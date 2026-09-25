@@ -121,7 +121,7 @@ async function safetyCard(dev, onChange) {
   const persisted = await storagePersisted();
   const storageLine = h('span', { 'data-storage-state': persisted ? 'protected' : 'best-effort' }, persisted ? badge('Protected', 'ok') : badge('May be cleared by the browser', 'warn'));
   const protect = persisted ? null : h('button', { type: 'button', class: 'btn sm', onClick: async () => { const ok = await requestPersistentStorage(); toast(ok ? 'The browser will keep SUDS’s storage.' : 'The browser did not agree. Installing SUDS to the home screen usually helps; keep downloading backups either way.', ok ? 'ok' : 'error'); onChange(); } }, 'Ask the browser to protect it');
-  return h('div', { class: 'card', 'data-device-safety': '1' }, h('h3', {}, 'Keep your records safe'),
+  return h('div', { class: 'card', 'data-device-safety': '1' }, h('h2', {}, 'Keep your records safe'),
     kv([['Storage', h('span', {}, storageLine, ' ', protect)], ['Last backup', h('span', { 'data-last-backup': dev ? (dev.last_backup_at || 'never') : '' }, dev ? ago(dev.last_backup_at) : '—')]]),
     h('p', { class: 'small muted mt' }, isStaticHost()
       ? 'The records on this device exist only in this browser. If its site data is cleared, or the device is lost, only a backup brings them back. Download one at least weekly and keep it off this device.'
@@ -138,7 +138,7 @@ function accountsCard(dev, onChange) {
     try { await put('/api/local/device', { signup_enabled: box.checked }); toast(box.checked ? 'Other people can sign up on this device' : 'Sign-ups on this device are off', 'ok'); onChange(); }
     catch (e) { box.checked = !box.checked; toast(e.message, 'error'); }
   } });
-  return h('div', { class: 'card', 'data-device-accounts': '1' }, h('h3', {}, 'Accounts on this device'),
+  return h('div', { class: 'card', 'data-device-accounts': '1' }, h('h2', {}, 'Accounts on this device'),
     kv([['Accounts', String(dev.users)], ['You', dev.device_admin ? badge('Manage this device', 'info') : 'Navigator account']]),
     h('label', { class: 'check mt' }, box, 'Let other people create their own account here (Sign up)'),
     h('p', { class: 'small muted' }, dev.device_admin
@@ -218,12 +218,12 @@ route('sync', async () => {
     // count of "changes waiting to send", which read as work at risk. This page is about the device itself.
     return h('div', {}, pageHead('This device'),
       h('div', { class: 'grid cols-2' },
-        h('div', { class: 'card', 'data-static-status': '1' }, h('h3', {}, 'Status'),
+        h('div', { class: 'card', 'data-static-status': '1' }, h('h2', {}, 'Status'),
           kv([['This device', badge('SUDS on this device', 'info')], ['Where your records are', 'In this browser on this device only, encrypted'], ['Clients', dev ? String(dev.clients) : '—']]),
           h('p', { class: 'small muted mt' }, 'Your records stay in this browser and are never sent anywhere. Clearing this browser’s site data erases them, so keep a recent backup.')),
         await safetyCard(dev, refresh),
         accountsCard(dev, refresh),
-        h('div', { class: 'card' }, h('h3', {}, 'Office server'), h('div', { class: 'banner info', 'data-static-no-sync': '1' }, h('div', {}, STATIC_HOST_MESSAGE)), h('div', { class: 'btn-row mt' }, eraseDeviceButton())),
+        h('div', { class: 'card' }, h('h2', {}, 'Office server'), h('div', { class: 'banner info', 'data-static-no-sync': '1' }, h('div', {}, STATIC_HOST_MESSAGE)), h('div', { class: 'btn-row mt' }, eraseDeviceButton())),
         await sampleDataCard(refresh)));
   }
   // A browser has no Keystore or Keychain, so the local kernel keeps its encryption keys in this profile's
@@ -233,9 +233,9 @@ route('sync', async () => {
     h('div', { class: 'banner warn mb' }, h('b', {}, 'This is an offline copy of the office SUDS. '),
       'Its encryption keys are stored in this browser profile alongside the data, so anyone who can use this browser profile can read what is in it. Keep real client information on the office SUDS unless your administrator has approved this device for field work.'),
     h('div', { class: 'grid cols-2' },
-      h('div', { class: 'card' }, h('h3', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', badge('Keys kept in this browser', 'warn')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
+      h('div', { class: 'card' }, h('h2', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', badge('Keys kept in this browser', 'warn')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
         h('p', { class: 'small muted mt' }, 'Sync exchanges clients, visits, calls, notes, reminders, referrals and everything else in both directions. The office SUDS decides: the newest change wins, a change it rejects for good is not sent again, and a record the office has purged or merged does not come back.')),
-      h('div', { class: 'card' }, h('h3', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this device to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
+      h('div', { class: 'card' }, h('h2', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this device to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
         h('div', { class: 'btn-row' }, eraseDeviceButton())),
       await safetyCard(dev, refresh),
       await sampleDataCard(refresh)));

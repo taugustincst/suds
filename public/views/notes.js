@@ -112,7 +112,7 @@ export async function openNote(id, { onChange } = {}) {
     n.signature_hash ? verifyPanel(n, breakGlass) : null,
     n.structured ? h('div', { class: 'mt' }, Object.entries(n.structured).map(([k, v]) => v ? h('div', { class: 'mb' }, h('b', {}, sectionLabel(n.format, k)), h('div', { style: { whiteSpace: 'pre-wrap' } }, v)) : null)) : h('pre', { class: 'note mt' }, n.content),
     n.structured && n.content ? h('details', { class: 'mt' }, h('summary', { class: 'muted small' }, 'Narrative text'), h('pre', { class: 'note' }, n.content)) : null,
-    n.addenda.length ? h('div', { class: 'mt' }, h('h4', {}, 'Addenda'), n.addenda.map(a => h('div', { class: 'list-item' }, h('div', { class: 'small muted' }, `${fmt.dt(a.created_at)} · ${a.author}${a.reason ? ' · ' + a.reason : ''}`), h('div', { style: { whiteSpace: 'pre-wrap' } }, a.content)))) : null,
+    n.addenda.length ? h('div', { class: 'mt' }, h('h3', { class: 'eyebrow' }, 'Addenda'), n.addenda.map(a => h('div', { class: 'list-item' }, h('div', { class: 'small muted' }, `${fmt.dt(a.created_at)} · ${a.author}${a.reason ? ' · ' + a.reason : ''}`), h('div', { style: { whiteSpace: 'pre-wrap' } }, a.content)))) : null,
     h('div', { class: 'btn-row' },
       writable && n.status === 'draft' && (mine || can('clients:all')) ? h('button', { class: 'btn', onClick: () => { m.close(); openNoteForm(n, { onDone: onChange }); } }, 'Edit draft') : null,
       writable && n.status === 'draft' && (mine || can('clients:all')) ? h('button', { class: 'btn danger', onClick: async () => { if (await confirmDialog('Delete draft', 'Delete this draft note?', { danger: true, okText: 'Delete' })) { await del(`/api/notes/${n.id}`); m.close(); onChange && onChange(); } } }, 'Delete draft') : null,

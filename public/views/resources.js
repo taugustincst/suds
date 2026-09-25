@@ -138,7 +138,7 @@ async function regionCard(refresh) {
         const out = await del(`/api/regions/${rg.id}`); toast(`${out.removed} removed, ${out.kept} kept`, 'ok'); refresh();
       };
       box.append(h('div', { class: 'card region-card', 'data-region': rg.id },
-        h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, rg.name, ' starter directory'), h('div', { class: 'small muted' }, rg.counties.join(' · '))),
+        h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, rg.name, ' starter directory'), h('div', { class: 'small muted' }, rg.counties.join(' · '))),
           rg.loaded ? badge(`${rg.present} loaded`, 'ok') : badge(`${rg.provider_count} programs`, 'info')),
         h('p', { class: 'small' }, rg.description),
         rg.loaded ? [
@@ -181,7 +181,7 @@ route('resources', async (r) => {
     { label: 'Services', render: x => h('div', { class: 'small' }, tagBadges(String(x.service_tags || '').split(',').slice(0, 4).join(','), 'purple')) },
     { label: 'Contact', render: x => h('div', { class: 'small' }, x.phone ? h('div', {}, '☎ ', contactLinks(x.phone)) : null, x.city ? h('div', { class: 'muted' }, x.city) : null, x.website ? h('a', { href: siteHref(x.website), target: '_blank', rel: 'noopener', onClick: e => e.stopPropagation() }, 'website') : null) },
     { label: 'Accepts', render: x => [x.accepts_medicaid ? badge('Medicaid', 'ok') : null, ' ', x.accepts_uninsured ? badge('Uninsured', 'info') : null, x.mat_offered ? [' ', badge('MAT', 'purple')] : null] },
-    { label: 'Referrals', key: 'referral_count', num: true }, { label: 'Verified', render: x => h('span', { style: stale(x) ? { color: 'var(--warn)' } : {} }, x.last_verified_at ? fmt.date(x.last_verified_at) : 'never') }, { label: '', render: x => x.is_active ? null : badge('Inactive', 'warn') },
+    { label: 'Referrals', key: 'referral_count', num: true }, { label: 'Verified', render: x => h('span', { style: stale(x) ? { color: 'var(--warn)' } : {} }, x.last_verified_at ? fmt.date(x.last_verified_at) : 'never', stale(x) ? ' — needs verification' : '') }, { label: '', render: x => x.is_active ? null : badge('Inactive', 'warn') },
   ], rows, { onRow: x => nav(`resource/${x.id}`), empty: 'No resources yet. Add treatment providers, MAT clinics, shelters, and other referral partners.' });
   return h('div', {},
     pageHead('Resource directory', can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(null, (id) => nav(`resource/${id}`)) }, '+ Add resource') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => window.__suds.downloadCsv('/api/reports/export/resources') }, 'Export') : null),
@@ -203,12 +203,12 @@ route('resource', async (r) => {
     gallery.replaceChildren();
     if (!photos.length) { gallery.append(h('div', { class: 'gallery-empty' }, h('div', { class: 'big' }, '📷'), h('div', { class: 'muted small' }, can('resources:write') ? 'No pictures yet. Add photos of the building, entrance and rooms so staff and clients know what to expect.' : 'No pictures yet.'))); return; }
     const hero = photos[0];
-    gallery.append(h('figure', { class: 'hero' }, img(hero.data_url, { alt: hero.caption || x.name, onClick: () => lightbox(0) }), hero.caption ? h('figcaption', {}, hero.caption) : null));
-    if (photos.length > 1) gallery.append(h('div', { class: 'thumbs' }, photos.map((p, i) => h('button', { class: 'thumb-btn', type: 'button', title: p.caption || '', onClick: () => lightbox(i) }, img(p.thumb_url || p.data_url, { alt: p.caption || '', loading: 'lazy' })))));
+    gallery.append(h('figure', { class: 'hero' }, h('button', { class: 'hero-btn', type: 'button', title: 'Open the pictures', onClick: () => lightbox(0) }, img(hero.data_url, { alt: `${hero.caption || x.name} — open the pictures` })), hero.caption ? h('figcaption', { 'aria-hidden': 'true' }, hero.caption) : null));
+    if (photos.length > 1) gallery.append(h('div', { class: 'thumbs' }, photos.map((p, i) => h('button', { class: 'thumb-btn', type: 'button', title: p.caption || '', onClick: () => lightbox(i) }, img(p.thumb_url || p.data_url, { alt: p.caption ? `${p.caption} (picture ${i + 1} of ${photos.length})` : `Picture ${i + 1} of ${photos.length}`, loading: 'lazy' })))));
   };
   const lightbox = (i) => {
     let idx = i; const lightboxImg = h('img', { alt: '' }); const cap = h('div', { class: 'small muted mt' }); const count = h('span', { class: 'small muted' });
-    const show = () => { const p = photos[idx]; setImage(lightboxImg, p.data_url); cap.textContent = p.caption || ''; count.textContent = `${idx + 1} / ${photos.length}`; };
+    const show = () => { const p = photos[idx]; setImage(lightboxImg, p.data_url); lightboxImg.alt = p.caption || `${x.name}, picture ${idx + 1} of ${photos.length}`; cap.textContent = p.caption || ''; count.textContent = `${idx + 1} / ${photos.length}`; };
     const prev = () => { idx = (idx - 1 + photos.length) % photos.length; show(); }; const next = () => { idx = (idx + 1) % photos.length; show(); };
     const m = modal(x.name, h('div', { class: 'lightbox' }, lightboxImg, cap, h('div', { class: 'row mt', style: { justifyContent: 'space-between' } },
       h('div', { class: 'row' }, photos.length > 1 ? [h('button', { class: 'btn sm', onClick: prev }, '‹ Prev'), h('button', { class: 'btn sm', onClick: next }, 'Next ›')] : null, count),
@@ -315,7 +315,7 @@ route('resource', async (r) => {
   const recent = (x.recent_referrals || []).length ? table([{ label: 'Client', render: y => h('a', { href: `#/client/${y.client_id}/referrals` }, y.client_code) }, { label: 'Referred', render: y => fmt.date(y.referred_at) }, { label: 'Status', render: y => badge(fmt.label(y.status)) }], x.recent_referrals) : null;
   // Drag pictures onto the card, or paste one (Ctrl+V / Cmd+V) while on this page: the same upload as the
   // file window, for people and tools that cannot use that window.
-  const picturesCard = h('div', { class: 'card', 'data-pictures-card': '1' }, h('div', { class: 'card-head' }, h('h3', {}, 'Pictures'), can('resources:write') ? h('div', { class: 'row', style: { gap: '.35rem' } }, h('label', { class: 'btn sm file-btn' }, '+ Add pictures', fileInput), addressBtn) : null), gallery, status,
+  const picturesCard = h('div', { class: 'card', 'data-pictures-card': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Pictures'), can('resources:write') ? h('div', { class: 'row', style: { gap: '.35rem' } }, h('label', { class: 'btn sm file-btn' }, '+ Add pictures', fileInput), addressBtn) : null), gallery, status,
     can('resources:write') ? h('p', { class: 'small muted mt' }, 'Pictures are shrunk on this device before saving. You can also drag pictures onto this card or paste one. Do not upload pictures of clients.') : null);
   if (can('resources:write')) {
     const hasFiles = (e) => [...((e.dataTransfer && e.dataTransfer.types) || [])].includes('Files');
@@ -349,9 +349,9 @@ route('resource', async (r) => {
     head,
     h('div', { class: 'grid cols-2' },
       picturesCard,
-      h('div', {}, h('div', { class: 'card mb' }, h('h3', {}, 'Services offered'), services), h('div', { class: 'card' }, h('h3', {}, 'Contact & location'), contact))),
-    h('div', { class: 'grid cols-2 mt' }, h('div', { class: 'card' }, h('h3', {}, 'Referral outcomes'), outcomes, recent ? h('div', { class: 'mt' }, recent) : null),
-      x.notes || can('resources:write') ? h('div', { class: 'card' }, h('h3', {}, 'Internal notes'), x.notes ? h('p', { class: 'small', style: { whiteSpace: 'pre-wrap' } }, x.notes) : h('p', { class: 'muted small' }, 'Nothing noted.'),
+      h('div', {}, h('div', { class: 'card mb' }, h('h2', {}, 'Services offered'), services), h('div', { class: 'card' }, h('h2', {}, 'Contact & location'), contact))),
+    h('div', { class: 'grid cols-2 mt' }, h('div', { class: 'card' }, h('h2', {}, 'Referral outcomes'), outcomes, recent ? h('div', { class: 'mt' }, recent) : null),
+      x.notes || can('resources:write') ? h('div', { class: 'card' }, h('h2', {}, 'Internal notes'), x.notes ? h('p', { class: 'small', style: { whiteSpace: 'pre-wrap' } }, x.notes) : h('p', { class: 'muted small' }, 'Nothing noted.'),
         can('resources:write') && x.is_active ? h('div', { class: 'btn-row' }, h('button', { class: 'btn danger sm', onClick: async () => { if (await confirmDialog('Deactivate', 'Hide this resource from referral pickers?', { danger: true, okText: 'Deactivate' })) { await del(`/api/resources/${x.id}`); toast('Resource deactivated', 'ok'); refresh(); } } }, 'Deactivate')) : null) : null));
 });
 

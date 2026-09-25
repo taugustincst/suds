@@ -60,9 +60,12 @@ await m.click('.fab button'); await m.waitForSelector('.quick-list', { timeout: 
 // Clickable rows and the client picker were mouse-only, and modals let Tab escape into the page behind.
 await page.goto(base + '/#/clients'); await settle(page);
 const firstRow = await page.$('tbody tr');
-ok(firstRow && await firstRow.getAttribute('tabindex') === '0', 'a clickable table row can be reached with the keyboard');
-ok(firstRow && await firstRow.getAttribute('role') === 'button', 'and is announced as something that can be activated');
-await firstRow.focus(); await page.keyboard.press('Enter'); await settle(page);
+// The row's first cell is a button (the keyboard's way in); the row itself stays a table row, so a screen
+// reader still reads its cells with their column headings.
+const rowBtn = firstRow && await firstRow.$('button.row-open');
+ok(rowBtn, 'a clickable table row can be reached with the keyboard (a button in its first cell)');
+ok(firstRow && !(await firstRow.getAttribute('role')), 'and the row keeps its table semantics');
+await rowBtn.focus(); await page.keyboard.press('Enter'); await settle(page);
 ok(/#\/client\//.test(page.url()), 'pressing Enter on a row opens it', page.url());
 
 await page.goto(base + '/#/interventions'); await settle(page);

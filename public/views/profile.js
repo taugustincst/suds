@@ -29,17 +29,17 @@ route('profile', async (r) => {
     if (perm !== 'granted') { e.target.checked = false; toast('This browser did not allow notifications. Check its site settings for SUDS and try again.', 'error'); return; }
     prefs.set('notify_due', true); toast('You will be told here when a reminder comes due', 'ok');
   } });
-  const reminders = can('tasks:read') ? h('div', { class: 'card' }, h('h3', {}, 'Reminders'),
+  const reminders = can('tasks:read') ? h('div', { class: 'card' }, h('h2', {}, 'Reminders'),
     h('label', { class: 'check', for: 'notify-due', style: { marginTop: 0 } }, notifyBox, 'Show a notification on this device when one of my reminders comes due (while SUDS is open)'),
     h('p', { class: 'small muted mt' }, notifySupported ? 'The notification shows the reminder\'s title and the client\'s name, so switch it off on a shared computer. The bell at the top of every page shows the same count either way.' : 'This browser does not support notifications; the bell at the top of every page still shows what is due.')) : null;
   return h('div', {}, pageHead('My profile'),
     force ? h('div', { class: 'banner warn' }, 'You must change your password before continuing.') : null,
     h('div', { class: 'grid cols-2' },
-      h('div', { class: 'card' }, h('h3', {}, 'Account'), kv([['Name', u.display_name], ['Username', u.username], ['Role', fmt.label(u.role)], ['Title', u.title], ['Email', u.email], ['Caseload', u.caseload_restricted ? 'Assigned clients only' : 'All clients']])),
-      h('div', { class: 'card' }, h('h3', {}, 'Multi-factor authentication'), mfaBox),
-      h('div', { class: 'card' }, h('h3', {}, 'Change password'), pw),
+      h('div', { class: 'card' }, h('h2', {}, 'Account'), kv([['Name', u.display_name], ['Username', u.username], ['Role', fmt.label(u.role)], ['Title', u.title], ['Email', u.email], ['Caseload', u.caseload_restricted ? 'Assigned clients only' : 'All clients']])),
+      h('div', { class: 'card' }, h('h2', {}, 'Multi-factor authentication'), mfaBox),
+      h('div', { class: 'card' }, h('h2', {}, 'Change password'), pw),
       reminders,
-      state.local ? null : h('div', { class: 'card' }, h('h3', {}, 'Use SUDS on your phone'), h('p', { class: 'small' }, 'On the office Wi-Fi open ', h('b', {}, location.origin.replace(/^https?:\/\//, '')), ' or scan this code, then add it to the home screen: ', h('b', {}, 'iPhone:'), ' Share → Add to Home Screen. ', h('b', {}, 'Android:'), ' ⋮ → Install app. Your clients, notes and reminders are the same on every device — nothing to set up.'), h('div', { class: 'center' }, qrSvg(location.origin + '/', { size: 160 }))),
-      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Active sessions'), sessions.sessions.length > 1 ? h('button', { class: 'btn sm', onClick: async () => { await post('/api/auth/sessions/revoke-others', {}); toast('Other sessions signed out', 'ok'); nav('profile?_=' + Date.now()); } }, 'Sign out other sessions') : null),
-        table([{ label: 'Started', render: s => fmt.dt(s.created_at) }, { label: 'Last active', render: s => fmt.dt(s.last_seen_at) }, { label: 'IP', key: 'ip' }, { label: 'Device', render: s => h('span', { class: 'small muted' }, (s.user_agent || '').slice(0, 60)) }, { label: '', render: s => s.current ? badge('This session', 'ok') : '' }], sessions.sessions, { wrap: false }))));
+      state.local ? null : h('div', { class: 'card' }, h('h2', {}, 'Use SUDS on your phone'), h('p', { class: 'small' }, 'On the office Wi-Fi open ', h('b', {}, location.origin.replace(/^https?:\/\//, '')), ' or scan this code, then add it to the home screen: ', h('b', {}, 'iPhone:'), ' Share → Add to Home Screen. ', h('b', {}, 'Android:'), ' ⋮ → Install app. Your clients, notes and reminders are the same on every device — nothing to set up.'), h('div', { class: 'center' }, qrSvg(location.origin + '/', { size: 160 }))),
+      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Active sessions'), sessions.sessions.length > 1 ? h('button', { class: 'btn sm', onClick: async () => { await post('/api/auth/sessions/revoke-others', {}); toast('Other sessions signed out', 'ok'); nav('profile?_=' + Date.now()); } }, 'Sign out other sessions') : null),
+        table([{ label: 'Started', render: s => fmt.dt(s.created_at) }, { label: 'Last active', render: s => fmt.dt(s.last_seen_at) }, { label: 'IP', key: 'ip' }, { label: 'Device', render: s => h('span', { class: 'small muted' }, (s.user_agent || '').slice(0, 60)) }, { label: '', srLabel: 'Current session', render: s => s.current ? badge('This session', 'ok') : '' }], sessions.sessions))));
 });

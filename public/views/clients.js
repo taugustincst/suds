@@ -1,4 +1,4 @@
-import { h, route, get, post, put, state, form, modal, confirmDialog, toast, nav, table, pagedList, badge, statusKind, fmt, can, pageHead, clear, clientStatus } from '../app.js';
+import { h, route, get, post, put, state, form, modal, confirmDialog, toast, nav, table, pagedList, badge, statusKind, fmt, can, pageHead, clear, clientStatus, flag } from '../app.js';
 
 // hasEpisodes: an existing client whose discharge lives on the Episodes tab (the New client form never
 // shows discharge fields: intake opens an episode, and discharging is what closes it).
@@ -181,8 +181,8 @@ route('clients', async (r) => {
       { label: 'MAT', render: c => fmt.label(c.mat_status) },
       { label: 'Assigned', key: 'assigned_workers' },
       { label: 'Intake', render: c => fmt.date(c.intake_date) },
-      { label: 'Time to engage', render: c => c.days_to_engagement === null ? '—' : h('span', { style: c.days_to_engagement < 0 ? { color: 'var(--danger)' } : {} }, `${c.days_to_engagement}d`) },
-      { label: 'Last contact', render: c => [h('span', { style: !c.last_contact || Date.now() - Date.parse(c.last_contact) > 30 * 86400000 ? { color: 'var(--warn)' } : {} }, fmt.ago(c.last_contact)), c.overdue_tasks ? [' ', badge(`${c.overdue_tasks} overdue`, 'danger')] : null] },
+      { label: 'Time to engage', render: c => c.days_to_engagement === null ? '—' : flag(`${c.days_to_engagement}d`, c.days_to_engagement < 0, 'engagement date is before the referral date') },
+      { label: 'Last contact', render: c => [flag(fmt.ago(c.last_contact), !c.last_contact || Date.now() - Date.parse(c.last_contact) > 30 * 86400000, 'no contact in the last 30 days', 'warn'), c.overdue_tasks ? [' ', badge(`${c.overdue_tasks} overdue`, 'danger')] : null] },
       expiring ? { label: 'Consent expires', render: c => fmt.date(c.consent_expires_at) } : null,
       requests ? { label: 'Request due', render: c => h('a', { href: `#/client/${c.id}/requests` }, (requests.get(c.id) || []).map(x => h('div', { style: x.overdue ? { color: 'var(--danger)', fontWeight: 600 } : {} }, `${fmt.label(x.kind)} · ${fmt.date(x.due_at)}${x.overdue ? ' — overdue' : ''}`))) } : null,
     ].filter(Boolean), rows, { onRow: deid ? null : (c) => nav(`client/${c.id}`), rowLabel: c => `${c.display_name}, ${fmt.label(c.status)}`,

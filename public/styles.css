@@ -3,7 +3,7 @@
   --primary: #1f5f8b; --primary-2: #17496b; --primary-soft: #e3eef7; --accent: #2a9d8f; --danger: #c0392b; --danger-soft: #fdecea;
   --warn: #8a5a12; --warn-soft: #fff5e0; --ok: #276749; --ok-soft: #e6f4ec; --info-soft: #e8f1fb; --purple: #6b46c1; --purple-soft: #efe9fb;
   --radius: 10px; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.1);
-  --sidebar-w: 236px; --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sidebar-w: 14.75rem; /* 236px at the default text size; grows with the reader's text size (1.4.4) */ --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #0f151c; --panel: #161e27; --panel-2: #1b2531; --border: #2a3644; --text: #e6edf3; --muted: #97a6b6;
@@ -27,13 +27,16 @@ a { color: var(--primary); text-decoration: none; } a:hover { text-decoration: u
    row that is already one (see noteTable in notes.js) — deliberately not reachable by keyboard/Tab. */
 .link-like { color: var(--primary); cursor: pointer; } .link-like:hover { text-decoration: underline; }
 h1, h2, h3, h4 { margin: 0 0 .5rem; font-weight: 650; line-height: 1.25; }
-h1 { font-size: 1.45rem; } h2 { font-size: 1.15rem; } h3 { font-size: 1rem; } h4 { font-size: .9rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+h1 { font-size: 1.45rem; } h2 { font-size: 1.15rem; } h3 { font-size: 1rem; } h4, .eyebrow { font-size: .9rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+/* Headings go down one level at a time (page h1 → card h2 → group h3). A card's title is an h2 that looks the
+   size a card title always has; a dialog's own title (also h2) keeps the larger size. */
+.card h2 { font-size: 1rem; } .modal > .card-head h2 { font-size: 1.15rem; }
 p { margin: 0 0 .75rem; }
 code, .mono { font-family: var(--mono); font-size: .85em; }
 .boot { padding: 4rem; text-align: center; color: var(--muted); }
 .muted { color: var(--muted); } .small { font-size: .85em; } .right { text-align: right; } .center { text-align: center; } .nowrap { white-space: nowrap; }
 .mt { margin-top: 1rem; } .mb { margin-bottom: 1rem; } .row { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; } .row.between { justify-content: space-between; } .grow { flex: 1; }
-.grid { display: grid; gap: 1rem; } .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); } .grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); } .grid.cols-4 { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.grid { display: grid; gap: 1rem; } .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); } .grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); } .grid.cols-4 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 11.25rem), 1fr)); }
 .hidden { display: none !important; }
 
 /* Layout */
@@ -44,7 +47,7 @@ code, .mono { font-family: var(--mono); font-size: .85em; }
 .brand img { width: 30px; height: 30px; } .brand b { font-size: 1.05rem; } .brand small { display: block; color: var(--muted); font-size: .72rem; }
 .nav a { display: flex; align-items: center; gap: .6rem; padding: .5rem .65rem; border-radius: 8px; color: var(--text); font-weight: 500; }
 .nav a:hover { background: var(--panel-2); text-decoration: none; } .nav a.active { background: var(--primary-soft); color: var(--primary); }
-.nav a .ico { width: 18px; text-align: center; opacity: .8; } .nav .sec { margin: .6rem .65rem .2rem; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.nav a .ico { width: 1.3em; flex: 0 0 auto; text-align: center; opacity: .8; } .nav a { overflow-wrap: anywhere; min-width: 0; } .nav .sec { margin: .6rem .65rem .2rem; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .sidebar .foot { margin-top: auto; padding-top: .75rem; border-top: 1px solid var(--border); font-size: .85em; }
 .main { padding: 1.25rem 1.5rem 3rem; min-width: 0; }
 .topbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
@@ -53,7 +56,7 @@ code, .mono { font-family: var(--mono); font-size: .85em; }
 
 /* Cards, tables */
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1rem 1.15rem; }
-.card.tight { padding: .65rem .85rem; } .card h3 { margin-bottom: .6rem; }
+.card.tight { padding: .65rem .85rem; } .card h2, .card h3 { margin-bottom: .6rem; }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: .75rem; margin-bottom: .6rem; flex-wrap: wrap; }
 .stat { display: flex; flex-direction: column; gap: .15rem; } .stat .v { font-size: 1.6rem; font-weight: 700; line-height: 1.1; } .stat .l { color: var(--muted); font-size: .8rem; }
 .stat.warn .v { color: var(--warn); } .stat.danger .v { color: var(--danger); } .stat.ok .v { color: var(--ok); }
@@ -74,7 +77,7 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel-2); } 
 
 /* Forms */
 label { display: block; font-size: .8rem; font-weight: 600; color: var(--muted); margin-bottom: .25rem; }
-input, select, textarea { width: 100%; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: .5rem .6rem; }
+input, select, textarea { width: 100%; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--input-border, var(--border)); border-radius: 8px; padding: .5rem .6rem; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary-soft); border-color: var(--primary); }
 input[type="checkbox"] { width: auto; margin-right: .4rem; } textarea { min-height: 90px; resize: vertical; }
 .field { margin-bottom: .8rem; } .dt-pair { display: flex; gap: .4rem; } .dt-pair input[type="date"] { flex: 1 1 58%; min-width: 0; } .dt-pair input[type="time"] { flex: 1 1 42%; min-width: 0; } .date-with-pick { display: flex; gap: .4rem; } .date-with-pick input[type="date"] { flex: 1 1 auto; min-width: 0; } .date-pick { flex: 0 0 auto; padding-left: .55rem; padding-right: .55rem; } .field .help { font-size: .78rem; color: var(--muted); margin-top: .2rem; } .field.error input, .field.error select, .field.error textarea { border-color: var(--danger); } .field .err { color: var(--danger); font-size: .78rem; }
@@ -98,7 +101,7 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
    cover the first row of the + Log sheet — and toasts (100) over everything, so a save error is never hidden. */
 .modal-bg { position: fixed; inset: 0; background: rgba(10,15,20,.55); display: flex; align-items: flex-start; justify-content: center; padding: 3vh 1rem; overflow: auto; z-index: 70; }
 .modal { background: var(--panel); border-radius: 12px; width: 100%; min-width: 0; max-width: 760px; box-shadow: 0 20px 60px rgba(0,0,0,.35); padding: 1.25rem 1.4rem; margin: auto; }
-.modal.wide { max-width: 1040px; } .modal h2 { margin-bottom: 1rem; }
+.modal.wide { max-width: 1040px; } .modal h2 { margin-bottom: 1rem; } .modal .card h2 { margin-bottom: .6rem; }
 .toasts { position: fixed; right: 1rem; bottom: 1rem; display: flex; flex-direction: column; gap: .5rem; z-index: 100; }
 /* A toast only says something; it has no controls. It must never take a tap or click meant for what is under
    it — a "Task saved" toast lying over the next dialog's date field swallowed the tap on its calendar button. */
@@ -109,6 +112,9 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
 /* Login */
 .login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 1rem; background: linear-gradient(160deg, var(--primary-soft), var(--bg) 60%); }
 .login { width: 100%; max-width: 460px; }
+/* One column that never grows past the screen (a long link in the statement page pushed it wider). */
+.login-wrap { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+.statement { overflow-wrap: anywhere; } .card p, .card li { overflow-wrap: break-word; }
 /* Log in / Sign up: a two-option segmented control (role=tablist) that fills the card on a phone. */
 .seg { display: grid; grid-template-columns: 1fr 1fr; gap: .25rem; padding: .25rem; margin: .25rem 0 1rem; background: var(--primary-soft); border-radius: 10px; }
 .seg-btn { min-height: 44px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
@@ -127,11 +133,11 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
 .timeline .t { font-size: .78rem; color: var(--muted); } .timeline .h { font-weight: 600; } .timeline .d { color: var(--muted); font-size: .9em; white-space: pre-wrap; }
 
 /* Bars / charts */
-.bar { display: flex; align-items: center; gap: .5rem; font-size: .85em; margin: .25rem 0; } .bar .lbl { width: 40%; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { display: flex; align-items: center; gap: .5rem; font-size: .85em; margin: .25rem 0; } .bar .lbl { width: 40%; min-width: 0; overflow-wrap: anywhere; }
 .bar .trk { flex: 1; background: var(--panel-2); border-radius: 4px; height: 12px; overflow: hidden; } .bar .fil { height: 100%; background: var(--primary); border-radius: 4px; } .bar .n { min-width: 3.5rem; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .progress { height: 10px; background: var(--panel-2); border-radius: 5px; overflow: hidden; } .progress > div { height: 100%; background: var(--accent); } .progress > div.warn { background: var(--warn); } .progress > div.danger { background: var(--danger); }
 .spark { display: flex; align-items: flex-end; gap: 2px; height: 48px; } .spark div { flex: 1; background: var(--primary); border-radius: 2px 2px 0 0; min-height: 2px; opacity: .85; }
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .9rem; font-size: .92em; } .kv dt { color: var(--muted); } .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.kv { display: grid; grid-template-columns: fit-content(40%) minmax(0, 1fr); gap: .25rem .9rem; font-size: .92em; } .kv dt { color: var(--muted); } .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 /* A badge is nowrap by default; inside a max-content grid on a phone that pushes the whole page sideways. */
 .kv .badge { white-space: normal; }
 pre.note { white-space: pre-wrap; font-family: var(--font); background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: .8rem; max-height: 50vh; overflow: auto; }
@@ -181,9 +187,9 @@ pre.note { white-space: pre-wrap; font-family: var(--font); background: var(--pa
 .fab { display: none; }
 .quick-list { display: grid; gap: .5rem; } .quick-list .btn { justify-content: flex-start; font-size: 1.05rem; padding: .8rem 1rem; } .quick-list .ico { width: 1.6rem; text-align: center; font-size: 1.2rem; }
 .help-wrap { position: relative; display: inline-block; }
-.help-btn { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border); background: var(--panel-2); color: var(--primary); font-weight: 700; cursor: pointer; font-size: .8rem; vertical-align: middle; }
+.help-btn { width: 1.4rem; height: 1.4rem; border-radius: 50%; border: 1px solid var(--border); background: var(--panel-2); color: var(--primary); font-weight: 700; cursor: pointer; font-size: .8rem; vertical-align: middle; }
 .helptip { position: absolute; top: 130%; left: 0; z-index: 30; width: min(360px, 80vw); background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.2); padding: .75rem .9rem; font-size: .92rem; font-weight: 400; color: var(--text); text-transform: none; letter-spacing: 0; }
-.empty-state { text-align: center; padding: 2rem 1rem; } .empty-state .big { font-size: 1.15rem; font-weight: 650; margin-bottom: .3rem; }
+.empty-state { text-align: center; padding: 2rem 1rem; } .empty-state .big { font-size: 1.15rem; font-weight: 650; margin: 0 0 .3rem; }
 .today-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .35rem .75rem; padding: .6rem 0; border-bottom: 1px solid var(--border); }
 .today-item > * { min-width: 0; } .today-due { max-width: 100%; text-align: right; margin-left: auto; } .today-item:last-child { border-bottom: 0; }
 .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .35rem .7rem; border-radius: 999px; background: var(--primary-soft); color: var(--primary); font-weight: 600; font-size: .85rem; }
@@ -269,7 +275,7 @@ html.offline .appbar, html.offline .mobilebar { filter: grayscale(.4); }
 .res-summary { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
 .res-tags .badge { margin-bottom: .2rem; }
 .res-head { margin-bottom: 1rem; } .res-lead { font-size: 1.02rem; max-width: 70ch; white-space: pre-wrap; }
-.gallery .hero { margin: 0; } .gallery .hero img { width: 100%; max-height: 380px; object-fit: cover; border-radius: 10px; cursor: zoom-in; display: block; background: var(--panel-2); }
+.gallery .hero { margin: 0; } .hero-btn { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 10px; } .gallery .hero img { width: 100%; max-height: 380px; object-fit: cover; border-radius: 10px; cursor: zoom-in; display: block; background: var(--panel-2); }
 .gallery .hero figcaption { font-size: .82rem; color: var(--muted); margin-top: .3rem; }
 .gallery .thumbs { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .5rem; }
 .thumb-btn { padding: 0; border: 2px solid transparent; border-radius: 8px; background: none; cursor: pointer; } .thumb-btn:hover, .thumb-btn:focus { border-color: var(--primary); outline: none; }
@@ -385,3 +391,51 @@ ul.badge-list { list-style: none; margin: 0; padding: 0; }
 ul.badge-list > li { display: contents; }
 /* A picture dragged over a resource profile's Pictures card (public/views/resources.js). */
 .card.drop-over { outline: 2px dashed var(--primary); outline-offset: -4px; background: var(--primary-soft); }
+
+/* ---------- WCAG 2.1 AA (docs/accessibility/DEVELOPERS.md) ---------- */
+/* 1.4.1: a link inside text is underlined, not told apart by colour alone. Controls that look like buttons,
+   cards, navigation and list rows are already obviously interactive and keep their own look. */
+a { text-decoration: underline; text-underline-offset: .15em; }
+a.btn, .nav a, a.list-item, a.card, a.bar, a.bell, a.chip, a.badge, .mobilebar a, .skip-link, a.res-card { text-decoration: none; }
+a.btn:hover, a.card:hover, .nav a:hover, a.list-item:hover { text-decoration: none; }
+/* 2.4.7 / 1.4.11: one focus ring for everything the keyboard reaches, 3:1 against the page in both themes.
+   Form fields used to show only a pale ring (--primary-soft) and a 1px border change. */
+:root { --focus: #1d4ed8; --on-fill: #fff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --focus: #7cb7ff; --on-fill: #0b1219;
+  --warn-bg: #3a2f16; --warn-fg: #f5dca8; --err-bg: #3a1f1c; --err-fg: #ffc2b8; --ok-bg: #173325; --ok-fg: #bff0d2; } }
+:root[data-theme="dark"] { --focus: #7cb7ff; --on-fill: #0b1219;
+  --warn-bg: #3a2f16; --warn-fg: #f5dca8; --err-bg: #3a1f1c; --err-fg: #ffc2b8; --ok-bg: #173325; --ok-fg: #bff0d2; }
+/* 1.4.11: a text field's edge is what shows where to type, so it is 3:1 against the card and the page. */
+:root { --input-border: #7d8a99; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --input-border: #66788c; } }
+:root[data-theme="dark"] { --input-border: #66788c; }
+.btn.primary, .btn.primary:hover, .seg button.active, button.chip:hover, .toast.error, .toast.ok, .bell-count, .btn.ok { color: var(--on-fill); }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--focus); }
+.thumb-btn:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+/* The idle sign-out warning (2.2.1) reads in either theme, with its button. */
+.idle-warn { background: #7a4a00; color: #fff; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: center; }
+.idle-warn .btn { background: #fff; color: #5a3600; border-color: #fff; }
+.badge { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+/* A button's words wrap inside it rather than running out of it at large text sizes. */
+.btn { white-space: normal; }
+.kv dt { overflow-wrap: anywhere; }
+/* table({ onRow }): the first cell's content is the row's button; it looks like the text it was. */
+.row-open { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; text-align: inherit; cursor: pointer; display: block; width: 100%; line-height: inherit; }
+.row-open:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+tr.click:focus-within td { background: var(--panel-2); }
+/* flag() in app.js: an at-risk value carries ⚠ and a reason, not only a colour (1.4.1). */
+.flag.danger { color: var(--danger); font-weight: 600; } .flag.warn { color: var(--warn); font-weight: 600; }
+/* The sign-in and first-run screens name the product in their level-one heading, sized as the brand. */
+.brand .brand-title { font-size: 1.05rem; margin: 0; font-weight: 700; line-height: 1.25; }
+.a11y-link { margin: .75rem 0 0; }
+/* Focus moved to a page's <main> or heading (skip link, a new page) is where reading starts, not a control:
+   no ring around the whole page. */
+main[tabindex="-1"]:focus, h1[tabindex="-1"]:focus { outline: none; }
+input::-webkit-calendar-picker-indicator:focus-visible { outline: 2px solid var(--focus); border-radius: 2px; }
+/* A focusable scrolling region (app.js scrollRegions) shows its ring inside the frame. */
+.table-wrap:focus-visible, .table-scroll:focus-visible { outline: 3px solid var(--focus); outline-offset: -3px; }
+.table-scroll { overflow-x: auto; max-width: 100%; }
+/* A link inside a coloured banner takes the banner's text colour (always 4.5:1 on it) and stays underlined. */
+.banner a:not(.btn) { color: inherit; font-weight: 600; }
+/* Visually hidden means 1px whatever else applies to the element (a file input in a .row is width: auto). */
+.sr-only { width: 1px !important; height: 1px !important; max-width: 1px !important; }

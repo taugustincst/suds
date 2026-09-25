@@ -9,7 +9,7 @@ function openDocumentForm(values, onDone) {
   let file = null; let fileLabel = values?.filename || null;
   // .sr-only, not .hidden (display:none) — a programmatic .click() on a display:none file input is silently
   // ignored by a good few mobile browsers/WebViews.
-  const fileInput = h('input', { type: 'file', class: 'sr-only', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.txt,application/pdf,image/*', onChange: async () => {
+  const fileInput = h('input', { type: 'file', tabindex: '-1', 'aria-hidden': 'true', class: 'sr-only', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.txt,application/pdf,image/*', onChange: async () => {
     const f = fileInput.files[0]; if (!f) return;
     try { file = await readFile(f); fileLabel = f.name; fileNote.textContent = `Selected: ${f.name}`; } catch (e) { toast(e.message, 'error'); }
   } });

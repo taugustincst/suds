@@ -233,12 +233,70 @@ export function announce(message) {
   liveRegion._clear = setTimeout(() => { liveRegion.textContent = ''; }, 4000);
 }
 
+// ---------- accessibility pass (docs/accessibility/DEVELOPERS.md) ----------
+// Every view builds its DOM with h(); a few conventions are applied here, to whatever is added to the page,
+// so a view written tomorrow gets them without doing anything:
+//  * a <label> without `for` next to a control (the filter bars: h('div', {class:'field'}, h('label', {},
+//    'Status'), select)) is tied to that control, so the control has a name (WCAG 1.3.1, 4.1.2);
+//  * a table wrapper that scrolls and has nothing focusable inside becomes a named, focusable region, so a
+//    keyboard can scroll it (2.1.1);
+//  * a control given a placeholder and nothing else gets the placeholder as its name (placeholder alone
+//    disappears as soon as someone types, and some screen readers skip it).
+const LABELABLE = 'input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]),select,textarea';
+const hasName = (c) => (c.labels && c.labels.length) || c.hasAttribute('aria-label') || c.hasAttribute('aria-labelledby') || c.closest('label');
+function a11yPass(root) {
+  if (!root || !root.querySelectorAll) return;
+  for (const label of root.querySelectorAll('label:not([for])')) {
+    if (label.querySelector(LABELABLE)) continue; // wraps its control: already tied
+    // The control that goes with it: the next element (past an "Edit this list" link), when that is a
+    // control or a wrapper around exactly one (a date field with its calendar button, the client search).
+    // A label over a group of several controls is a heading for them, not a name, and is left alone.
+    let n = label.nextElementSibling;
+    while (n && n.matches('a.field-link, .help')) n = n.nextElementSibling;
+    if (!n || n.tagName === 'LABEL') continue;
+    const inside = n.matches(LABELABLE) ? [n] : [...n.querySelectorAll(LABELABLE)];
+    const target = inside.length === 1 && !hasName(inside[0]) ? inside[0] : null;
+    if (!target) continue;
+    if (!target.id) target.id = 'c-' + Math.random().toString(36).slice(2, 9);
+    label.htmlFor = target.id;
+  }
+  for (const c of root.querySelectorAll('input[placeholder],textarea[placeholder]')) {
+    if (!hasName(c) && c.placeholder) c.setAttribute('aria-label', c.placeholder);
+  }
+}
+function scrollRegions(root) {
+  for (const w of (root || document).querySelectorAll('.table-wrap, .table-scroll, [data-scroll-region]')) {
+    // Whether it scrolls can change after it is drawn (fonts, a sibling growing, a rotation): watch its size.
+    if (scrollWatch && !w._a11yWatched) { w._a11yWatched = true; scrollWatch.observe(w); if (w.firstElementChild) scrollWatch.observe(w.firstElementChild); }
+    const scrolls = w.scrollHeight > w.clientHeight + 1 || w.scrollWidth > w.clientWidth + 1;
+    if (!scrolls || w.hasAttribute('tabindex') || w.querySelector(FOCUSABLE)) continue;
+    w.tabIndex = 0; w.setAttribute('role', 'region');
+    if (!w.hasAttribute('aria-label')) {
+      const head = w.closest('.card')?.querySelector('h2,h3') || document.querySelector('.main h1');
+      w.setAttribute('aria-label', `${head ? head.textContent.trim() + ' — ' : ''}table (scrolls)`);
+    }
+  }
+}
+let a11yFrame = 0;
+const scrollWatch = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => scrollCheckSoon());
+const scrollCheckSoon = () => { if (!a11yFrame) a11yFrame = requestAnimationFrame(() => { a11yFrame = 0; scrollRegions(document); }); };
+// Labels at once, in the same task that added them (before anyone can reach the control); whether a table
+// scrolls is only known after layout, so that check waits for the next frame (and runs again on resize).
+if (typeof MutationObserver !== 'undefined') {
+  new MutationObserver((records) => {
+    for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1 && n.isConnected) a11yPass(n);
+    scrollCheckSoon();
+  }).observe(document.documentElement, { childList: true, subtree: true });
+}
+window.addEventListener('resize', scrollCheckSoon);
+
 /**
  * A message that stays until it is dismissed, for conditions the user has to act on rather than
  * acknowledge in passing — a device that has stopped saving, a consent that was revoked.
  */
 export function banner(message, kind = 'warn', { id = message } = {}) {
-  const host = document.getElementById('banners') || (() => { const b = h('div', { id: 'banners' }); document.body.prepend(b); return b; })();
+  // After the skip link, which stays the first thing a keyboard reaches on every page.
+  const host = document.getElementById('banners') || (() => { const b = h('div', { id: 'banners' }); skipLink().after(b); return b; })();
   if (host.querySelector(`[data-banner="${CSS.escape(String(id))}"]`)) return;
   const el = h('div', { class: `banner ${kind}`, 'data-banner': String(id), role: 'alert' },
     h('span', {}, message),
@@ -246,6 +304,20 @@ export function banner(message, kind = 'warn', { id = message } = {}) {
   host.append(el);
   announce(message);
   return el;
+}
+// "Skip to content" (WCAG 2.4.1): one link, the first focusable thing in the document on every screen, that
+// moves focus to the page's <main> — the app's content, or the sign-in form.
+let skipEl = null;
+function skipLink() {
+  if (skipEl && skipEl.isConnected) return skipEl;
+  skipEl = h('a', { class: 'skip-link', href: '#main', onClick: (e) => {
+    e.preventDefault();
+    const main = document.querySelector('main') || document.getElementById('app');
+    if (!main.hasAttribute('tabindex')) main.setAttribute('tabindex', '-1');
+    main.focus(); main.scrollIntoView();
+  } }, 'Skip to content');
+  document.body.prepend(skipEl);
+  return skipEl;
 }
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 // The phone's Back button (Android, or a browser's back) closes the dialog on top instead of leaving the
@@ -294,7 +366,7 @@ export function modal(title, content, { wide = false, onClose = null } = {}) {
         }
       } catch { /* no history API */ }
     }
-    bg.remove();
+    bg.remove(); syncInertBehindDialogs(); // now, not at the observer's turn: focus goes back to the page below
     document.removeEventListener('keydown', onKey);
     if (opener && document.contains(opener) && typeof opener.focus === 'function') { try { opener.focus(); } catch { /* the element may have been replaced by a re-render */ } }
     if (onClose) onClose();
@@ -311,7 +383,8 @@ export function modal(title, content, { wide = false, onClose = null } = {}) {
     else if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
   }
   document.addEventListener('keydown', onKey);
-  root.append(bg);
+  watchDialogs(root);
+  root.append(bg); syncInertBehindDialogs();
   try {
     const st = { ...(history.state || {}), sudsModal: historyId, sudsClosed: false };
     // A spent entry (a dialog closed with ✕ on this same page) is reused rather than piling up more.
@@ -323,6 +396,24 @@ export function modal(title, content, { wide = false, onClose = null } = {}) {
   const first = box.querySelector('input,select,textarea,button.primary') || box.querySelector(FOCUSABLE);
   if (first) first.focus();
   return { close, el: box };
+}
+// While a dialog is open the page behind it cannot be reached by Tab, a screen reader's virtual cursor or a
+// click; only the top dialog is live. Banners and toasts stay outside, so a warning is still heard.
+// Kept in step by watching #modal-root itself, so a dialog removed any way at all (closed, a re-render
+// clearing the root, the paused screen) never leaves the page behind it dead.
+function syncInertBehindDialogs() {
+  const open = [...document.querySelectorAll('#modal-root > .modal-bg')];
+  const app = document.getElementById('app');
+  // aria-hidden as well as inert: some tools that read the accessibility tree do not yet honour inert.
+  const hide = (el, on) => { el.inert = on; if (on) el.setAttribute('aria-hidden', 'true'); else el.removeAttribute('aria-hidden'); };
+  if (app) hide(app, open.length > 0);
+  open.forEach((bg, i) => hide(bg, i < open.length - 1));
+}
+let dialogWatch = null;
+function watchDialogs(root) {
+  if (dialogWatch || typeof MutationObserver === 'undefined') return;
+  dialogWatch = new MutationObserver(syncInertBehindDialogs);
+  dialogWatch.observe(root, { childList: true });
 }
 export function confirmDialog(title, message, { danger = false, okText = 'Confirm', requireReason = false, minLength = 0 } = {}) {
   return new Promise((resolve) => {
@@ -523,7 +614,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   for (const f of fields) {
     if (f.type === 'section') {
       if (f.collapsible) { const inner = h('div', { class: 'form-grid' }); grid.append(h('details', { class: 'section', open: !!f.open }, h('summary', {}, f.label, f.hint ? h('span', { class: 'muted small' }, ` — ${f.hint}`) : null), inner)); target = inner; }
-      else { target = grid; grid.append(h('div', { class: 'span' }, h('h4', {}, f.label))); }
+      else { target = grid; grid.append(h('div', { class: 'span' }, h('h3', { class: 'eyebrow' }, f.label))); }
       continue;
     }
     let input; const v = values[f.name] ?? f.value ?? '';
@@ -550,7 +641,8 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     const helpId = f.help ? `${fieldId}-help` : null;
     const errId = `${fieldId}-err`;
     // A date & time field is two controls; the label points at the date, and both are described alike.
-    for (const ctl of input && input.dateInput ? [input.dateInput, input.timeInput] : [input]) {
+    // A client picker is a wrapper; its name, description and required state belong on the search box.
+    for (const ctl of input && input.dateInput ? [input.dateInput, input.timeInput] : input && input.searchInput ? [input.searchInput] : [input]) {
       if (!ctl || !ctl.tagName) continue;
       ctl.id = ctl === input.timeInput ? `${fieldId}-time` : fieldId;
       ctl.setAttribute('aria-describedby', [helpId, errId].filter(Boolean).join(' '));
@@ -716,14 +808,18 @@ export function clientPicker(name, value, f = {}) {
   // a tap on that field's date picker was swallowed — it either did nothing or chose whichever client
   // happened to be under the finger.
   const list = h('div', { class: 'card tight hidden client-picker-list', id: listId, role: 'listbox', style: { maxHeight: '220px', overflow: 'auto', marginTop: '.25rem' } });
-  const wrap = h('div', { class: 'client-picker' }, text, hidden, list);
+  // What the search found when it found nothing ("No matches…") is said beside the list, not inside it: a
+  // listbox holds options only.
+  const msg = h('div', { class: 'card tight hidden client-picker-list muted small', 'data-picker-message': '1', style: { marginTop: '.25rem' } });
+  const wrap = h('div', { class: 'client-picker' }, text, hidden, list, msg);
+  wrap.searchInput = text;
   Object.defineProperty(wrap, 'value', { get: () => hidden.value, set: (v) => { hidden.value = v || ''; } });
   hidden.value = value || '';
   if (value && f.display) text.value = f.display;
   else if (value) get(`/api/clients/${value}`, { quiet: true }).then(r => { text.value = `${r.client.display_name} (${r.client.client_code})`; }).catch(() => {});
 
   let timer; let options = []; let active = -1;
-  const openList = (open) => { list.classList.toggle('hidden', !open); text.setAttribute('aria-expanded', String(open)); if (!open) { active = -1; text.removeAttribute('aria-activedescendant'); } };
+  const openList = (open) => { if (!open) msg.classList.add('hidden'); list.classList.toggle('hidden', !open || !options.length); text.setAttribute('aria-expanded', String(open && options.length > 0)); if (!open) { active = -1; text.removeAttribute('aria-activedescendant'); } };
   const highlight = (i) => {
     options.forEach((o, n) => { o.el.classList.toggle('active', n === i); o.el.setAttribute('aria-selected', String(n === i)); });
     active = i;
@@ -760,9 +856,10 @@ export function clientPicker(name, value, f = {}) {
     const q = text.value.trim();
     try {
       const r = await get(`/api/clients?limit=15&status=all${q ? '&q=' + encodeURIComponent(q) : ''}`);
-      clear(list); options = []; active = -1;
+      clear(list); options = []; active = -1; msg.classList.add('hidden');
       if (!r.clients.length) {
-        list.append(h('div', { class: 'muted small' }, q ? 'No matches. Try a first, last or preferred name, the full phone number, date of birth or client code.' : 'Type to search'));
+        msg.textContent = q ? 'No matches. Try a first, last or preferred name, the full phone number, date of birth or client code.' : 'Type to search';
+        msg.classList.remove('hidden');
         announce('No matching clients');
       } else {
         r.clients.forEach((c, i) => {
@@ -790,26 +887,44 @@ export function clientPicker(name, value, f = {}) {
 // column stacked as label/value pairs. The full table is still rendered for wider screens; CSS picks one.
 export function table(columns, rows, { onRow, empty = 'No records', wrap = true, rowLabel, compact } = {}) {
   if (!rows.length) return h('div', { class: 'empty' }, empty);
-  // A clickable row must also be reachable and activatable from the keyboard, or the whole view is
-  // mouse-only. tabindex + Enter/Space + a role is the minimum that makes that true.
-  const rowAttrs = (r) => (onRow ? {
-    class: 'click', tabindex: '0', role: 'button',
-    'aria-label': rowLabel ? rowLabel(r) : undefined,
-    onClick: () => onRow(r),
-    onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRow(r); } },
-  } : {});
-  const t = h('table', {}, h('thead', {}, h('tr', {}, columns.map(c => h('th', { class: c.num ? 'num' : '', scope: 'col' }, c.label)))),
-    h('tbody', {}, rows.map(r => h('tr', rowAttrs(r), columns.map(c => h('td', { class: c.num ? 'num' : '', 'data-label': c.label || '' }, c.render ? c.render(r) : (r[c.key] ?? '—')))))));
+  // A clickable row opens on a click anywhere in it, and from the keyboard through a real button: the first
+  // cell's content (a name, a date) is that button, so Tab reaches one control per row and a screen reader
+  // hears a button named by what the row shows. The row itself stays a table row, so its cells are still read
+  // with their column headings (WCAG 1.3.1, 2.1.1, 4.1.2). A cell that already holds a control of its own is
+  // passed over for the next one; a row with no such cell gets an "Open" button at its end.
+  // (rowLabel is accepted but not applied: a row's name is its own visible text, WCAG 2.5.3.)
+  const cell = (c, r) => (c.render ? c.render(r) : (r[c.key] ?? '—'));
+  const rowFor = (r) => {
+    const cells = columns.map(c => h('td', { class: c.num ? 'num' : '', 'data-label': c.label || '' }, cell(c, r)));
+    if (!onRow) return h('tr', {}, cells);
+    const open = (e) => { e.stopPropagation(); onRow(r); };
+    const td = cells.find(x => x.textContent.trim() && !x.querySelector(FOCUSABLE));
+    if (td) { const b = h('button', { type: 'button', class: 'row-open', onClick: open }); b.append(...td.childNodes); td.append(b); }
+    else cells[cells.length - 1].append(h('button', { type: 'button', class: 'btn sm ghost row-open-extra', onClick: open }, 'Open'));
+    return h('tr', { class: 'click', onClick: () => onRow(r) }, cells);
+  };
+  // A column with no heading (the Edit/Delete buttons, a select box) still has one for a screen reader.
+  const t = h('table', {}, h('thead', {}, h('tr', {}, columns.map(c => h('th', { class: c.num ? 'num' : '', scope: 'col' }, c.label || h('span', { class: 'sr-only' }, c.srLabel || 'Actions'))))),
+    h('tbody', {}, rows.map(rowFor)));
   if (compact && wrap) {
     const tap = compact.onTap || onRow;
-    const list = h('div', { class: 'compact-list' }, rows.map(r => h('div', tap ? {
-      class: 'compact-row click', tabindex: '0', role: 'button', 'aria-label': rowLabel ? rowLabel(r) : undefined,
-      onClick: () => tap(r), onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tap(r); } },
-    } : { class: 'compact-row' },
-    h('div', { class: 'primary' }, compact.primary(r)), compact.secondary ? h('div', { class: 'secondary small muted' }, compact.secondary(r)) : null)));
+    const list = h('div', { class: 'compact-list' }, rows.map(r => {
+      const primary = h('div', { class: 'primary' }, compact.primary(r));
+      const secondary = compact.secondary ? h('div', { class: 'secondary small muted' }, compact.secondary(r)) : null;
+      if (!tap) return h('div', { class: 'compact-row' }, primary, secondary);
+      // A row that holds a control of its own (a to-do's done box) cannot also be a button — a control inside
+      // a control (WCAG 4.1.2). The row still opens on a tap; the keyboard gets its own "Open" button.
+      if (primary.querySelector(FOCUSABLE) || (secondary && secondary.querySelector(FOCUSABLE))) {
+        primary.append(h('button', { type: 'button', class: 'btn ghost sm compact-open', onClick: (e) => { e.stopPropagation(); tap(r); } }, h('span', { class: 'sr-only' }, `Open ${primary.textContent.trim()}`), h('span', { 'aria-hidden': 'true' }, '›')));
+        return h('div', { class: 'compact-row click', onClick: () => tap(r) }, primary, secondary);
+      }
+      return h('div', { class: 'compact-row click', tabindex: '0', role: 'button', onClick: () => tap(r), onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tap(r); } } }, primary, secondary);
+    }));
     return h('div', { class: 'table-wrap has-compact' }, t, list);
   }
-  return wrap ? h('div', { class: 'table-wrap' }, t) : t;
+  // Unwrapped (a small table inside a card) still scrolls inside its own frame when it is wider than a
+  // phone, rather than pushing the page sideways or being cut off (WCAG 1.4.10).
+  return wrap ? h('div', { class: 'table-wrap' }, t) : h('div', { class: 'table-scroll' }, t);
 }
 
 /**
@@ -832,7 +947,7 @@ export function pagedList({ first, url, key = 'rows', limit = 200, render, summa
       box.append(h('div', { class: 'row mt load-more' }, h('span', { class: 'muted small', 'data-shown': String(rows.length) }, `Showing ${fmt.num(rows.length)} of ${fmt.num(total)}`), btn));
     }
     // Keep a keyboard user where they were: on the first row that just arrived.
-    if (focusFrom !== undefined) { const r = box.querySelectorAll('tbody tr')[focusFrom]; if (r) { if (!r.hasAttribute('tabindex')) r.setAttribute('tabindex', '-1'); r.focus({ preventScroll: true }); } }
+    if (focusFrom !== undefined) { const r = box.querySelectorAll('tbody tr')[focusFrom]; const b = r && r.querySelector('.row-open, .row-open-extra'); if (b) b.focus({ preventScroll: true }); else if (r) { if (!r.hasAttribute('tabindex')) r.setAttribute('tabindex', '-1'); r.focus({ preventScroll: true }); } }
   };
   const more = async (btn) => {
     btn.disabled = true; btn.textContent = 'Loading…';
@@ -854,11 +969,16 @@ export function pagedList({ first, url, key = 'rows', limit = 200, render, summa
 
 // A tab strip that folds the tabs that do not fit into a "More ▾" menu instead of scrolling them off the
 // edge with nothing to say so. Re-measured on resize; the active tab is always kept in view.
-export function tabStrip(tabs, active, onPick) {
-  const strip = h('div', { class: 'tabs managed', role: 'tablist' });
-  const buttons = tabs.map(([k, label]) => h('button', { class: k === active ? 'active' : '', role: 'tab', type: 'button', 'aria-selected': String(k === active), 'data-tab': k, onClick: () => onPick(k) }, label));
+// Each tab is its own address (#/client/…/notes), so the strip is navigation, not an ARIA tab widget: a
+// labelled <nav> of buttons, the current one marked aria-current="page" (WCAG 1.3.1, 4.1.2). role=tablist
+// promised arrow-key behaviour and tab panels that were never there, and could not hold the More button.
+export function tabStrip(tabs, active, onPick, { label = 'Sections' } = {}) {
+  const strip = h('nav', { class: 'tabs managed', 'aria-label': label });
+  const buttons = tabs.map(([k, text]) => h('button', { class: k === active ? 'active' : '', type: 'button', 'aria-current': k === active ? 'page' : null, 'data-tab': k, onClick: () => onPick(k) }, text));
   const menu = h('div', { class: 'tabs-menu hidden', role: 'menu' });
-  const moreBtn = h('button', { class: 'tabs-more', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-label': 'More tabs' }, 'More ▾');
+  const moreBtn = h('button', { class: 'tabs-more', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false' });
+  const moreText = (n) => { clear(moreBtn).append(n === undefined ? 'More' : `More (${n})`, h('span', { 'aria-hidden': 'true' }, ' ▾')); };
+  moreText();
   const wrap = h('div', { class: 'tabs-more-wrap' }, moreBtn, menu);
   strip.append(...buttons, wrap);
   const setOpen = (open) => { menu.classList.toggle('hidden', !open); moreBtn.setAttribute('aria-expanded', String(open)); if (open) (menu.querySelector('button.active') || menu.querySelector('button'))?.focus(); };
@@ -874,7 +994,7 @@ export function tabStrip(tabs, active, onPick) {
   document.addEventListener('click', onDoc);
   function layout() {
     for (const b of buttons) { b.hidden = false; strip.insertBefore(b, wrap); }
-    clear(menu); wrap.hidden = false; moreBtn.textContent = `More (${buttons.length}) ▾`; // measured at its widest
+    clear(menu); wrap.hidden = false; moreText(buttons.length); // measured at its widest
     const avail = strip.clientWidth; if (!avail) return;
     const widths = buttons.map(b => b.offsetWidth + 4);
     if (widths.reduce((a, b) => a + b, 0) <= avail) { wrap.hidden = true; setOpen(false); return; }
@@ -885,16 +1005,23 @@ export function tabStrip(tabs, active, onPick) {
     if (overflow.includes(activeIdx) && overflow[0] > 0) { overflow[overflow.indexOf(activeIdx)] = overflow[0] - 1; }
     for (const i of overflow.sort((a, b) => a - b)) {
       const b = buttons[i]; b.hidden = true;
-      menu.append(h('button', { role: 'menuitem', type: 'button', class: b.classList.contains('active') ? 'active' : '', onClick: () => { setOpen(false); onPick(tabs[i][0]); } }, tabs[i][1]));
+      menu.append(h('button', { role: 'menuitem', type: 'button', class: b.classList.contains('active') ? 'active' : '', 'aria-current': b.classList.contains('active') ? 'page' : null, onClick: () => { setOpen(false); onPick(tabs[i][0]); } }, tabs[i][1]));
     }
     // The active tab, if it was swapped in, goes right before the More button so the strip reads in order.
     if (!buttons[activeIdx]?.hidden) strip.insertBefore(buttons[activeIdx], wrap);
-    moreBtn.textContent = `More (${overflow.length}) ▾`;
+    moreText(overflow.length);
   }
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => layout()).observe(strip);
   else requestAnimationFrame(layout);
   strip.relayout = layout;
   return strip;
+}
+/**
+ * A simple row of section buttons for a page whose sections are addresses (Settings, Funding, Supervision).
+ * items: [[key, label, extraAttrs?]]; the current one is aria-current="page", not only a colour.
+ */
+export function pageTabs(items, active, onPick, { label = 'Sections' } = {}) {
+  return h('nav', { class: 'tabs', 'aria-label': label }, items.filter(Boolean).map(([k, text, attrs]) => h('button', { ...(attrs || {}), type: 'button', class: k === active ? 'active' : '', 'aria-current': k === active ? 'page' : null, 'data-tab': k, onClick: () => onPick(k) }, text)));
 }
 export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.num, link = null, list = null } = {}) {
   // A value can be a string such as "<11" (a suppressed small cell in the funder report): it draws no bar and
@@ -906,7 +1033,22 @@ export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.
   return h('div', {}, items.map(i => { const href = link && link(i) && reachable(link(i)) ? link(i) : null; const row = [h('div', { class: 'lbl', title: fmt.label(i[labelKey], list) }, fmt.label(i[labelKey], list)), h('div', { class: 'trk' }, h('div', { class: 'fil', style: { width: `${(numOf(i) / m) * 100}%` } })), h('div', { class: 'n' }, show(i[valueKey]))];
     return href ? h('a', { class: 'bar link', href: href.startsWith('#') ? href : '#/' + href, title: 'Show these' }, row) : h('div', { class: 'bar' }, row); }));
 }
-export function sparkline(values) { const m = Math.max(1, ...values); return h('div', { class: 'spark' }, values.map(v => h('div', { style: { height: `${(v / m) * 100}%` }, title: String(v) }))); }
+// A sparkline is a picture of numbers: it carries them as its text alternative (WCAG 1.1.1), so a screen
+// reader hears the series and someone who cannot tell the bar heights apart can still get the values.
+export function sparkline(values, { label = 'Trend', unit = '' } = {}) {
+  const m = Math.max(1, ...values);
+  const text = values.length ? `${label}: ${values.join(', ')}${unit ? ' ' + unit : ''} (oldest first; highest ${Math.max(...values)})` : `${label}: no data`;
+  return h('div', { class: 'spark', role: 'img', 'aria-label': text, title: text }, values.map(v => h('div', { style: { height: `${(v / m) * 100}%` } })));
+}
+/**
+ * Emphasis that is not colour alone (WCAG 1.4.1): a value shown in red or amber because it needs attention
+ * also carries a symbol and says why — visibly (⚠ and a tooltip) and to a screen reader. `on` false renders
+ * the content plain. Use this, not an inline `color: var(--danger)`, for any at-risk value.
+ */
+export function flag(content, on, why, kind = 'danger') {
+  if (!on) return h('span', {}, content);
+  return h('span', { class: `flag ${kind}`, title: why }, h('span', { 'aria-hidden': 'true' }, '⚠\u00a0'), content, h('span', { class: 'sr-only' }, ` (${why})`));
+}
 // A number or bar on Home links to the page it counts only for someone who may open that page: for a
 // read-only oversight account every "Active clients ›" used to land on "Not available for your role".
 function reachable(href) {
@@ -915,7 +1057,9 @@ function reachable(href) {
   return !item || !item.perm || canAny(item.perm);
 }
 export function stat(label, value, kind = '', href = null, title = 'Open') {
-  const body = [h('div', { class: 'v' }, value), h('div', { class: 'l' }, label)];
+  // A red or amber figure also carries ⚠ (and says "needs attention" to a screen reader): WCAG 1.4.1.
+  const alert = kind === 'danger' || kind === 'warn';
+  const body = [h('div', { class: 'v' }, alert ? h('span', { 'aria-hidden': 'true', class: 'stat-flag' }, '⚠ ') : null, value, alert ? h('span', { class: 'sr-only' }, ' (needs attention)') : null), h('div', { class: 'l' }, label)];
   return href && reachable(href) ? h('a', { class: `card stat link ${kind}`, href: href.startsWith('#') ? href : '#/' + href, title }, body) : h('div', { class: `card stat ${kind}` }, body);
 }
 export function kv(pairs) { return h('dl', { class: 'kv' }, pairs.filter(p => p).map(([k, v]) => [h('dt', {}, k), h('dd', {}, v ?? '—')])); }
@@ -925,12 +1069,20 @@ export function pageHead(title, ...actions) {
 }
 // Small "?" that reveals a plain-language explanation
 export function helpTip(text) {
-  const box = h('div', { class: 'helptip hidden' }, text);
-  const btn = h('button', { class: 'help-btn', type: 'button', 'aria-label': 'What is this?', onClick: () => box.classList.toggle('hidden') }, '?');
-  return h('span', { class: 'help-wrap' }, btn, box);
+  // A disclosure: the button says whether the explanation is showing (aria-expanded) and Escape puts it away.
+  const id = 'help-' + Math.random().toString(36).slice(2, 9);
+  const box = h('div', { class: 'helptip hidden', id, role: 'note' }, text);
+  const show = (on) => { box.classList.toggle('hidden', !on); btn.setAttribute('aria-expanded', String(on)); };
+  const btn = h('button', { class: 'help-btn', type: 'button', 'aria-label': 'What is this?', 'aria-expanded': 'false', 'aria-controls': id, onClick: () => show(box.classList.contains('hidden')) }, '?');
+  const wrap = h('span', { class: 'help-wrap', onKeydown: (e) => { if (e.key === 'Escape' && !box.classList.contains('hidden')) { e.stopPropagation(); show(false); btn.focus(); } } }, btn, box);
+  return wrap;
 }
 // Empty state with one obvious next step
-export function emptyState(title, text, action) { return h('div', { class: 'empty-state' }, h('div', { class: 'big' }, title), h('p', { class: 'muted' }, text), action || null); }
+// The accessibility statement (public/accessibility.html; docs/accessibility/STATEMENT.md): how SUDS meets
+// WCAG 2.1 AA, what does not yet, and how to report a barrier. Linked from every screen's footer.
+export function accessibilityLink() { return h('p', { class: 'small center a11y-link' }, h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility')); }
+// `level`: when the empty state is the whole page (Not found, Not available), its title is that page's heading.
+export function emptyState(title, text, action, { level = 0 } = {}) { return h('div', { class: 'empty-state' }, h(level ? `h${level}` : 'div', { class: 'big' }, title), h('p', { class: 'muted' }, text), action || null); }
 
 // "+ Log" quick action: the one button non-technical users need most
 export function quickActions() {
@@ -1158,6 +1310,8 @@ async function renderPage() {
     if (app.firstElementChild && app.firstElementChild.dataset.screen === screen) return;
     if (view && view.dataset) view.dataset.screen = screen;
     clear(app).append(view);
+    // The sign-in page names itself as it switches between Log in and Sign up (views/login.js).
+    if (r.name === 'mfa' || r.name === 'setup') document.title = `${TITLES[r.name]} — SUDS`;
   };
   // A device with no account yet opens the sign-in page on Sign up, which is its first-run set-up.
   if (state.localSetupNeeded) { if (r.name !== 'localsetup' && r.name !== 'login') { nav('login?mode=signup'); return; } return show(routes.login(r)); }
@@ -1175,21 +1329,64 @@ async function renderPage() {
   const navItem = NAV.find(n => n.name === r.name);
   // An address that goes nowhere (a mistyped link, a page that no longer exists) says so, instead of
   // quietly showing Home under the wrong address.
-  const loader = navItem?.perm && !canAny(navItem.perm) ? (async () => emptyState('Not available for your role', `Your account does not have access to ${navItem.label}. Ask your supervisor or administrator if you need it.`, h('button', { class: 'btn', onClick: () => nav('dashboard') }, 'Back to home')))
-    : routes[r.name] || (async () => h('div', { 'data-not-found': '1' }, emptyState('Page not found', `There is no page at "#/${r.name}". The link may be out of date.`, h('a', { class: 'btn primary', href: '#/dashboard' }, 'Go to Home'))));
+  const loader = navItem?.perm && !canAny(navItem.perm) ? (async () => emptyState('Not available for your role', `Your account does not have access to ${navItem.label}. Ask your supervisor or administrator if you need it.`, h('button', { class: 'btn', onClick: () => nav('dashboard') }, 'Back to home'), { level: 1 }))
+    : routes[r.name] || (async () => h('div', { 'data-not-found': '1' }, emptyState('Page not found', `There is no page at "#/${r.name}". The link may be out of date.`, h('a', { class: 'btn primary', href: '#/dashboard' }, 'Go to Home'), { level: 1 })));
   const main = h('main', { class: 'main', id: 'main', tabindex: '-1' }, h('div', { class: 'boot' }, 'Loading…'));
   const side = sidebar(r);
   const qa = quickActions();
-  const layout = h('div', { class: 'layout' }, h('a', { class: 'skip-link', href: '#main', onClick: (e) => { e.preventDefault(); main.focus(); main.scrollIntoView(); } }, 'Skip to content'), mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), dueBell(), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
+  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), dueBell(), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
   if (qa) layout.querySelector('.fab button')?.addEventListener('click', () => qa.click());
+  const focusWas = focusKey(document.activeElement, app);
   clear(app).append(layout);
   // A hash change keeps the old scroll position, so leaving a long list for another page landed the
   // reader part-way down it, with the new page's header and alerts scrolled off the top.
   if (!current || current.name !== r.name || current.id !== r.id) window.scrollTo(0, 0);
   if (r.name === 'dashboard') { busy(1); setTimeout(() => { try { if (parseHash().name === 'dashboard') maybeTour(); } finally { busy(-1); } }, 400); }
+  const lost = () => !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
   try { const view = await loader(r); clear(main).append(view); if (state.local && r.name === 'sync') main.append(deviceErrorsCard()); }
-  catch (e) { clear(main).append(h('div', { class: 'banner danger' }, e.message)); }
+  catch (e) { clear(main).append(h('h1', {}, 'This page could not be shown'), h('div', { class: 'banner danger', role: 'alert' }, e.message)); }
+  if (seq !== renderSeq) return;
+  setPageTitle(r, navItem);
+  // Moving to another page left focus on nothing (the link that was pressed is gone with the old page), so
+  // a keyboard or screen-reader user started again from the top of the document. Put it on the new page's
+  // heading instead — only for a real move, and only when focus was not already placed by the view.
+  if (current && (current.name !== r.name || current.id !== r.id || current.sub !== r.sub) && lost()) {
+    const h1 = main.querySelector('h1') || main;
+    if (h1 !== main && !h1.hasAttribute('tabindex')) h1.setAttribute('tabindex', '-1');
+    try { h1.focus({ preventScroll: true }); } catch {}
+  } else if (focusWas && lost()) {
+    // The same page drawn again (a filter changed, a record saved, Home's refresh): focus goes back to the
+    // control it was on, not to the top of the document (WCAG 2.4.3, 3.2.2). Labels are tied by the
+    // accessibility pass first, which runs as a microtask.
+    await Promise.resolve();
+    restoreFocus(app, focusWas);
+  }
   current = r;
+}
+// Enough about a focused control to find "the same one" in a freshly drawn page.
+function focusKey(el, root) {
+  if (!el || el === document.body || !root.contains(el) || !el.tagName) return null;
+  const lbl = (el.labels && el.labels[0] ? el.labels[0].textContent : '') || '';
+  return { tag: el.tagName.toLowerCase(), name: el.getAttribute('name') || '', aria: el.getAttribute('aria-label') || '', lbl: lbl.trim(),
+    text: /^(A|BUTTON)$/.test(el.tagName) ? (el.textContent || '').trim().slice(0, 80) : '', href: el.getAttribute('href') || '', role: el.getAttribute('role') || '' };
+}
+function restoreFocus(root, k) {
+  const same = [...root.querySelectorAll(k.tag)].filter(el => (el.getAttribute('name') || '') === k.name && (el.getAttribute('aria-label') || '') === k.aria
+    && (el.getAttribute('href') || '') === k.href && (el.getAttribute('role') || '') === k.role
+    && (!k.lbl || ((el.labels && el.labels[0] ? el.labels[0].textContent : '') || '').trim() === k.lbl)
+    && (!k.text || (el.textContent || '').trim().slice(0, 80) === k.text));
+  const el = same[0];
+  if (el && typeof el.focus === 'function') { try { el.focus({ preventScroll: true }); } catch {} }
+}
+// Every address has its own title (WCAG 2.4.2): the page, the section within it, and the programme — never a
+// client's name, which would sit in the browser's history and tab list.
+const TITLES = { client: 'Client record', resource: 'Resource profile', profile: 'My profile', sync: 'This device', mfa: 'Two-step verification', setup: 'Set up SUDS' };
+export function setPageTitle(r = parseHash(), navItem = NAV.find(n => n.name === r.name)) {
+  let page = TITLES[r.name] || navItem?.label;
+  if (!page) page = document.querySelector('.main h1')?.textContent.trim() || (document.querySelector('[data-not-found]') ? 'Page not found' : 'SUDS');
+  const section = document.querySelector('.main nav.tabs [aria-current=page]')?.textContent.replace(/\s*\(\d+\)\s*$/, '').trim();
+  const parts = [section && section !== page ? `${section} · ${page}` : page, 'SUDS'];
+  document.title = parts.join(' — ');
 }
 function sidebar(r) {
   return h('aside', { class: 'sidebar' },
@@ -1203,7 +1400,7 @@ function sidebar(r) {
       return (!n.perm || canAny(n.perm)) ? h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '' }, h('span', { class: 'ico' }, n.ico), n.label) : null;
     })),
     h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, window.SUDS_STATIC_HOST ? '📱 On this device · Backup' : '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
-      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark')),
+      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'), h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility')),
       h('div', { class: 'small muted', 'data-build-stamp': '1', style: { marginTop: '.4rem' } }, `SUDS ${SUDS_VERSION}`)));
 }
 function mobileBar(r, side) {
@@ -1244,7 +1441,14 @@ function startIdleWatch() {
     if (!state.user) return;
     const idleMs = Date.now() - lastActivity; const limit = state.idleMinutes * 60000;
     let w = document.getElementById('idle-warn');
-    if (idleMs > limit - 60000 && !w) { w = h('div', { id: 'idle-warn', class: 'idle-warn' }, 'You will be signed out in 1 minute due to inactivity. Tap the screen, move the mouse or press a key to stay signed in.'); document.body.append(w); }
+    // WCAG 2.2.1: warned a minute ahead, with one obvious way to stay — a button (any key or tap works too).
+    // Announced as an alert; focus is left where it is so nothing being typed is interrupted.
+    if (idleMs > limit - 60000 && !w) {
+      w = h('div', { id: 'idle-warn', class: 'idle-warn', role: 'alert' },
+        h('span', {}, 'You will be signed out in 1 minute due to inactivity. Tap the screen, move the mouse or press a key to stay signed in. '),
+        h('button', { class: 'btn sm', type: 'button', 'data-stay-signed-in': '1', onClick: () => { lastActivity = Date.now(); w.remove(); get('/api/auth/me').catch(() => {}); announce('You are still signed in.'); } }, 'Stay signed in'));
+      document.body.append(w);
+    }
     if (idleMs <= limit - 60000 && w) w.remove();
     if (idleMs > limit) {
       if (w) w.remove();
@@ -1351,7 +1555,7 @@ window.addEventListener('unhandledrejection', (e) => { const r = e && e.reason; 
 /** The Sync page's "Errors on this device" card: what went wrong here, readable out loud to whoever supports it. */
 function deviceErrorsCard() {
   let list = []; try { list = JSON.parse(localStorage.getItem(DEVICE_ERRORS_KEY) || '[]'); if (!Array.isArray(list)) list = []; } catch {}
-  const card = h('div', { class: 'card mt', 'data-device-errors': String(list.length) }, h('h3', {}, 'Errors on this device'));
+  const card = h('div', { class: 'card mt', 'data-device-errors': String(list.length) }, h('h2', {}, 'Errors on this device'));
   if (!list.length) { card.append(h('p', { class: 'small muted' }, `None recorded. (SUDS ${SUDS_VERSION})`)); return card; }
   card.append(
     h('p', { class: 'small muted' }, 'The most recent problems SUDS ran into on this device, newest first. They hold no client information; if someone supporting SUDS asks, read them out.'),
@@ -1446,6 +1650,7 @@ function showPausedScreen(info) {
 }
 export async function boot(force = false) {
   state.local = isLocalMode();
+  skipLink();
   showBuildStamp(true);
   if (state.local) {
     document.getElementById('app').innerHTML = '<div class="boot">Starting SUDS on this device…</div>';

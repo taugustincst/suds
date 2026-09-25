@@ -55,7 +55,7 @@ function listCard(l, { editable, open }) {
     box.replaceChildren(...[
       h('summary', {}, h('b', {}, l.name), h('span', { class: 'muted small' }, ` — ${shown} of ${l.entries.length} offered`)),
       l.note ? h('p', { class: 'small muted' }, l.note) : null,
-      h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, editable ? h('th', { scope: 'col' }, 'Order') : null, h('th', { scope: 'col' }, 'Wording'), h('th', { scope: 'col' }, 'Status'), editable ? h('th', { scope: 'col' }, '') : null)), h('tbody', {}, rows))),
+      h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, editable ? h('th', { scope: 'col' }, 'Order') : null, h('th', { scope: 'col' }, 'Wording'), h('th', { scope: 'col' }, 'Status'), editable ? h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Actions')) : null)), h('tbody', {}, rows))),
       editable ? h('div', { class: 'row mt' },
         l.custom_allowed ? [addI, h('button', { class: 'btn sm primary', type: 'button', 'data-add-entry': l.key, onClick: add }, 'Add choice')] : null,
         h('button', { class: 'btn sm ghost', type: 'button', 'data-reset-list': l.key, onClick: reset }, 'Restore defaults')) : null].filter(Boolean)); // replaceChildren would print a null as "null"
@@ -96,7 +96,7 @@ async function fundsCard(open) {
     box.replaceChildren(...[
       h('summary', {}, h('b', {}, 'Funding sources'), h('span', { class: 'muted small' }, ` — ${funds.filter(x => x.is_active).length} active`)),
       h('p', { class: 'small muted' }, 'The "Funding source" choice on visits, time, overdose events and episodes. A deactivated source is no longer offered; records already charged to it keep it. Budget lines and spending are on ', h('a', { href: '#/budget' }, 'Funding & spending'), '.'),
-      funds.length ? h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, 'Name'), h('th', { scope: 'col' }, 'Status'), h('th', { scope: 'col' }, ''))), h('tbody', {}, rows))) : h('p', { class: 'muted' }, 'No funding sources yet.'),
+      funds.length ? h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, 'Name'), h('th', { scope: 'col' }, 'Status'), h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Actions')))), h('tbody', {}, rows))) : h('p', { class: 'muted' }, 'No funding sources yet.'),
       h('div', { class: 'row mt' }, h('button', { class: 'btn sm primary', type: 'button', 'data-fund-add': '1', onClick: quickAdd }, '+ Add funding source'))].filter(Boolean));
   };
   paint();
@@ -113,11 +113,11 @@ export async function listsTab(focus) {
       ? 'The choices offered on documentation forms. Rewording a choice changes how it reads everywhere — forms, lists, reports and exports — without changing the records that use it. A hidden choice is no longer offered on new records; records that already have it keep it. Choices marked "Used by SUDS" drive a count or an automatic step, so they can be reworded but not hidden.'
       : 'These lists are managed on the office SUDS and arrive on this device when it syncs.'));
     const groups = [...new Set(d.lists.map(l => l.group))];
-    for (const g of groups) out.append(h('h3', { class: 'mt' }, g), ...d.lists.filter(l => l.group === g).map(l => listCard(l, { editable, open: focus === l.key })));
+    for (const g of groups) out.append(h('h2', { class: 'mt' }, g), ...d.lists.filter(l => l.group === g).map(l => listCard(l, { editable, open: focus === l.key })));
     out.append(h('details', { class: 'card mt' }, h('summary', {}, h('b', {}, 'Lists that cannot be changed here')),
       h('ul', { class: 'small' }, d.excluded.map(x => h('li', {}, h('b', {}, x.name), ` — ${x.why}`)))));
   }
-  if (can('budget:manage')) out.append(h('h3', { class: 'mt' }, 'Funding'), await fundsCard(focus === 'funds' || !can('settings:manage')));
+  if (can('budget:manage')) out.append(h('h2', { class: 'mt' }, 'Funding'), await fundsCard(focus === 'funds' || !can('settings:manage')));
   if (focus) setTimeout(() => { const el = out.querySelector(`[data-list="${CSS.escape(focus)}"]`); if (el) { el.open = true; el.scrollIntoView({ block: 'start' }); } }, 0);
   return out;
 }

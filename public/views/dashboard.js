@@ -1,5 +1,5 @@
 import { backupReminderCard } from './local.js';
-import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName } from '../app.js';
+import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName, prefs } from '../app.js';
 
 route('dashboard', async () => {
   const [d, cont, caseload, handoffs] = await Promise.all([get('/api/reports/dashboard'), get('/api/me/continue'), can('clients:read') ? get('/api/caseload') : { caseload: [] },
@@ -9,8 +9,17 @@ route('dashboard', async () => {
   const isOverdue = (t) => fmt.isDateOnly(t.due_at) ? fmt.parse(t.due_at) < startOfToday : fmt.isPast(t.due_at);
   cont.due_today = [...cont.due_today].sort((a, b) => (isOverdue(b) - isOverdue(a)) || String(a.due_at).localeCompare(String(b.due_at)));
   const c = d.clients, i = d.interventions;
-  // auto-refresh so changes made on another device appear without a manual reload
-  const timer = setInterval(() => { if (location.hash.replace(/^#\/?/, '').split('?')[0] === 'dashboard' || location.hash === '' || location.hash === '#/') { if (!document.querySelector('.modal-bg')) nav('dashboard?_=' + Date.now()); } else clearInterval(timer); }, 90_000);
+  // auto-refresh so changes made on another device appear without a manual reload. It can be switched off
+  // (WCAG 2.2.2: moving content has a way to stop it), and it never redraws the page under someone working in
+  // it — focus on a control in the page, or a dialog open — because a redraw takes the keyboard focus away.
+  const autoOn = () => prefs.get('home_autorefresh', true) !== false;
+  const timer = setInterval(() => {
+    if (!(location.hash.replace(/^#\/?/, '').split('?')[0] === 'dashboard' || location.hash === '' || location.hash === '#/')) { clearInterval(timer); return; }
+    const a = document.activeElement; const main = document.getElementById('main');
+    const working = a && a !== document.body && a !== main && a.tagName !== 'H1' && main && main.contains(a);
+    if (autoOn() && !working && !document.querySelector('.modal-bg')) nav('dashboard?_=' + Date.now());
+  }, 90_000);
+  const autoToggle = h('label', { class: 'check small', style: { marginTop: 0 }, 'data-home-autorefresh': '1' }, h('input', { type: 'checkbox', checked: autoOn(), onChange: (e) => prefs.set('home_autorefresh', e.target.checked) }), 'Update this page every 90 seconds');
   const who = greetingName(state.user.display_name, state.user.username);
   const hour = new Date().getHours(); const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const alerts = [];
@@ -118,31 +127,31 @@ route('dashboard', async () => {
     catch (err) { if (box) { box.checked = false; box.disabled = false; } toast(err.message || 'Could not mark that done. Check your connection and try again.', 'error'); }
   };
   return h('div', {},
-    pageHead(`${greet}, ${who}`),
+    pageHead(`${greet}, ${who}`, autoToggle),
     backupReminder,
     sample,
     setupCard,
     cont.other_device ? h('div', { class: 'muted small mb' }, `Also signed in on ${cont.other_device.mobile ? 'your phone' : 'another computer'} (${fmt.ago(cont.other_device.last_seen_at) === 'today' ? 'active today' : fmt.ago(cont.other_device.last_seen_at)}). Everything stays in sync.`) : null,
     alerts.length ? h('div', { class: 'row mb' }, alerts.map(([k, t, href]) => h('a', { href, class: `badge ${k}`, style: { fontSize: '.9rem', padding: '.4rem .8rem' } }, t))) : null,
     h('div', { class: 'grid cols-2 mb' },
-      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Today'), can('tasks:read') ? h('a', { href: '#/tasks' }, 'All to-dos') : null),
+      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Today'), can('tasks:read') ? h('a', { href: '#/tasks' }, 'All to-dos') : null),
         cont.due_today.length ? cont.due_today.map(t => h('div', { class: 'today-item', 'data-overdue': isOverdue(t) ? '1' : '0' }, h('label', { class: 'check', style: { marginTop: 0 } }, h('span', { class: 'tap-target' }, h('input', { type: 'checkbox', 'aria-label': `Mark "${t.title}" done`, onChange: (e) => done(t, e.target) })), h('span', {}, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null)), h('span', { class: 'small today-due', style: isOverdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, isOverdue(t) ? [badge('Overdue', 'danger'), ' '] : null, h('span', { class: 'nowrap' }, fmt.dt(t.due_at))))) : emptyState('Nothing due today', 'Reminders you set for today will appear here.', can('tasks:write') ? h('button', { class: 'btn sm', onClick: async () => (await import('./tasks.js')).openTaskForm(null, { onDone: () => nav('dashboard?_=' + Date.now()) }) }, '+ Add a reminder') : null)),
-      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Continue where you left off'), h('span', { class: 'muted small' }, 'from any device')),
-        cont.drafts.length ? h('div', { class: 'mb' }, h('h4', {}, 'Unfinished notes'), cont.drafts.slice(0, 4).map(n => h('div', { class: 'today-item' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, n.title || `${fmt.label(n.format, 'NOTE_FORMATS')} note`, h('span', { class: 'muted small' }, ` · ${n.client_name}`)), h('span', { class: 'muted small' }, fmt.ago(n.updated_at))))) : null,
-        cont.recent.length ? h('div', {}, h('h4', {}, 'Recent clients'), h('div', { class: 'row' }, cont.recent.slice(0, 8).map(x => h('a', { class: 'chip', href: `#/client/${x.id}` }, x.display_name)))) : null,
+      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Continue where you left off'), h('span', { class: 'muted small' }, 'from any device')),
+        cont.drafts.length ? h('div', { class: 'mb' }, h('h3', { class: 'eyebrow' }, 'Unfinished notes'), cont.drafts.slice(0, 4).map(n => h('div', { class: 'today-item' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, n.title || `${fmt.label(n.format, 'NOTE_FORMATS')} note`, h('span', { class: 'muted small' }, ` · ${n.client_name}`)), h('span', { class: 'muted small' }, fmt.ago(n.updated_at))))) : null,
+        cont.recent.length ? h('div', {}, h('h3', { class: 'eyebrow' }, 'Recent clients'), h('div', { class: 'row' }, cont.recent.slice(0, 8).map(x => h('a', { class: 'chip', href: `#/client/${x.id}` }, x.display_name)))) : null,
         !cont.drafts.length && !cont.recent.length ? emptyState('You are all caught up', 'Clients and notes you open show here, ready to pick up on your phone or computer.') : null)),
-    handoffs && handoffs.rows.length ? h('div', { class: 'card mb', 'data-handoffs': '1' }, h('div', { class: 'card-head' }, h('h3', {}, 'Hand-offs from the last 24h'), h('span', { class: 'muted small' }, 'for the whole team')),
+    handoffs && handoffs.rows.length ? h('div', { class: 'card mb', 'data-handoffs': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Hand-offs from the last 24h'), h('span', { class: 'muted small' }, 'for the whole team')),
       handoffs.rows.map(n => h('div', { class: 'hand-off' }, h('div', {}, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, h('b', {}, n.title || 'Hand-off')), ' ', h('span', { class: 'muted small' }, `· ${n.client_name || n.client_code} · ${n.author} · ${fmt.dt(n.occurred_at)}`)), h('div', { class: 'small excerpt' }, n.excerpt)))) : null,
     h('div', { class: 'grid cols-4 mb' },
       stat('Active clients', fmt.num(c.active), '', 'clients?status=active', 'All active clients, any time — not limited to the last 90 days'), stat('High-risk clients', fmt.num(c.high_risk), c.high_risk ? 'danger' : '', 'clients?status=active&risk=high'), stat('Visits & services (90 days)', fmt.num(i.total), '', 'interventions', `${fmt.date(d.from)} – ${fmt.date(d.to)}; other numbers on this page are all-time`), stat('Naloxone kits given', fmt.num(i.naloxone_kits), '', 'interventions?type=naloxone_distribution'),
       stat('Calls', fmt.num(d.calls.total), '', 'calls'), stat('Open referrals', fmt.num(d.referrals.open), d.referrals.open ? 'warn' : '', 'referrals?status=open'),
       pr ? h('div', { 'data-patient-requests': '1', style: { display: 'contents' } }, stat('Open patient requests', pr.overdue ? `${fmt.num(pr.n)} (${pr.overdue} overdue)` : fmt.num(pr.n), pr.overdue ? 'danger' : pr.n ? 'warn' : '', 'clients?status=all&patient_requests=1', 'Requests for access, amendment, restriction or an accounting of disclosures — each must be answered within 30 days')) : null, d.time ? stat(can('time:all') ? 'Team hours logged' : 'My hours logged', (d.time.minutes / 60).toFixed(1), '', 'time') : null, d.budget ? stat('Spent of budget', h('span', {}, h('span', { class: 'money' }, fmt.money(d.budget.spent)), ' / ', h('span', { class: 'money' }, fmt.money(d.budget.total))), '', 'budget') : null),
     h('div', { class: 'grid cols-2' },
-      can('clients:read') ? h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Clients who need a check-in'), h('a', { href: '#/clients' }, 'All clients')),
+      can('clients:read') ? h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Clients who need a check-in'), h('a', { href: '#/clients' }, 'All clients')),
         caseload.caseload.length ? caseload.caseload.slice(0, 8).map(x => h('div', { class: 'today-item' }, h('div', {}, h('a', { href: `#/client/${x.id}` }, x.display_name), ' ', badge(fmt.label(x.risk_level), statusKind(x.risk_level))), h('div', { class: 'small muted' }, 'last contact ', fmt.ago(x.last_contact), x.overdue_tasks ? [' ', badge(`${x.overdue_tasks} overdue`, 'danger')] : null)))
           : can('clients:all') ? emptyState('Nothing on your own caseload', c.active ? `You see every client already (${c.active} active). This list only shows people assigned to you directly.` : 'Add the first client with the + Log button, or load sample data to look around.')
           : emptyState('No clients assigned to you yet', can('clients:write') ? 'Add your first client with the + Log button, or ask your supervisor to assign clients to you.' : 'Ask your supervisor to assign clients to you.')) : null,
-      h('div', { class: 'card' }, h('h3', {}, 'What you have been doing (90 days)'), bars(i.by_type.slice(0, 8), { list: 'INTERVENTION_TYPES', link: x => `interventions?type=${x.k}` }), h('div', { class: 'mt' }, sparkline(i.by_week.map(w => w.n)), h('div', { class: 'muted small' }, 'visits per week'))),
-      state.user.role === 'admin' && !state.local ? h('div', { class: 'card' }, h('h3', {}, 'Use SUDS on phones and tablets'), h('p', { class: 'small muted' }, 'There is no app to install: staff open SUDS in the browser on the office Wi-Fi and add it to their home screen. Show them the QR code under Settings → Network & devices, or send them to ', h('a', { href: 'get-app.html' }, 'Use SUDS on your phone or tablet'), '.'), h('a', { class: 'btn sm', href: '#/admin?tab=network' }, 'Connect a device')) : null,
-      d.consents_expiring.length ? h('div', { class: 'card' }, h('h3', {}, 'Consents expiring soon'), table([{ label: 'Client', render: r => h('a', { href: `#/client/${r.client_id}` }, r.client_code) }, { label: 'Type', render: r => fmt.label(r.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Expires', render: r => fmt.date(r.expires_at) }], d.consents_expiring, { wrap: false })) : null));
+      h('div', { class: 'card' }, h('h2', {}, 'What you have been doing (90 days)'), bars(i.by_type.slice(0, 8), { list: 'INTERVENTION_TYPES', link: x => `interventions?type=${x.k}` }), h('div', { class: 'mt' }, sparkline(i.by_week.map(w => w.n), { label: 'Visits per week, last 90 days' }), h('div', { class: 'muted small' }, 'visits per week'))),
+      state.user.role === 'admin' && !state.local ? h('div', { class: 'card' }, h('h2', {}, 'Use SUDS on phones and tablets'), h('p', { class: 'small muted' }, 'There is no app to install: staff open SUDS in the browser on the office Wi-Fi and add it to their home screen. Show them the QR code under Settings → Network & devices, or send them to ', h('a', { href: 'get-app.html' }, 'Use SUDS on your phone or tablet'), '.'), h('a', { class: 'btn sm', href: '#/admin?tab=network' }, 'Connect a device')) : null,
+      d.consents_expiring.length ? h('div', { class: 'card' }, h('h2', {}, 'Consents expiring soon'), table([{ label: 'Client', render: r => h('a', { href: `#/client/${r.client_id}` }, r.client_code) }, { label: 'Type', render: r => fmt.label(r.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Expires', render: r => fmt.date(r.expires_at) }], d.consents_expiring, { wrap: false })) : null));
 });

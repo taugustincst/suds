@@ -335,7 +335,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   const oldVisit = (await api('POST', '/api/interventions', { client_id: cl.id, type: 'outreach', location: 'jail', occurred_at: new Date().toISOString() })).data.id;
   await go(page, 'admin?tab=lists');
   ok(await page.$('.tabs button:has-text("Lists")'), 'Settings has a Lists tab');
-  const groups = await page.$$eval('[data-lists] > h3', hs => hs.map(x => x.textContent));
+  const groups = await page.$$eval('[data-lists] > h2', hs => hs.map(x => x.textContent));
   for (const g of ['Visits & services', 'Calls & texts', 'Referrals', 'Overdose & reversals', 'Time', 'Notes', 'Clients', 'Episodes of care', 'Funding']) ok(groups.includes(g), `the lists are grouped by form: ${g}`, groups);
   // Reword the overdose form's "What happened" choice.
   await openCard('OVERDOSE_KINDS');

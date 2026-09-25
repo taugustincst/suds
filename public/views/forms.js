@@ -20,7 +20,7 @@ route('forms', async (r) => {
   // name guessed from the filename, so the rest is just confirming, not starting from a blank form.
   // .sr-only, not .hidden (display:none) — a good few mobile browsers/WebViews refuse to honor a
   // programmatic .click() on a file input that display:none has taken out of the render tree.
-  const uploadInput = h('input', { type: 'file', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,application/pdf,image/*', class: 'sr-only', onChange: async () => {
+  const uploadInput = h('input', { type: 'file', tabindex: '-1', 'aria-hidden': 'true', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,application/pdf,image/*', class: 'sr-only', onChange: async () => {
     const file = uploadInput.files[0]; uploadInput.value = ''; if (!file) return;
     try {
       const data = file.type.startsWith('image/') ? (await shrinkImage(file, 2000, 0.85)).dataUrl : await readFile(file);
@@ -75,7 +75,7 @@ async function openTemplate(id, refresh) {
   const m = modal(t.name, h('div', {},
     h('div', { class: 'row mb' }, badge(fmt.label(t.category), 'info'), t.version ? badge(`v${t.version}`) : null, t.has_file ? badge(`${fileKind(t.content_type)} attached`, 'ok') : badge('No file', 'warn')),
     t.description ? h('p', {}, t.description) : null, t.instructions ? h('div', { class: 'banner small' }, t.instructions) : null,
-    h('h4', {}, `Fields (${fields.length})`), fields.length ? h('ul', { class: 'small' }, fields.map(f => h('li', {}, f.label, f.required ? ' *' : '', h('span', { class: 'muted' }, ` — ${FIELD_KINDS.find(k => k[0] === f.type)?.[1] || f.type}${f.autofill ? `, pre-filled from ${f.autofill.replace('.', ' ').replace(/_/g, ' ')}` : ''}`)))) : h('p', { class: 'muted small' }, 'No fields described yet; the form can still be printed and completed by hand.'),
+    h('h3', { class: 'eyebrow' }, `Fields (${fields.length})`), fields.length ? h('ul', { class: 'small' }, fields.map(f => h('li', {}, f.label, f.required ? ' *' : '', h('span', { class: 'muted' }, ` — ${FIELD_KINDS.find(k => k[0] === f.type)?.[1] || f.type}${f.autofill ? `, pre-filled from ${f.autofill.replace('.', ' ').replace(/_/g, ' ')}` : ''}`)))) : h('p', { class: 'muted small' }, 'No fields described yet; the form can still be printed and completed by hand.'),
     h('div', { class: 'btn-row' }, can('forms:write') ? h('button', { class: 'btn primary', onClick: () => { m.close(); useWithClient(t); } }, 'Fill out for a client') : null, h('button', { class: 'btn', onClick: () => openFile(`/api/forms/templates/${t.id}/blank.pdf`) }, 'Blank PDF'), t.has_file ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/forms/templates/${t.id}/file`) }, 'Original file') : null, can('forms:manage') ? h('button', { class: 'btn ghost', onClick: () => { m.close(); openDesigner(t.id, refresh); } }, 'Edit') : null)), { wide: true });
 }
 
@@ -94,22 +94,22 @@ export async function openDesigner(id, onDone, initialFile) {
   let fields = t.fields.map(f => ({ ...f })); let fileData = initialFile?.data || null, fileName = initialFile?.name || null, removeFile = false;
   const list = h('div', { class: 'designer' });
   const rowFor = (f, i) => {
-    const kind = h('select', { onChange: () => { f.type = kind.value; draw(); } }, FIELD_KINDS.map(([v, l]) => h('option', { value: v, selected: f.type === v }, l)));
-    const label = h('input', { value: f.label || '', placeholder: f.type === 'section' ? 'Section title' : f.type === 'note' ? 'Instruction shown on the form' : 'Question / label', onInput: () => { f.label = label.value; } });
+    const kind = h('select', { 'aria-label': `Field ${i + 1}: kind`, onChange: () => { f.type = kind.value; draw(); } }, FIELD_KINDS.map(([v, l]) => h('option', { value: v, selected: f.type === v }, l)));
+    const label = h('input', { 'aria-label': `Field ${i + 1}: label`, value: f.label || '', placeholder: f.type === 'section' ? 'Section title' : f.type === 'note' ? 'Instruction shown on the form' : 'Question / label', onInput: () => { f.label = label.value; } });
     const meta = ['section', 'note'].includes(f.type) ? null : h('div', { class: 'row small' },
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!f.required, onChange: e => { f.required = e.target.checked; } }), 'Required'),
       h('label', {}, 'Pre-fill: ', h('select', { onChange: e => { f.autofill = e.target.value || undefined; } }, h('option', { value: '' }, '— nothing —'), (C.FORM_AUTOFILL || []).map(a => h('option', { value: a, selected: f.autofill === a }, a.replace('.', ': ').replace(/_/g, ' '))))),
       f.type === 'select' ? h('input', { value: (f.options || []).join(', '), placeholder: 'Choices, comma separated', style: { minWidth: '220px' }, onInput: e => { f.options = e.target.value.split(',').map(x => x.trim()).filter(Boolean); } }) : null);
     return h('div', { class: `dfield ${f.type}` }, h('div', { class: 'dgrip muted small' }, i + 1),
       h('div', { class: 'grow' }, h('div', { class: 'row' }, kind, label), meta),
-      h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm ghost', title: 'Move up', onClick: () => { if (i > 0) { [fields[i - 1], fields[i]] = [fields[i], fields[i - 1]]; draw(); } } }, '↑'), h('button', { class: 'btn sm ghost', title: 'Move down', onClick: () => { if (i < fields.length - 1) { [fields[i + 1], fields[i]] = [fields[i], fields[i + 1]]; draw(); } } }, '↓'), h('button', { class: 'btn sm ghost', title: 'Remove', onClick: () => { fields.splice(i, 1); draw(); } }, '✕')));
+      h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm ghost', type: 'button', title: 'Move up', 'aria-label': `Move field ${i + 1} up`, onClick: () => { if (i > 0) { [fields[i - 1], fields[i]] = [fields[i], fields[i - 1]]; draw(); } } }, '↑'), h('button', { class: 'btn sm ghost', type: 'button', title: 'Move down', 'aria-label': `Move field ${i + 1} down`, onClick: () => { if (i < fields.length - 1) { [fields[i + 1], fields[i]] = [fields[i], fields[i + 1]]; draw(); } } }, '↓'), h('button', { class: 'btn sm ghost', type: 'button', title: 'Remove', 'aria-label': `Remove field ${i + 1}`, onClick: () => { fields.splice(i, 1); draw(); } }, '✕')));
   };
   const draw = () => { clear(list); if (!fields.length) list.append(h('p', { class: 'muted small' }, 'No fields yet. Upload a fillable PDF to detect its fields automatically, or add them below.')); fields.forEach((f, i) => list.append(rowFor(f, i))); };
   draw();
   const fileInfo = h('div', { class: 'small muted' }, initialFile ? `${initialFile.name} will be saved with the form.` : t.has_file ? `${fileKind(t.content_type)} attached: ${t.filename || ''}` : 'No file attached (a blank PDF is generated from the fields).');
   // .sr-only, not .hidden (display:none) — a good few mobile browsers/WebViews refuse to honor a
   // programmatic .click() on a file input that display:none has taken out of the render tree.
-  const fileInput = h('input', { type: 'file', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,application/pdf,image/*', class: 'sr-only', onChange: async () => {
+  const fileInput = h('input', { type: 'file', tabindex: '-1', 'aria-hidden': 'true', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,application/pdf,image/*', class: 'sr-only', onChange: async () => {
     const file = fileInput.files[0]; if (!file) return; fileName = file.name; fileInfo.textContent = `Reading ${file.name}…`;
     try { fileData = file.type.startsWith('image/') ? (await shrinkImage(file, 2000, 0.85)).dataUrl : await readFile(file); removeFile = false; fileInfo.textContent = `${file.name} (${Math.round(file.size / 1024)} KB) will be saved with the form.`; if (file.type === 'application/pdf' && !fields.length) fileInfo.textContent += ' Fields inside the PDF will be detected when you save.'; }
     catch (e) { fileInfo.textContent = e.message; fileData = null; }
@@ -162,7 +162,7 @@ export async function openClientForm(id, { onChange } = {}) {
   };
   const queue = () => { dirty = true; status.textContent = 'Unsaved changes'; clearTimeout(timer); timer = setTimeout(() => save().catch(e => { status.textContent = e.message; }), 1200); };
   const field = (fd) => {
-    if (fd.type === 'section') return h('h4', { class: 'ff-section' }, fd.label);
+    if (fd.type === 'section') return h('h3', { class: 'eyebrow ff-section' }, fd.label);
     if (fd.type === 'note') return h('p', { class: 'small muted ff-note' }, fd.label);
     const v = values[fd.key]; let input;
     const on = (e) => { values[fd.key] = fd.type === 'checkbox' ? e.target.checked : e.target.value; queue(); };
@@ -180,7 +180,7 @@ export async function openClientForm(id, { onChange } = {}) {
   drawFiles();
   // .sr-only, not .hidden (display:none) — a good few mobile browsers/WebViews refuse to honor a
   // programmatic .click() on a file input that display:none has taken out of the render tree.
-  const fileInput = h('input', { type: 'file', accept: 'image/*,application/pdf', class: 'sr-only', onChange: async () => {
+  const fileInput = h('input', { type: 'file', tabindex: '-1', 'aria-hidden': 'true', accept: 'image/*,application/pdf', class: 'sr-only', onChange: async () => {
     const file = fileInput.files[0]; fileInput.value = ''; if (!file) return;
     try { status.textContent = `Attaching ${file.name}…`; const dataUrl = file.type.startsWith('image/') ? (await shrinkImage(file, 2000, 0.85)).dataUrl : await readFile(file); const r = await post(`/api/forms/${id}/files`, { file_url: dataUrl, filename: file.name }); if (r.form_updated_at) version = r.form_updated_at; f.files.push({ ...r, created_at: new Date().toISOString() }); drawFiles(); status.textContent = 'Signed copy attached'; toast('Attached', 'ok'); }
     catch (e) { status.textContent = e.message; toast(e.message, 'error'); }
@@ -195,7 +195,7 @@ export async function openClientForm(id, { onChange } = {}) {
     f.template?.instructions ? h('div', { class: 'banner small' }, f.template.instructions) : null,
     f.fields.some(x => x.autofill) && editable && f.status === 'draft' ? h('p', { class: 'small muted' }, 'Fields marked ⟳ were pre-filled from the client record; check them and correct anything that is out of date.') : null,
     body,
-    h('div', { class: 'card tight mt' }, h('div', { class: 'card-head' }, h('h4', {}, 'Signed / scanned copy'), can('forms:write') && f.status !== 'void' ? h('div', {}, h('button', { class: 'btn sm', onClick: () => fileInput.click() }, '+ Attach photo or PDF'), fileInput) : null), files),
+    h('div', { class: 'card tight mt' }, h('div', { class: 'card-head' }, h('h3', { class: 'eyebrow' }, 'Signed / scanned copy'), can('forms:write') && f.status !== 'void' ? h('div', {}, h('button', { class: 'btn sm', onClick: () => fileInput.click() }, '+ Attach photo or PDF'), fileInput) : null), files),
     h('div', { class: 'btn-row mt', style: { flexWrap: 'wrap' } },
       editable ? h('button', { class: 'btn primary', onClick: async () => { await save(); toast('Draft saved', 'ok'); onChange && onChange(); } }, 'Save') : null,
       editable && f.status === 'draft' ? h('button', { class: 'btn ok', onClick: complete }, '✓ Mark completed') : null,
