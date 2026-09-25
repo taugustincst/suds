@@ -2,7 +2,7 @@
 // can change without a new release. Each documentation list can have its choices reworded, reordered,
 // retired (hidden from new records; old records keep showing them), added to, or put back as SUDS ships it.
 // The stored codes never change (server/options.js), so old records and reports keep their meaning.
-import { h, get, post, put, state, form, modal, toast, badge, fmt, can, confirmDialog, canEditLists, reloadRefData } from '../app.js';
+import { h, get, post, put, state, form, modal, toast, badge, fmt, can, confirmDialog, canEditLists, reloadRefData, loadRefData } from '../app.js';
 
 // A new funding source needs a period and an amount (the budget pages count against them); quick add fills
 // in the current July–June fiscal year and $0, which can be corrected on Funding & spending.
@@ -73,11 +73,14 @@ async function fundsCard(open) {
   const { funds } = await get('/api/budget/funds?all=1');
   const box = h('details', { class: 'card list-card', open: !!open, 'data-list': 'funds' });
   const refresh = async () => { const r = await get('/api/budget/funds?all=1'); funds.splice(0, funds.length, ...r.funds); state.funds = null; changed(); paint(); };
-  const quickAdd = () => {
+  // Every change on this page reloads the reference lists (changed()), which empties state.constants for a
+  // moment: wait for them rather than opening a dialog with no funding types (or throwing).
+  const quickAdd = async () => {
+    if (!state.constants) await loadRefData();
     const fy = fiscalYear();
     const f = form([
       { name: 'name', label: 'Name', required: true, span: true, placeholder: 'e.g. Opioid Settlement FY26' },
-      { name: 'source_type', label: 'Source type', type: 'select', options: state.constants.FUNDING_TYPES || [], required: true },
+      { name: 'source_type', label: 'Source type', type: 'select', options: state.constants?.FUNDING_TYPES || [], required: true },
       { name: 'fiscal_year_start', label: 'Period start', type: 'date', required: true, value: fy.start }, { name: 'fiscal_year_end', label: 'Period end', type: 'date', required: true, value: fy.end },
       { name: 'total_amount', label: 'Total award ($)', type: 'number', min: 0, step: 0.01, required: true, value: 0, help: 'Budget lines, restrictions and the rest are on Funding & spending.' },
     ], { submitText: 'Add funding source', onCancel: () => m.close(), onSubmit: async (d) => { await post('/api/budget/funds', d); toast(`Added "${d.name}"`, 'ok'); m.close(); await refresh(); } });

@@ -542,7 +542,14 @@ export const canEditLists = () => can('settings:manage') && (!state.local || !!w
 // spending by anyone else who holds budget:manage (finance cannot open Settings).
 export const fundsManageHref = () => (can('users:manage') || can('assignments:manage') ? '#/admin?tab=lists&list=funds' : '#/budget');
 /** Fetch the lists again (after an administrator changed one, or funding sources changed). */
-export async function reloadRefData() { state.constants = null; state.funds = null; await loadRefData(); }
+// Fetch the fresh lists first and swap them in: emptying state.constants and then awaiting left every view
+// that reads it (a dialog opened in that moment) with nothing, or a TypeError.
+export async function reloadRefData() {
+  let fresh = null;
+  try { fresh = await get('/api/meta/constants', { quiet: true }); } catch { /* keep what we have */ }
+  if (fresh) state.constants = fresh;
+  await loadRefData();
+}
 
 export function badge(text, kind = '') { return h('span', { class: `badge ${kind}` }, text); }
 // A client's programme status as shown on screen. Rows from before the status column was enforced can
