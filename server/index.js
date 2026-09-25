@@ -74,7 +74,7 @@ function housekeeping() {
     }
     // Scheduled backup, if an administrator has turned it on under Settings → System & backups. A failure
     // here (disk full, unreachable offsite share) must not stop the rest of housekeeping.
-    require('./scheduled-backup').runIfDue();
+    require('./scheduled-backup').runIfDue().catch((e) => console.error('[suds] scheduled backup', e && e.message || e));
     // Seal the audit chain's head into write-once storage outside the database every AUDIT_ANCHOR_HOURS.
     require('./audit-anchor').runIfDue();
     // Monthly recovery drill, if an administrator turned it on (off by default). Runs in the background.

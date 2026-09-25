@@ -87,6 +87,153 @@ async function createAsync({ encryptionKey, rate = 256 } = {}) {
   return { bytes, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
 }
 
+const SLICE = 4 << 20;
+const tmpName = (kind) => path.join(config.dataDir, `.${kind}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.db`);
+const removeTmp = async (tmp) => { await secureUnlinkAsync(tmp); for (const suffix of ['-wal', '-shm', '-journal']) await secureUnlinkAsync(tmp + suffix); };
+
+/**
+ * The encrypted backup written straight to `outFile`, never holding the event loop and never holding the
+ * whole database in memory: SQLite's online backup API copies the live database to a private temporary file
+ * (`rate` pages per step, yielding between steps), which is then read, encrypted and written 4 MB at a time
+ * by the thread pool; the GCM tag goes into the frame header at the end, and the plaintext copy is
+ * overwritten and removed. createAsync() builds one Buffer of the whole database (and a second for the
+ * ciphertext) — at a few hundred megabytes, allocating and copying those alone stalled the server for
+ * seconds. Used by scheduled backups (server/scheduled-backup.js).
+ * Resolves to { bytes, method, copy_ms, encrypt_ms, plain_bytes }.
+ */
+async function createToFileAsync(outFile, { encryptionKey, rate = 256, flag = 'w' } = {}) {
+  const sqlite = require('node:sqlite');
+  const tmp = tmpName('backup');
+  let method; const t0 = Date.now(); let t1; let plainBytes = 0; let written = 0;
+  try {
+    await fs.promises.writeFile(tmp, '', { mode: 0o600 });
+    if (typeof sqlite.backup === 'function' && config.dbPath !== ':memory:') {
+      method = 'sqlite-online-backup';
+      await sqlite.backup(db.get(), tmp, { rate });
+    } else {
+      method = 'vacuum-into';
+      await fs.promises.unlink(tmp);
+      db.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+    }
+    try { await fs.promises.chmod(tmp, 0o600); } catch {}
+    t1 = Date.now();
+    const iv = crypto.randomBytes(12);
+    const c = crypto.createCipheriv('aes-256-gcm', backupKey(encryptionKey), iv);
+    const src = await fs.promises.open(tmp, 'r');
+    let out = null;
+    try {
+      out = await fs.promises.open(outFile, flag, 0o600);
+      await out.write(Buffer.concat([iv, Buffer.alloc(16)]), 0, 28, 0); // tag written last, when it is known
+      written = 28;
+      const chunk = Buffer.alloc(SLICE);
+      for (;;) {
+        const { bytesRead } = await src.read(chunk, 0, SLICE, plainBytes);
+        if (!bytesRead) break;
+        plainBytes += bytesRead;
+        const enc = c.update(chunk.subarray(0, bytesRead));
+        await out.write(enc, 0, enc.length, written); written += enc.length;
+      }
+      chunk.fill(0);
+      const fin = c.final();
+      if (fin.length) { await out.write(fin, 0, fin.length, written); written += fin.length; }
+      await out.write(c.getAuthTag(), 0, 16, 12);
+      await out.sync();
+    } finally { await src.close().catch(() => {}); if (out) await out.close().catch(() => {}); }
+  } finally { await removeTmp(tmp); }
+  return { bytes: written, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
+}
+
+/**
+ * Decrypt the backup file `encFile` into `plainFile` (created 0600), 4 MB at a time, without holding the
+ * event loop. Throws — and removes `plainFile` — when the key is wrong or the file has been altered (the GCM
+ * tag is checked at the end). With no keys given, tries the same keys decrypt() does.
+ */
+async function decryptFileAsync(encFile, plainFile, { encryptionKey, escrow } = {}) {
+  const src = await fs.promises.open(encFile, 'r');
+  try {
+    const { size } = await src.stat();
+    if (size < 29) throw new Error('That does not look like a SUDS backup file');
+    const head = Buffer.alloc(28); await src.read(head, 0, 28, 0);
+    const iv = head.subarray(0, 12), tag = head.subarray(12, 28);
+    const chunk = Buffer.alloc(SLICE);
+    for (const key of candidateKeys(encryptionKey, escrow)) {
+      const d = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      d.setAuthTag(tag);
+      const out = await fs.promises.open(plainFile, 'w', 0o600);
+      let ok = false;
+      try {
+        let pos = 28; let at = 0;
+        for (;;) {
+          const { bytesRead } = await src.read(chunk, 0, SLICE, pos);
+          if (!bytesRead) break;
+          pos += bytesRead;
+          const p = d.update(chunk.subarray(0, bytesRead));
+          await out.write(p, 0, p.length, at); at += p.length; p.fill(0);
+        }
+        const fin = d.final(); // throws when the tag does not match: wrong key, or altered
+        if (fin.length) await out.write(fin, 0, fin.length, at);
+        ok = true;
+      } catch { /* not this key */ } finally { await out.close().catch(() => {}); chunk.fill(0); }
+      if (ok) return;
+      await secureUnlinkAsync(plainFile);
+    }
+  } finally { await src.close().catch(() => {}); }
+  throw new Error(escrow ? 'The backup could not be read with the escrowed keys. Either the key file is not the one for this backup set, or the backup is damaged.' : 'The backup could not be read. It is either damaged, or it was made with a different encryption key.');
+}
+
+// The body of inspect() that touches SQLite, run in a worker thread by verifyFileAsync so PRAGMA
+// integrity_check on a large database (seconds) does not stop requests being served. Reports plain facts;
+// the decisions (damaged, not a SUDS backup, newer schema) are made by the caller, as inspect() makes them.
+const INSPECT_WORKER = `
+const { parentPort, workerData } = require('node:worker_threads');
+const { DatabaseSync } = require('node:sqlite');
+try {
+  const d = new DatabaseSync(workerData.file, { readOnly: true });
+  try {
+    const integrity = d.prepare('PRAGMA integrity_check').get();
+    const has = (t) => !!d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
+    const count = (t) => (has(t) ? d.prepare('SELECT COUNT(*) n FROM ' + t).get().n : 0);
+    const setting = (k) => (has('settings') ? d.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value : undefined);
+    parentPort.postMessage({ ok: true, integrity: String(integrity.integrity_check || ''), hasSettings: has('settings'), hasClients: has('clients'),
+      schema_version: Number(setting('schema_version') || 0), org_name: setting('org_name') || null,
+      counts: { clients: count('clients'), notes: count('notes'), interventions: count('interventions'), users: count('users'), audit_log: count('audit_log') } });
+  } finally { d.close(); }
+} catch (e) { parentPort.postMessage({ ok: false, error: String(e && e.message || e) }); }
+`;
+let WorkerCtor;
+try { WorkerCtor = require('node:worker_threads').Worker; } catch { WorkerCtor = null; }
+
+function inspectInWorker(file) {
+  return new Promise((resolve, reject) => {
+    // Settled on exit, not on the message: the worker has closed the database by then, so the copy and the
+    // -wal/-shm files SQLite made beside it can be removed without the close re-creating them.
+    const w = new WorkerCtor(INSPECT_WORKER, { eval: true, workerData: { file } });
+    let msg = null;
+    w.once('message', (m) => { msg = m; }); w.once('error', reject);
+    w.once('exit', (code) => (msg ? resolve(msg) : reject(new Error(`backup verification worker exited (${code})`))));
+  });
+}
+
+/**
+ * The scheduled backup's read-back check, without holding the event loop: decrypt `encFile` to a private
+ * temporary file (decryptFileAsync), open it read-only in a worker thread and run the same checks inspect()
+ * does, then overwrite and remove the copy. Resolves to what inspect() returns; throws what it throws.
+ */
+async function verifyFileAsync(encFile, opts = {}) {
+  if (typeof WorkerCtor !== 'function' || config.local) return inspect(decrypt(fs.readFileSync(encFile), opts));
+  const tmp = tmpName('inspect');
+  try {
+    await decryptFileAsync(encFile, tmp, opts);
+    const { size } = await fs.promises.stat(tmp);
+    const r = await inspectInWorker(tmp);
+    if (!r.ok) throw new Error(r.error);
+    if (r.integrity.toLowerCase() !== 'ok') throw new Error('The backup file is damaged.');
+    if (!r.hasSettings || !r.hasClients) throw new Error('That file is not a SUDS backup.');
+    if (r.schema_version > db.LATEST_SCHEMA_VERSION) throw new Error(`This backup was made by a newer version of SUDS (schema ${r.schema_version}; this build understands ${db.LATEST_SCHEMA_VERSION}). Upgrade SUDS before restoring it.`);
+    return { schema_version: r.schema_version, org_name: r.org_name, counts: r.counts, bytes: size };
+  } finally { await removeTmp(tmp); }
+}
+
 /** secureUnlink without blocking: the overwrite is written by the thread pool, a slice at a time. */
 async function secureUnlinkAsync(file) {
   let st = null; try { st = await fs.promises.lstat(file); } catch (e) { if (e && e.code === 'ENOENT') return false; }
@@ -184,7 +331,7 @@ function inspect(plainBytes) {
         bytes: plainBytes.length,
       };
     } finally { d.close(); }
-  } finally { secureUnlink(tmp); }
+  } finally { secureUnlink(tmp); for (const suffix of ['-wal', '-shm', '-journal']) secureUnlink(tmp + suffix); } // a read-only open of a WAL database leaves both beside it
 }
 
 /**
@@ -227,4 +374,4 @@ function restore(plainBytes) {
   return { ...info, previous_database_kept_at: aside };
 }
 
-module.exports = { create, createAsync, encryptPlain, decrypt, inspect, restore, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
+module.exports = { create, createAsync, encryptPlain, decrypt, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect, restore, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };

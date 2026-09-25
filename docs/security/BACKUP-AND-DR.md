@@ -11,7 +11,7 @@ The county sets the targets in its contingency plan (HIPAA §164.308(a)(7)); SUD
 
 ## Backups
 
-* **What:** a consistent snapshot of the whole database (`VACUUM INTO`, safe while serving), encrypted with AES-256-GCM (`server/backup.js`). Keys are not in the backup; `SUDS_BACKUP_KEY` decouples backups from PHI-key rotation.
+* **What:** a consistent snapshot of the whole database, encrypted with AES-256-GCM (`server/backup.js`). Scheduled backups and snapshots use SQLite's online backup API and stream the encryption to the file 4 MB at a time, then (scheduled backups) decrypt the file back and run `PRAGMA integrity_check` in a worker thread — none of it holds the event loop (`createToFileAsync`, `verifyFileAsync`); the manual download and `npm run backup` use `VACUUM INTO`. Keys are not in the backup; `SUDS_BACKUP_KEY` decouples backups from PHI-key rotation.
 * **When:** Settings → Scheduled backups (`backup_schedule_hours`; hourly housekeeping runs it when due). Also on demand (*Run a backup now*, download from System & backups, `npm run backup`). **A production install made with the setup wizard starts with backups every 4 hours**; one configured by environment variables starts with none, and **in production, backups switched off (0) are reported** as *Action needed* on Security status, as an alert on the administrator's Home page, and in the startup log (`server/startup-checks.js`).
 * **Verified on write:** every scheduled backup is read back, decrypted and opened read-only before it counts (`server/scheduled-backup.js`).
 * **Retention:** newest `backup_retain_count` (default 14) kept locally, oldest pruned first.
@@ -29,9 +29,11 @@ It is a full copy each time, not a page-level increment (SQLite has no increment
 
 | Operation | Wall time | Longest event-loop stall |
 | --- | --- | --- |
-| Scheduled backup (`VACUUM INTO` + encrypt, synchronous) | ~1.0 s | ~1.0 s (the whole operation) |
+| Scheduled backup, old synchronous path up to 1.11.0 (`VACUUM INTO` + encrypt + read-back) | ~1.0 s | ~1.0 s (the whole operation) |
 | Online snapshot, copy only (`backup()`, 256 pages/step) | 0.4–0.7 s | — |
 | Online snapshot end to end (copy, sliced encrypt, write, rotate) | ~1.2 s | ~90 ms |
+
+Scheduled backups after 1.11.0 (online copy, encryption streamed to the file, read-back decryption streamed to a temporary file, integrity check in a worker thread; `test/scheduled-backup.test.js` asserts the stall stays small): on a 311 MB database in a 4-core development container, **4.2 s wall time, longest event-loop stall 16 ms**, where the synchronous path it replaced stalled for the whole 6.3 s (3.8 s on the machine the problem was first measured on). Memory no longer scales with the database: nothing holds the whole database in one Buffer.
 
 So a snapshot every 15 minutes costs about 0.1% of one core and at worst one ~90 ms pause (comparable to one password check) per run, and keeps 107 MB × `backup_snapshot_retain` on the share (2.6 GB for 24, six hours of 15-minute points). Memory peaks at about three times the database size during the copy. Scale roughly linearly with database size.
 

@@ -215,7 +215,7 @@ async function run({ backupFile = null, fresh = false, by = 'system', trigger = 
     }
     if (!file) {
       step('No backup on disk; taking one first');
-      const made = require('./scheduled-backup').run({ retain: sched.retain, offsiteDir: sched.offsiteDir });
+      const made = await require('./scheduled-backup').run({ retain: sched.retain, offsiteDir: sched.offsiteDir });
       if (!made.file) throw new Error(`a backup could not be taken: ${made.error}`);
       madeBackup = true;
       if (made.offsiteFile && copy !== 'local') { file = made.offsiteFile; source = { ...source, copy: 'offsite', dir: sched.offsiteDir }; }
