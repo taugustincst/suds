@@ -124,7 +124,7 @@ const dec = (v) => { if (!v) return ''; try { return decrypt(v); } catch { retur
 /** A consents row as the plain values the element checks read. */
 function consentValues(row) {
   return { discloser: row.discloser, recipient: dec(row.recipient_enc), purpose: dec(row.purpose_enc), scope: dec(row.scope_enc), expires_at: row.expires_at, expires_event: row.expires_event,
-    document_ref: row.document_ref, signed_on_paper: row.signed_on_paper, witness: row.witness, signer_relationship: row.signer_relationship, signer_name: dec(row.signer_name_enc),
+    document_ref: row.document_ref, signed_on_paper: row.signed_on_paper, witness: dec(row.witness_enc), signer_relationship: row.signer_relationship, signer_name: dec(row.signer_name_enc),
     revocation_right_given: row.revocation_right_given, redisclosure_notice_given: row.redisclosure_notice_given, refusal_consequences_given: row.refusal_consequences_given, signed_at: row.signed_at };
 }
 /** What stops this consent row authorising a disclosure as a Part 2 consent (empty when nothing does). */

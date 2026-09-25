@@ -6,7 +6,7 @@ const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
 const C = require('../constants');
-const { badRequest, notFound } = require('../http');
+const { badRequest, notFound, contentDisposition } = require('../http');
 const { validate, paging } = require('../validate');
 const { uuid, encrypt, decrypt } = require('../crypto');
 const M = require('../clients-model');
@@ -171,14 +171,14 @@ module.exports = (r) => {
   });
   r.get('/api/forms/templates/:id/file', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write', 'forms:manage'), (ctx) => {
     const t = db.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id); if (!t || !t.file_b64) throw notFound('No file for this form');
-    ctx.res.writeHead(200, { 'Content-Type': safeContentType(t.content_type), 'Content-Disposition': `${ctx.query.get('inline') === '1' ? 'inline' : 'attachment'}; filename="${(t.filename || 'form').replace(/["\r\n]/g, '')}"` });
+    ctx.res.writeHead(200, { 'Content-Type': safeContentType(t.content_type), 'Content-Disposition': contentDisposition(ctx.query.get('inline') === '1' ? 'inline' : 'attachment', t.filename, 'form') });
     ctx.res.end(Buffer.from(t.file_b64, 'base64')); return null;
   });
   // A blank, printable version drawn from the field definitions (for forms uploaded without a file, or to hand-fill)
   r.get('/api/forms/templates/:id/blank.pdf', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write', 'forms:manage'), (ctx) => {
     const t = db.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id); if (!t) throw notFound();
     const body = pdf.renderForm({ title: t.name, subtitle: t.description, org: db.getSetting('org_name', 'SUDS'), meta: [t.version ? `Version ${t.version}` : null], fields: parseJson(t.fields_json, []), values: {}, footer: 'Blank form printed from SUDS' });
-    ctx.res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${t.name.replace(/[^\w.-]+/g, '_')}-blank.pdf"` }); ctx.res.end(body); return null;
+    ctx.res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': contentDisposition('inline', `${t.name}-blank.pdf`) }); ctx.res.end(body); return null;
   });
 
   // ---------- forms filled out for a client ----------
@@ -240,7 +240,7 @@ module.exports = (r) => {
     const values = parseJson(decrypt(f.values_enc), {}); const by = f.completed_by ? db.one(`SELECT display_name FROM users WHERE id=?`, f.completed_by) : null;
     audit.log({ user: ctx.user, action: 'client_form.print', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip });
     const body = pdf.renderForm({ title: f.template_name, org: db.getSetting('org_name', 'SUDS'), meta: [`Client: ${client.first_name} ${client.last_name} (${client.client_code})`, f.status === 'completed' ? `Completed ${f.completed_at.slice(0, 10)}${by ? ' by ' + by.display_name : ''}` : 'DRAFT'], fields: parseJson(f.fields_json, []), values, footer: printFooter() });
-    ctx.res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `${ctx.query.get('download') === '1' ? 'attachment' : 'inline'}; filename="${client.client_code}-${f.template_name.replace(/[^\w.-]+/g, '_')}.pdf"` }); ctx.res.end(body); return null;
+    ctx.res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': contentDisposition(ctx.query.get('download') === '1' ? 'attachment' : 'inline', `${client.client_code}-${f.template_name}.pdf`) }); ctx.res.end(body); return null;
   });
   // Signed / scanned copies attached to the filled form (stored encrypted)
   r.post('/api/forms/:id/files', auth.requireAuth, auth.requirePerm('forms:write'), (ctx) => {
@@ -259,7 +259,7 @@ module.exports = (r) => {
   r.get('/api/forms/:id/files/:fid', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();
     audit.log({ user: ctx.user, action: 'client_form.file.view', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
-    ctx.res.writeHead(200, { 'Content-Type': safeContentType(x.content_type), 'Content-Disposition': `${ctx.query.get('download') === '1' ? 'attachment' : 'inline'}; filename="${String(x.filename).replace(/["\r\n]/g, '')}"`, 'X-Content-Type-Options': 'nosniff' }); ctx.res.end(Buffer.from(decrypt(x.data_enc), 'base64')); return null;
+    ctx.res.writeHead(200, { 'Content-Type': safeContentType(x.content_type), 'Content-Disposition': contentDisposition(ctx.query.get('download') === '1' ? 'attachment' : 'inline', x.filename, 'attachment'), 'X-Content-Type-Options': 'nosniff' }); ctx.res.end(Buffer.from(decrypt(x.data_enc), 'base64')); return null;
   });
   r.delete('/api/forms/:id/files/:fid', auth.requireAuth, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT id FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();

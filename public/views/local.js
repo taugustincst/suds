@@ -219,7 +219,7 @@ route('sync', async () => {
     return h('div', {}, pageHead('This device'),
       h('div', { class: 'grid cols-2' },
         h('div', { class: 'card', 'data-static-status': '1' }, h('h2', {}, 'Status'),
-          kv([['This device', badge('SUDS on this device', 'info')], ['Where your records are', 'In this browser on this device only, encrypted'], ['Clients', dev ? String(dev.clients) : '—']]),
+          kv([['This device', badge('SUDS on this device', 'info')], ['Where your records are', 'In this browser on this device only'], ['Clients', dev ? String(dev.clients) : '—']]),
           h('p', { class: 'small muted mt' }, 'Your records stay in this browser and are never sent anywhere. Clearing this browser’s site data erases them, so keep a recent backup.')),
         await safetyCard(dev, refresh),
         accountsCard(dev, refresh),
@@ -231,7 +231,7 @@ route('sync', async () => {
   // information into it, not only in the documentation.
   return h('div', {}, pageHead('Sync with the office'),
     h('div', { class: 'banner warn mb' }, h('b', {}, 'This is an offline copy of the office SUDS. '),
-      'Its encryption keys are stored in this browser profile alongside the data, so anyone who can use this browser profile can read what is in it. Keep real client information on the office SUDS unless your administrator has approved this device for field work.'),
+      'Its encryption keys are stored in this browser profile alongside the data, so anyone who can use this browser profile can read what is in it — a lost device is protected only by its own disk encryption and screen lock. Keep real client information on the office SUDS unless your administrator has approved this device for field work.'),
     h('div', { class: 'grid cols-2' },
       h('div', { class: 'card' }, h('h2', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', badge('Keys kept in this browser', 'warn')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
         h('p', { class: 'small muted mt' }, 'Sync exchanges clients, visits, calls, notes, reminders, referrals and everything else in both directions. The office SUDS decides: the newest change wins, a change it rejects for good is not sent again, and a record the office has purged or merged does not come back.')),

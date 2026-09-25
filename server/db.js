@@ -525,6 +525,16 @@ const migrations = [
       ['clients', 'contact_preferences', 'contact_preferences_enc'],
     ]) encryptColumn(d, t, from, to);
   },
+  // 38: PLACEHOLDER for another change stream's migration 38 (funding attribution); replace this no-op with
+  //     it when the branches are merged. It exists only so migration 39 keeps its number on this branch.
+  () => {},
+  // 39: the last free text about a person held in plaintext. A consent's witness is usually someone the
+  //     client knows (a parent, a partner), and an imported note's metadata carries the client-name hints
+  //     sniffed from its text ("Met with J. Smith").
+  (d) => {
+    encryptColumn(d, 'consents', 'witness', 'witness_enc');
+    encryptColumn(d, 'import_items', 'metadata', 'metadata_enc');
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

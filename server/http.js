@@ -97,14 +97,34 @@ function readBody(req, limit = config.maxBodyBytes) {
   });
 }
 
-function securityHeaders(res) {
+// HSTS: sent when this process terminates TLS itself, and when a trusted proxy (TRUST_PROXY) says the
+// request reached it over https -- not every county runs the bundled Caddyfile, which adds it too.
+function behindTls(req) {
+  if (!req || !config.trustProxy) return false;
+  return String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase() === 'https';
+}
+function securityHeaders(res, req) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-  if (config.tls.cert) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  if (config.tls.cert || behindTls(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+}
+
+/**
+ * A Content-Disposition value for a download whose name someone typed (an upload's file name, a template
+ * name, a client code). The quoted filename is plain ASCII with quotes, backslashes, semicolons and control
+ * characters (CR/LF: header injection) removed; the real name, when it differs, travels percent-encoded in
+ * filename* (RFC 6266 / 5987), which no character can break out of. Node refuses a header value outside
+ * Latin-1, so a Chinese file name used to make the download a 500.
+ */
+function contentDisposition(type, filename, fallback = 'download') {
+  const name = String(filename ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 200) || fallback;
+  const ascii = name.normalize('NFKD').replace(/[^\x20-\x7e]/g, '').replace(/["\\;%/]/g, '_').trim() || fallback;
+  const star = encodeURIComponent(name).replace(/['()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  return `${type === 'inline' ? 'inline' : 'attachment'}; filename="${ascii}"${ascii !== name ? `; filename*=UTF-8''${star}` : ''}`;
 }
 
 function sendJson(res, status, obj) {
@@ -163,4 +183,4 @@ function serveStatic(root) {
   };
 }
 
-module.exports = { Router, HttpError, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, sendFile, serveStatic };
+module.exports = { Router, HttpError, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, parseRequestUrl, readBody, securityHeaders, contentDisposition, sendJson, sendFile, serveStatic };

@@ -40,6 +40,8 @@ function client() {
   return {
     req, get: (p, e) => req('GET', p, undefined, e), post: (p, b, e) => req('POST', p, b, e), put: (p, b, e) => req('PUT', p, b, e), del: (p, b, e) => req('DELETE', p, b, e),
     setHeader: (k, v) => { headers[k] = v; },
+    /** The fetch Response itself (for binary bodies and exact headers), with this client's session. */
+    raw: (p, extra = {}) => fetch(base + p, { headers: { 'X-Requested-With': 'suds', ...headers, ...(cookie ? { Cookie: cookie } : {}), ...extra } }),
     async login(username, password) { const r = await req('POST', '/api/auth/login', { username, password }); if (r.status !== 200) throw new Error('login failed: ' + JSON.stringify(r.data)); return r.data; },
   };
 }

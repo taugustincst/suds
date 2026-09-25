@@ -12,7 +12,7 @@ const CHANNELS = ['in_person', 'phone', 'mail', 'email', 'web', 'other'];
 const COMPLAINANTS = ['client', 'representative', 'staff', 'anonymous', 'other'];
 const STATUSES = ['open', 'investigating', 'resolved', 'closed'];
 const DET = { pending: 'Not yet determined', breach: 'Breach — notices owed', not_breach: 'Not a breach (low probability of compromise)' };
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 
 function printNotice(n) {
   const w = window.open('', '_blank');

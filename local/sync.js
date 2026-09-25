@@ -110,7 +110,7 @@ function changedColumns(t, existing, raw, existingCols) {
   return out;
 }
 
-function applyPull(payload, conflicts = [], skipped = []) {
+function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
   const counts = {};
   const offset = payload.server_now ? Date.parse(payload.server_now) - Date.now() : 0;
   const toServer = (ts) => { const t = Date.parse(ts || NEVER); return Number.isFinite(t) ? new Date(t + offset).toISOString() : NEVER; };
@@ -134,6 +134,16 @@ function applyPull(payload, conflicts = [], skipped = []) {
     for (const ts of payload.tombstones || []) {
       const t = SYNC.tables.find(x => x.name === ts.table_name); if (!t) continue;
       db.savepoint(() => applyTombstone(t, ts, toServer), (err) => skipped.push({ table: t.name, id: ts.id, reason: String(err && err.message || 'could not be deleted').slice(0, 200) }));
+    }
+    // The office took these clients off this person's caseload. The phone must not stay the place their
+    // record lives on -- unless another account on this shared device still has them on its caseload.
+    for (const id of payload.dropped_clients || []) {
+      if (typeof id !== 'string') continue;
+      if (officeUserId && db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id<>? AND ${auth.activeAssignment()}`, id, officeUserId)) continue;
+      db.savepoint(() => {
+        const removed = SYNC.purgeClient(db, id);
+        if (removed) audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.caseload_removed', entity: 'client', entityId: id, clientId: id, details: { rows: removed } });
+      }, (err) => skipped.push({ table: 'clients', id, reason: String(err && err.message || 'could not be removed').slice(0, 200) }));
     }
     for (const [k, v] of Object.entries(payload.settings || {})) if (v !== null && v !== undefined) db.setSetting(k, v);
   });
@@ -458,7 +468,7 @@ export async function run({ server, username, password, code, onProgress = () =>
         pages++;
         continue;
       }
-      const counts = applyPull(pulled, pullConflicts, skipped);
+      const counts = applyPull(pulled, pullConflicts, skipped, officeUserId);
       for (const [k, v] of Object.entries(counts)) applied[k] = (applied[k] || 0) + v;
       serverNow = pulled.server_now;
       since = pulled.cursor;
