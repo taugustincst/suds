@@ -10,7 +10,9 @@
 // The file names clients (name, date of birth, Medi-Cal ID), so it is an identified disclosure outside the
 // programme: export:identified only, a named recipient and purpose, a lawful basis — for each client a live
 // consent on file that names the stated recipient (clients without one are left out and listed), or, for the
-// whole file, a registered QSOA with the recipient or the supervisor's "other" override — and one
+// whole file, one of the other identified-export bases (a registered QSOA, research or audit/evaluation
+// approval with the recipient, or "internal" when the county EHR is this programme's own) — never the
+// supervisor's "other" override, which requireExportBasis refuses for any identified file — and one
 // accounting-of-disclosures row per client it contains (server/disclosure.js). It follows the identified-
 // export rules (requireExportBasis): the consent must be one that can authorise a disclosure in this
 // programme (a Part 2 consent with the §2.31 elements, the 2024 single TPO consent included — a general
@@ -24,7 +26,9 @@ const { badRequest } = require('../http');
 const { decrypt } = require('../crypto');
 
 const NOT_A_CLAIM = 'Encounter hand-off for entry into the county EHR / billing system. This is not a claim: SUDS does not submit Drug Medi-Cal (837 / Short-Doyle) claims. Minutes are the total of the services recorded; the county EHR decides what is billable.';
-const BASES = ['consent', 'qsoa', 'other'];
+// The identified-export bases (disclosure.EXPORT_BASES): no "other". A justified override is a one-client
+// decision (requireBasis), not a way to release every client's identified encounters in one file.
+const BASES = require('../disclosure').EXPORT_BASES;
 const COLUMNS = [
   ['service_date', 'Service Date'], ['client_code', 'Client Code'], ['last_name', 'Last Name'], ['first_name', 'First Name'], ['dob', 'Date Of Birth'],
   ['medi_cal_id', 'Medi-Cal ID'], ['insurance', 'Insurance'], ['service_type', 'Service Type'], ['service_type_code', 'Service Type Code'], ['contacts', 'Contacts'],
@@ -94,14 +98,14 @@ module.exports = (r) => {
     const recipient = (ctx.query.get('recipient') || '').trim().slice(0, 200); const purpose = (ctx.query.get('purpose') || '').trim().slice(0, 500);
     if (!recipient || !purpose) throw badRequest('The hand-off names clients: say who receives it and why (recipient= and purpose=); both go into each client\'s accounting of disclosures');
     const basis = ctx.query.get('basis') || 'consent';
-    if (!BASES.includes(basis)) throw badRequest(`basis must be one of ${BASES.join(', ')}`);
+    if (!BASES.includes(basis)) throw badRequest(`"${String(basis).slice(0, 40)}" is not a basis the hand-off can be made under (${BASES.join(', ')})`);
     const disclosure = require('../disclosure');
     if (ctx.query.get('legal_proceeding') === '1') disclosure.requireExportBasis([], { basis: 'internal', legal_proceeding: true }); // always refuses: never a bulk file
-    // A QSOA or "other" basis covers the whole file; checked once, before anything is read. A QSOA must be
-    // registered and be with the recipient; "other" is the supervisor/administrator override and needs its
-    // written justification (disclosure.requireBasis). Agreed restrictions are checked below, against the
-    // clients actually in the file.
-    const fileBasis = basis === 'consent' ? null : disclosure.requireBasis(null, { basis, justification: ctx.query.get('justification'), agreement_id: ctx.query.get('agreement_id') || undefined, recipient, user: ctx.user, restriction_reviewed: true });
+    // Any basis but consent covers the whole file; checked once, before anything is read, by the same rule
+    // every identified export follows (disclosure.requireExportBasis): a QSOA, research or audit approval must
+    // be registered and be with the recipient, research and audit are a supervisor's, "internal" stays in the
+    // programme. Agreed restrictions are checked below, against the clients actually in the file.
+    const fileBasis = basis === 'consent' ? null : disclosure.requireExportBasis([], { basis, agreement_id: ctx.query.get('agreement_id') || undefined, recipient, user: ctx.user, restriction_reviewed: true });
     const all = encounters(ctx, p);
     const consentOf = new Map(); const excluded = new Set();
     if (basis === 'consent') for (const id of new Set(all.map(x => x._client_id))) { const c = consentFor(id, recipient); if (c) consentOf.set(id, c.id); else excluded.add(id); }
@@ -111,7 +115,7 @@ module.exports = (r) => {
     try { disclosure.requireRestrictionReview(clientIds, ctx.query.get('restriction_reviewed') === '1'); }
     catch (e) { audit.log({ user: ctx.user, action: 'handoff.export.refused', ip: ctx.ip, success: false, details: { basis, clients: clientIds.length, reason: 'restriction_review' } }); throw e; }
     db.transaction(() => {
-      for (const clientId of clientIds) disclosure.record({ clientId, consentId: consentOf.get(clientId) || null, agreementId: fileBasis?.agreement?.id || null, recipient, purpose, what: `County EHR encounter hand-off (${p.from} to ${p.to}): service dates, types, minutes, staff and funding; name, date of birth, Medi-Cal ID`, method: 'export', basis, justification: fileBasis ? fileBasis.justification : null, source: 'ehr_handoff', sourceRef: `handoff:${p.from}_${p.to}`, user: ctx.user, ip: ctx.ip });
+      for (const clientId of clientIds) disclosure.record({ clientId, consentId: consentOf.get(clientId) || null, agreementId: fileBasis?.agreement?.id || null, recipient, purpose, what: `County EHR encounter hand-off (${p.from} to ${p.to}): service dates, types, minutes, staff and funding; name, date of birth, Medi-Cal ID`, method: 'export', basis, justification: null, source: 'ehr_handoff', sourceRef: `handoff:${p.from}_${p.to}`, user: ctx.user, ip: ctx.ip });
     });
     require('../incidents').maybeMassExport({ clients: clientIds.length, kind: 'ehr-handoff', user: ctx.user });
     audit.log({ user: ctx.user, action: 'handoff.export', ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, basis, clients_disclosed: clientIds.length, excluded_no_consent: excludedCodes.length || undefined } });

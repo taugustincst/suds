@@ -338,8 +338,14 @@ test('the county EHR hand-off: identified, consent-checked, accounted, and not a
   assert.ok(sum.data.without_consent.includes(codeOf(roiOnly)), 'a general release does not count as consent');
   assert.match(sum.data.not_a_claim, /does not submit Drug Medi-Cal/);
   assert.equal((await sup.get(`/api/handoff/export?${q}`)).status, 400, 'recipient and purpose are required');
-  const other = await sup.get(`/api/handoff/export?${q}&recipient=County%20EHR&purpose=Billing&basis=other&justification=short`);
-  assert.equal(other.status, 400, '"other" needs a written justification');
+  // "Other" is not a basis an identified file can be made under (requireExportBasis): a supervisor's written
+  // justification would otherwise release every client's identified encounters with no consent of their own.
+  const JUSTIFIED = encodeURIComponent('The county billing unit asked for the whole month to reconcile claims before the deadline.');
+  const other = await sup.get(`/api/handoff/export?${q}&recipient=County%20EHR&purpose=Billing&basis=other&justification=${JUSTIFIED}`);
+  assert.equal(other.status, 400, JSON.stringify(other.data)); assert.match(other.data.error, /"other" is not a basis/);
+  assert.ok(!db.one(`SELECT 1 FROM disclosures WHERE source='ehr_handoff' AND basis='other'`), 'nothing accounted, nothing released');
+  const adminOther = await admin.get(`/api/handoff/export?${q}&recipient=County%20EHR&purpose=Billing&basis=other&justification=${JUSTIFIED}`);
+  assert.equal(adminOther.status, 400, 'not for an administrator either');
   const x = await sup.get(`/api/handoff/export?${q}&recipient=County%20EHR%20billing&purpose=Encounter%20entry%20for%20billing`);
   assert.equal(x.status, 200);
   assert.match(x.headers.get('x-suds-export'), /Not a claim/);

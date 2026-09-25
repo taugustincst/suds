@@ -186,15 +186,13 @@ route('caloms', async (r) => {
     const f = form([
       { name: 'recipient', label: 'Recipient', required: true, value: 'County EHR / billing unit', span: true },
       { name: 'purpose', label: 'Purpose', required: true, value: 'Encounter entry in the county EHR for billing and claims', span: true },
-      { name: 'basis', label: 'Lawful basis', type: 'select', noBlank: true, value: 'consent', options: [{ value: 'consent', label: 'Each client\'s consent naming the recipient (clients without one are left out)' }, { value: 'qsoa', label: 'Qualified service organization agreement with the recipient, on file (whole file)' }, { value: 'other', label: 'Other — supervisor or administrator, with a written justification' }] },
-      { name: 'justification', label: 'Justification (for "Other")', type: 'textarea', rows: 2, span: true },
+      { name: 'basis', label: 'Lawful basis', type: 'select', noBlank: true, value: 'consent', options: [{ value: 'consent', label: 'Each client\'s consent naming the recipient (clients without one are left out)' }, { value: 'qsoa', label: 'Qualified service organization agreement with the recipient, on file (whole file)' }, { value: 'internal', label: 'Internal — the county EHR is this program\'s own (whole file)' }] },
       { name: 'format', label: 'Format', type: 'select', noBlank: true, value: 'csv', options: [{ value: 'csv', label: 'CSV' }, { value: 'xlsx', label: 'Excel' }] },
     ], { submitText: 'Download hand-off file', onSubmit: async (d) => {
       if (!await confirmDialog('County EHR hand-off', 'This file includes client names, dates of birth and Medi-Cal IDs. Each client in it gets an entry in their accounting of disclosures. Continue?', { okText: 'Download' })) return;
       const q = new URLSearchParams({ from, to, recipient: d.recipient, purpose: d.purpose, basis: d.basis, format: d.format });
-      if (d.justification) q.set('justification', d.justification);
-      // Fetched rather than followed as a link, so a refusal (an agreed restriction to confirm, a missing
-      // justification) is shown as a message instead of being saved as a file.
+      // Fetched rather than followed as a link, so a refusal (an agreed restriction to confirm, no
+      // agreement on file) is shown as a message instead of being saved as a file.
       const done = await withRestrictionCheck((extra) => fetchDownload(`/api/handoff/export?${q}${extra.restriction_reviewed ? '&restriction_reviewed=1' : ''}`));
       toast(downloadedMessage(done, 'Hand-off file downloaded. It carries the 42 CFR Part 2 notice.'), 'ok');
     } });
