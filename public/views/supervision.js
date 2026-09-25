@@ -35,7 +35,14 @@ route('supervision', async (r) => {
         { label: 'Client', render: x => x.client_code || '—' },
         { label: 'What', render: x => x.kind === 'readmission' ? h('span', { 'data-readmission': '1' }, badge('Re-admission', 'warn'), ' ', h('a', { href: `#/client/${x.client_id}` }, 'Took a discharged client onto their caseload')) : x.note_id ? h('a', { href: `#/notes/${x.note_id}` }, 'One note') : 'Note list' },
         { label: 'Reason given', render: x => h('div', { style: { whiteSpace: 'pre-wrap' } }, x.reason) },
-        { label: '', render: x => h('button', { class: 'btn sm primary', 'data-ack-breakglass': x.id, onClick: (e) => { e.stopPropagation(); ack(x); } }, 'Acknowledge') },
+        { label: '', render: x => h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm primary', 'data-ack-breakglass': x.id, onClick: (e) => { e.stopPropagation(); ack(x); } }, 'Acknowledge'),
+          // Not justified: acknowledged all the same, and a draft goes to the incident register (a possible breach).
+          h('button', { class: 'btn sm danger', 'data-concern-breakglass': x.id, onClick: async (e) => {
+            e.stopPropagation();
+            const note = await confirmDialog('Flag a concern', 'What is wrong with this access? It is acknowledged, and a draft incident opens in the privacy incident register for a breach determination.', { danger: true, okText: 'Flag and open incident', requireReason: true, minLength: 10 });
+            if (!note) return;
+            try { await post(`/api/supervision/breakglass/${x.id}/ack`, { concern: true, note }); toast('Flagged — a draft incident is open under Privacy & Part 2', 'ok'); refresh(); } catch (err) { toast(err.message, 'error'); }
+          } }, 'Flag a concern')) },
       ], g.rows, { rowLabel: (x) => `Break-glass by ${x.user_name} for ${x.client_code || 'a client'}` })
         : emptyState('Nothing waiting', 'Emergency accesses and re-admissions from outside a caseload appear here until a supervisor or privacy officer acknowledges them.')));
     return h('div', {}, pageHead('Supervision'), tabs, page);

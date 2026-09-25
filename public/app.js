@@ -1102,6 +1102,7 @@ export const NAV = [
   { name: 'budget', label: 'Funding & spending', ico: '$', perm: 'budget:read', help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
   { name: 'documents', label: 'Policies & contracts', ico: '📋', perm: 'documents:read', help: 'County policies, procedures and signed contracts, searchable by title and category.' },
   { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
+  { name: 'compliance', label: 'Privacy & Part 2', ico: '⚖', perm: ['consents:read', 'complaints:read', 'incidents:read', 'settings:manage'], help: '42 CFR Part 2: the patient notice and who has not been given it, the privacy complaint log, and the incident and breach register with its 60-day notification clock.' },
   { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
   // A supervisor holds assignments:manage (moving a caseload when someone leaves lives on this page) but not
   // users:manage; gating the whole page on the latter locked them out of a feature built for them.

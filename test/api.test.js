@@ -158,7 +158,7 @@ test('resources and referrals', async () => {
   const noConsent = await nav.post('/api/referrals', { client_id: clientId, resource_id: res.data.id, referred_at: '2026-09-03T09:00:00Z', urgency: 'urgent', warm_handoff: true });
   assert.equal(noConsent.status, 400, 'a warm handoff without consent must be refused');
   assert.match(noConsent.data.error, /consent/i);
-  const consent = await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'MAT referral', signed_at: '2026-09-01', scope: 'Referral summary and MAT status', expires_at: '2027-09-01', signed_on_paper: true, redisclosure_notice_given: true });
+  const consent = await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'MAT referral', signed_at: '2026-09-01', scope: 'Referral summary and MAT status', expires_at: '2027-09-01', signed_on_paper: true, redisclosure_notice_given: true, revocation_right_given: true, refusal_consequences_given: true });
   assert.equal(consent.status, 201); referralConsentId = consent.data.id;
   const ref = await nav.post('/api/referrals', { client_id: clientId, resource_id: res.data.id, referred_at: '2026-09-03T09:00:00Z', urgency: 'urgent', warm_handoff: true, consent_id: referralConsentId });
   assert.equal(ref.status, 201);
@@ -211,7 +211,7 @@ test('consents and disclosure accounting (42 CFR Part 2)', async () => {
   // Recipient and purpose alone are not a Part 2 consent (§2.31): scope, an expiry, evidence of signature and
   // the redisclosure notice are required too.
   assert.equal((await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'Treatment coordination', signed_at: '2026-09-01', expires_at: '2027-09-01' })).status, 400);
-  const c = await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'Treatment coordination', signed_at: '2026-09-01', scope: 'Referral summary and MAT status', expires_at: '2027-09-01', signed_on_paper: true, redisclosure_notice_given: true });
+  const c = await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'Treatment coordination', signed_at: '2026-09-01', scope: 'Referral summary and MAT status', expires_at: '2027-09-01', signed_on_paper: true, redisclosure_notice_given: true, revocation_right_given: true, refusal_consequences_given: true });
   assert.equal(c.status, 201);
   assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { disclosed_to: 'County OTP', purpose: 'coordination', info_disclosed: 'referral summary', disclosed_at: '2026-09-03T10:00:00Z' })).status, 400);
   assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { consent_id: c.data.id, disclosed_to: 'County OTP', purpose: 'coordination', info_disclosed: 'referral summary', disclosed_at: '2026-09-03T10:00:00Z' })).status, 201);
@@ -659,7 +659,7 @@ test('reports, exports, and audit chain', async () => {
   assert.ok(!cl.data.includes('Jane')); // finance lacks export:identified → de-identified
   // An identified export is a disclosure: it has to say to whom and why.
   assert.equal((await admin.get('/api/reports/export/clients?identified=1')).status, 400);
-  const cl2 = await admin.get('/api/reports/export/clients?identified=1&recipient=County%20auditor&purpose=Annual%20audit'); assert.ok(cl2.data.includes('Jane'));
+  const cl2 = await admin.get('/api/reports/export/clients?identified=1&basis=audit_evaluation&recipient=County%20auditor&purpose=Annual%20audit'); assert.ok(cl2.data.includes('Jane'));
   const a = await admin.get('/api/admin/audit?action=note.'); assert.ok(a.data.total > 0);
   assert.equal((await nav.get('/api/admin/audit')).status, 403);
   const v = await admin.get('/api/admin/audit/verify'); assert.equal(v.data.ok, true);

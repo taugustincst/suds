@@ -18,7 +18,7 @@ before(async () => {
   nav2 = H.client(); await nav2.login('idem_nav2', 'StaffPassw0rd!x');
   clientId = (await nav.post('/api/clients', { first_name: 'Idem', last_name: 'Potent' })).data.id;
   resourceId = (await nav.post('/api/resources', { name: 'Retry Clinic', category: 'mat_otp' })).data.id;
-  consentId = (await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'Retry Clinic', purpose: 'MAT referral', signed_at: '2026-09-01', scope: 'Referral summary', expires_at: '2027-09-01', signed_on_paper: true, redisclosure_notice_given: true })).data.id;
+  consentId = (await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'Retry Clinic', purpose: 'MAT referral', signed_at: '2026-09-01', scope: 'Referral summary', expires_at: '2027-09-01', signed_on_paper: true, redisclosure_notice_given: true, revocation_right_given: true, refusal_consequences_given: true })).data.id;
 });
 after(async () => { await H.stop(); });
 

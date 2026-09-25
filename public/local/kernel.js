@@ -7103,6 +7103,9 @@ CREATE TABLE IF NOT EXISTS notes (
   intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL,
   call_id TEXT REFERENCES calls(id) ON DELETE SET NULL,
   part2_protected INTEGER NOT NULL DEFAULT 1,
+  -- A SUD counseling note (42 CFR \xA72.11, 2024 rule): a clinician's notes analysing a counselling session,
+  -- kept apart from the rest of the record. Disclosed only under a consent given for counseling notes alone.
+  counseling_note INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   deleted_at TEXT
@@ -7139,6 +7142,16 @@ CREATE TABLE IF NOT EXISTS consents (
   signed_on_paper INTEGER NOT NULL DEFAULT 0,
   -- The client was told that what is disclosed under this consent may not be redisclosed (\xA72.32).
   redisclosure_notice_given INTEGER NOT NULL DEFAULT 0,
+  -- The rest of the 42 CFR \xA72.31 (2024 rule) elements (migration 29): who may make the disclosure, who
+  -- signed when it was not the patient (a parent, guardian or personal representative, \xA72.14/\xA72.15; the
+  -- name is PHI), and that the consent stated the right to revoke and the consequences of refusing to sign.
+  -- rule_version is '2024' for a consent recorded against that element list; NULL is an earlier record.
+  discloser TEXT,
+  signer_relationship TEXT,
+  signer_name_enc TEXT,
+  revocation_right_given INTEGER NOT NULL DEFAULT 0,
+  refusal_consequences_given INTEGER NOT NULL DEFAULT 0,
+  rule_version TEXT,
   revoked_by TEXT REFERENCES users(id),
   created_by TEXT NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -7147,6 +7160,35 @@ CREATE TABLE IF NOT EXISTS consents (
 CREATE INDEX IF NOT EXISTS idx_consents_client ON consents(client_id);
 CREATE INDEX IF NOT EXISTS idx_consents_updated ON consents(updated_at);
 CREATE INDEX IF NOT EXISTS idx_consents_client ON consents(client_id);
+
+-- Court orders authorising disclosure under 42 CFR Part 2 subpart E (\xA7\xA72.61-2.67). A subpoena alone never
+-- authorises disclosure of a Part 2 record; an order recorded here is what the 'court_order' basis, and any
+-- disclosure for use in a proceeding against the patient, must point at (server/disclosure.js). Every
+-- descriptive field names the patient's legal matter, so it is encrypted.
+CREATE TABLE IF NOT EXISTS court_orders (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  order_type TEXT NOT NULL CHECK (order_type IN ('noncriminal_2_64','criminal_patient_2_65','program_investigation_2_66','undercover_2_67')),
+  court_enc TEXT NOT NULL,
+  case_ref_enc TEXT,
+  issued_at TEXT NOT NULL,
+  expires_at TEXT,
+  recipient_enc TEXT,
+  purpose_enc TEXT NOT NULL,
+  scope_enc TEXT NOT NULL,             -- what the order permits: limited to the parts of the record essential to its purpose (\xA72.64(e))
+  findings_recorded INTEGER NOT NULL DEFAULT 0,       -- the order states the good-cause findings (\xA72.64(d))
+  notice_requirement_met INTEGER NOT NULL DEFAULT 0,  -- the patient/program had the notice and chance to respond the section requires
+  covers_counseling_notes INTEGER NOT NULL DEFAULT 0,
+  document_ref TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','vacated')),
+  vacated_at TEXT,
+  vacated_reason TEXT,
+  recorded_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_court_orders_client ON court_orders(client_id);
+CREATE INDEX IF NOT EXISTS idx_court_orders_updated ON court_orders(updated_at);
 
 CREATE TABLE IF NOT EXISTS disclosures (
   id TEXT PRIMARY KEY,
@@ -7163,6 +7205,13 @@ CREATE TABLE IF NOT EXISTS disclosures (
   justification_enc TEXT,
   source TEXT,                         -- referral, export, manual: what caused the disclosure to be recorded
   source_ref TEXT,
+  -- Migration 29: the subpart E order relied on, whether the information is for use in a proceeding
+  -- against the patient (\xA72.12(d)), whether it includes SUD counseling notes (\xA72.31(b)), and which
+  -- wording of the \xA72.32 notice went with it.
+  court_order_id TEXT REFERENCES court_orders(id) ON DELETE SET NULL,
+  legal_proceeding INTEGER NOT NULL DEFAULT 0,
+  counseling_notes INTEGER NOT NULL DEFAULT 0,
+  notice_version TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -7448,6 +7497,93 @@ CREATE TABLE IF NOT EXISTS option_overrides (
   UNIQUE (list_key, code)
 );
 CREATE INDEX IF NOT EXISTS idx_option_overrides_updated ON option_overrides(updated_at);
+
+-- 42 CFR \xA72.22 (2024 rule): each patient is given the program's notice of privacy practices. One row per
+-- time it was given \u2014 when, how, by whom, which version of the notice, and whether the patient signed an
+-- acknowledgement (or declined to). The notice text itself is a setting (Privacy & Part 2 page).
+CREATE TABLE IF NOT EXISTS part2_notices (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  given_at TEXT NOT NULL,
+  method TEXT NOT NULL CHECK (method IN ('in_person_paper','electronic','mail','verbal_with_copy')),
+  notice_version TEXT,
+  acknowledged INTEGER NOT NULL DEFAULT 0,
+  ack_refused INTEGER NOT NULL DEFAULT 0,
+  notes_enc TEXT,
+  given_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_part2_notices_client ON part2_notices(client_id);
+CREATE INDEX IF NOT EXISTS idx_part2_notices_updated ON part2_notices(updated_at);
+
+-- Privacy complaints (42 CFR \xA72.4; HIPAA \xA7164.530(d)): anyone may complain to the program or to HHS, and
+-- nobody may be retaliated against for it. client_id is null for an anonymous complaint or one from
+-- someone who is not a client. Server-side only (a supervisor's register), not synchronised.
+CREATE TABLE IF NOT EXISTS complaints (
+  id TEXT PRIMARY KEY,
+  client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,
+  received_at TEXT NOT NULL,
+  channel TEXT NOT NULL DEFAULT 'in_person' CHECK (channel IN ('in_person','phone','mail','email','web','other')),
+  complainant TEXT NOT NULL DEFAULT 'client' CHECK (complainant IN ('client','representative','staff','anonymous','other')),
+  summary_enc TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','investigating','resolved','closed')),
+  resolution_enc TEXT,
+  resolved_at TEXT,
+  hhs_referral_given INTEGER NOT NULL DEFAULT 0,      -- told they may also complain to the HHS Secretary (OCR)
+  retaliation_reviewed INTEGER NOT NULL DEFAULT 0,    -- someone checked no adverse action followed the complaint
+  handled_by TEXT REFERENCES users(id),
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status, received_at);
+CREATE INDEX IF NOT EXISTS idx_complaints_client ON complaints(client_id);
+
+-- Privacy / security incident register. The 2024 Part 2 rule applies the HIPAA Breach Notification Rule
+-- (45 CFR \xA7\xA7164.400-414) to Part 2 records: a breach is presumed unless a four-factor risk assessment shows
+-- a low probability of compromise, and notice is due without unreasonable delay and within 60 days of
+-- discovery. Deadlines are computed from discovered_at (server/incidents.js). Server-side only.
+CREATE TABLE IF NOT EXISTS privacy_incidents (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,                 -- a short label with no client information in it
+  discovered_at TEXT NOT NULL,
+  occurred_at TEXT,
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','audit_chain','breakglass','mass_export')),
+  source_ref TEXT,
+  description_enc TEXT,
+  part2_records INTEGER NOT NULL DEFAULT 1,
+  affected_count INTEGER NOT NULL DEFAULT 0,
+  max_in_one_state INTEGER NOT NULL DEFAULT 0,
+  risk_nature_enc TEXT,                -- factor 1: nature and extent of the information, likelihood of re-identification
+  risk_recipient_enc TEXT,             -- factor 2: the unauthorised person who used it or to whom it went
+  risk_acquired_enc TEXT,              -- factor 3: whether it was actually acquired or viewed
+  risk_mitigation_enc TEXT,            -- factor 4: the extent to which the risk has been mitigated
+  determination TEXT NOT NULL DEFAULT 'pending' CHECK (determination IN ('pending','breach','not_breach')),
+  determination_reason_enc TEXT,
+  determined_by TEXT REFERENCES users(id),
+  determined_at TEXT,
+  law_enforcement_delay_until TEXT,    -- \xA7164.412: a law-enforcement request to delay notice
+  individuals_notified_at TEXT,
+  hhs_notified_at TEXT,
+  media_notified_at TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
+  closed_at TEXT,
+  reported_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_privacy_incidents_status ON privacy_incidents(status, discovered_at);
+CREATE TABLE IF NOT EXISTS privacy_incident_clients (
+  id TEXT PRIMARY KEY,
+  incident_id TEXT NOT NULL REFERENCES privacy_incidents(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  notified_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (incident_id, client_id)
+);
+CREATE INDEX IF NOT EXISTS idx_privacy_incident_clients_client ON privacy_incident_clients(client_id);
 `;
   }
 });
@@ -8220,6 +8356,36 @@ var require_db = __commonJS({
         const m = schemaText.match(/CREATE TABLE IF NOT EXISTS option_overrides \([\s\S]*?\n\);/);
         if (m) d.exec(m[0]);
         for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_option_overrides/.test(line.trim())) d.exec(line.trim());
+      },
+      // 29: 42 CFR Part 2 (2024 final rule). Consents record the rest of the §2.31 elements (who may disclose,
+      //     who signed if not the patient, the revocation and refusal statements, which rule version they were
+      //     taken against); subpart E court orders get a table that disclosures point at; a disclosure says
+      //     whether it is for a proceeding against the patient, includes SUD counseling notes, and which §2.32
+      //     notice went with it; notes can be SUD counseling notes (§2.11); the §2.22 patient notice is
+      //     recorded per client; and a complaint log (§2.4) and a breach/incident register. Existing consents
+      //     keep rule_version NULL (recorded before the 2024 element list) and are shown as such.
+      (d) => {
+        const schemaText = safeSchema();
+        for (const [c, def] of [
+          ["discloser", "TEXT"],
+          ["signer_relationship", "TEXT"],
+          ["signer_name_enc", "TEXT"],
+          ["revocation_right_given", "INTEGER NOT NULL DEFAULT 0"],
+          ["refusal_consequences_given", "INTEGER NOT NULL DEFAULT 0"],
+          ["rule_version", "TEXT"]
+        ]) addColumn(d, "consents", c, def);
+        addColumn(d, "notes", "counseling_note", "INTEGER NOT NULL DEFAULT 0");
+        for (const t of ["court_orders", "part2_notices", "complaints", "privacy_incidents", "privacy_incident_clients"]) {
+          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+          if (m) d.exec(m[0]);
+        }
+        for (const [c, def] of [
+          ["court_order_id", "TEXT REFERENCES court_orders(id) ON DELETE SET NULL"],
+          ["legal_proceeding", "INTEGER NOT NULL DEFAULT 0"],
+          ["counseling_notes", "INTEGER NOT NULL DEFAULT 0"],
+          ["notice_version", "TEXT"]
+        ]) addColumn(d, "disclosures", c, def);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_(court_orders|part2_notices|complaints|privacy_incident)/.test(line.trim())) d.exec(line.trim());
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -8597,6 +8763,90 @@ var require_http = __commonJS({
   }
 });
 
+// server/incidents.js
+var require_incidents = __commonJS({
+  "server/incidents.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { uuid: uuid2, encrypt: encrypt3 } = require_crypto();
+    var DAY = 864e5;
+    var NOTICE_DAYS = 60;
+    var HHS_IMMEDIATE_AT = 500;
+    var MEDIA_OVER = 500;
+    var WARN_DAYS = 14;
+    var addDays = (date, n) => new Date(Date.parse(String(date).slice(0, 10) + "T00:00:00Z") + n * DAY).toISOString().slice(0, 10);
+    var today = () => (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    function obligations(i) {
+      const deadline = addDays(i.discovered_at, NOTICE_DAYS);
+      const due = i.law_enforcement_delay_until && i.law_enforcement_delay_until > deadline ? i.law_enforcement_delay_until.slice(0, 10) : deadline;
+      const breach = i.determination === "breach";
+      const live = i.determination !== "not_breach";
+      const t = today();
+      const ob = (required, when, doneAt) => ({ required, due: required ? when : null, done: !!doneAt, done_at: doneAt || null, overdue: required && !doneAt && when < t });
+      const year = Number(String(i.discovered_at).slice(0, 4));
+      const hhsDue = (i.affected_count || 0) >= HHS_IMMEDIATE_AT ? due : addDays(`${year}-12-31`, NOTICE_DAYS);
+      const out2 = {
+        deadline: due,
+        days_left: Math.round((Date.parse(due) - Date.parse(t)) / DAY),
+        determination_overdue: i.determination === "pending" && due < t,
+        individuals: ob(breach, due, i.individuals_notified_at),
+        hhs: ob(breach, hhsDue, i.hhs_notified_at),
+        hhs_route: (i.affected_count || 0) >= HHS_IMMEDIATE_AT ? "contemporaneous" : "annual_log",
+        media: ob(breach && (i.max_in_one_state || 0) > MEDIA_OVER, due, i.media_notified_at)
+      };
+      const open2 = [out2.individuals, out2.hhs, out2.media].filter((o) => o.required && !o.done);
+      out2.attention = i.status === "open" && live && (i.determination === "pending" || open2.length > 0);
+      out2.next_due = i.determination === "pending" ? due : open2.map((o) => o.due).sort()[0] || null;
+      out2.warn = out2.attention && out2.next_due && Math.round((Date.parse(out2.next_due) - Date.parse(t)) / DAY) <= WARN_DAYS;
+      out2.overdue = out2.determination_overdue || open2.some((o) => o.overdue);
+      return out2;
+    }
+    function draft({ source, sourceRef = null, title, description = "", user = null }) {
+      const existing = db3.one(`SELECT id FROM privacy_incidents WHERE source=? AND COALESCE(source_ref,'')=? AND status='open' AND determination='pending'`, source, sourceRef || "");
+      if (existing) return existing.id;
+      const id = uuid2();
+      db3.run(
+        `INSERT INTO privacy_incidents(id,title,discovered_at,source,source_ref,description_enc,reported_by) VALUES(?,?,?,?,?,?,?)`,
+        id,
+        title,
+        today(),
+        source,
+        sourceRef,
+        description ? encrypt3(description) : null,
+        user && user.id && !String(user.id).startsWith("system") ? user.id : null
+      );
+      audit3.log({ user: user || { username: "system" }, action: "incident.draft", entity: "privacy_incident", entityId: id, details: { source } });
+      return id;
+    }
+    function massExportThreshold() {
+      const v = Number(db3.getSetting("mass_export_threshold", ""));
+      return Number.isFinite(v) && v > 0 ? v : 500;
+    }
+    function maybeMassExport({ clients, kind, user }) {
+      if (clients < massExportThreshold()) return null;
+      return draft({
+        source: "mass_export",
+        sourceRef: `${kind}:${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}:${user.id}`,
+        title: `Identified export of ${clients} clients (${kind})`,
+        description: `An identified export (${kind}) naming ${clients} clients was made by ${user.display_name || user.username}. Confirm it was authorised and went where it was recorded as going; if so, determine "not a breach" with that reason.`,
+        user
+      });
+    }
+    function chainFailure(r, user = null) {
+      return draft({
+        source: "audit_chain",
+        sourceRef: "audit_log",
+        title: "Audit log failed its integrity check",
+        description: `The audit log's hash chain did not verify (${r.truncated ? `truncated: ${r.reason || "rows missing from the end"}` : `first bad entry ${r.firstBadId}`}). Establish whether audit entries were altered or removed, and whether that concealed access to client records.`,
+        user
+      });
+    }
+    module.exports = { obligations, draft, chainFailure, maybeMassExport, massExportThreshold, NOTICE_DAYS, HHS_IMMEDIATE_AT, MEDIA_OVER, WARN_DAYS };
+  }
+});
+
 // server/audit.js
 var require_audit = __commonJS({
   "server/audit.js"(exports, module) {
@@ -8808,6 +9058,11 @@ var require_audit = __commonJS({
       console.error(`[suds] AUDIT CHAIN BROKEN ${r.truncated ? `(truncated: ${r.reason})` : `at entry ${r.firstBadId}`} \u2014 investigate immediately`);
       log({ user: { username: "system" }, action: "audit.verify.failed", success: false, details: { first_bad_id: r.firstBadId, checked: r.checked, truncated: r.truncated || void 0, reason: r.reason, mode: r.mode } });
       db3.setSetting("audit_verify_failed_at", db3.now());
+      try {
+        require_incidents().chainFailure(r);
+      } catch (e) {
+        console.error("[suds] could not open an incident for the audit failure:", e.message);
+      }
       return r;
     }
     module.exports = { log, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };
@@ -8946,7 +9201,10 @@ var require_auth = __commonJS({
         "documents:write",
         "disclosures:override",
         "clients:legal-hold",
-        "patient-requests:*"
+        "patient-requests:*",
+        "complaints:*",
+        "incidents:*",
+        "court-orders:*"
       ],
       supervisor: [
         "clients:read",
@@ -8986,7 +9244,10 @@ var require_auth = __commonJS({
         "documents:read",
         "documents:write",
         "disclosures:override",
-        "patient-requests:*"
+        "patient-requests:*",
+        "complaints:*",
+        "incidents:*",
+        "court-orders:*"
       ],
       // Front-line staff hold export:read so the Export buttons on their own screens work; without
       // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
@@ -9014,7 +9275,8 @@ var require_auth = __commonJS({
         "overdose:*",
         "documents:read",
         "patient-requests:*",
-        "export:read"
+        "export:read",
+        "court-orders:read"
       ],
       navigator: [
         "clients:read",
@@ -9040,7 +9302,8 @@ var require_auth = __commonJS({
         "overdose:*",
         "documents:read",
         "patient-requests:*",
-        "export:read"
+        "export:read",
+        "court-orders:read"
       ],
       // finance sees money, not people: export:read without export:identified means every export it can run
       // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
@@ -9421,7 +9684,10 @@ var require_sync_tables = __commonJS({
         { name: "calls", enc: ["contact_name_enc", "phone_enc", "summary_enc", "purpose_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "calls:write", parent: ["clients", "client_id"] },
         { name: "time_entries", enc: [], scope: "client-or-null", clientCol: "client_id", writePerm: "time:write", parent: ["clients", "client_id"] },
         // A referral may cite the consent it was made under, so consents come first.
-        { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc", "signer_name_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
+        { name: "court_orders", enc: ["court_enc", "case_ref_enc", "recipient_enc", "purpose_enc", "scope_enc"], scope: "client", clientCol: "client_id", writePerm: "court-orders:write", parent: ["clients", "client_id"] },
+        { name: "part2_notices", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         { name: "referrals", enc: ["outcome_enc", "barrier_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
         // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
         { name: "tasks", enc: ["title_enc", "description_enc"], legacy: { description: "description_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "tasks:write", parent: ["clients", "client_id"] },
@@ -9469,7 +9735,8 @@ var require_sync_tables = __commonJS({
       ],
       // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
       // emergency access, and a device has no supervisor to review it.
-      server_only: ["breakglass_events"],
+      // complaints and the privacy incident register are the privacy officer's, kept at the office likewise.
+      server_only: ["breakglass_events", "complaints", "privacy_incidents", "privacy_incident_clients"],
       // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
       // the answers to retried POSTs made against that database (server/idempotency.js). A device's retry is
       // answered by the device; the office never sees the key, only the rows the request created.
@@ -9520,7 +9787,13 @@ var require_sync_tables = __commonJS({
         ["users", "supervisor_id"],
         ["devices", "user_id"],
         ["supply_stock", "updated_by"],
-        ["option_overrides", "updated_by"]
+        ["option_overrides", "updated_by"],
+        ["court_orders", "recorded_by"],
+        ["part2_notices", "given_by"],
+        ["complaints", "handled_by"],
+        ["complaints", "created_by"],
+        ["privacy_incidents", "determined_by"],
+        ["privacy_incidents", "reported_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -9628,7 +9901,22 @@ var require_constants = __commonJS({
       // 'handoff' is the shift hand-off note (what the next worker on needs to know), 'safety_plan' a structured
       // safety plan (see SECTIONS in public/views/notes.js); both are ordinary notes as far as access rules go.
       NOTE_FORMATS: ["narrative", "SOAP", "DAP", "BIRP", "GIRP", "intake", "progress", "discharge", "contact", "collateral", "crisis", "supervision", "handoff", "safety_plan"],
-      CONSENT_TYPES: ["part2_disclosure", "roi", "treatment", "telehealth", "contact_preferences", "research", "photo_media"],
+      // part2_* are 42 CFR Part 2 consents (§2.31): every element is required of them. part2_tpo is the 2024
+      // rule's single consent for all future treatment, payment and health care operations; part2_counseling_notes
+      // is the separate consent SUD counseling notes need (§2.31(b)); part2_proceedings is the stand-alone consent
+      // for use in a civil, criminal, administrative or legislative proceeding (§2.31(d)), which may not be
+      // combined with any other. 'roi' is a general release, which Part 2 says is not sufficient on its own.
+      CONSENT_TYPES: ["part2_disclosure", "part2_tpo", "part2_counseling_notes", "part2_proceedings", "roi", "treatment", "telehealth", "contact_preferences", "research", "photo_media"],
+      PART2_CONSENT_TYPES: ["part2_disclosure", "part2_tpo", "part2_counseling_notes", "part2_proceedings"],
+      CONSENT_SIGNERS: ["patient", "parent_or_guardian", "personal_representative", "court_appointed_guardian"],
+      COURT_ORDER_TYPES: ["noncriminal_2_64", "criminal_patient_2_65", "program_investigation_2_66", "undercover_2_67"],
+      PART2_NOTICE_METHODS: ["in_person_paper", "electronic", "mail", "verbal_with_copy"],
+      // 42 CFR §2.32(a)(1) as amended by the 2024 final rule (89 FR 12472): the notice that must accompany
+      // every disclosure made with the patient's written consent. PART2_NOTICE_SHORT is §2.32(a)(2)'s
+      // abbreviated form, used as the label on screens and printouts.
+      PART2_NOTICE_VERSION: "2024",
+      PART2_REDISCLOSURE_NOTICE: "This record which has been disclosed to you is protected by Federal confidentiality rules (42 CFR part 2). These rules prohibit you from using or disclosing this record, or testimony that describes the information contained in this record, in any civil, criminal, administrative, or legislative proceedings by any Federal, State, or local authority, against the patient, unless authorized by the consent of the patient, except as provided at 42 CFR 2.12(c)(5) or as authorized by a court in accordance with 42 CFR 2.64 or 2.65. In addition, the Federal rules prohibit you from making any other use or disclosure of this record unless at least one of the following applies: (i) Further use or disclosure is expressly permitted by the written consent of the individual whose information is being disclosed in this record or as otherwise permitted by 42 CFR part 2. (ii) You are a covered entity or business associate and have received the record for treatment, payment, or health care operations, or (iii) You have received the record from a covered entity or business associate as permitted by 45 CFR part 164, subparts A and E. A general authorization for the release of medical or other information is NOT sufficient to meet the required elements of written consent to further use or redisclose the record (see 42 CFR 2.31).",
+      PART2_NOTICE_SHORT: "42 CFR part 2 prohibits unauthorized use or disclosure of these records.",
       SUBSTANCES: ["opioids_fentanyl", "opioids_heroin", "opioids_rx", "alcohol", "methamphetamine", "cocaine", "benzodiazepines", "cannabis", "synthetic_cannabinoids", "xylazine", "nicotine", "other", "unknown"],
       SERVICE_TAGS: ["detox", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_buprenorphine", "mat_methadone", "mat_naltrexone", "medication_management", "individual_counseling", "group_counseling", "family_program", "peer_support", "case_management", "mental_health", "trauma_informed", "co_occurring", "medical_care", "harm_reduction", "naloxone", "syringe_services", "housing", "sober_living", "employment", "legal_help", "transportation", "childcare", "telehealth", "walk_in", "same_day_intake", "crisis_24_7", "aftercare", "faith_based", "spanish_speaking"],
       POPULATIONS: ["adults", "adolescents", "women", "men", "pregnant_parenting", "families", "veterans", "lgbtq", "justice_involved", "unhoused", "older_adults", "native_american", "spanish_speakers", "deaf_hard_of_hearing"],
@@ -10809,8 +11097,8 @@ var require_demo = __commonJS({
     var M = require_clients_model();
     var audit3 = require_audit();
     var DEMO_PREFIX = "DEMO-";
-    var TABLES = ["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "episodes", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_stock"];
-    var SYNCED = /* @__PURE__ */ new Set(["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "episodes", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_stock"]);
+    var TABLES = ["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "part2_notices", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "episodes", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_stock"];
+    var SYNCED = /* @__PURE__ */ new Set(["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "part2_notices", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "episodes", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_stock"]);
     function rng(seed2) {
       let a = seed2 >>> 0;
       return () => {
@@ -11380,7 +11668,8 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
             counts.notes++;
           }
           const consentId = track("consents", uuid2());
-          db3.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,?,?)`, consentId, c.id, "part2_disclosure", encrypt3("County Opioid Treatment Program"), encrypt3("Treatment coordination and referral"), encrypt3("Referral summary, diagnosis, MAT status"), day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), "Consent binder, tab " + (i + 1), c.worker);
+          db3.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, "part2_disclosure", encrypt3("County Opioid Treatment Program"), encrypt3("Treatment coordination and referral"), encrypt3("Referral summary, diagnosis, MAT status"), day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), "Consent binder, tab " + (i + 1), c.worker);
+          if (i % 4 !== 1) db3.run(`INSERT INTO part2_notices(id,client_id,given_at,method,notice_version,acknowledged,given_by) VALUES(?,?,?,?,?,?,?)`, track("part2_notices", uuid2()), c.id, day(60 + i), "in_person_paper", "1", 1, c.worker);
           if (i % 3 === 0) db3.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)`, track("consents", uuid2()), c.id, "roi", encrypt3("Family member (mother)"), encrypt3("Care coordination with family"), encrypt3("Appointment dates and general progress"), day(50 + i), day(-315), c.worker);
           if (i % 2 === 0) db3.run(`INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,source) VALUES(?,?,?,?,?,?,?,?,?,?,'manual')`, track("disclosures", uuid2()), c.id, consentId, encrypt3("County Opioid Treatment Program"), encrypt3("Referral for MAT intake"), encrypt3("Referral summary and MAT status"), "fax", d(40 + i), c.worker, "consent");
           const EXP = [["transportation", "Metro Transit", "Bus pass (monthly)", 45], ["client_assistance", "Walgreens", "Hygiene kit and phone charger", 32.18], ["housing_assistance", "Motel 6", "Emergency motel, 3 nights", 267], ["ids_documents", "DMV", "State ID fee", 28], ["client_assistance", "Uber", "Ride to intake appointment", 18.75], ["phones_communication", "Metro PCS", "Prepaid phone (recovery contact)", 40], ["naloxone_supplies", "Harm Reduction Coalition", "Naloxone kits (5)", 150]];
@@ -12824,6 +13113,7 @@ var require_admin = __commonJS({
       r.get("/api/admin/audit/verify", auth3.requireAuth, auth3.requirePerm("audit:read"), async (ctx) => {
         const res = await audit3.verifyChainAsync();
         audit3.log({ user: ctx.user, action: "audit.verify", ip: ctx.ip, details: res });
+        if (!res.ok) require_incidents().chainFailure(res, ctx.user);
         return res;
       });
       r.get("/api/admin/api-keys", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), () => ({ keys: db3.all(`SELECT k.id,k.name,k.prefix,k.scopes,k.created_at,k.last_used_at,k.revoked_at,u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by ORDER BY k.created_at DESC`) }));
@@ -13564,6 +13854,634 @@ var require_client_filters = __commonJS({
   }
 });
 
+// server/disclosure.js
+var require_disclosure = __commonJS({
+  "server/disclosure.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var { badRequest, forbidden } = require_http();
+    var BASES = ["consent", "court_order", "medical_emergency", "qsoa", "audit_evaluation", "research", "crime_on_premises", "child_abuse_report", "other"];
+    var NEEDS_JUSTIFICATION = ["other", "medical_emergency"];
+    var MIN_JUSTIFICATION = 20;
+    var EXPORT_BASES = ["consent", "audit_evaluation", "research", "qsoa", "internal"];
+    var RESTRICTION_EXEMPT = ["court_order", "medical_emergency", "child_abuse_report", "crime_on_premises"];
+    function part2Program() {
+      return db3.getSetting("part2_program", "1") !== "0";
+    }
+    function notice() {
+      return { version: C.PART2_NOTICE_VERSION, text: C.PART2_REDISCLOSURE_NOTICE, short: C.PART2_NOTICE_SHORT };
+    }
+    function disclosingConsentTypes() {
+      return part2Program() ? C.PART2_CONSENT_TYPES : [...C.PART2_CONSENT_TYPES, "roi", "research"];
+    }
+    function activeConsent(clientId, consentId) {
+      if (!consentId) return null;
+      return db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
+    }
+    function courtOrderProblems(o) {
+      const out2 = [];
+      if (o.status !== "active") out2.push("it has been vacated");
+      if (o.expires_at && o.expires_at < (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) out2.push("it has expired");
+      if (!o.findings_recorded) out2.push("it does not record the good-cause findings the regulation requires (\xA72.64(d))");
+      if (!o.notice_requirement_met) out2.push("the notice and opportunity to respond the regulation requires was not given");
+      return out2;
+    }
+    function agreedRestrictions(clientId) {
+      return db3.one(`SELECT COUNT(*) n FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled'`, clientId).n;
+    }
+    function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed } = {}) {
+      const b = basis || "consent";
+      if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
+      const proceeding = !!legal_proceeding;
+      const notes = !!counseling_notes;
+      if (proceeding && !["consent", "court_order"].includes(b)) throw badRequest("Information for use in a proceeding against the patient may only be disclosed under a court order issued under 42 CFR \xA72.64/\xA72.65, or the patient's written consent given for that proceeding alone (\xA72.12(d), \xA72.31(d)). A subpoena on its own is not enough.");
+      if (notes && !["consent", "court_order"].includes(b)) throw badRequest("SUD counseling notes may only be disclosed under a consent given for counseling notes alone (\xA72.31(b)), or a court order that expressly covers them.");
+      let consent = null;
+      let order = null;
+      if (b === "consent") {
+        consent = activeConsent(clientId, consent_id);
+        if (!consent) throw badRequest("A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.");
+        if (!disclosingConsentTypes().includes(consent.type)) {
+          throw badRequest(consent.type === "roi" ? "A general release of information is not a 42 CFR Part 2 consent (\xA72.31, \xA72.32). Record a Part 2 consent with every required element, or choose another lawful basis." : `A "${consent.type.replace(/_/g, " ")}" consent does not authorise sharing information. Record a Part 2 consent, or choose another lawful basis.`);
+        }
+        if (proceeding && consent.type !== "part2_proceedings") throw badRequest("Information for use in a proceeding against the patient needs a court order, or a consent given for that proceeding alone (\xA72.31(d)); this consent does not cover it.");
+        if (!proceeding && consent.type === "part2_proceedings") throw badRequest("A consent for use in a legal proceeding cannot be combined with any other purpose (\xA72.31(d)); use it only for the proceeding it names.");
+        if (notes && consent.type !== "part2_counseling_notes") throw badRequest("SUD counseling notes need a separate consent given for counseling notes alone (\xA72.31(b)); a treatment, payment and operations consent or a general Part 2 consent does not cover them.");
+        if (!notes && consent.type === "part2_counseling_notes") throw badRequest('A consent for SUD counseling notes covers counseling notes only (\xA72.31(b)); tick "includes SUD counseling notes", or rely on a different consent for other information.');
+      }
+      if (b === "court_order") {
+        order = court_order_id ? db3.one(`SELECT * FROM court_orders WHERE id=? AND client_id=?`, court_order_id, clientId) : null;
+        if (!order) throw badRequest("A disclosure under a court order must name the order: record it on the client's Consents tab (42 CFR subpart E) and choose it. A subpoena on its own does not authorise disclosing a Part 2 record.");
+        const problems = courtOrderProblems(order);
+        if (problems.length) throw badRequest(`That court order cannot authorise a disclosure: ${problems.join("; ")}.`);
+        if (notes && !order.covers_counseling_notes) throw badRequest("That court order does not expressly cover SUD counseling notes.");
+      }
+      if (!RESTRICTION_EXEMPT.includes(b) && !restriction_reviewed && agreedRestrictions(clientId)) {
+        throw badRequest("This client has an agreed restriction on how their information is shared (see their Requests tab). Check that this disclosure respects it, then confirm.", { restrictionReview: true });
+      }
+      const why = String(justification || "").trim();
+      if (NEEDS_JUSTIFICATION.includes(b) && why.length < MIN_JUSTIFICATION) {
+        throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.`);
+      }
+      if (b === "other" && !require_auth().hasPerm(user, "disclosures:override")) throw forbidden('Only a supervisor or administrator can record a disclosure on an "other" basis');
+      return { basis: b, consent, court_order: order, justification: why || null, legal_proceeding: proceeding, counseling_notes: notes };
+    }
+    function requireExportBasis(clientIds, { basis, restriction_reviewed, legal_proceeding } = {}) {
+      if (legal_proceeding) throw badRequest("Records for use in a legal proceeding against a patient are disclosed one client at a time, under a recorded court order or a proceedings-only consent (Consents tab \u2192 Record a disclosure), never as a bulk export.");
+      if (!basis) throw badRequest(`An identified export must state its lawful basis (basis=${EXPORT_BASES.join("|")}); it is written to the accounting of disclosures for every client in the file`);
+      if (!EXPORT_BASES.includes(basis)) throw badRequest(`"${basis}" is not a basis an identified export can be made under (${EXPORT_BASES.join(", ")})`);
+      if (basis === "consent" && clientIds.length) {
+        const types = disclosingConsentTypes().filter((t) => t !== "part2_proceedings" && t !== "part2_counseling_notes");
+        const covered = new Set(db3.all(`SELECT DISTINCT client_id FROM consents WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) AND type IN (${types.map(() => "?").join(",")})`, ...types).map((r) => r.client_id));
+        const missing = clientIds.filter((id) => !covered.has(id)).length;
+        if (missing) throw badRequest(`${missing} client${missing === 1 ? "" : "s"} in this export ${missing === 1 ? "has" : "have"} no active Part 2 consent. Narrow the export, or state another lawful basis.`, { clientsWithoutConsent: missing });
+      }
+      if (!restriction_reviewed && clientIds.length) {
+        const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
+        const n = clientIds.filter((id) => restricted.has(id)).length;
+        if (n) throw badRequest(`${n} client${n === 1 ? "" : "s"} in this export ${n === 1 ? "has" : "have"} an agreed restriction on how their information is shared. Check the export respects it, then confirm (restriction_reviewed=1).`, { restrictionReview: true, restrictedClients: n });
+      }
+      return basis;
+    }
+    function record({ clientId, consentId = null, courtOrderId = null, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
+      const id = uuid2();
+      const at = disclosedAt || db3.now();
+      const noticeVersion = part2Program() ? C.PART2_NOTICE_VERSION : null;
+      db3.run(
+        `INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,justification_enc,source,source_ref,court_order_id,legal_proceeding,counseling_notes,notice_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        id,
+        clientId,
+        consentId,
+        encrypt3(String(recipient)),
+        encrypt3(String(purpose)),
+        encrypt3(String(what)),
+        method,
+        at,
+        user.id,
+        basis,
+        justification ? encrypt3(String(justification)) : null,
+        source,
+        sourceRef,
+        courtOrderId,
+        legalProceeding ? 1 : 0,
+        counselingNotes ? 1 : 0,
+        noticeVersion
+      );
+      audit3.log({ user, action: "disclosure.record", entity: "disclosure", entityId: id, clientId, ip, details: {
+        basis,
+        source,
+        consent_id: consentId || void 0,
+        court_order_id: courtOrderId || void 0,
+        justified: justification ? true : void 0,
+        legal_proceeding: legalProceeding ? true : void 0,
+        counseling_notes: counselingNotes ? true : void 0,
+        notice: noticeVersion || void 0
+      } });
+      return id;
+    }
+    function present(row) {
+      if (!row) return null;
+      const out2 = { ...row };
+      out2.recipient = row.recipient_enc ? decrypt3(row.recipient_enc) : null;
+      out2.purpose = row.purpose_enc ? decrypt3(row.purpose_enc) : null;
+      out2.what = row.what_enc ? decrypt3(row.what_enc) : null;
+      out2.justification = row.justification_enc ? decrypt3(row.justification_enc) : null;
+      delete out2.recipient_enc;
+      delete out2.purpose_enc;
+      delete out2.what_enc;
+      delete out2.justification_enc;
+      return out2;
+    }
+    function accounting(clientId) {
+      const client = db3.one(`SELECT id, client_code FROM clients WHERE id=?`, clientId);
+      const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name, u.username AS disclosed_by_username, co.order_type AS court_order_type FROM disclosures d JOIN users u ON u.id=d.disclosed_by LEFT JOIN court_orders co ON co.id=d.court_order_id WHERE d.client_id=? ORDER BY d.disclosed_at`, clientId).map(present);
+      const consents = db3.all(`SELECT id, type, recipient_enc, purpose_enc, signed_at, expires_at, expires_event, revoked_at, rule_version FROM consents WHERE client_id=? ORDER BY signed_at`, clientId).map((c) => ({ id: c.id, type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null, signed_at: c.signed_at, expires_at: c.expires_at, expires_event: c.expires_event, revoked_at: c.revoked_at, rule_version: c.rule_version }));
+      return { client_id: client?.id, client_code: client?.client_code, generated_at: db3.now(), part2_program: part2Program(), notice: part2Program() ? notice() : null, disclosures, consents };
+    }
+    module.exports = { BASES, EXPORT_BASES, NEEDS_JUSTIFICATION, MIN_JUSTIFICATION, part2Program, notice, disclosingConsentTypes, activeConsent, courtOrderProblems, agreedRestrictions, requireBasis, requireExportBasis, record, present, accounting };
+  }
+});
+
+// server/routes/consents.js
+var require_consents = __commonJS({
+  "server/routes/consents.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var disclosure = require_disclosure();
+    var M = require_clients_model();
+    var PART2_TYPES = C.PART2_CONSENT_TYPES;
+    function requirePart2Elements(v) {
+      const missing = [];
+      if (!v.discloser) missing.push("who may make the disclosure");
+      if (!v.recipient) missing.push("the recipient (a name, or a class of recipients)");
+      if (!v.purpose) missing.push("the purpose");
+      if (!v.scope) missing.push("what information is covered (scope)");
+      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
+      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
+      if (v.signer_relationship !== "patient" && !v.signer_name) missing.push("the name of the person who signed for the patient");
+      if (!v.revocation_right_given) missing.push("confirmation that the consent states the right to revoke it and how");
+      if (!v.redisclosure_notice_given) missing.push("confirmation that the redisclosure statement was given (\xA72.32)");
+      if (!v.refusal_consequences_given) missing.push("confirmation that the consent states the consequences of refusing to sign");
+      if (missing.length) throw badRequest(`A 42 CFR Part 2 consent must record ${missing.join("; ")}`, { missing });
+    }
+    function presentConsent(c) {
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const active = !c.revoked_at && (!c.expires_at || c.expires_at >= today);
+      return {
+        ...c,
+        recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null,
+        purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null,
+        scope: c.scope_enc ? decrypt3(c.scope_enc) : null,
+        signer_name: c.signer_name_enc ? decrypt3(c.signer_name_enc) : null,
+        recipient_enc: void 0,
+        purpose_enc: void 0,
+        scope_enc: void 0,
+        signer_name_enc: void 0,
+        active,
+        part2: PART2_TYPES.includes(c.type),
+        can_disclose: active && disclosure.disclosingConsentTypes().includes(c.type),
+        // Recorded before the 2024 element list: still in force, but shown so it can be renewed on the new form.
+        legacy_elements: PART2_TYPES.includes(c.type) && c.rule_version !== "2024"
+      };
+    }
+    function presentOrder(o) {
+      return {
+        ...o,
+        court: o.court_enc ? decrypt3(o.court_enc) : null,
+        case_ref: o.case_ref_enc ? decrypt3(o.case_ref_enc) : null,
+        recipient: o.recipient_enc ? decrypt3(o.recipient_enc) : null,
+        purpose: o.purpose_enc ? decrypt3(o.purpose_enc) : null,
+        scope: o.scope_enc ? decrypt3(o.scope_enc) : null,
+        court_enc: void 0,
+        case_ref_enc: void 0,
+        recipient_enc: void 0,
+        purpose_enc: void 0,
+        scope_enc: void 0,
+        problems: disclosure.courtOrderProblems(o)
+      };
+    }
+    module.exports = (r) => {
+      r.get("/api/clients/:id/consents", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write"), (ctx) => {
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const consents = db3.all(`SELECT c.*, u.display_name AS created_by_name FROM consents c JOIN users u ON u.id=c.created_by WHERE client_id=? ORDER BY signed_at DESC`, ctx.params.id).map(presentConsent);
+        const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name FROM disclosures d JOIN users u ON u.id=d.disclosed_by WHERE client_id=? ORDER BY disclosed_at DESC`, ctx.params.id).map(disclosure.present);
+        const orders = auth3.hasPerm(ctx.user, "court-orders:read") ? db3.all(`SELECT * FROM court_orders WHERE client_id=? ORDER BY issued_at DESC`, ctx.params.id).map(presentOrder) : null;
+        const notices = db3.all(`SELECT n.*, u.display_name AS given_by_name FROM part2_notices n JOIN users u ON u.id=n.given_by WHERE n.client_id=? ORDER BY n.given_at DESC`, ctx.params.id).map((n) => ({ ...n, notes: n.notes_enc ? decrypt3(n.notes_enc) : null, notes_enc: void 0 }));
+        audit3.log({ user: ctx.user, action: "consent.list", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { consents: consents.length, disclosures: disclosures.length, court_orders: orders ? orders.length : void 0, notices: notices.length } });
+        return { consents, disclosures, court_orders: orders, notices, restrictions: disclosure.agreedRestrictions(ctx.params.id), part2_program: disclosure.part2Program(), notice: disclosure.notice() };
+      });
+      r.post("/api/clients/:id/consents", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const v = validate(ctx.body, {
+          type: { type: "string", required: true, enum: C.CONSENT_TYPES },
+          recipient: { type: "string", maxLen: 300 },
+          purpose: { type: "string", maxLen: 500 },
+          scope: { type: "string", maxLen: 1e3 },
+          signed_at: { type: "date", required: true },
+          expires_at: { type: "date" },
+          expires_event: { type: "string", maxLen: 200 },
+          document_ref: { type: "string", maxLen: 300 },
+          witness: { type: "string", maxLen: 120 },
+          signed_on_paper: { type: "boolean" },
+          redisclosure_notice_given: { type: "boolean" },
+          discloser: { type: "string", maxLen: 200 },
+          signer_relationship: { type: "string", enum: C.CONSENT_SIGNERS },
+          signer_name: { type: "string", maxLen: 200 },
+          revocation_right_given: { type: "boolean" },
+          refusal_consequences_given: { type: "boolean" }
+        });
+        const part2 = PART2_TYPES.includes(v.type);
+        if (part2) {
+          if (!v.discloser) v.discloser = db3.getSetting("org_name", null) || null;
+          if (!v.signer_relationship) v.signer_relationship = "patient";
+          requirePart2Elements(v);
+          if (v.expires_at && v.expires_at < v.signed_at) throw badRequest("A consent cannot expire before it was signed");
+        }
+        const id = uuid2();
+        db3.run(
+          `INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,expires_event,document_ref,witness,signed_on_paper,redisclosure_notice_given,
+        discloser,signer_relationship,signer_name_enc,revocation_right_given,refusal_consequences_given,rule_version,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          id,
+          ctx.params.id,
+          v.type,
+          v.recipient ? encrypt3(v.recipient) : null,
+          v.purpose ? encrypt3(v.purpose) : null,
+          v.scope ? encrypt3(v.scope) : null,
+          v.signed_at,
+          v.expires_at || null,
+          v.expires_event || null,
+          v.document_ref || null,
+          v.witness || null,
+          v.signed_on_paper ? 1 : 0,
+          v.redisclosure_notice_given ? 1 : 0,
+          v.discloser || null,
+          v.signer_relationship || null,
+          v.signer_name ? encrypt3(v.signer_name) : null,
+          v.revocation_right_given ? 1 : 0,
+          v.refusal_consequences_given ? 1 : 0,
+          part2 ? "2024" : null,
+          ctx.user.id
+        );
+        audit3.log({ user: ctx.user, action: "consent.create", entity: "consent", entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { type: v.type, rule_version: part2 ? "2024" : void 0 } });
+        ctx.status = 201;
+        return { id };
+      });
+      r.post("/api/consents/:id/revoke", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
+        const c = db3.one(`SELECT * FROM consents WHERE id=?`, ctx.params.id);
+        if (!c) throw notFound();
+        auth3.assertClientAccess(ctx, c.client_id);
+        if (c.revoked_at) throw badRequest("This consent has already been revoked");
+        const { reason } = validate(ctx.body, { reason: { type: "string", maxLen: 300 } });
+        const dependent = db3.all(`SELECT id, resource_id FROM referrals WHERE consent_id=? AND status NOT IN ('closed','declined')`, c.id);
+        db3.transaction(() => {
+          db3.run(`UPDATE consents SET revoked_at=?, revoked_reason=?, revoked_by=?, updated_at=? WHERE id=?`, db3.now(), reason || null, ctx.user.id, db3.now(), c.id);
+          for (const ref of dependent) db3.run(`UPDATE referrals SET consent_revoked=1, updated_at=? WHERE id=?`, db3.now(), ref.id);
+        });
+        audit3.log({ user: ctx.user, action: "consent.revoke", entity: "consent", entityId: c.id, clientId: c.client_id, ip: ctx.ip, details: { dependent_referrals: dependent.length } });
+        return { ok: true, dependent_referrals: dependent.length };
+      });
+      r.get("/api/consents/:id/pdf", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write"), (ctx) => {
+        const row = db3.one(`SELECT c.*, u.display_name AS created_by_name FROM consents c JOIN users u ON u.id=c.created_by WHERE c.id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        auth3.assertClientAccess(ctx, row.client_id);
+        const c = presentConsent(row);
+        const client = M.decryptRow(db3.one(`SELECT * FROM clients WHERE id=?`, row.client_id));
+        const n = disclosure.notice();
+        const yes = (b) => b ? "Yes" : "Not recorded";
+        const fields = [
+          { type: "section", label: "Consent (42 CFR \xA72.31)" },
+          { key: "patient", label: "1. Name of the patient" },
+          { key: "discloser", label: "2. Who may make the disclosure" },
+          { key: "scope", label: "3. Information to be disclosed" },
+          { key: "recipient", label: "4. To whom (name or class of recipients)" },
+          { key: "purpose", label: "5. Purpose of the disclosure" },
+          { key: "revoke", label: "6. The consent states the right to revoke it in writing, and how" },
+          { key: "expires", label: "7. Expires on (date or event)" },
+          { key: "signer", label: "8. Signed by" },
+          { key: "signed", label: "9. Date signed" },
+          { key: "redisclosure", label: "10. Redisclosure statement given (\xA72.32)" },
+          { key: "refusal", label: "11. The consent states the consequences of refusing to sign" },
+          { key: "evidence", label: "Evidence of signature" },
+          { type: "section", label: "Status" },
+          { key: "status", label: "Status" }
+        ];
+        const values = {
+          patient: `${client.first_name} ${client.last_name} (${client.client_code})`,
+          discloser: c.discloser || "",
+          scope: c.scope || "",
+          recipient: c.recipient || "",
+          purpose: c.purpose || "",
+          revoke: yes(c.revocation_right_given),
+          expires: c.expires_at || c.expires_event || "",
+          signer: c.signer_relationship && c.signer_relationship !== "patient" ? `${c.signer_name || ""} (${String(c.signer_relationship).replace(/_/g, " ")})` : "The patient",
+          signed: c.signed_at,
+          redisclosure: yes(c.redisclosure_notice_given),
+          refusal: yes(c.refusal_consequences_given),
+          evidence: [c.signed_on_paper ? "Signed on paper" : null, c.witness ? `Witness: ${c.witness}` : null, c.document_ref ? `Document: ${c.document_ref}` : null].filter(Boolean).join("; "),
+          status: c.revoked_at ? `Revoked ${c.revoked_at.slice(0, 10)}${c.revoked_reason ? ` (${c.revoked_reason})` : ""}` : c.active ? "Active" : "Expired"
+        };
+        audit3.log({ user: ctx.user, action: "consent.print", entity: "consent", entityId: c.id, clientId: c.client_id, ip: ctx.ip });
+        const body = require_pdf().renderForm({
+          title: `Consent to disclose: ${String(c.type).replace(/_/g, " ")}`,
+          org: db3.getSetting("org_name", "SUDS"),
+          meta: [`Recorded by ${row.created_by_name}`, c.legacy_elements ? "Recorded before the 2024 element list" : null],
+          fields,
+          values,
+          footer: disclosure.part2Program() ? `${n.short} NOTICE TO RECIPIENT (42 CFR \xA72.32): ${n.text}` : "Contains protected health information; handle per HIPAA."
+        });
+        ctx.res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${client.client_code}-consent-${c.id.slice(0, 8)}.pdf"` });
+        ctx.res.end(body);
+        return null;
+      });
+      r.post("/api/clients/:id/disclosures", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const v = validate(ctx.body, {
+          consent_id: { type: "string" },
+          disclosed_to: { type: "string", required: true, maxLen: 200 },
+          purpose: { type: "string", required: true, maxLen: 500 },
+          info_disclosed: { type: "string", required: true, maxLen: 1e3 },
+          method: { type: "string", maxLen: 60 },
+          disclosed_at: { type: "datetime", required: true },
+          basis: { type: "string", enum: disclosure.BASES },
+          justification: { type: "string", maxLen: 2e3 },
+          court_order_id: { type: "string" },
+          legal_proceeding: { type: "boolean" },
+          counseling_notes: { type: "boolean" },
+          restriction_reviewed: { type: "boolean" }
+        });
+        const basis = disclosure.requireBasis(ctx.params.id, { ...v, user: ctx.user });
+        const id = disclosure.record({
+          clientId: ctx.params.id,
+          consentId: basis.consent?.id || null,
+          courtOrderId: basis.court_order?.id || null,
+          legalProceeding: basis.legal_proceeding,
+          counselingNotes: basis.counseling_notes,
+          recipient: v.disclosed_to,
+          purpose: v.purpose,
+          what: v.info_disclosed,
+          method: v.method || null,
+          basis: basis.basis,
+          justification: basis.justification,
+          source: "manual",
+          disclosedAt: v.disclosed_at,
+          user: ctx.user,
+          ip: ctx.ip
+        });
+        ctx.status = 201;
+        return { id, notice: disclosure.part2Program() && basis.basis === "consent" ? disclosure.notice() : null };
+      });
+      r.get("/api/clients/:id/disclosures/accounting", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write"), (ctx) => {
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=?`, ctx.params.id)) throw notFound();
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const out2 = disclosure.accounting(ctx.params.id);
+        audit3.log({ user: ctx.user, action: "disclosure.accounting", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { disclosures: out2.disclosures.length } });
+        return out2;
+      });
+    };
+    module.exports.presentOrder = presentOrder;
+  }
+});
+
+// server/routes/part2.js
+var require_part2 = __commonJS({
+  "server/routes/part2.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var disclosure = require_disclosure();
+    var { badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var M = require_clients_model();
+    var DEFAULT_NOTICE = `NOTICE OF PRIVACY PRACTICES \u2014 {org}
+
+THIS NOTICE DESCRIBES HOW HEALTH INFORMATION ABOUT YOU MAY BE USED AND DISCLOSED AND HOW YOU CAN GET ACCESS TO THIS INFORMATION. PLEASE REVIEW IT CAREFULLY.
+
+Your substance use disorder (SUD) treatment records are protected by federal law: 42 CFR part 2 and the HIPAA Privacy Rule (45 CFR parts 160 and 164). Generally, {org} may not say to anyone outside the program that you attend it, or disclose any information identifying you as having or having had a substance use disorder, unless you agree in writing or the law allows it.
+
+HOW WE MAY USE AND DISCLOSE YOUR RECORDS
+\u2022 With your written consent. You may give one consent for all future uses and disclosures for treatment, payment and health care operations. Records disclosed to a HIPAA covered entity or business associate under that consent may be redisclosed by them as HIPAA permits.
+\u2022 SUD counseling notes are disclosed only with a separate consent for those notes alone.
+\u2022 Without your consent, only as 42 CFR part 2 allows: to medical personnel in a medical emergency; for research and for audit or evaluation under strict conditions; to report suspected child abuse or neglect as state law requires; about a crime on program premises or against program staff; to a qualified service organization that works for us under a written agreement; and as authorized by a court order that meets 42 CFR part 2, subpart E.
+\u2022 Your records, and testimony about them, may not be used or disclosed in any civil, criminal, administrative or legislative proceeding against you unless you consent in writing to that use alone or a court orders it under 42 CFR part 2 after notice and an opportunity to respond. A subpoena alone is not enough.
+
+YOUR RIGHTS
+\u2022 To ask us to restrict how we use or disclose your records. We are not required to agree, except to a request not to disclose to your health plan information about care you paid for in full yourself.
+\u2022 To ask us to contact you in a particular way or at a particular place.
+\u2022 To see and get a copy of your records.
+\u2022 To receive an accounting of disclosures of your records made with and without your consent, and a list of disclosures made by an intermediary under a general designation.
+\u2022 To revoke a consent in writing at any time, except for action already taken in reliance on it.
+\u2022 To choose someone to act for you, and to receive a paper copy of this notice on request.
+\u2022 To be told if there is a breach of your unsecured records.
+\u2022 If we ever contact you to raise funds for the program, to opt out of any further fundraising communications.
+
+OUR DUTIES
+We are required by law to protect the privacy of your records, to give you this notice of our legal duties and privacy practices, to follow the terms of the notice currently in effect, and to notify you following a breach of your unsecured records. We may change this notice; a changed notice applies to all records we hold and will be made available to you.
+
+COMPLAINTS
+If you believe your privacy rights have been violated, you may complain to us, and to the Secretary of the U.S. Department of Health and Human Services (Office for Civil Rights, www.hhs.gov/ocr/complaints). We will not retaliate against you for filing a complaint. Violations of 42 CFR part 2 may also be reported to the United States Attorney for the judicial district in which the violation occurred.
+
+CONTACT: {contact}
+
+Effective date: {effective}`;
+    function settings() {
+      const custom = db3.getSetting("part2_notice_text", null);
+      return {
+        part2_program: disclosure.part2Program(),
+        notice_template: { text: custom || DEFAULT_NOTICE, is_default: !custom, version: db3.getSetting("part2_notice_version", "1"), effective_date: db3.getSetting("part2_notice_effective", null) },
+        redisclosure_notice: disclosure.notice(),
+        mass_export_threshold: require_incidents().massExportThreshold()
+      };
+    }
+    function renderedNotice() {
+      const s = settings().notice_template;
+      const fill = { org: db3.getSetting("org_name", null) || "this program", contact: db3.getSetting("program_contact", null) || "the program's privacy officer", effective: s.effective_date || "on file with the program" };
+      return { ...s, rendered: s.text.replace(/\{(org|contact|effective)\}/g, (_, k) => fill[k]) };
+    }
+    function presentNotice(n) {
+      return { ...n, notes: n.notes_enc ? decrypt3(n.notes_enc) : null, notes_enc: void 0 };
+    }
+    function latestNotice(clientId) {
+      const n = db3.one(`SELECT n.*, u.display_name AS given_by_name FROM part2_notices n JOIN users u ON u.id=n.given_by WHERE n.client_id=? ORDER BY n.given_at DESC, n.created_at DESC LIMIT 1`, clientId);
+      return n ? presentNotice(n) : null;
+    }
+    var MISSING_NOTICE = `c.deleted_at IS NULL AND c.merged_into IS NULL AND c.status='active' AND NOT EXISTS (SELECT 1 FROM part2_notices n WHERE n.client_id=c.id)`;
+    var ORDER_SHAPE = {
+      order_type: { type: "string", required: true, enum: C.COURT_ORDER_TYPES },
+      court: { type: "string", required: true, maxLen: 200 },
+      case_ref: { type: "string", maxLen: 120 },
+      issued_at: { type: "date", required: true },
+      expires_at: { type: "date" },
+      recipient: { type: "string", maxLen: 300 },
+      purpose: { type: "string", required: true, maxLen: 500 },
+      scope: { type: "string", required: true, maxLen: 1e3 },
+      findings_recorded: { type: "boolean" },
+      notice_requirement_met: { type: "boolean" },
+      covers_counseling_notes: { type: "boolean" },
+      document_ref: { type: "string", maxLen: 300 }
+    };
+    module.exports = (r) => {
+      r.get("/api/part2/settings", auth3.requireAuth, () => settings());
+      r.get("/api/part2/notice", auth3.requireAuth, () => renderedNotice());
+      r.put("/api/part2/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const v = validate(ctx.body, { part2_program: { type: "boolean" }, notice_text: { type: "string", maxLen: 2e4 }, notice_effective_date: { type: "date" }, reset_notice: { type: "boolean" }, mass_export_threshold: { type: "number", integer: true, min: 1, max: 1e6 } }, { partial: true });
+        const changed = [];
+        db3.transaction(() => {
+          if (v.part2_program !== void 0 && v.part2_program !== null) {
+            db3.setSetting("part2_program", v.part2_program ? "1" : "0");
+            changed.push("part2_program");
+          }
+          if (v.reset_notice || v.notice_text !== void 0 && v.notice_text !== null) {
+            const text = v.reset_notice ? null : String(v.notice_text).trim();
+            if (!v.reset_notice && text.length < 200) throw badRequest("The patient notice must say what 42 CFR \xA72.22 requires; this text is too short to");
+            if (text) db3.setSetting("part2_notice_text", text);
+            else db3.run(`DELETE FROM settings WHERE key='part2_notice_text'`);
+            db3.setSetting("part2_notice_version", String(Number(db3.getSetting("part2_notice_version", "1")) + 1));
+            changed.push("notice_text");
+          }
+          if (v.notice_effective_date) {
+            db3.setSetting("part2_notice_effective", v.notice_effective_date);
+            changed.push("notice_effective_date");
+          }
+          if (v.mass_export_threshold) {
+            db3.setSetting("mass_export_threshold", String(v.mass_export_threshold));
+            changed.push("mass_export_threshold");
+          }
+        });
+        audit3.log({ user: ctx.user, action: "part2.settings.update", ip: ctx.ip, details: { changed, version: db3.getSetting("part2_notice_version", "1") } });
+        return settings();
+      });
+      r.get("/api/clients/:id/part2-notices", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write"), (ctx) => {
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=?`, ctx.params.id)) throw notFound();
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const rows = db3.all(`SELECT n.*, u.display_name AS given_by_name FROM part2_notices n JOIN users u ON u.id=n.given_by WHERE n.client_id=? ORDER BY n.given_at DESC`, ctx.params.id).map(presentNotice);
+        audit3.log({ user: ctx.user, action: "part2_notice.list", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { count: rows.length } });
+        return { rows };
+      });
+      r.post("/api/clients/:id/part2-notices", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const v = validate(ctx.body, { given_at: { type: "date", required: true }, method: { type: "string", required: true, enum: C.PART2_NOTICE_METHODS }, acknowledged: { type: "boolean" }, ack_refused: { type: "boolean" }, notes: { type: "string", maxLen: 2e3 } });
+        if (v.given_at > (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) throw badRequest("The notice cannot have been given in the future");
+        if (v.acknowledged && v.ack_refused) throw badRequest("Either the client signed the acknowledgement or declined to; not both");
+        const id = uuid2();
+        db3.run(
+          `INSERT INTO part2_notices(id,client_id,given_at,method,notice_version,acknowledged,ack_refused,notes_enc,given_by) VALUES(?,?,?,?,?,?,?,?,?)`,
+          id,
+          ctx.params.id,
+          v.given_at,
+          v.method,
+          db3.getSetting("part2_notice_version", "1"),
+          v.acknowledged ? 1 : 0,
+          v.ack_refused ? 1 : 0,
+          v.notes ? encrypt3(v.notes) : null,
+          ctx.user.id
+        );
+        audit3.log({ user: ctx.user, action: "part2_notice.create", entity: "part2_notice", entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { method: v.method, acknowledged: !!v.acknowledged } });
+        ctx.status = 201;
+        return { id };
+      });
+      r.get("/api/part2/notices/missing", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write"), (ctx) => {
+        const cf = auth3.caseloadFilter(ctx.user, "c.id");
+        const rows = db3.all(`SELECT c.id, c.client_code, c.first_name_enc, c.last_name_enc, c.preferred_name_enc, c.intake_date FROM clients c WHERE ${MISSING_NOTICE} AND ${cf.sql} ORDER BY c.intake_date DESC LIMIT 500`, ...cf.params).map((x) => {
+          const d = M.decryptRow(x);
+          return { id: x.id, client_code: x.client_code, display_name: d.display_name || `${d.first_name || ""} ${d.last_name || ""}`.trim(), intake_date: x.intake_date };
+        });
+        const total = db3.one(`SELECT COUNT(*) n FROM clients c WHERE ${MISSING_NOTICE} AND ${cf.sql}`, ...cf.params).n;
+        audit3.log({ user: ctx.user, action: "part2_notice.missing", ip: ctx.ip, details: { count: rows.length } });
+        return { rows, total, part2_program: disclosure.part2Program() };
+      });
+      r.get("/api/clients/:id/court-orders", auth3.requireAuth, auth3.requirePerm("court-orders:read", "court-orders:write"), (ctx) => {
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=?`, ctx.params.id)) throw notFound();
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const rows = db3.all(`SELECT o.*, u.display_name AS recorded_by_name FROM court_orders o JOIN users u ON u.id=o.recorded_by WHERE o.client_id=? ORDER BY o.issued_at DESC`, ctx.params.id).map(require_consents().presentOrder);
+        audit3.log({ user: ctx.user, action: "court_order.list", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { count: rows.length } });
+        return { rows };
+      });
+      r.post("/api/clients/:id/court-orders", auth3.requireAuth, auth3.requirePerm("court-orders:write"), (ctx) => {
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const v = validate(ctx.body, ORDER_SHAPE);
+        if (v.expires_at && v.expires_at < v.issued_at) throw badRequest("An order cannot expire before it was issued");
+        const id = uuid2();
+        db3.run(
+          `INSERT INTO court_orders(id,client_id,order_type,court_enc,case_ref_enc,issued_at,expires_at,recipient_enc,purpose_enc,scope_enc,findings_recorded,notice_requirement_met,covers_counseling_notes,document_ref,recorded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          id,
+          ctx.params.id,
+          v.order_type,
+          encrypt3(v.court),
+          v.case_ref ? encrypt3(v.case_ref) : null,
+          v.issued_at,
+          v.expires_at || null,
+          v.recipient ? encrypt3(v.recipient) : null,
+          encrypt3(v.purpose),
+          encrypt3(v.scope),
+          v.findings_recorded ? 1 : 0,
+          v.notice_requirement_met ? 1 : 0,
+          v.covers_counseling_notes ? 1 : 0,
+          v.document_ref || null,
+          ctx.user.id
+        );
+        audit3.log({ user: ctx.user, action: "court_order.create", entity: "court_order", entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { order_type: v.order_type, qualifying: !!(v.findings_recorded && v.notice_requirement_met) } });
+        const row = db3.one(`SELECT * FROM court_orders WHERE id=?`, id);
+        ctx.status = 201;
+        return { id, problems: disclosure.courtOrderProblems(row) };
+      });
+      r.get("/api/court-orders/:id", auth3.requireAuth, auth3.requirePerm("court-orders:read", "court-orders:write"), (ctx) => {
+        const o = db3.one(`SELECT o.*, u.display_name AS recorded_by_name FROM court_orders o JOIN users u ON u.id=o.recorded_by WHERE o.id=?`, ctx.params.id);
+        if (!o) throw notFound();
+        auth3.assertClientAccess(ctx, o.client_id);
+        audit3.log({ user: ctx.user, action: "court_order.view", entity: "court_order", entityId: o.id, clientId: o.client_id, ip: ctx.ip });
+        return { row: require_consents().presentOrder(o) };
+      });
+      r.post("/api/court-orders/:id/vacate", auth3.requireAuth, auth3.requirePerm("court-orders:write"), (ctx) => {
+        const o = db3.one(`SELECT * FROM court_orders WHERE id=?`, ctx.params.id);
+        if (!o) throw notFound();
+        auth3.assertClientAccess(ctx, o.client_id);
+        if (o.status === "vacated") throw badRequest("This order has already been vacated");
+        const { reason } = validate(ctx.body, { reason: { type: "string", required: true, maxLen: 300 } });
+        db3.run(`UPDATE court_orders SET status='vacated', vacated_at=?, vacated_reason=?, updated_at=? WHERE id=?`, db3.now(), reason, db3.now(), o.id);
+        audit3.log({ user: ctx.user, action: "court_order.vacate", entity: "court_order", entityId: o.id, clientId: o.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/part2/summary", auth3.requireAuth, auth3.requirePerm("complaints:read", "incidents:read", "settings:manage"), (ctx) => {
+        const n = (sql, ...p) => db3.one(sql, ...p).n;
+        const out2 = {
+          part2_program: disclosure.part2Program(),
+          clients_missing_notice: n(`SELECT COUNT(*) n FROM clients c WHERE ${MISSING_NOTICE}`),
+          consents_legacy_active: n(`SELECT COUNT(*) n FROM consents WHERE type IN (${C.PART2_CONSENT_TYPES.map(() => "?").join(",")}) AND (rule_version IS NULL OR rule_version<>'2024') AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, ...C.PART2_CONSENT_TYPES),
+          court_orders_active: n(`SELECT COUNT(*) n FROM court_orders WHERE status='active' AND (expires_at IS NULL OR expires_at >= date('now'))`),
+          disclosures_90d: n(`SELECT COUNT(*) n FROM disclosures WHERE disclosed_at >= ?`, new Date(Date.now() - 90 * 864e5).toISOString()),
+          complaints_open: n(`SELECT COUNT(*) n FROM complaints WHERE status IN ('open','investigating')`),
+          incidents_open: n(`SELECT COUNT(*) n FROM privacy_incidents WHERE status='open'`),
+          counseling_notes: n(`SELECT COUNT(*) n FROM notes WHERE counseling_note=1 AND deleted_at IS NULL`)
+        };
+        audit3.log({ user: ctx.user, action: "part2.summary", ip: ctx.ip });
+        return out2;
+      });
+    };
+    module.exports.latestNotice = latestNotice;
+    module.exports.MISSING_NOTICE = MISSING_NOTICE;
+    module.exports.DEFAULT_NOTICE = DEFAULT_NOTICE;
+  }
+});
+
 // server/routes/clients.js
 var require_clients = __commonJS({
   "server/routes/clients.js"(exports, module) {
@@ -13874,6 +14792,7 @@ var require_clients = __commonJS({
         const moved = {};
         const sourceOpenEpisodes = db3.all(`SELECT id FROM episodes WHERE client_id=? AND status='open'`, source.id).map((e) => e.id);
         db3.transaction(() => {
+          db3.run(`DELETE FROM privacy_incident_clients WHERE client_id=? AND incident_id IN (SELECT incident_id FROM privacy_incident_clients WHERE client_id=?)`, source.id, keep.id);
           for (const [table, col] of links) {
             const cols2 = db3.all(`PRAGMA table_info(${table})`).map((c) => c.name);
             const touch = cols2.includes("updated_at") ? ", updated_at=?" : "";
@@ -13942,6 +14861,7 @@ var require_clients = __commonJS({
         const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, `notes:${k}:read`) || auth3.hasPerm(ctx.user, `notes:${k}:write`));
         const sp = kinds.length ? db3.one(`SELECT id, occurred_at, status FROM notes WHERE client_id=? AND format='safety_plan' AND deleted_at IS NULL AND status IN ('signed','amended') AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY occurred_at DESC LIMIT 1`, row.id, ...kinds) : null;
         client.safety_plan = sp || null;
+        client.part2 = { program: require_disclosure().part2Program(), notice: require_part2().latestNotice(row.id) };
         audit3.log({ user: ctx.user, action: "client.view", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip });
         return { client };
       });
@@ -14023,217 +14943,254 @@ var require_clients = __commonJS({
   }
 });
 
-// server/disclosure.js
-var require_disclosure = __commonJS({
-  "server/disclosure.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
-    var { badRequest, forbidden } = require_http();
-    var BASES = ["consent", "court_order", "medical_emergency", "qsoa", "audit_evaluation", "research", "crime_on_premises", "child_abuse_report", "other"];
-    var NEEDS_JUSTIFICATION = ["other", "medical_emergency"];
-    var MIN_JUSTIFICATION = 20;
-    function activeConsent(clientId, consentId) {
-      if (!consentId) return null;
-      return db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
-    }
-    function requireBasis(clientId, { consent_id, basis, justification, user } = {}) {
-      const b = basis || "consent";
-      if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
-      if (b === "consent") {
-        const consent = activeConsent(clientId, consent_id);
-        if (!consent) throw badRequest("A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.");
-        return { basis: "consent", consent, justification: null };
-      }
-      const why = String(justification || "").trim();
-      if (NEEDS_JUSTIFICATION.includes(b) && why.length < MIN_JUSTIFICATION) {
-        throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.`);
-      }
-      if (b === "other" && !require_auth().hasPerm(user, "disclosures:override")) throw forbidden('Only a supervisor or administrator can record a disclosure on an "other" basis');
-      return { basis: b, consent: null, justification: why || null };
-    }
-    function record({ clientId, consentId = null, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
-      const id = uuid2();
-      const at = disclosedAt || db3.now();
-      db3.run(
-        `INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,justification_enc,source,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        id,
-        clientId,
-        consentId,
-        encrypt3(String(recipient)),
-        encrypt3(String(purpose)),
-        encrypt3(String(what)),
-        method,
-        at,
-        user.id,
-        basis,
-        justification ? encrypt3(String(justification)) : null,
-        source,
-        sourceRef
-      );
-      audit3.log({ user, action: "disclosure.record", entity: "disclosure", entityId: id, clientId, ip, details: { basis, source, consent_id: consentId || void 0, justified: justification ? true : void 0 } });
-      return id;
-    }
-    function present(row) {
-      if (!row) return null;
-      const out2 = { ...row };
-      out2.recipient = row.recipient_enc ? decrypt3(row.recipient_enc) : null;
-      out2.purpose = row.purpose_enc ? decrypt3(row.purpose_enc) : null;
-      out2.what = row.what_enc ? decrypt3(row.what_enc) : null;
-      out2.justification = row.justification_enc ? decrypt3(row.justification_enc) : null;
-      delete out2.recipient_enc;
-      delete out2.purpose_enc;
-      delete out2.what_enc;
-      delete out2.justification_enc;
-      return out2;
-    }
-    function accounting(clientId) {
-      const client = db3.one(`SELECT id, client_code FROM clients WHERE id=?`, clientId);
-      const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name, u.username AS disclosed_by_username FROM disclosures d JOIN users u ON u.id=d.disclosed_by WHERE d.client_id=? ORDER BY d.disclosed_at`, clientId).map(present);
-      const consents = db3.all(`SELECT id, type, recipient_enc, purpose_enc, signed_at, expires_at, expires_event, revoked_at FROM consents WHERE client_id=? ORDER BY signed_at`, clientId).map((c) => ({ id: c.id, type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null, signed_at: c.signed_at, expires_at: c.expires_at, expires_event: c.expires_event, revoked_at: c.revoked_at }));
-      return { client_id: client?.id, client_code: client?.client_code, generated_at: db3.now(), disclosures, consents };
-    }
-    module.exports = { BASES, NEEDS_JUSTIFICATION, MIN_JUSTIFICATION, activeConsent, requireBasis, record, present, accounting };
-  }
-});
-
-// server/routes/consents.js
-var require_consents = __commonJS({
-  "server/routes/consents.js"(exports, module) {
+// server/routes/compliance.js
+var require_compliance = __commonJS({
+  "server/routes/compliance.js"(exports, module) {
     "use strict";
     init_globals_inject();
     var db3 = require_db();
     var auth3 = require_auth();
     var audit3 = require_audit();
-    var C = require_constants();
+    var crud = require_crud();
+    var incidents = require_incidents();
     var { badRequest, notFound } = require_http();
     var { validate } = require_validate();
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
-    var disclosure = require_disclosure();
-    function requirePart2Elements(v) {
-      const missing = [];
-      if (!v.recipient) missing.push("the recipient");
-      if (!v.purpose) missing.push("the purpose");
-      if (!v.scope) missing.push("what information is covered (scope)");
-      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
-      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
-      if (!v.redisclosure_notice_given) missing.push("confirmation that the redisclosure notice was given (\xA72.32)");
-      if (missing.length) throw badRequest(`A 42 CFR Part 2 consent must record ${missing.join("; ")}`);
+    var CHANNELS = ["in_person", "phone", "mail", "email", "web", "other"];
+    var COMPLAINANTS = ["client", "representative", "staff", "anonymous", "other"];
+    var COMPLAINT_STATUSES = ["open", "investigating", "resolved", "closed"];
+    var DETERMINATIONS = ["pending", "breach", "not_breach"];
+    var MIN_REASON = 20;
+    var dec2 = (v) => v ? decrypt3(v) : null;
+    function encComplaint(v) {
+      for (const f of ["summary", "resolution"]) if (v[f] !== void 0) {
+        v[`${f}_enc`] = v[f] ? encrypt3(v[f]) : null;
+        delete v[f];
+      }
     }
-    function presentConsent(c) {
-      return {
-        ...c,
-        recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null,
-        purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null,
-        scope: c.scope_enc ? decrypt3(c.scope_enc) : null,
-        recipient_enc: void 0,
-        purpose_enc: void 0,
-        scope_enc: void 0,
-        active: !c.revoked_at && (!c.expires_at || c.expires_at >= (/* @__PURE__ */ new Date()).toISOString().slice(0, 10))
-      };
+    var INCIDENT_ENC = ["description", "risk_nature", "risk_recipient", "risk_acquired", "risk_mitigation", "determination_reason"];
+    var INCIDENT_SHAPE = {
+      title: { type: "string", maxLen: 200 },
+      discovered_at: { type: "date" },
+      occurred_at: { type: "date" },
+      description: { type: "string", maxLen: 8e3 },
+      part2_records: { type: "boolean" },
+      affected_count: { type: "number", integer: true, min: 0, max: 1e8 },
+      max_in_one_state: { type: "number", integer: true, min: 0, max: 1e8 },
+      risk_nature: { type: "string", maxLen: 4e3 },
+      risk_recipient: { type: "string", maxLen: 4e3 },
+      risk_acquired: { type: "string", maxLen: 4e3 },
+      risk_mitigation: { type: "string", maxLen: 4e3 },
+      determination: { type: "string", enum: DETERMINATIONS },
+      determination_reason: { type: "string", maxLen: 4e3 },
+      law_enforcement_delay_until: { type: "date" },
+      individuals_notified_at: { type: "date" },
+      hhs_notified_at: { type: "date" },
+      media_notified_at: { type: "date" },
+      status: { type: "string", enum: ["open", "closed"] }
+    };
+    function presentIncident(row, { full = false } = {}) {
+      const out2 = { ...row };
+      for (const f of INCIDENT_ENC) {
+        if (full) out2[f] = dec2(row[`${f}_enc`]);
+        delete out2[`${f}_enc`];
+      }
+      out2.obligations = incidents.obligations(row);
+      return out2;
+    }
+    function loadIncident(id) {
+      const i = db3.one(`SELECT * FROM privacy_incidents WHERE id=?`, id);
+      if (!i) throw notFound("Incident not found");
+      return i;
     }
     module.exports = (r) => {
-      r.get("/api/clients/:id/consents", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write"), (ctx) => {
-        auth3.assertClientAccess(ctx, ctx.params.id);
-        const consents = db3.all(`SELECT c.*, u.display_name AS created_by_name FROM consents c JOIN users u ON u.id=c.created_by WHERE client_id=? ORDER BY signed_at DESC`, ctx.params.id).map(presentConsent);
-        const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name FROM disclosures d JOIN users u ON u.id=d.disclosed_by WHERE client_id=? ORDER BY disclosed_at DESC`, ctx.params.id).map(disclosure.present);
-        audit3.log({ user: ctx.user, action: "consent.list", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { consents: consents.length, disclosures: disclosures.length } });
-        return { consents, disclosures };
+      crud.build(r, {
+        table: "complaints",
+        entity: "complaint",
+        base: "/api/complaints",
+        perm: "complaints",
+        clientRequired: false,
+        dateCol: "received_at",
+        ownerCol: "handled_by",
+        creatorCol: "created_by",
+        order: `CASE complaints.status WHEN 'open' THEN 0 WHEN 'investigating' THEN 1 ELSE 2 END, complaints.received_at DESC`,
+        joins: "LEFT JOIN clients c ON c.id=complaints.client_id LEFT JOIN users u ON u.id=complaints.handled_by",
+        select: "complaints.*, c.client_code, u.display_name AS handler",
+        shape: {
+          client_id: { type: "string" },
+          received_at: { type: "date", required: true },
+          channel: { type: "string", enum: CHANNELS },
+          complainant: { type: "string", enum: COMPLAINANTS },
+          summary: { type: "string", required: true, maxLen: 4e3 },
+          status: { type: "string", enum: COMPLAINT_STATUSES },
+          resolution: { type: "string", maxLen: 4e3 },
+          resolved_at: { type: "date" },
+          hhs_referral_given: { type: "boolean" },
+          retaliation_reviewed: { type: "boolean" },
+          handled_by: { type: "string" }
+        },
+        filters: (ctx, where, params) => {
+          const s = ctx.query.get("status");
+          if (s === "open") where.push(`complaints.status IN ('open','investigating')`);
+          else if (s && s !== "all") {
+            where.push("complaints.status=?");
+            params.push(s);
+          }
+        },
+        beforeInsert: (ctx, v) => {
+          if (v.complainant === "anonymous" && v.client_id) throw badRequest("An anonymous complaint cannot name the client; record it without one");
+          if (["resolved", "closed"].includes(v.status) && !v.resolution) throw badRequest("Say how the complaint was resolved before closing it");
+          if (["resolved", "closed"].includes(v.status) && !v.resolved_at) v.resolved_at = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+          encComplaint(v);
+        },
+        beforeUpdate: (ctx, v, row) => {
+          for (const k of ["received_at", "channel", "complainant", "status", "hhs_referral_given", "retaliation_reviewed"]) if (v[k] === null) delete v[k];
+          if (v.summary === null) throw badRequest("A complaint needs its summary");
+          const closing = ["resolved", "closed"].includes(v.status) && !["resolved", "closed"].includes(row.status);
+          if (closing && !v.resolution && !row.resolution_enc) throw badRequest("Say how the complaint was resolved before closing it");
+          if (closing && !v.resolved_at) v.resolved_at = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+          if (v.status && ["open", "investigating"].includes(v.status)) v.resolved_at = null;
+          encComplaint(v);
+        },
+        afterLoad: (ctx, row) => ({ ...row, summary: dec2(row.summary_enc), resolution: dec2(row.resolution_enc), summary_enc: void 0, resolution_enc: void 0 }),
+        // A complaint is part of the programme's record of how it answered it: closed, never deleted.
+        canDelete: () => false
       });
-      r.post("/api/clients/:id/consents", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
-        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
-        auth3.assertClientAccess(ctx, ctx.params.id);
-        const v = validate(ctx.body, {
-          type: { type: "string", required: true, enum: C.CONSENT_TYPES },
-          recipient: { type: "string", maxLen: 200 },
-          purpose: { type: "string", maxLen: 500 },
-          scope: { type: "string", maxLen: 1e3 },
-          signed_at: { type: "date", required: true },
-          expires_at: { type: "date" },
-          expires_event: { type: "string", maxLen: 200 },
-          document_ref: { type: "string", maxLen: 300 },
-          witness: { type: "string", maxLen: 120 },
-          signed_on_paper: { type: "boolean" },
-          redisclosure_notice_given: { type: "boolean" }
-        });
-        if (v.type === "part2_disclosure") requirePart2Elements(v);
-        const id = uuid2();
-        db3.run(
-          `INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,expires_event,document_ref,witness,signed_on_paper,redisclosure_notice_given,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          id,
-          ctx.params.id,
-          v.type,
-          v.recipient ? encrypt3(v.recipient) : null,
-          v.purpose ? encrypt3(v.purpose) : null,
-          v.scope ? encrypt3(v.scope) : null,
-          v.signed_at,
-          v.expires_at || null,
-          v.expires_event || null,
-          v.document_ref || null,
-          v.witness || null,
-          v.signed_on_paper ? 1 : 0,
-          v.redisclosure_notice_given ? 1 : 0,
-          ctx.user.id
-        );
-        audit3.log({ user: ctx.user, action: "consent.create", entity: "consent", entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { type: v.type } });
-        ctx.status = 201;
-        return { id };
-      });
-      r.post("/api/consents/:id/revoke", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
-        const c = db3.one(`SELECT * FROM consents WHERE id=?`, ctx.params.id);
-        if (!c) throw notFound();
-        auth3.assertClientAccess(ctx, c.client_id);
-        if (c.revoked_at) throw badRequest("This consent has already been revoked");
-        const { reason } = validate(ctx.body, { reason: { type: "string", maxLen: 300 } });
-        const dependent = db3.all(`SELECT id, resource_id FROM referrals WHERE consent_id=? AND status NOT IN ('closed','declined')`, c.id);
-        db3.transaction(() => {
-          db3.run(`UPDATE consents SET revoked_at=?, revoked_reason=?, revoked_by=?, updated_at=? WHERE id=?`, db3.now(), reason || null, ctx.user.id, db3.now(), c.id);
-          for (const ref of dependent) db3.run(`UPDATE referrals SET consent_revoked=1, updated_at=? WHERE id=?`, db3.now(), ref.id);
-        });
-        audit3.log({ user: ctx.user, action: "consent.revoke", entity: "consent", entityId: c.id, clientId: c.client_id, ip: ctx.ip, details: { dependent_referrals: dependent.length } });
-        return { ok: true, dependent_referrals: dependent.length };
-      });
-      r.post("/api/clients/:id/disclosures", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
-        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
-        auth3.assertClientAccess(ctx, ctx.params.id);
-        const v = validate(ctx.body, {
-          consent_id: { type: "string" },
-          disclosed_to: { type: "string", required: true, maxLen: 200 },
-          purpose: { type: "string", required: true, maxLen: 500 },
-          info_disclosed: { type: "string", required: true, maxLen: 1e3 },
-          method: { type: "string", maxLen: 60 },
-          disclosed_at: { type: "datetime", required: true },
-          basis: { type: "string", enum: disclosure.BASES },
-          justification: { type: "string", maxLen: 2e3 }
-        });
-        const basis = disclosure.requireBasis(ctx.params.id, { ...v, user: ctx.user });
-        const id = disclosure.record({
-          clientId: ctx.params.id,
-          consentId: basis.consent?.id || null,
-          recipient: v.disclosed_to,
-          purpose: v.purpose,
-          what: v.info_disclosed,
-          method: v.method || null,
-          basis: basis.basis,
-          justification: basis.justification,
-          source: "manual",
-          disclosedAt: v.disclosed_at,
-          user: ctx.user,
-          ip: ctx.ip
-        });
-        ctx.status = 201;
-        return { id };
-      });
-      r.get("/api/clients/:id/disclosures/accounting", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write"), (ctx) => {
-        if (!db3.one(`SELECT 1 FROM clients WHERE id=?`, ctx.params.id)) throw notFound();
-        auth3.assertClientAccess(ctx, ctx.params.id);
-        const out2 = disclosure.accounting(ctx.params.id);
-        audit3.log({ user: ctx.user, action: "disclosure.accounting", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { disclosures: out2.disclosures.length } });
+      r.get("/api/complaints/report", auth3.requireAuth, auth3.requirePerm("complaints:read", "complaints:write"), (ctx) => {
+        const from = ctx.query.get("from") || `${(/* @__PURE__ */ new Date()).getUTCFullYear()}-01-01`;
+        const to = ctx.query.get("to") || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw badRequest("from and to must be YYYY-MM-DD");
+        const w = `received_at BETWEEN ? AND ?`;
+        const by = (col) => db3.all(`SELECT ${col} k, COUNT(*) n FROM complaints WHERE ${w} GROUP BY ${col} ORDER BY n DESC`, from, to);
+        const days = db3.all(`SELECT julianday(resolved_at)-julianday(received_at) d FROM complaints WHERE ${w} AND resolved_at IS NOT NULL ORDER BY d`, from, to).map((x) => x.d);
+        const out2 = {
+          from,
+          to,
+          total: db3.one(`SELECT COUNT(*) n FROM complaints WHERE ${w}`, from, to).n,
+          open: db3.one(`SELECT COUNT(*) n FROM complaints WHERE ${w} AND status IN ('open','investigating')`, from, to).n,
+          by_status: by("status"),
+          by_channel: by("channel"),
+          by_complainant: by("complainant"),
+          hhs_referral_given: db3.one(`SELECT COUNT(*) n FROM complaints WHERE ${w} AND hhs_referral_given=1`, from, to).n,
+          retaliation_reviewed: db3.one(`SELECT COUNT(*) n FROM complaints WHERE ${w} AND retaliation_reviewed=1`, from, to).n,
+          median_days_to_resolve: days.length ? Math.round(days[Math.floor(days.length / 2)]) : null
+        };
+        audit3.log({ user: ctx.user, action: "complaint.report", ip: ctx.ip, details: { from, to, total: out2.total } });
         return out2;
       });
+      r.get("/api/incidents", auth3.requireAuth, auth3.requirePerm("incidents:read", "incidents:write"), (ctx) => {
+        const s = ctx.query.get("status");
+        const rows = db3.all(`SELECT i.*, (SELECT COUNT(*) FROM privacy_incident_clients x WHERE x.incident_id=i.id) linked_clients FROM privacy_incidents i ${s && s !== "all" ? "WHERE i.status=?" : ""} ORDER BY i.status='open' DESC, i.discovered_at DESC LIMIT 500`, ...s && s !== "all" ? [s] : []).map((x) => presentIncident(x));
+        audit3.log({ user: ctx.user, action: "incident.list", ip: ctx.ip, details: { count: rows.length } });
+        return { rows, thresholds: { notice_days: incidents.NOTICE_DAYS, hhs_immediate_at: incidents.HHS_IMMEDIATE_AT, media_over: incidents.MEDIA_OVER } };
+      });
+      r.get("/api/incidents/:id", auth3.requireAuth, auth3.requirePerm("incidents:read", "incidents:write"), (ctx) => {
+        const i = loadIncident(ctx.params.id);
+        const clients = db3.all(`SELECT x.client_id, x.notified_at, c.client_code FROM privacy_incident_clients x JOIN clients c ON c.id=x.client_id WHERE x.incident_id=? ORDER BY c.client_code`, i.id);
+        audit3.log({ user: ctx.user, action: "incident.view", entity: "privacy_incident", entityId: i.id, ip: ctx.ip, details: { linked_clients: clients.length } });
+        return { row: { ...presentIncident(i, { full: true }), clients } };
+      });
+      r.post("/api/incidents", auth3.requireAuth, auth3.requirePerm("incidents:write"), (ctx) => {
+        const v = validate(ctx.body, { ...INCIDENT_SHAPE, title: { ...INCIDENT_SHAPE.title, required: true }, discovered_at: { type: "date", required: true } });
+        if (v.discovered_at > (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) throw badRequest("An incident cannot be discovered in the future");
+        const id = uuid2();
+        const cols2 = {
+          id,
+          title: v.title,
+          discovered_at: v.discovered_at,
+          occurred_at: v.occurred_at || null,
+          part2_records: v.part2_records === void 0 ? 1 : v.part2_records,
+          affected_count: v.affected_count || 0,
+          max_in_one_state: v.max_in_one_state || 0,
+          reported_by: ctx.user.id,
+          source: "manual"
+        };
+        for (const f of INCIDENT_ENC) if (v[f]) cols2[`${f}_enc`] = encrypt3(v[f]);
+        const keys = Object.keys(cols2);
+        db3.run(`INSERT INTO privacy_incidents(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
+        audit3.log({ user: ctx.user, action: "incident.create", entity: "privacy_incident", entityId: id, ip: ctx.ip });
+        ctx.status = 201;
+        return { id, obligations: incidents.obligations(loadIncident(id)) };
+      });
+      r.put("/api/incidents/:id", auth3.requireAuth, auth3.requirePerm("incidents:write"), (ctx) => {
+        const i = loadIncident(ctx.params.id);
+        const v = validate(ctx.body, INCIDENT_SHAPE, { partial: true });
+        for (const k of ["affected_count", "max_in_one_state"]) if (v[k] === null) v[k] = 0;
+        for (const k of ["title", "discovered_at", "determination", "status", "part2_records"]) if (v[k] === null) delete v[k];
+        const merged = { ...i };
+        for (const [k, x] of Object.entries(v)) merged[INCIDENT_ENC.includes(k) ? `${k}_enc` : k] = x;
+        const has = (f) => v[f] !== void 0 ? !!(v[f] && String(v[f]).trim()) : !!i[`${f}_enc`];
+        if (v.determination && v.determination !== "pending" && v.determination !== i.determination) {
+          const reason = v.determination_reason !== void 0 ? String(v.determination_reason || "") : dec2(i.determination_reason_enc) || "";
+          if (reason.trim().length < MIN_REASON) throw badRequest(`Record the reason for the determination (at least ${MIN_REASON} characters)`);
+          if (v.determination === "not_breach") {
+            const missing = [["risk_nature", "the nature and extent of the information"], ["risk_recipient", "who received or used it"], ["risk_acquired", "whether it was actually acquired or viewed"], ["risk_mitigation", "how the risk was mitigated"]].filter(([f]) => !has(f)).map(([, l]) => l);
+            if (missing.length) throw badRequest(`"Not a breach" needs the four-factor risk assessment: ${missing.join("; ")}`, { missing });
+          }
+          merged.determined_by = ctx.user.id;
+          merged.determined_at = db3.now();
+        }
+        if (v.status === "closed" && i.status !== "closed") {
+          if (merged.determination === "pending") throw badRequest("Make a determination (breach or not) before closing the incident");
+          const ob = incidents.obligations(merged);
+          const owed = [["individuals", "the individuals"], ["hhs", "HHS"], ["media", "the media"]].filter(([k]) => ob[k].required && !ob[k].done).map(([, l]) => l);
+          if (owed.length) throw badRequest(`Record when ${owed.join(", ")} ${owed.length === 1 ? "was" : "were"} notified before closing this breach`, { owed });
+          merged.closed_at = db3.now();
+        }
+        if (v.status === "open") merged.closed_at = null;
+        const sets = [];
+        const params = [];
+        for (const k of Object.keys(v)) {
+          const col = INCIDENT_ENC.includes(k) ? `${k}_enc` : k;
+          sets.push(`${col}=?`);
+          params.push(INCIDENT_ENC.includes(k) ? v[k] ? encrypt3(v[k]) : null : v[k]);
+        }
+        for (const k of ["determined_by", "determined_at", "closed_at"]) if (merged[k] !== i[k]) {
+          sets.push(`${k}=?`);
+          params.push(merged[k]);
+        }
+        if (sets.length) db3.run(`UPDATE privacy_incidents SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, db3.now(), i.id);
+        audit3.log({ user: ctx.user, action: "incident.update", entity: "privacy_incident", entityId: i.id, ip: ctx.ip, details: { fields: Object.keys(v), determination: v.determination || void 0, status: v.status || void 0 } });
+        return { ok: true, obligations: incidents.obligations(loadIncident(i.id)) };
+      });
+      r.post("/api/incidents/:id/clients", auth3.requireAuth, auth3.requirePerm("incidents:write"), (ctx) => {
+        const i = loadIncident(ctx.params.id);
+        const { client_ids } = validate(ctx.body, { client_ids: { type: "array", required: true, maxLen: 5e3 } });
+        let added = 0;
+        db3.transaction(() => {
+          for (const cid of client_ids) {
+            if (typeof cid !== "string" || !db3.one(`SELECT 1 FROM clients WHERE id=?`, cid)) throw badRequest("Unknown client");
+            auth3.assertClientAccess(ctx, cid);
+            added += db3.run(`INSERT OR IGNORE INTO privacy_incident_clients(id,incident_id,client_id) VALUES(?,?,?)`, uuid2(), i.id, cid).changes;
+          }
+          const linked = db3.one(`SELECT COUNT(*) n FROM privacy_incident_clients WHERE incident_id=?`, i.id).n;
+          if (linked > (i.affected_count || 0)) db3.run(`UPDATE privacy_incidents SET affected_count=?, updated_at=? WHERE id=?`, linked, db3.now(), i.id);
+        });
+        for (const cid of client_ids) audit3.log({ user: ctx.user, action: "incident.client.link", entity: "privacy_incident", entityId: i.id, clientId: cid, ip: ctx.ip });
+        return { ok: true, added };
+      });
+      r.put("/api/incidents/:id/clients/:clientId", auth3.requireAuth, auth3.requirePerm("incidents:write"), (ctx) => {
+        const i = loadIncident(ctx.params.id);
+        const link = db3.one(`SELECT * FROM privacy_incident_clients WHERE incident_id=? AND client_id=?`, i.id, ctx.params.clientId);
+        if (!link) throw notFound("That client is not linked to this incident");
+        auth3.assertClientAccess(ctx, link.client_id);
+        const v = validate(ctx.body, { notified_at: { type: "date" } });
+        db3.run(`UPDATE privacy_incident_clients SET notified_at=?, updated_at=? WHERE id=?`, v.notified_at || null, db3.now(), link.id);
+        audit3.log({ user: ctx.user, action: "incident.client.notified", entity: "privacy_incident", entityId: i.id, clientId: link.client_id, ip: ctx.ip, details: { notified: !!v.notified_at } });
+        return { ok: true };
+      });
+      r.delete("/api/incidents/:id/clients/:clientId", auth3.requireAuth, auth3.requirePerm("incidents:write"), (ctx) => {
+        const i = loadIncident(ctx.params.id);
+        const link = db3.one(`SELECT * FROM privacy_incident_clients WHERE incident_id=? AND client_id=?`, i.id, ctx.params.clientId);
+        if (!link) throw notFound("That client is not linked to this incident");
+        auth3.assertClientAccess(ctx, link.client_id);
+        db3.run(`DELETE FROM privacy_incident_clients WHERE id=?`, link.id);
+        audit3.log({ user: ctx.user, action: "incident.client.unlink", entity: "privacy_incident", entityId: i.id, clientId: link.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/meta/compliance-options", auth3.requireAuth, () => ({ channels: CHANNELS, complainants: COMPLAINANTS, complaint_statuses: COMPLAINT_STATUSES, determinations: DETERMINATIONS }));
     };
+    module.exports.CHANNELS = CHANNELS;
   }
 });
 
@@ -15622,8 +16579,9 @@ var require_form_starters = __commonJS({
           text("client_name", "Client name", { required: true }),
           date("client_dob", "Date of birth"),
           section("sec_release", "What may be released, to whom, and why"),
-          text("recipient", "Information may be released to (name and agency)", { required: true }),
-          area("purpose", "Purpose of the disclosure", { required: true, help: 'Be specific \u2014 "for treatment coordination" is enough; "for any purpose" is not.' }),
+          text("discloser", "Who may make the disclosure (this program, or the named program or person)", { required: true }),
+          text("recipient", 'Information may be released to (name and agency, or a class \u2014 for a treatment, payment and operations consent: "my treating providers, health plans, third-party payers, and people helping to operate this program")', { required: true }),
+          area("purpose", "Purpose of the disclosure", { required: true, help: 'Be specific \u2014 "for treatment coordination", "at the request of the patient", or for a single TPO consent "for treatment, payment, and health care operations"; "for any purpose" is not. SUD counseling notes, and use in a legal proceeding, each need a separate consent of their own.' }),
           {
             key: "info",
             label: "Information to be released",
@@ -15637,8 +16595,9 @@ var require_form_starters = __commonJS({
           area("expires_event", "Or, the event or condition that ends it"),
           check("redisclosure", "The redisclosure notice below was explained to the client", { required: true }),
           section("sec_rights", "Client rights"),
-          check("may_revoke", "The client was told they may revoke this consent at any time, in writing or verbally, except where information has already been released in reliance on it"),
-          check("no_condition", "The client was told that treatment, payment and eligibility do not depend on signing this"),
+          check("may_revoke", "This consent states that the client may revoke it at any time in writing, and how, except to the extent the program or another lawful holder has already acted in reliance on it", { required: true }),
+          check("no_condition", "This consent states the consequences of refusing to sign (including that treatment, payment and eligibility do not depend on signing, where that is so)", { required: true }),
+          check("redisclosure_hipaa", "This consent states that records disclosed to a HIPAA covered entity or business associate may be redisclosed as HIPAA permits, except for use in proceedings against the client"),
           section("sec_sign", "Signatures"),
           text("client_sig", "Client signature", { required: true }),
           date("client_sig_date", "Date", { required: true }),
@@ -15647,7 +16606,7 @@ var require_form_starters = __commonJS({
           text("witness_sig", "Witness / staff signature"),
           date("witness_date", "Date")
         ],
-        footer: "NOTICE: This information has been disclosed to you from records protected by federal confidentiality rules (42 CFR Part 2). The federal rules prohibit you from making any further disclosure of information in this record that identifies a patient as having or having had a substance use disorder either directly, by reference to publicly available information, or through verification of such identification or status, unless authorised in writing by the patient or as otherwise permitted by 42 CFR Part 2. A general authorisation for the release of medical or other information is NOT sufficient for this purpose. The federal rules restrict any use of the information to investigate or prosecute with regard to a crime any patient with a substance use disorder, except as provided at \xA7\xA7 2.12(c)(5) and 2.65."
+        footer: `NOTICE TO RECIPIENT (42 CFR \xA72.32): ${require_constants().PART2_REDISCLOSURE_NOTICE}`
       },
       {
         key: "consent_revocation",
@@ -15966,6 +16925,12 @@ var require_forms = __commonJS({
     function safeContentType(t) {
       return SERVABLE_TYPES.has(String(t || "").toLowerCase().split(";")[0].trim()) ? String(t).split(";")[0].trim() : "application/octet-stream";
     }
+    function printFooter() {
+      const disclosure = require_disclosure();
+      const n = disclosure.notice();
+      const printed = `Printed from SUDS ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.`;
+      return disclosure.part2Program() ? `${printed} PROTECTED BY 42 CFR PART 2. ${n.short} If this record is disclosed, this notice must accompany it (42 CFR \xA72.32): ${n.text}` : `${printed} Contains protected health information; handle per HIPAA.`;
+    }
     module.exports = (r) => {
       r.get("/api/forms/starters", auth3.requireAuth, auth3.requirePerm("forms:manage"), () => ({ starters: require_form_starters().list() }));
       r.post("/api/forms/starters", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
@@ -16119,7 +17084,7 @@ var require_forms = __commonJS({
         const values = parseJson(decrypt3(f.values_enc), {});
         const by = f.completed_by ? db3.one(`SELECT display_name FROM users WHERE id=?`, f.completed_by) : null;
         audit3.log({ user: ctx.user, action: "client_form.print", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
-        const body = pdf.renderForm({ title: f.template_name, org: db3.getSetting("org_name", "SUDS"), meta: [`Client: ${client.first_name} ${client.last_name} (${client.client_code})`, f.status === "completed" ? `Completed ${f.completed_at.slice(0, 10)}${by ? " by " + by.display_name : ""}` : "DRAFT"], fields: parseJson(f.fields_json, []), values, footer: `Printed from SUDS ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}. Contains protected health information; handle per 42 CFR Part 2 and HIPAA.` });
+        const body = pdf.renderForm({ title: f.template_name, org: db3.getSetting("org_name", "SUDS"), meta: [`Client: ${client.first_name} ${client.last_name} (${client.client_code})`, f.status === "completed" ? `Completed ${f.completed_at.slice(0, 10)}${by ? " by " + by.display_name : ""}` : "DRAFT"], fields: parseJson(f.fields_json, []), values, footer: printFooter() });
         ctx.res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": `${ctx.query.get("download") === "1" ? "attachment" : "inline"}; filename="${client.client_code}-${f.template_name.replace(/[^\w.-]+/g, "_")}.pdf"` });
         ctx.res.end(body);
         return null;
@@ -17142,12 +18107,16 @@ var require_notes = __commonJS({
       intervention_id: { type: "string" },
       call_id: { type: "string" },
       part2_protected: { type: "boolean" },
+      counseling_note: { type: "boolean" },
       cosign_requested: { type: "boolean" },
       source: { type: "string", enum: ["manual", "pocket_ai", "onenote", "import", "api"] },
       source_ref: { type: "string", maxLen: 300 }
     };
     function kindPerm(kind, rw) {
       return `notes:${kind}:${rw}`;
+    }
+    function checkCounseling(kind, counseling) {
+      if (counseling && kind !== "clinical") throw badRequest("Only a clinical note can be a SUD counseling note");
     }
     async function verifyIdentity(ctx) {
       const { password } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 } }, { partial: true });
@@ -17241,7 +18210,7 @@ var require_notes = __commonJS({
         }
         const w = "WHERE " + where.join(" AND ");
         const rows = db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
-      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
+      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
       (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda
       FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
         const out2 = rows.map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0, ...signatureState(x) }));
@@ -17253,10 +18222,11 @@ var require_notes = __commonJS({
         if (!auth3.hasPerm(ctx.user, kindPerm(v.kind, "write"))) throw forbidden(`You cannot author ${v.kind} notes`);
         if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
         auth3.assertClientAccess(ctx, v.client_id);
+        checkCounseling(v.kind, v.counseling_note);
         const id = uuid2();
         const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
         db3.run(
-          `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,counseling_note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           id,
           v.client_id,
           ctx.user.id,
@@ -17272,9 +18242,10 @@ var require_notes = __commonJS({
           v.source || "manual",
           v.source_ref || null,
           author?.requires_cosign ? 1 : 0,
-          v.cosign_requested ? 1 : 0
+          v.cosign_requested ? 1 : 0,
+          v.counseling_note ? 1 : 0
         );
-        audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0 } });
+        audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0, counseling_note: v.counseling_note ? true : void 0 } });
         ctx.status = 201;
         return { id, updated_at: db3.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at };
       });
@@ -17296,10 +18267,11 @@ var require_notes = __commonJS({
         if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
         if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can edit a draft");
         require_crud().assertFresh(ctx, n, "note");
-        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested }, { partial: true, existing: n });
+        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested }, { partial: true, existing: n });
+        checkCounseling(n.kind, v.counseling_note);
         const sets = [];
         const params = [];
-        for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected", "cosign_requested"]) if (v[k] !== void 0) {
+        for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected", "counseling_note", "cosign_requested"]) if (v[k] !== void 0) {
           sets.push(`${k}=?`);
           params.push(v[k]);
         }
@@ -18001,11 +18973,22 @@ var require_referrals = __commonJS({
       }
       return out2;
     }
+    function gate(ctx, v, row = {}) {
+      return {
+        consent_id: v.consent_id || row.consent_id,
+        basis: v._disclosure_basis,
+        justification: v._disclosure_justification,
+        court_order_id: v._court_order_id,
+        restriction_reviewed: v._restriction_reviewed,
+        user: ctx.user
+      };
+    }
     function recordDisclosure(ctx, row, v = {}) {
-      const basis = disclosure.requireBasis(row.client_id, { consent_id: v.consent_id || row.consent_id, basis: v._disclosure_basis, justification: v._disclosure_justification, user: ctx.user });
+      const basis = disclosure.requireBasis(row.client_id, gate(ctx, v, row));
       disclosure.record({
         clientId: row.client_id,
         consentId: basis.consent?.id || null,
+        courtOrderId: basis.court_order?.id || null,
         recipient: resourceName(v.resource_id || row.resource_id),
         purpose: "Referral for services",
         what: v._disclosure_what || "Referral information (name, contact details and presenting need)",
@@ -18047,7 +19030,9 @@ var require_referrals = __commonJS({
           // Not columns: how this disclosure is justified, and what was actually sent.
           _disclosure_basis: { type: "string", enum: BASES },
           _disclosure_what: { type: "string", maxLen: 1e3 },
-          _disclosure_justification: { type: "string", maxLen: 2e3 }
+          _disclosure_justification: { type: "string", maxLen: 2e3 },
+          _court_order_id: { type: "string" },
+          _restriction_reviewed: { type: "boolean" }
         },
         filters: (ctx, where, params) => {
           const s = ctx.query.get("status");
@@ -18068,7 +19053,7 @@ var require_referrals = __commonJS({
         beforeInsert: (ctx, v) => {
           if (!db3.one(`SELECT 1 FROM resources WHERE id=?`, v.resource_id)) throw badRequest("Unknown resource");
           if (v.consent_id && !db3.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, v.client_id)) throw badRequest("That consent belongs to a different client");
-          if (sharesInformation(v)) disclosure.requireBasis(v.client_id, { consent_id: v.consent_id, basis: v._disclosure_basis, justification: v._disclosure_justification, user: ctx.user });
+          if (sharesInformation(v)) disclosure.requireBasis(v.client_id, gate(ctx, v));
           if (!v.follow_up_due) {
             const days = v.urgency === "emergent" ? 1 : v.urgency === "urgent" ? 3 : 14;
             v.follow_up_due = new Date(Date.now() + days * 864e5).toISOString().slice(0, 10);
@@ -18112,7 +19097,9 @@ var require_referrals = __commonJS({
           consent_id: { type: "string" },
           _disclosure_basis: { type: "string", enum: BASES },
           _disclosure_what: { type: "string", maxLen: 1e3 },
-          _disclosure_justification: { type: "string", maxLen: 2e3 }
+          _disclosure_justification: { type: "string", maxLen: 2e3 },
+          _court_order_id: { type: "string" },
+          _restriction_reviewed: { type: "boolean" }
         }, { existing: row });
         if (v.consent_id && !db3.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest("That consent belongs to a different client");
         const admitted = v.status === "admitted" || !!v.admitted_at;
@@ -22168,6 +23155,15 @@ var require_reports = __commonJS({
           // Patient-rights requests (access, amendment, restriction, accounting) each run a 30-day clock; the
           // count of open ones, and how many have run out, so a deadline is not first noticed when it is missed.
           patient_requests: auth3.hasPerm(ctx.user, "patient-requests:read") || auth3.hasPerm(ctx.user, "patient-requests:write") ? scoped1(`SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN p.due_at < ? THEN 1 ELSE 0 END),0) overdue FROM patient_requests p JOIN clients c ON c.id=p.client_id WHERE p.status='open' AND c.deleted_at IS NULL AND {CF}`, today) : null,
+          // 42 CFR §2.22: active clients on this person's caseload with no record of being given the notice.
+          part2_notice_missing: (auth3.hasPerm(ctx.user, "consents:read") || auth3.hasPerm(ctx.user, "consents:write")) && require_disclosure().part2Program() ? scoped1(`SELECT COUNT(*) n FROM clients c WHERE ${require_part2().MISSING_NOTICE} AND {CF}`).n : null,
+          // The privacy officer's registers: open complaints, and incidents whose breach-notification clock
+          // needs attention (a determination not made, or a notice owed) — how many are due within two weeks or late.
+          complaints_open: auth3.hasPerm(ctx.user, "complaints:read") ? db3.one(`SELECT COUNT(*) n FROM complaints WHERE status IN ('open','investigating')`).n : null,
+          incidents: auth3.hasPerm(ctx.user, "incidents:read") ? (() => {
+            const ob = db3.all(`SELECT * FROM privacy_incidents WHERE status='open'`).map((i) => require_incidents().obligations(i));
+            return { open: ob.length, attention: ob.filter((o) => o.attention).length, due_soon: ob.filter((o) => o.warn && !o.overdue).length, overdue: ob.filter((o) => o.overdue).length };
+          })() : null,
           // The number of clients the "consent expiring" list shows (the card below lists the first 20 consents).
           consents_expiring_clients: (() => {
             const f = CFX.consentExpiring();
@@ -22289,20 +23285,33 @@ var require_reports = __commonJS({
         const recipient = (ctx.query.get("recipient") || "").trim();
         const purpose = (ctx.query.get("purpose") || "").trim();
         if (identified && (!recipient || !purpose)) throw require_http().badRequest("An identified export must name its recipient and purpose (recipient= and purpose=); they are written to the accounting of disclosures for every client it contains");
+        const disclosure = require_disclosure();
+        const gate = { basis: ctx.query.get("basis") || "", restriction_reviewed: ctx.query.get("restriction_reviewed") === "1", legal_proceeding: ctx.query.get("legal_proceeding") === "1" };
+        if (identified) disclosure.requireExportBasis([], gate);
+        const part2 = identified && disclosure.part2Program();
+        const notice = disclosure.notice();
         const format = ctx.query.get("format") === "xlsx" || ctx.params.kind === "workbook" ? "xlsx" : "csv";
         const X = require_exports();
         const D = X.datasets(ctx, { ...period, identified });
         const S = require_spreadsheet();
-        const disclosure = require_disclosure();
         const accountFor = (kind, ids) => {
           if (!identified) return [];
-          return ids.map((clientId) => disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: "export", basis: "export", source: "export", sourceRef: kind, user: ctx.user, ip: ctx.ip }));
+          try {
+            disclosure.requireExportBasis(ids, gate);
+          } catch (e) {
+            audit3.log({ user: ctx.user, action: "report.export.refused", ip: ctx.ip, success: false, details: { kind, basis: gate.basis, clients: ids.length, reason: String(e.message).slice(0, 200) } });
+            throw e;
+          }
+          const written = ids.map((clientId) => disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: "export", basis: gate.basis, source: "export", sourceRef: kind, user: ctx.user, ip: ctx.ip }));
+          require_incidents().maybeMassExport({ clients: ids.length, kind, user: ctx.user });
+          return written;
         };
         const aboutSheet = { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: [
-          { k: "Classification", v: identified ? `Identified export \u2014 PHI. Disclosed to: ${recipient}. Purpose: ${purpose}.` : X.DEID_LABEL },
+          { k: "Classification", v: identified ? `Identified export \u2014 PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Lawful basis: ${gate.basis}.` : X.DEID_LABEL },
           { k: "Period", v: `${from} to ${to}` },
           { k: "Generated", v: db3.now() },
-          { k: "Generated by", v: ctx.user.display_name || ctx.user.username }
+          { k: "Generated by", v: ctx.user.display_name || ctx.user.username },
+          ...part2 ? [{ k: "Protected by 42 CFR Part 2", v: notice.short }, { k: "Notice to recipient (42 CFR \xA72.32)", v: notice.text }] : []
         ] };
         const label = (k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) });
         const RAW = /* @__PURE__ */ new Set(["client_code", "receipt_ref", "grant_number", "email", "website", "phone", "fax", "zip", "username", "document_ref", "medicaid_id", "address", "first_name", "last_name", "contact_name", "name", "organization", "vendor", "title", "template_name", "fund", "line", "resource", "worker", "approver", "assignee", "completed_by", "created_by", "disclosed_by", "recipient", "summary", "description", "notes", "purpose", "what", "goals", "flags", "hours", "eligibility", "services", "languages", "capacity_notes", "contact_person", "intake_process", "cost_notes", "restrictions", "label", "city"]);
@@ -22313,7 +23322,7 @@ var require_reports = __commonJS({
           for (const [k, v] of Object.entries(r2)) o[k] = typeof v === "string" && !RAW.has(k) && !(k in listed) && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) && v.length <= 40 ? humanize(v) : v;
           return o;
         });
-        const classification = identified ? `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Generated ${db3.now()}.` : `${X.DEID_LABEL} Generated ${db3.now()}.`;
+        const classification = identified ? `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Basis: ${gate.basis}.${part2 ? ` ${notice.short}` : ""} Generated ${db3.now()}.` : `${X.DEID_LABEL} Generated ${db3.now()}.`;
         const headerSafe = (s) => String(s).replace(/[^\x20-\x7e]/g, "?").slice(0, 900);
         let body, filename, type;
         if (ctx.params.kind === "workbook") {
@@ -22354,6 +23363,7 @@ var require_reports = __commonJS({
             type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
           } else {
             body = S.toCsv(rows, d.columns.map(label));
+            if (part2) body += "\r\n\r\n" + S.toCsv([{ n: `${notice.short} NOTICE TO RECIPIENT (42 CFR \xA72.32): ${notice.text}` }], [{ key: "n", label: "" }]).split("\r\n")[1];
             filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.csv`;
             type = "text/csv; charset=utf-8";
           }
@@ -22790,9 +23800,13 @@ var require_supervision = __commonJS({
         if (!b) throw notFound("Break-glass event not found");
         if (b.acknowledged_at) throw badRequest("This event has already been reviewed");
         if (b.user_id === ctx.user.id) throw forbidden("You cannot acknowledge your own break-glass access");
+        const v = validate(ctx.body || {}, { concern: { type: "boolean" }, note: { type: "string", maxLen: 2e3 } });
+        if (v.concern && String(v.note || "").trim().length < 10) throw badRequest("Say what is wrong with this access (at least 10 characters); it opens a draft incident");
         db3.run(`UPDATE breakglass_events SET acknowledged_by=?, acknowledged_at=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), db3.now(), b.id);
-        audit3.log({ user: ctx.user, action: "breakglass.acknowledge", entity: "breakglass_event", entityId: b.id, clientId: b.client_id, ip: ctx.ip, details: { accessed_by: b.user_id, note_id: b.note_id || void 0 } });
-        return { ok: true };
+        const incident = v.concern ? require_incidents().draft({ source: "breakglass", sourceRef: b.id, title: "Emergency access flagged at review", description: v.note, user: ctx.user }) : null;
+        if (incident) db3.run(`INSERT OR IGNORE INTO privacy_incident_clients(id,incident_id,client_id) SELECT ?,?,? WHERE ? IS NOT NULL`, require_crypto().uuid(), incident, b.client_id, b.client_id);
+        audit3.log({ user: ctx.user, action: "breakglass.acknowledge", entity: "breakglass_event", entityId: b.id, clientId: b.client_id, ip: ctx.ip, details: { accessed_by: b.user_id, note_id: b.note_id || void 0, incident: incident || void 0 } });
+        return { ok: true, incident };
       });
       const NO_REASON = "Say why this time is being returned, so the worker knows what to correct";
       function loadEntry(ctx, id) {
@@ -23260,7 +24274,7 @@ var require_sync = __commonJS({
           }
           const existing = db3.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
           if (!existing) continue;
-          if (t.name === "clients" || t.name === "notes" || t.name === "consents" || t.name === "disclosures" || t.name === "note_addenda") continue;
+          if (["clients", "notes", "consents", "disclosures", "note_addenda", "court_orders", "part2_notices"].includes(t.name)) continue;
           const clientId = t.clientCol ? existing[t.clientCol] : null;
           if (clientId && !auth3.canAccessClient(user, clientId)) {
             reject(t.name, ts.id, "not on caseload");
@@ -23649,6 +24663,7 @@ var init_ = __esm({
       "./routes/calls.js": () => require_calls(),
       "./routes/client-errors.js": () => require_client_errors(),
       "./routes/clients.js": () => require_clients(),
+      "./routes/compliance.js": () => require_compliance(),
       "./routes/consents.js": () => require_consents(),
       "./routes/dataimport.js": () => require_dataimport2(),
       "./routes/documents.js": () => require_documents(),
@@ -23662,6 +24677,7 @@ var init_ = __esm({
       "./routes/oidc.js": () => require_oidc2(),
       "./routes/options.js": () => require_options2(),
       "./routes/overdose.js": () => require_overdose(),
+      "./routes/part2.js": () => require_part2(),
       "./routes/patient-requests.js": () => require_patient_requests(),
       "./routes/referrals.js": () => require_referrals(),
       "./routes/regions.js": () => require_regions2(),
@@ -23736,6 +24752,8 @@ var require_app2 = __commonJS({
       "notes",
       "consents",
       "patient-requests",
+      "part2",
+      "compliance",
       "forms",
       "documents",
       "imports",
@@ -24490,6 +25508,8 @@ var routeLoaders = {
   notes: () => Promise.resolve().then(() => __toESM(require_notes())),
   consents: () => Promise.resolve().then(() => __toESM(require_consents())),
   "patient-requests": () => Promise.resolve().then(() => __toESM(require_patient_requests())),
+  part2: () => Promise.resolve().then(() => __toESM(require_part2())),
+  compliance: () => Promise.resolve().then(() => __toESM(require_compliance())),
   forms: () => Promise.resolve().then(() => __toESM(require_forms())),
   documents: () => Promise.resolve().then(() => __toESM(require_documents())),
   regions: () => Promise.resolve().then(() => __toESM(require_regions2())),

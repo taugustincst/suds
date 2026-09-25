@@ -12,8 +12,13 @@ const audit = require('./audit');
 // Every client-scoped table, children before parents. Tables whose client link is financial or
 // staff-time bookkeeping (time_entries, expenditures) keep their rows with the client link removed:
 // the money was spent and the hours were worked whether or not the person's record still exists.
-const DELETE_TABLES = ['client_form_files', 'client_forms', 'disclosures', 'consents', 'patient_requests', 'referrals', 'tasks', 'calls', 'overdose_events', 'interventions', 'episodes', 'assignments', 'breakglass_events'];
-const UNLINK_TABLES = ['time_entries', 'expenditures'];
+// A disclosure cites the court order it relied on, so disclosures go before court_orders.
+const DELETE_TABLES = ['client_form_files', 'client_forms', 'disclosures', 'court_orders', 'part2_notices', 'consents', 'patient_requests', 'referrals', 'tasks', 'calls', 'overdose_events', 'interventions', 'episodes', 'assignments', 'breakglass_events', 'privacy_incident_clients'];
+// A complaint is the programme's record of how it answered one, and stays (unlinked) when the person's
+// record goes; the incident register keeps its counts when a linked client is purged.
+const UNLINK_TABLES = ['time_entries', 'expenditures', 'complaints'];
+// Tables that never synchronise leave no tombstone behind.
+const NO_TOMBSTONE = ['breakglass_events', 'privacy_incident_clients'];
 
 function retentionYears() {
   const v = Number(db.getSetting('client_retention_years', ''));
@@ -41,11 +46,14 @@ const ACTIVITY = {
   client_form_files: ['created_at'],
   overdose_events: ['occurred_at'],
   patient_requests: ['received_at', 'closed_at'],
+  court_orders: ['issued_at'],
+  part2_notices: ['given_at'],
   time_entries: ['work_date'],
   expenditures: ['spent_at'],
 };
 // Client-linked tables that are not activity on the record: who was assigned, and emergency reads of it.
-const NOT_ACTIVITY = ['assignments', 'breakglass_events'];
+// A privacy complaint or an incident that touched the record is not care given to the person either.
+const NOT_ACTIVITY = ['assignments', 'breakglass_events', 'complaints', 'privacy_incident_clients'];
 
 function lastActivitySql() {
   const parts = [];
@@ -110,7 +118,7 @@ function purgeClient(client, { user = { username: 'system' }, reason = 'retentio
       counts[t] = ids.length;
       if (!ids.length) continue;
       db.run(`DELETE FROM ${t} WHERE client_id=?`, client.id);
-      if (t !== 'breakglass_events') for (const id of ids) db.tombstone(t, id);
+      if (!NO_TOMBSTONE.includes(t)) for (const id of ids) db.tombstone(t, id);
     }
     for (const t of UNLINK_TABLES) counts[t] = db.run(`UPDATE ${t} SET client_id=NULL, updated_at=? WHERE client_id=?`, db.now(), client.id).changes;
     // An import item that was guessed to be this person keeps a plain (non-FK) pointer; it must not dangle.

@@ -9,8 +9,8 @@ const M = require('./clients-model');
 const audit = require('./audit');
 
 const DEMO_PREFIX = 'DEMO-';
-const TABLES = ['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'episodes', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_stock'];
-const SYNCED = new Set(['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'episodes', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_stock']);
+const TABLES = ['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'episodes', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_stock'];
+const SYNCED = new Set(['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'episodes', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_stock']);
 
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
@@ -215,7 +215,9 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
       }
       // Consents & disclosures
       const consentId = track('consents', uuid());
-      db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,?,?)`, consentId, c.id, 'part2_disclosure', encrypt('County Opioid Treatment Program'), encrypt('Treatment coordination and referral'), encrypt('Referral summary, diagnosis, MAT status'), day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), 'Consent binder, tab ' + (i + 1), c.worker);
+      db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, 'part2_disclosure', encrypt('County Opioid Treatment Program'), encrypt('Treatment coordination and referral'), encrypt('Referral summary, diagnosis, MAT status'), day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), 'Consent binder, tab ' + (i + 1), c.worker);
+      // The §2.22 notice was given to most sample clients; a few are left without one so the reminder shows.
+      if (i % 4 !== 1) db.run(`INSERT INTO part2_notices(id,client_id,given_at,method,notice_version,acknowledged,given_by) VALUES(?,?,?,?,?,?,?)`, track('part2_notices', uuid()), c.id, day(60 + i), 'in_person_paper', '1', 1, c.worker);
       if (i % 3 === 0) db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)`, track('consents', uuid()), c.id, 'roi', encrypt('Family member (mother)'), encrypt('Care coordination with family'), encrypt('Appointment dates and general progress'), day(50 + i), day(-315), c.worker);
       if (i % 2 === 0) db.run(`INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,source) VALUES(?,?,?,?,?,?,?,?,?,?,'manual')`, track('disclosures', uuid()), c.id, consentId, encrypt('County Opioid Treatment Program'), encrypt('Referral for MAT intake'), encrypt('Referral summary and MAT status'), 'fax', d(40 + i), c.worker, 'consent');
       // Expenditures

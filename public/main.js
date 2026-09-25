@@ -27,4 +27,5 @@ import './views/episodes.js';
 import './views/overdose.js';
 import './views/funder.js';
 import './views/supplies.js';
+import './views/compliance.js';
 boot();

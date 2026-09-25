@@ -33,7 +33,10 @@ module.exports = {
     { name: 'calls', enc: ['contact_name_enc', 'phone_enc', 'summary_enc', 'purpose_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'calls:write', parent: ['clients', 'client_id'] },
     { name: 'time_entries', enc: [], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'time:write', parent: ['clients', 'client_id'] },
     // A referral may cite the consent it was made under, so consents come first.
-    { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
+    { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc', 'signer_name_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
+    // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
+    { name: 'court_orders', enc: ['court_enc', 'case_ref_enc', 'recipient_enc', 'purpose_enc', 'scope_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'court-orders:write', parent: ['clients', 'client_id'] },
+    { name: 'part2_notices', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     { name: 'referrals', enc: ['outcome_enc', 'barrier_enc', 'notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'referrals:write', parent: ['clients', 'client_id'] },
     // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
     { name: 'tasks', enc: ['title_enc', 'description_enc'], legacy: { description: 'description_enc' }, scope: 'client-or-null', clientCol: 'client_id', writePerm: 'tasks:write', parent: ['clients', 'client_id'] },
@@ -68,7 +71,8 @@ module.exports = {
   ],
   // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
   // emergency access, and a device has no supervisor to review it.
-  server_only: ['breakglass_events'],
+  // complaints and the privacy incident register are the privacy officer's, kept at the office likewise.
+  server_only: ['breakglass_events', 'complaints', 'privacy_incidents', 'privacy_incident_clients'],
   // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
   // the answers to retried POSTs made against that database (server/idempotency.js). A device's retry is
   // answered by the device; the office never sees the key, only the rows the request created.
@@ -90,6 +94,8 @@ module.exports = {
     ['breakglass_events', 'user_id'], ['breakglass_events', 'acknowledged_by'], ['patient_requests', 'handled_by'], ['patient_requests', 'created_by'],
     ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'], ['devices', 'user_id'],
     ['supply_stock', 'updated_by'], ['option_overrides', 'updated_by'],
+    ['court_orders', 'recorded_by'], ['part2_notices', 'given_by'], ['complaints', 'handled_by'], ['complaints', 'created_by'],
+    ['privacy_incidents', 'determined_by'], ['privacy_incidents', 'reported_by'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.

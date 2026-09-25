@@ -82,6 +82,7 @@ module.exports = (r) => {
   r.get('/api/admin/audit/verify', auth.requireAuth, auth.requirePerm('audit:read'), async (ctx) => {
     const res = await audit.verifyChainAsync();
     audit.log({ user: ctx.user, action: 'audit.verify', ip: ctx.ip, details: res });
+    if (!res.ok) require('../incidents').chainFailure(res, ctx.user);
     return res;
   });
 

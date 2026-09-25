@@ -84,9 +84,15 @@ module.exports = (r) => {
     if (b.acknowledged_at) throw badRequest('This event has already been reviewed');
     // Reviewing your own emergency access is not a review.
     if (b.user_id === ctx.user.id) throw forbidden('You cannot acknowledge your own break-glass access');
+    // The reviewer may find the access was not justified: that is a possible breach, and it goes to the
+    // incident register as a draft (with the reviewer's note, encrypted) rather than ending at "reviewed".
+    const v = validate(ctx.body || {}, { concern: { type: 'boolean' }, note: { type: 'string', maxLen: 2000 } });
+    if (v.concern && String(v.note || '').trim().length < 10) throw badRequest('Say what is wrong with this access (at least 10 characters); it opens a draft incident');
     db.run(`UPDATE breakglass_events SET acknowledged_by=?, acknowledged_at=?, updated_at=? WHERE id=?`, ctx.user.id, db.now(), db.now(), b.id);
-    audit.log({ user: ctx.user, action: 'breakglass.acknowledge', entity: 'breakglass_event', entityId: b.id, clientId: b.client_id, ip: ctx.ip, details: { accessed_by: b.user_id, note_id: b.note_id || undefined } });
-    return { ok: true };
+    const incident = v.concern ? require('../incidents').draft({ source: 'breakglass', sourceRef: b.id, title: 'Emergency access flagged at review', description: v.note, user: ctx.user }) : null;
+    if (incident) db.run(`INSERT OR IGNORE INTO privacy_incident_clients(id,incident_id,client_id) SELECT ?,?,? WHERE ? IS NOT NULL`, require('../crypto').uuid(), incident, b.client_id, b.client_id);
+    audit.log({ user: ctx.user, action: 'breakglass.acknowledge', entity: 'breakglass_event', entityId: b.id, clientId: b.client_id, ip: ctx.ip, details: { accessed_by: b.user_id, note_id: b.note_id || undefined, incident: incident || undefined } });
+    return { ok: true, incident };
   });
 
   // ---- staff time approval (mirrors the expenditure separation of duties) ----

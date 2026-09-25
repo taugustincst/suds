@@ -258,6 +258,9 @@ async function scheduledVerify({ full = false, batch } = {}) {
   console.error(`[suds] AUDIT CHAIN BROKEN ${r.truncated ? `(truncated: ${r.reason})` : `at entry ${r.firstBadId}`} — investigate immediately`);
   log({ user: { username: 'system' }, action: 'audit.verify.failed', success: false, details: { first_bad_id: r.firstBadId, checked: r.checked, truncated: r.truncated || undefined, reason: r.reason, mode: r.mode } });
   db.setSetting('audit_verify_failed_at', db.now());
+  // A broken chain may mean someone altered or removed the record of who read what: that is a possible
+  // breach until someone has looked, so it opens a draft in the incident register (server/incidents.js).
+  try { require('./incidents').chainFailure(r); } catch (e) { console.error('[suds] could not open an incident for the audit failure:', e.message); }
   return r;
 }
 

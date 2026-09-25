@@ -42,13 +42,19 @@ function present(row) {
   return out;
 }
 
+/** What disclosure.requireBasis needs from a referral form: the consent, or the other basis and its order. */
+function gate(ctx, v, row = {}) {
+  return { consent_id: v.consent_id || row.consent_id, basis: v._disclosure_basis, justification: v._disclosure_justification, court_order_id: v._court_order_id,
+    restriction_reviewed: v._restriction_reviewed, user: ctx.user };
+}
+
 /**
  * The one place a referral's disclosure is written: from create, update and the outcome route alike.
  * Nothing identifiable goes out without a basis, and a basis that is not consent has to be justified.
  */
 function recordDisclosure(ctx, row, v = {}) {
-  const basis = disclosure.requireBasis(row.client_id, { consent_id: v.consent_id || row.consent_id, basis: v._disclosure_basis, justification: v._disclosure_justification, user: ctx.user });
-  disclosure.record({ clientId: row.client_id, consentId: basis.consent?.id || null, recipient: resourceName(v.resource_id || row.resource_id),
+  const basis = disclosure.requireBasis(row.client_id, gate(ctx, v, row));
+  disclosure.record({ clientId: row.client_id, consentId: basis.consent?.id || null, courtOrderId: basis.court_order?.id || null, recipient: resourceName(v.resource_id || row.resource_id),
     purpose: 'Referral for services', what: v._disclosure_what || 'Referral information (name, contact details and presenting need)',
     method: (v.warm_handoff ?? row.warm_handoff) ? 'warm handoff' : 'referral', basis: basis.basis, justification: basis.justification, source: 'referral', sourceRef: row.id, user: ctx.user, ip: ctx.ip });
 }
@@ -65,6 +71,7 @@ module.exports = (r) => {
       follow_up_due: { type: 'date' }, notes: { type: 'string', maxLen: 2000 }, episode_id: { type: 'string' },
       // Not columns: how this disclosure is justified, and what was actually sent.
       _disclosure_basis: { type: 'string', enum: BASES }, _disclosure_what: { type: 'string', maxLen: 1000 }, _disclosure_justification: { type: 'string', maxLen: 2000 },
+      _court_order_id: { type: 'string' }, _restriction_reviewed: { type: 'boolean' },
     },
     filters: (ctx, where, params) => {
       const s = ctx.query.get('status'); if (s && s !== 'all') { where.push('referrals.status=?'); params.push(s); }
@@ -79,7 +86,7 @@ module.exports = (r) => {
       if (v.consent_id && !db.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, v.client_id)) throw badRequest('That consent belongs to a different client');
       // Nothing identifiable goes out without a basis. A "pending" referral with no warm handoff is just a
       // phone number handed to the client, so it needs none.
-      if (sharesInformation(v)) disclosure.requireBasis(v.client_id, { consent_id: v.consent_id, basis: v._disclosure_basis, justification: v._disclosure_justification, user: ctx.user });
+      if (sharesInformation(v)) disclosure.requireBasis(v.client_id, gate(ctx, v));
       // Closing the loop is the point of a referral: every one gets a follow-up date whether or not the
       // worker set one, so "we referred them and never found out" stops being possible.
       if (!v.follow_up_due) {
@@ -116,6 +123,7 @@ module.exports = (r) => {
       status: { type: 'string', required: true, list: 'REFERRAL_STATUSES' },
       outcome: { type: 'string', maxLen: 500 }, barrier: { type: 'string', maxLen: 300 }, admitted_at: { type: 'datetime' },
       consent_id: { type: 'string' }, _disclosure_basis: { type: 'string', enum: BASES }, _disclosure_what: { type: 'string', maxLen: 1000 }, _disclosure_justification: { type: 'string', maxLen: 2000 },
+      _court_order_id: { type: 'string' }, _restriction_reviewed: { type: 'boolean' },
     }, { existing: row });
     if (v.consent_id && !db.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest('That consent belongs to a different client');
     const admitted = v.status === 'admitted' || !!v.admitted_at;

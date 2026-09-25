@@ -44,7 +44,22 @@ module.exports = {
   // 'handoff' is the shift hand-off note (what the next worker on needs to know), 'safety_plan' a structured
   // safety plan (see SECTIONS in public/views/notes.js); both are ordinary notes as far as access rules go.
   NOTE_FORMATS: ['narrative', 'SOAP', 'DAP', 'BIRP', 'GIRP', 'intake', 'progress', 'discharge', 'contact', 'collateral', 'crisis', 'supervision', 'handoff', 'safety_plan'],
-  CONSENT_TYPES: ['part2_disclosure', 'roi', 'treatment', 'telehealth', 'contact_preferences', 'research', 'photo_media'],
+  // part2_* are 42 CFR Part 2 consents (§2.31): every element is required of them. part2_tpo is the 2024
+  // rule's single consent for all future treatment, payment and health care operations; part2_counseling_notes
+  // is the separate consent SUD counseling notes need (§2.31(b)); part2_proceedings is the stand-alone consent
+  // for use in a civil, criminal, administrative or legislative proceeding (§2.31(d)), which may not be
+  // combined with any other. 'roi' is a general release, which Part 2 says is not sufficient on its own.
+  CONSENT_TYPES: ['part2_disclosure', 'part2_tpo', 'part2_counseling_notes', 'part2_proceedings', 'roi', 'treatment', 'telehealth', 'contact_preferences', 'research', 'photo_media'],
+  PART2_CONSENT_TYPES: ['part2_disclosure', 'part2_tpo', 'part2_counseling_notes', 'part2_proceedings'],
+  CONSENT_SIGNERS: ['patient', 'parent_or_guardian', 'personal_representative', 'court_appointed_guardian'],
+  COURT_ORDER_TYPES: ['noncriminal_2_64', 'criminal_patient_2_65', 'program_investigation_2_66', 'undercover_2_67'],
+  PART2_NOTICE_METHODS: ['in_person_paper', 'electronic', 'mail', 'verbal_with_copy'],
+  // 42 CFR §2.32(a)(1) as amended by the 2024 final rule (89 FR 12472): the notice that must accompany
+  // every disclosure made with the patient's written consent. PART2_NOTICE_SHORT is §2.32(a)(2)'s
+  // abbreviated form, used as the label on screens and printouts.
+  PART2_NOTICE_VERSION: '2024',
+  PART2_REDISCLOSURE_NOTICE: 'This record which has been disclosed to you is protected by Federal confidentiality rules (42 CFR part 2). These rules prohibit you from using or disclosing this record, or testimony that describes the information contained in this record, in any civil, criminal, administrative, or legislative proceedings by any Federal, State, or local authority, against the patient, unless authorized by the consent of the patient, except as provided at 42 CFR 2.12(c)(5) or as authorized by a court in accordance with 42 CFR 2.64 or 2.65. In addition, the Federal rules prohibit you from making any other use or disclosure of this record unless at least one of the following applies: (i) Further use or disclosure is expressly permitted by the written consent of the individual whose information is being disclosed in this record or as otherwise permitted by 42 CFR part 2. (ii) You are a covered entity or business associate and have received the record for treatment, payment, or health care operations, or (iii) You have received the record from a covered entity or business associate as permitted by 45 CFR part 164, subparts A and E. A general authorization for the release of medical or other information is NOT sufficient to meet the required elements of written consent to further use or redisclose the record (see 42 CFR 2.31).',
+  PART2_NOTICE_SHORT: '42 CFR part 2 prohibits unauthorized use or disclosure of these records.',
   SUBSTANCES: ['opioids_fentanyl', 'opioids_heroin', 'opioids_rx', 'alcohol', 'methamphetamine', 'cocaine', 'benzodiazepines', 'cannabis', 'synthetic_cannabinoids', 'xylazine', 'nicotine', 'other', 'unknown'],
   SERVICE_TAGS: ['detox', 'residential', 'inpatient', 'partial_hospitalization', 'intensive_outpatient', 'outpatient', 'mat_buprenorphine', 'mat_methadone', 'mat_naltrexone', 'medication_management', 'individual_counseling', 'group_counseling', 'family_program', 'peer_support', 'case_management', 'mental_health', 'trauma_informed', 'co_occurring', 'medical_care', 'harm_reduction', 'naloxone', 'syringe_services', 'housing', 'sober_living', 'employment', 'legal_help', 'transportation', 'childcare', 'telehealth', 'walk_in', 'same_day_intake', 'crisis_24_7', 'aftercare', 'faith_based', 'spanish_speaking'],
   POPULATIONS: ['adults', 'adolescents', 'women', 'men', 'pregnant_parenting', 'families', 'veterans', 'lgbtq', 'justice_involved', 'unhoused', 'older_adults', 'native_american', 'spanish_speakers', 'deaf_hard_of_hearing'],

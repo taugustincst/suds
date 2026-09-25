@@ -16,7 +16,7 @@ SUDS needs a connection to the office. Without one, a banner says so and nothing
 Use your individual username. After 5 wrong passwords the account locks for 15 minutes. You are signed out automatically after 15 minutes without activity — a banner warns you one minute before. Supervisors and administrators must enroll an authenticator app (Profile → Multi-factor authentication → scan the QR code).
 
 ## Dashboard
-Shows alerts (overdue tasks, unsigned notes, imported notes waiting for review, clients with no intervention in 30 days, consents expiring, open patient-rights requests and how many are past their 30-day deadline), your caseload sorted by risk and last contact, and 90-day activity charts. The same open-requests count appears on the Supervision page.
+Shows alerts (overdue tasks, unsigned notes, imported notes waiting for review, clients with no intervention in 30 days, consents expiring, open patient-rights requests and how many are past their 30-day deadline, active clients with no Part 2 notice on record, and — for supervisors — open privacy complaints and incidents nearing or past their notification deadline), your caseload sorted by risk and last contact, and 90-day activity charts. The same open-requests count appears on the Supervision page.
 
 ## Clients
 * **Search** matches exact last name, "Last, First", phone number, date of birth (YYYY-MM-DD) or client code, plus the first few letters of a surname and (for names in the Latin alphabet) close misspellings. Names in any script work — Arabic, Cyrillic, Chinese and so on — and accents do not matter: *Oster* finds *Øster*, *Lecki* finds *Łecki*, *Jose* finds *José*.
@@ -57,7 +57,21 @@ Do not add pictures of clients.
 * Do not put names or other identifiers in intervention *summary* fields — they are not encrypted. Use notes for anything sensitive.
 
 ## Consents & ROI (42 CFR Part 2)
-Before sharing SUD information with a provider, family member or agency, record a **consent** naming the recipient, purpose, information covered and expiration. Every time information is shared, record a **disclosure** (who, what, why, how, on what basis). Revoke consents when the client withdraws them.
+Your programme is a **42 CFR Part 2** programme: the client header says so, and the rules below are enforced — SUDS refuses what the rule does not allow and tells you why.
+
+* **Give the patient notice.** When a client starts, give them the programme's notice of privacy practices (Privacy & Part 2 → Patient notice has the current version to print) and record **+ Notice given** on their Consents tab. Until you do, the Overview says *Not recorded* and Home counts them.
+* **Record the consent.** **+ Consent** starts on the single consent for **treatment, payment and health care operations**, with the wording the rule allows. Fill in what the information covers and when it expires, who signed (the client, or a parent, guardian or representative — then their name), and tick each statement only if the signed form really contains it: the right to revoke in writing, the redisclosure statement, and what happens if the client refuses to sign. Use a separate consent for **SUD counseling notes** or for use in a **legal proceeding** — each of those covers nothing else. A general **ROI** is not a Part 2 consent. **Print** on a consent gives a PDF of everything recorded. A consent marked *Pre-2024 form* is still in force; renew it on the current form when you next see the client.
+* **Record every disclosure.** Referrals record their own. For anything else shared, **+ Disclosure**: who, what, why, how and on what basis. When you share under a consent, SUDS shows the **§2.32 notice** — put it on the fax cover, letter or email. Tick *includes SUD counseling notes* or *for use in a legal proceeding* when that is what it is; SUDS then asks for the consent or court order that covers it.
+* **Courts and subpoenas.** A subpoena alone never allows you to share a client's record. A supervisor records the **court order** on the Consents tab (Court orders); only an order with the required findings and notice can be relied on. Ask your supervisor and county counsel before responding to any legal request.
+* **Agreed restrictions.** If a client's restriction request has been agreed (Requests tab), SUDS asks you to confirm you have checked it before anything is shared.
+* **Revoke** a consent when the client withdraws it: open referrals that relied on it are flagged.
+
+## Privacy & Part 2 (supervisors and administrators)
+The **Privacy & Part 2** page (sidebar) has the programme-level controls; navigators and clinicians see the patient notice and the list of their clients who have not been given it.
+* **Overview** — counts of what needs attention; an administrator sets whether this is a Part 2 programme and the size of identified export that opens a draft incident.
+* **Patient notice** — the notice of privacy practices, ready to print. An administrator edits it (each save is a new version) once counsel has approved the wording.
+* **Complaints** — log every privacy complaint, named or anonymous. Record whether the person was told they may also complain to HHS, check no adverse action followed, and close it with its resolution. Complaints are never deleted.
+* **Incidents & breaches** — record anything that may have exposed client information the day it is discovered. Fill in the four-factor risk assessment, make the determination (a breach is presumed unless the assessment shows a low probability of compromise), link the affected clients and record each notice as it goes out. The deadline (60 days from discovery) and whether HHS and the media must be told are worked out for you; Home warns two weeks before and when late. A failed audit-log check, a break-glass access you flag as a concern (Supervision → Access to review → *Flag a concern*) and a very large identified export open a draft here automatically.
 
 ## Budget
 Finance staff see client codes on Budget and Time but not client records; the codes are not links for them, and opening a client link says *Not available for your role*.

@@ -24,6 +24,13 @@ route('dashboard', async () => {
   // Patient-rights requests run a 30-day clock: an overdue one is a compliance failure, not a to-do.
   const pr = d.patient_requests;
   if (pr && pr.n) alerts.push([pr.overdue ? 'danger' : 'warn', `${pr.n} open patient request${pr.n > 1 ? 's' : ''}${pr.overdue ? ` (${pr.overdue} overdue)` : ''}`, '#/clients?status=all&patient_requests=1']);
+  // 42 CFR Part 2: active clients never given the §2.22 notice; the breach clock (60 days from discovery) on
+  // open incidents; and complaints still open (docs/compliance/PART2.md).
+  if (d.part2_notice_missing) alerts.push(['warn', `${d.part2_notice_missing} active client${d.part2_notice_missing > 1 ? 's have' : ' has'} no Part 2 notice on record`, '#/compliance?tab=notices']);
+  const inc = d.incidents;
+  if (inc && (inc.overdue || inc.due_soon)) alerts.push(['danger', `${inc.overdue ? `${inc.overdue} privacy incident${inc.overdue > 1 ? 's' : ''} past the notification deadline` : `${inc.due_soon} privacy incident${inc.due_soon > 1 ? 's' : ''} due within 14 days`}`, '#/compliance?tab=incidents']);
+  else if (inc && inc.attention) alerts.push(['warn', `${inc.attention} privacy incident${inc.attention > 1 ? 's' : ''} need a determination or notice`, '#/compliance?tab=incidents']);
+  if (d.complaints_open) alerts.push(['warn', `${d.complaints_open} open privacy complaint${d.complaints_open > 1 ? 's' : ''}`, '#/compliance?tab=complaints']);
   // Account requests from the sign-in page's Sign up, waiting for an administrator (office server only).
   if (can('users:manage') && !state.local) {
     const reqs = await get('/api/users/access-requests', { quiet: true }).catch(() => null);

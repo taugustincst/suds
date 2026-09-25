@@ -94,6 +94,16 @@ module.exports = (r) => {
       patient_requests: auth.hasPerm(ctx.user, 'patient-requests:read') || auth.hasPerm(ctx.user, 'patient-requests:write')
         ? scoped1(`SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN p.due_at < ? THEN 1 ELSE 0 END),0) overdue FROM patient_requests p JOIN clients c ON c.id=p.client_id WHERE p.status='open' AND c.deleted_at IS NULL AND {CF}`, today)
         : null,
+      // 42 CFR §2.22: active clients on this person's caseload with no record of being given the notice.
+      part2_notice_missing: (auth.hasPerm(ctx.user, 'consents:read') || auth.hasPerm(ctx.user, 'consents:write')) && require('../disclosure').part2Program()
+        ? scoped1(`SELECT COUNT(*) n FROM clients c WHERE ${require('./part2').MISSING_NOTICE} AND {CF}`).n : null,
+      // The privacy officer's registers: open complaints, and incidents whose breach-notification clock
+      // needs attention (a determination not made, or a notice owed) — how many are due within two weeks or late.
+      complaints_open: auth.hasPerm(ctx.user, 'complaints:read') ? db.one(`SELECT COUNT(*) n FROM complaints WHERE status IN ('open','investigating')`).n : null,
+      incidents: auth.hasPerm(ctx.user, 'incidents:read') ? (() => {
+        const ob = db.all(`SELECT * FROM privacy_incidents WHERE status='open'`).map(i => require('../incidents').obligations(i));
+        return { open: ob.length, attention: ob.filter(o => o.attention).length, due_soon: ob.filter(o => o.warn && !o.overdue).length, overdue: ob.filter(o => o.overdue).length };
+      })() : null,
       // The number of clients the "consent expiring" list shows (the card below lists the first 20 consents).
       consents_expiring_clients: (() => { const f = CFX.consentExpiring(); return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n; })(),
       consents_expiring: db.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10), ...cf.params).map(x => ({ ...x, recipient: x.recipient_enc ? require('../crypto').decrypt(x.recipient_enc) : null, recipient_enc: undefined })),
@@ -236,20 +246,32 @@ module.exports = (r) => {
     const identified = ctx.query.get('identified') === '1' && auth.hasPerm(ctx.user, 'export:identified');
     const recipient = (ctx.query.get('recipient') || '').trim(); const purpose = (ctx.query.get('purpose') || '').trim();
     if (identified && (!recipient || !purpose)) throw require('../http').badRequest('An identified export must name its recipient and purpose (recipient= and purpose=); they are written to the accounting of disclosures for every client it contains');
+    const disclosure = require('../disclosure');
+    // An identified export is a disclosure like any other and passes the same gate (server/disclosure.js):
+    // one lawful basis for the file, checked against every client in it once the rows are known.
+    const gate = { basis: ctx.query.get('basis') || '', restriction_reviewed: ctx.query.get('restriction_reviewed') === '1', legal_proceeding: ctx.query.get('legal_proceeding') === '1' };
+    if (identified) disclosure.requireExportBasis([], gate);
+    const part2 = identified && disclosure.part2Program(); const notice = disclosure.notice();
     const format = ctx.query.get('format') === 'xlsx' || ctx.params.kind === 'workbook' ? 'xlsx' : 'csv';
     const X = require('../exports');
     const D = X.datasets(ctx, { ...period, identified });
     const S = require('../spreadsheet');
-    const disclosure = require('../disclosure');
     // One accounting row per client per export file: the workbook is one disclosure of everything it
     // holds, not one per sheet, so the recipient's name does not appear a dozen times in a client's accounting.
     const accountFor = (kind, ids) => {
       if (!identified) return [];
-      return ids.map(clientId => disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: 'export', basis: 'export', source: 'export', sourceRef: kind, user: ctx.user, ip: ctx.ip }));
+      try { disclosure.requireExportBasis(ids, gate); }
+      catch (e) { audit.log({ user: ctx.user, action: 'report.export.refused', ip: ctx.ip, success: false, details: { kind, basis: gate.basis, clients: ids.length, reason: String(e.message).slice(0, 200) } }); throw e; }
+      const written = ids.map(clientId => disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: 'export', basis: gate.basis, source: 'export', sourceRef: kind, user: ctx.user, ip: ctx.ip }));
+      // A file naming a great many people at once is exactly what a privacy officer wants to look at, lawful
+      // or not: past the threshold it opens a draft incident for review (server/incidents.js).
+      require('../incidents').maybeMassExport({ clients: ids.length, kind, user: ctx.user });
+      return written;
     };
     const aboutSheet = { name: 'About', columns: [{ key: 'k', label: 'Field' }, { key: 'v', label: 'Value' }], rows: [
-      { k: 'Classification', v: identified ? `Identified export — PHI. Disclosed to: ${recipient}. Purpose: ${purpose}.` : X.DEID_LABEL },
-      { k: 'Period', v: `${from} to ${to}` }, { k: 'Generated', v: db.now() }, { k: 'Generated by', v: ctx.user.display_name || ctx.user.username }] };
+      { k: 'Classification', v: identified ? `Identified export — PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Lawful basis: ${gate.basis}.` : X.DEID_LABEL },
+      { k: 'Period', v: `${from} to ${to}` }, { k: 'Generated', v: db.now() }, { k: 'Generated by', v: ctx.user.display_name || ctx.user.username },
+      ...(part2 ? [{ k: 'Protected by 42 CFR Part 2', v: notice.short }, { k: 'Notice to recipient (42 CFR §2.32)', v: notice.text }] : [])] };
     const label = (k) => ({ key: k, label: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) });
     // Coded values ("naloxone_supplies", "reimbursed") go out the way the screen shows them ("Naloxone
     // Supplies", "Reimbursed"); a funder should not have to decode enum names. Identifier-like columns are
@@ -260,7 +282,7 @@ module.exports = (r) => {
     // The classification travels in a response header and the filename (and, for Excel, the About sheet).
     // It used to be a "# …" comment line ahead of the CSV header, which put the label in row 1 of every
     // spreadsheet and broke re-import; CSV has no comment syntax.
-    const classification = identified ? `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Generated ${db.now()}.` : `${X.DEID_LABEL} Generated ${db.now()}.`;
+    const classification = identified ? `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Basis: ${gate.basis}.${part2 ? ` ${notice.short}` : ''} Generated ${db.now()}.` : `${X.DEID_LABEL} Generated ${db.now()}.`;
     const headerSafe = (s) => String(s).replace(/[^\x20-\x7e]/g, '?').slice(0, 900);
     let body, filename, type;
     if (ctx.params.kind === 'workbook') {
@@ -291,7 +313,13 @@ module.exports = (r) => {
       audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format, clients_disclosed: identified ? clientsDisclosed : undefined } });
       const suffix = identified ? 'identified' : 'deidentified';
       if (format === 'xlsx') { body = S.writeWorkbook([{ name: d.label, columns: d.columns.map(label), rows }, aboutSheet]); filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; }
-      else { body = S.toCsv(rows, d.columns.map(label)); filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.csv`; type = 'text/csv; charset=utf-8'; }
+      else {
+        // CSV has no place for a cover sheet, so an identified file carries the §2.32 notice as its last row,
+        // after a blank one: the header stays row 1, and the notice travels with the data wherever it goes.
+        body = S.toCsv(rows, d.columns.map(label));
+        if (part2) body += '\r\n\r\n' + S.toCsv([{ n: `${notice.short} NOTICE TO RECIPIENT (42 CFR §2.32): ${notice.text}` }], [{ key: 'n', label: '' }]).split('\r\n')[1];
+        filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.csv`; type = 'text/csv; charset=utf-8';
+      }
     }
     ctx.res.writeHead(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename="${filename}"`, 'X-SUDS-Export': headerSafe(classification) });
     ctx.res.end(body);
