@@ -28,31 +28,33 @@ module.exports = {
     { name: 'funding_sources', enc: [], scope: 'all', writePerm: 'budget:manage' },
     { name: 'budget_lines', enc: [], scope: 'all', writePerm: 'budget:manage', parent: ['funding_sources', 'funding_source_id'], selfParent: 'parent_id' },
     // merged_into points at another client: the record that was kept must land before its duplicate.
-    { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc', 'legal_hold_reason_enc', 'legal_hold_cleared_reason_enc', 'removed_reason_enc'], legacy: { legal_hold_reason: 'legal_hold_reason_enc' }, scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write', selfParent: 'merged_into' },
-    { name: 'assignments', enc: [], scope: 'client', clientCol: 'client_id', writePerm: 'assignments:manage', parent: ['clients', 'client_id'] },
+    { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc', 'legal_hold_reason_enc', 'legal_hold_cleared_reason_enc', 'removed_reason_enc', 'contact_preferences_enc'], legacy: { legal_hold_reason: 'legal_hold_reason_enc', contact_preferences: 'contact_preferences_enc' }, scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write', selfParent: 'merged_into' },
+    { name: 'assignments', enc: ['notes_enc'], legacy: { notes: 'notes_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'assignments:manage', parent: ['clients', 'client_id'] },
     { name: 'episodes', enc: ['presenting_problem_enc', 'discharge_summary_enc', 'reopen_reason_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['clients', 'client_id'] },
     // CalOMS Tx records hang off an episode: the episode must land first.
     { name: 'caloms_records', enc: ['answers_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['episodes', 'episode_id'] },
     { name: 'interventions', enc: ['summary_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'interventions:write', parent: ['clients', 'client_id'] },
     { name: 'overdose_events', enc: ['notes_enc', 'substances_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'overdose:write', parent: ['clients', 'client_id'] },
     { name: 'calls', enc: ['contact_name_enc', 'phone_enc', 'summary_enc', 'purpose_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'calls:write', parent: ['clients', 'client_id'] },
-    { name: 'time_entries', enc: [], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'time:write', parent: ['clients', 'client_id'] },
+    { name: 'time_entries', enc: ['description_enc', 'approval_note_enc'], legacy: { description: 'description_enc', approval_note: 'approval_note_enc' }, scope: 'client-or-null', clientCol: 'client_id', writePerm: 'time:write', parent: ['clients', 'client_id'] },
     // A referral may cite the consent it was made under, so consents come first.
-    { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc', 'signer_name_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
+    { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc', 'signer_name_enc', 'revoked_reason_enc'], legacy: { revoked_reason: 'revoked_reason_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
     { name: 'court_orders', enc: ['court_enc', 'case_ref_enc', 'recipient_enc', 'purpose_enc', 'scope_enc', 'vacated_reason_enc'], legacy: { vacated_reason: 'vacated_reason_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'court-orders:write', parent: ['clients', 'client_id'] },
     { name: 'part2_notices', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     { name: 'referrals', enc: ['outcome_enc', 'barrier_enc', 'notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'referrals:write', parent: ['clients', 'client_id'] },
+    // Migration 37 moved the free text on assignments, time entries, consents (revocation), expenditures, notes
+    // (countersignature), addenda, client forms and clients (contact preferences) into _enc columns likewise.
     // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
     { name: 'tasks', enc: ['title_enc', 'description_enc'], legacy: { description: 'description_enc' }, scope: 'client-or-null', clientCol: 'client_id', writePerm: 'tasks:write', parent: ['clients', 'client_id'] },
-    { name: 'expenditures', enc: [], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'budget:write', parent: ['clients', 'client_id'] },
-    { name: 'notes', enc: ['content_enc', 'structured_enc', 'title_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'notes:admin:write', parent: ['clients', 'client_id'] },
-    { name: 'note_addenda', enc: ['content_enc'], scope: 'via-note', writePerm: 'notes:admin:write', parent: ['notes', 'note_id'] },
+    { name: 'expenditures', enc: ['description_enc', 'approval_note_enc'], legacy: { description: 'description_enc', approval_note: 'approval_note_enc' }, scope: 'client-or-null', clientCol: 'client_id', writePerm: 'budget:write', parent: ['clients', 'client_id'] },
+    { name: 'notes', enc: ['content_enc', 'structured_enc', 'title_enc', 'cosign_note_enc'], legacy: { cosign_note: 'cosign_note_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'notes:admin:write', parent: ['clients', 'client_id'] },
+    { name: 'note_addenda', enc: ['content_enc', 'reason_enc'], legacy: { reason: 'reason_enc' }, scope: 'via-note', writePerm: 'notes:admin:write', parent: ['notes', 'note_id'] },
     { name: 'disclosures', enc: ['recipient_enc', 'purpose_enc', 'what_enc', 'justification_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     { name: 'imports', enc: [], scope: 'all', writePerm: 'imports:write' },
     { name: 'import_items', enc: ['content_enc', 'title_enc'], scope: 'all', writePerm: 'imports:write', parent: ['imports', 'import_id'] },
     { name: 'form_templates', enc: [], scope: 'all', writePerm: 'forms:manage', blob: ['file_b64'] },
-    { name: 'client_forms', enc: ['values_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['clients', 'client_id'] },
+    { name: 'client_forms', enc: ['values_enc', 'notes_enc'], legacy: { notes: 'notes_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['clients', 'client_id'] },
     { name: 'client_form_files', enc: ['data_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
     { name: 'patient_requests', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     // Clinical documentation (CalAIM): the problem list and its history, the care plan, ASAM assessments and

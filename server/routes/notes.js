@@ -75,6 +75,7 @@ function present(row, { withContent = true } = {}) {
   const out = { ...row };
   delete out.content_enc; delete out.structured_enc; delete out.title_enc;
   out.title = row.title_enc ? decrypt(row.title_enc) : null;
+  if ('cosign_note_enc' in row) { out.cosign_note = row.cosign_note_enc ? decrypt(row.cosign_note_enc) : null; delete out.cosign_note_enc; }
   if (withContent) { out.content = decrypt(row.content_enc); out.structured = row.structured_enc ? JSON.parse(decrypt(row.structured_enc)) : null; }
   return out;
 }
@@ -153,7 +154,8 @@ module.exports = (r) => {
     const n = load(ctx, ctx.params.id);
     const access = canRead(ctx, n);
     if (!access) { audit.log({ user: ctx.user, action: 'note.view.denied', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, success: false }); throw forbidden('You do not have access to this note'); }
-    const addenda = db.all(`SELECT a.id,a.reason,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map(a => ({ ...a, content: decrypt(a.content_enc), content_enc: undefined }));
+    const addenda = db.all(`SELECT a.id,a.reason_enc,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id)
+      .map(a => ({ ...a, content: decrypt(a.content_enc), reason: a.reason_enc ? decrypt(a.reason_enc) : null, content_enc: undefined, reason_enc: undefined }));
     const event = access === 'breakglass' ? recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) }) : null;
     audit.log({ user: ctx.user, action: access === 'breakglass' ? 'note.view.breakglass' : 'note.view', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === 'breakglass' ? { reason_recorded: true, breakglass_event: event } : { kind: n.kind } });
     return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
@@ -235,8 +237,9 @@ module.exports = (r) => {
     const { note } = validate(ctx.body, { password: { type: 'string', required: true, maxLen: 500 }, note: { type: 'string', maxLen: 1000 } });
     await verifyIdentity(ctx);
     const hash = sha256(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ''}`);
-    db.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note=?, updated_at=? WHERE id=?`, ctx.user.id, db.now(), hash, note || null, db.now(), n.id);
-    audit.log({ user: ctx.user, action: 'note.cosign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash } });
+    db.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db.now(), hash, note ? encrypt(note) : null, db.now(), n.id);
+    // The countersigner's comment is about the client's care: encrypted on the note, never in the audit entry.
+    audit.log({ user: ctx.user, action: 'note.cosign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash, note_recorded: note ? true : undefined } });
     return { ok: true, cosignature_hash: hash };
   });
 
@@ -245,9 +248,9 @@ module.exports = (r) => {
     if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
     const { content, reason } = validate(ctx.body, { content: { type: 'string', required: true, maxLen: 20000 }, reason: { type: 'string', maxLen: 300 } });
     const id = uuid();
-    db.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt(content), reason || null);
+    db.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason_enc) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt(content), reason ? encrypt(reason) : null);
     if (n.status === 'signed') db.run(`UPDATE notes SET status='amended', updated_at=? WHERE id=?`, db.now(), n.id);
-    audit.log({ user: ctx.user, action: 'note.addendum', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+    audit.log({ user: ctx.user, action: 'note.addendum', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reason ? { reason_recorded: true } : undefined });
     ctx.status = 201; return { id };
   });
 

@@ -96,7 +96,9 @@ function loadForm(ctx, id) {
   const f = db.one(`SELECT * FROM client_forms WHERE id=? AND deleted_at IS NULL`, id); if (!f) throw notFound();
   auth.assertClientAccess(ctx, f.client_id); return f;
 }
-const formOut = (f, { values = true } = {}) => ({ ...f, fields: parseJson(f.fields_json, []), fields_json: undefined, values: values ? parseJson(decrypt(f.values_enc), {}) : undefined, values_enc: undefined });
+// A form's notes are free text about the client ("signed at her sister's house"): encrypted like its values.
+const formNotes = (f) => (f.notes_enc ? decrypt(f.notes_enc) : null);
+const formOut = (f, { values = true } = {}) => ({ ...f, fields: parseJson(f.fields_json, []), fields_json: undefined, values: values ? parseJson(decrypt(f.values_enc), {}) : undefined, values_enc: undefined, notes: formNotes(f), notes_enc: undefined });
 
 // An uploaded file's declared type is attacker-chosen. Echoing it back on download would let someone
 // store text/html on this origin and have the browser run it as a same-origin page, so only the types the
@@ -182,7 +184,9 @@ module.exports = (r) => {
   // ---------- forms filled out for a client ----------
   r.get('/api/clients/:id/forms', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
     auth.assertClientAccess(ctx, ctx.params.id);
-    const rows = db.all(`SELECT f.id, f.template_id, f.template_name, f.status, f.completed_at, f.created_at, f.updated_at, f.notes, cu.display_name completed_by_name, cr.display_name created_by_name, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.client_id=? AND f.deleted_at IS NULL ORDER BY f.updated_at DESC`, ctx.params.id);
+    const rows = db.all(`SELECT f.id, f.template_id, f.template_name, f.status, f.completed_at, f.created_at, f.updated_at, f.notes_enc, cu.display_name completed_by_name, cr.display_name created_by_name, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.client_id=? AND f.deleted_at IS NULL ORDER BY f.updated_at DESC`, ctx.params.id)
+      .map(f => ({ ...f, notes: formNotes(f), notes_enc: undefined }));
+    audit.log({ user: ctx.user, action: 'client_form.list', entity: 'client', entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { count: rows.length } });
     return { forms: rows };
   });
   // Start a form for a client: pre-filled from the chart
@@ -214,7 +218,7 @@ module.exports = (r) => {
     if (ctx.body.values !== undefined) values = { ...values, ...cleanValues(fields, ctx.body.values) };
     const stamp = db.now();
     const sets = ['values_enc=?', 'updated_at=?']; const params = [encrypt(JSON.stringify(values)), stamp];
-    if (v.notes !== undefined) { sets.push('notes=?'); params.push(v.notes); }
+    if (v.notes !== undefined) { sets.push('notes_enc=?'); params.push(v.notes ? encrypt(v.notes) : null); }
     if (v.status) {
       if (v.status === 'completed') { const miss = missingRequired(fields, values); if (miss.length) { db.run(`UPDATE client_forms SET values_enc=?, updated_at=? WHERE id=?`, params[0], params[1], f.id); throw badRequest(`Please fill in: ${miss.join(', ')}`, { updated_at: stamp }); } sets.push('status=?', 'completed_at=?', 'completed_by=?'); params.push('completed', db.now(), ctx.user.id); }
       else { sets.push('status=?', 'completed_at=NULL', 'completed_by=NULL'); params.push(v.status); }

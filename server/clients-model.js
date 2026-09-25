@@ -2,12 +2,13 @@
 const db = require('./db');
 const { encrypt, decrypt, blindIndex, foldText, uuid } = require('./crypto');
 
-// goals and flags are clinical narrative about a named person: encrypted like every other PHI field.
-const ENC_FIELDS = ['first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'alt_phone', 'email', 'address', 'medicaid_id', 'emergency_contact', 'goals', 'flags'];
+// goals and flags are clinical narrative about a named person: encrypted like every other PHI field. So are
+// contact preferences, which are "safe contact" notes (who must not find out, when it is safe to call).
+const ENC_FIELDS = ['first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'alt_phone', 'email', 'address', 'medicaid_id', 'emergency_contact', 'goals', 'flags', 'contact_preferences'];
 const PLAIN_FIELDS = ['city', 'zip', 'gender', 'pronouns', 'race_ethnicity', 'preferred_language', 'veteran', 'housing_status', 'insurance', 'status', 'intake_date',
   'discharge_date', 'discharge_reason', 'referral_source', 'referral_date', 'engagement_date', 'primary_substance', 'secondary_substances', 'route_of_use', 'asam_level', 'mat_status', 'mat_medication',
   'overdose_history', 'last_overdose_date', 'naloxone_provided', 'naloxone_last_date', 'risk_level', 'justice_involved', 'pregnant_or_parenting', 'co_occurring_mh',
-  'race_codes', 'contact_preferences', 'ok_to_text', 'ok_to_voicemail'];
+  'race_codes', 'ok_to_text', 'ok_to_voicemail'];
 
 /** Whole days between referral and engagement, or null while either date is missing. Left negative rather
  *  than hidden if the dates are entered out of order — that is itself worth someone noticing. */

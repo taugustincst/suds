@@ -5,7 +5,7 @@ const crud = require('../crud');
 const C = require('../constants');
 const O = require('../options');
 const { badRequest, forbidden } = require('../http');
-const { uuid } = require('../crypto');
+const { uuid, encrypt, decrypt } = require('../crypto');
 const supplies = require('./supplies');
 const { localDate, cents } = require('./budget');
 
@@ -50,10 +50,10 @@ function syncExpenditure(row) {
   if (!line) return; // already validated on the way in; guards against a reference that went stale in between
   const desc = `Auto-recorded from ${row.type.replace(/_/g, ' ')}`;
   const spentAt = serviceDate(row);
-  if (existing) db.run(`UPDATE expenditures SET funding_source_id=?, budget_line_id=?, client_id=?, spent_at=?, amount=?, category=?, description=?, updated_at=? WHERE id=?`,
-    row.funding_source_id, row.budget_line_id, row.client_id || null, spentAt, cents(row.cost), line.category, desc, db.now(), existing.id);
-  else db.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,intervention_id,spent_at,amount,category,description) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-    uuid(), row.funding_source_id, row.budget_line_id, row.client_id || null, row.user_id, row.id, spentAt, cents(row.cost), line.category, desc);
+  if (existing) db.run(`UPDATE expenditures SET funding_source_id=?, budget_line_id=?, client_id=?, spent_at=?, amount=?, category=?, description_enc=?, updated_at=? WHERE id=?`,
+    row.funding_source_id, row.budget_line_id, row.client_id || null, spentAt, cents(row.cost), line.category, encrypt(desc), db.now(), existing.id);
+  else db.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,intervention_id,spent_at,amount,category,description_enc) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    uuid(), row.funding_source_id, row.budget_line_id, row.client_id || null, row.user_id, row.id, spentAt, cents(row.cost), line.category, encrypt(desc));
 }
 
 // A visit that logged its own time entry keeps that entry right when the visit is corrected: a duration
@@ -114,8 +114,8 @@ module.exports = (r) => {
     afterInsert: (ctx, row) => {
       // Optional automatic time entry + naloxone tracking on client
       if (row._log_time && row.duration_minutes > 0) {
-        db.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description) VALUES(?,?,?,?,?,?,?,?,?)`,
-          uuid(), row.user_id, row.client_id ?? null, serviceDate(row), row.duration_minutes, row._time_category || 'direct_service', row.funding_source_id || null, row.id, O.labelOf('INTERVENTION_TYPES', row.type));
+        db.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description_enc) VALUES(?,?,?,?,?,?,?,?,?)`,
+          uuid(), row.user_id, row.client_id ?? null, serviceDate(row), row.duration_minutes, row._time_category || 'direct_service', row.funding_source_id || null, row.id, encrypt(O.labelOf('INTERVENTION_TYPES', row.type)));
       }
       // Community distribution has no client record to update, and no client to follow up with.
       if (row.naloxone_kits > 0 && row.client_id) db.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, serviceDate(row), db.now(), row.client_id);
@@ -135,7 +135,7 @@ module.exports = (r) => {
       // it is part of a signed-off time sheet, so it is detached and marked instead of silently rewritten.
       const te = db.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
       if (te && (te.status === 'draft' || te.status === 'submitted')) { db.run(`DELETE FROM time_entries WHERE id=?`, te.id); db.tombstone('time_entries', te.id); }
-      else if (te) db.run(`UPDATE time_entries SET intervention_id=NULL, description=?, updated_at=? WHERE id=?`, `${te.description || ''} (the visit this was logged from was deleted)`.trim(), db.now(), te.id);
+      else if (te) db.run(`UPDATE time_entries SET intervention_id=NULL, description_enc=?, updated_at=? WHERE id=?`, encrypt(`${te.description_enc ? decrypt(te.description_enc) : ''} (the visit this was logged from was deleted)`.trim()), db.now(), te.id);
       // The kits and strips this visit drew from the cupboard go back on the shelf: a deleted visit
       // handed nothing out.
       supplies.restore(ctx, row);

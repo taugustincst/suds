@@ -7,7 +7,21 @@ const C = require('../constants');
 const config = require('../config');
 const { badRequest, notFound, HttpError } = require('../http');
 const { validate } = require('../validate');
-const { uuid } = require('../crypto');
+const { uuid, encrypt, decrypt } = require('../crypto');
+
+// What an expenditure bought and for whom ("Motel night for J.") and the reviewer's note on it are free text
+// that can name the client: both are encrypted (migration 37). The API keeps the names description and
+// approval_note.
+function encDescription(v) {
+  if (v.description !== undefined) { v.description_enc = v.description ? encrypt(String(v.description)) : null; delete v.description; }
+}
+function presentExpenditure(e) {
+  if (!e) return e;
+  const o = { ...e };
+  if ('description_enc' in e) { o.description = e.description_enc ? decrypt(e.description_enc) : null; delete o.description_enc; }
+  if ('approval_note_enc' in e) { o.approval_note = e.approval_note_enc ? decrypt(e.approval_note_enc) : null; delete o.approval_note_enc; }
+  return o;
+}
 
 /** Money is stored as REAL: round to cents at the boundary so 25.009999 is never written and never summed. */
 const cents = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 100) / 100 : v);
@@ -255,6 +269,7 @@ module.exports = (r) => {
       const f = db.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id); if (!f) throw badRequest('Unknown or inactive funding source');
       assertInPeriod(f, v.spent_at, 'Expenditure date');
       if (v.budget_line_id) { const l = db.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, f.id); if (!l) throw badRequest('Budget line does not belong to fund'); if (!v.category) v.category = l.category; }
+      encDescription(v);
     },
     beforeUpdate: (ctx, v, row) => {
       if (v.amount !== undefined && v.amount !== null) v.amount = cents(v.amount);
@@ -266,7 +281,9 @@ module.exports = (r) => {
         const lineId = 'budget_line_id' in v ? v.budget_line_id : row.budget_line_id;
         if (lineId) { const l = db.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, lineId, f.id); if (!l) throw badRequest('Budget line does not belong to fund'); }
       }
+      encDescription(v);
     },
+    afterLoad: (ctx, x) => presentExpenditure(x),
     canEdit: (ctx, row) => row.status === 'pending' && (row.user_id === ctx.user.id || auth.hasPerm(ctx.user, 'budget:approve')),
   });
   // The approval state machine: pending -> approved | rejected, approved -> reimbursed, nothing else. A
@@ -285,7 +302,9 @@ module.exports = (r) => {
     if (e.user_id === ctx.user.id && status === 'approved') throw badRequest('Separation of duties: you cannot approve your own expenditure; another approver must review it');
     // A rejection with no reason leaves the submitter guessing, and there is no undo for a mis-click.
     if (status === 'rejected' && !note) throw badRequest('Say why this expenditure is being rejected, so the person who submitted it knows what to fix');
-    const details = { note, amount: e.amount };
+    // The note can name the client ("receipt shows J.'s name"): encrypted on the row, and the audit entry
+    // records only that one was given.
+    const details = { note_recorded: note ? true : undefined, amount: e.amount };
     if (status === 'approved' && e.budget_line_id) {
       // Overspending a line is not something a reviewer does by accident. Recording the expense already
       // warned; approving it is where the money is committed, so it takes a supervisor or administrator
@@ -304,10 +323,10 @@ module.exports = (r) => {
     }
     if (status === 'reimbursed') {
       // The approver stays on the record; reimbursement is a later step by (often) a different person.
-      db.run(`UPDATE expenditures SET status=?, approval_note=COALESCE(?, approval_note), updated_at=? WHERE id=?`, status, note || null, db.now(), e.id);
+      db.run(`UPDATE expenditures SET status=?, approval_note_enc=COALESCE(?, approval_note_enc), updated_at=? WHERE id=?`, status, note ? encrypt(note) : null, db.now(), e.id);
       details.reimbursed_by = ctx.user.id;
     } else {
-      db.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, status, ctx.user.id, db.now(), note || null, db.now(), e.id);
+      db.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, status, ctx.user.id, db.now(), note ? encrypt(note) : null, db.now(), e.id);
     }
     audit.log({ user: ctx.user, action: `expenditure.${status}`, entity: 'expenditure', entityId: e.id, clientId: e.client_id, ip: ctx.ip, details });
     return { ok: true, status };
@@ -335,3 +354,4 @@ module.exports.orgTimezone = orgTimezone;
 module.exports.validTimezone = validTimezone;
 module.exports.cents = cents;
 module.exports.lineAvailable = lineAvailable;
+module.exports.presentExpenditure = presentExpenditure;

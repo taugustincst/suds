@@ -331,10 +331,10 @@ function push(user, payload) {
           let revocation = false;
           if (existing && SYNC.immutable.includes(t.name)) {
             const changed = changedColumns(t, existing, raw, existingCols);
-            const onlyRevocation = t.name === 'consents' && !existing.revoked_at && raw.revoked_at && changed.every(c => ['revoked_at', 'revoked_reason', 'revoked_by'].includes(c));
+            const onlyRevocation = t.name === 'consents' && !existing.revoked_at && raw.revoked_at && changed.every(c => ['revoked_at', 'revoked_reason_enc', 'revoked_by'].includes(c));
             if (!onlyRevocation) { if (changed.length) reject(t.name, raw.id, 'immutable'); return false; }
             revocation = true;
-            for (const k of Object.keys(raw)) if (!['id', 'revoked_at', 'revoked_reason'].includes(k)) delete raw[k];
+            for (const k of Object.keys(raw)) if (!['id', 'revoked_at', 'revoked_reason_enc'].includes(k)) delete raw[k];
             raw.revoked_by = user.id;
           }
           // A consent reaches the office by sync exactly as it would by the consent form: a new Part 2 consent
@@ -411,12 +411,12 @@ function push(user, payload) {
               if (target && !auth.hasPerm(user, perm)) { reject(t.name, raw.id, 'attributed to another user, which your role cannot do'); return false; }
             }
           }
-          if (t.name === 'expenditures') { if (!existing) { raw.status = 'pending'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'budget:approve')) { raw.status = existing.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; raw.approval_note = existing.approval_note; } }
-          if (t.name === 'time_entries') { if (!existing) { raw.status = raw.status === 'submitted' ? 'submitted' : 'draft'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'time:approve')) { raw.status = existing.status === 'approved' || existing.status === 'rejected' ? existing.status : raw.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; } }
+          if (t.name === 'expenditures') { if (!existing) { raw.status = 'pending'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'budget:approve')) { raw.status = existing.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; raw.approval_note_enc = undefined; } }
+          if (t.name === 'time_entries') { if (!existing) { raw.status = raw.status === 'submitted' ? 'submitted' : 'draft'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'time:approve')) { raw.status = existing.status === 'approved' || existing.status === 'rejected' ? existing.status : raw.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; raw.approval_note_enc = undefined; } }
           if (t.name === 'notes' && existing) {
             if (existing.status !== 'draft') { raw.content_enc = undefined; raw.structured_enc = undefined; raw.problem_ids = existing.problem_ids; raw.status = existing.status; raw.signed_by = existing.signed_by; raw.signed_at = existing.signed_at; raw.signature_hash = existing.signature_hash; } // signed notes are immutable
             // A countersignature is the supervisor's act on the office server; a device can never assert one.
-            raw.cosigned_by = existing.cosigned_by; raw.cosigned_at = existing.cosigned_at; raw.cosignature_hash = existing.cosignature_hash;
+            raw.cosigned_by = existing.cosigned_by; raw.cosigned_at = existing.cosigned_at; raw.cosignature_hash = existing.cosignature_hash; raw.cosign_note_enc = undefined;
           }
           // A score is recomputed from the answers, as POST /api/clients/:id/outcomes computes it: a device's
           // total, band or safety flag is never taken on trust.

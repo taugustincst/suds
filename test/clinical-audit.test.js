@@ -141,7 +141,7 @@ test('M4: editing a visit\'s duration or date updates its unapproved time entry;
   const kept = H.db.one(`SELECT * FROM time_entries WHERE id=?`, te.id);
   assert.ok(kept, 'the approved entry survives');
   assert.equal(kept.intervention_id, null);
-  assert.match(kept.description, /visit .* was deleted/);
+  assert.match(require('../server/crypto').decrypt(kept.description_enc), /visit .* was deleted/);
   // A draft entry goes with its visit.
   const v2 = (await nav.post('/api/interventions', { client_id: c.id, type: 'outreach', occurred_at: at, duration_minutes: 20, log_time: true })).data;
   const te2 = H.db.one(`SELECT id FROM time_entries WHERE intervention_id=?`, v2.id);

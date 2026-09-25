@@ -224,8 +224,8 @@ module.exports = (r) => {
           continue;
         }
         db.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, lastDay, db.now(), a.id);
-        db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes,created_by) VALUES(?,?,?,?,?,?,?)`,
-          uuid(), a.client_id, to.id, v.role_on_case || a.role_on_case, when, v.reason ? `Transferred from ${from.display_name}: ${v.reason}` : `Transferred from ${from.display_name}`, ctx.user.id);
+        db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`,
+          uuid(), a.client_id, to.id, v.role_on_case || a.role_on_case, when, encrypt(v.reason ? `Transferred from ${from.display_name}: ${v.reason}` : `Transferred from ${from.display_name}`), ctx.user.id);
         moved++;
       }
       if (v.reassign_open_tasks !== 0) {

@@ -4,6 +4,22 @@ const auth = require('../auth');
 const crud = require('../crud');
 const C = require('../constants');
 const { withClientName, SELECT: NAME_COLS } = require('../client-name');
+const { encrypt, decrypt } = require('../crypto');
+
+// What the time was spent on ("Drove J. to detox intake") and the reviewer's note on it are free text that
+// can name the client: both are encrypted (migration 37). The API keeps the plain names description and
+// approval_note.
+function encDescription(v) {
+  if (v.description !== undefined) { v.description_enc = v.description ? encrypt(String(v.description)) : null; delete v.description; }
+}
+/** Decrypt a time entry row's free text, for this route and the places that read time entries outside it. */
+function presentTime(t) {
+  if (!t) return t;
+  const o = { ...t };
+  if ('description_enc' in t) { o.description = t.description_enc ? decrypt(t.description_enc) : null; delete o.description_enc; }
+  if ('approval_note_enc' in t) { o.approval_note = t.approval_note_enc ? decrypt(t.approval_note_enc) : null; delete o.approval_note_enc; }
+  return o;
+}
 
 // Hours charged to a grant must fall in its period, and never in the future (see budget.js's assertInPeriod).
 function checkPeriod(v) {
@@ -18,7 +34,7 @@ module.exports = (r) => {
     ownerOnly: 'time:all',
     joins: 'JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id',
     select: `time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${NAME_COLS}`,
-    afterLoad: withClientName,
+    afterLoad: (ctx, x) => presentTime(withClientName(ctx, x)),
     shape: {
       client_id: { type: 'string' }, user_id: { type: 'string' }, work_date: { type: 'date', required: true }, minutes: { type: 'number', required: true, integer: true, min: 1, max: 1440 },
       category: { type: 'string', list: 'TIME_CATEGORIES' }, billable: { type: 'boolean' }, funding_source_id: { type: 'string' }, description: { type: 'string', maxLen: 500 },
@@ -29,11 +45,11 @@ module.exports = (r) => {
       if (!auth.hasPerm(ctx.user, 'time:all')) { where.push('time_entries.user_id=?'); params.push(ctx.user.id); }
       const cat = ctx.query.get('category'); if (cat) { where.push('time_entries.category=?'); params.push(cat); }
     },
-    beforeInsert: (ctx, v) => { if (v.user_id && v.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) v.user_id = ctx.user.id; checkPeriod(v); },
+    beforeInsert: (ctx, v) => { if (v.user_id && v.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) v.user_id = ctx.user.id; checkPeriod(v); encDescription(v); },
     // Reassigning whose hours these are is a time:all action (see public/views/time.js, which only shows the
     // Worker picker when can('time:all')) -- without this, a worker who owns the row (canEdit below) could
     // still smuggle a different user_id through an update even though they could never set it on insert.
-    beforeUpdate: (ctx, v, row) => { if (v.user_id && v.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) delete v.user_id; if ('work_date' in v || 'funding_source_id' in v) checkPeriod({ work_date: row.work_date, funding_source_id: row.funding_source_id, ...v }); },
+    beforeUpdate: (ctx, v, row) => { if (v.user_id && v.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) delete v.user_id; if ('work_date' in v || 'funding_source_id' in v) checkPeriod({ work_date: row.work_date, funding_source_id: row.funding_source_id, ...v }); encDescription(v); },
     canEdit: (ctx, row) => row.user_id === ctx.user.id || auth.hasPerm(ctx.user, 'time:all'),
   });
 
@@ -51,3 +67,4 @@ module.exports = (r) => {
     };
   });
 };
+module.exports.presentTime = presentTime;
