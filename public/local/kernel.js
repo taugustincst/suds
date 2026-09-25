@@ -8350,7 +8350,7 @@ var require_db = __commonJS({
         if (m) d.exec(m[0]);
         for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_option_overrides/.test(line.trim())) d.exec(line.trim());
       },
-      // 30 (assigned number; renumbered at merge): clinical depth for CalAIM documentation — the problem list
+      // 29: clinical depth for CalAIM documentation — the problem list
       //     and its change history, the care coordination plan (goals and steps), ASAM six-dimension
       //     assessments and scored outcome measures; and notes.problem_ids, the problems a note addresses.
       //     New tables only, plus one nullable column, so an existing database starts with none of them.
