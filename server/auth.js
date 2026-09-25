@@ -153,8 +153,17 @@ function reauthStatus(ctx) {
   const minutes = policy().signReauthMinutes;
   const at = ctx.session && ctx.session.reauth_at ? Date.parse(ctx.session.reauth_at) : NaN;
   const until = Number.isFinite(at) && minutes > 0 ? at + minutes * 60000 : 0;
-  return { recent: until > Date.now(), until: until ? new Date(until).toISOString() : null, window_minutes: minutes, method: ctx.user && ctx.user.mfa_enabled ? 'totp' : 'password' };
+  // How the signer proves it again: the authenticator code with two-step verification on; single sign-on
+  // (an identity-provider round-trip, server/routes/oidc.js) for an account linked to the provider that has
+  // no SUDS password of its own (SCIM-provisioned, or never given one); otherwise the password. `sso`: the
+  // round-trip is offered at all (as an alternative, for a linked account that also has a password).
+  const u = ctx.user ? db.one(`SELECT mfa_enabled, password_hash, oidc_subject FROM users WHERE id=?`, ctx.user.id) : null;
+  const sso = !!(u && u.oidc_subject && config.oidc && config.oidc.enabled);
+  const method = u && u.mfa_enabled ? 'totp' : sso && !hasLocalPassword(u.password_hash) ? 'sso' : 'password';
+  return { recent: until > Date.now(), until: until ? new Date(until).toISOString() : null, window_minutes: minutes, method, sso };
 }
+/** Whether a password hash is a real one (an SSO-provisioned account's is a marker nobody can match). */
+function hasLocalPassword(hash) { return /^scrypt\$/.test(String(hash || '')); }
 /**
  * Establish who is signing: the password (or, with two-step verification on, the authenticator code) given
  * with this request, or a recent re-authentication plus an explicit confirmation. Returns how, for the audit
@@ -199,8 +208,11 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed' } = {}) {
   }
   const st = reauthStatus(ctx);
   // validate() stores booleans as 1/0 (SQLite); either spelling is the confirmation.
-  if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? 'Confirm the attestation to sign' : st.method === 'totp' ? 'Enter the code from your authenticator app to sign' : 'Your password is required to sign');
-  if (!st.recent) throw new HttpError(403, st.method === 'totp' ? 'It has been a while since you last confirmed it is you. Enter the code from your authenticator app to sign.' : 'It has been a while since you last confirmed it is you. Enter your password to sign.', { reauthRequired: true, method: st.method });
+  if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? 'Confirm the attestation to sign' : st.method === 'totp' ? 'Enter the code from your authenticator app to sign' : st.method === 'sso' ? 'Confirm with single sign-on, then sign' : 'Your password is required to sign');
+  if (!st.recent) {
+    const how = { totp: 'Enter the code from your authenticator app to sign.', sso: 'Confirm with single sign-on to sign.', password: 'Enter your password to sign.' }[st.method];
+    throw new HttpError(403, `It has been a while since you last confirmed it is you. ${how}`, { reauthRequired: true, method: st.method, sso: st.sso });
+  }
   return 'recent_auth';
 }
 function clearReauth(ctx) { if (ctx.session) { db.run(`UPDATE sessions SET reauth_at=NULL WHERE id=?`, ctx.session.id); ctx.session.reauth_at = null; } }

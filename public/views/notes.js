@@ -162,20 +162,33 @@ export async function openNote(id, { onChange } = {}) {
  * The electronic-signature dialog, for a signature and a countersignature alike. Within a few minutes of
  * signing in (or of the last password or code given) it is the attestation and one button; after that it
  * asks for the password — or the authenticator code, with two-step verification on (GET /api/auth/reauth,
- * the same rule the server applies). `send(body)` makes the request; `fields` come before the identity field.
+ * the same rule the server applies). An account that signs in through single sign-on and has no SUDS
+ * password confirms with the identity provider instead (POST /api/auth/oidc/reauth): the browser goes to
+ * the county sign-in and comes back to `returnTo` (the note) ready to sign with the confirmation alone.
+ * `send(body)` makes the request; `fields` come before the identity field.
  */
-export async function signatureDialog({ title, intro, submitText, send, done, fields = [] }) {
+export async function signatureDialog({ title, intro, submitText, send, done, fields = [], returnTo }) {
   let st = { recent: false, method: 'password' };
   try { st = await get('/api/auth/reauth', { quiet: true }); } catch { /* ask for the password */ }
+  const ssoButton = (label, primary) => {
+    const status = h('div', { class: 'small', role: 'status', 'aria-live': 'polite' });
+    const btn = h('button', { type: 'button', class: `btn ${primary ? 'primary' : ''}`, 'data-sso-reauth': '1', onClick: async () => {
+      btn.disabled = true; status.textContent = 'Opening the county sign-in…';
+      try { const r = await post('/api/auth/oidc/reauth', { return: returnTo || location.hash }); location.assign(r.url); }
+      catch (e) { btn.disabled = false; status.textContent = e.message; }
+    } }, label);
+    return [btn, status];
+  };
   const open = (st, why) => {
+    const viaSso = !st.recent && st.method === 'sso';
     const identity = st.recent ? []
       : st.method === 'totp' ? [{ name: 'code', label: 'Code from your authenticator app', required: true, autocomplete: 'one-time-code', pattern: '[0-9]{6}', help: 'It has been a while since you confirmed it is you.' }]
       : [{ name: 'password', label: 'Re-enter your password to sign', type: 'password', required: true, autocomplete: 'current-password', help: 'It has been a while since you confirmed it is you.' }];
-    const f = form([...fields, ...identity], { submitText, onCancel: () => m.close(), onSubmit: async (d) => {
+    const f = viaSso ? null : form([...fields, ...identity], { submitText, onCancel: () => m.close(), onSubmit: async (d) => {
       try { await send(st.recent ? { ...d, confirm: true } : d); }
       catch (e) {
         // The few minutes ran out while the dialog was open: ask again, keeping what was typed.
-        if (e.data && e.data.reauthRequired && st.recent) { m.close(); open({ recent: false, method: e.data.method || 'password' }, e.message); return; }
+        if (e.data && e.data.reauthRequired && st.recent) { m.close(); open({ recent: false, method: e.data.method || 'password', sso: !!e.data.sso }, e.message); return; }
         throw e;
       }
       m.close(); done && done();
@@ -183,15 +196,33 @@ export async function signatureDialog({ title, intro, submitText, send, done, fi
     const m = modal(title, h('div', { 'data-signature-dialog': st.recent ? 'confirm' : st.method },
       why ? h('div', { class: 'banner warn', role: 'status' }, why) : null,
       intro,
-      st.recent ? h('p', { class: 'small muted' }, 'You confirmed it is you a few minutes ago, so your password is not needed again.') : null,
-      f));
+      st.recent ? h('p', { class: 'small muted' }, st.method === 'sso' ? 'You confirmed it is you a few minutes ago, so you do not need to sign in again.' : 'You confirmed it is you a few minutes ago, so your password is not needed again.') : null,
+      viaSso ? (() => {
+        const [btn, status] = ssoButton('Confirm with single sign-on', true);
+        return [h('p', {}, 'It has been a while since you confirmed it is you. Your account signs in through single sign-on, so confirm with the county sign-in. You will come back here and sign with one click.'),
+          status, h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', onClick: () => m.close() }, 'Cancel'), btn)];
+      })() : f,
+      !viaSso && !st.recent && st.sso && st.method === 'password' ? h('div', { class: 'mt' }, ...ssoButton('Confirm with single sign-on instead', false)) : null));
   };
   open(st);
+}
+// Back from the county sign-in (POST /api/auth/oidc/reauth → the provider → #/…?sso_reauth=<result>).
+const SSO_REAUTH_RESULT = {
+  ok: ['You confirmed it is you with single sign-on. You can sign now.', 'ok'],
+  stale: ['The county sign-in did not ask for your credentials again, so it could not confirm it is you. Try again.', 'error'],
+  mismatch: ['The county sign-in was for a different account. Sign in there as yourself, then try again.', 'error'],
+  denied: ['Single sign-on did not confirm it is you. Try again, or sign with your password if you have one.', 'error'],
+  failed: ['Single sign-on did not confirm it is you. Try again; if it keeps failing, tell your administrator.', 'error'],
+};
+export function ssoReauthNotice(query) {
+  const r = SSO_REAUTH_RESULT[query.get('sso_reauth')];
+  if (r) toast(r[0], r[1]);
+  return !!r;
 }
 function signNote(n, done) {
   return signatureDialog({ title: 'Electronic signature', submitText: 'Sign note',
     intro: h('p', { 'data-attestation': '1' }, 'By signing you attest that this documentation is accurate and complete. Signed notes cannot be edited or deleted; corrections are made by addendum.'),
-    send: (body) => post(`/api/notes/${n.id}/sign`, body),
+    send: (body) => post(`/api/notes/${n.id}/sign`, body), returnTo: `#/notes/${n.id}`,
     done: () => { toast('Note signed and locked', 'ok'); done(); } });
 }
 function addAddendum(n, done) {
@@ -219,6 +250,8 @@ route('notes', async (r) => {
   // #/notes/<id> (the supervision queue's rows link here) opens that note over the list instead of
   // silently showing the unfiltered list and leaving the reader to hunt for it.
   if (r.id) setTimeout(() => openNote(r.id, { onChange: refresh }), 0);
+  // Back from confirming with single sign-on: say how it went, once (drop the marker from the address).
+  if (ssoReauthNotice(r.query)) history.replaceState(history.state, '', `${location.pathname}${location.search}#/notes${r.id ? '/' + r.id : ''}`);
   const sSel = h('select', { onChange: () => nav(`notes?status=${sSel.value}&kind=${kind}${mine ? '&mine=1' : ''}`) }, [['', 'Any status'], ['draft', 'Unsigned drafts'], ['signed', 'Signed'], ['amended', 'Amended']].map(([v, l]) => h('option', { value: v, selected: v === status }, l)));
   const kSel = h('select', { onChange: () => nav(`notes?status=${status}&kind=${kSel.value}${mine ? '&mine=1' : ''}`) }, [['', 'All types'], ['admin', 'Administrative'], ['clinical', 'Clinical']].map(([v, l]) => h('option', { value: v, selected: v === kind }, l)));
   return h('div', {},
