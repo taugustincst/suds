@@ -61,7 +61,7 @@ function status() {
     const acr = db.getSetting('sso_mfa_acr_values', '') || '';
     const since = new Date(Date.now() - 30 * DAY).toISOString();
     const viaIdp = trusted ? db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='auth.oidc.login' AND at >= ? AND details LIKE '%"mfa":"idp"%'`, since).n : 0;
-    add('Identity', "Identity provider's multi-factor sign-in", trusted ? 'info' : 'ok', trusted ? `trusted in place of SUDS two-step verification (amr mfa/otp/hwk/swk${acr ? `, or acr ${acr}` : ''}); ${viaIdp} sign-in${viaIdp === 1 ? '' : 's'} in 30 days` : 'not trusted: SSO sign-ins still need the SUDS second factor',
+    add('Identity', "Identity provider's multi-factor sign-in", trusted ? 'info' : 'ok', trusted ? `trusted in place of SUDS two-step verification (amr mfa or two factor kinds such as pwd+otp${acr ? `, or acr ${acr}` : ''}); ${viaIdp} sign-in${viaIdp === 1 ? '' : 's'} in 30 days` : 'not trusted: SSO sign-ins still need the SUDS second factor',
       trusted ? 'A sign-in the provider does not mark as multi-factor still needs the SUDS code. Every trusted sign-in is audited (auth.oidc.login with mfa "idp"). Make sure the provider enforces MFA for this application (conditional access).' : 'Settings → Security policy → "Trust the identity provider\'s multi-factor sign-in" (off by default).', 'server/routes/oidc.js mfaTrust; server/oidc.js idpMfa');
   }
   {
