@@ -51,7 +51,8 @@ test('a sync push cannot rewrite a consent, a disclosure or an addendum — only
   const row = H.db.one(`SELECT * FROM consents WHERE id=?`, cid);
   assert.ok(row.revoked_at, 'the revocation landed');
   assert.equal(row.revoked_by, navId, 'attributed to the syncing user');
-  assert.equal(row.revoked_reason, 'client asked');
+  // Sent under its pre-migration-37 name (revoked_reason) by this older-kernel-shaped row; kept encrypted.
+  assert.equal(require('../server/crypto').decrypt(row.revoked_reason_enc), 'client asked');
 
   // A revoked consent cannot be resurrected.
   const r3 = await push(nav, { tables: { consents: [{ id: cid, client_id: clientId, type: 'part2_disclosure', recipient_enc: 'County OTP', purpose_enc: 'MAT intake', signed_at: '2026-09-01', revoked_at: null, created_by: navId, updated_at: iso(Date.now() + 9000) }] } });

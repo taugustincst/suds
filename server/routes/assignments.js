@@ -4,7 +4,7 @@ const auth = require('../auth');
 const audit = require('../audit');
 const { badRequest, notFound } = require('../http');
 const { validate } = require('../validate');
-const { uuid } = require('../crypto');
+const { uuid, encrypt } = require('../crypto');
 
 module.exports = (r) => {
   r.post('/api/clients/:id/assignments', auth.requireAuth, auth.requirePerm('assignments:manage'), (ctx) => {
@@ -14,7 +14,7 @@ module.exports = (r) => {
     const id = uuid();
     db.transaction(() => {
       if ((v.role_on_case || 'primary') === 'primary') db.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, db.now(), c.id);
-      db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || 'primary', v.start_date || new Date().toISOString().slice(0, 10), v.notes || null, ctx.user.id);
+      db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || 'primary', v.start_date || new Date().toISOString().slice(0, 10), v.notes ? encrypt(v.notes) : null, ctx.user.id);
     });
     audit.log({ user: ctx.user, action: 'assignment.create', entity: 'assignment', entityId: id, clientId: c.id, ip: ctx.ip, details: { user_id: v.user_id, role: v.role_on_case } });
     ctx.status = 201; return { id };

@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS clients (
   co_occurring_mh INTEGER DEFAULT 0,
   goals_enc TEXT,
   flags_enc TEXT,                      -- comma separated safety flags, encrypted
-  contact_preferences TEXT,
+  contact_preferences_enc TEXT,             -- "safe contact" notes (who must not be told, when to call): encrypted
   ok_to_text INTEGER DEFAULT 0,
   ok_to_voicemail INTEGER DEFAULT 0,
   created_by TEXT REFERENCES users(id),
@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS assignments (
   -- Set only when somebody ends the assignment there and then (a supervisor taking a worker off a case).
   -- Access stops at this instant; a plain end_date runs out at the end of that day instead.
   ended_at TEXT,
-  notes TEXT,
+  notes_enc TEXT,                      -- free text about the client (a transfer's reason): encrypted
   created_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -302,12 +302,13 @@ CREATE TABLE IF NOT EXISTS time_entries (
   funding_source_id TEXT REFERENCES funding_sources(id),
   intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL,
   call_id TEXT REFERENCES calls(id) ON DELETE SET NULL,
-  description TEXT,
+  -- What the time was spent on and the reviewer's note: free text that can name the client, so encrypted.
+  description_enc TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','submitted','approved','rejected')),
   submitted_at TEXT,
   approved_by TEXT REFERENCES users(id),
   approved_at TEXT,
-  approval_note TEXT,
+  approval_note_enc TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -449,12 +450,13 @@ CREATE TABLE IF NOT EXISTS expenditures (
   amount REAL NOT NULL,
   category TEXT NOT NULL,
   vendor TEXT,
-  description TEXT,
+  -- What was bought, for whom, and the reviewer's note: free text that can name the client, so encrypted.
+  description_enc TEXT,
   receipt_ref TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','reimbursed')),
   approved_by TEXT REFERENCES users(id),
   approved_at TEXT,
-  approval_note TEXT,
+  approval_note_enc TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -484,7 +486,7 @@ CREATE TABLE IF NOT EXISTS notes (
   cosigned_by TEXT REFERENCES users(id),
   cosigned_at TEXT,
   cosignature_hash TEXT,
-  cosign_note TEXT,
+  cosign_note_enc TEXT,                -- the countersigner's comment on the note: encrypted
   -- The author asked a supervisor to review/co-sign this note (a navigator flagging a difficult contact),
   -- separate from cosign_required, which the account's supervision setting imposes on every note.
   cosign_requested INTEGER NOT NULL DEFAULT 0,
@@ -512,7 +514,7 @@ CREATE TABLE IF NOT EXISTS note_addenda (
   note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
   author_id TEXT NOT NULL REFERENCES users(id),
   content_enc TEXT NOT NULL,
-  reason TEXT,
+  reason_enc TEXT,                     -- why the addendum was needed (free text): encrypted
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -530,7 +532,7 @@ CREATE TABLE IF NOT EXISTS consents (
   -- 42 CFR §2.31 lets a consent expire on an event ("on discharge from the program") instead of a date.
   expires_event TEXT,
   revoked_at TEXT,
-  revoked_reason TEXT,
+  revoked_reason_enc TEXT,             -- why the client revoked it (free text): encrypted
   document_ref TEXT,
   witness TEXT,
   signed_on_paper INTEGER NOT NULL DEFAULT 0,
@@ -648,7 +650,7 @@ CREATE TABLE IF NOT EXISTS client_forms (
   completed_at TEXT,
   completed_by TEXT REFERENCES users(id),
   created_by TEXT NOT NULL REFERENCES users(id),
-  notes TEXT,
+  notes_enc TEXT,                      -- free text about this client's form: encrypted
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   deleted_at TEXT

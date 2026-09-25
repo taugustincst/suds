@@ -512,6 +512,19 @@ const migrations = [
     for (const c of ['legal_hold_reason_enc', 'legal_hold_cleared_reason_enc', 'removed_reason_enc']) addColumn(d, 'clients', c, 'TEXT');
     if (tableExists(d, 'episodes')) addColumn(d, 'episodes', 'reopen_reason_enc', 'TEXT');
   },
+  // 37: the rest of the free text typed about a client or a note leaves plaintext: an addendum's reason, a
+  //     consent's revocation reason, a countersignature note, an assignment's notes (a caseload transfer's
+  //     reason), a time entry's or expenditure's description and reviewer's note, a client form's notes and
+  //     a client's contact preferences ("safe contact" notes). Staff-only text with no client (a fund's notes,
+  //     a list label, a template's description) stays as it is.
+  (d) => {
+    for (const [t, from, to] of [
+      ['note_addenda', 'reason', 'reason_enc'], ['consents', 'revoked_reason', 'revoked_reason_enc'], ['notes', 'cosign_note', 'cosign_note_enc'],
+      ['assignments', 'notes', 'notes_enc'], ['time_entries', 'description', 'description_enc'], ['time_entries', 'approval_note', 'approval_note_enc'],
+      ['expenditures', 'description', 'description_enc'], ['expenditures', 'approval_note', 'approval_note_enc'], ['client_forms', 'notes', 'notes_enc'],
+      ['clients', 'contact_preferences', 'contact_preferences_enc'],
+    ]) encryptColumn(d, t, from, to);
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

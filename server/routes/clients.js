@@ -312,7 +312,7 @@ module.exports = (r) => {
       }
       // Fill gaps in the kept record from the duplicate rather than losing what was only entered once.
       const fills = {};
-      for (const col of ['dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'preferred_name_enc', 'goals_enc', 'flags_enc']) {
+      for (const col of ['dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'preferred_name_enc', 'goals_enc', 'flags_enc', 'contact_preferences_enc']) {
         if (!keep[col] && source[col]) fills[col] = source[col];
       }
       for (const col of M.PLAIN_FIELDS) if ((keep[col] === null || keep[col] === '' || keep[col] === undefined) && source[col]) fills[col] = source[col];
@@ -356,7 +356,8 @@ module.exports = (r) => {
     const row = loadClient(ctx, ctx.params.id);
     const client = M.decryptRow(row);
     client.days_to_engagement = M.daysToEngagement(client);
-    client.assignments = db.all(`SELECT a.*, u.display_name, u.role AS user_role FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=? ORDER BY a.end_date IS NOT NULL, a.start_date DESC`, row.id);
+    client.assignments = db.all(`SELECT a.*, u.display_name, u.role AS user_role FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=? ORDER BY a.end_date IS NOT NULL, a.start_date DESC`, row.id)
+      .map(a => ({ ...a, notes: a.notes_enc ? decrypt(a.notes_enc) : null, notes_enc: undefined }));
     client.active_consents = db.all(`SELECT id,type,recipient_enc,purpose_enc,signed_at,expires_at FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, row.id)
       .map(x => ({ id: x.id, type: x.type, recipient: x.recipient_enc ? decrypt(x.recipient_enc) : null, purpose: x.purpose_enc ? decrypt(x.purpose_enc) : null, signed_at: x.signed_at, expires_at: x.expires_at }));
     client.counts = {
@@ -461,7 +462,7 @@ module.exports = (r) => {
       events.push({ kind: 'consent', id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, ' ')}${x.recipient_enc ? ' → ' + decrypt(x.recipient_enc) : ''}`, detail: x.purpose_enc ? decrypt(x.purpose_enc) : null, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } });
     if (auth.hasPerm(ctx.user, 'budget:read'))
       for (const x of db.all(`SELECT e.*, f.name AS fund FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE client_id=? ORDER BY e.spent_at DESC LIMIT ?`, id, per))
-        events.push({ kind: 'expense', id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, ' ')}`, detail: x.description, meta: { fund: x.fund, status: x.status } });
+        events.push({ kind: 'expense', id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, ' ')}`, detail: x.description_enc ? decrypt(x.description_enc) : null, meta: { fund: x.fund, status: x.status } });
     events.push({ kind: 'milestone', id: 'intake', at: row.intake_date, title: 'Program intake', meta: {} });
     if (row.referral_date) events.push({ kind: 'milestone', id: 'referral', at: row.referral_date, title: 'Referred in', meta: {} });
     if (row.engagement_date) events.push({ kind: 'milestone', id: 'engagement', at: row.engagement_date, title: 'Engaged with services', meta: {} });

@@ -7,7 +7,7 @@ const auth = require('../auth');
 const audit = require('../audit');
 const { badRequest, notFound, forbidden } = require('../http');
 const { validate } = require('../validate');
-const { decrypt } = require('../crypto');
+const { decrypt, encrypt } = require('../crypto');
 
 /** Staff this user supervises: those who name them, plus everyone if they hold the given "see all" permission. */
 function supervisedIds(user, allPerm = 'clients:all') {
@@ -128,8 +128,10 @@ module.exports = (r) => {
     if (t.user_id === ctx.user.id) throw forbidden('You cannot approve your own time');
     if (t.status !== 'submitted') throw badRequest('Only submitted time can be approved or returned');
     if (v.decision === 'rejected' && !v.note) throw badRequest(NO_REASON);
-    db.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db.now(), v.note || null, db.now(), t.id);
-    audit.log({ user: ctx.user, action: `time.${v.decision}`, entity: 'time_entry', entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes } });
+    // The reviewer's note can name the client ("J. was seen Tuesday"): encrypted, and not in the audit entry.
+    const note = v.note ? encrypt(v.note) : null;
+    db.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db.now(), note, db.now(), t.id);
+    audit.log({ user: ctx.user, action: `time.${v.decision}`, entity: 'time_entry', entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes, note_recorded: v.note ? true : undefined } });
     return { ok: true };
   });
 
@@ -143,7 +145,7 @@ module.exports = (r) => {
         if (!t) { skipped.push({ id, reason: 'not found' }); continue; }
         if (t.user_id === ctx.user.id) { skipped.push({ id, reason: 'your own time' }); continue; }
         if (t.status !== 'submitted') { skipped.push({ id, reason: 'not awaiting approval' }); continue; }
-        db.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db.now(), v.note || null, db.now(), t.id);
+        db.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db.now(), v.note ? encrypt(v.note) : null, db.now(), t.id);
         n++;
       }
     });

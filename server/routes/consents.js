@@ -24,10 +24,10 @@ function presentConsent(c) {
   const today = new Date().toISOString().slice(0, 10);
   const active = !c.revoked_at && (!c.expires_at || c.expires_at >= today);
   return { ...c, recipient: c.recipient_enc ? decrypt(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt(c.purpose_enc) : null, scope: c.scope_enc ? decrypt(c.scope_enc) : null,
-    signer_name: c.signer_name_enc ? decrypt(c.signer_name_enc) : null,
+    signer_name: c.signer_name_enc ? decrypt(c.signer_name_enc) : null, revoked_reason: c.revoked_reason_enc ? decrypt(c.revoked_reason_enc) : null,
     // The coded categories it covers, as a list ([] when none were recorded: it covers nothing automated).
     info_categories: [...disclosure.parseCategories(c.info_categories)],
-    recipient_enc: undefined, purpose_enc: undefined, scope_enc: undefined, signer_name_enc: undefined,
+    recipient_enc: undefined, purpose_enc: undefined, scope_enc: undefined, signer_name_enc: undefined, revoked_reason_enc: undefined,
     // A consent that lacks the §2.31 elements (one that arrived by sync or by hand, or a legacy one) is shown,
     // but cannot be chosen to authorise a disclosure: incomplete says why.
     active, part2: PART2_TYPES.includes(c.type), incomplete: disclosure.consentElementProblems(c),
@@ -102,10 +102,10 @@ module.exports = (r) => {
     // Flag the open referrals that relied on it so a worker sees them rather than discovering later.
     const dependent = db.all(`SELECT id, resource_id FROM referrals WHERE consent_id=? AND status NOT IN ('closed','declined')`, c.id);
     db.transaction(() => {
-      db.run(`UPDATE consents SET revoked_at=?, revoked_reason=?, revoked_by=?, updated_at=? WHERE id=?`, db.now(), reason || null, ctx.user.id, db.now(), c.id);
+      db.run(`UPDATE consents SET revoked_at=?, revoked_reason_enc=?, revoked_by=?, updated_at=? WHERE id=?`, db.now(), reason ? encrypt(reason) : null, ctx.user.id, db.now(), c.id);
       for (const ref of dependent) db.run(`UPDATE referrals SET consent_revoked=1, updated_at=? WHERE id=?`, db.now(), ref.id);
     });
-    audit.log({ user: ctx.user, action: 'consent.revoke', entity: 'consent', entityId: c.id, clientId: c.client_id, ip: ctx.ip, details: { dependent_referrals: dependent.length } });
+    audit.log({ user: ctx.user, action: 'consent.revoke', entity: 'consent', entityId: c.id, clientId: c.client_id, ip: ctx.ip, details: { dependent_referrals: dependent.length, reason_recorded: reason ? true : undefined } });
     return { ok: true, dependent_referrals: dependent.length };
   });
   // The consent as a printable record: every §2.31 element, as recorded, with the §2.32 statement.
