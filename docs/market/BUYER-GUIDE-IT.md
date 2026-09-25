@@ -1,42 +1,47 @@
-# SUDS buyer guide: for county IT and security
+# SUDS buyer guide: for IT partners, county IT and security
 
-For the CIO, IT security lead and privacy officer reviewing SUDS for a SUD programme. It answers the gate
+For whoever will run and review SUDS for a harm-reduction, outreach or prevention programme: a CBO's managed-IT
+partner, a county IT team hosting a CBO's instance, or a county security and privacy reviewer. It answers the gate
 questions — deployment, identity, data flows, security controls, recovery, accessibility, integration and
 support — and points to the evidence for each. It is honest about what is not yet in place; see the
 [readiness scorecard](README.md#readiness-scorecard).
 
 **What SUDS is, in one line:** a single-server web application, Node.js built-ins only, that holds 42 CFR
-Part 2 and HIPAA-protected programme records for non-billing SUD programmes. It is not an EHR and does not bill
-([POSITIONING.md](POSITIONING.md)).
+Part 2 and HIPAA-protected programme records for non-billing harm-reduction and prevention programmes. It is
+not an EHR, does not bill ([POSITIONING.md](POSITIONING.md)), and is **not a hosted service**: someone — you —
+runs the server. Who does what, including at 2am: [HOSTING.md](HOSTING.md).
 
 ## Deployment options
 
 | Option | Who runs it | System of record | Good for | Status |
 | --- | --- | --- | --- | --- |
-| **County-hosted office server** | County IT, on a VM, physical server or container (`Dockerfile`, `docker-compose.yml` with a Caddy TLS proxy) | The county's server | Most counties; data never leaves county infrastructure | Available ([docs/INSTALL.md](../INSTALL.md), [docs/DEPLOYMENT.md](../DEPLOYMENT.md)) |
-| **Vendor-hosted** | The vendor, one isolated instance per programme in a US cloud region under a BAA with the cloud provider | The vendor-hosted instance | CBOs and small counties without server capacity | **Planned** — offered once the hosting environment, BAA chain and SOC 2 scope are in place ([PROCUREMENT.md](PROCUREMENT.md), vendor to-do) |
+| **Self-hosted by the programme's IT partner** | The CBO's managed-IT provider or its own staff, on a VM, office server or container (`Dockerfile`, `docker-compose.yml` with a Caddy TLS proxy), or in the programme's own cloud account | The programme's server | CBOs with an IT partner | Available ([docs/INSTALL.md](../INSTALL.md), [docs/DEPLOYMENT.md](../DEPLOYMENT.md)) |
+| **County-hosted** | County IT, for a county programme or a CBO the county sponsors | The county's server | County-sponsored pilots; data never leaves county infrastructure | Available (same) |
+| **Vendor-hosted, single-tenant** | The vendor, one isolated instance per programme in a US cloud region under a BAA with the cloud provider | The vendor-hosted instance | CBOs with no IT capacity | **Planned — not offered.** Requires the checklist in [HOSTING.md](HOSTING.md) (cloud BAA, offsite backups, monitoring, on-call, insurance, pen test) |
 | **SUDS on this device** | Nobody — runs in one browser | That browser | A single navigator with no server; not recommended for county programmes that share records | Available ([docs/WEB_APP.md](../WEB_APP.md)) |
 
-Requirements (county-hosted): Node.js 22.13+, an encrypted disk for the data directory, TLS (built-in or a
+Requirements (self-hosted or county-hosted): Node.js 22.13+, an encrypted disk for the data directory, TLS (built-in or a
 reverse proxy such as IIS ARR, nginx, Caddy or a cloud load balancer), outbound internet not required. One
 process and one SQLite database per programme; a second process is refused
 ([docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Single instance only*). Sized for dozens of users, not hundreds.
 
-## What the county hosts vs what the vendor provides
+## What the operator does vs what the vendor provides
 
-| | County-hosted | Vendor-hosted (planned) |
+"Operator" is whoever hosts: the programme's IT partner or the county.
+
+| | Self-hosted / county-hosted (operator) | Vendor-hosted (planned, not offered) |
 | --- | --- | --- |
-| Server, OS patching, disk encryption, firewall | County | Vendor |
-| TLS certificate | County | Vendor |
-| Encryption keys and custody | County (secrets manager or `data/keys.json`) | Vendor, with documented custody; county may request a key-escrow arrangement |
-| Backups, off-host copy, restore drills | County (built-in scheduler helps) | Vendor, with drill results shared |
-| Identity provider (SSO) | County | County (vendor configures the OIDC client) |
-| Upgrades | County installs tagged releases (vendor provides release, notes, checksum, support) | Vendor, pilot group first |
-| User accounts, roles, MFA enrolment | County administrator | County administrator |
-| Audit review, break-glass acknowledgement, patient requests | County | County |
-| Software defects, security fixes, support desk | Vendor | Vendor |
+| Server, OS patching, disk encryption, firewall | Operator | Vendor |
+| TLS certificate | Operator | Vendor |
+| Encryption keys and custody | Operator (secrets manager or `data/keys.json`) | Vendor, with documented custody; programme may request a key-escrow arrangement |
+| Backups, off-host copy, restore drills | Operator (built-in scheduler and drill help) | Vendor, with drill results shared |
+| Identity provider (SSO), if any | Programme or county | Programme or county (vendor configures the OIDC client) |
+| Upgrades | Operator installs tagged releases (vendor provides release, notes, checksum, business-hours help) | Vendor, pilot group first |
+| User accounts, roles, MFA enrolment | Programme's SUDS administrator | Programme's SUDS administrator |
+| Audit review, break-glass acknowledgement, participant requests | Programme | Programme |
+| Software defects, security fixes, support | Vendor, business hours ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)) | Vendor |
 | BAA / Part 2 QSOA | Required if the vendor can access PHI (e.g. support on the server) | Required |
-| Uptime commitment | County's own | Vendor SLA ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)) |
+| Uptime and 2am on-call | The operator's own | Vendor, only as staffed and written into the contract ([HOSTING.md](HOSTING.md)) |
 
 ## Identity and access
 
@@ -78,24 +83,25 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
 | Control | What SUDS does | Evidence |
 | --- | --- | --- |
 | Architecture | Single Node.js process, built-ins only, zero third-party runtime packages; CSP self-only, no inline scripts | [docs/security/ARCHITECTURE.md](../security/ARCHITECTURE.md), [docs/DEPLOYMENT.md](../DEPLOYMENT.md) |
-| Encryption at rest | AES-256-GCM on every PHI field, keys outside the database; blind-index (HMAC) search; disk encryption required | [docs/HIPAA.md](../HIPAA.md), [docs/security/ENCRYPTION-AND-KEYS.md](../security/ENCRYPTION-AND-KEYS.md) |
+| Encryption at rest | AES-256-GCM on identifying and free-text fields (names, contact details, dates of birth, notes, consents…), keys outside the database; blind-index (HMAC) search; coded reporting fields (status, substance, risk…) are not field-encrypted and rely on the required disk encryption — table-by-table in HIPAA.md, *Data classification* | [docs/HIPAA.md](../HIPAA.md), [docs/security/ENCRYPTION-AND-KEYS.md](../security/ENCRYPTION-AND-KEYS.md) |
 | Encryption in transit | TLS 1.2+, HSTS, secure/HttpOnly/SameSite=Strict cookies | [docs/HIPAA.md](../HIPAA.md) |
 | Key management | Three independently rotatable keys; rotation runbook; retired-key handling | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Key rotation runbook* |
-| Audit | Every PHI read/write, sign-in, denial, export and config change; tamper-evident hash chain, append-only in the database, anchored every 6 hours (write-once when the county points `AUDIT_ANCHOR_DIR` at WORM storage), verified incrementally and weekly in full; 7-year retention | [docs/HIPAA.md](../HIPAA.md), [docs/security/LOGGING-AND-AUDIT.md](../security/LOGGING-AND-AUDIT.md) |
+| Audit | PHI reads and writes through the API (every route that touches PHI is required to log — `CLAUDE.md`, [ADR-0006](../architecture/ADR-0006-append-only-audit.md)), sign-ins, denials, exports, disclosures and configuration changes; tamper-evident hash chain, append-only in the database, anchored every 6 hours (write-once when the operator points `AUDIT_ANCHOR_DIR` at WORM storage), verified incrementally and weekly in full; 7-year retention | [docs/HIPAA.md](../HIPAA.md), [docs/security/LOGGING-AND-AUDIT.md](../security/LOGGING-AND-AUDIT.md) |
 | 42 CFR Part 2 | Consent elements enforced, referral gating, disclosure accounting, final-rule controls | [docs/HIPAA.md](../HIPAA.md), [docs/compliance/PART2.md](../compliance/PART2.md) |
 | De-identification | Safe Harbor exports by default (year-only dates, 90+, ZIP3 with restricted areas as 000, no free text, random per-export record ids); small-cell suppression in the funder report only | [docs/HIPAA.md](../HIPAA.md) |
 | Backup and recovery | Scheduled encrypted backups, off-host copy, restore from the UI, pre-migration snapshots; DR drill with measured RTO/RPO | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Backups*; [docs/security/BACKUP-AND-DR.md](../security/BACKUP-AND-DR.md) |
 | Monitoring | `/api/health` readiness probe; Prometheus metrics; JSON logs; no PHI in logs | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Monitoring and logs* |
 | Hardening | Checklist for host, TLS, proxy, permissions, firewall, MFA, keys | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Hardening checklist* |
-| Supply chain | Release zips with SHA-256 checksums; Dependabot; human review of every change | [docs/ADOPTION.md](../ADOPTION.md), [docs/RELEASE.md](../RELEASE.md) |
+| Supply chain and change control | Zero runtime packages on the server; release zips with SHA-256 checksums (not yet signed); Dependabot for the browser-kernel build tools. **Development is AI-assisted**: most commits are written with an AI coding assistant (171 of 202 up to 1.11.0) under the rules in `CLAUDE.md`, gated by automated tests and CI (API suite, browser suite with accessibility checks, drift checks) and reviewed and merged by the owner. There is no second human reviewer today. Branch protection and independent review of what you deploy are yours to configure ([ADOPTION.md](../ADOPTION.md) §1) | [docs/security/SDLC.md](../security/SDLC.md), [docs/RELEASE.md](../RELEASE.md), [docs/architecture/](../architecture/README.md) |
 | Residual risks | Blind-index leakage, shared index/audit key, single instance, local-mode keys, experimental `node:sqlite` | [docs/HIPAA.md](../HIPAA.md), *Risk register notes* |
-| Attestation | **SOC 2: readiness self-assessment only; no audit report yet. No third-party pen test yet.** | [docs/security/README.md](../security/README.md) (SOC 2 readiness); timeline in [PROCUREMENT.md](PROCUREMENT.md) |
+| Attestation | **SOC 2: readiness self-assessment only; no audit report yet. No third-party pen test yet.** | [docs/security/SOC2-READINESS.md](../security/SOC2-READINESS.md); timeline in [PROCUREMENT.md](PROCUREMENT.md) |
 
 ## Security questionnaire
 
-A completed security questionnaire (answers to the common county, CAIQ-lite and SIG-Lite style questions, each
-pointing to evidence) is kept in [docs/security/README.md](../security/README.md). Send us your county's own questionnaire as
-well; we answer it from the same evidence and will not answer "yes" to a control that is not in place.
+A pre-answered security questionnaire (HECVAT-Lite and CSA CAIQ style questions, and the themes of city/county
+supplier assessments such as San Francisco's, each answer pointing to evidence) is
+[docs/security/QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md). Send us your own questionnaire as well; we answer
+it from the same evidence and will not answer "yes" to a control that is not in place.
 
 ## Accessibility
 
@@ -122,12 +128,13 @@ well; we answer it from the same evidence and will not answer "yes" to a control
 
 ## Support model
 
-- **Vendor support desk** with severity levels and response targets ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)).
+- **Vendor support in business hours** with severity levels and response targets ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)).
+  The vendor is one person today; there is no 24×7 support and no vendor on-call.
 - **Releases**: tagged, checksummed, with release notes; pilot-group-first rollout recommended
   ([docs/ADOPTION.md](../ADOPTION.md), section 3). Security fixes expedited.
 - **Open source (MIT)**: the county can inspect, build and maintain the code without the vendor; there is no
   licence lock-in. The adoption plan asks the county to name a code owner whether or not it buys support.
-- **County staffing** for a county-hosted install: 0.25–0.5 FTE system administrator, a key custodian, a
+- **Operator staffing** for a self-hosted or county-hosted install: 0.25–0.5 FTE system administrator, a key custodian, a
   monthly audit reviewer ([docs/ADOPTION.md](../ADOPTION.md), section 7).
 
 ## Before real client data
