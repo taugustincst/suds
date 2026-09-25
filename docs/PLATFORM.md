@@ -95,11 +95,14 @@ by these rules, all of which the server enforces:
 
 **Recommendation for counties.** Leave local mode off — the default from 1.9.3, and the wizard's
 recommended answer — unless there is a documented field-work need (navigators who record visits where
-there is no signal). A plain browser has no protected key store:
-the offline copy's encryption keys live in the browser profile beside the data, so anyone who can use that
-profile can read it. Where the need exists, restrict local mode to county-managed devices with a device
-passcode, disk encryption and MDM remote wipe, record which devices are approved, and review Synced devices
-when someone leaves. With local mode off, the server serves a plain explanation at `/?local=1` and nothing
+there is no signal). The offline copy is sealed at rest under a key that only the device password of its
+user opens, and it locks on every page load, on sign-out and after 15 minutes idle
+([ADR-0008](architecture/ADR-0008-device-encryption.md)); while someone is signed in it is open on the device,
+and a weak device password can be guessed offline from a copied profile. Where the need exists, restrict local
+mode to county-managed devices with a device passcode, disk encryption and MDM remote wipe, record which
+devices are approved, and review Synced devices when someone leaves. A navigator who forgets their device
+password cannot open the copy (an office reset reaches the device only through a sync by someone who can
+unlock it): the device is erased, set up again and re-synced, and anything not yet synced is lost. With local mode off, the server serves a plain explanation at `/?local=1` and nothing
 else, and the `/app` page does not mention it.
 
 ## What is on a device

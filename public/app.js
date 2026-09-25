@@ -451,12 +451,13 @@ function wipeLocalDatabase() {
     req.onerror = () => reject(req.error);
     req.onsuccess = () => {
       const t = req.result.transaction('kv', 'readwrite');
-      // The whole store: the database (under an epoch key since 1.9.3), its epoch, and a pre-1.9.3 copy.
+      // The whole store: the sealed database (under an epoch key since 1.9.3), its epoch, the vault holding
+      // every account's wrap of its key, and a pre-1.9.3 copy; and any keys 1.11 or earlier left in localStorage.
       t.objectStore('kv').clear();
       t.oncomplete = resolve;
       t.onerror = () => reject(t.error);
     };
-  }).then(() => { try { localStorage.removeItem('suds.local.session'); } catch {} });
+  }).then(() => { for (const k of ['suds.local.session', 'suds.local.enc', 'suds.local.idx']) { try { localStorage.removeItem(k); } catch {} } });
 }
 /** The typed-confirmation dialog behind both offerDeviceReset() and eraseDeviceButton() below. The erase
  *  button starts disabled and only enables once the typed text matches exactly — a reason field that is

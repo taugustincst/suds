@@ -11,7 +11,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { makeChecks, until, settle, saved } from './assert.mjs';
+import { makeChecks, until, settle, saved, signInAgain } from './assert.mjs';
 // A page of the 1.9.0 build has no activity hook (window.__sudsActivity) to wait on; pace it the old way.
 const pace = async (p) => ((await p.evaluate(() => !!window.__sudsActivity).catch(() => false)) ? settle(p) : p.waitForTimeout(150));
 
@@ -36,6 +36,8 @@ const PROMPT = 'button:has-text("Use SUDS in this window")';
 const TAKE_BACK = 'button:has-text("Use SUDS here instead")';
 const booted = (page) => page.waitForSelector('.layout, input[name=username], input[name=display_name]', { timeout: 20000 });
 const isPaused = async (page) => /paused/i.test((await page.textContent('#app').catch(() => '')) || '');
+// Every new document starts locked (the database is sealed; docs/architecture/ADR-0008-device-encryption.md).
+const unlock = (page) => signInAgain(page, 'tabs', 'Navigator2026!!');
 async function setup(page, url) {
   await page.goto(url);
   await page.waitForSelector('input[name=display_name]', { timeout: 20000 });
@@ -49,6 +51,7 @@ async function takeOver(page) {
   await page.click(PROMPT);
   await booted(page).catch(async (e) => { throw new Error(`did not boot after taking over: ${((await page.textContent('#app').catch(() => '')) || '').slice(0, 200)}`); });
   await until(() => page.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 });
+  await unlock(page);
 }
 
 // ---- 1. two tabs, take over, write in B, take back in A: B's record must survive ----
@@ -65,6 +68,7 @@ async function takeOver(page) {
   ok(!(await A.$('.modal-bg')), 'with no dialog left open over it');
   await A.evaluate(() => [...document.querySelectorAll('button')].find(b => /Use SUDS here instead/.test(b.textContent)).click());
   await booted(A); await until(() => A.evaluate(() => !!window.SUDS_LOCAL && !document.querySelector('.boot.error')), { timeout: 15000 });
+  await unlock(A);
   ok(/Bravo/.test(await clientNames(A)), 'taking it back in A shows the record B made (no stale in-memory copy)');
   eq((await addClient(A, 'Charlie')).status, 201, 'tab A records another client after taking back');
   await until(() => isPaused(B), { timeout: 10000 });
@@ -78,7 +82,7 @@ async function takeOver(page) {
   await settle(B);
   ok(await isPaused(B) && !(await B.$('.layout')), 'and the dashboard refresh', (await B.textContent('#app')).slice(0, 80));
   await saved(A);
-  await A.reload(); await booted(A); await until(() => A.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 });
+  await A.reload(); await booted(A); await until(() => A.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 }); await unlock(A);
   const after = await clientNames(A);
   ok(/Alpha/.test(after) && /Bravo/.test(after) && /Charlie/.test(after), 'after a reload all three records are on the device', after.match(/"last_name":"[^"]*"/g));
   await ctx.close();
@@ -117,7 +121,7 @@ for (const freezeSave of [true, false]) {
   eq(await A.getAttribute('[data-paused]', 'data-paused'), freezeSave ? 'saved' : 'unsaved', `the paused tab says truthfully whether its last write was saved first${tag}`);
   ok(freezeSave ? /saved first/.test(await A.textContent('#app')) : /may need to be re-entered/.test(await A.textContent('#app')), `and words it that way${tag}`);
   await A.waitForTimeout(800); // intentional: give A's pending save timer its chance to fire into the fence
-  await B.reload(); await booted(B); await until(() => B.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 });
+  await B.reload(); await booted(B); await until(() => B.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 }); await unlock(B);
   ok(/Echo/.test(await clientNames(B)), `B's record survives A waking up${tag}`);
   await ctx.close();
 }
@@ -138,8 +142,9 @@ for (const freezeSave of [true, false]) {
   // A reload of the holding tab is the same window: straight back in, and nothing written just before is lost.
   eq((await addClient(A, 'Golf')).status, 201, 'tab A records a client just before reloading');
   await A.reload(); await booted(A);
-  ok(!(await A.$(PROMPT)) && (await A.$('.layout')), 'reloading the holding tab boots straight back in with no prompt');
-  await until(() => A.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 });
+  ok(!(await A.$(PROMPT)) && !(await A.$('.boot.error')), 'reloading the holding tab boots straight back in with no prompt');
+  await until(() => A.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 }); await unlock(A);
+  ok(await A.$('.layout'), 'and signing in opens it');
   ok(/Golf/.test(await clientNames(A)), 'the record written right before the reload is there');
   await ctx.close();
 }
@@ -209,9 +214,14 @@ else if (buildOld()) {
     const late = await addClient(A, 'Oldtwo');
     ok(late.status === 201, 'the 1.9.0 tab still accepts a write (it cannot know better)', late.status);
     await A.waitForTimeout(800); // intentional: let the 1.9.0 tab's save timer fire (nothing observable to wait on)
-    await B.reload(); await booted(B); await until(() => B.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 });
+    await B.reload(); await booted(B); await until(() => B.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 }); await unlock(B);
     const names = await clientNames(B);
     ok(/Newone/.test(names) && /Oldone/.test(names), 'the new tab\'s data is intact after the old tab saved again', names.match(/"last_name":"[^"]*"/g));
+    // The 1.9.0 tab writes its copy in the clear under the old `db` key; the new build's next save removes it.
+    eq((await addClient(B, 'Newtwo')).status, 201, 'the new tab records another client');
+    await saved(B);
+    const plainLeft = await B.evaluate(() => new Promise((res) => { const o = indexedDB.open('suds-local', 1); o.onsuccess = () => { const s = o.result.transaction('kv', 'readonly').objectStore('kv'); const k = s.getAllKeys(); const v = s.getAll(); v.onsuccess = () => { const dec = new TextDecoder(); res(k.result.filter((key, i) => { const x = v.result[i]; return (x instanceof Uint8Array || x instanceof ArrayBuffer) && dec.decode(new Uint8Array(x instanceof ArrayBuffer ? x : x.buffer).slice(0, 15)) === 'SQLite format 3'; }).map(String)); o.result.close(); }; }; }));
+    eq(plainLeft.join(','), '', 'no database is left in the clear in IndexedDB once the new build has saved');
     await ctx.close();
   } finally { server.close(); }
 }

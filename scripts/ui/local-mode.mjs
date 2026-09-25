@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-import { makeChecks, until, settle, saved } from './assert.mjs';
+import { makeChecks, until, settle, saved, signInAgain } from './assert.mjs';
 const { ok, eq, fail, finish } = makeChecks('local-mode');
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 import('node:fs').then(m => m.mkdirSync('/tmp/suds-shots', { recursive: true }));
@@ -29,8 +29,12 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   ok(toasts.length > 0 && !toasts.some(t => /error|failed|could not/i.test(t)), 'recording a visit on the device confirms it saved', toasts);
   // persistence across reload: the local kernel's writes flush to IndexedDB asynchronously, and reloading
   // before that flush lands is a real race, not just UI settling — so wait until it reports nothing unsaved.
-  await settle(page); await saved(page); await page.reload(); await page.waitForSelector('.layout', { timeout: 15000 }).catch(() => {});
-  ok(await page.$('.layout'), 'the device is still signed in after a reload', (await page.textContent('#app')).slice(0, 80));
+  // A reload locks the device (its records are sealed under a key only an account password opens): the
+  // sign-in form comes back, and signing in opens the same records again.
+  await settle(page); await saved(page); await page.reload(); await page.waitForSelector('.layout, .login input[name=username]', { timeout: 15000 }).catch(() => {});
+  ok(!(await page.$('.layout')) && await page.$('.login input[name=username]'), 'after a reload the device is locked and asks for the password again', (await page.textContent('#app')).slice(0, 80));
+  await signInAgain(page, 'mrivera', 'Navigator2026!!');
+  ok(await page.$('.layout'), 'signing in on the device opens it again', (await page.textContent('#app')).slice(0, 80));
   await page.goto(base + '/?local=1#/clients'); await page.waitForSelector('tbody', { timeout: 10000 }).catch(() => {});
   const rowsBefore = await page.$$eval('tbody tr', r => r.length);
   ok(rowsBefore >= 1, 'the client entered on the device survived the reload', rowsBefore);
@@ -192,8 +196,8 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   await until(() => p.evaluate(() => window.__sameDocument !== true).catch(() => false), { timeout: 10000 });
   ok(await p.evaluate(() => window.__sameDocument !== true), 'the next move to another page picks the new version up (the page reloads)');
   // Still the "old" build after that one reload (here: version.json keeps disagreeing): the banner stays,
-  // and the page does not reload again on every move.
-  await p.waitForSelector('.layout', { timeout: 15000 });
+  // and the page does not reload again on every move. The reload locked the device: sign in again first.
+  await signInAgain(p, 'stamp', 'Navigator2026!!');
   await p.evaluate(() => { window.__sameDocument = true; location.hash = '#/dashboard'; });
   await p.waitForTimeout(1200); // intentional: proving a second reload does NOT happen needs time to pass
   ok(await p.evaluate(() => window.__sameDocument === true), 'one automatic reload per release, not one per page');

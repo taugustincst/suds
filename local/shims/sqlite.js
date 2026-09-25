@@ -1,5 +1,6 @@
 // Browser replacement for node:sqlite's DatabaseSync, backed by sql.js (SQLite compiled to WebAssembly).
-// The database is persisted to IndexedDB after writes and loaded before the kernel starts.
+// The database is persisted to IndexedDB after writes, sealed with the device's data-encryption key
+// (local/vault.js, docs/architecture/ADR-0008-device-encryption.md); the kernel opens it after a sign-in.
 //
 // Four hazards this file has to handle, because a phone is not a server:
 //  * Two tabs. Each would hold its own copy in memory and persist by overwriting the whole database, so
@@ -31,15 +32,15 @@ export async function init(wasmUrl) {
 //  * The database bytes live under `db2:<epoch>`, and a page only ever writes the key of ITS epoch. Claiming
 //    reads the previous holder's key and copies it to the new one in that same transaction, and deletes every
 //    other `db2:*` key. Nothing reads an old key again.
-//  * An ordinary save reads `epoch` first, in the same readwrite transaction as its put, and issues the put
-//    only from that read's callback, only while the epoch is still its own; otherwise it aborts the
-//    transaction and the page stops (the paused screen).
-//  * The unload save (pagehide / hidden / freeze) cannot wait for a callback: it commit()s at once, after
-//    which nothing can abort it. It needs no check — it writes `db2:<myEpoch>`, which after a takeover is a
-//    key nobody reads; at worst it leaves a dead copy that the next claim deletes. IndexedDB runs readwrite
-//    transactions on one store strictly in the order they were created, so a claim either sees such a
-//    save (created before it: it is carried over) or makes it harmless (created after: it lands on a dead
-//    key). There is no ordering in which a stale page's save replaces the current holder's bytes.
+//  * A save of the database image issues its put and a read of `epoch` together and commit()s at once, so it
+//    never waits on a callback of this page (see saveBytes: a frozen page must not hold the store). It needs
+//    no check before writing — it writes `db2:<myEpoch>`, which after a takeover is a key nobody reads; the
+//    read tells the page afterwards that it was displaced (it stops: the paused screen) and the dead copy is
+//    deleted. IndexedDB runs readwrite transactions on one store strictly in the order they were created, so
+//    a claim either sees such a save (created before it: it is carried over) or makes it harmless (created
+//    after: it lands on a dead key). There is no ordering in which a stale page's save replaces the current
+//    holder's bytes. A write of the vault is the exception: it reads `epoch` first and writes only while
+//    the epoch is still its own, otherwise it aborts.
 //  * 1.9.0–1.9.2 kept the database under `db` and know nothing of epochs. The first claim on a store with no
 //    `epoch` migrates `db` to `db2:<epoch>` and `db` is never read again, so a tab still running one of those
 //    releases after a deploy writes only to a dead key: its late saves cannot erase anything. What is typed
@@ -216,39 +217,115 @@ function idb() {
     r.onerror = () => rej(r.error);
   });
 }
-/** The bytes read when this page claimed its epoch (acquireLock runs first); null on a new device. */
+/** What was stored under this page's epoch when it claimed it (acquireLock runs first); null on a new device. */
 export async function loadBytes() { return claimedBytes; }
+
+// ---- sealing: nothing is written in the clear ----
+// Since encryption at rest (after 1.11) the value under `db2:<epoch>` is a sealed image (local/vault.js), never SQLite bytes. The kernel
+// hands this file a sealer once it holds the data-encryption key (after a sign-in, or when the first account
+// is set up); until then saves are withheld — the writes stay in memory, marked dirty — rather than written
+// in the clear. `pendingExtra` is what must land in the same transaction as the first sealed save (the vault
+// that can open it, and the deletion of a plaintext copy left by 1.11 or earlier): it goes with every save, urgent ones
+// included, until one has committed, so no sealed image is ever stored without the vault that opens it.
+let sealer = null;
+let pendingExtra = null;
+/** `s` = { seal: async (bytes) => value, sealSync: (bytes) => value }, or null to withhold every save. */
+export function setSealer(s, { extra = null } = {}) { sealer = s; pendingExtra = extra; }
+export function hasSealer() { return !!sealer; }
+// A locked device has no database open, and nothing may create one by accident: server/db.js opens a fresh
+// empty database on first use, which would then be sealed and saved over the real one.
+let openAllowed = true;
+export function setOpenAllowed(v) { openAllowed = !!v; }
+let lastSave = null;
+let ordinarySaveMs = 0; // the last coalesced (not unload) save's cost, which sets the next coalescing delay
+/** Timings of the last save (sizes and milliseconds; never contents), for diagnostics and the performance check. */
+export function saveStats() { return lastSave; }
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
 /**
- * Resolves true when the bytes were stored; false when the save was withheld because the store had been
- * cleared (wiped) or another page had claimed the database since (fenced). See "fencing" above. With the
- * connection already open, the transaction is created before this returns, so a save started from pagehide
- * is ordered before anything the next document does.
+ * Resolves true when `value` (and any `extra` entries: key → value, or null to delete) were stored; false
+ * when the save was withheld because the store had been cleared (wiped) or another page had claimed the
+ * database since (fenced). `value` null writes only the extras. See "fencing" above. With the connection
+ * already open, the transaction is created before this returns, so a save started from pagehide is ordered
+ * before anything the next document does.
  */
-export function saveBytes(bytes, { urgent = false } = {}) {
+export function saveBytes(value, { urgent = false, extra = null } = {}) {
+  const extras = { ...(pendingExtra || {}), ...(extra || {}) };
+  const carried = pendingExtra;
   const write = (d) => new Promise((res, rej) => {
     if (myEpoch === null) { rej(new Error('the on-device database was never claimed')); return; }
     const t = d.transaction('kv', 'readwrite'); const store = t.objectStore('kv');
     const key = dbKey(myEpoch);
     let outcome = null; // 'wiped' | 'fenced'
+    // A tab still running a release from before 1.9.3 writes its copy, in the clear, under `db` (it knows
+    // nothing of epochs or sealing): every sealed save removes whatever such a tab has left there.
+    const putAll = () => { if (value !== null) { store.put(value, key); store.delete(LEGACY_KEY); } for (const [k, v] of Object.entries(extras)) { if (v === null) store.delete(k); else store.put(v, k); } };
     const probe = store.get(EPOCH_KEY);
     const judge = () => { const e = probe.result; if (e === undefined) outcome = 'wiped'; else if (e !== myEpoch) outcome = 'fenced'; };
-    if (urgent) {
-      // On the way out no callback is guaranteed to run again, and a transaction that waits for one is
-      // aborted with the document: commit() finishes it without. The probe can then no longer stop the
-      // put, and need not — it goes to this page's own epoch key, which is dead if the page was displaced.
-      store.put(bytes, key);
+    // Blind: every request is issued now and the transaction committed at once, so it finishes without any
+    // callback of this page having to run. That is required on the way out (no callback is guaranteed to
+    // run again, and a transaction waiting for one is aborted with the document), and it is what every
+    // image-only save does: a transaction that waits for a callback is held open for as long as this page
+    // cannot run it — a background tab the browser froze, a page stopped in a debugger — and every other
+    // page's readwrite transaction on the store queues behind it, so a window taking the database over hung
+    // at "Starting SUDS on this device…" behind a frozen holder (multitab.mjs, the frozen-holder case). The
+    // probe can then no longer stop the put, and need not: it goes to this page's own epoch key, which is
+    // dead if the page was displaced (and is removed again below). Only a save that also writes the vault
+    // checks the epoch before writing anything: a displaced page must never replace the holder's vault.
+    const blind = urgent || !Object.keys(extras).length;
+    if (blind) {
+      putAll();
       probe.onsuccess = () => { judge(); };
     } else {
-      probe.onsuccess = () => { judge(); if (outcome) { try { t.abort(); } catch {} } else store.put(bytes, key); };
+      probe.onsuccess = () => { judge(); if (outcome) { try { t.abort(); } catch {} } else putAll(); };
     }
-    const settle = () => { if (outcome === 'wiped') { wiped = true; dirty = false; } else if (outcome === 'fenced') lose({ savedFirst: false }); };
-    t.oncomplete = () => { if (inflight === t) inflight = null; if (outcome) { settle(); res(false); } else res(true); };
+    const settle = () => {
+      if (outcome === 'wiped') { wiped = true; dirty = false; } else if (outcome === 'fenced') lose({ savedFirst: false });
+      // A blind save that landed in a store cleared or claimed meanwhile left a copy under a key nobody reads.
+      if (blind && value !== null) { try { const c = d.transaction('kv', 'readwrite'); c.objectStore('kv').delete(key); if (typeof c.commit === 'function') c.commit(); } catch {} }
+    };
+    t.oncomplete = () => {
+      if (inflight === t) inflight = null;
+      if (outcome) { settle(); res(false); return; }
+      if (carried && pendingExtra === carried) pendingExtra = null;
+      res(true);
+    };
     t.onabort = () => { if (inflight === t) inflight = null; if (outcome) { settle(); res(false); } else rej(t.error || new Error('save aborted')); };
     inflight = t;
-    if (urgent && typeof t.commit === 'function') { try { t.commit(); } catch {} }
+    if (blind && typeof t.commit === 'function') { try { t.commit(); } catch {} }
   });
   if (conn) { try { return write(conn); } catch (e) { conn = null; } }
   return idb().then(write);
+}
+/** Write `entries` (key → value, null deletes) under the fence, without the database: the vault. */
+export function putMeta(entries) { return saveBytes(null, { extra: entries }); }
+/** One value from the store (the vault), or null. */
+export async function getMeta(key) {
+  const d = await idb();
+  return new Promise((res, rej) => { const g = d.transaction('kv', 'readonly').objectStore('kv').get(key); g.onsuccess = () => res(g.result === undefined ? null : g.result); g.onerror = () => rej(g.error); });
+}
+/** Every [key, value] in the store: used to prove, after sealing an old device, that no plaintext copy is left. */
+export async function entries() {
+  const d = await idb();
+  return new Promise((res, rej) => {
+    const s = d.transaction('kv', 'readonly').objectStore('kv'); const k = s.getAllKeys(); const v = s.getAll();
+    v.onsuccess = () => res(k.result.map((key, i) => [key, v.result[i]])); v.onerror = () => rej(v.error);
+  });
+}
+/**
+ * The value this page last saved under its epoch, read back from the store (a sign-in opens the database
+ * from here, not from anything kept in memory). Refuses, and stops this page, if another page has claimed
+ * the database since.
+ */
+export async function readCurrent() {
+  if (wiped || frozen || myEpoch === null) throw new Error('This window no longer holds the on-device database. Reload and try again.');
+  const d = await idb();
+  const { epoch, value } = await new Promise((res, rej) => {
+    const s = d.transaction('kv', 'readonly').objectStore('kv'); const e = s.get(EPOCH_KEY); const v = s.get(dbKey(myEpoch));
+    v.onsuccess = () => res({ epoch: e.result, value: v.result === undefined ? null : v.result }); v.onerror = () => rej(v.error);
+  });
+  if (epoch !== myEpoch) { lose({ savedFirst: !dirty }); throw new Error('SUDS is now open in another window on this device.'); }
+  return value;
 }
 // The readwrite transaction currently being committed, if any, so an urgent flush can hurry it along.
 let inflight = null;
@@ -256,11 +333,11 @@ let inflight = null;
  * Erase the on-device database. Deleting the IndexedDB key alone was not a wipe: the copy still in memory
  * was written straight back by the next debounced save or by the pagehide flush, before the page reloaded.
  * So the timer is cancelled, the in-memory copy dropped, and every later save refused (`wiped`) until the
- * page goes away. The whole store is cleared: the current copy, the epoch, and a pre-1.9.3 `db` key.
+ * page goes away. The whole store is cleared: the current copy, the epoch, the vault, and a pre-1.9.3 `db` key.
  * Resolves only once the clear has been committed, so a reload that waits on it finds the store empty.
  */
 export async function wipe() {
-  wiped = true; dirty = false; clearTimeout(saveTimer); saveTimer = null;
+  wiped = true; dirty = false; clearTimeout(saveTimer); saveTimer = null; sealer = null; pendingExtra = null;
   if (saving) { try { await saving; } catch {} }
   if (current) { const c = current; current = null; try { c.close(); } catch {} }
   const d = await idb();
@@ -270,14 +347,14 @@ export async function wipe() {
 export function isWiped() { return wiped; }
 
 /**
- * Replace the device database with `bytes` (restoring a device backup), under the fence like everything
- * else: in one readwrite transaction this checks the store's epoch is still this page's, claims the next
- * one, writes the restored bytes under it and deletes every other copy. From then on this page saves
- * nothing (the copy in memory is dropped, so neither the coalescing timer nor the unload flush can write
- * the old database back over the restored one) and the page must reload, which claims the next epoch and
- * reads the restored bytes like any start. Rejects, changing nothing, when another window owns the store.
+ * Replace the device database with `value` (a sealed image: restoring a device backup) and write `extra`
+ * (the vault that opens it) in the same transaction, under the fence like everything else: it checks the
+ * store's epoch is still this page's, claims the next one, writes the restored image under it and deletes
+ * every other copy. The copy in memory is dropped, so neither the coalescing timer nor the unload flush can
+ * write the old database back; the caller installs the new sealer and opens the restored database in this
+ * page. Rejects, changing nothing, when another window owns the store.
  */
-export async function replaceWith(bytes) {
+export async function replaceWith(value, { extra = null } = {}) {
   if (wiped || frozen || myEpoch === null) throw new Error('This window no longer holds the on-device database. Reload and try again.');
   clearTimeout(saveTimer); saveTimer = null;
   if (saving) { try { await saving; } catch {} }
@@ -289,21 +366,20 @@ export async function replaceWith(bytes) {
     g.onsuccess = () => {
       if (g.result !== myEpoch) { fenced = true; try { t.abort(); } catch {} return; }
       next = Math.max(myEpoch + 1, Date.now());
-      s.put(next, EPOCH_KEY); s.put(bytes, dbKey(next));
-      const keys = s.getAllKeys(IDBKeyRange.bound(DB_PREFIX, DB_PREFIX + '\uffff'));
+      s.put(next, EPOCH_KEY); s.put(value, dbKey(next));
+      for (const [k, v] of Object.entries(extra || {})) { if (v === null) s.delete(k); else s.put(v, k); }
+      const keys = s.getAllKeys(IDBKeyRange.bound(DB_PREFIX, DB_PREFIX + '￿'));
       keys.onsuccess = () => { for (const k of keys.result) if (k !== dbKey(next)) s.delete(k); };
     };
     t.oncomplete = () => res(next);
     t.onabort = () => rej(fenced ? new Error('SUDS is open in another window on this device; restore from that window.') : (t.error || new Error('The restore could not be written')));
     t.onerror = () => rej(t.error);
   });
-  myEpoch = epoch; replaced = true; dirty = false;
+  myEpoch = epoch; dirty = false; sealer = null; pendingExtra = null;
   if (current) { const c = current; current = null; try { c.close(); } catch {} }
 }
 /** The database as it is in memory right now (a device backup). */
 export function exportCurrent() { if (!current) throw new Error('The on-device database is not open'); return current.export(); }
-/** True once this page has put a restored database in place; it must reload before doing anything else. */
-export function isReplaced() { return replaced; }
 /** Open a copy of `bytes` read-only, off to the side, for `fn(db)` to inspect (a backup's contents). */
 export function inspect(bytes, fn) {
   if (!SQL) throw new Error('sqlite shim not initialised');
@@ -312,7 +388,7 @@ export function inspect(bytes, fn) {
   finally { d.close(); }
 }
 
-let current = null; let saveTimer = null; let dirty = false; let saving = null; let wiped = false; let replaced = false;
+let current = null; let saveTimer = null; let dirty = false; let saving = null; let wiped = false;
 // Nesting depth of the transaction server/db.js has open, tracked by DatabaseSync.exec(): a save in the
 // middle of one would end it (sql.js's export() closes and reopens the database), so writes made inside a
 // transaction are saved after its COMMIT lands, not before.
@@ -321,22 +397,43 @@ let inTransaction = false;
 let onSaveError = (e) => console.error('[suds-local] save failed', e);
 export function setSaveErrorHandler(fn) { onSaveError = fn; }
 
+// Saves are sealed asynchronously (WebCrypto), so a save can be overtaken: an urgent one issued while an
+// ordinary one is still sealing. Each save takes a ticket when it exports; one whose ticket is older than the
+// last save actually issued is dropped, so an older image can never land after a newer one.
+let ticket = 0; let issued = 0;
 /**
- * Persist the in-memory database. `urgent` is the unload path (pagehide, visibilitychange→hidden, freeze):
- * the write is issued synchronously, before this returns, with an explicit commit, and a save already in
- * flight is told to commit too rather than waited for, because nothing can be waited for after unload.
+ * Persist the in-memory database, sealed. `urgent` is the unload path (pagehide, visibilitychange→hidden,
+ * freeze): the image is sealed synchronously and the write issued before this returns, with an explicit
+ * commit, and a save already in flight is told to commit too rather than waited for, because nothing can be
+ * waited for after unload. `force` saves even when nothing changed (the first sealed save of a device).
  * A failure reaches onSaveError (the "stopped saving" banner) and rejects; it is never swallowed.
  */
-export function flush({ urgent = false } = {}) {
-  if (wiped || frozen || replaced || !current || myEpoch === null) return Promise.resolve();
+export function flush({ urgent = false, force = false } = {}) {
+  if (wiped || frozen || !current || myEpoch === null) return Promise.resolve();
   if (urgent && inflight && typeof inflight.commit === 'function') { try { inflight.commit(); } catch {} }
-  if (!dirty) return saving || Promise.resolve();
-  if (saving && !urgent) return saving.then(() => flush()); // a save is in flight; queue behind it
+  if (!dirty && !force) return saving || Promise.resolve();
+  if (!sealer) return Promise.resolve(); // no key to seal with yet: withheld, never written in the clear
+  if (saving && !urgent) return saving.then(() => flush({ force }));
   if (inTransaction) return Promise.resolve(); // saved after the COMMIT; exporting now would end it
   clearTimeout(saveTimer); saveTimer = null;
-  const seq = writeSeq;
-  const bytes = current.export();
-  const p = saveBytes(bytes, { urgent })
+  const seq = writeSeq; const mine = ++ticket;
+  const t0 = now(); const bytes = current.export(); const t1 = now();
+  const stat = (sealed, t2) => (stored) => { const t3 = now(); if (stored) { lastSave = { bytes: bytes.length, urgent, export_ms: Math.round(t1 - t0), seal_ms: Math.round(t2 - t1), write_ms: Math.round(t3 - t2), total_ms: Math.round(t3 - t0) }; if (!urgent) ordinarySaveMs = lastSave.total_ms; } return stored; };
+  let p;
+  if (urgent) {
+    const sealed = sealer.sealSync(bytes); const t2 = now(); bytes.fill(0);
+    issued = mine;
+    p = saveBytes(sealed, { urgent: true }).then(stat(sealed, t2));
+  } else {
+    const s = sealer;
+    p = s.seal(bytes).then((sealed) => {
+      const t2 = now(); bytes.fill(0);
+      if (mine < issued || sealer !== s) return false; // overtaken by a newer save, or the key changed meanwhile
+      issued = mine;
+      return saveBytes(sealed).then(stat(sealed, t2));
+    });
+  }
+  p = p
     // Clean only if nothing was written while the save was in flight; a write during the save used to be
     // marked as saved by the save that had started before it, and sat unsaved until the next write.
     .then((stored) => { if (stored && writeSeq === seq) dirty = false; })
@@ -348,21 +445,23 @@ export function flush({ urgent = false } = {}) {
 }
 /** Is there anything written in memory and not yet saved? */
 export function isDirty() { return dirty; }
-// How long consecutive writes are coalesced before they are saved. Every save exports and writes the whole
-// database (tens of milliseconds, growing with its size), so it is not done per request — 1.9.1 did, and a
-// write took 40–130 ms on a large caseload. What is unsaved when the page goes away is written by the
-// unload flush (pagehide / visibilitychange→hidden / freeze, in public/app.js); the next document of the
-// same tab waits for this one's lock, held until it is torn down, before it reads anything (acquireLock),
-// and IndexedDB orders its claim after the unload save.
+// How long consecutive writes are coalesced before they are saved. Every save exports, seals and writes the
+// WHOLE database (tens of milliseconds, growing with its size), so it is not done per request — 1.9.1 did,
+// and a write took 40–130 ms on a large caseload. The delay stretches to twice the last save's cost (at
+// most 4 s) so a large database is not re-sealed back to back. What is unsaved when the page goes away is
+// written by the unload flush (pagehide / visibilitychange→hidden / freeze, in public/app.js); the next
+// document of the same tab waits for this one's lock, held until it is torn down, before it reads anything
+// (acquireLock), and IndexedDB orders its claim after the unload save.
 const COALESCE_MS = 250;
+const MAX_COALESCE_MS = 4000;
 let writeSeq = 0;
 function markDirty() {
-  if (wiped || frozen || replaced) return;
+  if (wiped || frozen) return;
   dirty = true; writeSeq++;
   if (inTransaction) return; // scheduled when the COMMIT lands
-  if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = null; flush().catch(() => { /* reported by onSaveError */ }); }, COALESCE_MS);
+  const delay = Math.min(MAX_COALESCE_MS, Math.max(COALESCE_MS, ordinarySaveMs * 2));
+  if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = null; flush().catch(() => { /* reported by onSaveError */ }); }, delay);
 }
-
 class Statement {
   constructor(db, sql) { this.db = db; this.sql = sql; }
   _bind(params) { return params.map(p => (p === undefined ? null : (typeof p === 'boolean' ? (p ? 1 : 0) : p))); }
@@ -373,6 +472,7 @@ class Statement {
 export class DatabaseSync {
   constructor(path, bytes) {
     if (!SQL) throw new Error('sqlite shim not initialised');
+    if (!openAllowed) throw new Error('The on-device database is locked: sign in first.');
     this.db = bytes ? new SQL.Database(bytes) : new SQL.Database();
     // node:sqlite enforces foreign keys by default; sql.js does not, and the pragma is per connection, so
     // an existing database reopened here (the schema's own PRAGMA only runs on a fresh one) had no
@@ -409,4 +509,4 @@ export class DatabaseSync {
   close() { if (current === this.db) { current = null; dirty = false; clearTimeout(saveTimer); saveTimer = null; } try { this.db.close(); } catch {} }
   export() { return this.db.export(); }
 }
-export default { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, replaceWith, isReplaced, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
+export default { DatabaseSync, init, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };

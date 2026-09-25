@@ -19,7 +19,13 @@ indexes are recomputed by the receiver. What syncs, per table, is declared once 
 
 **Pull.** Rows changed since the cursor that the user may see (caseload scoping applied per table), at most
 2,000 per table per response, each page ending on an `updated_at` boundary so no row with the same timestamp
-is lost; `complete: false` means "come back". Other users' password hashes are replaced with a dummy.
+is lost; `complete: false` means "come back". Other users' password hashes are replaced with a dummy. A
+client that came onto the user's caseload inside a page's window (an active assignment of theirs created or
+changed after the cursor, with none of theirs active before it) arrives whole: that page also carries every
+row about the client older than the cursor — notes, consents, visits and the rest, within each table's scope
+and read permission (`newlyInScope`, `backfillRows`). Assigning an existing client changes no client row, so
+before this the device received the assignment and nothing it pointed at. A client taken off the caseload is
+listed in `dropped_clients` for the device to purge; assigned again later, it arrives whole again.
 
 **Push.** Each row is applied in its own savepoint; a failure rejects that row (with a reason the device
 shows) and the rest land. Every row passes the same checks as its REST route: write permission, caseload,

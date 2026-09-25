@@ -19,7 +19,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { makeChecks, until, settle } from './assert.mjs';
+import { makeChecks, until, settle, signInAgain } from './assert.mjs';
 // A page of the older build has no activity hook (window.__sudsActivity) to wait on; pace it the old way.
 const pace = async (p) => ((await p.evaluate(() => !!window.__sudsActivity).catch(() => false)) ? settle(p) : p.waitForTimeout(150));
 // SUDS_BROWSER=webkit (or firefox) runs this script in that engine instead of Chromium; CI's WebKit smoke
@@ -235,8 +235,12 @@ for (const [label, base] of surfaces) {
       await page.goto(base + '/#/getapp');
       await page.waitForURL(/get-app\.html/, { timeout: 10000 }).catch(() => {});
       ok(/get-app\.html$/.test(page.url()) && await page.title() === 'Use SUDS on your phone or tablet', `${L}: #/getapp opens the "Use SUDS on your phone or tablet" page`, page.url());
+      // Coming back from get-app.html is a new page load, and the device locks on every one (ADR-0008).
+      const backIn = async () => { await page.goto(base + '/'); await signInAgain(page, 'qatest-new', 'Navigator2026!!'); await settle(page); };
+      await backIn();
       await page.goto(base + '/#/phone'); await page.waitForURL(/get-app\.html/, { timeout: 10000 }).catch(() => {});
       ok(/get-app\.html$/.test(page.url()), `${L}: so does #/phone`, page.url());
+      await backIn();
       await page.goto(base + '/#/devices'); await page.waitForSelector('.layout', { timeout: 10000 }); await settle(page);
       ok(/#\/sync$/.test(page.url()) && (await page.textContent('h1')) === 'This device', `${L}: #/devices opens This device`, page.url());
       await page.goto(base + '/#/no-such-page'); await settle(page);
@@ -358,8 +362,8 @@ for (const [label, base] of surfaces) {
       await page.click('.modal button[type=submit]'); await until(async () => !(await page.$('.modal')), { timeout: 6000 }); await settle(page);
       const statusShown = () => page.evaluate(() => { const dt = [...document.querySelectorAll('#main dt, #main .k, #main th')].find(e => e.textContent.trim() === 'Status'); return [[...document.querySelectorAll('#main .badge')].some(b => b.textContent.replace(/^Status: /, '') === 'Inactive'), dt ? (dt.nextElementSibling?.textContent || '').trim() : 'no Status row']; });
       eq((await statusShown()).join('|'), 'true|Inactive', `${L}: after Edit → Inactive the profile shows the Inactive badge and Status "Inactive"`);
-      await page.reload(); await page.waitForSelector('.layout'); await settle(page);
-      eq((await statusShown()).join('|'), 'true|Inactive', `${L}: and still does after a reload`);
+      await page.reload(); await signInAgain(page, 'qatest-new', 'Navigator2026!!'); await settle(page);
+      eq((await statusShown()).join('|'), 'true|Inactive', `${L}: and still does after a reload (and signing in again)`);
 
       });
       await step('settings', async () => {
@@ -475,11 +479,12 @@ else if (buildOldSite()) {
     // A host that sends max-age (GitHub Pages: ten minutes) must not pin the device to the files it has: with
     // app.js fresh in the HTTP cache, a new deploy of app.js has to be running after one reload.
     const withMaxAge = (dir) => { const inner = plainStatic(dir); return (q, r) => { const wh = r.writeHead.bind(r); r.writeHead = (st, hd = {}) => wh(st, { ...hd, 'Cache-Control': 'public, max-age=600' }); return inner(q, r); }; };
-    handler = withMaxAge(newSite); await page.reload(); await page.waitForSelector('.layout', { timeout: 15000 });
+    const unlock = () => signInAgain(page, 'qatest', 'Navigator2026!!');
+    handler = withMaxAge(newSite); await page.reload(); await unlock();
     const deployB = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-deploy-b-'));
     fs.cpSync(newSite, deployB, { recursive: true });
     fs.appendFileSync(path.join(deployB, 'app.js'), "\nwindow.SUDS_BUILD_MARK = 'B';\n");
-    handler = withMaxAge(deployB); await page.reload(); await page.waitForSelector('.layout', { timeout: 15000 });
+    handler = withMaxAge(deployB); await page.reload(); await unlock();
     eq(await page.evaluate(() => window.SUDS_BUILD_MARK), 'B', `${label}: a new deploy of app.js is running after one reload even though the HTTP cache still calls the old copy fresh (max-age=600)`);
     handler = plainStatic(newSite); try { fs.rmSync(deployB, { recursive: true, force: true }); } catch {}
     // item 4: greeting from the account the old build created

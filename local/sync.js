@@ -534,7 +534,7 @@ export async function run({ server, username, password, code, onProgress = () =>
 export { applyPull, localRows, chunkRows };
 
 export function register(router) {
-  ensureTables();
+  // The tables are made when the database is opened (local/kernel.js openDatabase): a locked device has none open here.
   router.post('/api/local/sync', auth.requireAuth, async (ctx) => {
     const { server, username, password, code } = ctx.body || {};
     return run({ server, username: username || ctx.user.username, password, code });

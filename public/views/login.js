@@ -21,6 +21,21 @@ const SAMPLE_ACCOUNT = { username: 'sample', password: 'Sample-SUDS-2026', displ
 const brand = (subtitle) => h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('h1', { class: 'brand-title' }, state.local ? 'SUDS on this device' : 'SUDS'), h('small', {}, subtitle)));
 const oneColumn = (f) => { f.querySelectorAll('.form-grid').forEach(g => { g.style.gridTemplateColumns = '1fr'; }); return f; };
 const fieldError = (name, message) => { const e = new Error(message); e.labelled = true; e.data = { fields: { [name]: message } }; return e; };
+// The records on a device are encrypted with a key that only a device account's password opens (local/vault.js).
+// Someone who has no key yet — a new person signing up, or an account from before that — is let in by an
+// account that already has one: its username and password, typed here. Kept by the kernel, never stored.
+const SPONSOR_FIELDS = [
+  { name: 'sponsor_username', label: 'Username of someone who can already log in here', autocomplete: 'off' },
+  { name: 'sponsor_password', label: 'Their password', type: 'password', autocomplete: 'off' },
+];
+function sponsorBox(f, { shown }) {
+  const wraps = SPONSOR_FIELDS.map(x => f.querySelector(`[data-field="${x.name}"]`)).filter(Boolean);
+  const note = h('p', { class: 'small muted', 'data-sponsor-note': '1' }, 'The records on this device are encrypted. Someone who already has an account here types their username and password to let you in; their password is not kept.');
+  if (wraps[0]) wraps[0].before(note);
+  const show = (on) => { note.hidden = !on; for (const w of wraps) w.hidden = !on; for (const x of SPONSOR_FIELDS) { const i = f.inputs && f.inputs[x.name]; if (i) { i.required = on; if (on) i.setAttribute('aria-required', 'true'); else i.removeAttribute('aria-required'); } } };
+  show(shown);
+  return show;
+}
 async function signInAs(username, password) {
   await post('/api/auth/login', { username, password });
   await loadSession(); nav('dashboard'); render();
@@ -37,6 +52,8 @@ async function accountPage(r) {
     ? await get('/api/local/status', { quiet: true }).catch(() => ({ users: 1, signup_enabled: false }))
     : await get('/api/auth/signup/status', { quiet: true }).catch(() => ({ enabled: false }));
   const noAccount = state.local && status.users === 0;
+  // A device locks on every reload (local/kernel.js): whoever unlocks it goes back to the page they were on.
+  const back = state.local && r.name !== 'login' && r.name !== 'localsetup' ? location.hash.replace(/^#\/?/, '') : '';
   const asked = r.query.get('mode');
   let mode = asked === 'signup' || asked === 'login' ? asked : (noAccount || r.name === 'localsetup' ? 'signup' : 'login');
   const panel = h('div', { id: 'account-panel', role: 'tabpanel', 'data-account-mode': mode });
@@ -46,7 +63,7 @@ async function accountPage(r) {
     document.title = `${m === 'signup' ? 'Sign up' : 'Log in'} — ${state.local ? 'SUDS on this device' : 'SUDS'}`;
     for (const [k, b] of Object.entries(tabs)) { const on = k === m; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; b.classList.toggle('active', on); }
     panel.setAttribute('aria-labelledby', `account-tab-${m}`);
-    const content = m === 'signup' ? await signupPanel(status, noAccount) : await loginPanel(r, noAccount);
+    const content = m === 'signup' ? await signupPanel(status, noAccount) : await loginPanel(r, noAccount, back);
     clear(panel).append(content);
     const q = new URLSearchParams(r.query); q.delete('_'); q.set('mode', m);
     replaceHash(`#/login?${q}`);
@@ -72,25 +89,33 @@ async function accountPage(r) {
   return h('main', { class: 'login-wrap', id: 'main', tabindex: '-1' }, card, accessibilityLink());
 }
 
-async function loginPanel(r, noAccount) {
+async function loginPanel(r, noAccount, back = '') {
   if (noAccount) {
     return h('div', { 'data-no-account': '1' },
       h('p', {}, 'There is no account on this device yet. Choose ', h('b', {}, 'Sign up'), ' to set SUDS up here, or put a backup back.'),
       h('div', { class: 'btn-row' }, restoreBackupButton()));
   }
+  let showSponsor = null;
   const f = oneColumn(form([
     { name: 'username', label: 'Username', required: true, autocomplete: 'username' },
     { name: 'password', label: 'Password', type: 'password', required: true },
+    ...(state.local ? SPONSOR_FIELDS : []),
   ], { submitText: 'Log in', onSubmit: async (d) => {
-    const r2 = await post('/api/auth/login', d);
+    if (!d.sponsor_username) { delete d.sponsor_username; delete d.sponsor_password; }
+    let r2;
+    // A device account with no key to the encrypted records yet (one made before they were encrypted, or
+    // restored from a backup) is let in by someone who has one: the two extra fields appear.
+    try { r2 = await post('/api/auth/login', d); }
+    catch (e) { if (e.data && e.data.sponsorRequired && showSponsor && !d.sponsor_username) { showSponsor(true); e.message += ' If your account has not been used on this device since its records were encrypted, someone who can already log in here can let you in below.'; e.labelled = true; } throw e; }
     await loadSession();
     if (r2.mfaPending) { nav('mfa'); }
     // Past the deadline the server refuses everything else anyway; inside it, the banner on every page says
     // when -- an error toast and a hijacked landing page every morning is not "advisory".
     else if (r2.mfaSetupRequired && (!r2.mfaSetupDeadline || Date.parse(r2.mfaSetupDeadline) < Date.now())) { toast('Two-step verification must be set up before you can continue.', 'error'); nav('profile?mfa=1'); }
-    else nav('dashboard');
+    else nav(back || 'dashboard');
     render();
   } }));
+  if (state.local) showSponsor = sponsorBox(f, { shown: false });
   // Local (offline, on-device) mode has no route to an identity provider, so single sign-on is never
   // offered there — only the office server, where /api/auth/oidc/status can actually mean something.
   const oidc = state.local ? { enabled: false } : await get('/api/auth/oidc/status', { quiet: true }).catch(() => ({ enabled: false }));
@@ -110,7 +135,7 @@ async function loginPanel(r, noAccount) {
 async function signupPanel(status, noAccount) {
   if (!state.local) return officeSignup(status);
   if (noAccount) return firstRun();
-  if (status.signup_enabled) return deviceSignup();
+  if (status.signup_enabled) return deviceSignup(status);
   return h('div', { class: 'banner info', 'data-signup-disabled': '1' }, h('div', {}, isStaticHost()
     ? 'Sign-ups are turned off on this device. Ask the person who manages it to create your account, or to turn sign-ups back on under This device.'
     : 'This device is already set up. Your account comes from the office SUDS: log in, or ask your administrator for an account.'));
@@ -146,7 +171,7 @@ function firstRun() {
   const f = oneColumn(form([
     { name: 'org_name', label: 'Program name (optional)', placeholder: 'e.g. Clark County SUD Navigation', span: true },
     { name: 'display_name', label: 'Your name', required: true }, { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', help: stat ? 'You will use this to log in on this device.' : 'Use the same username as on the office SUDS if you have one.' },
-    { name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: `${PASSWORD_HELP} Protects the records on this device.` }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
+    { name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: `${PASSWORD_HELP} It encrypts the records on this device: nobody can recover them if it is forgotten, except from a backup.` }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
     // Asked for rather than assumed: a clinician set up as a navigator loses access to clinical notes,
     // including notes they wrote themselves, and only finds out when they try to open one.
     { name: 'role', label: 'Your role', type: 'select', noBlank: true, value: 'navigator', span: true,
@@ -186,15 +211,16 @@ function firstRun() {
       h('p', { class: 'small muted' }, `Creates an account called “${SAMPLE_ACCOUNT.username}” (password “${SAMPLE_ACCOUNT.password}”) with a set of fictional clients, visits, notes and referrals. Use it to look around, not for real records: to start for real, erase this device and sign up.`),
       h('div', { class: 'row' }, btn, busyText));
   }
-  // Where the records are, said once, here — before the first real name is typed in, and confirmed with the
-  // checkbox above. A browser has no Keystore or Keychain, so the kernel keeps its keys in this profile's
-  // localStorage (local/shims/config.js), beside the data.
+  // Where the records are and what protects them, said once, here — before the first real name is typed in,
+  // and confirmed with the checkbox above. The records are encrypted under a key only a device account's
+  // password opens (local/vault.js), so a forgotten password is the one thing nobody can fix for them.
   const notice = stat
     ? h('div', { class: 'banner info mb', 'data-storage-notice': '1' }, h('div', {}, h('b', {}, 'Where your records are kept. '),
-      'Everything you record is stored in this browser on this device, and nowhere else. Names, contact details and notes are encrypted, but the keys are kept in the same browser and the rest of each record (dates, substance use, risk) is not, so anyone who can open this browser on this device can read it all: use a device with disk encryption and a screen lock. ',
-      'If this browser’s site data is cleared, or the device is lost or replaced, the records are gone for good unless you have a backup — download one regularly from ', h('b', {}, 'This device'), '.'))
+      'Everything you record is stored in this browser on this device, and nowhere else, encrypted with your password: SUDS locks when you log out or step away, and only a password of an account on this device opens it. ',
+      h('b', {}, 'If you forget your password and nobody else has an account here, the records cannot be recovered'), ' — not by anyone — except from a backup. ',
+      'The same goes if this browser’s site data is cleared, or the device is lost or replaced: download a backup regularly from ', h('b', {}, 'This device'), ' and keep its passphrase safe.'))
     : h('div', {},
-      h('div', { class: 'banner warn mb', 'data-browser-copy-warning': '1' }, h('div', {}, h('b', {}, 'This is an offline copy of the office SUDS. '), 'Its encryption keys stay in this browser profile beside the data, so anyone who can open this browser on this device (a lost laptop that is unlocked or has no disk encryption) can read every record in it. Keep real client information on the office SUDS unless your administrator has approved this device for field work.')),
+      h('div', { class: 'banner warn mb', 'data-browser-copy-warning': '1' }, h('div', {}, h('b', {}, 'This is an offline copy of the office SUDS. '), 'Its records are encrypted with the password you choose here, and SUDS locks when you log out or step away. Keep that password to yourself: if you forget it, the records on this device cannot be opened, and anything not yet synced is lost — the office copy is re-downloaded when you set the device up again. Keep real client information on the office SUDS unless your administrator has approved this device for field work.')),
       h('p', { class: 'small muted' }, 'Everything you record is kept in this browser on this device. Whenever you are near the office, tap Sync to exchange changes with the office SUDS — both directions.'));
   return h('div', { 'data-first-run': '1' },
     h('p', { class: 'small' }, stat ? 'Create the first account on this device. You will manage it: backups, and whether other people may sign up here.' : 'Set up SUDS on this device.'),
@@ -203,18 +229,20 @@ function firstRun() {
 }
 
 // ---- the on-device app, after its first account: another person on the same device ----
-function deviceSignup() {
+function deviceSignup(status = {}) {
   const f = oneColumn(form([
     { name: 'display_name', label: 'Your name', required: true },
     { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+' },
     { name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: PASSWORD_HELP },
     { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
+    ...(status.locked ? SPONSOR_FIELDS : []),
   ], { submitText: 'Create account', onSubmit: async (d) => {
     if (d.password !== d.confirm) throw fieldError('confirm', 'Passwords do not match');
     delete d.confirm;
     await post('/api/local/signup', d);
     await signInAs(d.username, d.password);
   } }));
+  if (status.locked) sponsorBox(f, { shown: true });
   return h('div', { 'data-device-signup': '1' },
     h('p', { class: 'small muted' }, 'Create your own account on this device. You will see the clients you record or are assigned to — not other people’s. Records stay in this browser.'), f);
 }

@@ -13,7 +13,8 @@ fixed in one would stay broken in the other.
 
 - `local/kernel.js` imports the **server's own modules** (`server/db.js`, `server/auth.js`, `server/audit.js`,
   the route modules listed in `LOCAL_ROUTE_MODULES` in `server/app.js`) and runs them in the browser against
-  an in-browser SQLite (sql.js WebAssembly) held encrypted in IndexedDB.
+  an in-browser SQLite (sql.js WebAssembly) kept in IndexedDB as an image sealed under a key that only a
+  device account's password opens ([ADR-0008](ADR-0008-device-encryption.md)).
 - `scripts/build-local.js` bundles it with esbuild, swapping Node built-ins for shims in `local/shims/`
   (`sqlite.js`, `crypto.js`, `fs.js`, …) and regenerating `server/schema-text.js` from `server/schema.sql`.
   The output, `public/local/kernel.js`, is **committed**; CI fails if it differs from a fresh build.

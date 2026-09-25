@@ -6,7 +6,7 @@
 // raw column names (LOW).
 import { chromium } from 'playwright';
 import { createHmac } from 'node:crypto';
-import { makeChecks, until, settle, skipTour } from './assert.mjs';
+import { makeChecks, until, settle, skipTour, signInAgain } from './assert.mjs';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const { ok, eq, fail, finish } = makeChecks('device-audit');
@@ -52,7 +52,8 @@ const idbHasDb = (page) => page.evaluate(() => new Promise((resolve) => {
 }));
 const syncLog = (page) => until(async () => { const t = (await page.textContent('[data-sync-log]')) || ''; return /connecting/i.test(t) ? null : t; }, { timeout: 30000 });
 async function syncViaForm(page, { username, password, code } = {}) {
-  await page.goto(base + '/?local=1#/sync'); await page.waitForSelector('input[name=office_password]', { timeout: 15000 });
+  // A different address is a new page load, which locks the device: sign in to it again (it returns to Sync).
+  await page.goto(base + '/?local=1#/sync'); await signInAgain(page, 'dchen', 'Navigator2026!!'); await page.waitForSelector('input[name=office_password]', { timeout: 15000 });
   await page.fill('input[name=server]', base);
   if (username) await page.fill('input[name=username]', username);
   await page.fill('input[name=office_password]', password);
@@ -96,7 +97,8 @@ try {
   const goal = 'Typed just before leaving ' + Date.now();
   await api(page, 'PUT', '/api/clients/' + cl.json.id, { goals: goal });
   await page.waitForTimeout(150); // intentional: the case under test is an edit 150 ms before a reload
-  await page.reload(); await page.waitForSelector('.layout', { timeout: 20000 });
+  // Every page load locks the device (the records are sealed; ADR-0008): sign in, then look.
+  await page.reload(); await signInAgain(page, 'dchen', 'Navigator2026!!');
   const back = await api(page, 'GET', '/api/clients/' + cl.json.id);
   eq(back.json && back.json.client && back.json.client.goals, goal, 'an edit made 150 ms before a reload is still there afterwards');
   {
@@ -108,7 +110,7 @@ try {
     const goal2 = 'Written and gone ' + Date.now();
     await page.evaluate(([id, g]) => window.SUDS_LOCAL.handle('PUT', '/api/clients/' + id, { goals: g }, {}), [cl.json.id, goal2]);
     // A different query string is a real navigation (a hash change alone would not unload the page).
-    await page.goto(base + '/?local=1&nav=' + Date.now() + '#/clients'); await page.waitForSelector('.layout', { timeout: 20000 });
+    await page.goto(base + '/?local=1&nav=' + Date.now() + '#/clients'); await signInAgain(page, 'dchen', 'Navigator2026!!');
     const back2 = await api(page, 'GET', '/api/clients/' + cl.json.id);
     eq(back2.json && back2.json.client && back2.json.client.goals, goal2, 'an edit made immediately before navigating away survives too');
   }
@@ -220,7 +222,8 @@ try {
     await ctx2.setOffline(true);
     await p2.reload().catch(() => {});
     await until(() => p2.$('.layout, input[name=username]'), { timeout: 20000 });
-    ok(await p2.$('.layout'), 'with the network gone, the app still boots from the cache and is signed in', (await p2.textContent('body')).slice(0, 120));
+    await signInAgain(p2, 'offlinenav', 'Navigator2026!!');
+    ok(await p2.$('.layout'), 'with the network gone, the app still boots from the cache and unlocks with the device password', (await p2.textContent('body')).slice(0, 120));
     const offlineList = await api(p2, 'GET', '/api/local/status');
     eq(offlineList.status, 200, 'and the kernel answers requests offline');
     await ctx2.setOffline(false);
