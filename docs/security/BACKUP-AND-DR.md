@@ -11,7 +11,7 @@ The county sets the targets in its contingency plan (HIPAA §164.308(a)(7)); SUD
 
 ## Backups
 
-* **What:** a consistent snapshot of the whole database (`VACUUM INTO`, safe while serving), encrypted with AES-256-GCM (`server/backup.js`). Keys are not in the backup; `SUDS_BACKUP_KEY` decouples backups from PHI-key rotation.
+* **What:** a consistent snapshot of the whole database, encrypted with AES-256-GCM (`server/backup.js`). Scheduled backups and snapshots use SQLite's online backup API and stream the encryption to the file 4 MB at a time, then (scheduled backups) decrypt the file back and run `PRAGMA integrity_check` in a worker thread — none of it holds the event loop (`createToFileAsync`, `verifyFileAsync`); the manual download and `npm run backup` use `VACUUM INTO`. Keys are not in the backup; `SUDS_BACKUP_KEY` decouples backups from PHI-key rotation.
 * **When:** Settings → Scheduled backups (`backup_schedule_hours`; hourly housekeeping runs it when due). Also on demand (*Run a backup now*, download from System & backups, `npm run backup`). **A production install made with the setup wizard starts with backups every 4 hours**; one configured by environment variables starts with none, and **in production, backups switched off (0) are reported** as *Action needed* on Security status, as an alert on the administrator's Home page, and in the startup log (`server/startup-checks.js`).
 * **Verified on write:** every scheduled backup is read back, decrypted and opened read-only before it counts (`server/scheduled-backup.js`).
 * **Retention:** newest `backup_retain_count` (default 14) kept locally, oldest pruned first.
@@ -29,9 +29,11 @@ It is a full copy each time, not a page-level increment (SQLite has no increment
 
 | Operation | Wall time | Longest event-loop stall |
 | --- | --- | --- |
-| Scheduled backup (`VACUUM INTO` + encrypt, synchronous) | ~1.0 s | ~1.0 s (the whole operation) |
+| Scheduled backup, old synchronous path up to 1.11.0 (`VACUUM INTO` + encrypt + read-back) | ~1.0 s | ~1.0 s (the whole operation) |
 | Online snapshot, copy only (`backup()`, 256 pages/step) | 0.4–0.7 s | — |
 | Online snapshot end to end (copy, sliced encrypt, write, rotate) | ~1.2 s | ~90 ms |
+
+Scheduled backups after 1.11.0 (online copy, encryption streamed to the file, read-back decryption streamed to a temporary file, integrity check in a worker thread; `test/scheduled-backup.test.js` asserts the stall stays small): on a 311 MB database in a 4-core development container, **4.2 s wall time, longest event-loop stall 16 ms**, where the synchronous path it replaced stalled for the whole 6.3 s (3.8 s on the machine the problem was first measured on). Memory no longer scales with the database: nothing holds the whole database in one Buffer.
 
 So a snapshot every 15 minutes costs about 0.1% of one core and at worst one ~90 ms pause (comparable to one password check) per run, and keeps 107 MB × `backup_snapshot_retain` on the share (2.6 GB for 24, six hours of 15-minute points). Memory peaks at about three times the database size during the copy. Scale roughly linearly with database size.
 
@@ -69,6 +71,12 @@ Exit 0 = verified (`scripts/verify-dr-report.js`, `server/dr-report.js`). Withou
 The only writes to the live database are that settings row and the audit entries (`dr.drill.start`, `dr.drill`) — and, when no backup existed, the backup the drill made first.
 
 A failed drill (wrong key, damaged file, failed check) is recorded exactly like a passed one, shows as "Action needed" on Security status, and its report says which check failed.
+
+## Exercised on every push, and the evidence
+
+Backup and restore are not only tested by unit tests: the `dr-drill` CI job (`.github/workflows/ci.yml`) runs `scripts/dr-exercise.js` (`npm run dr-exercise`) on every push — seed a throwaway database, seal an audit anchor, take an encrypted backup through the scheduled-backup path, run this drill against it with an escrowed key file, restore it again with the host procedure (`scripts/backup.js --restore`) into a **fresh data directory**, start the server there and wait for `/api/health`, compare every table's row count with the source, verify the whole audit chain, and verify the signed drill report with the public key only. The signed report is printed in the job log (the repository uses no Actions at all, so no artifact upload). The release gate refuses a release whose `dr-drill` job did not pass ([RELEASE.md](../RELEASE.md#release-gate)).
+
+A recorded run on a 20,000-client database (128 MB backup): [docs/evidence/dr-drill-2026-09-25.md](../evidence/dr-drill-2026-09-25.md) — drill RTO 3.3 s, host-procedure RTO 3.8 s, 11/11 checks. That is a **development-environment exercise on fictional data**, not a production drill: a county's own drill, on its production server with its offsite copy and escrowed keys, is what shows its recovery works.
 
 ## Restore procedures
 

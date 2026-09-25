@@ -139,6 +139,8 @@ const migrations = [
       const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
       if (m) d.exec(m[0]);
     }
+    // Errors ignored here on purpose: some of these indexes name columns a later migration adds. Anything
+    // still missing once every migration has run is created, or reported, by ensureIndexes() below.
     for (const line of schemaText.split('\n')) if (/^CREATE( UNIQUE)? INDEX IF NOT EXISTS /.test(line.trim())) { try { d.exec(line.trim()); } catch {} }
 
     // Every existing client keeps being served until someone closes them out: open an episode so that
@@ -545,10 +547,35 @@ function initialise(d, schemaText, dbPath) {
   if (fresh) {
     d.exec(schemaText);
     d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
-    return;
-  }
-  migrate(d, dbPath);
+  } else migrate(d, dbPath);
+  ensureIndexes(d, schemaText);
 }
+
+// Every index schema.sql declares, checked at every open. Migration 5 creates them all with the errors
+// ignored (some index columns a later migration adds), so an index that could not be created at all — a
+// UNIQUE index over rows that already break it — used to vanish silently: slow queries, or the duplicates it
+// exists to prevent. Anything missing is created now; what still fails is logged (index name and SQLite's
+// message, never row values) and reported by /api/health and Security status (indexProblems()).
+let lastIndexProblems = [];
+function ensureIndexes(d, schemaText) {
+  const problems = [];
+  for (const raw of schemaText.split('\n')) {
+    const line = raw.trim();
+    const m = line.match(/^CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\S+) ON /);
+    if (!m) continue;
+    if (d.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name=?`).get(m[1])) continue;
+    try { d.exec(line); }
+    catch (e) {
+      const error = String(e && e.message || e).slice(0, 200);
+      problems.push({ index: m[1], error });
+      console.warn(`[suds] ${JSON.stringify({ event: 'db.index_missing', index: m[1], error })}`);
+    }
+  }
+  lastIndexProblems = problems;
+  return problems;
+}
+/** Indexes schema.sql declares that the open database lacks and could not be created: [{ index, error }]. */
+function indexProblems() { return lastIndexProblems.slice(); }
 
 // A migration is the one operation a county cannot retry: if it goes wrong the old database is already
 // rewritten. Take a consistent copy first (VACUUM INTO, so it is a real snapshot rather than a file copy
@@ -675,4 +702,4 @@ function setSetting(key, value) {
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
+module.exports = { open, openWith, get, close, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };

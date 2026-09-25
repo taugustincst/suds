@@ -554,7 +554,11 @@ function flagPossibleDuplicate(user, raw, clientCode, warnings) {
   let matches = [];
   try {
     matches = require('./clients').possibleDuplicates({ first_name: raw.first_name_enc, last_name: raw.last_name_enc, dob: raw.dob_enc, phone: raw.phone_enc }, raw.id);
-  } catch { return; }
+  } catch (e) {
+    // Not fatal to the sync, but a duplicate nobody is told about is how two records for one person start.
+    console.error('[suds] sync: the possible-duplicate check failed; no supervisor task was raised:', e && e.message);
+    return;
+  }
   if (!matches.length) return;
   const codes = matches.map(m => m.client_code);
   audit.log({ user, action: 'client.possible_duplicate', entity: 'client', entityId: raw.id, clientId: raw.id, ip: 'device', details: { client_code: clientCode, matches: matches.map(m => ({ id: m.id, client_code: m.client_code, reasons: m.reasons })), source: 'sync' } });

@@ -34,7 +34,7 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 | --- | --- | --- |
 | 17 | SSO (SAML/OIDC)? | OIDC (Authorization Code + PKCE) with the county IdP. SAML: via an IdP that bridges to OIDC (Entra ID, Okta, ADFS, Keycloak all do). |
 | 18 | Can password login be disabled? | Yes — *Require single sign-on*, with named break-glass admin accounts; emergency use is audited. |
-| 19 | MFA? | TOTP for every role by default, enforced after a grace period; an explicit "every role" switch; a report of accounts without MFA. |
+| 19 | MFA? | TOTP for every role by default, enforced after a grace period of 3 days (configurable, 0 = at first sign-in; counted from creation or approval), after which the account can reach only enrolment; an explicit "every role" switch; a report of accounts without MFA. |
 | 20 | Password policy? | 12+ chars, complexity, 90-day expiry (configurable), scrypt hashing, lockout after 5 failures. |
 | 21 | Session timeout? | 15 min idle (max 60), 12 h absolute; configurable. |
 | 22 | RBAC / least privilege? | Six roles; caseload scoping; de-identified roles; break-glass for clinical notes. [IDENTITY.md](IDENTITY.md) |

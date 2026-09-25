@@ -179,14 +179,15 @@ function requireAuth(ctx) {
     // setup wizard just created, before they had any chance to enrol.
     // A session whose second factor the identity provider asserted (and the administrator trusts) has had
     // one: the SUDS enrolment deadline is about SUDS's own authenticator and does not apply to it.
+    // The page that lets someone change their password (or enrol a second factor) still needs the reference
+    // data and preferences the app shell loads first; refusing those too meant a brand-new account (or an
+    // expired password) was bounced straight back to the sign-in form, forever. Reads of those two — no PHI
+    // — and nothing else, get through.
+    const shellOnly = ctx.method === 'GET' && (ctx.path === '/api/meta/constants' || ctx.path === '/api/me/prefs');
     const due = ctx.session?.mfa_source === 'idp' ? null : mfaDeadline(ctx.user);
-    if (due && Date.now() > Date.parse(due)) {
+    if (due && Date.now() > Date.parse(due) && !shellOnly) {
       throw new HttpError(403, 'Two-step verification must be set up for your role before you can continue', { mfaSetupRequired: true, mfaSetupDeadline: due });
     }
-    // The page that lets someone change their password still needs the reference data and preferences the
-    // app shell loads first; refusing those too meant a brand-new account (or an expired password) was
-    // bounced straight back to the sign-in form, forever. Reads of those two, and nothing else, get through.
-    const shellOnly = ctx.method === 'GET' && (ctx.path === '/api/meta/constants' || ctx.path === '/api/me/prefs');
     if (ctx.user.must_change_password && !shellOnly) throw new HttpError(403, 'Password change required', { passwordChangeRequired: true });
     const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 86400000 : Infinity;
     const maxAge = policy().passwordMaxAgeDays; if (age > maxAge && !shellOnly) throw new HttpError(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });

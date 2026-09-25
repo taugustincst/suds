@@ -74,7 +74,7 @@ function housekeeping() {
     }
     // Scheduled backup, if an administrator has turned it on under Settings → System & backups. A failure
     // here (disk full, unreachable offsite share) must not stop the rest of housekeeping.
-    require('./scheduled-backup').runIfDue();
+    require('./scheduled-backup').runIfDue().catch((e) => console.error('[suds] scheduled backup', e && e.message || e));
     // Seal the audit chain's head into write-once storage outside the database every AUDIT_ANCHOR_HOURS.
     require('./audit-anchor').runIfDue();
     // Monthly recovery drill, if an administrator turned it on (off by default). Runs in the background.
@@ -93,5 +93,6 @@ for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
   if (stopping) process.exit(0);
   stopping = true;
   console.log('[suds] shutting down…');
-  listener.stop(() => { try { db.close(); } catch {} process.exit(0); });
+  // Flush the log file before exiting, so the last lines (often the reason for the stop) are not lost.
+  listener.stop(() => { try { db.close(); } catch {} require('./log').flush().finally(() => process.exit(0)); });
 });

@@ -18,6 +18,7 @@
     "rotate-key": "node --no-warnings=ExperimentalWarning scripts/rotate-key.js",
     "rotate-index-key": "node --no-warnings=ExperimentalWarning scripts/rotate-index-key.js",
     "dr-drill": "node --no-warnings=ExperimentalWarning scripts/dr-drill.js",
+    "dr-exercise": "node --no-warnings=ExperimentalWarning scripts/dr-exercise.js",
     "verify-audit-export": "node scripts/verify-audit-export.js",
     "verify-dr-report": "node scripts/verify-dr-report.js",
     "update": "node --no-warnings=ExperimentalWarning scripts/update.js",

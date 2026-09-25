@@ -186,9 +186,9 @@ module.exports = (r) => {
   // Unattended backups (server/scheduled-backup.js), run from the hourly housekeeping timer once an
   // administrator turns the schedule on under Settings → System & backups.
   const scheduledBackup = require('../scheduled-backup');
-  r.post('/api/admin/backup/run-now', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+  r.post('/api/admin/backup/run-now', auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
     const { retain, offsiteDir } = scheduledBackup.settings();
-    const out = scheduledBackup.run({ retain, offsiteDir });
+    const out = await scheduledBackup.run({ retain, offsiteDir });
     audit.log({ user: ctx.user, action: 'backup.run_now', ip: ctx.ip, details: { bytes: out.bytes, offsite: out.offsiteOk, verified: out.verified } });
     return { ok: true, file: path.basename(out.file), bytes: out.bytes, offsite_ok: out.offsiteOk, offsite_error: out.offsiteError || null, verified: out.verified, verify_error: out.verifyError || null };
   });

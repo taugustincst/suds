@@ -21,5 +21,9 @@ RUN addgroup -S suds && adduser -S suds -G suds && mkdir -p /data /anchors && ch
 USER suds
 VOLUME ["/data", "/anchors"]
 EXPOSE 8080
+# Run with an init process as PID 1: `init: true` in docker-compose.yml, or `docker run --init` (Docker's own
+# tini; nothing is added to this image). Without one node is PID 1: SIGTERM needs explicit handling and zombie
+# children are not reaped. The instance lock (server/instance-lock.js) is safe either way — a stale lock that
+# names this process's own pid, after a kill or power loss, is taken over rather than crash-looping.
 HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:8080/api/health > /dev/null || exit 1
 CMD ["node", "--no-warnings=ExperimentalWarning", "server/index.js"]

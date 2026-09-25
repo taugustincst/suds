@@ -104,6 +104,14 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   ok(await until(() => p.$('[data-banner="mfa-required"]'), { timeout: 5000 }), 'and is told its role requires two-step verification, with the grace period to set it up');
   const me = await p.evaluate(() => fetch('/api/auth/me').then(r => r.json()));
   eq(me.user.role, 'navigator', 'with the role the administrator chose');
+  // The grace period runs out while they are signed in: the next page sends them to enrolment instead of
+  // failing every request (they are not locked out — enrolment and the app shell still answer).
+  // (Navigators only: the administrator's own account, bootstrapped earlier, would be past a zero-day deadline too.)
+  eq((await api('PUT', '/api/admin/settings', { mfa_required_roles: 'navigator', mfa_grace_days: 0 })).status, 200, 'the administrator shortens the navigators\' MFA grace period to none');
+  await p.evaluate(() => { location.hash = '#/clients'; });
+  ok(await until(() => p.evaluate(() => location.hash.startsWith('#/profile?mfa=1')), { timeout: 8000 }), 'past the MFA deadline, the next page goes to two-step enrolment', await p.evaluate(() => location.hash));
+  ok(await until(async () => (await p.getByText('Enroll authenticator').count()) > 0, { timeout: 8000 }), 'and the authenticator enrolment opens, so the account is not locked out');
+  eq((await api('PUT', '/api/admin/settings', { mfa_required_roles: 'admin,navigator', mfa_grace_days: 14 })).status, 200, 'the policy is put back');
 
   // Sign-up switched off.
   eq((await api('PUT', '/api/admin/settings', { self_signup: '0' })).status, 200, 'the administrator turns sign-up off');
