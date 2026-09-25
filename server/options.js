@@ -129,6 +129,18 @@ function accepts(key, value, existing) {
 function labelMap(key) { return Object.fromEntries(entries(key).map(e => [e.code, e.label])); }
 function labelOf(key, code) { if (code === null || code === undefined || code === '') return code; if (!has(key)) return humanize(code); return labelMap(key)[code] || humanize(code); }
 
+/**
+ * A typed-in value matched to one of a list's codes: the code itself or its wording, whatever the case
+ * ("Shelter", "SHELTER" → shelter); otherwise `fallback`. For free text recorded before a field became a
+ * list (the overdose form's "Where" used to be free text; the NDP log groups by the location code).
+ */
+function codeFor(key, value, fallback = 'other') {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const v = String(value).trim().toLowerCase();
+  const e = entries(key).find(x => x.code.toLowerCase() === v || String(x.label).toLowerCase() === v);
+  return e ? e.code : fallback;
+}
+
 /** Everything the forms need: visible codes per list (as the plain arrays they always used) and the details. */
 function meta() {
   const option_lists = {}; const visibleLists = {};
@@ -154,4 +166,4 @@ function slug(label, taken) {
   return code;
 }
 
-module.exports = { LISTS, EXCLUDED, MAX_LABEL, has, def, entries, visible, known, accepts, labelMap, labelOf, meta, describe, slug, humanize };
+module.exports = { LISTS, EXCLUDED, MAX_LABEL, has, def, entries, visible, known, accepts, codeFor, labelMap, labelOf, meta, describe, slug, humanize };

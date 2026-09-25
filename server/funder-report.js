@@ -110,13 +110,16 @@ async function build(ctx, { from, to, ts, tsP }) {
       })(),
     };
 
-    const od = db.one(`SELECT COUNT(*) events, COALESCE(SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END),0) reversals,
+    // A reversal: naloxone used and the person survived. An event recorded as kind "reversal" had naloxone
+    // by definition, whether or not the box was ticked (older records, or rows pushed from a device).
+    const NALOXONE = `(o.naloxone_used=1 OR o.kind='reversal')`;
+    const od = db.one(`SELECT COUNT(*) events, COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END),0) reversals,
         COALESCE(SUM(CASE WHEN o.kind='fatal' OR o.survived=0 THEN 1 ELSE 0 END),0) fatal, COALESCE(SUM(CASE WHEN o.client_id IS NULL THEN 1 ELSE 0 END),0) community_reported,
         COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts('o.occurred_at')}`, ...tsP);
     const overdose = {
       ...od,
-      by_month: db.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts('o.occurred_at')} GROUP BY month ORDER BY month`, ...tsP),
-      by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, ...tsP),
+      by_month: db.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts('o.occurred_at')} GROUP BY month ORDER BY month`, ...tsP),
+      by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND ${NALOXONE} GROUP BY k ORDER BY n DESC`, ...tsP),
     };
 
     // One grouped pass over the period's visits, read from the covering index (idx_interventions_period):

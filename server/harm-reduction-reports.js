@@ -48,8 +48,10 @@ function ndp(ctx, { from, to, ts, tsP }) {
     add(`d|${date}|${site}|${recipient}`, { date, entry: 'distribution', site_type: site, recipient_type: recipient, kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null }, (r) => { r.kits += x.kits; r.doses += x.kits * perKit; });
   }
   for (const x of db.all(`SELECT o.occurred_at, o.location_type, o.naloxone_doses, o.administered_by FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id
-      WHERE ${ts('o.occurred_at')} AND o.naloxone_used=1 AND o.survived=1 AND (o.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
-    const date = dayOf(x.occurred_at); const site = x.location_type || 'unknown'; const by = x.administered_by || 'unknown';
+      WHERE ${ts('o.occurred_at')} AND (o.naloxone_used=1 OR o.kind='reversal') AND o.survived=1 AND (o.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
+    // The same coded site list as distribution; a place typed in before "Where" was a list is matched to
+    // a code whatever its case, or counted as "other".
+    const date = dayOf(x.occurred_at); const site = O.codeFor('LOCATIONS', x.location_type) || 'unknown'; const by = x.administered_by || 'unknown';
     add(`r|${date}|${site}|${by}`, { date, entry: 'reversal', site_type: site, recipient_type: null, kits: null, doses: null, reversals: 0, reversal_doses: 0, administered_by: by }, (r) => { r.reversals += 1; r.reversal_doses += x.naloxone_doses || 0; });
   }
   const list = [...rows.values()].sort((a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type)));
@@ -124,7 +126,7 @@ const aboutSheet = (ctx, rows) => ({ name: 'About', columns: [{ key: 'k', label:
 function routes(r, range) {
   const S = require('./spreadsheet');
   const NDP_COLUMNS = [['date', 'Date'], ['entry', 'Entry'], ['site_type', 'Site type'], ['recipient_type', 'Recipient type'], ['kits', 'Kits distributed'], ['doses', 'Naloxone doses distributed'], ['reversals', 'Reversals reported'], ['reversal_doses', 'Doses used in reversals'], ['administered_by', 'Naloxone given by']].map(([key, label]) => ({ key, label }));
-  const ndpRows = (d) => d.rows.map(x => ({ ...x, entry: x.entry === 'distribution' ? 'Distribution' : 'Reversal reported', site_type: x.entry === 'distribution' ? O.labelOf('LOCATIONS', x.site_type) : x.site_type,
+  const ndpRows = (d) => d.rows.map(x => ({ ...x, entry: x.entry === 'distribution' ? 'Distribution' : 'Reversal reported', site_type: x.site_type === 'unknown' ? 'Unknown' : O.labelOf('LOCATIONS', x.site_type),
     administered_by: x.administered_by ? O.labelOf('ADMINISTERED_BY', x.administered_by) : null }));
 
   r.get('/api/reports/naloxone-ndp', auth.requireAuth, auth.requirePerm('reports:read'), (ctx) => {

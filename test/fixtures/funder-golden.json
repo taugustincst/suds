@@ -165,7 +165,7 @@
   },
   "overdose": {
    "events": 300,
-   "reversals": 216,
+   "reversals": 245,
    "fatal": 102,
    "community_reported": 156,
    "naloxone_doses": 448,
@@ -173,80 +173,80 @@
     {
      "month": "2025-07",
      "n": 22,
-     "reversals": 17
+     "reversals": 18
     },
     {
      "month": "2025-08",
      "n": 25,
-     "reversals": 15
+     "reversals": 20
     },
     {
      "month": "2025-09",
      "n": 25,
-     "reversals": 17
+     "reversals": 22
     },
     {
      "month": "2025-10",
      "n": 22,
-     "reversals": 18
+     "reversals": 20
     },
     {
      "month": "2025-11",
      "n": 26,
-     "reversals": 18
+     "reversals": 21
     },
     {
      "month": "2025-12",
      "n": 24,
-     "reversals": 19
+     "reversals": 21
     },
     {
      "month": "2026-01",
      "n": 31,
-     "reversals": 25
+     "reversals": 27
     },
     {
      "month": "2026-02",
      "n": 22,
-     "reversals": 16
+     "reversals": 20
     },
     {
      "month": "2026-03",
      "n": 30,
-     "reversals": 22
+     "reversals": 24
     },
     {
      "month": "2026-04",
      "n": 27,
-     "reversals": 16
+     "reversals": 17
     },
     {
      "month": "2026-05",
      "n": 24,
-     "reversals": 19
+     "reversals": 20
     },
     {
      "month": "2026-06",
      "n": 22,
-     "reversals": 14
+     "reversals": 15
     }
    ],
    "by_administered_by": [
     {
      "k": "bystander",
-     "n": 63
+     "n": 71
     },
     {
      "k": "first_responder",
-     "n": 54
+     "n": 67
     },
     {
      "k": "staff",
-     "n": 60
+     "n": 65
     },
     {
      "k": "unknown",
-     "n": 56
+     "n": 64
     }
    ]
   },
@@ -451,7 +451,7 @@
   },
   "overdose": {
    "events": 83,
-   "reversals": 63,
+   "reversals": 71,
    "fatal": 29,
    "community_reported": 46,
    "naloxone_doses": 119,
@@ -459,27 +459,27 @@
     {
      "month": "2026-01",
      "n": 31,
-     "reversals": 25
+     "reversals": 27
     },
     {
      "month": "2026-02",
      "n": 22,
-     "reversals": 16
+     "reversals": 20
     },
     {
      "month": "2026-03",
      "n": 30,
-     "reversals": 22
+     "reversals": 24
     }
    ],
    "by_administered_by": [
     {
      "k": "bystander",
-     "n": 16
+     "n": 17
     },
     {
      "k": "first_responder",
-     "n": 9
+     "n": 14
     },
     {
      "k": "staff",
@@ -487,7 +487,7 @@
     },
     {
      "k": "unknown",
-     "n": 26
+     "n": 29
     }
    ]
   },
@@ -898,7 +898,7 @@
   },
   "overdose": {
    "events": 300,
-   "reversals": 216,
+   "reversals": 245,
    "fatal": 102,
    "community_reported": 156,
    "naloxone_doses": 448,
@@ -906,80 +906,80 @@
     {
      "month": "2025-07",
      "n": 22,
-     "reversals": 17
+     "reversals": 18
     },
     {
      "month": "2025-08",
      "n": 25,
-     "reversals": 15
+     "reversals": 20
     },
     {
      "month": "2025-09",
      "n": 25,
-     "reversals": 17
+     "reversals": 22
     },
     {
      "month": "2025-10",
      "n": 22,
-     "reversals": 18
+     "reversals": 20
     },
     {
      "month": "2025-11",
      "n": 26,
-     "reversals": 18
+     "reversals": 21
     },
     {
      "month": "2025-12",
      "n": 24,
-     "reversals": 19
+     "reversals": 21
     },
     {
      "month": "2026-01",
      "n": 31,
-     "reversals": 25
+     "reversals": 27
     },
     {
      "month": "2026-02",
      "n": 22,
-     "reversals": 16
+     "reversals": 20
     },
     {
      "month": "2026-03",
      "n": 30,
-     "reversals": 22
+     "reversals": 24
     },
     {
      "month": "2026-04",
      "n": 27,
-     "reversals": 16
+     "reversals": 17
     },
     {
      "month": "2026-05",
      "n": 24,
-     "reversals": 19
+     "reversals": 20
     },
     {
      "month": "2026-06",
      "n": 22,
-     "reversals": 14
+     "reversals": 15
     }
    ],
    "by_administered_by": [
     {
      "k": "bystander",
-     "n": 63
+     "n": 71
     },
     {
      "k": "first_responder",
-     "n": 54
+     "n": 67
     },
     {
      "k": "staff",
-     "n": 60
+     "n": 65
     },
     {
      "k": "unknown",
-     "n": 56
+     "n": 64
     }
    ]
   },
@@ -1166,7 +1166,7 @@
   },
   "overdose": {
    "events": 300,
-   "reversals": 216,
+   "reversals": 245,
    "fatal": 102,
    "community_reported": 156,
    "naloxone_doses": 448,
@@ -1174,80 +1174,80 @@
     {
      "month": "2025-07",
      "n": 22,
-     "reversals": 17
+     "reversals": 18
     },
     {
      "month": "2025-08",
      "n": 25,
-     "reversals": 15
+     "reversals": 20
     },
     {
      "month": "2025-09",
      "n": 25,
-     "reversals": 17
+     "reversals": 22
     },
     {
      "month": "2025-10",
      "n": 22,
-     "reversals": 18
+     "reversals": 20
     },
     {
      "month": "2025-11",
      "n": 26,
-     "reversals": 18
+     "reversals": 21
     },
     {
      "month": "2025-12",
      "n": 24,
-     "reversals": 19
+     "reversals": 21
     },
     {
      "month": "2026-01",
      "n": 31,
-     "reversals": 25
+     "reversals": 27
     },
     {
      "month": "2026-02",
      "n": 22,
-     "reversals": 16
+     "reversals": 20
     },
     {
      "month": "2026-03",
      "n": 30,
-     "reversals": 22
+     "reversals": 24
     },
     {
      "month": "2026-04",
      "n": 27,
-     "reversals": 16
+     "reversals": 17
     },
     {
      "month": "2026-05",
      "n": 24,
-     "reversals": 19
+     "reversals": 20
     },
     {
      "month": "2026-06",
      "n": 22,
-     "reversals": 14
+     "reversals": 15
     }
    ],
    "by_administered_by": [
     {
      "k": "bystander",
-     "n": 63
+     "n": 71
     },
     {
      "k": "first_responder",
-     "n": 54
+     "n": 67
     },
     {
      "k": "staff",
-     "n": 60
+     "n": 65
     },
     {
      "k": "unknown",
-     "n": 56
+     "n": 64
     }
    ]
   },

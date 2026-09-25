@@ -31,7 +31,9 @@ after(async () => { await H.stop(); });
 // random per run (names are not), and rows that tie on their count may come back in either order. The golden
 // answers are exact counts (the programme's own submission): how small cells are suppressed for publication
 // is tested on its own below, so a change to suppression is not a change to what the report counts. A
-// report filtered to one fund shows that fund's row only.
+// report filtered to one fund shows that fund's row only. An event of kind "reversal" counts as
+// a naloxone reversal whether or not its box was ticked (the fixture has such rows), which moved the reversal
+// figures and nothing else.
 const FUND_KEYS = ['name', 'grant_number', 'fiscal_year_start', 'fiscal_year_end', 'clients_served', 'services', 'approved_minutes'];
 const sortRows = (rows) => [...rows].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 function normalise(d) {

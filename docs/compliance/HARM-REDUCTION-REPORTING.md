@@ -38,11 +38,11 @@ The DHCS Naloxone Distribution Project (NDP) supplies naloxone to organisations 
 | --- | --- |
 | Date | The day of the visit or event, in the programme's time zone. |
 | Entry | *Distribution* (kits handed out) or *Reversal reported*. |
-| Site type | Distribution: the visit's *Location* (field, community, shelter…). Reversal: the overdose event's location type. |
+| Site type | The same coded *Location* list for both (field, community, shelter…): distribution, the visit's; reversal, the overdose form's *Where*. A place typed in before *Where* was a list is matched to a code whatever its case (*Shelter* → shelter), or else counted as *Other*; the record keeps its words. |
 | Recipient type | *Community member (anonymous)* — community distribution with no client — or *Programme participant* (a client on the caseload). |
 | Kits distributed | Sum of *Naloxone kits given* (`interventions.naloxone_kits`). |
 | Naloxone doses distributed | Kits × the `naloxone_doses_per_kit` setting (default 2: a standard nasal-spray kit holds two doses). |
-| Reversals reported | Overdose events (Overdose & naloxone form, including community reports with no client) where naloxone was used and the person survived. |
+| Reversals reported | Overdose events (Overdose & naloxone form, including community reports with no client) where naloxone was used and the person survived. An event recorded as a *Reversal* had naloxone by definition: the form ticks *Naloxone was given* when Reversal is chosen, the server records it so, and one saved before that rule with the box unticked is counted too. |
 | Doses used in reversals | `overdose_events.naloxone_doses`. |
 | Naloxone given by | The overdose form's *Given by*. |
 
