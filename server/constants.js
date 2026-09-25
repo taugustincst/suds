@@ -52,6 +52,20 @@ module.exports = {
   // combined with any other. 'roi' is a general release, which Part 2 says is not sufficient on its own.
   CONSENT_TYPES: ['part2_disclosure', 'part2_tpo', 'part2_counseling_notes', 'part2_proceedings', 'roi', 'treatment', 'telehealth', 'contact_preferences', 'research', 'photo_media'],
   PART2_CONSENT_TYPES: ['part2_disclosure', 'part2_tpo', 'part2_counseling_notes', 'part2_proceedings'],
+  // The categories of information a consent can cover, recorded as codes (consents.info_categories) beside
+  // the free-text scope the signed form carries, so that an automated disclosure (the FHIR API) shares only
+  // what the consent covers (server/disclosure.js CATEGORY_OF_FHIR_TYPE). 'all' covers every category.
+  CONSENT_INFO_CATEGORIES: ['demographics', 'encounters', 'diagnoses_assessments', 'referrals', 'tasks', 'documents', 'risk_overdose', 'all'],
+  CONSENT_INFO_CATEGORY_LABELS: {
+    demographics: 'Identity and contact details (name, date of birth, address, phone, Medi-Cal ID)',
+    encounters: 'Attendance and services (episodes of care, visits, calls)',
+    diagnoses_assessments: 'SUD diagnosis and assessments (problems, ASAM, screening results)',
+    referrals: 'Referrals and care coordination',
+    tasks: 'Tasks and follow-ups',
+    documents: 'Signed notes — titles and dates only, never their text',
+    risk_overdose: 'Risk level and overdose events',
+    all: 'All of the above',
+  },
   CONSENT_SIGNERS: ['patient', 'parent_or_guardian', 'personal_representative', 'court_appointed_guardian'],
   COURT_ORDER_TYPES: ['noncriminal_2_64', 'criminal_patient_2_65', 'program_investigation_2_66', 'undercover_2_67'],
   PART2_NOTICE_METHODS: ['in_person_paper', 'electronic', 'mail', 'verbal_with_copy'],

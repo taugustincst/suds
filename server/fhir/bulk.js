@@ -148,12 +148,13 @@ async function run(job, client, ip) {
   const jobDir = path.join(dir(), job.id);
   try {
     fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
-    const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose });
     const patients = new Set(); const omitted = new Set(); let total = 0;
     for (const type of job.types) {
       if (!jobs.has(job.id)) return; // cancelled
       job.progress = `exporting ${type}`;
       const d = R.DEFS[type];
+      // Per type: a consent covers only the categories of information it names.
+      const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose, resourceType: type });
       const filter = R.where(type, new URLSearchParams(), { since: job.since });
       const lines = []; const inFile = {};
       for (let offset = 0; ; offset += PAGE) {
@@ -239,7 +240,7 @@ function file(ctx, client) {
   let perClient = null;
   if (who.length) {
     // The disclosure happens now, so the consent is checked now: everyone in this file must still be covered.
-    const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose });
+    const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose, resourceType: f.type });
     const lapsed = who.filter(cid => !coverage.has(cid));
     if (lapsed.length) {
       audit.log({ user: client.actor, action: 'fhir.export.download.refused', entity: 'fhir_export', entityId: j.id, ip: ctx.ip, success: false, details: { client: client.prefix, type: f.type, lapsed_patients: lapsed.length } });

@@ -166,6 +166,10 @@ function isSelfAssignment(raw, user, knownUsers, batchClients) {
 function consentPushProblem(raw) {
   const disclosure = require('../disclosure');
   if (!require('../constants').CONSENT_TYPES.includes(raw.type)) return `has a value the office does not accept (consent type "${String(raw.type).slice(0, 40)}")`;
+  // The coded categories of information it covers (what the FHIR API honours): known codes only.
+  const cats = String(raw.info_categories || '').split(',').map(x => x.trim()).filter(Boolean);
+  const unknownCat = cats.find(x => !require('../constants').CONSENT_INFO_CATEGORIES.includes(x));
+  if (unknownCat) return `has a value the office does not accept (information category "${unknownCat.slice(0, 40)}")`;
   if (!require('../constants').PART2_CONSENT_TYPES.includes(raw.type)) return null;
   const v = { discloser: raw.discloser, recipient: raw.recipient_enc, purpose: raw.purpose_enc, scope: raw.scope_enc, expires_at: raw.expires_at, expires_event: raw.expires_event, document_ref: raw.document_ref,
     signed_on_paper: raw.signed_on_paper, witness: raw.witness, signer_relationship: raw.signer_relationship, signer_name: raw.signer_name_enc, revocation_right_given: raw.revocation_right_given,

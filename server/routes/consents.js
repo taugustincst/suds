@@ -25,6 +25,8 @@ function presentConsent(c) {
   const active = !c.revoked_at && (!c.expires_at || c.expires_at >= today);
   return { ...c, recipient: c.recipient_enc ? decrypt(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt(c.purpose_enc) : null, scope: c.scope_enc ? decrypt(c.scope_enc) : null,
     signer_name: c.signer_name_enc ? decrypt(c.signer_name_enc) : null,
+    // The coded categories it covers, as a list ([] when none were recorded: it covers nothing automated).
+    info_categories: [...disclosure.parseCategories(c.info_categories)],
     recipient_enc: undefined, purpose_enc: undefined, scope_enc: undefined, signer_name_enc: undefined,
     // A consent that lacks the §2.31 elements (one that arrived by sync or by hand, or a legacy one) is shown,
     // but cannot be chosen to authorise a disclosure: incomplete says why.
@@ -62,6 +64,16 @@ module.exports = (r) => {
       signed_on_paper: { type: 'boolean' }, redisclosure_notice_given: { type: 'boolean' },
       discloser: { type: 'string', maxLen: 200 }, signer_relationship: { type: 'string', enum: C.CONSENT_SIGNERS }, signer_name: { type: 'string', maxLen: 200 },
       revocation_right_given: { type: 'boolean' }, refusal_consequences_given: { type: 'boolean' } });
+    // The categories of information it covers, as codes (C.CONSENT_INFO_CATEGORIES): what an automated
+    // disclosure (the FHIR API) honours. A list or comma-separated text; an unknown code is refused rather
+    // than dropped, since dropping it would narrow the consent without anyone noticing. None is allowed —
+    // the consent then covers nothing automated.
+    const rawCats = ctx.body && ctx.body.info_categories;
+    const catList = rawCats === undefined || rawCats === null || rawCats === '' ? [] : Array.isArray(rawCats) ? rawCats.map(String) : String(rawCats).split(',');
+    const cats = [...new Set(catList.map(x => x.trim()).filter(Boolean))];
+    const unknown = cats.filter(x => !C.CONSENT_INFO_CATEGORIES.includes(x));
+    if (unknown.length) throw badRequest('Validation failed', { fields: { info_categories: `has a category SUDS does not know (${unknown.map(x => x.slice(0, 40)).join(', ')}); choose from ${C.CONSENT_INFO_CATEGORIES.join(', ')}` } });
+    const infoCategories = cats.length ? (cats.includes('all') ? 'all' : C.CONSENT_INFO_CATEGORIES.filter(x => cats.includes(x)).join(',')) : null;
     const part2 = PART2_TYPES.includes(v.type);
     if (part2) {
       // Who may disclose is this programme unless the form names someone else; the signer is the patient
@@ -73,11 +85,11 @@ module.exports = (r) => {
     }
     const id = uuid();
     db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,expires_event,document_ref,witness,signed_on_paper,redisclosure_notice_given,
-        discloser,signer_relationship,signer_name_enc,revocation_right_given,refusal_consequences_given,rule_version,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        discloser,signer_relationship,signer_name_enc,revocation_right_given,refusal_consequences_given,rule_version,created_by,info_categories) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, ctx.params.id, v.type, v.recipient ? encrypt(v.recipient) : null, v.purpose ? encrypt(v.purpose) : null, v.scope ? encrypt(v.scope) : null, v.signed_at, v.expires_at || null, v.expires_event || null,
       v.document_ref || null, v.witness || null, v.signed_on_paper ? 1 : 0, v.redisclosure_notice_given ? 1 : 0,
-      v.discloser || null, v.signer_relationship || null, v.signer_name ? encrypt(v.signer_name) : null, v.revocation_right_given ? 1 : 0, v.refusal_consequences_given ? 1 : 0, part2 ? '2024' : null, ctx.user.id);
-    audit.log({ user: ctx.user, action: 'consent.create', entity: 'consent', entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { type: v.type, rule_version: part2 ? '2024' : undefined } });
+      v.discloser || null, v.signer_relationship || null, v.signer_name ? encrypt(v.signer_name) : null, v.revocation_right_given ? 1 : 0, v.refusal_consequences_given ? 1 : 0, part2 ? '2024' : null, ctx.user.id, infoCategories);
+    audit.log({ user: ctx.user, action: 'consent.create', entity: 'consent', entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { type: v.type, rule_version: part2 ? '2024' : undefined, info_categories: infoCategories || undefined } });
     ctx.status = 201; return { id };
   });
   r.post('/api/consents/:id/revoke', auth.requireAuth, auth.requirePerm('consents:write'), (ctx) => {

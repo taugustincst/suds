@@ -64,7 +64,7 @@ async function newClient(first, last) {
 }
 function consent(clientId, { type = 'part2_disclosure', recipient = RECIPIENT, purpose = 'Treatment' } = {}) {
   const id = nodeCrypto.randomUUID();
-  H.db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+  H.db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,created_by,info_categories) VALUES(?,?,?,?,?,?,?,?,?,?,?,'all')`,
     id, clientId, type, encrypt(recipient), encrypt(purpose), encrypt('Navigation record'), '2026-01-10', '2030-01-01', 1, 1, adminId);
   return id;
 }

@@ -104,6 +104,20 @@ Every FHIR answer that identifies a client is a disclosure from a Part 2 program
 - its purpose covers the FHIR client's purpose of use.
   - `part2_tpo` covers `TREAT`, `HPAYMT` and `HOPERAT` by definition.
   - Otherwise the purpose text must contain *treatment* (or *care coordination*) for `TREAT`, *payment* (or *billing*/*claims*) for `HPAYMT`, or *operations* for `HOPERAT`. A consent that says *TPO*, or *treatment, payment and health care operations*, covers all three.
+- it covers the **category of information** the resource belongs to (schema migration 35). A consent's scope is free text on the signed form ("attendance records only"), which no machine can read, so the consent form also records it as codes (`consents.info_categories`, `CONSENT_INFO_CATEGORIES` in `server/constants.js`), and each resource type is released only for a client whose covering consent names its category (`CATEGORY_OF_FHIR_TYPE` in `server/disclosure.js`):
+
+  | Category (code) | Resource types |
+  | --- | --- |
+  | Identity and contact details (`demographics`) | Patient |
+  | Attendance and services (`encounters`) | EpisodeOfCare, Encounter |
+  | Referrals and care coordination (`referrals`) | ServiceRequest |
+  | Tasks and follow-ups (`tasks`) | Task |
+  | Signed notes — titles and dates only (`documents`) | DocumentReference |
+  | Risk level and overdose events (`risk_overdose`) | Observation |
+  | SUD diagnosis and assessments (`diagnoses_assessments`) | none served yet |
+  | Everything (`all`) | all of the above |
+
+  A Consent resource is listed for a client whose covering consent names any category. A consent with **no categories recorded** covers nothing over FHIR — the conservative reading of a scope nobody coded. Consents recorded before migration 35 have none, except those whose scope says plainly that it covers the whole record ("All records", "All of my SUD treatment records", "Entire record"; `generalScope` in `server/disclosure.js`), which were given `all`. For any other existing consent, record a new consent with its categories ticked. Bulk export applies the rule type by type, and again at each download.
 - the client has **no agreed restriction** (a fulfilled `restriction` request on their Requests tab, §2.26 / §164.522). `requireBasis` makes a worker confirm that a disclosure respects an agreed restriction; there is no worker to confirm a FHIR answer, so a client with one is withheld entirely until the restriction is lifted.
 
 A general TPO wording that names no organisation is **not** honoured over FHIR: the organisation has to be named on the consent. This is the conservative reading, and it keeps the match mechanical and auditable. `fhirCoverage()` in `server/disclosure.js` holds the rule, and its result is cached until any consent or patient request changes, the Part 2 programme setting changes, or the date turns. A revocation or a newly agreed restriction therefore takes effect on the very next request.

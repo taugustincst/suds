@@ -91,7 +91,8 @@ module.exports = {
   // emergency access, and a device has no supervisor to review it.
   // complaints and the privacy incident register are the privacy officer's, kept at the office likewise.
   // fhir_jwt_assertions is the FHIR token endpoint's replay guard for client assertions (office server only).
-  server_only: ['breakglass_events', 'complaints', 'privacy_incidents', 'privacy_incident_clients', 'fhir_jwt_assertions'],
+  // caloms_submissions holds each CalOMS Tx file as produced for DHCS, which only the office sends.
+  server_only: ['breakglass_events', 'complaints', 'privacy_incidents', 'privacy_incident_clients', 'fhir_jwt_assertions', 'caloms_submissions'],
   // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
   // the answers to retried POSTs made against that database (server/idempotency.js). A device's retry is
   // answered by the device; the office never sees the key, only the rows the request created.
@@ -117,7 +118,7 @@ module.exports = {
     ['care_plan_steps', 'owner_user_id'], ['care_plan_steps', 'created_by'], ['asam_assessments', 'assessed_by'], ['outcome_measures', 'administered_by'],
     ['caloms_records', 'created_by'], ['caloms_records', 'updated_by'],
     ['court_orders', 'recorded_by'], ['part2_notices', 'given_by'], ['complaints', 'handled_by'], ['complaints', 'created_by'],
-    ['privacy_incidents', 'determined_by'], ['privacy_incidents', 'reported_by'], ['disclosure_agreements', 'created_by'],
+    ['privacy_incidents', 'determined_by'], ['privacy_incidents', 'reported_by'], ['disclosure_agreements', 'created_by'], ['caloms_submissions', 'created_by'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.

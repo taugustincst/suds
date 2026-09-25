@@ -480,6 +480,27 @@ const migrations = [
       rebuildTable(d, schemaText, 'privacy_incident_clients');
     }
   },
+  // 35: a further disclosure review (docs/compliance/PART2.md). A consent records the categories of
+  //     information it covers (consents.info_categories), which the FHIR API honours; and a CalOMS Tx
+  //     submission is produced once and kept (caloms_submissions), so the file sent is the file accounted.
+  //     An existing consent's scope is free text: it is given the 'all' category only when that text says
+  //     plainly that it covers everything (GENERAL_SCOPE below); every other one stays NULL and covers nothing
+  //     automated until a new consent is recorded with its categories — the conservative reading.
+  (d) => {
+    const schemaText = safeSchema();
+    addColumn(d, 'consents', 'info_categories', 'TEXT');
+    const m = schemaText.match(/CREATE TABLE IF NOT EXISTS caloms_submissions \([\s\S]*?\n\);/);
+    if (!m) throw new Error('migration 35: no definition for caloms_submissions in schema');
+    d.exec(m[0]);
+    for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_caloms_submissions/.test(line.trim())) d.exec(line.trim());
+    const { decrypt } = require('./crypto');
+    const { generalScope } = require('./disclosure');
+    const upd = d.prepare(`UPDATE consents SET info_categories='all' WHERE id=?`);
+    for (const r of d.prepare(`SELECT id, scope_enc FROM consents WHERE scope_enc IS NOT NULL AND info_categories IS NULL`).all()) {
+      let scope = ''; try { scope = decrypt(r.scope_enc); } catch { continue; }
+      if (generalScope(scope)) upd.run(r.id);
+    }
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

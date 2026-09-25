@@ -20,7 +20,7 @@ before(() => {
   const d = new DatabaseSync(dbPath);
   d.exec(fs.readFileSync(path.join(__dirname, 'fixtures', 'schema-v4.sql'), 'utf8'));
   const { uuid, encrypt } = require('../server/crypto');
-  ids.user = uuid(); ids.client = uuid(); ids.note = uuid(); ids.consent = uuid(); ids.disclosure = uuid(); ids.intervention = uuid();
+  ids.user = uuid(); ids.client = uuid(); ids.note = uuid(); ids.consent = uuid(); ids.disclosure = uuid(); ids.intervention = uuid(); ids.generalConsent = uuid();
   d.prepare(`INSERT INTO users(id,username,password_hash,display_name,role) VALUES(?,?,?,?,?)`).run(ids.user, 'u1', 'x', 'U One', 'navigator');
   d.prepare(`INSERT INTO clients(id,client_code,first_name_enc,last_name_enc,goals,flags,intake_date,status,created_by) VALUES(?,?,?,?,?,?,?,?,?)`)
     .run(ids.client, 'M26-0001', encrypt('Ada'), encrypt('Lovelace'), 'Housing, then MAT induction', 'od_risk,no_voicemail', '2026-01-05', 'active', ids.user);
@@ -30,6 +30,8 @@ before(() => {
     .run(ids.note, ids.client, ids.user, 'admin', 'Intake call', encrypt('note body'), '2026-02-01T10:00:00.000Z');
   d.prepare(`INSERT INTO consents(id,client_id,type,recipient,purpose,scope,signed_at,created_by) VALUES(?,?,?,?,?,?,?,?)`)
     .run(ids.consent, ids.client, 'part2_disclosure', 'Granite Wellness', 'treatment referral', 'dates of service only', '2026-01-06', ids.user);
+  d.prepare(`INSERT INTO consents(id,client_id,type,recipient,purpose,scope,signed_at,created_by) VALUES(?,?,?,?,?,?,?,?)`)
+    .run(ids.generalConsent, ids.client, 'part2_disclosure', 'Granite Wellness', 'treatment referral', 'All of my SUD treatment records', '2026-01-06', ids.user);
   d.prepare(`INSERT INTO disclosures(id,client_id,disclosed_to,purpose,info_disclosed,disclosed_at,disclosed_by) VALUES(?,?,?,?,?,?,?)`)
     .run(ids.disclosure, ids.client, 'Granite Wellness', 'referral', 'intake summary', '2026-01-07T00:00:00.000Z', ids.user);
   d.prepare(`INSERT INTO assignments(id,client_id,user_id,start_date,created_by) VALUES(?,?,?,?,?)`).run(uuid(), ids.client, ids.user, '2026-01-05', ids.user);
@@ -231,4 +233,10 @@ test('a pre-existing orphaned row (unrelated to this upgrade) does not brick eve
     require('../server/db').open(dbPath); // restore the shared fixture db for anything after this test
     fs.rmSync(orphanDir, { recursive: true, force: true });
   }
+});
+
+test('migration 35: a free-text scope covers nothing automated unless it plainly says the whole record', () => {
+  assert.equal(db().one(`SELECT info_categories FROM consents WHERE id=?`, ids.consent).info_categories, null, '"dates of service only" is not machine-readable');
+  assert.equal(db().one(`SELECT info_categories FROM consents WHERE id=?`, ids.generalConsent).info_categories, 'all');
+  assert.ok(db().one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='caloms_submissions'`));
 });

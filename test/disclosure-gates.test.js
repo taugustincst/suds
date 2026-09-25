@@ -257,7 +257,7 @@ test('the FHIR API applies the same element check: an incomplete consent covers 
   const D = require('../server/disclosure'); const { encrypt } = require('../server/crypto');
   const c = await newClient();
   const id = randomUUID();
-  H.db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,rule_version,discloser,signer_relationship,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  H.db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,rule_version,discloser,signer_relationship,created_by,info_categories) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'all')`,
     id, c, 'part2_disclosure', encrypt('Gate HIE'), encrypt('Treatment'), encrypt('Summary'), '2026-09-01', '2099-01-01', 1, '2024', 'This program', 'patient', navId);
   assert.ok(!D.fhirCoverage({ cacheKey: 'gate-a', recipients: ['Gate HIE'], purposeOfUse: 'TREAT' }).has(c), 'no revocation, redisclosure or refusal statements: not covered');
   H.db.run(`UPDATE consents SET revocation_right_given=1, redisclosure_notice_given=1, refusal_consequences_given=1, updated_at=? WHERE id=?`, new Date().toISOString(), id);

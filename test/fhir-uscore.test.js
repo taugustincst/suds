@@ -42,7 +42,7 @@ before(async () => {
   ids.declined = await mk('Bea', 'Declined', { race_codes: 'declined', gender: 'non_binary' });
   ids.sparse = await mk('Cy', 'Sparse', { race_codes: '', gender: '' });
   for (const cid of [ids.full, ids.declined, ids.sparse]) {
-    H.db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    H.db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,created_by,info_categories) VALUES(?,?,?,?,?,?,?,?,?,?,?,'all')`,
       randomUUID(), cid, 'part2_disclosure', encrypt('County Behavioral Health'), encrypt('Treatment'), encrypt('Navigation record'), '2026-01-10', '2030-01-01', 1, 1, adminId);
   }
   H.db.run(`INSERT INTO interventions(id,client_id,user_id,type,occurred_at,duration_minutes,location,modality,outcome) VALUES(?,?,?,?,?,?,?,?,?)`, randomUUID(), ids.full, adminId, 'care_coordination', '2026-03-05T17:00:00.000Z', 30, 'field', 'in_person', 'completed');
