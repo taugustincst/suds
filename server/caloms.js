@@ -298,7 +298,9 @@ function columnsFor(type) {
  * provider activity report (per provider per month, "no activity" when nothing was reported), and a
  * README. Returns the files, which clients they cover (for the accounting of disclosures) and counts.
  */
-function buildExtract({ from, to, scope, generatedBy }) {
+// A preview's records carry these in place of the name, and no date of birth: it can be checked, never sent.
+const PREVIEW_NAME = { last_name: 'PREVIEW', first_name: 'NOT FOR SUBMISSION', dob: '' };
+function buildExtract({ from, to, scope, generatedBy, preview = false, submissionId = null }) {
   const rep = report({ from, to, scope });
   const ready = rep.checked.filter(x => !fatal(x.issues).length).map(x => x.record);
   const names = new Map();
@@ -306,7 +308,7 @@ function buildExtract({ from, to, scope, generatedBy }) {
     if (names.has(clientId)) return names.get(clientId);
     const c = db.one(`SELECT client_code, first_name_enc, last_name_enc, dob_enc FROM clients WHERE id=?`, clientId);
     const d = (v) => { try { return v ? decrypt(v) : ''; } catch { return ''; } };
-    const o = { client_id: c.client_code, first_name: d(c.first_name_enc), last_name: d(c.last_name_enc), dob: d(c.dob_enc) };
+    const o = preview ? { client_id: c.client_code, ...PREVIEW_NAME } : { client_id: c.client_code, first_name: d(c.first_name_enc), last_name: d(c.last_name_enc), dob: d(c.dob_enc) };
     names.set(clientId, o); return o;
   };
   const admissionDate = (episodeId) => (db.one(`SELECT record_date FROM caloms_records WHERE episode_id=? AND record_type='admission'`, episodeId) || {}).record_date || '';
@@ -336,19 +338,35 @@ function buildExtract({ from, to, scope, generatedBy }) {
   }
   files.push(['provider_activity.csv', T.toCsv(activity, [{ key: 'provider_id', label: 'ProviderID' }, { key: 'report_month', label: 'ReportMonth' }, { key: 'admissions', label: 'Admissions' }, { key: 'discharges', label: 'Discharges' }, { key: 'annual_updates', label: 'AnnualUpdates' }, { key: 'no_activity', label: 'NoActivity' }])]);
   const excluded = rep.summary.blocked;
-  files.push(['README.txt', readme({ from, to, counts, excluded, activity, generatedBy, missing: rep.summary.missing })]);
+  files.push(['README.txt', readme({ from, to, counts, excluded, activity, generatedBy, missing: rep.summary.missing, preview, submissionId })]);
+  // Every file in a preview says so in its own name, so a stray copy cannot be taken for the submission.
+  if (preview) for (const f of files) f[0] = `PREVIEW-${f[0]}`;
   return { files, ready, clientIds: [...new Set(ready.map(r => r.client_id))], counts, excluded, activity_rows: activity.length, no_activity_months: activity.filter(a => a.no_activity === 'Y').length };
 }
 
-function readme({ from, to, counts, excluded, activity, generatedBy, missing }) {
+function readme({ from, to, counts, excluded, activity, generatedBy, missing, preview = false, submissionId = null }) {
   return [
+    ...(preview ? [
+      'PREVIEW - NOT FOR SUBMISSION',
+      '============================',
+      '',
+      'This is a preview for checking the records before they are submitted. Names are replaced with PREVIEW /',
+      'NOT FOR SUBMISSION and dates of birth are left out, so DHCS cannot accept it. To submit, produce the',
+      'submission file in SUDS (Reports -> State reporting -> Produce submission file) and send that file.',
+      '',
+    ] : []),
     'CalOMS Tx submission prepared by SUDS',
     '====================================',
     '',
-    'CONTAINS PHI. Identified client records for the California Department of Health Care Services (DHCS),',
-    'disclosed as required by law for state treatment outcome reporting. The disclosure is recorded in each',
-    'client\'s accounting of disclosures in SUDS. Transmit only through the county\'s approved DHCS channel.',
+    ...(preview ? [
+      'Contains client codes and coded treatment answers (42 CFR Part 2 records), but no names or dates of birth.',
+    ] : [
+      'CONTAINS PHI. Identified client records for the California Department of Health Care Services (DHCS),',
+      'disclosed as required by law for state treatment outcome reporting. The disclosure is recorded in each',
+      'client\'s accounting of disclosures in SUDS. Transmit only through the county\'s approved DHCS channel.',
+    ]),
     '',
+    ...(submissionId ? [`Submission: ${submissionId} (its SHA-256 is recorded in SUDS; send this file unchanged)`] : []),
     `Period: ${from} to ${to}`,
     `Generated: ${db.now()}${generatedBy ? ` by ${generatedBy}` : ''}`,
     `Layout: ${S.SPEC_VERSION}`,
@@ -361,7 +379,7 @@ function readme({ from, to, counts, excluded, activity, generatedBy, missing }) 
     `  provider_activity.csv   ${activity.length} provider-month row(s); NoActivity=Y marks a month with nothing to report`,
     '',
     `Records held back because of fatal errors: ${excluded}. Missing or overdue records: ${missing}.`,
-    'Fix them in SUDS (Reports -> State reporting -> Validation) and produce the extract again.',
+    'Fix them in SUDS (Reports -> State reporting -> Validation) and produce a new submission for them.',
     '',
     'IMPORTANT: the code values and column names in these files follow SUDS\'s CalOMS Tx layout, which has',
     'NOT been verified against the current DHCS CalOMS Tx data dictionary / file specification. Before the',
@@ -371,7 +389,8 @@ function readme({ from, to, counts, excluded, activity, generatedBy, missing }) 
     '',
     'How to submit (county process)',
     '  1. Resolve every fatal error in the SUDS validation report for the period.',
-    '  2. Produce this extract (it holds back anything still in error).',
+    '  2. Produce the submission file in SUDS (it holds back anything still in error). Producing it records',
+    '     the disclosure in each client\'s accounting; send exactly that file.',
     '  3. Load the files through the county\'s CalOMS Tx submission tool or DHCS upload, per the county\'s',
     '     CalOMS Tx procedure, by the monthly deadline. Submit a provider activity (no activity) report for',
     '     any month with no admissions, discharges or annual updates.',

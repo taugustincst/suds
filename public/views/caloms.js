@@ -2,8 +2,8 @@
 //
 // CalOMS Tx: when the programme reports it (Settings, below), the admission and discharge dialogs on a
 // client's Episodes tab carry the CalOMS questions, each episode shows which CalOMS records it has and
-// needs, and this page lists every edit-check problem by client code and field, then produces the extract
-// for DHCS. The county EHR hand-off is the billing boundary: SUDS does not bill, it hands encounters over.
+// needs, and this page lists every edit-check problem by client code and field, previews the file, and
+// produces the submission for DHCS (the disclosure; the file downloaded is the one accounted). The county EHR hand-off is the billing boundary: SUDS does not bill, it hands encounters over.
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, downloadCsv, stat, kv } from '../app.js';
 import { withRestrictionCheck } from './part2.js';
 import { fetchDownload, downloadedMessage } from './reports.js';
@@ -122,6 +122,7 @@ route('caloms', async (r) => {
   const cfg = await calomsConfig({ fresh: true });
   const seesEpisodes = can('episodes:read') || can('episodes:write');
   const v = seesEpisodes ? await get(`/api/caloms/validation?from=${from}&to=${to}`) : null;
+  const subs = can('export:identified') ? await get('/api/caloms/submissions', { quiet: true }).catch(() => null) : null;
   const fromI = h('input', { type: 'date', value: from, 'aria-label': 'From' }), toI = h('input', { type: 'date', value: to, 'aria-label': 'To' });
   const go = (f, t) => nav(`caloms?from=${f}&to=${t}`);
 
@@ -157,22 +158,41 @@ route('caloms', async (r) => {
       ], v.rows, { rowLabel: x => `${x.severity} ${x.client_code} ${x.field_label}` }) : emptyState('No problems found', 'Every CalOMS record in this period passes the edit checks, and every episode has the records it needs.'));
   };
 
+  // The preview checks the file; producing the submission is the disclosure, and the file downloaded is the
+  // one that was accounted (server/routes/caloms.js). Earlier submissions can be downloaded again while kept.
+  const downloadSubmission = async (sub) => {
+    try { await fetchDownload(`/api/caloms/submissions/${sub.id}/file`); toast(`Submission file downloaded (SHA-256 ${sub.sha256.slice(0, 12)}…). Send it to DHCS unchanged.`, 'ok'); }
+    catch (e) { toast(e.message, 'error'); }
+  };
   const extractCard = () => {
     if (!can('export:identified')) return null;
-    return h('div', { class: 'card mb', 'data-caloms-extract': '1' }, h('h2', {}, 'Extract for DHCS'),
-      h('p', { class: 'small' }, 'A zip of CSV files — admissions, discharges, annual updates and the monthly provider activity report (with "no activity" months) — for the period above. Records with fatal errors are held back. Downloading it is a test / preview: it is audited, but it is not a disclosure until the file goes to DHCS. When you have submitted it, choose "Mark as submitted": each client in it then gets a "State reporting (CalOMS)" entry in their accounting of disclosures, and its records are marked as sent.'),
+    const rows = (subs && subs.rows) || [];
+    return h('div', { class: 'card mb', 'data-caloms-extract': '1' }, h('h2', {}, 'Submission to DHCS'),
+      h('p', { class: 'small' }, 'A zip of CSV files — admissions, discharges, annual updates and the monthly provider activity report (with "no activity" months) — for the period above. Records with fatal errors are held back.'),
+      h('ol', { class: 'small' },
+        h('li', {}, h('b', {}, 'Preview'), ' to check the file. A preview has PREVIEW / NOT FOR SUBMISSION where names go and no dates of birth, so it cannot be submitted; nobody\'s accounting of disclosures changes.'),
+        h('li', {}, h('b', {}, 'Produce the submission file'), ' when the records are ready. This is the disclosure: each client in it gets a "State reporting (CalOMS)" entry in their accounting of disclosures, its records are marked as sent, and the file downloads.'),
+        h('li', {}, 'Send that file to DHCS unchanged. It is kept here, identified by its SHA-256, for ', String((subs && subs.keep_days) || 90), ' days, so it can be downloaded again.')),
       h('p', { class: 'small muted' }, 'The layout has not been verified against the current DHCS CalOMS Tx data dictionary; see the README in the zip and docs/compliance/CALOMS.md before the first submission.'),
       h('div', { class: 'row' },
-        h('button', { class: 'btn', disabled: !cfg.enabled, 'data-caloms-download': '1', onClick: async () => {
-          if (!await confirmDialog('CalOMS Tx extract (test / preview)', `This file identifies clients. Downloading it is recorded in the audit log; nobody's accounting of disclosures changes until you mark the extract as submitted. ${v && v.summary.blocked ? `${v.summary.blocked} record(s) with fatal errors will be held back.` : ''} Continue?`, { okText: 'Download extract' })) return;
-          downloadCsv(`/api/caloms/extract?from=${from}&to=${to}`);
-        } }, 'Download extract (test / preview)'),
+        h('button', { class: 'btn', disabled: !cfg.enabled, 'data-caloms-download': '1', onClick: () => downloadCsv(`/api/caloms/extract?from=${from}&to=${to}`) }, 'Download preview (not for submission)'),
         h('button', { class: 'btn primary', disabled: !cfg.enabled, 'data-caloms-submitted': '1', onClick: async () => {
-          if (!await confirmDialog('Mark as submitted to DHCS', `Record that the CalOMS Tx extract for ${fmt.date(from)} – ${fmt.date(to)} was submitted to DHCS. Each client in it gets an entry in their accounting of disclosures (a disclosure required by law), and its records are marked as sent. Do this once the file has actually been submitted.`, { okText: 'Mark as submitted' })) return;
-          try { const r = await post('/api/caloms/submissions', { from, to }); toast(`Recorded: ${r.clients_disclosed} client(s) accounted for as submitted to DHCS.`, 'ok'); }
-          catch (e) { toast(e.message, 'error'); }
-        } }, 'Mark as submitted')),
-      cfg.enabled ? null : h('p', { class: 'small muted' }, 'CalOMS reporting is off for this program.'));
+          if (!await confirmDialog('Produce the submission file for DHCS', `Produce the CalOMS Tx submission for ${fmt.date(from)} – ${fmt.date(to)}. It includes client names and dates of birth. Each client in it gets an entry in their accounting of disclosures (a disclosure required by law) and its records are marked as sent. ${v && v.summary.blocked ? `${v.summary.blocked} record(s) with fatal errors will be held back. ` : ''}Send the file that downloads to DHCS unchanged.`, { okText: 'Produce submission file' })) return;
+          try {
+            const r = await post('/api/caloms/submissions', { from, to });
+            toast(`Submission produced: ${r.clients_disclosed} client(s) accounted for as disclosed to DHCS.`, 'ok');
+            await downloadSubmission(r);
+            go(from, to);
+          } catch (e) { toast(e.message, 'error'); }
+        } }, 'Produce submission file')),
+      cfg.enabled ? null : h('p', { class: 'small muted' }, 'CalOMS reporting is off for this program.'),
+      rows.length ? h('div', { 'data-caloms-submissions': '1' }, h('h3', {}, 'Submissions produced'), table([
+        { label: 'Period', render: x => `${fmt.date(x.period_from)} – ${fmt.date(x.period_to)}` },
+        { label: 'Produced', render: x => `${fmt.date(x.created_at)} by ${x.created_by_name}` },
+        { label: 'Clients', key: 'clients' },
+        { label: 'SHA-256', render: x => h('span', { class: 'mono', title: x.sha256 }, `${x.sha256.slice(0, 12)}…`) },
+        { label: 'File', render: x => x.file_available ? h('button', { class: 'btn sm', 'data-caloms-submission-download': x.id, 'aria-label': `Download the submission for ${fmt.date(x.period_from)} – ${fmt.date(x.period_to)}`, onClick: () => downloadSubmission(x) }, 'Download') : h('span', { class: 'muted small' }, 'No longer kept') },
+      ], rows, { rowLabel: x => `Submission ${x.period_from} to ${x.period_to}` })) : null);
   };
 
   const handoffCard = () => {

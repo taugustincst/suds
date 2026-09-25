@@ -244,64 +244,106 @@ test('the validation report lists each problem by client code and field, includi
 });
 
 // ---- extract ----
-test('the extract is identified-export only, holds back fatal records, and is accounted for per client', async () => {
+const bytesOf = async (path, username = 'co_sup') => {
+  // helpers' client decodes bodies as text, which corrupts a zip; fetch the bytes with the same cookie.
+  const login = await fetch(`${await H.start()}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ username, password: 'StaffPassw0rd!x' }) });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const x = await fetch(`${await H.start()}${path}`, { headers: { Cookie: cookie, 'X-Requested-With': 'suds' } });
+  return { x, buf: Buffer.from(await x.arrayBuffer()) };
+};
+test('the preview cannot be submitted; the submission file is produced once, accounted, and served exactly', async () => {
   const from = day(-60);
   assert.equal((await clin.get(`/api/caloms/extract?from=${from}&to=${TODAY}`)).status, 403, 'a clinician cannot make an identified export');
   assert.equal((await fin.get(`/api/caloms/extract?from=${from}&to=${TODAY}`)).status, 403);
   assert.equal((await nav.get(`/api/caloms/extract?from=${from}&to=${TODAY}`)).status, 403);
-  // helpers' client decodes bodies as text, which corrupts a zip; fetch the bytes with the same cookie.
-  const login = await fetch(`${await H.start()}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ username: 'co_sup', password: 'StaffPassw0rd!x' }) });
-  const cookie = login.headers.get('set-cookie').split(';')[0];
-  const x = await fetch(`${await H.start()}/api/caloms/extract?from=${from}&to=${TODAY}`, { headers: { Cookie: cookie, 'X-Requested-With': 'suds' } });
+  const { x, buf } = await bytesOf(`/api/caloms/extract?from=${from}&to=${TODAY}`);
   assert.equal(x.status, 200);
   assert.equal(x.headers.get('content-type'), 'application/zip');
-  assert.match(x.headers.get('x-suds-export'), /Identified - PHI\. CalOMS Tx/);
-  const files = unzip(Buffer.from(await x.arrayBuffer()));
-  assert.deepEqual(Object.keys(files).sort(), ['README.txt', 'admissions.csv', 'annual_updates.csv', 'discharges.csv', 'provider_activity.csv']);
-  const adm = files['admissions.csv'];
+  // The preview says what it is in its file name, in every file's name, and in the records themselves: no
+  // names and no dates of birth, so it can neither be mistaken for the submission nor submitted.
+  assert.match(x.headers.get('content-disposition'), /caloms-tx-PREVIEW-NOT-FOR-SUBMISSION-/);
+  assert.match(x.headers.get('x-suds-export'), /Preview - not for submission/);
+  const files = unzip(buf);
+  assert.deepEqual(Object.keys(files).sort(), ['PREVIEW-README.txt', 'PREVIEW-admissions.csv', 'PREVIEW-annual_updates.csv', 'PREVIEW-discharges.csv', 'PREVIEW-provider_activity.csv']);
+  const adm = files['PREVIEW-admissions.csv'];
   const header = adm.split('\r\n')[0].split(',');
   assert.deepEqual(header.slice(0, 8), ['RecordType', 'ProviderID', 'ProviderClientID', 'ClientLastName', 'ClientFirstName', 'DateOfBirth', 'AdmissionDate', 'AdmissionTransactionDate']);
   assert.ok(header.includes('Race1') && header.includes('Race5') && header.includes('PregnantAtAdmission'));
-  assert.match(adm, new RegExp(`A,${PROVIDER},${codeOf(goodClient)},Oms`), 'the clean admission is in');
+  assert.match(adm, new RegExp(`A,${PROVIDER},${codeOf(goodClient)},PREVIEW,NOT FOR SUBMISSION,,`), 'the clean admission is in, without the name or date of birth');
+  assert.doesNotMatch(adm, /Oms[a-z0-9]{5}|1990-04-02/, 'no names or dates of birth anywhere in the preview');
   assert.ok(!adm.includes(codeOf(badClient)), 'the admission with a fatal error is held back');
-  assert.match(files['discharges.csv'], /^RecordType,ProviderID/);
+  assert.match(files['PREVIEW-README.txt'], /^PREVIEW - NOT FOR SUBMISSION/);
   // Provider activity: both providers, every month; the satellite reported nothing, so "no activity".
-  const act = files['provider_activity.csv'].split('\r\n');
+  const act = files['PREVIEW-provider_activity.csv'].split('\r\n');
   assert.equal(act[0], 'ProviderID,ReportMonth,Admissions,Discharges,AnnualUpdates,NoActivity');
   assert.ok(act.some(l => l.startsWith(`654321,${TODAY.slice(0, 7).replace('-', '')},0,0,0,Y`)));
   assert.ok(act.some(l => l.startsWith(`${PROVIDER},`) && l.endsWith(',N')));
-  assert.match(files['README.txt'], /NOT been verified against the current DHCS CalOMS Tx data dictionary/);
-  assert.match(files['README.txt'], /held back because of fatal errors: [1-9]/);
-  // The same 2024 §2.32 notice every identified file carries, in the README and (abbreviated) the header.
+  assert.match(files['PREVIEW-README.txt'], /NOT been verified against the current DHCS CalOMS Tx data dictionary/);
+  assert.match(files['PREVIEW-README.txt'], /held back because of fatal errors: [1-9]/);
   const C = require('../server/constants');
-  assert.ok(files['README.txt'].includes(`NOTICE TO RECIPIENT (42 CFR §2.32): ${C.PART2_REDISCLOSURE_NOTICE}`), 'the README carries the §2.32 notice');
   assert.ok(x.headers.get('x-suds-export').includes(C.PART2_NOTICE_SHORT));
-  // Downloading the file is not submitting it: audited, labelled a test/preview, and nobody's accounting
-  // of disclosures changes until someone records that the file was actually submitted to DHCS.
-  assert.match(x.headers.get('x-suds-export'), /Test \/ preview/);
-  assert.ok(!db.one(`SELECT 1 FROM disclosures WHERE client_id=? AND source='caloms'`, goodClient), 'a download alone is not accounted');
+  // A preview is audited, but nobody's accounting changes and nothing is marked as sent.
+  assert.ok(!db.one(`SELECT 1 FROM disclosures WHERE client_id=? AND source='caloms'`, goodClient), 'a preview is not accounted');
   assert.equal(db.one(`SELECT extracted_at FROM caloms_records WHERE client_id=?`, goodClient).extracted_at, null, 'nor marked as sent');
   assert.match(db.one(`SELECT details FROM audit_log WHERE action='caloms.extract' ORDER BY id DESC`).details, /"preview":true/);
-  assert.equal((await nav.post('/api/caloms/submissions', { from, to: TODAY })).status, 403, 'marking it submitted is the same permission as making it');
-  const sub = await sup.post('/api/caloms/submissions', { from, to: TODAY });
+
+  // Producing the submission is the disclosure: the file is built once, stored, and accounted per client.
+  assert.equal((await nav.post('/api/caloms/submissions', { from, to: TODAY })).status, 403, 'the same permission as the extract');
+  db.setSetting('mass_export_threshold', '1');
+  let sub;
+  try { sub = await sup.post('/api/caloms/submissions', { from, to: TODAY }); }
+  finally { db.setSetting('mass_export_threshold', ''); }
   assert.equal(sub.status, 200, JSON.stringify(sub.data));
+  assert.ok(sub.data.id && /^[0-9a-f]{64}$/.test(sub.data.sha256), 'identified by id and SHA-256');
   assert.ok(sub.data.clients_disclosed >= 1);
-  assert.ok(db.one(`SELECT 1 FROM audit_log WHERE action='caloms.submitted'`));
-  // The accounting of disclosures: one state-reporting row per client in the file, none for the one held back.
+  assert.ok(db.one(`SELECT 1 FROM privacy_incidents WHERE source='mass_export' AND source_ref LIKE 'caloms:%'`), 'a large submission opens a draft incident for review');
+  const stored = db.one(`SELECT * FROM caloms_submissions WHERE id=?`, sub.data.id);
+  assert.match(stored.file_enc, /^v1:/, 'the file is kept encrypted');
+  assert.equal(stored.sha256, sub.data.sha256);
   const d = db.one(`SELECT * FROM disclosures WHERE client_id=? AND source='caloms'`, goodClient);
   assert.ok(d, 'the disclosure is accounted for');
+  assert.equal(d.source_ref, `caloms:${sub.data.id}`, 'against this submission');
   assert.equal(d.basis, 'state_reporting'); assert.equal(d.consent_id, null);
   assert.equal(d.notice_version, '2024'); assert.equal(d.legal_proceeding, 0); assert.equal(d.counseling_notes, 0);
   assert.match(require('../server/crypto').decrypt(d.recipient_enc), /DHCS/);
+  assert.match(require('../server/crypto').decrypt(d.what_enc), new RegExp(sub.data.sha256.slice(0, 12)), 'the accounting names the file by its hash');
   assert.ok(!db.one(`SELECT 1 FROM disclosures WHERE client_id=? AND source='caloms'`, badClient));
   const acct = await sup.get(`/api/clients/${goodClient}/disclosures/accounting`);
-  assert.equal(acct.status, 200);
   const listed = acct.data.disclosures.find(x => x.source === 'caloms');
   assert.ok(listed && listed.basis === 'state_reporting' && /CalOMS Tx/.test(listed.purpose), 'and it appears in the client\'s accounting of disclosures');
   assert.ok(db.one(`SELECT extracted_at FROM caloms_records WHERE client_id=?`, goodClient).extracted_at);
   assert.equal(db.one(`SELECT extracted_at FROM caloms_records WHERE client_id=?`, badClient).extracted_at, null);
   const audit = db.one(`SELECT details FROM audit_log WHERE action='caloms.submitted' ORDER BY id DESC`).details;
   assert.match(audit, /"held_back":[1-9]/); assert.doesNotMatch(audit, /Oms[a-z0-9]{5}|1990-04-02/);
+
+  // A record edited after the submission does not change what is served: the file is the one accounted.
+  const rec = db.one(`SELECT id FROM caloms_records WHERE client_id=? AND record_type='admission'`, goodClient);
+  db.run(`UPDATE caloms_records SET provider_id='654321' WHERE id=?`, rec.id);
+  assert.equal((await nav.get(`/api/caloms/submissions/${sub.data.id}/file`)).status, 403);
+  const got = await bytesOf(`/api/caloms/submissions/${sub.data.id}/file`);
+  assert.equal(got.x.status, 200);
+  assert.equal(require('node:crypto').createHash('sha256').update(got.buf).digest('hex'), sub.data.sha256, 'byte for byte what was accounted');
+  assert.equal(got.x.headers.get('x-suds-sha256'), sub.data.sha256);
+  assert.match(got.x.headers.get('content-disposition'), new RegExp(`caloms-tx-SUBMISSION-${from}_${TODAY}-`));
+  const real = unzip(got.buf);
+  assert.deepEqual(Object.keys(real).sort(), ['README.txt', 'admissions.csv', 'annual_updates.csv', 'discharges.csv', 'provider_activity.csv']);
+  assert.match(real['admissions.csv'], new RegExp(`A,${PROVIDER},${codeOf(goodClient)},Oms`), 'the submission file names the client, under the provider it was accounted with');
+  assert.ok(real['README.txt'].includes(`NOTICE TO RECIPIENT (42 CFR §2.32): ${C.PART2_REDISCLOSURE_NOTICE}`), 'the README carries the §2.32 notice');
+  assert.match(real['README.txt'], new RegExp(`Submission: ${sub.data.id}`));
+  assert.match(db.one(`SELECT details FROM audit_log WHERE action='caloms.submission.download' ORDER BY id DESC`).details, new RegExp(sub.data.sha256));
+  db.run(`UPDATE caloms_records SET provider_id=? WHERE id=?`, PROVIDER, rec.id);
+  // The list of submissions: what was produced, when, by whom — no names.
+  const list = await sup.get('/api/caloms/submissions');
+  assert.equal(list.status, 200);
+  const row = list.data.rows.find(r => r.id === sub.data.id);
+  assert.ok(row && row.sha256 === sub.data.sha256 && row.file_available === true && row.clients === sub.data.clients_disclosed);
+  assert.ok(!JSON.stringify(list.data).includes('Oms'), 'no names in the list');
+  assert.equal((await nav.get('/api/caloms/submissions')).status, 403);
+  // A stored file is kept only so long: once cleared, the row remains and the file is gone.
+  db.run(`UPDATE caloms_submissions SET created_at=? WHERE id=?`, '2000-01-01T00:00:00.000Z', sub.data.id);
+  require('../server/retention').clearOldCalomsFiles();
+  assert.equal(db.one(`SELECT file_enc FROM caloms_submissions WHERE id=?`, sub.data.id).file_enc, null);
+  assert.equal((await sup.get(`/api/caloms/submissions/${sub.data.id}/file`)).status, 410);
 });
 
 test('no extract while CalOMS is off', async () => {
@@ -392,4 +434,16 @@ test('CalOMS records are client data everywhere else too: synced, merged, purged
   assert.ok(SYNC.settings_keys.includes('caloms_enabled') && SYNC.settings_keys.includes('caloms_providers'));
   const R = require('../server/retention');
   assert.ok(R.DELETE_TABLES.indexOf('caloms_records') < R.DELETE_TABLES.indexOf('episodes'), 'purged before the episode it hangs off');
+});
+
+test('a stored submission file goes when a client in it is purged; its record and hash stay', async () => {
+  const cid = await newClient(sup);
+  const subId = require('node:crypto').randomUUID();
+  const supId = db.one(`SELECT id FROM users WHERE username='co_sup'`).id;
+  db.run(`INSERT INTO caloms_submissions(id,period_from,period_to,file_name,sha256,bytes,clients,file_enc,created_by) VALUES(?,?,?,?,?,?,?,?,?)`, subId, day(-30), TODAY, 'x.zip', 'a'.repeat(64), 3, 1, require('../server/crypto').encrypt('eHl6'), supId);
+  require('../server/disclosure').recordStateReport({ clientIds: [cid], what: 'test', sourceRef: `caloms:${subId}`, user: { id: supId }, ip: null });
+  const counts = require('../server/retention').purgeClient({ id: cid, client_code: codeOf(cid) });
+  assert.equal(counts.caloms_files_cleared, 1);
+  const row = db.one(`SELECT * FROM caloms_submissions WHERE id=?`, subId);
+  assert.equal(row.file_enc, null); assert.ok(row.file_cleared_at); assert.equal(row.sha256, 'a'.repeat(64));
 });

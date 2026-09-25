@@ -114,19 +114,25 @@ const sup = await session('jwalker', 'Navigator2026!!');
   ok(handoff.includes('SUDS does not submit Drug Medi-Cal claims'), 'the hand-off states the billing boundary');
   await until(async () => !(await page.textContent('[data-handoff-summary]')).includes('Checking'));
   ok(/encounter row/.test(await page.textContent('[data-handoff-summary]')), 'and previews the period without names');
-  // The extract: confirm, then a zip downloads.
+  // The preview downloads straight away, and says in its name that it is not the submission.
   const [download] = await Promise.all([
     page.waitForEvent('download', { timeout: 15000 }),
-    (async () => { await page.click('[data-caloms-download]'); await page.click('.modal button:has-text("Download extract")'); })(),
+    page.click('[data-caloms-download]'),
   ]);
-  ok(/^caloms-tx-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.zip$/.test(download.suggestedFilename()), 'the extract downloads as a zip', download.suggestedFilename());
-  // A download is a test / preview: nobody's accounting changes until the extract is marked as submitted.
+  ok(/^caloms-tx-PREVIEW-NOT-FOR-SUBMISSION-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.zip$/.test(download.suggestedFilename()), 'the preview downloads as a zip marked not for submission', download.suggestedFilename());
+  // A preview is not a disclosure: nobody's accounting changes until the submission file is produced.
   const before = await api('GET', `/api/clients/${clientId}/disclosures/accounting`);
-  ok(!(before.data.disclosures || []).some(d => d.basis === 'state_reporting'), 'downloading the extract does not account it');
-  await page.click('[data-caloms-submitted]'); await page.click('.modal button:has-text("Mark as submitted")');
-  ok(await until(async () => /accounted for as submitted/.test(await page.textContent('body'))), 'the page confirms the submission was recorded');
+  ok(!(before.data.disclosures || []).some(d => d.basis === 'state_reporting'), 'downloading the preview does not account it');
+  // Producing the submission accounts it and downloads exactly that file.
+  const [sub] = await Promise.all([
+    page.waitForEvent('download', { timeout: 15000 }),
+    (async () => { await page.click('[data-caloms-submitted]'); await page.click('.modal button:has-text("Produce submission file")'); })(),
+  ]);
+  ok(/^caloms-tx-SUBMISSION-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}-[0-9a-f]{8}\.zip$/.test(sub.suggestedFilename()), 'the submission file downloads', sub.suggestedFilename());
+  ok(await until(async () => /accounted for as disclosed to DHCS/.test(await page.textContent('body'))), 'the page confirms the submission was recorded');
+  ok(await until(async () => !!(await page.$('[data-caloms-submissions] [data-caloms-submission-download]'))), 'and lists it, to download again');
   const acct = await api('GET', `/api/clients/${clientId}/disclosures/accounting`);
-  ok((acct.data.disclosures || []).some(d => d.basis === 'state_reporting'), 'marking it submitted records it in the admitted client\'s accounting of disclosures');
+  ok((acct.data.disclosures || []).some(d => d.basis === 'state_reporting'), 'producing the submission records it in the admitted client\'s accounting of disclosures');
 }
 
 // ---------------- administrator: switch it off again ----------------

@@ -122,6 +122,11 @@ function purgeClient(client, { user = { username: 'system' }, reason = 'retentio
     for (const id of noteIds) { db.run(`DELETE FROM note_addenda WHERE note_id=?`, id); }
     counts.notes = db.run(`DELETE FROM notes WHERE client_id=?`, client.id).changes;
     for (const id of noteIds) db.tombstone('notes', id);
+    // A stored CalOMS Tx submission file this client is in names them: the file goes with the record (the
+    // submission row, its hash and the other clients' accounting stay). Found through this client's own
+    // accounting rows, before they are deleted below.
+    const inFiles = db.all(`SELECT DISTINCT source_ref FROM disclosures WHERE client_id=? AND source='caloms' AND source_ref LIKE 'caloms:%'`, client.id).map(r => r.source_ref.slice('caloms:'.length));
+    counts.caloms_files_cleared = inFiles.reduce((n, id) => n + db.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE id=? AND file_enc IS NOT NULL`, db.now(), db.now(), id).changes, 0);
     for (const t of DELETE_TABLES) {
       const ids = db.all(`SELECT id FROM ${t} WHERE client_id=?`, client.id).map(r => r.id);
       counts[t] = ids.length;
@@ -172,11 +177,23 @@ function purgeExpiredClients(opts = {}) {
   return { years, purged, skipped };
 }
 
+// A CalOMS Tx submission file is kept this long after it is produced — long enough to download it, submit
+// it and answer DHCS's error report — and then only its record (period, hash, counts) stays.
+const CALOMS_FILE_DAYS = 90;
+/** Clear stored CalOMS Tx submission files older than CALOMS_FILE_DAYS. Returns how many were cleared. */
+function clearOldCalomsFiles(days = CALOMS_FILE_DAYS) {
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+  const n = db.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE file_enc IS NOT NULL AND created_at < ?`, db.now(), db.now(), cutoff).changes;
+  if (n) audit.log({ user: { username: 'system' }, action: 'caloms.submission.file_cleared', details: { files: n, older_than_days: days } });
+  return n;
+}
+
 /** Run at most once a day from the hourly housekeeping pass. */
 function runIfDue() {
   const last = db.getSetting('client_retention_ran_at', null);
   if (last && Date.now() - Date.parse(last) < 86400000) return null;
+  try { clearOldCalomsFiles(); } catch (e) { console.error(`[suds] retention: could not clear old CalOMS files: ${e.message}`); }
   return purgeExpiredClients();
 }
 
-module.exports = { ACTIVITY, NOT_ACTIVITY, retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, runIfDue, DELETE_TABLES, UNLINK_TABLES };
+module.exports = { ACTIVITY, NOT_ACTIVITY, retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, runIfDue, DELETE_TABLES, UNLINK_TABLES, CALOMS_FILE_DAYS, clearOldCalomsFiles };
