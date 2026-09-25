@@ -8,6 +8,8 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   on a slow device, showed two sign-in forms); it is also what made the local-mode browser check fail
   intermittently in CI, where the click landed on the screen-reader status region during the blank. Full-screen
   pages (sign-in, set-up, MFA) are now built first and swapped in whole, and only the latest render wins.
+  The same screen already showing is kept rather than replaced, so a re-render never throws away what was
+  being typed into the sign-in form.
 - **QA retest fixes (reproduced on the published build, as the tester uses it).**
   - SUDS on this device: supply items can be added and counted again — it has no office, so it no longer
     refuses supply changes with "kept at the office". On a device that syncs with an office, the Supplies

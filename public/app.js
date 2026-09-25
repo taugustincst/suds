@@ -1141,7 +1141,16 @@ async function renderPage() {
   // showing. Only the latest render swaps in, so an older, slower one never lands on top of a newer one
   // (two overlapping sign-in renders used to append two sign-in forms).
   const seq = ++renderSeq;
-  const show = async (pending) => { const view = await pending; if (seq === renderSeq) clear(app).append(view); };
+  // The same whole-screen view already showing (the hash went from #/ to #/login, or signing out rendered
+  // twice) is kept, not replaced: replacing it threw away whatever the person had started typing into it.
+  const screen = [r.name === 'mfa' || r.name === 'setup' ? r.name : 'login', new URLSearchParams(location.hash.split('?')[1] || '').get('mode') || '', !!state.localSetupNeeded, !!state.setupNeeded, !!state.user].join('|');
+  const show = async (pending) => {
+    const view = await pending;
+    if (seq !== renderSeq) return;
+    if (app.firstElementChild && app.firstElementChild.dataset.screen === screen) return;
+    if (view && view.dataset) view.dataset.screen = screen;
+    clear(app).append(view);
+  };
   // A device with no account yet opens the sign-in page on Sign up, which is its first-run set-up.
   if (state.localSetupNeeded) { if (r.name !== 'localsetup' && r.name !== 'login') { nav('login?mode=signup'); return; } return show(routes.login(r)); }
   if (state.setupNeeded) { if (r.name !== 'setup') { nav('setup'); return; } return show(routes.setup(r)); }

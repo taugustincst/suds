@@ -31,7 +31,14 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   // The administrator, in a browser of their own.
   const actx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const admin = await actx.newPage(); watch(admin, 'office admin');
-  await admin.goto(office + '/#/login'); await admin.waitForSelector('input[name=username]');
+  // The sign-in page is shown at #/ as well as #/login. Moving between them re-renders it, and that must not
+  // throw away what was already typed (1.10.0's swap-in replaced the form, so a password typed a moment before
+  // a re-render went with it and Log in submitted an empty form).
+  await admin.goto(office + '/#/'); await admin.waitForSelector('input[name=username]'); await settle(admin);
+  await admin.fill('input[name=username]', 'admin-typed');
+  await admin.evaluate(() => { location.hash = '#/login'; }); await settle(admin);
+  eq(await admin.inputValue('input[name=username]'), 'admin-typed', 'a re-render of the sign-in page keeps what was typed in it');
+  eq(await admin.locator('input[name=username]').count(), 1, 'and there is still exactly one sign-in form');
   await admin.fill('input[name=username]', 'admin'); await admin.fill('input[name=password]', 'AdminPassw0rd!x'); await admin.click('button[type=submit]');
   await admin.waitForSelector('.layout', { timeout: 10000 });
   await admin.evaluate((h) => fetch('/api/me/prefs', { method: 'PUT', headers: h, body: JSON.stringify({ tour_done: true }) }), H);
