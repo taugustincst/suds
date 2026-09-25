@@ -66,8 +66,12 @@ ok(await toastSays(/saved|logged|✓/i), 'an administrative note is saved');
 // "?_=" reload of whatever tab was open) asynchronously after it closes — if that lands *after* this script
 // has already navigated to notes, it silently bounces back to overview. Wait for it to happen first.
 await page.waitForURL(/[?&]_=\d+/, { timeout: 5000 }).catch(() => {});
-await page.goto(`${base}/#/client/${cid}/notes`); await page.waitForSelector('tbody tr.click', { timeout: 15000 }); await page.click('tbody tr.click'); await page.waitForSelector('.modal'); await page.click('text=Sign & lock'); await page.waitForSelector('.modal:last-of-type input[name=password]', { timeout: 5000 });
-await page.fill('.modal:last-of-type input[name=password]', 'Navigator2026!!'); await page.click('.modal:last-of-type button[type=submit]');
+await page.goto(`${base}/#/client/${cid}/notes`); await page.waitForSelector('tbody tr.click', { timeout: 15000 }); await page.click('tbody tr.click'); await page.waitForSelector('.modal'); await page.click('text=Sign & lock');
+// Just after signing in the signature step is a confirmation of the attestation; later it asks for the password.
+const sigMode = await (await page.waitForSelector('.modal [data-signature-dialog]', { timeout: 5000 })).getAttribute('data-signature-dialog');
+eq(sigMode, 'confirm', 'signing soon after signing in needs no password');
+if (sigMode === 'password') await page.fill('.modal [data-signature-dialog] input[name=password]', 'Navigator2026!!');
+await page.click('.modal [data-signature-dialog] button[type=submit]');
 ok(await toastSays(/sign|lock|✓/i), 'signing the note locks it');
 await page.waitForURL(/[?&]_=\d+/, { timeout: 5000 }).catch(() => {});
 // 5. task

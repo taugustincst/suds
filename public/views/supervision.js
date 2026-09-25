@@ -2,9 +2,19 @@
 // referrals with no outcome recorded. Before this, the dashboard only counted the signed-in user's own
 // unsigned notes, so none of this was visible to the person responsible for it.
 import { h, route, get, post, state, toast, table, badge, fmt, can, pageHead, nav, emptyState, modal, form, announce, confirmDialog, pageTabs } from '../app.js';
+import { openNote, signatureDialog } from './notes.js';
+import { openOutcomeForm } from './referrals.js';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const hoursOf = (m) => fmt.mins(m);
+// Who the row is about: the client's name for a role that may open the client (the server leaves
+// client_name null for everyone else), with the code beside it; the code alone otherwise.
+const clientCell = (r) => (r.client_name ? h('span', { 'data-client-name': '1' }, r.client_name, ' ', h('span', { class: 'small muted' }, `(${r.client_code})`)) : (r.client_code || '—'));
+const who = (r) => (r.client_name ? `${r.client_name} (${r.client_code})` : r.client_code);
+// A countersignature certifies that the supervisor read the note, so the note itself is what they sign under.
+const noteBody = (n) => (n.structured
+  ? h('div', {}, Object.entries(n.structured).map(([k, v]) => (v ? h('div', { class: 'mb' }, h('b', {}, k), h('div', { style: { whiteSpace: 'pre-wrap' } }, v)) : null)))
+  : h('pre', { class: 'note' }, n.content || ''));
 
 route('supervision', async (r) => {
   const tab = r.query.get('tab') === 'breakglass' && can('audit:read') ? 'breakglass' : 'queue';
@@ -47,43 +57,47 @@ route('supervision', async (r) => {
   }
 
   // ---- countersignatures ----
-  const cosign = async (row) => {
-    let password, note;
-    // A countersignature certifies that the supervisor reviewed the note, so the note itself has to be
-    // in front of them here -- not just who wrote it and when.
-    let n = null; try { n = (await get(`/api/notes/${row.id}`)).note; } catch (e) { toast(e.message, 'error'); return; }
-    const content = n.structured
-      ? h('div', {}, Object.entries(n.structured).map(([k, v]) => v ? h('div', { class: 'mb' }, h('b', {}, k), h('div', { style: { whiteSpace: 'pre-wrap' } }, v)) : null))
-      : h('pre', { class: 'note' }, n.content || '');
-    const m = modal('Countersign this note', h('div', {},
-      h('p', {}, `${n.title ? n.title + ' — ' : ''}written by ${row.author} on ${fmt.date(row.occurred_at)} for ${row.client_code}.`),
-      h('div', { class: 'card tight mb', 'data-cosign-content': '1', style: { maxHeight: '40vh', overflow: 'auto' } }, content),
-      h('p', { class: 'small muted' }, 'Countersigning records your approval alongside the author. It does not replace their signature — both names stay on the record.'),
-      h('div', { class: 'field' }, h('label', { for: 'cosign-note' }, 'Comment (optional)'), note = h('textarea', { id: 'cosign-note', rows: 3 })),
-      h('div', { class: 'field' }, h('label', { for: 'cosign-pw' }, 'Your password *'), password = h('input', { id: 'cosign-pw', type: 'password', autocomplete: 'current-password' })),
-      h('div', { class: 'btn-row' },
-        h('button', { class: 'btn', onClick: () => m.close() }, 'Cancel'),
-        h('button', { class: 'btn primary', onClick: async () => {
-          if (!password.value) { password.focus(); toast('Your password is required to countersign', 'error'); return; }
-          try {
-            await post(`/api/notes/${row.id}/cosign`, { password: password.value, note: note.value.trim() || undefined });
-            toast('Countersigned', 'ok'); m.close(); refresh();
-          } catch (e) { toast(e.message, 'error'); }
-        } }, 'Countersign'))), { wide: true });
+  // One note, or several read one after the other in the same dialog: either way one confirmation (and the
+  // password or code only if it has been a while), and a countersignature — hash and audit entry — per note.
+  const cosign = async (rows) => {
+    const notes = [];
+    for (const row of rows) { try { notes.push({ row, n: (await get(`/api/notes/${row.id}`)).note }); } catch (e) { toast(e.message, 'error'); return; } }
+    const one = notes.length === 1;
+    const list = h('div', { 'data-cosign-list': String(notes.length) }, notes.map(({ row, n }, i) => h('section', { class: 'card tight mb', 'data-cosign-content': row.id },
+      h('h3', { class: 'eyebrow' }, `${one ? '' : `${i + 1} of ${notes.length}: `}${n.title || fmt.label(n.kind)}`),
+      h('p', { class: 'small' }, `Written by ${row.author} on ${fmt.date(row.occurred_at)} for ${who(row)}.`),
+      h('div', { 'data-scroll-region': '1', style: { maxHeight: one ? '40vh' : '30vh', overflow: 'auto' } }, noteBody(n)))));
+    signatureDialog({ title: one ? 'Countersign this note' : `Countersign ${notes.length} notes`, submitText: one ? 'Countersign' : `Countersign ${notes.length} notes`,
+      intro: h('div', {}, list, h('p', { class: 'small muted' }, `Countersigning records your approval alongside the author${one ? '' : ' of each note'}. It does not replace their signature — both names stay on the record.`)),
+      fields: [{ name: 'note', label: one ? 'Comment (optional)' : 'Comment for every note (optional)', type: 'textarea', rows: 2, span: true }],
+      send: async (body) => {
+        if (one) { await post(`/api/notes/${notes[0].row.id}/cosign`, { ...body, note: (body.note || '').trim() || undefined }); toast('Countersigned', 'ok'); return; }
+        const r = await post('/api/notes/cosign-batch', { ...body, ids: notes.map(x => x.row.id), note: (body.note || '').trim() || undefined });
+        toast(`${plural(r.cosigned.length, 'note', 'notes')} countersigned`, 'ok');
+        if (r.skipped.length) toast(`${r.skipped.length} not countersigned: ${r.skipped[0].reason}`, 'warn');
+      },
+      done: refresh });
   };
 
   // Countersignature and the team's unsigned drafts are for someone who can countersign (notes:cosign). A
   // role that only approves time (finance) used to see both, permanently empty, with nothing it could do.
   const cosignRows = q.awaiting_cosignature || [];
+  const picked = new Set();
+  const pickedCount = h('span', { class: 'small muted', 'data-cosign-picked': '0' }, '');
+  const showPicked = () => { pickedCount.textContent = picked.size ? `${picked.size} selected` : ''; pickedCount.dataset.cosignPicked = String(picked.size); };
   if (can('notes:cosign')) page.append(h('section', { class: 'card', 'data-section': 'cosign' },
     h('div', { class: 'card-head' }, h('h2', {}, 'Notes waiting for your countersignature'), badge(String(cosignRows.length), cosignRows.length ? 'warn' : 'ok')),
-    cosignRows.length ? table([
-      { label: 'Client', key: 'client_code' },
+    cosignRows.length ? h('div', {}, table([
+      { label: '', srLabel: 'Select', render: r => h('input', { type: 'checkbox', 'data-cosign-pick': r.id, 'aria-label': `Select the note by ${r.author} for ${r.client_code}`, onClick: (e) => e.stopPropagation(), onChange: (e) => { if (e.target.checked) picked.add(r.id); else picked.delete(r.id); showPicked(); announce(`${picked.size} selected`); } }) },
+      { label: 'Client', render: clientCell },
       { label: 'Author', key: 'author' },
       { label: 'Note', render: r => [r.title || fmt.label(r.kind), r.cosign_requested ? [' ', badge('Review requested by author', 'warn')] : null] },
       { label: 'Signed', render: r => fmt.dt(r.signed_at) },
-      { label: '', render: r => h('button', { class: 'btn sm primary', onClick: (e) => { e.stopPropagation(); cosign(r); } }, 'Countersign') },
-    ], cosignRows, { onRow: (r) => nav(`notes/${r.id}`), rowLabel: (r) => `Note by ${r.author} for ${r.client_code}` })
+      { label: '', render: r => h('button', { class: 'btn sm primary', onClick: (e) => { e.stopPropagation(); cosign([r]); } }, 'Countersign') },
+    ], cosignRows, { onRow: (r) => openNote(r.id, { onChange: refresh }) }),
+    cosignRows.length > 1 ? h('div', { class: 'btn-row' },
+      h('button', { class: 'btn primary', 'data-cosign-selected': '1', onClick: () => { const rows = cosignRows.filter(r => picked.has(r.id)); if (!rows.length) { toast('Select the notes to countersign first', 'error'); return; } cosign(rows); } }, 'Review and countersign selected'),
+      pickedCount) : null)
       : emptyState('Nothing to countersign', 'Notes by staff who need supervision appear here once they have signed them — and any note a worker sends you for review.')));
 
   // ---- unsigned drafts across the team ----
@@ -93,11 +107,11 @@ route('supervision', async (r) => {
     h('div', { class: 'card-head' }, h('h2', {}, 'Unsigned notes across your team'),
       badge(overdue ? `${overdue} overdue` : String(drafts.length), overdue ? 'danger' : drafts.length ? 'warn' : 'ok')),
     drafts.length ? table([
-      { label: 'Client', key: 'client_code' },
+      { label: 'Client', render: clientCell },
       { label: 'Author', key: 'author' },
       { label: 'Kind', render: r => fmt.label(r.kind) },
       { label: 'Started', render: r => h('span', { style: r.overdue ? { color: 'var(--danger)' } : {} }, fmt.date(r.created_at), r.overdue ? ' — overdue' : '') },
-    ], drafts, { onRow: (r) => nav(`notes/${r.id}`), rowLabel: (r) => `Draft by ${r.author} for ${r.client_code}` })
+    ], drafts, { onRow: (r) => openNote(r.id, { onChange: refresh }) })
       : emptyState('Everything is signed', 'Draft notes left by your team would show here.')));
 
   // ---- staff time ----
@@ -130,7 +144,7 @@ route('supervision', async (r) => {
           { label: 'Date', render: r => fmt.date(r.work_date) },
           { label: 'Minutes', key: 'minutes', num: true },
           { label: 'Activity', render: r => fmt.label(r.category, 'TIME_CATEGORIES') },
-          { label: 'Client', render: r => r.client_code || '—' },
+          { label: 'Client', render: clientCell },
           { label: 'Fund', render: r => r.funding_source || '—' },
           { label: '', render: r => h('div', { class: 'row' },
             h('button', { class: 'btn sm primary', onClick: (e) => { e.stopPropagation(); decide('approved', [r.id]); } }, 'Approve'),
@@ -164,6 +178,12 @@ route('supervision', async (r) => {
   }
 
   // ---- referrals that never closed the loop ----
+  // A row opens that referral's outcome form (what closes the loop); without write access, the client's
+  // referrals list.
+  const openReferral = async (r) => {
+    if (!can('referrals:write')) { nav(`referrals?client_id=${r.client_id}`); return; }
+    try { const row = (await get(`/api/referrals/${r.id}`)).row; openOutcomeForm(row, refresh); } catch (e) { toast(e.message, 'error'); }
+  };
   const open = q.referrals_awaiting_outcome || [];
   const revoked = q.referrals_consent_revoked || [];
   if (open.length || revoked.length) {
@@ -172,13 +192,14 @@ route('supervision', async (r) => {
       revoked.length ? h('div', { class: 'banner error', role: 'alert' },
         `${plural(revoked.length, 'referral', 'referrals')} relied on a consent that has since been revoked. Stop sharing information and close them out.`) : null,
       revoked.length ? table([
-        { label: 'Client', key: 'client_code' }, { label: 'Referred to', key: 'resource' },
-      ], revoked, { onRow: (r) => nav(`referrals?client_id=${r.client_id}`) }) : null,
-      open.length ? h('div', {}, h('h2', { class: 'mt' }, 'No outcome recorded yet'),
+        { label: 'Client', render: clientCell }, { label: 'Referred to', key: 'resource' },
+      ], revoked, { onRow: openReferral }) : null,
+      open.length ? h('div', { 'data-awaiting-outcome': String(open.length) }, h('h2', { class: 'mt' }, 'No outcome recorded yet'),
+        h('p', { class: 'small muted' }, 'Referrals the provider has been told about (contacted through scheduled) where nobody has recorded what happened.'),
         table([
-          { label: 'Client', key: 'client_code' }, { label: 'Referred to', key: 'resource' },
+          { label: 'Client', render: clientCell }, { label: 'Referred to', key: 'resource' },
           { label: 'Sent', render: r => fmt.date(r.referred_at) }, { label: 'Status', render: r => badge(fmt.label(r.status, 'REFERRAL_STATUSES')) },
-        ], open, { onRow: (r) => nav(`referrals?client_id=${r.client_id}`), rowLabel: (r) => `Referral for ${r.client_code} to ${r.resource}` })) : null));
+        ], open, { onRow: openReferral })) : null));
   }
 
   return h('div', {},

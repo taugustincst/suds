@@ -307,6 +307,9 @@ const DIALOGS = [
   ['Overdose report', 'overdose:write', async (p) => p.evaluate(async () => (await import('./views/overdose.js')).openOverdoseForm(null, {}))],
   ['§2.32 notice with a disclosure', 'consents:write', async (p) => p.evaluate(async () => (await import('./views/part2.js')).showNotice({ text: 'This record which has been disclosed to you is protected by Federal confidentiality rules (42 CFR part 2).' }))],
   ['Expenditure', 'budget:write', async (p) => p.evaluate(async () => (await import('./views/budget.js')).openExpenditureForm(null, {}))],
+  // The electronic-signature dialog as it opens soon after signing in (the attestation and one button).
+  ['Signature (confirmation only)', ['notes:admin:write', 'notes:clinical:write'], async (p) => p.evaluate(async () => (await import('./views/notes.js')).signatureDialog({ title: 'Electronic signature', submitText: 'Sign note', intro: 'By signing you attest that this documentation is accurate and complete.', send: async () => {} }))],
+  ['Consent as recorded', ['consents:read', 'consents:write'], async (p) => p.evaluate(async () => (await import('./views/part2.js')).openConsentDetail({ id: 'x', type: 'part2_disclosure', recipient: 'County OTP', purpose: 'Referral', scope: 'Referral summary', signed_at: '2026-09-01', expires_at: '2099-09-01', info_categories: ['referrals'], revocation_right_given: 1, redisclosure_notice_given: 1, refusal_consequences_given: 1, created_by_name: 'A colleague', active: true }))],
 ];
 async function auditDialogs(page, base, tag, clientId) {
   await go(page, base, 'dashboard');
@@ -385,6 +388,8 @@ const BUTTON_DIALOGS = [
   // Settings: an access request, a FHIR client, the recovery drill.
   ['admin?tab=users', 'Approve'], ['admin?tab=fhir', '+ New FHIR client'], ['admin?tab=fhir', 'Edit'],
   ['reports', 'Identified Excel workbook'], ['admin?tab=lists', '+ Add funding source'],
+  // The supervision queue: countersigning one note (the note's text, a comment, the signature step).
+  ['supervision', 'Countersign'],
 ];
 // [page, the <summary> that unfolds it, name]
 const EXPANDED = [
@@ -395,6 +400,7 @@ const EXPANDED = [
 const ROW_DIALOGS = [
   ['client/:client/assessments', '[data-asam]', 'an ASAM assessment'], ['client/:client/assessments', '[data-outcomes]', 'an outcome measure'],
   ['compliance?tab=complaints', '.card', 'a complaint'], ['compliance?tab=incidents', '.card', 'an incident'],
+  ['supervision', '[data-section=cosign]', 'a note from the countersignature queue'],
 ];
 
 // What each pass checks beyond axe, so a matrix of 5 passes × 7 roles does not repeat the slow ones.
@@ -678,9 +684,16 @@ async function keyboardRun() {
   ok(await tabTo(page, 'tbody tr.click button.row-open'), `${K}: Tab reaches the note in the list`);
   await page.keyboard.press('Enter'); await page.waitForSelector('.modal');
   ok(await tabTo(page, '.modal button', { text: 'Sign & lock' }), `${K}: Tab reaches "Sign & lock"`);
-  await page.keyboard.press('Enter'); await page.waitForSelector('.modal [name=password]');
-  eq((await active(page))?.name, 'password', `${K}: the signature dialog opens on the password field`);
-  await keyboardType(page, PW); await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  // Soon after signing in the signature is the attestation and one button; later it asks for the password.
+  const mode = await (await page.waitForSelector('.modal [data-signature-dialog]')).getAttribute('data-signature-dialog');
+  if (mode === 'confirm') {
+    eq((await active(page))?.text, 'Sign note', `${K}: the signature dialog opens on "Sign note", under the attestation`);
+    await page.keyboard.press('Enter');
+  } else {
+    eq((await active(page))?.name, 'password', `${K}: the signature dialog opens on the password field`);
+    await keyboardType(page, PW); await page.keyboard.press('Enter');
+  }
   await until(async () => !(await page.$('.modal')), { timeout: 10000 });
   const notes = await api(page, 'GET', `/api/notes?client_id=${clientId}`);
   ok((notes.data?.rows || []).some(n => n.status === 'signed'), `${K}: the note is signed with the keyboard alone`, (notes.data?.rows || []).map(n => n.status));

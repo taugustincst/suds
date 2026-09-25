@@ -10,6 +10,8 @@ const { uuid, randomToken, sha256 } = require('../crypto');
 // default_funding_source_id used to be accepted here and was read by nothing; it is gone (1.9.5).
 const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'program_contact', 'self_signup', 'note_lock_days', 'session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_required_roles', 'mfa_grace_days',
   'backup_schedule_hours', 'backup_retain_count', 'backup_offsite_dir', 'client_retention_years', 'org_timezone',
+  // Minutes after proving identity during which a note is signed with a confirmation alone (auth.verifySigner).
+  'sign_reauth_minutes',
   // Identity and recovery controls (server/security-status.js validates them together).
   'mfa_require_all', 'sso_required', 'sso_emergency_accounts', 'dr_drill_monthly', 'dr_rto_target_minutes', 'dr_rpo_target_hours',
   // Frequent online snapshots (server/scheduled-backup.js snapshot).
@@ -62,6 +64,7 @@ module.exports = (r) => {
         if (['mfa_require_all', 'sso_required', 'dr_drill_monthly'].includes(k) && v !== '' && !['0', '1'].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
         if (['dr_rto_target_minutes', 'dr_rpo_target_hours'].includes(k) && v !== '' && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
         if (k === 'mfa_required_roles') v = v.split(',').map(x => x.trim()).filter(x => ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'].includes(x)).join(',');
+        if (k === 'sign_reauth_minutes' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 60)) throw badRequest('sign_reauth_minutes must be a whole number of minutes from 0 (always ask) to 60');
         if (k === 'session_idle_minutes' && v !== '' && Number(v) > 60) throw badRequest('Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)');
         // Snapshots every few minutes: 0 is off; under 5 would spend the server on copying itself.
         if (k === 'backup_schedule_minutes' && v !== '' && !(Number.isInteger(Number(v)) && (Number(v) === 0 || (Number(v) >= 5 && Number(v) <= 1440)))) throw badRequest('backup_schedule_minutes must be 0 (off) or a whole number of minutes from 5 to 1440');

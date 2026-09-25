@@ -525,6 +525,10 @@ const migrations = [
       ['clients', 'contact_preferences', 'contact_preferences_enc'],
     ]) encryptColumn(d, t, from, to);
   },
+  // 40: a session remembers when it last proved who is using it (sessions.reauth_at), so signing a note
+  //     shortly after the sign-in, or after the last password given, needs a confirmation rather than the
+  //     password typed again. Existing sessions have none and ask for the password the first time.
+  (d) => { addColumn(d, 'sessions', 'reauth_at', 'TEXT'); },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's
