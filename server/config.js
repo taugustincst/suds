@@ -147,8 +147,10 @@ const config = {
   // only with a documented reason (and see docs/HIPAA.md).
   mfaRequiredRoles: (process.env.MFA_REQUIRED_ROLES ?? 'admin,supervisor,clinician,navigator,finance,readonly').split(',').map(s => s.trim()).filter(Boolean),
   // Days a new account in one of those roles has to enrol before it is locked out of everything but the
-  // enrolment screens. Set to 0 to require it immediately.
-  mfaGraceDays: Number(process.env.MFA_GRACE_DAYS ?? 14),
+  // enrolment screens, counted from creation (or from approval of an access request). 3 by default: long
+  // enough to get an authenticator app onto a phone, short of a fortnight of password-only access to PHI for
+  // every new or newly approved account (it was 14). 0 = at first sign-in. Not a number or negative: 3.
+  mfaGraceDays: (() => { const v = Number(process.env.MFA_GRACE_DAYS ?? 3); return Number.isFinite(v) && v >= 0 ? v : 3; })(),
   password: { minLength: 12, maxAgeDays: 90 },
   lockout: { maxAttempts: 5, minutes: 15 },
   // Sign-in attempts allowed per source address per 15 minutes. A whole office behind one NAT address

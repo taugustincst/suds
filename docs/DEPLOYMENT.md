@@ -335,7 +335,7 @@ Schema migrations run automatically at startup (`server/db.js`), each inside a t
 - [ ] Data directory permissions `0700`, database `0600`, owned by the service user.
 - [ ] Host firewall allows only 443 from the county network / VPN.
 - [ ] OS disk encryption enabled; screen lock policies on workstations.
-- [ ] MFA required for all roles (`MFA_REQUIRED_ROLES`, or the "every role" switch in Settings); grace period (`MFA_GRACE_DAYS`, default 14) set to what your policy allows.
+- [ ] MFA required for all roles (`MFA_REQUIRED_ROLES`, or the "every role" switch in Settings); grace period (`MFA_GRACE_DAYS`, default 3 days, counted from account creation or access-request approval; 0 = at first sign-in) set to what your policy allows.
 - [ ] Keys in a secrets manager; key custodian documented.
 - [ ] Backups scheduled, encrypted, off-host (snapshots every 15–60 minutes if the RPO target is under an hour); a recovery drill passed within the last quarter using the **escrowed key file** and the **offsite copy** (Settings → System & backups), monthly drill on.
 - [ ] `AUDIT_ANCHOR_DIR` on write-once storage outside the data directory; Security status shows the anchors matching and no startup-log warning about it.

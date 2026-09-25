@@ -39,7 +39,7 @@ test('B1: saving the Settings form on a fresh install keeps every policy default
     assert.equal((await admin.put('/api/admin/settings', body)).status, 200);
     const pol = auth.policy();
     assert.deepEqual(pol.mfaRequiredRoles, ALL_ROLES, 'MFA is still required of every role');
-    assert.equal(pol.idleMinutes, 15); assert.equal(pol.absoluteHours, 12); assert.equal(pol.passwordMaxAgeDays, 90); assert.equal(pol.mfaGraceDays, 14);
+    assert.equal(pol.idleMinutes, 15); assert.equal(pol.absoluteHours, 12); assert.equal(pol.passwordMaxAgeDays, 90); assert.equal(pol.mfaGraceDays, 3);
     assert.equal(require('../server/scheduled-backup').settings().retain, 14);
     assert.equal(H.db.getSetting('mfa_required_roles', null), null, 'an empty roles field is "unset", never stored as an empty string');
     assert.equal(H.db.getSetting('county_name'), 'Clark');
@@ -56,7 +56,7 @@ test('B1: a settings save is all-or-nothing', async () => {
   assert.equal(H.db.getSetting('program_contact', null), null, 'the field before the bad one was not written on its own');
 });
 
-test('H3: an MFA grace period of 0 means enrol now, not the 14-day default; other policy numbers refuse 0', async () => {
+test('H3: an MFA grace period of 0 means enrol now, not the 3-day default; other policy numbers refuse 0', async () => {
   assert.equal((await admin.put('/api/admin/settings', { mfa_grace_days: 0, mfa_required_roles: 'navigator' })).status, 200);
   try {
     assert.equal(auth.policy().mfaGraceDays, 0);
