@@ -229,6 +229,25 @@ function purgeClient(d, clientId, depth = 0) {
   return n;
 }
 
+/**
+ * The rows of a client-or-null table (calls, visits, overdose events, to-dos, time, expenditures) a user may
+ * see, as SQL on `alias`: a row with a client when `cf` (the caller's auth.caseloadFilter on that client)
+ * admits it; a row with no client only when the user owns it (the table's `unlinked.owners`) or holds its
+ * `unlinked.all`. One rule for REST (crud.js reads `unlinked` from here), devices (routes/sync.js) and
+ * exports (exports.js), so none can show what another refuses. `hasPerm` is auth.hasPerm, passed in so this
+ * file stays free of the auth module (the browser kernel loads it too).
+ */
+function clientOrNullScope(tableName, user, alias, cf, hasPerm) {
+  const t = module.exports.tables.find(x => x.name === tableName);
+  if (!t) throw new Error(`clientOrNullScope: ${tableName} is not a synchronised table`);
+  const col = `${alias}.${t.clientCol || 'client_id'}`;
+  const u = t.unlinked && !hasPerm(user, t.unlinked.all) ? t.unlinked : null;
+  if (!u) return { sql: `(${col} IS NULL OR ${cf.sql})`, params: [...cf.params] };
+  const own = u.owners.map(c => `${alias}.${c}=?`).join(' OR ');
+  return { sql: `((${col} IS NULL AND (${own})) OR (${col} IS NOT NULL AND ${cf.sql}))`, params: [...u.owners.map(() => user.id), ...cf.params] };
+}
+module.exports.clientOrNullScope = clientOrNullScope;
+
 /** Whether a push rejection reason is one a retry can never fix (see permanent_reasons). */
 module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some(p => String(reason || '').startsWith(p));
 module.exports.exportRow = exportRow;
