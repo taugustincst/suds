@@ -14687,6 +14687,10 @@ var require_admin = __commonJS({
       r.post("/api/admin/backup/run-now", auth3.requireAuth, auth3.requirePerm("settings:manage"), async (ctx) => {
         const { retain, offsiteDir } = scheduledBackup.settings();
         const out2 = await scheduledBackup.run({ retain, offsiteDir });
+        if (out2.failed || !out2.file) {
+          audit3.log({ user: ctx.user, action: "backup.run_now", ip: ctx.ip, success: false, details: { error: String(out2.error || "unknown").slice(0, 300) } });
+          throw new HttpError3(500, `The backup failed: ${out2.error || "no backup file was written"}. Nothing was saved; check the disk and the data folder, then try again.`);
+        }
         audit3.log({ user: ctx.user, action: "backup.run_now", ip: ctx.ip, details: { bytes: out2.bytes, offsite: out2.offsiteOk, verified: out2.verified } });
         return { ok: true, file: path.basename(out2.file), bytes: out2.bytes, offsite_ok: out2.offsiteOk, offsite_error: out2.offsiteError || null, verified: out2.verified, verify_error: out2.verifyError || null };
       });
@@ -23753,7 +23757,7 @@ var require_reports = __commonJS({
     var db3 = require_db();
     var auth3 = require_auth2();
     var audit3 = require_audit();
-    var { sendJson, badRequest } = require_http();
+    var { sendJson, badRequest, forbidden } = require_http();
     var M = require_clients_model();
     var CFX = require_client_filters();
     var { defer } = require_spreadsheet();
@@ -23771,6 +23775,25 @@ var require_reports = __commonJS({
       const hi = toEnd > to ? toEnd : to;
       const ts = (col) => `(${col} BETWEEN ? AND ? AND ((length(${col})>10 AND ${col} BETWEEN ? AND ?) OR (length(${col})=10 AND ${col} BETWEEN ? AND ?)))`;
       return { from, to, fromTs, toEnd, ts, tsP: [lo, hi, fromTs, toEnd, from, to] };
+    }
+    function requireReportRun({ caseloadScoped, fund = false }) {
+      return (ctx) => {
+        const asked = ctx.query.get("purpose") || "";
+        const exact = ctx.query.get("counts") === "exact";
+        if (exact && asked !== "publication" && !auth3.hasPerm(ctx.user, "reports:exact")) {
+          audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms: ["reports:exact"], path: ctx.path } });
+          throw forbidden("Only a supervisor or an administrator can run this report with exact counts. Small cells stay suppressed for everyone else.");
+        }
+        if (asked === "publication" && !exact) return;
+        if (asked && !["submission", "internal"].includes(asked)) return;
+        const { from, to } = range(ctx);
+        const rel = FR.release(ctx, { from, to }, { fund: fund ? ctx.query.get("funding_source_id") || null : null });
+        const internal = asked || exact || !rel.publishable;
+        if (!internal || auth3.reportRunAllowed(ctx.user, { caseloadScoped })) return;
+        audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms: ["reports:internal"], path: ctx.path, purpose: asked || "internal", counts: ctx.query.get("counts") || "suppressed" } });
+        const why = asked ? `it asks for ${exact ? "exact counts" : `purpose=${asked}`}` : rel.not_publishable.join(" and ");
+        throw forbidden(`Your role can run this report only as a publication release: the whole programme (all funding sources) for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended. This run is not one, because ${why}. Internal and submission runs, and exact counts, are for supervisors and administrators.`);
+      };
     }
     module.exports = (r) => {
       r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
@@ -23918,12 +23941,12 @@ var require_reports = __commonJS({
           time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s)
         };
       });
-      r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), async (ctx) => {
+      r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), requireReportRun({ caseloadScoped: true, fund: true }), async (ctx) => {
         const out2 = await FR.build(ctx, range(ctx));
         audit3.log({ user: ctx.user, action: "report.funder", ip: ctx.ip, details: { from: out2.from, to: out2.to, funding_source_id: out2.funding_source_id || void 0, served: out2.unduplicated.served, counts: out2.suppression.mode, purpose: out2.suppression.purpose } });
         return out2;
       });
-      r.get("/api/reports/funder/export", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("export:read"), async (ctx) => {
+      r.get("/api/reports/funder/export", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("export:read"), requireReportRun({ caseloadScoped: true, fund: true }), async (ctx) => {
         const d = await FR.build(ctx, range(ctx));
         const fundName = d.funding_source_id ? db3.one(`SELECT name FROM funding_sources WHERE id=?`, d.funding_source_id)?.name : null;
         const sh = FR.sheets(d, ctx, fundName);
@@ -23941,7 +23964,9 @@ var require_reports = __commonJS({
         });
         ctx.res.end(body);
       });
-      require_harm_reduction_reports().routes(r, range);
+      const HR_SCOPED = { "/api/reports/naloxone-ndp": true, "/api/reports/naloxone-ndp/export": true };
+      const hrRouter = { get: (path, ...fns) => r.get(path, ...fns.slice(0, -1), requireReportRun({ caseloadScoped: !!HR_SCOPED[path] }), fns[fns.length - 1]) };
+      require_harm_reduction_reports().routes(hrRouter, range);
       r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("export:read"), async (ctx) => {
         const period = range(ctx);
         const { from, to } = period;
@@ -32981,6 +33006,7 @@ var require_auth2 = __commonJS({
         "incidents:*",
         "court-orders:*",
         "agreements:*",
+        "reports:internal",
         "reports:exact"
       ],
       supervisor: [
@@ -33028,6 +33054,7 @@ var require_auth2 = __commonJS({
         "incidents:*",
         "court-orders:*",
         "agreements:*",
+        "reports:internal",
         "reports:exact"
       ],
       // Front-line staff hold export:read so the Export buttons on their own screens work; without
@@ -33093,10 +33120,12 @@ var require_auth2 = __commonJS({
       ],
       // finance sees money, not people: export:read without export:identified means every export it can run
       // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
-      finance: ["clients:list-deidentified", "budget:read", "budget:write", "budget:approve", "budget:manage", "time:read", "time:all", "time:approve", "reports:read", "export:read", "users:read", "documents:read", "documents:write", "reports:exact"],
+      // Its people counts are publication releases only (no reports:internal, so no reports:exact): money and hours
+      // are exact in those, and on Budget and Time for any range or fund.
+      finance: ["clients:list-deidentified", "budget:read", "budget:write", "budget:approve", "budget:manage", "time:read", "time:all", "time:approve", "reports:read", "export:read", "users:read", "documents:read", "documents:write"],
       // readonly is for oversight (a county analyst, an auditor's dashboard): aggregate reports and the resource
       // directory, keyed by client code. It holds neither clients:read nor export:read, so it can identify nobody
-      // and take nothing off the system.
+      // and take nothing off the system. Its funder, NDP and settlement reports are publication releases only.
       readonly: ["clients:list-deidentified", "resources:read", "reports:read", "users:read", "forms:read", "documents:read"]
     };
     function hasPerm(user, perm) {
@@ -33116,6 +33145,10 @@ var require_auth2 = __commonJS({
           throw forbidden("You do not have permission for this action");
         }
       };
+    }
+    function reportRunAllowed(user, { caseloadScoped = false } = {}) {
+      if (hasPerm(user, "reports:internal")) return true;
+      return hasPerm(user, "clients:read") && (caseloadScoped || !caseloadRestricted(user));
     }
     function caseloadRestricted(user) {
       if (hasPerm(user, "clients:all") || hasPerm(user, "clients:list-deidentified")) return false;
@@ -33430,6 +33463,7 @@ var require_auth2 = __commonJS({
       assertClientAccess,
       caseloadFilter,
       caseloadRestricted,
+      reportRunAllowed,
       createSession,
       markReauth,
       reauthStatus,
@@ -35466,9 +35500,13 @@ async function rekeyAfterRestore(v, currentDek, username, password, { userId, ke
   const dek2 = newDek();
   const key = await importDek(dek2);
   const others = v.wraps.filter((w) => w.chained && w.user_id !== userId && w.name !== name);
-  const dropped = v.wraps.filter((w) => !w.chained && w.user_id !== userId).map((w) => w.user_id);
+  const droppedWraps = v.wraps.filter((w) => !w.chained && w.user_id !== userId);
+  const dropped = droppedWraps.map((w) => w.user_id);
   const own = await wrapDek(dek2, password, { userId, name });
   const next = { ...v, keys: await sealKeys(key, keys), wraps: [...others, own], rekeyed_at: (/* @__PURE__ */ new Date()).toISOString() };
+  const names = [.../* @__PURE__ */ new Set([...v.dropped_after_restore || [], ...droppedWraps.map((w) => w.name)])];
+  if (names.length) next.dropped_after_restore = names;
+  else delete next.dropped_after_restore;
   if (hints2) next.hints = hints2;
   delete next.rekey;
   if (others.length) {
@@ -35514,8 +35552,18 @@ async function openKeys(dekKey2, sealed) {
 async function create2(dekKey2, keys, hints2 = {}) {
   return { format: VAULT_FORMAT, version: VERSION2, salt: rand(16), kdf: "PBKDF2-SHA256", iterations: ITERATIONS2, wraps: [], keys: await sealKeys(dekKey2, keys), hints: hints2, created_at: (/* @__PURE__ */ new Date()).toISOString() };
 }
+async function droppedAfterRestore(vault, username) {
+  if (!vault || !Array.isArray(vault.dropped_after_restore) || !vault.dropped_after_restore.length || !username) return false;
+  if ((await wrapsFor(vault, username)).length) return false;
+  return vault.dropped_after_restore.includes(await nameHash(vault.salt, username));
+}
 function withWrap(vault, wrap) {
   const next = { ...vault, wraps: vault.wraps.filter((w) => w.user_id !== wrap.user_id).concat(wrap) };
+  if (Array.isArray(next.dropped_after_restore)) {
+    const left = next.dropped_after_restore.filter((n) => n !== wrap.name);
+    if (left.length) next.dropped_after_restore = left;
+    else delete next.dropped_after_restore;
+  }
   if (!next.wraps.some((w) => w.chained)) delete next.chain;
   return next;
 }
@@ -35709,7 +35757,7 @@ async function rekeyIfRestored(userId, username, password) {
       return false;
     }
     before.dek.fill(0);
-    import_audit2.default.log({ user: { username: "device" }, action: "device.key_rotated", details: { reason: "restore", carried_accounts_waiting: out2.vault.wraps.filter((w) => w.chained).length, wraps_dropped: out2.dropped.length } });
+    import_audit2.default.log({ user: { username: "device" }, action: "device.key_rotated", details: { reason: "restore", carried_accounts_waiting: out2.vault.wraps.filter((w) => w.chained).length, wraps_dropped: out2.dropped.length, dropped_accounts: out2.dropped } });
     return true;
   });
   vaultQueue = run2.catch(() => {
@@ -35847,6 +35895,7 @@ async function afterPasswordEvent(method, path, body, ctx, result) {
   }
 }
 var PASSWORD_PATHS = /^\/api\/(auth\/login|auth\/password|local\/signup|local\/setup|local\/sync|users(\/[^/]+)?)$/;
+var DROPPED_AT_RESTORE = "This device was restored from a backup and moved to a new key; your sign-in on this device must be re-approved by someone who can already sign in here. Ask them to type their username and password below.";
 async function lockedAnswer(method, path, body) {
   const b = body || {};
   if (method === "GET" && path === "/api/local/status") {
@@ -35859,6 +35908,9 @@ async function lockedAnswer(method, path, body) {
     if (!r && b.sponsor_username) {
       r = await tryUnwrap(b.sponsor_username, b.sponsor_password);
       if (!r) return refused(401, "The account unlocking this device could not sign in: check its username and password.", { sponsorRequired: true });
+    }
+    if (!r && await droppedAfterRestore(theVault, b.username)) {
+      return refused(401, DROPPED_AT_RESTORE, { sponsorRequired: true, droppedAfterRestore: true });
     }
     if (!r) return refused(401, "Username or password is incorrect.", { sponsorRequired: !(await wrapsFor(theVault, b.username)).length });
     await unlockWith(r.dek);
