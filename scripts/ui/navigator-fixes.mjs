@@ -224,12 +224,14 @@ const nav = await session('mrivera', 'Navigator2026!!');
   await go(page, 'supplies');
   const after = Number((await page.$eval('[data-qty="Naloxone kit"]', e => e.textContent)).replace(/,/g, ''));
   eq(after, before - 2, 'logging a visit with 2 kits takes 2 off the shelf count');
-  await page.click('button[aria-label="One more Naloxone kit"]'); await settle(page);
-  eq(Number((await page.$eval('[data-qty="Naloxone kit"]', e => e.textContent)).replace(/,/g, '')), before - 1, '+ adds one back');
+  // 1.14: a navigator records a delivery (Receive) rather than nudging the count (docs/SUPPLIES.md).
+  await page.click('button[aria-label="Receive Naloxone kit"]'); await page.waitForSelector('.modal input[name=quantity]');
+  await page.fill('.modal input[name=quantity]', '1'); await page.click('.modal button[type=submit]'); await until(async () => !(await page.$('.modal-bg'))); await settle(page);
+  eq(Number((await page.$eval('[data-qty="Naloxone kit"]', e => e.textContent)).replace(/,/g, '')), before - 1, 'receiving one adds one back');
   const ro = await session('afinance', 'Navigator2026!!');
   await go(ro.page, 'supplies');
-  // The cupboard belongs to the staff who record the visits that draw it down (interventions:read); a
-  // finance account has no visits to record, so neither the page nor the nav item is offered.
+  // The cupboard belongs to the staff who record the visits that draw it down (supplies:read); a finance
+  // account has no visits to record, so neither the page nor the nav item is offered.
   ok(!/Naloxone kit/.test(await ro.page.textContent('.main')), 'finance does not see the cupboard');
   ok(!(await ro.page.$('.nav a[href="#/supplies"]')), 'and has no Supplies link in the navigation');
   eq((await ro.api('GET', '/api/supplies')).status, 403, 'the API refuses it too');

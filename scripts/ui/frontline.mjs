@@ -278,7 +278,9 @@ eq((await admin.api('GET', '/api/supplies')).data.rows.length, 0, 'the supply cu
   // they were not taken off.
   await go(page, 'supplies');
   ok(await page.$('[data-supplies-missing]'), 'Supplies says visits take kits off only once the items exist');
-  ok(await page.$('[data-add-standard-supplies]'), 'and offers to add them in one click');
+  // Adding items is for supervisors and administrators (supplies:manage, 1.14.0): a navigator is told so; the
+  // administrator's one click is checked below.
+  ok(!(await page.$('[data-add-standard-supplies]')) && /A supervisor or administrator adds items/.test(await page.textContent('[data-supplies-missing]')), 'and says who adds them');
   await go(page, 'interventions');
   await page.evaluate(async () => (await import('./views/interventions.js')).openInterventionForm(null, {}));
   await page.waitForSelector('.modal select[name=type]');

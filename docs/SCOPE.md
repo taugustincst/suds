@@ -10,7 +10,7 @@ SOR / the Naloxone Distribution Project, SABG prevention funds and similar grant
 
 | | What | Who it is for |
 | --- | --- | --- |
-| **Core** | Outreach encounters, calls and texts; anonymous community distribution; overdose and reversal events; the supply cupboard; referrals and the resource directory; consents, the accounting of disclosures and the audit log; funding sources, budget lines, expenditures and staff time with approvals; the funder report and funder-style logs (a naloxone distribution log in the style of the DHCS Naloxone Distribution Project, an opioid-settlement expenditure report by allowable-use category — each to be checked against the funder's current template) | Every programme |
+| **Core** | Outreach encounters, calls and texts; anonymous community distribution; overdose and reversal events; supplies by item, site and lot with a receiving log, transfers, adjustments, disposal of expired stock and first-expiry-first-out draw-down by visits, and syringe services (syringes and sharps returned, a syringe services summary; [SUPPLIES.md](SUPPLIES.md)); referrals and the resource directory; consents, the accounting of disclosures and the audit log; funding sources, budget lines, expenditures and staff time with approvals; the funder report and funder-style logs (a naloxone distribution log in the style of the DHCS Naloxone Distribution Project, an opioid-settlement expenditure report by allowable-use category — each to be checked against the funder's current template) | Every programme |
 | **Optional (clinical)** | Care plan, problem list, six-dimension assessment, outcome measures, structured clinical notes with signature and countersignature, episodes of care, CalOMS Tx, the FHIR R4 API and the county EHR encounter hand-off below | Treatment-adjacent programmes that need them |
 
 The **programme profile** setting chooses which set a programme sees: **Harm reduction & outreach** (the default;
@@ -82,3 +82,13 @@ Still not produced:
   the mapping covers only what the settlement report holds, and each county's form must still be checked.
 - The naloxone log follows the published reporting fields as understood, not the official NDP template
   (docs/compliance/HARM-REDUCTION-REPORTING.md).
+
+## Supplies: what it is, and is not
+
+SUDS keeps a harm-reduction programme's stock: items by category (naloxone by product, test strips, syringes by
+size, sharps containers and the rest), at the sites the programme sets up, in lots with expiry dates, as an
+append-only ledger of what was received, moved, adjusted, disposed of and handed out ([SUPPLIES.md](SUPPLIES.md)).
+It is not a purchasing or accounts-payable system: a purchase is recorded against a fund on Funding & spending,
+and the delivery it paid for is received on Supplies. It does not order from the Naloxone Distribution Project
+or the CDPH supply clearinghouse, and its syringe services summary and NDP-style log are layouts to check
+against the current official templates, not the templates themselves.

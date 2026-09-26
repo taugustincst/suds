@@ -595,7 +595,54 @@ const migrations = [
     d.exec(`CREATE INDEX IF NOT EXISTS idx_suprt_assessments_date ON suprt_assessments(assessment_date)`);
     d.exec(`CREATE INDEX IF NOT EXISTS idx_suprt_assessments_updated ON suprt_assessments(updated_at)`);
   },
+  // 45: supplies by item, site and lot (docs/SUPPLIES.md). The single-number cupboard (supply_stock) becomes
+  //     items (supply_items), sites (supply_sites; one, "Main office", to start with) and an append-only stock
+  //     ledger (supply_ledger) whose sum is what is on hand; each old count is carried in as an opening
+  //     balance at the main office, and each old item keeps its id. A visit records any item it hands out
+  //     (intervention_supplies), the site it drew from, and the syringes and sharps brought back.
+  //     Self-contained and idempotent: every step checks what is already there.
+  (d) => migrateSupplies(d, safeSchema()),
 ];
+
+// The site every install starts with: created with this fixed id on a fresh database and by migration 45, so
+// an office and every device that syncs with it hold the same row (a device never creates sites of its own).
+const MAIN_SITE_ID = 'site-main';
+function ensureMainSite(d) {
+  d.prepare(`INSERT OR IGNORE INTO supply_sites(id,name,kind,sort_order) VALUES(?,?,?,0)`).run(MAIN_SITE_ID, 'Main office', 'office');
+}
+function migrateSupplies(d, schemaText) {
+  for (const t of ['supply_sites', 'supply_items', 'intervention_supplies', 'supply_ledger']) {
+    const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+    if (!m) throw new Error(`migration 45: no definition for ${t} in schema`);
+    d.exec(m[0]);
+  }
+  for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_(supply_sites|supply_items|intervention_supplies|supply_ledger)_/.test(line.trim())) d.exec(line.trim());
+  addColumn(d, 'users', 'default_site_id', 'TEXT');
+  addColumn(d, 'interventions', 'supply_site_id', 'TEXT');
+  addColumn(d, 'interventions', 'syringes_returned', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'interventions', 'returns_estimated', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'interventions', 'sharps_returned_litres', 'REAL');
+  ensureMainSite(d);
+  if (!tableExists(d, 'supply_stock')) return;
+  // The old cupboard: one row per item with a count. The item keeps its id (a device that still shows the
+  // old row by id finds the item), its category is read from its name, and a count above zero becomes an
+  // opening balance at the main office, dated the day it was last changed and recorded by who changed it.
+  const { categoryFromName, unitFor } = require('./supply-names');
+  const anyone = d.prepare(`SELECT id FROM users ORDER BY CASE role WHEN 'admin' THEN 0 WHEN 'supervisor' THEN 1 ELSE 2 END, created_at LIMIT 1`).get();
+  const known = new Set(d.prepare(`SELECT id FROM users`).all().map((u) => u.id));
+  const addItem = d.prepare(`INSERT OR IGNORE INTO supply_items(id,name,category,unit,quick,sort_order,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`);
+  const addEntry = d.prepare(`INSERT OR IGNORE INTO supply_ledger(id,item_id,site_id,kind,quantity,lot_number,expires_on,occurred_on,reason,user_id,created_at,updated_at) VALUES(?,?,?,'opening',?,'',NULL,?,?,?,?,?)`);
+  const now = new Date().toISOString();
+  let order = 0;
+  for (const s of d.prepare(`SELECT * FROM supply_stock ORDER BY item COLLATE NOCASE`).all()) {
+    const category = categoryFromName(s.item);
+    const by = s.updated_by && known.has(s.updated_by) ? s.updated_by : (anyone ? anyone.id : null);
+    addItem.run(s.id, String(s.item).trim(), category, unitFor(category, s.item), ['naloxone', 'fentanyl_test_strips'].includes(category) ? 1 : 0, order++, by, s.created_at || now, now);
+    if (Number(s.quantity) > 0) addEntry.run(`opening-${s.id}`, s.id, MAIN_SITE_ID, Math.trunc(Number(s.quantity)), String(s.updated_at || now).slice(0, 10), 'carried over from the single-number supply count', by, now, now);
+  }
+  d.exec(`DROP TABLE supply_stock`);
+  d.exec(`DELETE FROM tombstones WHERE table_name='supply_stock'`);
+}
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's
 // tables would try to index columns that do not exist yet. test/migrations.test.js asserts the two
@@ -610,6 +657,7 @@ function initialise(d, schemaText, dbPath) {
     // A new install is a harm-reduction & outreach programme until someone says otherwise (the setup
     // wizard asks; Settings › Programme changes it). server/programme.js.
     d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('programme_profile',?)`).run(require('./programme').DEFAULT_PROFILE);
+    ensureMainSite(d);
   } else {
     encryptedColumns = 0;
     migrate(d, dbPath);
@@ -889,4 +937,4 @@ function setSetting(key, value) {
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, isOpen, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
+module.exports = { open, openWith, get, close, isOpen, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };

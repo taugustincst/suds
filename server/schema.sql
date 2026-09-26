@@ -55,7 +55,10 @@ CREATE TABLE IF NOT EXISTS users (
   default_fund_id TEXT,
   -- The RFC 6238 time-step of the last authenticator code accepted for this account (migration 41): a code
   -- is good once, at sign-in, at signing or at enrolment, never replayed within its 90-second window.
-  totp_last_step INTEGER
+  totp_last_step INTEGER,
+  -- The supply site (supply_sites) this worker's visits draw supplies from unless the visit names another
+  -- (migration 44). Blank: the programme's default site. No REFERENCES, like default_fund_id.
+  default_site_id TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL;
@@ -272,7 +275,15 @@ CREATE TABLE IF NOT EXISTS interventions (
   summary_enc TEXT,
   follow_up_due TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- Syringe services (migration 44, docs/SUPPLIES.md). The supply site the visit's supplies came from
+  -- (supply_sites; no REFERENCES, so a visit never fails to sync over a site), and the used syringes and
+  -- sharps brought back: a count, or an estimate from the container's volume (returns_estimated=1,
+  -- sharps_returned_litres), which is how CDPH syringe services reporting counts returns it did not count.
+  supply_site_id TEXT,
+  syringes_returned INTEGER NOT NULL DEFAULT 0,
+  returns_estimated INTEGER NOT NULL DEFAULT 0,
+  sharps_returned_litres REAL
 );
 CREATE INDEX IF NOT EXISTS idx_interventions_client ON interventions(client_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_interventions_user ON interventions(user_id, occurred_at);
@@ -895,17 +906,95 @@ CREATE INDEX IF NOT EXISTS idx_overdose_client ON overdose_events(client_id, occ
 CREATE INDEX IF NOT EXISTS idx_overdose_occurred ON overdose_events(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_overdose_updated ON overdose_events(updated_at);
 
--- Harm-reduction supply inventory (naloxone kits, test strips…). A visit that records kits or strips
--- handed out decrements the matching item, so the count on hand is what is actually left in the cupboard.
-CREATE TABLE IF NOT EXISTS supply_stock (
+-- Harm-reduction and syringe-services supplies (migration 44, docs/SUPPLIES.md). Items (naloxone by product,
+-- test strips, syringes by size, sharps containers, safer-use and hygiene supplies…) are kept at sites (the
+-- office, a van, a drop-in, a partner site), in lots with a lot number and an expiry date. What is on hand is
+-- the sum of an append-only ledger: stock received, moved between sites, adjusted with a reason, disposed of,
+-- and handed out on a visit (drawn from the earliest-expiring lot first). Nothing in these tables is about a
+-- client: a visit's supplies are intervention_supplies, which hangs off the visit.
+-- Names are unique in the application, not by constraint: a device that holds the office's list must never
+-- refuse the office's copy of a row because of a local name.
+CREATE TABLE IF NOT EXISTS supply_sites (
   id TEXT PRIMARY KEY,
-  item TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  quantity INTEGER NOT NULL DEFAULT 0,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'office' CHECK (kind IN ('office','van','drop_in','partner','other')),
+  is_active INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
   updated_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-CREATE INDEX IF NOT EXISTS idx_supply_stock_updated ON supply_stock(updated_at);
+CREATE INDEX IF NOT EXISTS idx_supply_sites_updated ON supply_sites(updated_at);
+
+CREATE TABLE IF NOT EXISTS supply_items (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'other' CHECK (category IN ('naloxone','fentanyl_test_strips','xylazine_test_strips','syringes','sharps_container','cookers','cottons','alcohol_pads','safer_smoking','wound_care','condoms','hygiene_kit','other')),
+  -- Naloxone only: which product (constants SUPPLY_NALOXONE_PRODUCTS), carried to the NDP log.
+  product TEXT,
+  unit TEXT NOT NULL DEFAULT 'each',
+  -- One tap on the visit form (the programme's usual items).
+  quick INTEGER NOT NULL DEFAULT 0,
+  -- At or below this much on hand at a site, the item is shown as running low. NULL: no alert.
+  low_stock INTEGER,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  updated_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_supply_items_updated ON supply_items(updated_at);
+
+-- What a visit (or an anonymous outreach contact) handed out, one row per item. untracked: how much of the
+-- quantity was recorded before supplies were kept by item (a visit's naloxone_kits from 1.13 or earlier),
+-- which the old cupboard count already took off and the ledger must not take off again.
+CREATE TABLE IF NOT EXISTS intervention_supplies (
+  id TEXT PRIMARY KEY,
+  intervention_id TEXT NOT NULL REFERENCES interventions(id) ON DELETE CASCADE,
+  client_id TEXT REFERENCES clients(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  item_id TEXT NOT NULL REFERENCES supply_items(id),
+  quantity INTEGER NOT NULL CHECK (quantity > 0),
+  untracked INTEGER NOT NULL DEFAULT 0 CHECK (untracked >= 0 AND untracked <= quantity),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_intervention_supplies_visit ON intervention_supplies(intervention_id);
+CREATE INDEX IF NOT EXISTS idx_intervention_supplies_client ON intervention_supplies(client_id);
+CREATE INDEX IF NOT EXISTS idx_intervention_supplies_updated ON intervention_supplies(updated_at);
+
+-- The stock ledger. Append-only: a row is never changed or removed (a mistake is corrected by another row),
+-- and on hand at a site, per lot, is SUM(quantity). kind: opening (a balance carried in, including the 1.13
+-- cupboard counts), received, transfer_out / transfer_in (a pair sharing transfer_id), adjustment (reason:
+-- count_correction, damaged, expired, lost, other; shortfall when a draw-down found less on the books than
+-- was handed out, flagged for review), disposal (expired, damaged or recalled stock destroyed), distributed
+-- and restored (a visit's draw-down and its correction; intervention_id, no REFERENCES so the row outlives a
+-- deleted visit). lot_number '' is stock with no lot recorded. source (received only): ndp, cdph_clearinghouse,
+-- purchase (funding_source_id: the fund that paid), donation, other. reference: the order or shipment number.
+CREATE TABLE IF NOT EXISTS supply_ledger (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL REFERENCES supply_items(id),
+  site_id TEXT NOT NULL REFERENCES supply_sites(id),
+  kind TEXT NOT NULL CHECK (kind IN ('opening','received','transfer_out','transfer_in','adjustment','disposal','distributed','restored')),
+  quantity INTEGER NOT NULL CHECK (quantity <> 0),
+  lot_number TEXT NOT NULL DEFAULT '',
+  expires_on TEXT,
+  occurred_on TEXT NOT NULL,
+  source TEXT,
+  funding_source_id TEXT,
+  reference TEXT,
+  reason TEXT,
+  transfer_id TEXT,
+  intervention_id TEXT,
+  flagged INTEGER NOT NULL DEFAULT 0,
+  user_id TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_supply_ledger_updated ON supply_ledger(updated_at);
+CREATE INDEX IF NOT EXISTS idx_supply_ledger_stock ON supply_ledger(item_id, site_id, expires_on, lot_number);
+CREATE INDEX IF NOT EXISTS idx_supply_ledger_visit ON supply_ledger(intervention_id) WHERE intervention_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_supply_ledger_occurred ON supply_ledger(occurred_on);
 
 -- Hard deletes travel to devices as tombstones (created by migration 2 on databases predating 1.2).
 CREATE TABLE IF NOT EXISTS tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, id));

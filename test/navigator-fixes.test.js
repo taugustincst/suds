@@ -205,34 +205,40 @@ test('a safety plan is a structured note the client overview can point at', asyn
   assert.deepEqual((await nav.get(`/api/notes/${n.data.id}`)).data.note.structured, plan);
 });
 
-test('supply inventory: visit-recording roles read it, field staff change it, a visit draws it down', async () => {
+test('supply inventory: visit-recording roles read it, supervisors set counts, field staff receive, a visit draws it down', async () => {
+  // 1.14 (docs/SUPPLIES.md): the single-number cupboard became items kept at sites in lots, with a ledger.
+  // The older routes still work on it, but setting a count is now a supervisor's (supplies:manage); field
+  // staff record deliveries (supplies:receive) and their visits draw stock down. test/supplies.test.js has the rest.
   assert.equal((await ro.get('/api/supplies')).status, 403, 'read-only has no visits to record, so no cupboard to look in');
   assert.equal((await fin.post('/api/supplies', { item: 'Naloxone kit', quantity: 5 })).status, 403, 'finance cannot stock it');
   assert.equal((await ro.post('/api/supplies', { item: 'Naloxone kit', quantity: 5 })).status, 403);
-  const add = await nav.post('/api/supplies', { item: 'Naloxone kit', quantity: 10 });
+  assert.equal((await nav.post('/api/supplies', { item: 'Naloxone kit', quantity: 5 })).status, 403, 'a navigator no longer sets a count');
+  const add = await sup.post('/api/supplies', { item: 'Naloxone kit', quantity: 10 });
   assert.equal(add.status, 201);
-  assert.equal((await nav.post('/api/supplies', { item: 'naloxone KIT', quantity: 12 })).status, 200, 'the same item (any case) is updated, not duplicated');
-  assert.equal(H.db.one(`SELECT COUNT(*) n FROM supply_stock`).n, 1);
-  const strips = (await nav.post('/api/supplies', { item: 'Fentanyl test strips', quantity: 50 })).data;
-  assert.equal((await nav.put(`/api/supplies/${strips.id}`, { adjust: 25 })).data.quantity, 75, 'a delivery adjusts the count');
+  assert.equal((await sup.post('/api/supplies', { item: 'naloxone KIT', quantity: 12 })).status, 200, 'the same item (any case) is updated, not duplicated');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM supply_items`).n, 1);
+  const strips = (await sup.post('/api/supplies', { item: 'Fentanyl test strips', quantity: 50 })).data;
+  assert.equal((await nav.post('/api/supplies/receipts', { item_id: strips.id, site_id: H.db.MAIN_SITE_ID, quantity: 25 })).status, 201, 'a delivery received by a navigator');
 
   const c = (await nav.post('/api/clients', { first_name: 'Kit', last_name: 'Taker' })).data.id;
   const visit = await nav.post('/api/interventions', { client_id: c, type: 'naloxone_distribution', occurred_at: new Date().toISOString(), duration_minutes: 5, naloxone_kits: 2, fentanyl_strips: 10 });
   assert.equal(visit.status, 201);
-  const q = () => Object.fromEntries(H.db.all(`SELECT item, quantity FROM supply_stock`).map(x => [x.item, x.quantity]));
+  const q = () => Object.fromEntries(H.db.all(`SELECT i.name item, COALESCE(SUM(l.quantity),0) quantity FROM supply_items i LEFT JOIN supply_ledger l ON l.item_id=i.id GROUP BY i.id`).map(x => [x.item, x.quantity]));
   assert.equal(q()['Naloxone kit'], 10); assert.equal(q()['Fentanyl test strips'], 65);
   await nav.put(`/api/interventions/${visit.data.id}`, { naloxone_kits: 3 });
   assert.equal(q()['Naloxone kit'], 9, 'editing the count only draws down the difference');
   await nav.put(`/api/interventions/${visit.data.id}`, { naloxone_kits: 1 });
   assert.equal(q()['Naloxone kit'], 11, 'and gives it back when lowered');
   await nav.post('/api/interventions', { client_id: c, type: 'naloxone_distribution', occurred_at: new Date().toISOString(), naloxone_kits: 50 });
-  assert.equal(q()['Naloxone kit'], 0, 'never below zero');
+  assert.equal(q()['Naloxone kit'], 0, 'never below zero: the rest is a flagged shortfall');
+  assert.ok(H.db.one(`SELECT 1 FROM supply_ledger WHERE reason='shortfall' AND flagged=1 AND quantity=39`));
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='supply.drawdown'`));
   const list = (await nav.get('/api/supplies')).data;
   assert.equal(list.drawdown.naloxone_kits, 'Naloxone kit');
   assert.ok(list.rows.every(x => x.updated_by_name));
-  assert.equal((await nav.del(`/api/supplies/${strips.id}`)).status, 200);
-  assert.ok(H.db.one(`SELECT 1 FROM tombstones WHERE table_name='supply_stock' AND id=?`, strips.id));
+  assert.equal((await nav.del(`/api/supplies/${strips.id}`)).status, 403);
+  assert.equal((await sup.del(`/api/supplies/${strips.id}`)).status, 200);
+  assert.equal(H.db.one(`SELECT is_active FROM supply_items WHERE id=?`, strips.id).is_active, 0, 'taken out of use, its history kept');
 });
 
 test('the sample data set gives every admitted client an episode and stocks the cupboard', () => {
@@ -245,8 +251,9 @@ test('the sample data set gives every admitted client an episode and stocks the 
   assert.equal(H.db.one(`SELECT e.status FROM episodes e JOIN clients c ON c.id=e.client_id WHERE c.status='closed' AND c.client_code LIKE 'DEMO-%'`).status, 'closed');
   assert.ok(H.db.one(`SELECT 1 FROM notes WHERE format='handoff'`), 'a hand-off note');
   assert.ok(H.db.one(`SELECT 1 FROM notes WHERE format='safety_plan' AND structured_enc IS NOT NULL`), 'a safety plan');
-  assert.ok(H.db.one(`SELECT 1 FROM supply_stock WHERE item='Naloxone kit'`));
+  assert.ok(H.db.one(`SELECT 1 FROM supply_items i JOIN supply_ledger l ON l.item_id=i.id WHERE i.name='Syringes 1 mL 29G' AND l.expires_on IS NOT NULL`), 'syringes in lots with an expiry (the naloxone kit was already on the list, so it is left as it was)');
   demo.remove({ actor: adminId });
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE c.client_code LIKE 'DEMO-%'`).n, 0, 'removing the sample data removes its episodes');
-  assert.equal(H.db.one(`SELECT COUNT(*) n FROM supply_stock WHERE item='Xylazine test strips'`).n, 0);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM supply_items WHERE name='Xylazine test strips'`).n, 0);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM supply_ledger WHERE reference='Sample delivery'`).n, 0);
 });

@@ -48,15 +48,30 @@ The DHCS Naloxone Distribution Project (NDP) supplies naloxone to organisations 
 | Entry | *Distribution* (kits handed out) or *Reversal reported*. |
 | Site type | The same coded *Location* list for both (field, community, shelter…): distribution, the visit's; reversal, the overdose form's *Where*. A place typed in before *Where* was a list is matched to a code whatever its case (*Shelter* → shelter), or else counted as *Other*; the record keeps its words. |
 | Recipient type | *Community member (anonymous)* — community distribution with no client — or *Program participant* (a client on the caseload). |
-| Kits distributed | Sum of *Naloxone kits given* (`interventions.naloxone_kits`). |
+| Naloxone product | The day-by-day log only (not the published log by month): the product of the naloxone item the visit handed out (4 mg, 8 mg or 3 mg nasal spray, 0.4 mg injectable vial, ampule or prefilled syringe, other; [SUPPLIES.md](../SUPPLIES.md)), or *Not recorded* for kits recorded as a count alone, as every visit before 1.14 was. A visit with two products is two rows. |
+| Kits distributed | Sum of *Naloxone kits given* (`interventions.naloxone_kits`, since 1.14 the sum of the visit's naloxone items). |
 | Naloxone doses distributed | Kits × the `naloxone_doses_per_kit` setting (default 2: a standard nasal-spray kit holds two doses). |
 | Reversals reported | Overdose events (Overdose & naloxone form, including community reports with no client) where naloxone was used and the person survived. An event recorded as a *Reversal* had naloxone by definition: the form ticks *Naloxone was given* when Reversal is chosen, the server records it so, and one saved before that rule with the box unticked is counted too. |
 | Doses used in reversals | `overdose_events.naloxone_doses`. |
 | Naloxone given by | The overdose form's *Given by*. |
 
-Rows are aggregated by day, site type and recipient type (distribution) or day, site type and who gave it (reversals); in a publication release, by month (above). A navigator's log covers community distribution and their own caseload, like every other report.
+Rows are aggregated by day, site type, recipient type and product (distribution) or day, site type and who gave it (reversals); in a publication release, by month, site type and recipient type (above). A navigator's log covers community distribution and their own caseload, like every other report.
 
-**Unverified:** the column layout follows the NDP's published reporting fields *as SUDS understands them*. It is **not** the official NDP template and must be checked against the current NDP reporting template (and its reporting period and submission method) before it is used. In particular: whether the NDP wants per-event rows or period totals, its own site-type and recipient categories, and whether it asks for doses or kits by product (4 mg nasal spray, intramuscular) — SUDS does not record the product.
+**Unverified:** the column layout follows the NDP's published reporting fields *as SUDS understands them*. It is **not** the official NDP template and must be checked against the current NDP reporting template (and its reporting period and submission method) before it is used. In particular: whether the NDP wants per-event rows or period totals, its own site-type and recipient categories, and whether its product categories match the ones SUDS records (since 1.14, from the naloxone item a visit hands out).
+
+### Syringe services summary (Supplies → Syringe services report; Reports → Harm-reduction reporting)
+
+`GET /api/reports/ssp`, `GET /api/reports/ssp/export?format=xlsx|csv` (export:read) — [SUPPLIES.md](../SUPPLIES.md). For a
+period: participants served (unduplicated clients with a contact), contacts (visits and anonymous outreach at which
+supplies were handed out or sharps brought back), syringes distributed and returned (counted, or estimated from the
+container's volume, shown separately) and the returns per syringe distributed, sharps containers, naloxone kits (by
+product), fentanyl and xylazine test strips, the other supplies by item, and referrals made for the participants;
+by month and by supply site. Participants, the people referred and the referrals are counts of people and are
+suppressed as in section 1; supply and contact counts are exact. It is always the programme's own submission (or
+internal), never a publication release (`purpose=publication` is refused), so it is run by those who may run such a
+report (`reportRunAllowed`: supervisors and administrators, or a navigator or clinician for their own caseload and
+anonymous contacts); finance and read-only accounts are refused. **Unverified:** the layout follows what a
+CDPH-authorised SSP reports as SUDS understands it; check it against the programme's current reporting requirements.
 
 ## 3. Opioid settlement expenditure report (Reports → Harm-reduction reporting)
 

@@ -247,6 +247,8 @@ module.exports = (r) => {
   require('../harm-reduction-reports').routes(hrRouter, range);
   // The county template for the settlement report (a column mapping, no report run: not wrapped).
   require('../harm-reduction-reports').layoutRoutes(r);
+  // The syringe services program summary (server/ssp-report.js): the program's own submission, never a release.
+  require('../ssp-report').routes(r, range);
 
   // Exports: CSV or Excel per table, or one Excel workbook with every table. Needs export:read; de-identified
   // (HIPAA Safe Harbor) unless identified=1 and the user holds export:identified — and an identified export
