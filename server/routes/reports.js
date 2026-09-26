@@ -213,6 +213,8 @@ module.exports = (r) => {
   const HR_SCOPED = { '/api/reports/naloxone-ndp': true, '/api/reports/naloxone-ndp/export': true };
   const hrRouter = { get: (path, ...fns) => r.get(path, ...fns.slice(0, -1), requireReportRun({ caseloadScoped: !!HR_SCOPED[path] }), fns[fns.length - 1]) };
   require('../harm-reduction-reports').routes(hrRouter, range);
+  // The syringe services program summary (server/ssp-report.js): the program's own submission, never a release.
+  require('../ssp-report').routes(r, range);
 
   // Exports: CSV or Excel per table, or one Excel workbook with every table. Needs export:read; de-identified
   // (HIPAA Safe Harbor) unless identified=1 and the user holds export:identified — and an identified export

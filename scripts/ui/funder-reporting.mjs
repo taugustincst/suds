@@ -94,7 +94,9 @@ eq(await sup.$eval('select[data-hr-kind] option[value=publication]', o => o.disa
 const [nd] = await Promise.all([sup.waitForEvent('download'), sup.click('[data-ndp-export=xlsx]')]);
 const nwb = readWorkbook(fs.readFileSync(await nd.path()));
 ok(/naloxone-ndp-log.*exact-counts/.test(nd.suggestedFilename()), 'the NDP log downloads, the programme\'s own submission', nd.suggestedFilename());
-eq((nwb[0].rows[0] || []).slice(0, 5).join(','), 'Date,Entry,Site type,Recipient type,Kits distributed', 'with the NDP-style columns');
+// 1.14: the day log (the programme's submission) also says which naloxone product went out (docs/SUPPLIES.md).
+eq((nwb[0].rows[0] || []).slice(0, 6).join(','), 'Date,Entry,Site type,Recipient type,Naloxone product,Kits distributed', 'with the NDP-style columns, the naloxone product among them');
+ok(await sup.$('[data-ssp-row] [data-ssp-export=xlsx]'), 'and the syringe services summary is offered beside them');
 ok(nwb.some(s => s.name === 'About' && s.rows.some(r => /not the official NDP template/.test(r.join(' ')))), 'labelled as not the official NDP template');
 const [sd] = await Promise.all([sup.waitForEvent('download'), sup.click('[data-settlement-export=xlsx]')]);
 const swb = readWorkbook(fs.readFileSync(await sd.path()));

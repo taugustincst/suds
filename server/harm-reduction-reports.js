@@ -51,15 +51,36 @@ function distributionRows(ctx, { ts, tsP }, monthly) {
   const cf = auth.caseloadFilter(ctx.user, 'c.id');
   const perKit = dosesPerKit(); const dayOf = dayReader();
   const rows = new Map();
+  // The day-by-day log (the program's submission to the NDP) also says which naloxone product went out, where
+  // the visit recorded it (its naloxone items, docs/SUPPLIES.md); kits recorded as a count alone, as every visit
+  // before 1.14 was, are "not recorded", and stay so when such a visit is edited later (the part of an item
+  // recorded before items existed, intervention_supplies.untracked). The published log by month does not split by product.
+  const products = new Map();
+  if (!monthly) {
+    for (const x of db.all(`SELECT l.intervention_id, it.product, SUM(l.quantity - l.untracked) q FROM intervention_supplies l JOIN supply_items it ON it.id=l.item_id JOIN interventions i ON i.id=l.intervention_id
+        WHERE ${ts('i.occurred_at')} AND it.category='naloxone' GROUP BY l.intervention_id, it.product`, ...tsP)) {
+      if (!products.has(x.intervention_id)) products.set(x.intervention_id, []);
+      products.get(x.intervention_id).push({ product: x.product || null, kits: x.q });
+    }
+  }
   // Community distribution has no client; a kit handed to someone on a caseload is counted for whoever may
   // see that caseload, the same scoping as every other export.
-  for (const x of db.all(`SELECT i.occurred_at, i.location, i.client_id IS NULL AS anon, i.naloxone_kits kits FROM interventions i LEFT JOIN clients c ON c.id=i.client_id
+  for (const x of db.all(`SELECT i.id, i.occurred_at, i.location, i.client_id IS NULL AS anon, i.naloxone_kits kits FROM interventions i LEFT JOIN clients c ON c.id=i.client_id
       WHERE ${ts('i.occurred_at')} AND i.naloxone_kits > 0 AND (i.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
     const day = dayOf(x.occurred_at); const date = monthly ? day.slice(0, 7) : day; const site = x.location || 'unknown';
     const recipient = x.anon ? 'Community member (anonymous)' : 'Program participant';
-    const key = `d|${date}|${site}|${recipient}`;
-    if (!rows.has(key)) rows.set(key, { date, entry: 'distribution', site_type: site, recipient_type: recipient, kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null });
-    const r = rows.get(key); r.kits += x.kits; r.doses += x.kits * perKit;
+    // The visit's kits by product: what its naloxone items say, and the rest as not recorded.
+    const parts = [];
+    if (!monthly) {
+      let left = x.kits;
+      for (const p of products.get(x.id) || []) { const k = Math.min(left, p.kits); if (k > 0 && p.product) { parts.push({ product: p.product, kits: k }); left -= k; } }
+      if (left > 0) parts.push({ product: null, kits: left });
+    } else parts.push({ kits: x.kits });
+    for (const part of parts) {
+      const key = monthly ? `d|${date}|${site}|${recipient}` : `d|${date}|${site}|${recipient}|${part.product || ''}`;
+      if (!rows.has(key)) rows.set(key, { date, entry: 'distribution', site_type: site, recipient_type: recipient, ...(monthly ? {} : { product: part.product }), kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null });
+      const r = rows.get(key); r.kits += part.kits; r.doses += part.kits * perKit;
+    }
   }
   return rows;
 }
@@ -194,8 +215,12 @@ const aboutSheet = (ctx, rows) => ({ name: 'About', columns: [{ key: 'k', label:
 
 function routes(r, range) {
   const S = require('./spreadsheet');
-  const NDP_COLUMNS = [['date', 'Date'], ['entry', 'Entry'], ['site_type', 'Site type'], ['recipient_type', 'Recipient type'], ['kits', 'Kits distributed'], ['doses', 'Naloxone doses distributed'], ['reversals', 'Reversals reported'], ['reversal_doses', 'Doses used in reversals'], ['administered_by', 'Naloxone given by']].map(([key, label]) => ({ key, label }));
-  const ndpRows = (d) => d.rows.map(x => ({ ...x, entry: x.entry === 'distribution' ? 'Distribution' : 'Reversal reported', site_type: x.site_type === 'unknown' ? 'Unknown' : x.site_type === 'all' ? 'All sites' : O.labelOf('LOCATIONS', x.site_type),
+  // The day log (the program's submission) says which naloxone product went out; the published log by month does not.
+  const ndpColumns = (d) => NDP_COLUMNS.filter(c => c.key !== 'product' || d.by !== 'month');
+  const NDP_COLUMNS = [['date', 'Date'], ['entry', 'Entry'], ['site_type', 'Site type'], ['recipient_type', 'Recipient type'], ['product', 'Naloxone product'], ['kits', 'Kits distributed'], ['doses', 'Naloxone doses distributed'], ['reversals', 'Reversals reported'], ['reversal_doses', 'Doses used in reversals'], ['administered_by', 'Naloxone given by']].map(([key, label]) => ({ key, label }));
+  const SN = require('./supply-names');
+  const productLabel = (x) => (x.entry !== 'distribution' || !('product' in x) ? null : x.product ? SN.labelOf(SN.NALOXONE_PRODUCTS, x.product) : 'Not recorded');
+  const ndpRows = (d) => d.rows.map(x => ({ ...x, product: productLabel(x), entry: x.entry === 'distribution' ? 'Distribution' : 'Reversal reported', site_type: x.site_type === 'unknown' ? 'Unknown' : x.site_type === 'all' ? 'All sites' : O.labelOf('LOCATIONS', x.site_type),
     administered_by: x.administered_by ? O.labelOf('ADMINISTERED_BY', x.administered_by) : null }));
 
   r.get('/api/reports/naloxone-ndp', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
@@ -207,11 +232,11 @@ function routes(r, range) {
     const d = await ndp(ctx, range(ctx)); const xlsx = ctx.query.get('format') === 'xlsx'; const rows = ndpRows(d);
     FR.requirePublicationReview(ctx, d, 'naloxone-ndp');
     audit.log({ user: ctx.user, action: 'report.naloxone_ndp.export', ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv' } });
-    const body = xlsx ? S.writeWorkbook([{ name: 'NDP log', columns: NDP_COLUMNS, rows }, aboutSheet(ctx, [
+    const body = xlsx ? S.writeWorkbook([{ name: 'NDP log', columns: ndpColumns(d), rows }, aboutSheet(ctx, [
       { k: 'Report', v: 'Naloxone distribution and reversal log (NDP-style)' }, { k: 'Template', v: d.template_note }, { k: 'Period', v: `${d.from} to ${d.to}` }, { k: 'County', v: d.county || '' },
       { k: 'Doses per kit', v: `${d.doses_per_kit} (Settings: naloxone doses per kit)` }, { k: 'Totals', v: `${d.totals.kits} kits, ${d.totals.doses} doses distributed (${d.totals.community_kits} kits to anonymous community members); ${d.totals.reversals} reversals reported` },
       ...purposeRows(d), { k: 'Counts', v: d.counting_statement },
-      { k: 'Classification', v: d.by === 'month' ? 'Aggregate counts by month (distribution also by site type and recipient type; reversals for all sites together): no names, client codes or record ids.' : 'Aggregate counts by day, site type and recipient type: no names, client codes or record ids.' }])]) : S.toCsv(rows, NDP_COLUMNS);
+      { k: 'Classification', v: d.by === 'month' ? 'Aggregate counts by month (distribution also by site type and recipient type; reversals for all sites together): no names, client codes or record ids.' : 'Aggregate counts by day, site type and recipient type: no names, client codes or record ids.' }])]) : S.toCsv(rows, ndpColumns(d));
     send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-naloxone-ndp-log-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? 'xlsx' : 'csv'}`, classification: 'NDP-style log (not the official NDP template; check it against the current NDP reporting template). Aggregate, no identifiers.' });
   });
 

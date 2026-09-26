@@ -18,7 +18,10 @@ module.exports = {
   // caloms_*: whether this programme reports CalOMS Tx (which turns on the CalOMS questions in the admission
   // and discharge forms) and its provider IDs — a device needs both to offer the same forms offline.
   // default_fund_id: the fund a visit recorded on the device is charged to when the worker has none of their own.
+  // default_supply_site_id, supply_*: the site a visit draws from when its worker has none, when an expiry is
+  // flagged, and how a returned sharps container is counted (server/supplies.js).
   settings_keys: ['org_name', 'county_name', 'program_contact', 'note_lock_days', 'caloms_enabled', 'caloms_providers', 'caloms_start_date', 'default_fund_id',
+    'default_supply_site_id', 'supply_expiry_warn_days', 'supply_syringes_per_litre',
     // The programme profile and module switches (server/programme.js): a device shows what its office shows.
     ...require('./programme').SETTING_KEYS],
   tables: [
@@ -78,13 +81,19 @@ module.exports = {
     { name: 'care_plan_steps', enc: ['step_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'careplan:write', readPerm: 'careplan:read', parent: ['care_plan_goals', 'goal_id'] },
     { name: 'asam_assessments', enc: ['dimension_notes_enc', 'discrepancy_notes_enc', 'summary_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'assessments:write', readPerm: 'assessments:read', parent: ['clients', 'client_id'] },
     { name: 'outcome_measures', enc: ['responses_enc', 'notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'assessments:write', readPerm: 'assessments:read', parent: ['clients', 'client_id'] },
-    // Harm-reduction supply counts: shared program state. Pull-only (serverOwned): the office copy is the
-    // one shelf count, drawn down there when a pushed visit lands (server/routes/sync.js calls the same
-    // draw-down the REST route does). A device's absolute count is never accepted — two phones each
-    // subtracting from their own stale copy would otherwise leave whichever synced last as the truth.
-    { name: 'supply_stock', enc: [], scope: 'all', writePerm: 'interventions:write', serverOwned: true },
+    // Supplies (docs/SUPPLIES.md). Items and sites are the office's, pull-only like Settings → Lists: a device
+    // offers the same items and sites offline and cannot change them (server/routes/supplies.js refuses it in
+    // the local kernel). A visit's items travel with the visit and are checked like it (server/supplies.js
+    // linePushProblem). The stock ledger is append-only: a device may add stock received, moved, adjusted or
+    // disposed of (checked by ledgerPushProblem, and a lot taken below zero is recorded as a flagged shortfall
+    // by settlePushedEntry), never change a row; a visit's draw-down is the office's to work out from the
+    // visit (settlePushedVisit), so a device keeps its own only until the office's arrives (local/sync.js).
+    { name: 'supply_sites', enc: [], scope: 'all', writePerm: 'supplies:manage', serverOwned: true },
+    { name: 'supply_items', enc: [], scope: 'all', writePerm: 'supplies:manage', serverOwned: true },
+    { name: 'intervention_supplies', enc: [], scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['user_id'], all: 'clients:all' }, writePerm: 'interventions:write', parent: ['interventions', 'intervention_id'] },
+    { name: 'supply_ledger', enc: [], scope: 'all', writePerm: 'supplies:receive', readPerm: 'supplies:read' },
     // Settings → Lists (the wording and order of documentation choices): the office's configuration,
-    // pull-only like supply counts. A device needs it to offer the same choices and show the same labels
+    // pull-only like supply items and sites. A device needs it to offer the same choices and show the same labels
     // offline; it can never change it (server/routes/options.js refuses writes in the local kernel).
     { name: 'option_overrides', enc: [], scope: 'all', writePerm: 'settings:manage', serverOwned: true },
     // The QSOA / research / audit register the non-consent disclosure bases rest on (server/disclosure.js):
@@ -100,7 +109,7 @@ module.exports = {
     'not permitted', 'server-owned', 'your role cannot', 'clinical notes not permitted', 'you do not have permission',
     'is missing a required field', 'refers to a record the office server does not have', 'attributed to',
     'would create a cycle', 'parent allocation does not belong', 'its ', 'has a value the office does not accept',
-    'needs a lawful basis for disclosure',
+    'needs a lawful basis for disclosure', 'drawn down at the office',
   ],
   // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
   // emergency access, and a device has no supervisor to review it.
@@ -114,7 +123,8 @@ module.exports = {
   per_database: ['idempotency_keys'],
   // Rows a device may create but never change once they exist (a consent may only be revoked). The legal
   // record of what was agreed to and what was shared cannot be rewritten by whichever phone syncs last.
-  immutable: ['consents', 'disclosures', 'note_addenda', 'problem_history'],
+  // The stock ledger likewise: on hand is its sum, and a correction is another row (docs/SUPPLIES.md).
+  immutable: ['consents', 'disclosures', 'note_addenda', 'problem_history', 'supply_ledger'],
   // Columns that reference users(id) somewhere in the schema. A device's local account id is meaningless on the
   // office server (and vice versa), so every one of these has to be remapped on both sides of a sync.
   user_refs: [
@@ -128,7 +138,7 @@ module.exports = {
     ['resource_photos', 'uploaded_by'], ['form_templates', 'uploaded_by'], ['policy_documents', 'uploaded_by'],
     ['breakglass_events', 'user_id'], ['breakglass_events', 'acknowledged_by'], ['patient_requests', 'handled_by'], ['patient_requests', 'created_by'],
     ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'], ['devices', 'user_id'],
-    ['supply_stock', 'updated_by'], ['option_overrides', 'updated_by'],
+    ['supply_sites', 'updated_by'], ['supply_items', 'updated_by'], ['intervention_supplies', 'user_id'], ['supply_ledger', 'user_id'], ['option_overrides', 'updated_by'],
     ['problems', 'added_by'], ['problems', 'updated_by'], ['problem_history', 'changed_by'], ['care_plan_goals', 'created_by'], ['care_plan_goals', 'updated_by'],
     ['care_plan_steps', 'owner_user_id'], ['care_plan_steps', 'created_by'], ['asam_assessments', 'assessed_by'], ['outcome_measures', 'administered_by'],
     ['caloms_records', 'created_by'], ['caloms_records', 'updated_by'],

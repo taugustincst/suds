@@ -67,6 +67,9 @@ route('dashboard', async () => {
       alerts.push(['warn', `${what} assigned to inactive staff`, gone.length === 1 ? `#/admin?tab=caseload&from=${gone[0].id}` : '#/admin?tab=caseload']);
     }
   }
+  // Supplies expired or expiring, running low, or short on the books: for whoever runs the cupboard (views/supplies.js).
+  const supplies = can('supplies:manage') ? await (await import('./supplies.js')).supplyHome() : null;
+  if (supplies) alerts.push(...supplies.alerts);
   // The on-device app keeps its records nowhere else: a week without a backup is worth a word on Home.
   const backupReminder = await backupReminderCard();
   // Empty program: offer sample data (office admins, or anyone on a phone-only copy)
@@ -186,7 +189,7 @@ route('dashboard', async () => {
     h('div', { class: 'grid cols-4 mb' },
       stat('Active clients', fmt.num(c.active), '', 'clients?status=active', 'All active clients, any time — not limited to the last 90 days'), stat('High-risk clients', fmt.num(c.high_risk), c.high_risk ? 'danger' : '', 'clients?status=active&risk=high'), stat('Visits (90 days)', fmt.num(i.total), '', 'interventions', `${fmt.date(d.from)} – ${fmt.date(d.to)}; other numbers on this page are all-time`), stat('Naloxone kits given', fmt.num(i.naloxone_kits), '', 'interventions?type=naloxone_distribution'),
       stat('Calls', fmt.num(d.calls.total), '', 'calls'), stat('Open referrals', fmt.num(d.referrals.open), d.referrals.open ? 'warn' : '', 'referrals?status=open'),
-      pr ? h('div', { 'data-patient-requests': '1', style: { display: 'contents' } }, stat('Open patient requests', pr.overdue ? `${fmt.num(pr.n)} (${pr.overdue} overdue)` : fmt.num(pr.n), pr.overdue ? 'danger' : pr.n ? 'warn' : '', 'clients?status=all&patient_requests=1', 'Requests for access, amendment, restriction or an accounting of disclosures — each must be answered within 30 days')) : null, d.time ? stat(can('time:all') ? 'Team hours logged' : 'My hours logged', (d.time.minutes / 60).toFixed(1), '', 'time') : null, d.budget && can('budget:approve') ? stat('Spent of budget', h('span', {}, h('span', { class: 'money' }, fmt.money(d.budget.spent)), ' / ', h('span', { class: 'money' }, fmt.money(d.budget.total))), '', 'budget') : null),
+      pr ? h('div', { 'data-patient-requests': '1', style: { display: 'contents' } }, stat('Open patient requests', pr.overdue ? `${fmt.num(pr.n)} (${pr.overdue} overdue)` : fmt.num(pr.n), pr.overdue ? 'danger' : pr.n ? 'warn' : '', 'clients?status=all&patient_requests=1', 'Requests for access, amendment, restriction or an accounting of disclosures — each must be answered within 30 days')) : null, d.time ? stat(can('time:all') ? 'Team hours logged' : 'My hours logged', (d.time.minutes / 60).toFixed(1), '', 'time') : null, d.budget && can('budget:approve') ? stat('Spent of budget', h('span', {}, h('span', { class: 'money' }, fmt.money(d.budget.spent)), ' / ', h('span', { class: 'money' }, fmt.money(d.budget.total))), '', 'budget') : null, supplies ? supplies.tile : null),
     h('div', { class: 'grid cols-2' },
       can('clients:read') ? h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Clients who need a check-in'), h('a', { href: '#/clients' }, 'All clients')),
         caseload.caseload.length ? caseload.caseload.slice(0, 8).map(x => h('div', { class: 'today-item' }, h('div', {}, h('a', { href: `#/client/${x.id}` }, x.display_name), ' ', badge(fmt.label(x.risk_level), statusKind(x.risk_level))), h('div', { class: 'small muted' }, 'last contact ', fmt.ago(x.last_contact), x.overdue_tasks ? [' ', badge(`${x.overdue_tasks} overdue`, 'danger')] : null)))

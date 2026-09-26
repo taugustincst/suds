@@ -68,7 +68,10 @@ test('the NDP log exports to CSV and Excel, labelled as not the official templat
   const csv = await nav.get('/api/reports/naloxone-ndp/export?from=2026-05-01&to=2026-05-31&format=csv');
   assert.equal(csv.status, 200);
   const lines = String(csv.data).split('\r\n');
-  assert.match(lines[0], /^Date,Entry,Site type,Recipient type,Kits distributed,Naloxone doses distributed,Reversals reported,Doses used in reversals,Naloxone given by/);
+  // 1.14: the day log also says which naloxone product went out, where the visit recorded it (docs/SUPPLIES.md);
+  // these visits recorded counts alone, so it is "Not recorded".
+  assert.match(lines[0], /^Date,Entry,Site type,Recipient type,Naloxone product,Kits distributed,Naloxone doses distributed,Reversals reported,Doses used in reversals,Naloxone given by/);
+  assert.ok(lines.slice(1).filter(l => /,Distribution,/.test(l)).every(l => /,Not recorded,/.test(l)));
   assert.match(csv.headers.get('x-suds-export'), /not the official NDP template/i);
   const xl = await fetch(`${await H.start()}/api/reports/naloxone-ndp/export?from=2026-05-01&to=2026-05-31&format=xlsx`, { headers: { Authorization: `Bearer ${(await H.client().post('/api/auth/login', { username: 'hrnav', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' })).data.token}` } });
   assert.equal(xl.status, 200);

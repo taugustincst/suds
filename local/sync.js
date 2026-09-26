@@ -14,6 +14,7 @@ import audit from '../server/audit.js';
 import { HttpError } from '../server/http.js';
 import { encrypt, decrypt, blindIndex, uuid } from '../server/crypto.js';
 import SYNC from '../server/sync-tables.js';
+import SUPPLIES from '../server/supplies.js';
 import { wipe as wipeLocalDb } from './shims/sqlite.js';
 
 // A stable identity for this physical device, generated once and kept in its own local settings — separate
@@ -114,6 +115,27 @@ function changedColumns(t, existing, raw, existingCols) {
   return out;
 }
 
+// ---- supplies: a visit's draw-down on this device is provisional ----
+// The office works out a visit's draw-down from the visit, against its own stock (server/supplies.js). This
+// device draws its own copy down too, so the stock shown offline is right; those rows are never pushed, and
+// when the office's draw-down for a visit arrives, this device's own rows for it are dropped and the visit is
+// weighed again against the office's rows (a no-op unless the visit was edited here since it was sent).
+const PROVISIONAL = `(intervention_id IS NOT NULL OR kind IN ('distributed','restored') OR COALESCE(reason,'')='shortfall')`;
+const notExchanged = `NOT EXISTS (SELECT 1 FROM sync_seen s WHERE s.table_name='supply_ledger' AND s.id=supply_ledger.id)`;
+function dropProvisional(visitId) {
+  db.run(`DELETE FROM supply_ledger WHERE intervention_id=? AND ${notExchanged}`, visitId);
+}
+function settleSupplies(payload, officeUserId, skipped) {
+  const visits = new Set(((payload.tables || {}).supply_ledger || []).filter(r => r && typeof r.intervention_id === 'string').map(r => r.intervention_id));
+  const actor = { id: officeUserId, username: db.getSetting('sync_username', 'device') };
+  for (const v of visits) {
+    db.savepoint(() => {
+      dropProvisional(v);
+      if (db.one(`SELECT 1 FROM interventions WHERE id=?`, v)) SUPPLIES.reconcileVisit(v, actor, { ip: 'device' });
+    }, (err) => skipped.push({ table: 'supply_ledger', id: v, reason: String(err && err.message || 'could not be settled').slice(0, 200) }));
+  }
+}
+
 function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
   const counts = {};
   const offset = payload.server_now ? Date.parse(payload.server_now) - Date.now() : 0;
@@ -150,6 +172,7 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
       }, (err) => skipped.push({ table: 'clients', id, reason: String(err && err.message || 'could not be removed').slice(0, 200) }));
     }
     for (const [k, v] of Object.entries(payload.settings || {})) if (v !== null && v !== undefined) db.setSetting(k, v);
+    settleSupplies(payload, officeUserId, skipped);
   });
   return counts;
 }
@@ -236,8 +259,10 @@ function applyTombstone(t, ts, toServer) {
 function localRows() {
   const out = [];
   for (const t of SYNC.tables) {
-    if (t.name === 'users' || t.serverOwned) continue; // the office alone keeps server-owned tables (supply counts)
-    const rows = db.all(`SELECT x.* FROM ${t.name} x WHERE NOT EXISTS (SELECT 1 FROM sync_seen s WHERE s.table_name=? AND s.id=x.id AND s.updated_at IS COALESCE(x.updated_at, x.created_at))`, t.name);
+    if (t.name === 'users' || t.serverOwned) continue; // the office alone keeps server-owned tables (supply items and sites)
+    // A visit's draw-down here is provisional (see settleSupplies): the office works out its own.
+    const own = t.name === 'supply_ledger' ? ` AND NOT ${PROVISIONAL.replace(/\b(intervention_id|kind|reason)\b/g, 'x.$1')}` : '';
+    const rows = db.all(`SELECT x.* FROM ${t.name} x WHERE NOT EXISTS (SELECT 1 FROM sync_seen s WHERE s.table_name=? AND s.id=x.id AND s.updated_at IS COALESCE(x.updated_at, x.created_at))${own}`, t.name);
     for (const r of rows) { const e = exportRow(t, r); if (e) out.push({ table: t.name, row: e }); }
   }
   return out;
@@ -271,6 +296,8 @@ export function settleRejections(rejections, chunk, conflicts) {
     } else {
       seen(x.table, x.id, stamp(r));
     }
+    // A visit the office will never take draws nothing from its stock, so this device's own draw-down for it goes.
+    if (x.table === 'interventions') dropProvisional(x.id);
     conflicts.push({ table: x.table, id: x.id, label: x.table === 'clients' ? r.client_code : null, columns: [], reason: x.reason });
     audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.rejected', entity: x.table, entityId: x.id, clientId: x.table === 'clients' ? x.id : (t && t.clientCol ? r[t.clientCol] : null), details: { reason: x.reason, kept: 'office' } });
   }

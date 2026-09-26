@@ -91,9 +91,9 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 | Area | Details |
 | --- | --- |
 | Outreach & visits | Anonymous or named encounters in the field on a phone, naloxone kits and fentanyl test strips given, referrals made, follow-ups; works offline on an encrypted device copy |
-| Supplies | Supply cupboard with the quantity on hand of each item (naloxone kits, test strips…), drawn down automatically as visits record kits and strips given |
+| Supplies | Any harm-reduction or syringe-services item (naloxone by product, fentanyl and xylazine test strips, syringes by size, sharps containers, safer-use, wound-care and hygiene supplies) kept at sites you set up (office, van, drop-in, partner site) in lots with an expiry date; a receiving log (NDP, CDPH clearinghouse, purchase with a fund, donation), transfers between sites, adjustments with a reason and disposal of expired stock, as an append-only ledger; visits and anonymous contacts draw stock down first-expiry-first-out, a shortfall is flagged rather than going below zero, and expiring or expired lots are on Home for supervisors; syringes and sharps returned (counted or estimated from the container), and a syringe services (SSP) summary with CSV/Excel export ([docs/SUPPLIES.md](docs/SUPPLIES.md)) |
 | Overdoses & reversals | Overdose and reversal reports (who gave naloxone, doses, where), linked to a client or anonymous |
-| Grant reporting | Funder report (unduplicated people, services, hours, spending by fund; exact counts for your own submission, small-cell screened for publication), a Naloxone Distribution Project-style log and opioid-settlement spending by allowable use — each layout to be checked against the current official template |
+| Grant reporting | Funder report (unduplicated people, services, hours, spending by fund; exact counts for your own submission, small-cell screened for publication), a Naloxone Distribution Project-style log (with the naloxone product where the visit recorded it), a syringe services summary and opioid-settlement spending by allowable use — each layout to be checked against the current official template |
 | Clients | Encrypted demographics and contact info, substance use profile, ASAM level, MAT status, overdose / naloxone history, risk level, housing, insurance, safety flags, program status and intake/discharge |
 | Visits | 25 SUD-navigation visit (intervention) types, duration, location/modality, outcome, stage of change, naloxone kits and fentanyl test strips, funding source, cost, follow-up to-do creation, automatic time entry |
 | Calls | Direction, contact type, duration, outcome, crisis flag, encrypted summary, follow-up scheduling |
@@ -115,8 +115,8 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 
 | Role | Sees | Can |
 | --- | --- | --- |
-| navigator | Assigned caseload | Clients, visits, calls, time, referrals, to-dos, admin notes, consents, imports, de-identified exports of their own caseload; records expenditures (grant structure itself is `budget:manage`: supervisor, finance, admin) |
-| clinician | Assigned caseload | Clients, visits, calls, time, referrals, to-dos, admin and **clinical notes**, consents, imports, de-identified exports of their own caseload; reads the resource directory (no budget entry) |
+| navigator | Assigned caseload | Clients, visits, calls, time, referrals, to-dos, admin notes, consents, imports, de-identified exports of their own caseload; records expenditures (grant structure itself is `budget:manage`: supervisor, finance, admin); sees the supply stock and records deliveries received (items, sites, transfers, adjustments and disposal are `supplies:manage`: supervisor, admin) |
+| clinician | Assigned caseload | Clients, visits, calls, time, referrals, to-dos, admin and **clinical notes**, consents, imports, de-identified exports of their own caseload; reads the resource directory (no budget entry); sees the supply stock and records deliveries received |
 | supervisor | All clients | Everything, plus assignments, approvals, audit log, break-glass review, de-identified and identified exports, consent overrides |
 | finance | De-identified list | Funding, budget lines, expenditure approval, staff time approval (every submitted entry, on the Supervision page), time summaries, de-identified exports |
 | readonly | De-identified list | Reports and summaries, resource directory; no client records, no notes, no exports |

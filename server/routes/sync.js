@@ -390,6 +390,13 @@ function push(user, payload) {
     deviceReferralDisclosures.get(d.source_ref).push(d);
   }
 
+  // Visits whose supplies this push touched (their row, their items, or their deletion): the office draws the
+  // stock down for them once the whole batch has landed (server/supplies.js settlePushedVisit). Per visit: the
+  // row as the office had it before, and whether the device sent its counts, its items, or both.
+  const supplyVisits = new Map();
+  const touchVisit = (id, patch) => { if (typeof id !== 'string') return; supplyVisits.set(id, { prev: null, countsPushed: false, linesPushed: false, ...(supplyVisits.get(id) || {}), ...patch }); };
+  const SUP = require('../supplies');
+
   db.transaction(() => {
     for (const t of SYNC.tables) {
       let rows = (payload.tables || {})[t.name]; if (!Array.isArray(rows) || !rows.length) continue;
@@ -490,6 +497,15 @@ function push(user, payload) {
           }
           if (t.name === 'court_orders') {
             const problem = courtOrderPushProblem(raw, existing);
+            if (problem) { reject(t.name, raw.id, problem); return false; }
+          }
+          // Supplies: a stock movement is checked as the supply routes check it, and a visit's item as its visit.
+          if (t.name === 'supply_ledger') {
+            const problem = SUP.ledgerPushProblem(user, raw);
+            if (problem) { reject(t.name, raw.id, problem); return false; }
+          }
+          if (t.name === 'intervention_supplies') {
+            const problem = SUP.linePushProblem(user, raw, existing);
             if (problem) { reject(t.name, raw.id, problem); return false; }
           }
           // An optional screening instrument the office has not enabled (the DAST-10 until an administrator
@@ -612,14 +628,14 @@ function push(user, payload) {
           // The office's own auto-assignment for a client created in the field — unless the device is sending
           // the one it made, in which case that row is the assignment and a second would be a duplicate.
           if (t.name === 'clients' && !existing && auth.caseloadRestricted(user) && !(pushedSelfAssignments.get(raw.id))) db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require('../crypto').uuid(), raw.id, user.id, 'primary', (raw.intake_date || db.now()).slice(0, 10), user.id);
-          // A visit that handed out kits or strips draws down the office shelf count exactly as the REST
-          // route does — by the difference from what the office already had, so a re-sent row counts once.
+          // A visit that handed supplies out draws the office stock down once the batch has landed, by the
+          // difference from what the office already drew for it, so a re-sent row counts once.
           if (t.name === 'interventions') {
-            const supplies = require('./supplies');
-            const counts = { id: raw.id };
-            for (const c of Object.keys(supplies.DRAWDOWN)) counts[c] = o[c] !== undefined ? o[c] : (existing ? existing[c] : 0);
-            supplies.drawDown({ user, ip: 'device' }, counts, existing);
+            const countsPushed = Object.keys(SUP.N.COUNTED).some(c => o[c] !== undefined && (!existing || Number(o[c] || 0) !== Number(existing[c] || 0)));
+            touchVisit(raw.id, supplyVisits.has(raw.id) ? { countsPushed: countsPushed || supplyVisits.get(raw.id).countsPushed } : { prev: existing || null, countsPushed });
           }
+          if (t.name === 'intervention_supplies') touchVisit(o.intervention_id || (existing && existing.intervention_id), { linesPushed: true });
+          if (t.name === 'supply_ledger') SUP.settlePushedEntry(user, { ...o, id: raw.id });
           // A person entered on a phone may already be on the office books under another spelling. The row
           // still lands (the worker cannot check from the field), but a supervisor is told to look.
           if (t.name === 'clients' && !existing) flagPossibleDuplicate(user, raw, o.client_code, warnings);
@@ -644,14 +660,23 @@ function push(user, payload) {
       if (t.writePerm && !auth.hasPerm(user, t.writePerm)) { reject(t.name, ts.id, `your role cannot delete ${t.name}`); continue; }
       const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
       if (!existing) continue;
-      if (['clients', 'notes', 'consents', 'disclosures', 'note_addenda', 'court_orders', 'part2_notices'].includes(t.name)) continue; // never hard-deleted through sync (legal record)
+      if (['clients', 'notes', 'consents', 'disclosures', 'note_addenda', 'court_orders', 'part2_notices', 'supply_ledger'].includes(t.name)) continue; // never hard-deleted through sync (legal record; the append-only stock ledger)
       const clientId = t.clientCol ? existing[t.clientCol] : null;
       if (clientId && !auth.canAccessClient(user, clientId)) { reject(t.name, ts.id, 'not on caseload'); continue; }
       if (t.scope === 'all' && !auth.hasPerm(user, 'clients:all')) continue; // shared reference data is not deleted from devices
       if (t.name === 'expenditures' && existing.status !== 'pending') continue;
       if ((existing.updated_at || existing.created_at || NEVER) < ts.deleted_at) {
         db.savepoint(() => { db.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id); db.tombstone(t.name, ts.id); }, (err) => reject(t.name, ts.id, describeError(err)));
+        // A deleted visit (or one of its items) puts back what it drew.
+        if (t.name === 'interventions') touchVisit(ts.id, { linesPushed: true });
+        if (t.name === 'intervention_supplies') touchVisit(existing.intervention_id, { linesPushed: true });
       }
+    }
+
+    // The office's draw-down for every visit this push touched: after the rows, the items and the deletions
+    // have all landed, so a device's visit and its items are weighed together. One visit's failure is its own.
+    for (const [id, how] of supplyVisits) {
+      db.savepoint(() => SUP.settlePushedVisit(user, id, how), (err) => warnings.push({ table: 'interventions', id, reason: `supplies not drawn down: ${String(err && err.message || err).slice(0, 160)}` }));
     }
 
     // A device's audit rows are its own record of what its user did; they are re-logged here under that

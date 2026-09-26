@@ -62,25 +62,30 @@ function ssoPolicy() {
 // reports:exact lets such a run use exact counts instead of small-cell suppression, for the programme's own
 // submission to its funder (server/routes/reports.js); publication always suppresses. It is only ever held
 // with reports:internal, since exact counts are never a publication release.
+// supplies (docs/SUPPLIES.md): supplies:read is the stock on hand, by site and lot, and its history, for the
+// staff who hand supplies out; supplies:receive records stock that arrived (a delivery at their site), which
+// field staff do; supplies:manage is the rest of running the cupboard (items, sites, transfers between sites,
+// adjustments after a count, disposal of expired stock), held by supervisors and administrators. A visit's own
+// draw-down needs only interventions:write, as it always has.
 const PERMS = {
   admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
                'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve','budget:manage',
                'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','graph:import','reports:read','assignments:manage','export:read','export:identified','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','clients:legal-hold','patient-requests:*','careplan:read',
-               'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact'],
+               'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','supplies:*'],
   supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
                'consents:*','imports:*','graph:import','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*',
-               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact'],
+               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','supplies:*'],
   // Front-line staff hold export:read so the Export buttons on their own screens work; without
   // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
   clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
                'notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
-               'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','assessments:*','court-orders:read','agreements:read'],
+               'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','assessments:*','court-orders:read','agreements:read','supplies:read','supplies:receive'],
   navigator:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','notes:admin:read','notes:admin:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
-               'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','court-orders:read','agreements:read'],
+               'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','court-orders:read','agreements:read','supplies:read','supplies:receive'],
   // finance sees money, not people: export:read without export:identified means every export it can run
   // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
   // Its people counts are publication releases only (no reports:internal, so no reports:exact): money and hours

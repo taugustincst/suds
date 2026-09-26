@@ -252,20 +252,23 @@ for (const [label, base] of surfaces) {
       // SUPPLIES: "Add a supply item" → Save failed with 403 "kept at the office" on a build with no office.
       await page.goto(base + '/#/supplies'); await settle(page);
       await press(page.getByRole('button', { name: '+ Add item' }).first()); await page.waitForSelector('.modal');
-      await page.getByRole('textbox', { name: /Item/ }).fill('Naloxone kit'); await page.getByRole('spinbutton', { name: /Quantity/ }).fill('12');
+      await page.getByRole('textbox', { name: /Item name/ }).fill('Naloxone kit'); await page.getByRole('spinbutton', { name: /Quantity/ }).fill('12');
       await press(page.getByRole('button', { name: 'Save' }));
       const closed = await until(async () => !(await page.$('.modal')), { timeout: 6000 });
       ok(closed, `${L}: Save adds the supply item on SUDS on this device (the dialog closes)`, await page.evaluate(() => document.querySelector('.modal .banner.danger')?.textContent || document.querySelector('#toasts')?.textContent));
       await settle(page);
       eq((await kernel('GET', '/api/supplies')).json.rows.find(x => x.item === 'Naloxone kit')?.quantity, 12, `${L}: and it is on the shelf with 12`);
+      // 1.14: more stock is a delivery received (Receive stock), from the row's button or, on a phone, the row itself.
       if (kind === 'desktop') {
-        await page.getByRole('button', { name: 'One more Naloxone kit' }).click(); await settle(page);
-        eq((await kernel('GET', '/api/supplies')).json.rows.find(x => x.item === 'Naloxone kit')?.quantity, 13, `${L}: + adds one`);
+        await page.getByRole('button', { name: 'Receive Naloxone kit' }).click(); await page.waitForSelector('.modal');
+        await page.getByRole('spinbutton', { name: /Quantity received/ }).fill('1'); await page.getByRole('button', { name: 'Record delivery' }).click();
+        await until(async () => !(await page.$('.modal')), { timeout: 6000 }); await settle(page);
+        eq((await kernel('GET', '/api/supplies')).json.rows.find(x => x.item === 'Naloxone kit')?.quantity, 13, `${L}: receiving one adds one`);
       } else {
         await page.getByRole('button', { name: /Naloxone kit/ }).locator('visible=true').first().tap(); await page.waitForSelector('.modal');
-        await page.getByRole('spinbutton').fill('20'); await page.getByRole('button', { name: 'Record count' }).tap();
+        await page.getByRole('spinbutton', { name: /Quantity received/ }).fill('8'); await page.getByRole('button', { name: 'Record delivery' }).tap();
         await until(async () => !(await page.$('.modal')), { timeout: 6000 }); await settle(page);
-        eq((await kernel('GET', '/api/supplies')).json.rows.find(x => x.item === 'Naloxone kit')?.quantity, 20, `${L}: a stock-take from the phone row records the count`);
+        eq((await kernel('GET', '/api/supplies')).json.rows.find(x => x.item === 'Naloxone kit')?.quantity, 20, `${L}: a delivery received from the phone row adds to the count`);
       }
 
       });
