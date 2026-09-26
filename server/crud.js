@@ -7,6 +7,11 @@ const { notFound, forbidden, HttpError } = require('./http');
 const { validate, paging } = require('./validate');
 const { uuid } = require('./crypto');
 
+// Rows built here are presented through withClientName (client code only for a role without clients:read),
+// so a de-identified role holding the table's permission (finance: expenditures, time) may still reach a row
+// that names a client; auth.canAccessClient refuses it everywhere else.
+const DEID = { deidentified: true };
+
 function clientExists(id) { return !!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id); }
 
 // ---- optimistic concurrency ----
@@ -36,7 +41,7 @@ function build(r, opts) {
   const readPerm = `${perm}:read`, writePerm = `${perm}:write`;
 
   function decorate(ctx, rows) { return opts.afterLoad ? rows.map(x => opts.afterLoad(ctx, x)) : rows; }
-  function checkClient(ctx, clientId) { if (clientId) { if (!clientExists(clientId)) throw notFound('Client not found'); auth.assertClientAccess(ctx, clientId); } }
+  function checkClient(ctx, clientId) { if (clientId) { if (!clientExists(clientId)) throw notFound('Client not found'); auth.assertClientAccess(ctx, clientId, DEID); } }
 
   r.get(base, auth.requireAuth, auth.requirePerm(readPerm, writePerm), (ctx) => {
     const { limit, offset } = paging(ctx.query, { limit: 100, max: 1000 });
@@ -62,7 +67,7 @@ function build(r, opts) {
   r.get(`${base}/:id`, auth.requireAuth, auth.requirePerm(readPerm, writePerm), (ctx) => {
     const row = db.one(`SELECT ${select} FROM ${table} ${joins} WHERE ${table}.id=?`, ctx.params.id);
     if (!row) throw notFound();
-    if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
+    if (row.client_id) auth.assertClientAccess(ctx, row.client_id, DEID);
     // A record with no client (a staff time entry, a program to-do) is not covered by caseload scoping, so
     // the list view's owner filter has to be applied here too — otherwise it can be read by id alone.
     else if (opts.ownerOnly && row[ownerCol] !== ctx.user.id && !auth.hasPerm(ctx.user, opts.ownerOnly)) {
@@ -99,7 +104,7 @@ function build(r, opts) {
   r.put(`${base}/:id`, auth.requireAuth, auth.requirePerm(writePerm), (ctx) => {
     const row = db.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
     if (!row) throw notFound();
-    if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
+    if (row.client_id) auth.assertClientAccess(ctx, row.client_id, DEID);
     if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden('You cannot edit this record');
     if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
     const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true, existing: row });
@@ -119,7 +124,7 @@ function build(r, opts) {
   r.delete(`${base}/:id`, auth.requireAuth, auth.requirePerm(writePerm), (ctx) => {
     const row = db.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
     if (!row) throw notFound();
-    if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
+    if (row.client_id) auth.assertClientAccess(ctx, row.client_id, DEID);
     if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden('You cannot delete this record');
     if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden('You cannot delete this record');
     if (opts.beforeDelete) opts.beforeDelete(ctx, row);

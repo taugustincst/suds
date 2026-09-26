@@ -137,16 +137,20 @@ const ACTIVE_ASSIGNMENT = `((end_date IS NULL OR end_date >= date('now')) AND (e
 const activeAssignment = (prefix = '') => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
 
 // A role without clients:read (finance, readonly: clients:list-deidentified) is not caseload-scoped because
-// it never sees who a client is — so it can open no single client's record at all. caseloadRestricted() is
-// false for it, which used to make this answer "yes" for every client (readonly read identified forms).
-function canAccessClient(user, clientId) {
-  if (!hasPerm(user, 'clients:read')) return false;
+// it never sees who a client is — so it may open no client's record. caseloadRestricted() is false for it,
+// which used to make this answer "yes" for every client (readonly read any client's identified forms). The
+// one exception is opt-in: `deidentified: true` from a route whose answer is keyed by client code only
+// (crud.js: an expenditure or time entry that names a client, which finance approves; withClientName gives a
+// role without clients:read the code, never the name). test/deidentified-roles.test.js sweeps every GET
+// route as each such role and fails on any identifier in the answer.
+function canAccessClient(user, clientId, { deidentified = false } = {}) {
+  if (!hasPerm(user, 'clients:read')) return deidentified && hasPerm(user, 'clients:list-deidentified');
   if (!caseloadRestricted(user)) return true;
   const r = db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${activeAssignment()}`, clientId, user.id);
   return !!r;
 }
-function assertClientAccess(ctx, clientId) {
-  if (!canAccessClient(ctx.user, clientId)) {
+function assertClientAccess(ctx, clientId, opts) {
+  if (!canAccessClient(ctx.user, clientId, opts)) {
     audit.log({ user: ctx.user, action: 'authz.denied', entity: 'client', entityId: clientId, clientId, ip: ctx.ip, success: false, details: { reason: 'not on caseload' } });
     throw forbidden('This client is not on your caseload');
   }

@@ -447,7 +447,8 @@ function push(user, payload) {
           // Caseload scoping applies to everything that carries a client, including the tables where the
           // client is optional (calls, tasks, time, expenditures) — those were previously unchecked.
           // (A self-assignment is what puts the new client on the caseload, so it cannot be judged by it.)
-          if ((t.scope === 'client' || t.scope === 'client-or-null') && raw[t.clientCol] && t.name !== 'clients' && !selfAssignmentIds.has(raw.id) && !auth.canAccessClient(user, raw[t.clientCol])) { reject(t.name, raw.id, 'not on caseload'); return false; }
+          // deidentified: as over REST (crud.js), finance may file an expenditure against a client it knows by code.
+          if ((t.scope === 'client' || t.scope === 'client-or-null') && raw[t.clientCol] && t.name !== 'clients' && !selfAssignmentIds.has(raw.id) && !auth.canAccessClient(user, raw[t.clientCol], { deidentified: true })) { reject(t.name, raw.id, 'not on caseload'); return false; }
           if (t.name === 'clients' && existing && !auth.canAccessClient(user, raw.id)) { reject(t.name, raw.id, 'not on caseload'); return false; }
           // A self-assignment the device made for a client it created (see isSelfAssignment). A matching
           // open assignment under another id — the office's own, from a sync before this rule existed —
