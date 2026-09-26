@@ -76,18 +76,20 @@ function pkcePair() {
 
 // The state/nonce/PKCE-verifier travelling between /start and /callback has nowhere server-side to live
 // (a bare Authorization Code flow has no session yet) — it rides in a short-lived, HMAC-signed cookie
-// instead, keyed off config.indexKey the same way the audit chain is, so it cannot be forged or replayed
+// instead, keyed with its own subkey of the index key (crypto.subkey('oidc-state'), HKDF; before 1.12.5 the
+// index key itself, shared with the blind indexes and the audit chain), so it cannot be forged or replayed
 // past its own expiry.
 const COOKIE = 'suds_oidc';
+const stateKey = () => require('./crypto').subkey('oidc-state');
 function signState(payload) {
   const body = b64url(JSON.stringify(payload));
-  const sig = b64url(crypto.createHmac('sha256', config.indexKey).update(body).digest());
+  const sig = b64url(crypto.createHmac('sha256', stateKey()).update(body).digest());
   return `${body}.${sig}`;
 }
 function verifyState(token) {
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
   const [body, sig] = token.split('.');
-  const expected = b64url(crypto.createHmac('sha256', config.indexKey).update(body).digest());
+  const expected = b64url(crypto.createHmac('sha256', stateKey()).update(body).digest());
   if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
   let payload;
   try { payload = JSON.parse(fromB64url(body).toString('utf8')); } catch { return null; }
@@ -213,4 +215,4 @@ function idpMfa(claims, { acrValues = [] } = {}) {
 /** The verified state a callback's cookie carries (or null): tells a sign-in from a re-authentication. */
 function readState(cookieToken) { return verifyState(cookieToken); }
 
-module.exports = { checkEndpoint, discover, startAuth, completeAuth, readState, stateCookie, COOKIE, idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => { discoveryCache = null; jwksCache = null; } };
+module.exports = { checkEndpoint, discover, startAuth, completeAuth, readState, stateCookie, COOKIE, _signStateForTests: (p) => signState(p), idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => { discoveryCache = null; jwksCache = null; } };

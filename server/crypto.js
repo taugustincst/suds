@@ -50,6 +50,17 @@ function foldText(value) {
     .replace(TRANSLIT_RE, (c) => TRANSLIT[c]).normalize('NFC').replace(/[^\p{L}\p{M}\p{N}]/gu, '');
 }
 
+// A purpose-separated key derived from the index key (HKDF-SHA256, RFC 5869): a MAC made for one purpose is
+// then never a valid MAC for another. For every use of the index key added from 1.12.5 on (the OIDC state
+// cookie first). The blind indexes, the audit chain and the anchors keep the index key itself, because
+// changing their key would change every stored index and break verification of every existing audit entry
+// (docs/security/ENCRYPTION-AND-KEYS.md). Rotating the index key rotates every subkey with it.
+// Not cached: it costs microseconds, and a cache would outlive a rotated key.
+function subkey(purpose, key = config.indexKey) {
+  if (!purpose || typeof purpose !== 'string') throw new Error('subkey: a purpose is required');
+  return Buffer.from(crypto.hkdfSync('sha256', key, Buffer.from('suds-subkey-v1'), Buffer.from(`suds/${purpose}`), 32));
+}
+
 // Deterministic blind index for equality/prefix-free search on encrypted fields.
 function blindIndex(value, key = config.indexKey) {
   if (value === null || value === undefined) return null;
@@ -169,5 +180,5 @@ function otpauthUrl(secret, account, issuer = 'SUDS') {
  */
 function keyFingerprint() { return sha256('suds-key-check:' + config.encryptionKey.toString('hex')).slice(0, 32); }
 
-module.exports = { encrypt, decrypt, blindIndex, foldText, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
+module.exports = { encrypt, decrypt, blindIndex, subkey, foldText, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
   generateTotpSecret, totp, totpStep, verifyTotp, otpauthUrl, base32Encode, base32Decode };
