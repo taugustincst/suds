@@ -84,17 +84,20 @@ function countingMode(ctx, period = { from: '', to: '' }, opts = {}) {
 /** The part of the counting mode a response carries as `suppression`. */
 const suppressionOf = (c) => ({ mode: c.mode, threshold: c.threshold, purpose: c.purpose });
 
+/** What to do before sharing a publication release: on the About sheet of every file and in the counting statement. */
+const PUBLICATION_GUIDANCE = 'Before publishing: publish each standard period once, after its data are complete, and never two periods that overlap or where one contains the other (a quarter and the year that contains it): two such releases, or the same period run again after late entries, can be subtracted from each other to reveal a small group, which suppression within one release cannot prevent. Review the withheld and suppressed tables before release. This suppression is a conservative automated default, not a statistical expert determination (45 CFR 164.514(b)(1)).';
+
 /** What the About sheet, the page and the CSV say about how the counts were made. */
 function countingStatement(s) {
   const T = s.threshold;
-  const how = `every count of people under ${T} (people served, each breakdown row, people per fund, episodes, discharges, overdose events and reversals, who gave the naloxone) is shown as "<${T}" so nobody can be picked out of a small group, and wherever a hidden figure could still be worked out from the figures published with it (a total, a breakdown that adds up to it, or the people left when one fund's are taken from the total) more is hidden, shown as "suppressed", the total itself only when nothing else will do, so that it cannot be worked out by subtraction. Counts of naloxone kits, doses, test strips, services, staff hours and money are not counts of people and are exact.`;
+  const how = `every count of people under ${T} (people served, each breakdown row, people per fund, episodes, discharges, overdose events and reversals, who gave the naloxone) is shown as "<${T}" so nobody can be picked out of a small group, and wherever a hidden figure could still be worked out from the figures published with it (a total, a breakdown that adds up to it, or the people left when one fund's are taken from the total) more is hidden, shown as "suppressed", the total itself only when nothing else will do, so that it cannot be worked out by subtraction. Counts of naloxone kits, test strips, services, staff hours and money are not counts of people and are exact${s.purpose === 'publication' ? '; naloxone doses are exact unless they would show a hidden count of reversals, and are then hidden with it' : ', and so are naloxone doses'}.`;
   const rel = s.release || { publishable: false, not_publishable: [] };
   const why = rel.not_publishable.length ? ` (${rel.not_publishable.join('; ')})` : '';
   if (s.mode === 'exact') {
     return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the programme's own ${s.purpose === 'submission' ? 'submission to its funder' : 'internal use'}; not for publication or sharing.`;
   }
   if (s.purpose === 'publication') {
-    return `Publication release: the whole programme, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: nothing any of them prints says more about a small hidden count of people than "fewer than ${T}" (a count of services that would is hidden with it, and a table that cannot be protected is withheld). Suitable for publication or sharing. Publish one release per period, once: two releases for nested or overlapping periods (a quarter and the year that contains it) or the same period run again after late entries can be subtracted from each other to reveal a small group, which suppression within one release cannot prevent.`;
+    return `Publication release: the whole programme, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: nothing any of them prints says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it, and a table that cannot be protected is withheld and prints no rows). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Suitable for publication or sharing. ${PUBLICATION_GUIDANCE}`;
   }
   return `${s.purpose === 'submission' ? 'The programme\'s own submission to its funder' : 'Internal'}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole programme minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the programme and its funder.`;
 }
@@ -102,6 +105,22 @@ function countingStatement(s) {
 // Demographic columns read from each person served, in one pass.
 const DIMENSIONS = [['by_gender', 'gender', 'gender'], ['by_language', 'preferred_language', 'language'], ['by_housing', 'housing_status', 'housing'], ['by_insurance', 'insurance', 'insurance'], ['by_ethnicity', 'race_ethnicity', 'ethnicity']];
 const byCount = (a, b) => (b.n - a.n) || String(a.k).localeCompare(String(b.k));
+// Language, housing, insurance, gender, ethnicity and race codes are free text: an import can write
+// hundreds of values, each one person. In a publication release a breakdown lists at most FOLD_KEEP keys
+// under the threshold - the first in key order, whatever their counts, so which are listed says nothing about
+// them - and the rest are combined in one FOLDED row. The audit's size (server/sdc.js) then no longer grows
+// with what was typed, and a rare value is not printed as a label beside a small count. "unknown" is never
+// combined (it means none reported, which the race codes rely on).
+const FOLD_KEEP = 10;
+const FOLDED = 'Other (combined)';
+/** counts: Map key -> n. A function mapping each key to the key it is listed under, or null if none is combined. */
+function foldOf(counts, T) {
+  if (!T) return null;
+  const small = [...counts].filter(([k, n]) => n > 0 && n < T && k !== 'unknown' && k !== FOLDED).map(([k]) => String(k)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  if (small.length <= FOLD_KEEP) return null;
+  const combined = new Set(small.slice(FOLD_KEEP));
+  return (k) => (combined.has(String(k)) ? FOLDED : k);
+}
 
 // A reversal: naloxone used and the person survived. An event recorded as kind "reversal" had naloxone
 // by definition, whether or not the box was ticked (older records, or rows pushed from a device).
@@ -176,7 +195,7 @@ function servedCount(ts, tsP) {
  * fund: a funding source to filter to, or null. Returns { raw, perFund } - perFund: services and people per
  * funding source id, every fund with work in the period (a publication release needs the inactive ones too).
  */
-function* figures(ctx, { from, to, ts, tsP }, fund) {
+function* figures(ctx, { from, to, ts, tsP }, fund, opts = {}) {
   const cf = auth.caseloadFilter(ctx.user, 'c.id');
   const fundJoin = fund ? 'AND i.funding_source_id=?' : '';
   const fundP = fund ? [fund] : [];
@@ -198,17 +217,26 @@ function* figures(ctx, { from, to, ts, tsP }, fund) {
     // (IN, not a join: the planner then walks the clients once and probes the served set, about half the time.)
     const people = db.all(`SELECT c.gender, c.preferred_language, c.housing_status, c.insurance, c.race_ethnicity, c.race_codes, c.mat_status FROM clients c WHERE c.id IN (SELECT id FROM ${served})`);
     const demographics = {};
+    // A publication release (opts.fold: its threshold) combines the small keys of a free-text breakdown
+    // beyond the first FOLD_KEEP (foldOf).
+    const valueOf = (col) => (p) => (p[col] === null || p[col] === '' ? 'unknown' : p[col]);
     for (const [key, col, label] of DIMENSIONS) {
-      const n = new Map();
-      for (const p of people) { const k = p[col] === null || p[col] === '' ? 'unknown' : p[col]; n.set(k, (n.get(k) || 0) + 1); }
+      const n = new Map(); const of = valueOf(col);
+      for (const p of people) { const k = of(p); n.set(k, (n.get(k) || 0) + 1); }
+      const fold = foldOf(n, opts.fold);
+      if (fold) { n.clear(); for (const p of people) { const k = fold(of(p)); n.set(k, (n.get(k) || 0) + 1); } }
       demographics[key] = [...n].map(([k, v]) => ({ k, n: v, dimension: label })).sort(byCount);
     }
     // race_codes is comma separated because a person may report more than one, so each is counted
     // separately and the total will exceed the number of people served. That is how funders want it.
-    const byRace = new Map();
-    for (const p of people) {
-      const codes = String(p.race_codes || '').split(',').map(x => x.trim()).filter(Boolean);
-      for (const code of (codes.length ? codes : ['unknown'])) byRace.set(code, (byRace.get(code) || 0) + 1);
+    const codesOf = (p) => { const codes = String(p.race_codes || '').split(',').map(x => x.trim()).filter(Boolean); return codes.length ? codes : ['unknown']; };
+    let byRace = new Map();
+    for (const p of people) for (const code of codesOf(p)) byRace.set(code, (byRace.get(code) || 0) + 1);
+    const foldRace = foldOf(byRace, opts.fold);
+    if (foldRace) {
+      // A person with several combined codes is one person in the combined row.
+      byRace = new Map();
+      for (const p of people) for (const code of new Set(codesOf(p).map(foldRace))) byRace.set(code, (byRace.get(code) || 0) + 1);
     }
     demographics.by_race_code = [...byRace].map(([k, n]) => ({ k, n })).sort(byCount);
     yield;
@@ -376,6 +404,7 @@ function sheets(d, ctx, fundName) {
     { k: 'Funding source', v: fundName || 'All funding sources' },
     { k: 'Purpose', v: d.suppression.purpose === 'publication' ? 'Publication release (whole programme, one standard period)' : d.suppression.purpose === 'submission' ? 'The programme\'s own submission to its funder, not for publication' : 'Internal, not for publication' },
     { k: 'Counts', v: d.counting_statement },
+    ...(d.suppression.purpose === 'publication' ? [{ k: 'Before publishing', v: PUBLICATION_GUIDANCE }] : []),
     ...(d.caseload_scope_note ? [{ k: 'Scope', v: d.caseload_scope_note }] : []),
     { k: 'Classification', v: 'Aggregate counts: no names, client codes or dates of service.' },
     { k: 'Generated', v: db.now() }, { k: 'Generated by', v: ctx.user.display_name || ctx.user.username },
@@ -413,4 +442,4 @@ function sheets(d, ctx, fundName) {
   };
 }
 
-module.exports = { build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT };
+module.exports = { build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, PUBLICATION_GUIDANCE };

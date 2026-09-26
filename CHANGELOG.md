@@ -2,6 +2,28 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+- **Which rows a publication release lists no longer gives anything away.** An independent attack on 1.12.2
+  read the rows themselves: the NDP log listed only the months with a reversal, and the funder report only
+  the months, discharge reasons and "given by" codes that were used, so ten rows marked `withheld` beside
+  "staff <11" meant exactly one reversal a month. A publication release now lists every month of the period
+  and every code of those lists, zero or not, in a fixed order (never by size, which told which hidden cell
+  was larger), and a table withheld whole prints no rows. Episodes opened, closed and open at the end, and
+  the naloxone doses used (every reversal records one to twenty), are now part of the audit, so they can no
+  longer narrow a hidden count; doses are hidden with the reversals they would reveal. Closing an episode
+  before the day it opened is refused.
+- **A release the audit cannot verify is refused, not published.** Every hidden count is checked again when
+  the audit stops; if any is still exposed, or the audit runs past 5 s, the three reports answer that the
+  period cannot be published (internal runs are unaffected). The audited release is shared by the three
+  reports, and rare typed-in values beyond the first ten per breakdown are combined as "Other (combined)":
+  800 one-person languages audit in milliseconds instead of 20 s per report.
+- The funder report, the Reports page and every publication file's About sheet say what to do before sharing
+  a release: publish each period once and never nested or overlapping periods, review what is withheld, and
+  treat the suppression as a conservative default, not an expert determination.
+- docs/HIPAA.md no longer says read-only accounts hold `export:read` or that the monthly trends report is
+  not audited.
+
 ## 1.12.2 — 2026-09-26
 
 - **A publication release is audited as a whole.** An independent check of 1.12.1 still recovered hidden

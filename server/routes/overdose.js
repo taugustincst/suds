@@ -94,7 +94,7 @@ module.exports = (r) => {
       client_id: { type: 'string' }, occurred_at: { type: 'datetime', required: true },
       // Required: an empty form saved by accident used to become a countable reversal.
       kind: { type: 'string', enum: KINDS, list: 'OVERDOSE_KINDS', required: true }, substances: { type: 'string', maxLen: 200 },
-      naloxone_used: { type: 'boolean' }, naloxone_doses: { type: 'number', integer: true, min: 0, max: 20 },
+      naloxone_used: { type: 'boolean' }, naloxone_doses: { type: 'number', integer: true, min: 0, max: C.NALOXONE_DOSES_MAX },
       administered_by: { type: 'string', list: 'ADMINISTERED_BY' }, ems_called: { type: 'boolean' },
       hospitalized: { type: 'boolean' }, survived: { type: 'boolean' },
       // A code from the LOCATIONS list; typed-in text is matched to one (normalise, below).

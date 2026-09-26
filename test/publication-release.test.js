@@ -47,21 +47,30 @@ async function seedQuarter() {
   }
   for (let i = 0; i < 11; i++) await post({ occurred_at: `2024-05-${String(2 + i).padStart(2, '0')}T12:00:00Z`, kind: 'reversal', naloxone_used: true, naloxone_doses: 2, administered_by: i < 4 ? 'staff' : 'bystander', survived: true });
 }
-async function releaseOf(q) {
-  const [funder, ndp, settlement] = await Promise.all(['/api/reports/funder', '/api/reports/naloxone-ndp', '/api/reports/opioid-settlement'].map(p => sup.get(`${p}?${q}`).then(x => x.data)));
+// What anyone knows about a period: its months, and the code lists a breakdown lists in full.
+function domainsOf(q) {
+  const C = require('../server/constants'); const PR = require('../server/publication-release');
+  const p = new URLSearchParams(q);
+  return { months: PR.monthsOf(p.get('from'), p.get('to')), administered_by: C.ADMINISTERED_BY, discharge_reasons: C.DISCHARGE_REASONS };
+}
+async function releaseOf(q, who = sup) {
+  const [funder, ndp, settlement] = await Promise.all(['/api/reports/funder', '/api/reports/naloxone-ndp', '/api/reports/opioid-settlement'].map(p => who.get(`${p}?${q}`).then(x => x.data)));
   const [tf, ts] = await Promise.all(['/api/reports/funder', '/api/reports/opioid-settlement'].map(p => sup.get(`${p}?${q}${EXACT}`).then(x => x.data)));
-  return { pub: { funder, ndp, settlement }, truth: { funder: tf, settlement: ts } };
+  return { pub: { funder, ndp, settlement, domains: domainsOf(q) }, truth: { funder: tf, settlement: ts } };
 }
 
 test('API: the August release (reviewer e2e1) and the overdose quarter survive the attacker, all three reports together', async () => {
   await seedAugust(); await seedQuarter();
   for (const q of [AUG, Q]) {
     const { pub, truth } = await releaseOf(q);
-    for (const d of Object.values(pub)) assert.equal(d.suppression.purpose, 'publication', q);
+    for (const d of [pub.funder, pub.ndp, pub.settlement]) assert.equal(d.suppression.purpose, 'publication', q);
     assert.deepEqual(attack(pub, truth, 11), [], `${q}: ${JSON.stringify({ served: pub.funder.unduplicated.served, gender: pub.funder.demographics.by_gender, funds: pub.funder.by_funding_source.map(f => [f.name, f.clients_served, f.services]), settlement: pub.settlement.services_by_use, od: pub.funder.overdose })}`);
     // One release: the same id on all three, and the NDP reversals are the funder report's.
     assert.ok(pub.funder.release.id && pub.funder.release.id === pub.ndp.release.id && pub.ndp.release.id === pub.settlement.release.id, JSON.stringify([pub.funder.release, pub.ndp.release]));
-    assert.deepEqual(pub.ndp.rows.filter(x => x.entry === 'reversal').map(x => [x.date, x.reversals]), pub.funder.overdose.by_month.filter(x => truth.funder.overdose.by_month.find(m => m.month === x.month).reversals > 0).map(x => [x.month, x.reversals]));
+    // Every month of the period, with a reversal or not; none when the reversals by month are withheld.
+    const revGone = pub.funder.release.withheld.includes('overdose.by_month.reversals');
+    assert.deepEqual(pub.ndp.rows.filter(x => x.entry === 'reversal').map(x => [x.date, x.reversals]), revGone ? [] : pub.funder.overdose.by_month.map(x => [x.month, x.reversals]));
+    assert.deepEqual(pub.funder.overdose.by_month.map(x => x.month), pub.domains.months);
     assert.deepEqual(pub.ndp.totals.reversals, pub.funder.overdose.reversals);
   }
 });
@@ -121,6 +130,93 @@ test('API: a navigator\'s caseload run counts the caseload\'s overdoses and peop
   assert.match(csv, /About,Scope,/);
 });
 
+// ---- the reviewer's reproductions against 1.12.2, through the API ----
+async function clientsServed(n, day, prefix) {
+  const ids = [];
+  for (let i = 0; i < n; i++) {
+    const c = await admin.post('/api/clients', { first_name: `${prefix}${i}`, last_name: 'Release', confirm_duplicate: true });
+    assert.equal(c.status, 201, JSON.stringify(c.data)); ids.push(c.data.id);
+    if (day) assert.equal((await admin.post('/api/interventions', { client_id: c.data.id, type: 'outreach', occurred_at: `${day}T18:00:00.000Z` })).status, 201);
+  }
+  return ids;
+}
+const episode = (clientId, opened, closed, reason) => H.db.run(`INSERT INTO episodes(id,client_id,opened_at,status,closed_at,discharge_reason) VALUES(lower(hex(randomblob(16))),?,?,?,?,?)`, clientId, opened, closed ? 'closed' : 'open', closed, reason);
+const csvLines = (csv, re) => String(csv).split(/\r?\n/).filter(l => re.test(l));
+
+test('API: reviewer year2 - one reversal a month and nine discharge reasons; the rows listed say nothing', async () => {
+  // 2022: one reversal by staff in each of January to October, nine episodes closed, one for each reason.
+  // 1.12.2 listed ten "withheld" NDP month rows and "staff <11": each month exactly 1; and nine reasons
+  // under "Closed <11": 9 or 10.
+  const ids = await clientsServed(20, '2022-03-10', 'Y2-');
+  for (let m = 1; m <= 10; m++) assert.equal((await admin.post('/api/overdose-events', { client_id: ids[m], occurred_at: `2022-${String(m).padStart(2, '0')}-15T12:00:00Z`, kind: 'reversal', naloxone_used: true, naloxone_doses: 1, administered_by: 'staff', survived: true })).status, 201);
+  require('../server/constants').DISCHARGE_REASONS.forEach((reason, i) => episode(ids[i], '2022-02-01', '2022-06-15', reason));
+  const q = 'from=2022-01-01&to=2022-12-31';
+  const { pub, truth } = await releaseOf(q);
+  assert.equal(pub.funder.suppression.purpose, 'publication');
+  assert.deepEqual(attack(pub, truth, 11), [], JSON.stringify({ od: pub.funder.overdose, ep: pub.funder.episodes, withheld: pub.funder.release.withheld }));
+  const ndpCsv = (await sup.get(`/api/reports/naloxone-ndp/export?${q}&format=csv`)).data;
+  const revRows = csvLines(ndpCsv, /Reversal reported/);
+  assert.ok(revRows.length === 12 || revRows.length === 0, revRows.join('\n'));
+  const fCsv = (await sup.get(`/api/reports/funder/export?${q}&format=csv`)).data;
+  const reasons = csvLines(fCsv, /^Discharge reason,/); const givenBy = csvLines(fCsv, /^Naloxone given by,/);
+  assert.ok(reasons.length === 0 || reasons.length >= 9, reasons.join('\n'));
+  assert.ok(givenBy.length === 0 || givenBy.length >= 6, givenBy.join('\n'));
+  assert.ok(![...reasons, ...givenBy, ...revRows].some(l => /withheld/.test(l)), 'a row of a withheld table is printed');
+});
+
+test('API: reviewer year - one overdose a month, not reversed', async () => {
+  await clientsServed(15, '2023-03-10', 'Y1-');
+  for (let m = 1; m <= 10; m++) assert.equal((await admin.post('/api/overdose-events', { occurred_at: `2023-${String(m).padStart(2, '0')}-15T12:00:00Z`, kind: 'overdose', survived: true })).status, 201);
+  const { pub, truth } = await releaseOf('from=2023-01-01&to=2023-12-31');
+  assert.deepEqual(attack(pub, truth, 11), [], JSON.stringify(pub.funder.overdose));
+});
+
+test('API: reviewer e2e S1 - episodes opened, open at the end and closed are one system', async () => {
+  // Q1 2025: 30 episodes opened in February, 25 still open, 5 closed in March; 25 people served. 1.12.2
+  // printed Opened 30, Open at end 25 and Closed "<11": at least 5.
+  const ids = await clientsServed(30, null, 'S1-');
+  for (let i = 0; i < 25; i++) assert.equal((await admin.post('/api/interventions', { client_id: ids[i], type: 'outreach', occurred_at: '2025-02-10T18:00:00.000Z' })).status, 201);
+  ids.forEach((id, i) => episode(id, '2025-02-01', i < 5 ? '2025-03-15' : null, i < 5 ? (i < 3 ? 'completed' : 'moved') : null));
+  assert.equal((await admin.post('/api/overdose-events', { occurred_at: '2025-01-15T12:00:00Z', kind: 'overdose', survived: true })).status, 201);
+  assert.equal((await admin.post('/api/overdose-events', { occurred_at: '2025-02-15T12:00:00Z', kind: 'overdose', survived: true })).status, 201);
+  const q = 'from=2025-01-01&to=2025-03-31';
+  const { pub, truth } = await releaseOf(q);
+  assert.equal(truth.funder.episodes.admissions, 30); assert.equal(truth.funder.episodes.discharges, 5);
+  assert.deepEqual(attack(pub, truth, 11), [], JSON.stringify(pub.funder.episodes));
+  const e = pub.funder.episodes;
+  assert.ok(!(typeof e.admissions === 'number' && typeof e.open_at_end === 'number' && e.discharges === '<11'), `opened ${e.admissions}, open at end ${e.open_at_end}, closed ${e.discharges}`);
+});
+
+test('API: an episode cannot be closed before it was opened', async () => {
+  const [id] = await clientsServed(1, null, 'EP-');
+  const opened = await admin.post(`/api/clients/${id}/episodes`, { opened_at: '2025-05-10' });
+  let epId = opened.data && opened.data.id;
+  if (opened.status !== 201) epId = H.db.one(`SELECT id FROM episodes WHERE client_id=? AND status='open'`, id).id; // the intake episode
+  H.db.run(`UPDATE episodes SET opened_at='2025-05-10' WHERE id=?`, epId);
+  const bad = await admin.post(`/api/episodes/${epId}/close`, { discharge_reason: 'completed', closed_at: '2025-05-09', keep_client_active: true });
+  assert.equal(bad.status, 400, JSON.stringify(bad.data)); assert.match(bad.data.error, /before the episode was opened/);
+  assert.equal(H.db.one(`SELECT status FROM episodes WHERE id=?`, epId).status, 'open');
+  const ok = await admin.post(`/api/episodes/${epId}/close`, { discharge_reason: 'completed', closed_at: '2025-05-10', keep_client_active: true });
+  assert.equal(ok.status, 200, JSON.stringify(ok.data));
+});
+
+test('API: a release the audit cannot verify is refused by all three reports and their files; internal runs still work', async () => {
+  const SDC = require('../server/sdc'); const PR = require('../server/publication-release');
+  const orig = SDC.protect;
+  SDC.protect = (m, T, o = {}) => orig(m, T, { ...o, budget: 0 });
+  PR.clearCache();
+  try {
+    for (const p of ['/api/reports/funder', '/api/reports/naloxone-ndp', '/api/reports/opioid-settlement', '/api/reports/funder/export', '/api/reports/naloxone-ndp/export?format=xlsx']) {
+      const r = await sup.get(`${p}${p.includes('?') ? '&' : '?'}${AUG}`);
+      assert.equal(r.status, 422, `${p}: ${r.status}`);
+      assert.match(r.data.error, /cannot be published/); assert.equal(r.data.code, 'publication_refused');
+    }
+    const internal = await sup.get(`/api/reports/funder?${AUG}&purpose=internal`);
+    assert.equal(internal.status, 200); assert.equal(internal.data.suppression.purpose, 'internal');
+  } finally { SDC.protect = orig; PR.clearCache(); }
+  assert.equal((await sup.get(`/api/reports/funder?${AUG}`)).status, 200);
+});
+
 // ---- the solver ----
 test('the exact integer solver agrees with brute force on random small systems', () => {
   const SDC = require('../server/sdc');
@@ -174,12 +270,20 @@ test('the attacker\'s own solver agrees with brute force', () => {
 // ---- the release, as a pure function of its figures ----
 const PARTS = ['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_ethnicity'];
 const count = (people, f) => { const m = new Map(); for (const p of people) for (const k of [].concat(f(p))) m.set(k, (m.get(k) || 0) + 1); return [...m].map(([k, n]) => ({ k, n })).sort((a, b) => (b.n - a.n) || String(a.k).localeCompare(String(b.k))); };
+const QUARTER = ['2025-01', '2025-02', '2025-03'];
+const lastDay = (month) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
 /**
  * A programme's figures, computed from its records the way the reports count them. people: [{ gender, ...,
  * visits: { fundId|null: services } }]; anon: { fundId|null: services with no client }; events: [{ month,
- * reversed, fatal, community, by }]; discharges: [reason]; funds: [{ id, use (null: not settlement), active }].
+ * reversed, fatal, community, by, doses }]; discharges: [reason] (episodes opened before the period, closed
+ * in it); episodes: [{ opened: 'before'|'in', state: 'closed'|'open', reason }]; funds: [{ id, use (null: not
+ * settlement), active }]; period: the months of the period (the release lists every one).
  */
-function figuresOf({ people, anon = {}, events = [], discharges = [], funds }) {
+function figuresOf({ people, anon = {}, events = [], discharges = [], episodes = [], funds, period = QUARTER }) {
+  const C = require('../server/constants');
+  const eps = [...discharges.map(reason => ({ opened: 'before', state: 'closed', reason })), ...episodes];
+  const closed = eps.filter(e => e.state === 'closed');
+  const doses = (e) => (e.doses !== undefined ? e.doses : e.reversed ? 1 : 0);
   const perFund = new Map();
   for (const f of [...funds.map(x => x.id), null]) {
     const services = people.reduce((a, p) => a + (p.visits[f] || 0), 0) + (anon[f] || 0);
@@ -190,9 +294,9 @@ function figuresOf({ people, anon = {}, events = [], discharges = [], funds }) {
   const raw = {
     unduplicated: { served: people.length, new_admissions: 0, with_a_referral: people.filter(p => p.referred).length, admitted_after_referral: people.filter(p => p.admitted).length, on_mat: people.filter(p => p.mat).length },
     demographics: { by_gender: count(people, p => p.gender), by_language: count(people, p => p.language), by_housing: count(people, p => p.housing), by_insurance: count(people, p => p.insurance), by_ethnicity: count(people, p => p.ethnicity), by_race_code: count(people, p => (p.race.length ? p.race : ['unknown'])) },
-    episodes: { admissions: 0, discharges: discharges.length, open_at_end: 0, by_discharge_reason: count(discharges.map(k => ({ k })), x => x.k), median_length_of_stay_days: null },
-    overdose: { events: events.length, reversals: events.filter(e => e.reversed).length, fatal: events.filter(e => e.fatal).length, community_reported: events.filter(e => e.community).length, naloxone_doses: 0,
-      by_month: months.map(m => ({ month: m, n: events.filter(e => e.month === m).length, reversals: events.filter(e => e.month === m && e.reversed).length, reversal_doses: events.filter(e => e.month === m && e.reversed).length })),
+    episodes: { admissions: eps.filter(e => e.opened === 'in').length, discharges: closed.length, open_at_end: eps.filter(e => e.state === 'open').length, by_discharge_reason: count(closed.map(e => ({ k: e.reason })), x => x.k), median_length_of_stay_days: null },
+    overdose: { events: events.length, reversals: events.filter(e => e.reversed).length, fatal: events.filter(e => e.fatal).length, community_reported: events.filter(e => e.community).length, naloxone_doses: events.reduce((a, e) => a + doses(e), 0),
+      by_month: months.map(m => ({ month: m, n: events.filter(e => e.month === m).length, reversals: events.filter(e => e.month === m && e.reversed).length, reversal_doses: events.filter(e => e.month === m && e.reversed).reduce((a, e) => a + doses(e), 0) })),
       by_administered_by: count(events.filter(e => e.reversed), e => e.by) },
     naloxone_distribution: { kits: 0, strips: 0, community_kits: 0 },
     by_funding_source: [...funds.filter(f => f.active).map(f => ({ id: f.id, name: f.id, ...(perFund.get(f.id) || { services: 0, clients_served: 0 }) })), { id: null, name: 'No funding source', ...(perFund.get(null) || { services: 0, clients_served: 0 }) }]
@@ -206,17 +310,22 @@ function figuresOf({ people, anon = {}, events = [], discharges = [], funds }) {
   }).filter(x => x.services > 0);
   const settlement = { services_by_use, fundKeys: funds.filter(f => f.use).map(f => ({ id: f.id, key: f.use, active: f.active })) };
   const inactiveFunds = Object.fromEntries(funds.filter(f => !f.active).map(f => [f.id, { people: perFund.get(f.id)?.clients_served || 0, services: perFund.get(f.id)?.services || 0 }]));
-  return { inputs: { funder: raw, perFund, settlement }, inactiveFunds, funds };
+  const domains = { months: period, administered_by: C.ADMINISTERED_BY, discharge_reasons: C.DISCHARGE_REASONS };
+  return { inputs: { funder: raw, perFund, settlement, domains }, inactiveFunds, funds, range: { from: `${period[0]}-01`, to: lastDay(period[period.length - 1]) } };
 }
-/** Protect a programme's figures and put them the way the three reports publish them. */
-function publish(prog, T) {
+/** Protect a programme's figures and put them the way the three reports publish them (the NDP log through its own code). */
+function publish(prog, T, opts = {}) {
   const PR = require('../server/publication-release');
-  const p = PR.protectFigures(prog.inputs, T, { strict: true });
+  const HR = require('../server/harm-reduction-reports');
+  const p = PR.protectFigures(prog.inputs, T, { strict: true, ...opts });
+  if (p.refused) return { p };
   const { funder: raw, settlement } = prog.inputs;
+  const counting = { threshold: T, mode: 'suppressed', purpose: 'publication', release: { publishable: true, period: 'quarter', not_publishable: [] } };
   const pub = {
     funder: p.funder,
     settlement: { funds: prog.funds.filter(f => f.use).map(f => ({ id: f.id, settlement_use: f.use })), services_by_use: settlement.services_by_use.map((x, i) => ({ ...x, people: p.uses[i].people, services: p.uses[i].services })) },
-    ndp: { rows: raw.overdose.by_month.map((m, i) => ({ date: m.month, entry: 'reversal', reversals: p.ndp.by_month[i], truth: m.reversals })).filter(x => x.truth > 0), totals: { reversals: p.ndp.reversals } },
+    ndp: HR.ndpPublished(prog.range, counting, new Map(), p.ndp),
+    domains: prog.inputs.domains, withheld: p.withheld_tables,
   };
   const truth = { funder: raw, settlement: { services_by_use: settlement.services_by_use }, inactiveFunds: prog.inactiveFunds };
   return { p, pub, truth };
@@ -243,7 +352,7 @@ test('reviewer reproduction: the overdose months, reversals at most the events o
     c.months.forEach(([n, rv], m) => { for (let i = 0; i < n; i++) events.push({ month: `2026-0${m + 1}`, reversed: i < rv }); });
     let f = c.fatal; for (const e of events) if (!e.reversed && f > 0) { e.fatal = true; f--; }
     let b = 0; for (const e of events) if (e.reversed) { e.by = b < c.by[0] ? 'staff' : 'bystander'; b++; }
-    const { pub, truth } = publish(figuresOf(noPeople({ events })), 11);
+    const { pub, truth } = publish(figuresOf(noPeople({ events, period: ['2026-01', '2026-02', '2026-03'] })), 11);
     assert.deepEqual(attack(pub, truth, 11), [], `${JSON.stringify(c)} published as ${JSON.stringify(pub.funder.overdose)}`);
   }
 });
@@ -293,10 +402,15 @@ function randomProgramme(r) {
   const nm = 1 + Math.floor(r() * 3);
   const events = Array.from({ length: Math.floor(r() * 16) }, () => {
     const reversed = r() < 0.5; const fatal = !reversed && r() < 0.35;
-    return { month: `2025-0${1 + Math.floor(r() * nm)}`, reversed, fatal, community: r() < 0.3, by: pick(['staff', 'bystander', 'ems'], [skew[0], 1, r()]) };
+    // Doses: 1 to 3 per reversal (sometimes none recorded, sometimes many), and naloxone that did not save a life.
+    const doses = reversed ? (r() < 0.05 ? 0 : r() < 0.1 ? 20 : 1 + Math.floor(r() * 3)) : r() < 0.2 ? 1 + Math.floor(r() * 2) : 0;
+    return { month: `2025-0${1 + Math.floor(r() * nm)}`, reversed, fatal, community: r() < 0.3, by: pick(['staff', 'bystander', 'ems'], [skew[0], 1, r()]), doses };
   });
-  const discharges = Array.from({ length: Math.floor(r() * 12) }, () => pick(['completed', 'moved', 'lost'], skew));
-  return { T, prog: figuresOf({ people, anon, events, discharges, funds }) };
+  // Episodes: opened before the period or in it, closed in it or still open at its end (now and then one that
+  // closed before it opened, which an import could write).
+  const episodes = Array.from({ length: Math.floor(r() * 14) }, () => ({ opened: r() < 0.6 ? 'in' : 'before', state: r() < 0.5 ? 'closed' : 'open', reason: pick(['completed', 'moved', 'lost'], skew) }));
+  if (r() < 0.05) episodes.push({ opened: 'in', state: 'closed-before' });
+  return { T, prog: figuresOf({ people, anon, events, episodes, funds }) };
 }
 
 test('property: nothing any report of a release publishes lets an attacker narrow a hidden count beyond the rule', () => {
@@ -322,8 +436,133 @@ test('determinism: the same figures give the same release, cell for cell', () =>
   const r = rng(99);
   for (let run = 0; run < 20; run++) {
     const { T, prog } = randomProgramme(r);
-    const copy = { funder: JSON.parse(JSON.stringify(prog.inputs.funder)), perFund: new Map(prog.inputs.perFund), settlement: JSON.parse(JSON.stringify(prog.inputs.settlement)) };
+    const copy = { funder: JSON.parse(JSON.stringify(prog.inputs.funder)), perFund: new Map(prog.inputs.perFund), settlement: JSON.parse(JSON.stringify(prog.inputs.settlement)), domains: JSON.parse(JSON.stringify(prog.inputs.domains)) };
     const a = PR.protectFigures(prog.inputs, T); const b = PR.protectFigures(copy, T);
     assert.deepEqual(a.funder, b.funder); assert.deepEqual(a.uses, b.uses); assert.deepEqual(a.ndp, b.ndp); assert.equal(a.id, b.id);
   }
+});
+
+// ---- the reviewer's shapes against 1.12.2 (row presence, episodes, doses) ----
+const YEAR_2024 = Array.from({ length: 12 }, (_, i) => `2024-${String(i + 1).padStart(2, '0')}`);
+const person = (over = {}) => ({ gender: 'm', language: 'en', housing: 'u', insurance: 'a', ethnicity: 'u', race: [], visits: { C: 1 }, ...over });
+const shapes = {
+  // One reversal by staff in each of the first k months of the year (1.12.2: ten "withheld" NDP month rows,
+  // each at least 1, and "staff <11" made the reversals exactly 10, one a month).
+  oneReversalPerMonth: (r) => ({ period: YEAR_2024, events: Array.from({ length: 1 + Math.floor(r() * 11) }, (_, m) => ({ month: YEAR_2024[m], reversed: true, by: 'staff', doses: 1 })) }),
+  // One overdose, not reversed, reported from the community, in each of the first k months (1.12.2: the listed
+  // months pinned the events).
+  oneOverdosePerMonth: (r) => ({ period: YEAR_2024, events: Array.from({ length: 1 + Math.floor(r() * 11) }, (_, m) => ({ month: YEAR_2024[m], community: true })) }),
+  // One or two discharges for each of k reasons (1.12.2: nine listed reasons under "Closed <11" made it 9 or 10).
+  manyReasons: (r) => ({ episodes: require('../server/constants').DISCHARGE_REASONS.slice(0, 1 + Math.floor(r() * 9)).flatMap(reason => Array.from({ length: 1 + Math.floor(r() * 2) }, () => ({ opened: r() < 0.5 ? 'in' : 'before', state: 'closed', reason }))) }),
+  // Episodes opened in the period, most still open at its end, a few closed (1.12.2: opened 30, open at end 25
+  // and closed "<11" made it at least 5).
+  episodes: (r) => { const a = 10 + Math.floor(r() * 30); const closed = Math.floor(r() * 12); return { episodes: Array.from({ length: a }, (_, i) => ({ opened: 'in', state: i < closed ? 'closed' : 'open', reason: i % 2 ? 'moved' : 'completed' })).concat(Array.from({ length: Math.floor(r() * 4) }, () => ({ opened: 'before', state: r() < 0.5 ? 'open' : 'closed', reason: 'completed' }))) }; },
+  // A few reversals with many doses each, and a few with one: the doses bound the reversals both ways.
+  doses: (r) => ({ events: Array.from({ length: 1 + Math.floor(r() * 12) }, () => ({ month: QUARTER[Math.floor(r() * 3)], reversed: r() < 0.7, by: r() < 0.5 ? 'staff' : 'bystander', doses: r() < 0.5 ? 20 : 1 + Math.floor(r() * 3) })) }),
+};
+test('property: the reviewer\'s shapes - one reversal a month, many discharge reasons, episodes, doses - leak nothing', () => {
+  const r = rng(Number(process.env.PR_SEED) || 20260927);
+  for (const [name, make] of Object.entries(shapes)) {
+    for (let run = 0; run < 24; run++) {
+      const T = [3, 5, 11][run % 3];
+      const people = Array.from({ length: Math.floor(r() * 30) }, () => person());
+      const prog = figuresOf({ people, funds: [{ id: 'C', use: null, active: true }], ...make(r) });
+      const { p, pub, truth } = publish(prog, T);
+      assert.ok(!p.refused, `${name} run ${run}: refused`);
+      assert.deepEqual(attack(pub, truth, T), [], `${name} run ${run}, T=${T}: ${JSON.stringify({ od: pub.funder.overdose, ep: pub.funder.episodes, ndp: pub.ndp.rows, withheld: pub.withheld })}`);
+      // Every month of the period and every code of the lists has a row, or the table has none.
+      const months = pub.funder.overdose.by_month.map(x => x.month);
+      assert.ok(!months.length || prog.inputs.domains.months.every(m => months.includes(m)), `${name}: months ${months}`);
+      const ndpMonths = pub.ndp.rows.filter(x => x.entry === 'reversal').map(x => x.date);
+      assert.ok(!ndpMonths.length || prog.inputs.domains.months.every(m => ndpMonths.includes(m)), `${name}: NDP months ${ndpMonths}`);
+      const reasons = pub.funder.episodes.by_discharge_reason.map(x => x.k);
+      assert.ok(!reasons.length || prog.inputs.domains.discharge_reasons.every(k => reasons.includes(k)), `${name}: reasons ${reasons}`);
+      for (const [rows, table] of [[pub.funder.episodes.by_discharge_reason, 'episodes.by_discharge_reason'], [pub.funder.overdose.by_administered_by, 'overdose.by_administered_by']]) {
+        assert.ok(!rows.some(x => x.n === 'withheld'), `${name}: a withheld row of ${table} is printed`);
+      }
+    }
+  }
+});
+
+test('reviewer year2: one reversal by staff each month January-October and nine discharge reasons', () => {
+  const C = require('../server/constants');
+  const events = YEAR_2024.slice(0, 10).map(month => ({ month, reversed: true, by: 'staff', doses: 1 }));
+  const episodes = C.DISCHARGE_REASONS.map(reason => ({ opened: 'before', state: 'closed', reason }));
+  const prog = figuresOf({ people: Array.from({ length: 20 }, () => person()), funds: [{ id: 'C', use: null, active: true }], events, episodes, period: YEAR_2024 });
+  const { pub, truth } = publish(prog, 11);
+  assert.deepEqual(attack(pub, truth, 11), []);
+  // The NDP log lists all twelve months or none, never only the ten with a reversal.
+  const rows = pub.ndp.rows.filter(x => x.entry === 'reversal');
+  assert.ok(rows.length === 0 || rows.length === 12, JSON.stringify(rows));
+  assert.ok([0, C.DISCHARGE_REASONS.length].includes(pub.funder.episodes.by_discharge_reason.length));
+});
+
+test('the attacker catches the 1.12.2 listing: rows only for the months with a reversal pin each month', () => {
+  // The same figures as 1.12.2 printed them: the ten NDP rows "withheld", staff "<11". The attacker, told
+  // only what was printed, finds the months pinned (so the property test would have caught defect A).
+  const events = YEAR_2024.slice(0, 10).map(month => ({ month, reversed: true, by: 'staff', doses: 1 }));
+  const prog = figuresOf({ people: Array.from({ length: 20 }, () => person()), funds: [{ id: 'C', use: null, active: true }], events, period: YEAR_2024 });
+  const { pub, truth } = publish(prog, 11);
+  const old = { ...pub, withheld: ['overdose.by_month.n', 'overdose.by_month.reversals'],
+    funder: { ...pub.funder, overdose: { ...pub.funder.overdose, reversals: '<11', events: '<11', naloxone_doses: 'suppressed', by_month: YEAR_2024.slice(0, 10).map(month => ({ month, n: 'withheld', reversals: 'withheld', suppressed: true })), by_administered_by: [{ k: 'staff', n: '<11', suppressed: true }] } },
+    ndp: { ...pub.ndp, rows: YEAR_2024.slice(0, 10).map(date => ({ date, entry: 'reversal', reversals: 'withheld', reversal_doses: 'withheld' })), totals: { ...pub.ndp.totals, reversals: '<11', reversal_doses: 'suppressed' } } };
+  const leaks = attack(old, truth, 11);
+  assert.ok(leaks.some(l => /^r:2024-\d\d .*cannot be 10/.test(l)), leaks.join('\n'));
+});
+
+test('a release the audit cannot verify is refused, never published: no node budget, no time', () => {
+  // With no search budget every check answers "not protected": the audit cannot settle the release, and
+  // publishes nothing (1.12.2 gave up and published it: 111 of 150 programmes leaked).
+  const r = rng(555);
+  let refused = 0; let published = 0;
+  for (let run = 0; run < 150; run++) {
+    const { T, prog } = randomProgramme(r);
+    for (const budget of [0, 1]) {
+      const { p, pub, truth } = publish(prog, T, { budget });
+      if (p.refused) { refused++; assert.match(p.refused.message, /cannot be published/); assert.equal(p.funder, undefined); continue; }
+      published++;
+      assert.deepEqual(attack(pub, truth, T), [], `run ${run}, budget ${budget}`);
+    }
+  }
+  assert.ok(refused > 100, `refused ${refused}, published ${published}`);
+  // Out of time: refused, and says so.
+  const { T, prog } = randomProgramme(rng(3));
+  const { p } = publish(prog, T, { timeLimitMs: -1 });
+  assert.ok(p.refused && p.refused.out_of_time, JSON.stringify(p.refused));
+  assert.match(p.refused.message, /did not finish in time/);
+});
+
+test('the audit stays fast with many free-text categories, and a runaway audit is refused in bounded time', () => {
+  const PR = require('../server/publication-release');
+  const FR = require('../server/funder-report');
+  // 20,000 people, 800 small languages. Unfolded, the audit is refused at its time limit rather than holding
+  // the server; folded as figures() folds a release (FR.foldOf), it is fast.
+  const N = 20000; const K = 800;
+  const small = Array.from({ length: K }, (_, i) => ({ k: `lang${String(i).padStart(3, '0')}`, n: 1 + (i % 10) }));
+  const big = { k: 'en', n: N - small.reduce((a, x) => a + x.n, 0) };
+  const one = (k) => [{ k, n: N }];
+  const inputsWith = (language) => ({
+    funder: { unduplicated: { served: N, new_admissions: 0, with_a_referral: 0, admitted_after_referral: 0, on_mat: 0 },
+      demographics: { by_gender: one('m'), by_language: language, by_housing: one('h'), by_insurance: one('i'), by_ethnicity: one('e'), by_race_code: one('unknown') },
+      episodes: { admissions: 0, discharges: 0, open_at_end: 0, by_discharge_reason: [], median_length_of_stay_days: null },
+      overdose: { events: 0, reversals: 0, fatal: 0, community_reported: 0, naloxone_doses: 0, by_month: [], by_administered_by: [] }, naloxone_distribution: {},
+      by_funding_source: [{ id: null, name: 'No funding source', clients_served: N, services: N }], attribution: {} },
+    perFund: new Map([[null, { services: N, clients_served: N }]]), settlement: { services_by_use: [], fundKeys: [] }, domains: { months: QUARTER, administered_by: [], discharge_reasons: [] },
+  });
+  let t = Date.now();
+  const slow = PR.protectFigures(inputsWith([big, ...small]), 11, { timeLimitMs: 300 });
+  const slowMs = Date.now() - t;
+  assert.ok(slow.refused && slow.refused.out_of_time, 'unfolded, the audit ran past its limit and was refused');
+  assert.ok(slowMs < 1500, `refused after ${slowMs} ms`);
+  const counts = new Map([[big.k, big.n], ...small.map(x => [x.k, x.n])]);
+  const fold = FR.foldOf(counts, 11);
+  const folded = new Map(); for (const [k, n] of counts) folded.set(fold(k), (folded.get(fold(k)) || 0) + n);
+  const rows = [...folded].map(([k, n]) => ({ k, n }));
+  assert.equal(rows.filter(x => x.n < 11).length, FR.FOLD_KEEP);
+  t = Date.now();
+  const fast = PR.protectFigures(inputsWith(rows), 11);
+  const ms = Date.now() - t;
+  assert.ok(!fast.refused, JSON.stringify(fast.refused));
+  assert.ok(ms < 1000, `folded, K=${K}: ${ms} ms`);
+  if (process.env.SUDS_PERF_VERBOSE) console.log(`[perf] K=${K} small languages: unfolded refused after ${slowMs} ms, folded audited in ${ms} ms`);
 });

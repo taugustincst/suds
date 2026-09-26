@@ -37,7 +37,8 @@ test('a year\'s publication release for 5,000 people is computed and audited in 
   assert.equal(counting.purpose, 'publication');
   const times = [];
   let rel;
-  for (let k = 0; k < 3; k++) { const t = process.hrtime.bigint(); rel = PR.release(ctx, r, counting); times.push(Number(process.hrtime.bigint() - t) / 1e6); }
+  // Each run reads and audits afresh (the audited release is otherwise kept for the other two reports).
+  for (let k = 0; k < 3; k++) { PR.clearCache(); const t = process.hrtime.bigint(); rel = PR.release(ctx, r, counting); times.push(Number(process.hrtime.bigint() - t) / 1e6); }
   const ms = times.sort((a, b) => a - b)[1];
   assert.ok(ms < 2000, `the release took ${ms.toFixed(0)} ms`);
   if (process.env.SUDS_PERF_VERBOSE) console.log(`[perf] publication release, 5,000 clients, 12 months: ${times.map(x => x.toFixed(0)).join(', ')} ms`);
@@ -50,4 +51,38 @@ test('a year\'s publication release for 5,000 people is computed and audited in 
   const [f, n, s] = await Promise.all(['funder', 'naloxone-ndp', 'opioid-settlement'].map(p => admin.get(`/api/reports/${p}?${YEAR}`)));
   assert.ok(Date.now() - t < 6000);
   for (const x of [f, n, s]) { assert.equal(x.status, 200); assert.equal(x.data.release.id, rel.id); }
+});
+
+test('800 small free-text languages and 400 small race codes: the release is audited in under 1 s, and served once for all three reports', async () => {
+  // An import that wrote hundreds of one-off values (1.12.2: K=800 languages over 20,000 people took 19.9 s
+  // of audit, run once per report). A release lists FOLD_KEEP of them and combines the rest.
+  const { range } = require('../server/routes/reports');
+  const FR = require('../server/funder-report');
+  const PR = require('../server/publication-release');
+  const ids = H.db.all(`SELECT id FROM clients WHERE deleted_at IS NULL ORDER BY client_code LIMIT 3200 OFFSET 20`).map(x => x.id);
+  H.db.transaction(() => {
+    ids.slice(0, 2400).forEach((id, i) => H.db.run(`UPDATE clients SET preferred_language=? WHERE id=?`, `lang${String(i % 800).padStart(3, '0')}`, id));
+    ids.slice(2400).forEach((id, i) => H.db.run(`UPDATE clients SET race_codes=? WHERE id=?`, `code${String(i % 400).padStart(3, '0')},white`, id));
+  });
+  const user = H.db.one(`SELECT * FROM users WHERE username='admin'`);
+  const ctx = { user, query: new URLSearchParams(YEAR) };
+  const r = range(ctx); const counting = FR.countingMode(ctx, r);
+  PR.clearCache();
+  const { raw, perFund } = FR.runSync(FR.figures(ctx, r, null, { fold: counting.threshold }));
+  for (const k of ['by_language', 'by_race_code']) assert.ok(raw.demographics[k].filter(x => x.n < counting.threshold).length <= FR.FOLD_KEEP + 1, k);
+  assert.ok(raw.demographics.by_language.some(x => x.k === FR.FOLDED));
+  const HR = require('../server/harm-reduction-reports'); const O = require('../server/options');
+  const inputs = { funder: raw, perFund, settlement: HR.settlementFigures(r), domains: { months: PR.monthsOf(r.from, r.to), administered_by: O.known('ADMINISTERED_BY'), discharge_reasons: O.known('DISCHARGE_REASONS') } };
+  let t = process.hrtime.bigint();
+  const p = PR.protectFigures(inputs, counting.threshold);
+  const auditMs = Number(process.hrtime.bigint() - t) / 1e6;
+  assert.ok(!p.refused, JSON.stringify(p.refused));
+  assert.ok(auditMs < 1000, `the audit took ${auditMs.toFixed(0)} ms`);
+  // Read and audited, all three reports: the audit runs once.
+  t = process.hrtime.bigint();
+  const [f, n, s] = await Promise.all(['funder', 'naloxone-ndp', 'opioid-settlement'].map(q => admin.get(`/api/reports/${q}?${YEAR}`)));
+  const allMs = Number(process.hrtime.bigint() - t) / 1e6;
+  for (const x of [f, n, s]) { assert.equal(x.status, 200); assert.equal(x.data.release.id, f.data.release.id); }
+  assert.ok(allMs < 4000, `three reports took ${allMs.toFixed(0)} ms`);
+  if (process.env.SUDS_PERF_VERBOSE) console.log(`[perf] 800 small languages, 400 small race codes: audit ${auditMs.toFixed(0)} ms; three reports ${allMs.toFixed(0)} ms`);
 });

@@ -68,20 +68,17 @@ const byDate = (a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b
 /**
  * The published log (a publication release, server/publication-release.js): by month, not by day - a day at
  * one site is too fine a cell to publish - with the reversals by month for all sites together, which are the
- * funder report's reversals by month in the same release, shown the same way. dist: distributionRows by
- * month; od: the true overdose figures; shown: { by_month: the reversals shown for each of od.by_month,
- * reversals: the total shown }.
+ * funder report's reversals by month in the same release, shown the same way. Every month of the period has
+ * a reversal row, zero or not (a row only for the months with a reversal would say which months had one),
+ * and the doses used in them are cells of the same audited release. dist: distributionRows by month; shown:
+ * { rows: [{ month, reversals, reversal_doses }] (none when the table is withheld), reversals, reversal_doses }.
  */
-function ndpPublished({ from, to }, counting, dist, od, shown) {
-  const sc = { threshold: counting.threshold, exact: false };
-  const rev = od.by_month.map((x, i) => ({ x, r: shown.by_month[i] })).filter(({ x }) => x.reversals > 0)
-    .map(({ x, r }) => ({ date: x.month, entry: 'reversal', site_type: 'all', recipient_type: null, kits: null, doses: null, reversals: r, reversal_doses: x.reversal_doses, administered_by: null, ...(typeof r === 'number' ? {} : { suppressed: true }) }));
-  // The doses used in a hidden month go with it (they are not people), protected against the total doses.
-  const totalDoses = rev.reduce((n, r) => n + r.reversal_doses, 0);
-  const t = SC.table(rev, [], { ...sc, totals: { reversal_doses: totalDoses }, mirror: { reversal_doses: 'reversals' } });
+function ndpPublished({ from, to }, counting, dist, shown) {
+  const rev = shown.rows.map(x => ({ date: x.month, entry: 'reversal', site_type: 'all', recipient_type: null, kits: null, doses: null, reversals: x.reversals, reversal_doses: x.reversal_doses, administered_by: null,
+    ...(typeof x.reversals === 'number' && typeof x.reversal_doses === 'number' ? {} : { suppressed: true }) }));
   const d = [...dist.values()];
-  return { from, to, county: db.getSetting('county_name', '') || null, doses_per_kit: dosesPerKit(), template_note: NDP_TEMPLATE_NOTE, rows: [...d, ...t.rows].sort(byDate), by: 'month', ...header(counting),
-    totals: { kits: d.reduce((n, r) => n + r.kits, 0), doses: d.reduce((n, r) => n + r.doses, 0), reversals: shown.reversals, reversal_doses: t.totals.reversal_doses,
+  return { from, to, county: db.getSetting('county_name', '') || null, doses_per_kit: dosesPerKit(), template_note: NDP_TEMPLATE_NOTE, rows: [...d, ...rev].sort(byDate), by: 'month', ...header(counting),
+    totals: { kits: d.reduce((n, r) => n + r.kits, 0), doses: d.reduce((n, r) => n + r.doses, 0), reversals: shown.reversals, reversal_doses: shown.reversal_doses,
       community_kits: d.filter(r => r.recipient_type === 'Community member (anonymous)').reduce((n, r) => n + r.kits, 0) } };
 }
 
@@ -157,7 +154,8 @@ function settlementFigures({ from, to, ts, tsP }) {
     detail: [...detail.values()].map(x => ({ ...x, approved_amount: money(x.approved_amount), pending_amount: money(x.pending_amount), schedule: USE_LABEL[x.use]?.schedule || 'Uncategorised', use_label: USE_LABEL[x.use]?.label || 'No settlement category recorded', hiaa_label: HIAA_LABEL[x.hiaa] || 'No High Impact Abatement Activity recorded' }))
       .sort((a, b) => a.schedule.localeCompare(b.schedule) || a.use.localeCompare(b.use) || a.hiaa.localeCompare(b.hiaa)),
     // People per allowable use are counts of people (protected in settlement() below); services and kits are not.
-    services_by_use: services.map(x => ({ ...x, label: USE_LABEL[x.use_code]?.label || 'No settlement category recorded' })),
+    // In key order, never by size: a release lists rows in a fixed order (server/publication-release.js).
+    services_by_use: services.map(x => ({ ...x, label: USE_LABEL[x.use_code]?.label || 'No settlement category recorded' })).sort((a, b) => (a.use_code < b.use_code ? -1 : a.use_code > b.use_code ? 1 : 0)),
     fundKeys: funds.map(f => ({ id: f.id, key: f.settlement_use || 'uncategorised', active: !!f.is_active })),
     totals: { approved_amount: approved, pending_amount: money(exps.filter(e => e.status === 'pending').reduce((n, e) => n + e.amount, 0)), hiaa_amount: hiaaAmount,
       hiaa_share: approved ? Math.round(1000 * hiaaAmount / approved) / 10 : null, uncategorised_amount: byUse.get('uncategorised').approved_amount + byUse.get('uncategorised').pending_amount },
@@ -185,6 +183,8 @@ function settlement(ctx, range) {
 // and (Excel) the About sheet.
 const countsSuffix = (d) => (d.suppression.mode === 'exact' ? 'exact-counts' : d.suppression.purpose === 'publication' ? 'publication-suppressed' : 'internal-suppressed');
 const purposeLine = (d) => ({ k: 'Purpose', v: d.suppression.purpose === 'publication' ? 'Publication release (whole programme, one standard period)' : d.suppression.purpose === 'submission' ? 'The programme\'s own submission, not for publication' : 'Internal, not for publication' });
+// The About rows every file of a run carries about what it is for (and, for a publication release, what to do before sharing it).
+const purposeRows = (d) => [purposeLine(d), ...(d.suppression.purpose === 'publication' ? [{ k: 'Before publishing', v: FR.PUBLICATION_GUIDANCE }] : [])];
 function send(ctx, { body, filename, xlsx, classification, suppression }) {
   ctx.res.writeHead(200, { 'Content-Type': xlsx ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'X-SUDS-Export': classification,
     'X-SUDS-Report-Counts': suppression.mode === 'exact' ? 'exact' : `suppressed (threshold ${suppression.threshold})`, 'X-SUDS-Report-Purpose': suppression.purpose });
@@ -209,7 +209,7 @@ function routes(r, range) {
     const body = xlsx ? S.writeWorkbook([{ name: 'NDP log', columns: NDP_COLUMNS, rows }, aboutSheet(ctx, [
       { k: 'Report', v: 'Naloxone distribution and reversal log (NDP-style)' }, { k: 'Template', v: d.template_note }, { k: 'Period', v: `${d.from} to ${d.to}` }, { k: 'County', v: d.county || '' },
       { k: 'Doses per kit', v: `${d.doses_per_kit} (Settings: naloxone doses per kit)` }, { k: 'Totals', v: `${d.totals.kits} kits, ${d.totals.doses} doses distributed (${d.totals.community_kits} kits to anonymous community members); ${d.totals.reversals} reversals reported` },
-      purposeLine(d), { k: 'Counts', v: d.counting_statement },
+      ...purposeRows(d), { k: 'Counts', v: d.counting_statement },
       { k: 'Classification', v: d.by === 'month' ? 'Aggregate counts by month (distribution also by site type and recipient type; reversals for all sites together): no names, client codes or record ids.' : 'Aggregate counts by day, site type and recipient type: no names, client codes or record ids.' }])]) : S.toCsv(rows, NDP_COLUMNS);
     send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-naloxone-ndp-log-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? 'xlsx' : 'csv'}`, classification: 'NDP-style log (not the official NDP template; check it against the current NDP reporting template). Aggregate, no identifiers.' });
   });
@@ -225,7 +225,7 @@ function routes(r, range) {
     const detailCols = [['schedule', 'Schedule'], ['use_label', 'Category'], ['hiaa_label', 'High Impact Abatement Activity'], ['approved_amount', 'Approved or reimbursed ($)'], ['pending_amount', 'Pending ($)'], ['expenditures', 'Expenditures']].map(([key, label]) => ({ key, label }));
     const body = xlsx ? S.writeWorkbook([
       aboutSheet(ctx, [{ k: 'Report', v: 'Opioid settlement expenditures by allowable use' }, { k: 'Period', v: `${d.from} to ${d.to}` }, { k: 'Funds', v: d.funds.map(f => f.name).join('; ') || 'No settlement funds' },
-        { k: 'Approved or reimbursed', v: d.totals.approved_amount }, { k: 'Of which High Impact Abatement Activities', v: `${d.totals.hiaa_amount} (${d.totals.hiaa_share ?? 0}%)` }, { k: 'Sources and verification', v: d.source_note }, purposeLine(d), { k: 'Counts', v: d.counting_statement }]),
+        { k: 'Approved or reimbursed', v: d.totals.approved_amount }, { k: 'Of which High Impact Abatement Activities', v: `${d.totals.hiaa_amount} (${d.totals.hiaa_share ?? 0}%)` }, { k: 'Sources and verification', v: d.source_note }, ...purposeRows(d), { k: 'Counts', v: d.counting_statement }]),
       { name: 'By allowable use', columns: [['schedule', 'Schedule'], ['label', 'Category'], ['approved_amount', 'Approved or reimbursed ($)'], ['pending_amount', 'Pending ($)'], ['expenditures', 'Expenditures']].map(([key, label]) => ({ key, label })), rows: d.by_use },
       { name: 'By HIAA', columns: [['label', 'High Impact Abatement Activity'], ['approved_amount', 'Approved or reimbursed ($)'], ['pending_amount', 'Pending ($)'], ['expenditures', 'Expenditures']].map(([key, label]) => ({ key, label })), rows: d.by_hiaa },
       { name: 'Detail', columns: detailCols, rows: d.detail },

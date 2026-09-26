@@ -89,6 +89,9 @@ module.exports = (r) => {
     });
     const cal = calomsPart(v.caloms, 'discharge');
     const when = v.closed_at || new Date().toISOString().slice(0, 10);
+    // An episode cannot end before it began: reports count every episode opened in a period as closed in
+    // it or open at its end (server/publication-release.js relies on that).
+    if (e.opened_at && when < String(e.opened_at).slice(0, 10)) throw badRequest(`The discharge date cannot be before the episode was opened (${String(e.opened_at).slice(0, 10)})`);
     const openNotes = db.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND status='draft' AND deleted_at IS NULL`, e.client_id).n;
     let endedAssignments = 0; let cancelledTasks = 0; let openReferrals = 0; let calRec = null;
     db.transaction(() => {
