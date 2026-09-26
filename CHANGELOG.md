@@ -2,6 +2,44 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+- **The pattern of what a publication release hides no longer gives counts away to someone who knows the
+  method.** SUDS is open source, so an attacker can run the audit on every programme that could lie behind a
+  printout and keep those that print the same. Against 1.12.3 that worked: 12 served beside "on MAT <11"
+  was printed only when one person was on MAT (two or more hid the total), events 12 beside reversals "<11"
+  meant one reversal, and a withheld table said the total was not 1, or that everyone served was on MAT.
+  The audit decided which unprinted counts to protect, and which cell to hide first, from true values it
+  does not print. Now:
+  - whether a count must be protected is decided from its feasible range given what would be printed, never
+    from its true value, and the cells hidden to protect it are taken in a fixed structural order;
+  - a total whose every part is "<T" is hidden by the symbols alone, with the counts of at least T under it;
+  - every cell a release hides is checked against the method: SUDS finds worlds with the same printed
+    figures, runs them through the same suppression, and keeps those that print the identical release; the
+    cell must be shown by those worlds able to be 1 and to range over half the threshold, or the release is
+    refused. Against the printout alone the audit still asks for 1 and T-1, as near them as the printout's
+    symbols allow (served "<11" beside women and men "<11" says there are at most 9 women whatever else is
+    printed).
+  A new test enumerates every world of small families (people served and a subset up to 25 people, women
+  and men and MAT, overdose events and reversals in one and two months, two funds; thresholds 3, 5 and 11),
+  runs the real release on each and checks every hidden cell over the worlds that print the same; it finds
+  the reviewer's cases in 1.12.3 and nothing in this version. The price: a small programme at a small
+  threshold is refused more often (publish a longer period); a 5,000-person year is still published: read, audited
+  and checked in 0.6 to 1 s (0.15 s before the check). What the check does not prove, and what it leaves to the tests, is in
+  docs/HIPAA.md ("The pattern of what is hidden" and the residual risks).
+- **Publication releases are labelled for what they are.** "Suitable for publication" is gone: a release is
+  *Publication release — small cells screened; review before sharing* on screen, in its counting statement,
+  on its files' About sheet and in their filenames (`…-publication-screened-review-before-sharing`). Its
+  files download only after the person ticks *I have reviewed the withheld and small figures before sharing*;
+  the API needs `reviewed=1` on a publication release's export (428 otherwise) and writes
+  `report.publication.reviewed` to the audit log with the report, the period and the release id. Internal and
+  submission files are unchanged, and the `X-SUDS-Report-Purpose` header still says `publication`.
+- docs/HIPAA.md states that any deterministic suppression pattern can leak to an attacker who knows the
+  method, what this version does about it, what remains, and that the method is a conservative default, not
+  an expert determination (45 CFR 164.514(b)(1)). docs/market/EVALUATION-RESPONSE.md is brought up to date
+  through this version: the release gate, the instance lock, device encryption, and the published small-cell
+  counts as open pending an independent statistical review.
+
 ## 1.12.3 — 2026-09-26
 
 - **Which rows a publication release lists no longer gives anything away.** An independent attack on 1.12.2

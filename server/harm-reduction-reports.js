@@ -181,8 +181,8 @@ function settlement(ctx, range) {
 
 // The counting mode travels with the file, as with the funder report: in the filename, a response header
 // and (Excel) the About sheet.
-const countsSuffix = (d) => (d.suppression.mode === 'exact' ? 'exact-counts' : d.suppression.purpose === 'publication' ? 'publication-suppressed' : 'internal-suppressed');
-const purposeLine = (d) => ({ k: 'Purpose', v: d.suppression.purpose === 'publication' ? 'Publication release (whole programme, one standard period)' : d.suppression.purpose === 'submission' ? 'The programme\'s own submission, not for publication' : 'Internal, not for publication' });
+const countsSuffix = (d) => (d.suppression.mode === 'exact' ? 'exact-counts' : d.suppression.purpose === 'publication' ? 'publication-screened-review-before-sharing' : 'internal-suppressed');
+const purposeLine = (d) => ({ k: 'Purpose', v: d.suppression.purpose === 'publication' ? `${FR.PUBLICATION_LABEL} (whole programme, one standard period)` : d.suppression.purpose === 'submission' ? 'The programme\'s own submission, not for publication' : 'Internal, not for publication' });
 // The About rows every file of a run carries about what it is for (and, for a publication release, what to do before sharing it).
 const purposeRows = (d) => [purposeLine(d), ...(d.suppression.purpose === 'publication' ? [{ k: 'Before publishing', v: FR.PUBLICATION_GUIDANCE }] : [])];
 function send(ctx, { body, filename, xlsx, classification, suppression }) {
@@ -205,6 +205,7 @@ function routes(r, range) {
   });
   r.get('/api/reports/naloxone-ndp/export', auth.requireAuth, auth.requirePerm('reports:read'), auth.requirePerm('export:read'), (ctx) => {
     const d = ndp(ctx, range(ctx)); const xlsx = ctx.query.get('format') === 'xlsx'; const rows = ndpRows(d);
+    FR.requirePublicationReview(ctx, d, 'naloxone-ndp');
     audit.log({ user: ctx.user, action: 'report.naloxone_ndp.export', ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv' } });
     const body = xlsx ? S.writeWorkbook([{ name: 'NDP log', columns: NDP_COLUMNS, rows }, aboutSheet(ctx, [
       { k: 'Report', v: 'Naloxone distribution and reversal log (NDP-style)' }, { k: 'Template', v: d.template_note }, { k: 'Period', v: `${d.from} to ${d.to}` }, { k: 'County', v: d.county || '' },
@@ -221,6 +222,7 @@ function routes(r, range) {
   });
   r.get('/api/reports/opioid-settlement/export', auth.requireAuth, auth.requirePerm('budget:read'), auth.requirePerm('export:read'), (ctx) => {
     const d = settlement(ctx, range(ctx)); const xlsx = ctx.query.get('format') === 'xlsx';
+    FR.requirePublicationReview(ctx, d, 'opioid-settlement');
     audit.log({ user: ctx.user, action: 'report.opioid_settlement.export', ip: ctx.ip, details: { from: d.from, to: d.to, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv' } });
     const detailCols = [['schedule', 'Schedule'], ['use_label', 'Category'], ['hiaa_label', 'High Impact Abatement Activity'], ['approved_amount', 'Approved or reimbursed ($)'], ['pending_amount', 'Pending ($)'], ['expenditures', 'Expenditures']].map(([key, label]) => ({ key, label }));
     const body = xlsx ? S.writeWorkbook([

@@ -1,6 +1,6 @@
 import { h, route, get, state, fmt, can, pageHead, bars, stat, table, downloadCsv, nav, sparkline, form, modal, toast, moduleOn } from '../app.js';
 import { withRestrictionCheck } from './part2.js';
-import { isPublishablePeriod, mayRunInternalReports, publicationGuidance } from './funder.js';
+import { isPublishablePeriod, mayRunInternalReports, publicationGuidance, publicationReview } from './funder.js';
 
 // An identified export is a disclosure: fetched here rather than followed as a link, so a refusal (no lawful
 // basis, a client without consent, an agreed restriction to check) is shown as a message, not saved as a file.
@@ -104,15 +104,19 @@ route('reports', async (r) => {
     h('option', { value: '' }, 'Small cells suppressed'),
     h('option', { value: 'exact' }, 'Exact counts (our own submission to the funder)')) : null;
   const hrQs = () => (hrCounts && hrCounts.value === 'exact' ? '&purpose=submission&counts=exact' : '');
-  const harmReduction = () => h('div', { class: 'mt', 'data-harm-reduction-reports': '1' }, h('h4', { class: 'small', style: { margin: '.75rem 0 .25rem' } }, 'Harm-reduction reporting'),
+  // A publication release's file (a publication range, counts not exact) needs the review confirmed first.
+  const hrReview = () => { const rv = publicationReview(pubRange); if (rv.box && hrCounts) { const sync = () => { rv.box.hidden = hrCounts.value === 'exact'; }; hrCounts.addEventListener('change', sync); } return rv; };
+  const hrDownload = (rv, url) => (hrCounts && hrCounts.value === 'exact' ? fetchDownload(url) : rv.download(url, fetchDownload));
+  const harmReduction = (rv = hrReview()) => h('div', { class: 'mt', 'data-harm-reduction-reports': '1' }, h('h4', { class: 'small', style: { margin: '.75rem 0 .25rem' } }, 'Harm-reduction reporting'),
       h('p', { class: 'small muted' }, 'For the range above. Aggregate counts and amounts only: no names or client codes. Reversals and people counted under the small-cell threshold are suppressed, with the naloxone doses that would reveal them; kits and amounts are exact.'),
       h('p', { class: 'small muted', 'data-hr-publication-note': '1' }, 'A file is a publication release only when the range above is one calendar month, quarter or fiscal year (starting in January, April, July or October) that has ended; the NDP log is then by month, for all sites. Any other range gives a file marked internal, not for publication.'),
       pubRange ? publicationGuidance() : null,
       hrCounts ? h('div', { class: 'field mb' }, h('label', { for: 'hr-counts' }, 'Counts'), hrCounts) : null,
+      rv.box,
       h('div', { class: 'row mb' }, h('span', {}, h('b', {}, 'Naloxone distribution & reversal log (NDP-style)'), h('span', { class: 'small muted' }, ' — kits and doses by day, site and recipient type; reversals reported. Check the columns against the current NDP reporting template before submitting.')),
-        ndpOk ? [h('button', { class: 'btn sm', 'data-ndp-export': 'xlsx', onClick: () => fetchDownload(`/api/reports/naloxone-ndp/export?from=${from}&to=${to}&format=xlsx${hrQs()}`) }, 'NDP log (Excel)'), h('button', { class: 'btn sm ghost', 'data-ndp-export': 'csv', onClick: () => fetchDownload(`/api/reports/naloxone-ndp/export?from=${from}&to=${to}${hrQs()}`) }, 'CSV')] : onlyPublication),
+        ndpOk ? [h('button', { class: 'btn sm', 'data-ndp-export': 'xlsx', onClick: () => hrDownload(rv, `/api/reports/naloxone-ndp/export?from=${from}&to=${to}&format=xlsx${hrQs()}`) }, 'NDP log (Excel)'), h('button', { class: 'btn sm ghost', 'data-ndp-export': 'csv', onClick: () => hrDownload(rv, `/api/reports/naloxone-ndp/export?from=${from}&to=${to}${hrQs()}`) }, 'CSV')] : onlyPublication),
       can('budget:read') ? h('div', { class: 'row' }, h('span', {}, h('b', {}, 'Opioid settlement expenditures'), h('span', { class: 'small muted' }, ' — spending from settlement funds by allowable use (Exhibit E) and California High Impact Abatement Activity. Categories need verification against each fund\'s agreement.')),
-        settlementOk ? [h('button', { class: 'btn sm', 'data-settlement-export': 'xlsx', onClick: () => fetchDownload(`/api/reports/opioid-settlement/export?from=${from}&to=${to}&format=xlsx${hrQs()}`) }, 'Settlement report (Excel)'), h('button', { class: 'btn sm ghost', 'data-settlement-export': 'csv', onClick: () => fetchDownload(`/api/reports/opioid-settlement/export?from=${from}&to=${to}${hrQs()}`) }, 'CSV')] : onlyPublication.cloneNode(true)) : null);
+        settlementOk ? [h('button', { class: 'btn sm', 'data-settlement-export': 'xlsx', onClick: () => hrDownload(rv, `/api/reports/opioid-settlement/export?from=${from}&to=${to}&format=xlsx${hrQs()}`) }, 'Settlement report (Excel)'), h('button', { class: 'btn sm ghost', 'data-settlement-export': 'csv', onClick: () => hrDownload(rv, `/api/reports/opioid-settlement/export?from=${from}&to=${to}${hrQs()}`) }, 'CSV')] : onlyPublication.cloneNode(true)) : null);
   const exportsCard = () => h('div', { class: 'card', 'data-exports': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Export to Excel or CSV')),
     h('p', { class: 'small muted' }, 'The range above chooses the rows (clients, resources and to-dos are complete lists).'),
     exportGroup('Funder & programme', 'For grant reports and the programme\'s own books: everything in one workbook, staff time and the resource directory, and — for roles that see the budget — funding, budget lines and spending.', { 'data-export-group': 'programme' },

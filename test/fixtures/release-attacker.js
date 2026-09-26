@@ -116,7 +116,7 @@ function sizeOrdered(keys, domain, fixedLast) {
  * discharge_reasons }, withheld: table ids } as published; truth: the same figures exact ({ funder, settlement }
  * from exact runs). Returns { solver, vars: [{ name, shown, truth, people }] }.
  */
-function modelOf(pub, truth, T) {
+function modelOf(pub, truth, T, { symbolic = false } = {}) {
   const vars = []; const byName = new Map(); const cons = [];
   const tf = truth.funder;
   const dom = { months: [], administered_by: [], discharge_reasons: [], ...(pub.domains || {}) };
@@ -147,7 +147,9 @@ function modelOf(pub, truth, T) {
     const x = vars[i];
     if (shown !== undefined) {
       x.shown.push(shown);
-      const [a, b] = isNum(shown) ? [shown, shown] : shown === `<${T}` ? [1, T - 1] : shown === 'suppressed' ? [people ? T : 0, CAP] : [0, CAP];
+      // symbolic: what the symbols alone say - a number only as its class (0, or at least T for people).
+      const num = (v) => (!symbolic ? [v, v] : v === 0 ? [0, 0] : people ? [T, CAP] : [0, CAP]);
+      const [a, b] = isNum(shown) ? num(shown) : shown === `<${T}` ? [1, T - 1] : shown === 'suppressed' ? [people ? T : 0, CAP] : [0, CAP];
       x.lo = Math.max(x.lo, a); x.hi = Math.min(x.hi, b);
     }
     return i;
@@ -161,7 +163,14 @@ function modelOf(pub, truth, T) {
   const rest = (name, i) => derived.push({ name: `${name} (rest)`, terms: [[V('N'), 1], [i, -1]] });
   const atLeast = (i, v) => { vars[i].lo = Math.max(vars[i].lo, v); };
   const exactly = (i, v) => { vars[i].lo = Math.max(vars[i].lo, v); vars[i].hi = Math.min(vars[i].hi, v); };
-  const ordered = (idx) => { for (let j = 0; j + 1 < idx.length; j++) add([[idx[j], 1], [idx[j + 1], -1]], '>='); };
+  // Which rows are listed, and in what order, is a publisher's choice, not a symbol: what the symbols alone
+  // say reads a list as if every key of it were listed, in the fixed order.
+  const ordered = (idx) => { if (symbolic) return; for (let j = 0; j + 1 < idx.length; j++) add([[idx[j], 1], [idx[j + 1], -1]], '>='); };
+  const list = (printed, shownZero, domain, gone, truthKeys) => {
+    const L = listing(printed, shownZero, domain, gone, truthKeys);
+    if (symbolic) { L.atLeast1 = L.atLeast1.filter(k => !domain.includes(k)); L.zero = []; }
+    return L;
+  };
 
   // ---- the funder report ----
   const f = pub.funder;
@@ -193,8 +202,8 @@ function modelOf(pub, truth, T) {
   const monthsGone = !f.overdose.by_month.length && gone.has('overdose.by_month.n') && gone.has('overdose.by_month.reversals');
   const ndpGone = !ndpRows.length && gone.has('overdose.by_month.reversals');
   const truthMonths = od.by_month.map(m => m.month);
-  const fl = listing(f.overdose.by_month.map(m => m.month), f.overdose.by_month.some(m => m.n === 0), dom.months, monthsGone, truthMonths);
-  const nl = listing(ndpRows.map(x => x.date), ndpRows.some(x => x.reversals === 0), dom.months, ndpGone, truthMonths);
+  const fl = list(f.overdose.by_month.map(m => m.month), f.overdose.by_month.some(m => m.n === 0), dom.months, monthsGone, truthMonths);
+  const nl = list(ndpRows.map(x => x.date), ndpRows.some(x => x.reversals === 0), dom.months, ndpGone, truthMonths);
   const months = [...new Set([...fl.keys, ...nl.keys, ...(monthsGone || ndpGone ? truthMonths : [])])].sort();
   const n = (m) => V(`n:${m}`); const r = (m) => V(`r:${m}`); const d = (m) => V(`d:${m}`, undefined, false);
   for (const m of f.overdose.by_month) { V(`n:${m.month}`, m.n); V(`r:${m.month}`, m.reversals); }
@@ -218,7 +227,7 @@ function modelOf(pub, truth, T) {
   derived.push({ name: 'E-R', terms: [[E, 1], [R, -1]] }, { name: 'E-F', terms: [[E, 1], [F, -1]] }, { name: 'E-C', terms: [[E, 1], [C, -1]] }, { name: 'E-R-F', terms: [[E, 1], [R, -1], [F, -1]] });
   // Who gave the naloxone: adds up to the reversals.
   const byRows = f.overdose.by_administered_by;
-  const bl = listing(byRows.map(x => x.k), byRows.some(x => x.n === 0), dom.administered_by, !byRows.length && gone.has('overdose.by_administered_by'), od.by_administered_by.map(x => x.k));
+  const bl = list(byRows.map(x => x.k), byRows.some(x => x.n === 0), dom.administered_by, !byRows.length && gone.has('overdose.by_administered_by'), od.by_administered_by.map(x => x.k));
   for (const x of byRows) V(`by:${x.k}`, x.n);
   add([...bl.keys.map(k => [V(`by:${k}`), 1]), [R, -1]], '=');
   for (const k of bl.atLeast1) atLeast(V(`by:${k}`), 1);
@@ -235,7 +244,7 @@ function modelOf(pub, truth, T) {
   // end, so the episodes carried in from before are D + O - A >= 0.
   const D = V('D', f.episodes.discharges); const A = V('A', f.episodes.admissions); const O = V('O', f.episodes.open_at_end);
   const disRows = f.episodes.by_discharge_reason;
-  const dl = listing(disRows.map(x => x.k), disRows.some(x => x.n === 0), dom.discharge_reasons, !disRows.length && gone.has('episodes.by_discharge_reason'), te.by_discharge_reason.map(x => x.k));
+  const dl = list(disRows.map(x => x.k), disRows.some(x => x.n === 0), dom.discharge_reasons, !disRows.length && gone.has('episodes.by_discharge_reason'), te.by_discharge_reason.map(x => x.k));
   for (const x of disRows) V(`dis:${x.k}`, x.n);
   add([...dl.keys.map(k => [V(`dis:${k}`), 1]), [D, -1]], '=');
   for (const k of dl.atLeast1) atLeast(V(`dis:${k}`), 1);
@@ -283,6 +292,14 @@ function modelOf(pub, truth, T) {
  */
 function attack(pub, truth, T) {
   const { solver, vars } = modelOf(pub, truth, T);
+  // "1 and T-1", or as near them as the symbols alone allow: served "<T" beside women "<T" and men "<T" says
+  // there are at most T-2 women whatever else is printed (the numbers read only as their class).
+  const sym = modelOf(pub, truth, T, { symbolic: true }).solver;
+  const targets = (i) => {
+    let a = 1; while (a < T && !sym.can(i, a)) a++;
+    let b = T - 1; while (b > a && !sym.can(i, b)) b--;
+    return a >= T ? [] : [...new Set([a, b])];
+  };
   const out = [];
   const P = Math.ceil(T / 2);
   vars.forEach((x, i) => {
@@ -290,7 +307,7 @@ function attack(pub, truth, T) {
     const shown = x.shown;
     const small = shown.includes(`<${T}`) || ((x.derived || !shown.length || shown.every(s => s === 'withheld')) && x.truth > 0 && x.truth < T && !shown.some(isNum));
     if (small) {
-      for (const v of [1, T - 1]) if (!solver.can(i, v)) out.push(`${x.name} (${shown.join('/') || 'unprinted'}, truly ${x.truth}) cannot be ${v}`);
+      for (const v of targets(i)) if (!solver.can(i, v)) out.push(`${x.name} (${shown.join('/') || 'unprinted'}, truly ${x.truth}) cannot be ${v}`);
     } else if (shown.includes('suppressed') && !shown.some(isNum)) {
       const [a, b] = solver.range(i);
       if (b - a < P) out.push(`${x.name} (suppressed, truly ${x.truth}) lies in [${a}, ${b}]`);

@@ -53,7 +53,7 @@ test('a year\'s publication release for 5,000 people is computed and audited in 
   for (const x of [f, n, s]) { assert.equal(x.status, 200); assert.equal(x.data.release.id, rel.id); }
 });
 
-test('800 small free-text languages and 400 small race codes: the release is audited in under 1 s, and served once for all three reports', async () => {
+test('800 small free-text languages and 400 small race codes: the release is audited in under 1.5 s, and served once for all three reports', async () => {
   // An import that wrote hundreds of one-off values (1.12.2: K=800 languages over 20,000 people took 19.9 s
   // of audit, run once per report). A release lists FOLD_KEEP of them and combines the rest.
   const { range } = require('../server/routes/reports');
@@ -77,7 +77,8 @@ test('800 small free-text languages and 400 small race codes: the release is aud
   const p = PR.protectFigures(inputs, counting.threshold);
   const auditMs = Number(process.hrtime.bigint() - t) / 1e6;
   assert.ok(!p.refused, JSON.stringify(p.refused));
-  assert.ok(auditMs < 1000, `the audit took ${auditMs.toFixed(0)} ms`);
+  // The audit, and the check of every hidden cell against the method (worlds run through it again, 1.12.4).
+  assert.ok(auditMs < 1500, `the audit took ${auditMs.toFixed(0)} ms`);
   // Read and audited, all three reports: the audit runs once.
   t = process.hrtime.bigint();
   const [f, n, s] = await Promise.all(['funder', 'naloxone-ndp', 'opioid-settlement'].map(q => admin.get(`/api/reports/${q}?${YEAR}`)));

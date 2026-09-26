@@ -47,6 +47,28 @@ export function publicationGuidance() {
       h('li', {}, 'This suppression is a cautious automatic default, not a statistical expert determination.')));
 }
 
+/**
+ * The confirmation a publication release's files need (server: reviewed=1, recorded in the audit log with the
+ * release id). Returns { box, download(url, fetcher) }: box is null when no confirmation is needed; download
+ * runs the export only once the box is ticked, and otherwise says why and moves focus to it.
+ */
+let reviewSeq = 0;
+export function publicationReview(needed) {
+  if (!needed) return { box: null, download: (url, fetcher) => fetcher(url) };
+  const id = `publication-reviewed-${++reviewSeq}`;
+  const input = h('input', { type: 'checkbox', id, 'data-publication-reviewed': '1', 'aria-describedby': `${id}-why` });
+  const why = h('p', { class: 'small', id: `${id}-why`, 'data-publication-review-why': '1' }, 'Small cells are screened automatically, which is not a guarantee. The export of a publication release is recorded with your confirmation.');
+  const box = h('div', { class: 'field mb', 'data-publication-review': '1' },
+    h('label', { for: id, class: 'row', style: { gap: '.4rem', alignItems: 'center' } }, input, h('span', {}, 'I have reviewed the withheld and small figures before sharing')), why);
+  return {
+    box,
+    download: (url, fetcher) => {
+      if (!input.checked) { why.textContent = 'Tick "I have reviewed the withheld and small figures before sharing" first: the file is a publication release.'; why.setAttribute('role', 'alert'); input.focus(); return; }
+      fetcher(`${url}&reviewed=1`);
+    },
+  };
+}
+
 route('funder', async (r) => {
   const internalOk = mayRunInternalReports();
   const { lastMonth, lastQuarter, lastYear } = publishablePeriods();
@@ -103,10 +125,11 @@ route('funder', async (r) => {
   const u = d.unduplicated;
   const admitRate = isNum(u.with_a_referral) && isNum(u.admitted_after_referral) && u.with_a_referral ? Math.round((u.admitted_after_referral / u.with_a_referral) * 100) : null;
 
+  const review = publicationReview(publishable && can('export:read'));
   return h('div', {},
     pageHead('Funder report',
-      can('export:read') ? h('button', { class: 'btn', 'data-funder-export': 'xlsx', onClick: () => downloadCsv(`/api/reports/funder/export?${qs}&format=xlsx`) }, 'This report (Excel)') : null,
-      can('export:read') ? h('button', { class: 'btn ghost', 'data-funder-export': 'csv', onClick: () => downloadCsv(`/api/reports/funder/export?${qs}`) }, 'CSV') : null,
+      can('export:read') ? h('button', { class: 'btn', 'data-funder-export': 'xlsx', onClick: () => review.download(`/api/reports/funder/export?${qs}&format=xlsx`, downloadCsv) }, 'This report (Excel)') : null,
+      can('export:read') ? h('button', { class: 'btn ghost', 'data-funder-export': 'csv', onClick: () => review.download(`/api/reports/funder/export?${qs}`, downloadCsv) }, 'CSV') : null,
       can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Export everything to Excel') : null),
     h('p', { class: 'muted' }, 'Counts of people, each counted once however many times they were served. This is the shape most grant reporting asks for. It is not a CalOMS Tx submission: CalOMS records are collected, checked and extracted under Reports → State reporting.'),
     // Which counting this run used; the exported file says the same on its About sheet.
@@ -115,6 +138,7 @@ route('funder', async (r) => {
       h('strong', {}, publishable ? 'Publication release. ' : 'Internal, not for publication. '), d.counting_statement,
       publishable ? null : h('span', {}, ' To publish or share figures, run the report for all funding sources and one of the periods under "Periods you can publish".')),
     publishable ? publicationGuidance() : null,
+    review.box,
 
     // Custom ranges, one fund and year-to-date runs are internal: offered only to a role that may run them.
     internalOk ? h('div', { class: 'filters', 'data-custom-range': '1' },

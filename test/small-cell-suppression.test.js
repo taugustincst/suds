@@ -363,7 +363,7 @@ test('NDP log and settlement report: publication only for the whole programme an
     assert.equal((await sup.get(`${path}?${PERIOD}&purpose=publication`)).status, 400, `${path}: and cannot be labelled for publication`);
     const pub = (await sup.get(`${path}?${MARCH}`)).data;
     assert.equal(pub.suppression.purpose, 'publication', path);
-    assert.match(pub.counting_statement, /Suitable for publication/);
+    assert.match(pub.counting_statement, /Publication release — small cells screened; review before sharing/);
   }
   // Published, the NDP log is by month, and its reversals are the funder report's for the same release,
   // hidden the same way, so neither can be subtracted from the other.

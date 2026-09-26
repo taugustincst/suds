@@ -11,7 +11,7 @@
 // test/funder-perf.test.js holds the time.
 const db = require('./db');
 const auth = require('./auth');
-const { badRequest, forbidden } = require('./http');
+const { badRequest, forbidden, HttpError } = require('./http');
 const { uuid } = require('./crypto');
 // Between the report's phases the event loop is let go, so a health check or a colleague's page load waits
 // for one phase (tens of milliseconds) rather than the whole report. setImmediate is not in the browser kernel.
@@ -84,6 +84,22 @@ function countingMode(ctx, period = { from: '', to: '' }, opts = {}) {
 /** The part of the counting mode a response carries as `suppression`. */
 const suppressionOf = (c) => ({ mode: c.mode, threshold: c.threshold, purpose: c.purpose });
 
+/** What a publication release is called wherever a person reads it: it screens small cells, it does not promise. */
+const PUBLICATION_LABEL = 'Publication release \u2014 small cells screened; review before sharing';
+/** What whoever exports a publication release confirms first (recorded in the audit log with the release id). */
+const REVIEW_CONFIRMATION = 'I have reviewed the withheld and small figures before sharing';
+/**
+ * A publication release's file is exported only after the person confirms they reviewed it (reviewed=1): the
+ * confirmation is written to the audit log with the release id. Internal and submission runs are unchanged.
+ * 428 (Precondition Required) otherwise.
+ */
+function requirePublicationReview(ctx, d, report) {
+  if (!d.suppression || d.suppression.purpose !== 'publication') return;
+  if (ctx.query.get('reviewed') !== '1') {
+    throw new HttpError(428, `Before exporting a publication release, review its withheld and small figures and confirm it: "${REVIEW_CONFIRMATION}" (reviewed=1). Small cells are screened automatically, which is a conservative default, not a guarantee or an expert determination.`, { code: 'publication_review_required' });
+  }
+  require('./audit').log({ user: ctx.user, action: 'report.publication.reviewed', ip: ctx.ip, details: { report, release_id: d.release ? d.release.id : null, from: d.from, to: d.to, confirmation: REVIEW_CONFIRMATION } });
+}
 /** What to do before sharing a publication release: on the About sheet of every file and in the counting statement. */
 const PUBLICATION_GUIDANCE = 'Before publishing: publish each standard period once, after its data are complete, and never two periods that overlap or where one contains the other (a quarter and the year that contains it): two such releases, or the same period run again after late entries, can be subtracted from each other to reveal a small group, which suppression within one release cannot prevent. Review the withheld and suppressed tables before release. This suppression is a conservative automated default, not a statistical expert determination (45 CFR 164.514(b)(1)).';
 
@@ -97,7 +113,7 @@ function countingStatement(s) {
     return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the programme's own ${s.purpose === 'submission' ? 'submission to its funder' : 'internal use'}; not for publication or sharing.`;
   }
   if (s.purpose === 'publication') {
-    return `Publication release: the whole programme, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: nothing any of them prints says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it, and a table that cannot be protected is withheld and prints no rows). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Suitable for publication or sharing. ${PUBLICATION_GUIDANCE}`;
+    return `${PUBLICATION_LABEL}: the whole programme, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it, and a table that cannot be protected is withheld and prints no rows). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
   }
   return `${s.purpose === 'submission' ? 'The programme\'s own submission to its funder' : 'Internal'}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole programme minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the programme and its funder.`;
 }
@@ -402,7 +418,7 @@ function sheets(d, ctx, fundName) {
     { k: 'Report', v: 'Funder report (unduplicated people served)' },
     { k: 'Period', v: `${d.from} to ${d.to}` },
     { k: 'Funding source', v: fundName || 'All funding sources' },
-    { k: 'Purpose', v: d.suppression.purpose === 'publication' ? 'Publication release (whole programme, one standard period)' : d.suppression.purpose === 'submission' ? 'The programme\'s own submission to its funder, not for publication' : 'Internal, not for publication' },
+    { k: 'Purpose', v: d.suppression.purpose === 'publication' ? `${PUBLICATION_LABEL} (whole programme, one standard period)` : d.suppression.purpose === 'submission' ? 'The programme\'s own submission to its funder, not for publication' : 'Internal, not for publication' },
     { k: 'Counts', v: d.counting_statement },
     ...(d.suppression.purpose === 'publication' ? [{ k: 'Before publishing', v: PUBLICATION_GUIDANCE }] : []),
     ...(d.caseload_scope_note ? [{ k: 'Scope', v: d.caseload_scope_note }] : []),
@@ -442,4 +458,4 @@ function sheets(d, ctx, fundName) {
   };
 }
 
-module.exports = { build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, PUBLICATION_GUIDANCE };
+module.exports = { build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };

@@ -61,7 +61,8 @@ for (const [path, label] of [['/api/reports/funder', 'funder report'], ['/api/re
 
 test('funder report and NDP exports follow the same rule (finance holds export:read)', async () => {
   for (const path of ['/api/reports/funder/export', '/api/reports/naloxone-ndp/export']) {
-    assert.equal((await c.finance.get(`${path}?${PUB}&format=csv`)).status, 200, `${path}: a publication release`);
+    assert.equal((await c.finance.get(`${path}?${PUB}&format=csv`)).status, 428, `${path}: a publication release needs its review confirmed`);
+    assert.equal((await c.finance.get(`${path}?${PUB}&format=csv&reviewed=1`)).status, 200, `${path}: a publication release`);
     assert.equal((await c.finance.get(`${path}?${SHORT}&format=csv`)).status, 403, `${path}: an internal run`);
     assert.equal((await c.finance.get(`${path}?${PUB}&purpose=submission&counts=exact&format=csv`)).status, 403, `${path}: exact counts`);
     assert.equal((await c.supervisor.get(`${path}?${SHORT}&format=csv`)).status, 200);

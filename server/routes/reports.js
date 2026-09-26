@@ -186,12 +186,13 @@ module.exports = (r) => {
   // only — no names, client codes or dates of service — so it is not a disclosure, but it is audited.
   r.get('/api/reports/funder/export', auth.requireAuth, auth.requirePerm('reports:read'), auth.requirePerm('export:read'), requireReportRun({ caseloadScoped: true, fund: true }), async (ctx) => {
     const d = await FR.build(ctx, range(ctx));
+    FR.requirePublicationReview(ctx, d, 'funder');
     const fundName = d.funding_source_id ? db.one(`SELECT name FROM funding_sources WHERE id=?`, d.funding_source_id)?.name : null;
     const sh = FR.sheets(d, ctx, fundName);
     const S = require('../spreadsheet');
     const xlsx = ctx.query.get('format') === 'xlsx';
     // The counting and the purpose travel with the file: publication release or internal, not for publication.
-    const mode = d.suppression.mode === 'exact' ? 'exact-counts' : d.suppression.purpose === 'publication' ? 'publication-suppressed' : 'internal-suppressed';
+    const mode = d.suppression.mode === 'exact' ? 'exact-counts' : d.suppression.purpose === 'publication' ? 'publication-screened-review-before-sharing' : 'internal-suppressed';
     const filename = `suds-funder-report-${d.from}_${d.to}-${mode}.${xlsx ? 'xlsx' : 'csv'}`;
     const body = xlsx ? S.writeWorkbook(sh.workbook) : S.toCsv(sh.csv, sh.csvColumns);
     audit.log({ user: ctx.user, action: 'report.funder.export', ip: ctx.ip, details: { from: d.from, to: d.to, funding_source_id: d.funding_source_id || undefined, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv' } });
