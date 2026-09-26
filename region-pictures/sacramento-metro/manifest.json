@@ -1,0 +1,291 @@
+{
+ "region": "sacramento-metro",
+ "fetched_at": "2026-09-26T10:19:30.920Z",
+ "pictures": {
+  "988-sacramento": {
+   "file": "988-sacramento.png",
+   "content_type": "image/png",
+   "bytes": 224553,
+   "source_url": "https://www.wellspacehealth.org/wp-content/uploads/2024/09/2711fd0f638302f6f16d240ff29c3263-1024x654.png",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "aegis-marysville": {
+   "file": "aegis-marysville.webp",
+   "content_type": "image/webp",
+   "bytes": 229520,
+   "source_url": "https://pinnacletreatment.com/wp-content/uploads/2024/08/Aegis-Treatment-Centers-Marysville-Hero.webp",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "aegis-roseville": {
+   "file": "aegis-roseville.webp",
+   "content_type": "image/webp",
+   "bytes": 238472,
+   "source_url": "https://pinnacletreatment.com/wp-content/uploads/2024/08/Aegis-Treatment-Centers-Roseville-Hero.webp",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "bhs-sac-access": {
+   "file": "bhs-sac-access.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 411,
+   "source_url": "https://dhs.saccounty.gov/etc.clientlibs/saccounty/clientlibs/clientlib-global/resources/images/faviconV2.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "bridges-inc": {
+   "file": "bridges-inc.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 7020,
+   "source_url": "https://www.bridgesinc.net/wp-content/uploads/2020/02/cropped-favicon-180x180.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "casa-de-esperanza": {
+   "file": "casa-de-esperanza.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 157915,
+   "source_url": "https://casaysc.org/wp-content/uploads/2023/11/casa-logo.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "chapa-de-auburn": {
+   "file": "chapa-de-auburn.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 2317,
+   "source_url": "https://chapa-de.org/wp-content/uploads/2015/08/cropped-favion-180x180.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "chapa-de-grass-valley": {
+   "file": "chapa-de-grass-valley.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 2317,
+   "source_url": "https://chapa-de.org/wp-content/uploads/2015/08/cropped-favion-180x180.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "core-medical": {
+   "file": "core-medical.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 892877,
+   "source_url": "https://www.coremedicalclinic.com/core_sms.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "gathering-inn": {
+   "file": "gathering-inn.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 6953,
+   "source_url": "https://cdn.prod.website-files.com/6318eb5732794f73dc93921a/6334ae968879492ee4331a60_webclip.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "hansen-family-health": {
+   "file": "hansen-family-health.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 254848,
+   "source_url": "https://communicareole.org/wp-content/uploads/2024/07/hansen-family-health-center.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "harm-reduction-services": {
+   "file": "harm-reduction-services.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 8578,
+   "source_url": "https://hrssac.org/wp-content/uploads/2020/09/cropped-download-e1601521229950-2-180x180.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "harmony-health": {
+   "file": "harmony-health.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 16318,
+   "source_url": "https://static.wixstatic.com/media/fbf449_54f42d23238a44a2bca249689c7975bd%7Emv2_d_3000_1350_s_2.jpg/v1/fill/w_180%2Ch_180%2Clg_1%2Cusm_0.66_1.00_0.01/fbf449_54f42d23238a44a2bca249689c7975bd%7Emv2_d_3000_1350_s_2.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "hospitality-house-gv": {
+   "file": "hospitality-house-gv.png",
+   "content_type": "image/png",
+   "bytes": 15950,
+   "source_url": "https://hhshelter.org/wp-content/uploads/2021/02/cropped-web-icon-HH_icon_house-180x180.png",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "insight-respite": {
+   "file": "insight-respite.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 205417,
+   "source_url": "https://www.tpcp.org/wp-content/uploads/2022/06/Nev-Co-IRC.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "interfaith-food-ministry": {
+   "file": "interfaith-food-ministry.png",
+   "content_type": "image/png",
+   "bytes": 473559,
+   "source_url": "https://www.interfaithfoodministry.org/uploads/4/5/1/8/45188713/providing-supplemental-groceries-to-nevada-county-since-1987_orig.png",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "loaves-and-fishes": {
+   "file": "loaves-and-fishes.png",
+   "content_type": "image/png",
+   "bytes": 137947,
+   "source_url": "https://irp.cdn-website.com/224cd1ab/dms3rep/multi/opt/Web+logo-1920w.png",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "medmark-sacramento": {
+   "file": "medmark-sacramento.webp",
+   "content_type": "image/webp",
+   "bytes": 379480,
+   "source_url": "https://medmark.com/wp-content/uploads/2023/04/Sacramento.webp",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "mhucc-sacramento": {
+   "file": "mhucc-sacramento.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 580059,
+   "source_url": "https://www.tpcp.org/wp-content/uploads/2022/06/Sac-MHUCC.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "new-dawn-orangevale": {
+   "file": "new-dawn-orangevale.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 62011,
+   "source_url": "https://ecq7ps3kk7z.exactdn.com/wp-content/uploads/2025/03/lake-tahoe-drug-rehab-1-2-2-1-1-1-1.webp",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "ona-treatment": {
+   "file": "ona-treatment.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 1455523,
+   "source_url": "https://onatreatmentcenter.com/assets/img/pond-1.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "pathways-marysville": {
+   "file": "pathways-marysville.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 341865,
+   "source_url": "https://www.yspathways.net/wp-content/uploads/2024/09/bigstock-Man-With-Addiction-Sharing-Hea-443875037-scaled.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "peach-tree-linda": {
+   "file": "peach-tree-linda.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 41937,
+   "source_url": "https://pickpeach.org/wp-content/uploads/2022/11/Peach-Tree-Health-social.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "sacramento-ctc": {
+   "file": "sacramento-ctc.png",
+   "content_type": "image/png",
+   "bytes": 2190,
+   "source_url": "https://www.ctcprograms.com/wp-content/uploads/sites/204/2017/05/CTC-Favicon.png",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "salud-clinic": {
+   "file": "salud-clinic.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 174732,
+   "source_url": "https://communicareole.org/wp-content/uploads/2024/07/salud-clinic.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "snahc": {
+   "file": "snahc.png",
+   "content_type": "image/png",
+   "bytes": 5748,
+   "source_url": "https://snahc.org/wp-content/uploads/2019/08/cropped-favicon-180x180.png",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "tahoe-youth-family": {
+   "file": "tahoe-youth-family.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 9592,
+   "source_url": "https://www.tahoeyouth.org/wp-content/uploads/sites/58/2025/12/cropped-logo-sq-180x180.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "voa-sacramento": {
+   "file": "voa-sacramento.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 554688,
+   "source_url": "https://www.voa-ncnn.org/wp-content/uploads/sites/16/2026/03/8334984470670787488.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "wellspace-detox": {
+   "file": "wellspace-detox.png",
+   "content_type": "image/png",
+   "bytes": 4503,
+   "source_url": "https://www.wellspacehealth.org/wp-content/uploads/2024/11/cropped-wellspacehealth-favicon-180x180.png",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "wellspace-fqhc": {
+   "file": "wellspace-fqhc.png",
+   "content_type": "image/png",
+   "bytes": 4503,
+   "source_url": "https://www.wellspacehealth.org/wp-content/uploads/2024/11/cropped-wellspacehealth-favicon-180x180.png",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "western-sierra-gv": {
+   "file": "western-sierra-gv.png",
+   "content_type": "image/png",
+   "bytes": 632,
+   "source_url": "https://wsmcmed.org/wp-content/uploads/2018/12/favicon-16.png",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "yolo-food-bank": {
+   "file": "yolo-food-bank.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 240870,
+   "source_url": "https://yolofoodbank.org/wp-content/uploads/2021/10/Home-hero.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "yuba-sutter-food-bank": {
+   "file": "yuba-sutter-food-bank.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 27130,
+   "source_url": "https://static.wixstatic.com/media/8f4d16_7ca99d156b6d4d12907b74d0900b954b%7Emv2.jpg/v1/fit/w_2500,h_1330,al_c/8f4d16_7ca99d156b6d4d12907b74d0900b954b%7Emv2.jpg",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  },
+  "yuba-sutter-transit": {
+   "file": "yuba-sutter-transit.png",
+   "content_type": "image/png",
+   "bytes": 75251,
+   "source_url": "https://streamline.imgix.net/64f670dd-cfbb-4bde-a704-9e139315e31f/85457aad-6e1b-4d5c-aa88-7b634f27906f/YST%20-%20Logo%20-%20YST-0524-1%20-%20FINAL_Vertical.png?ixlib=rb-1.1.0&w=2000&h=2000&fit=max&or=0&s=2c447868be609b01f9bab82cd2b869b1",
+   "fetched_at": "2026-09-26T10:19:30.920Z"
+  }
+ },
+ "failures": {
+  "granite-gv-detox": "site returned 403",
+  "granite-hope-house": "site returned 403",
+  "granite-serenity-house": "site returned 403",
+  "granite-gv-outpatient": "site returned 403",
+  "granite-adolescent": "site returned 403",
+  "granite-truckee": "site returned 403",
+  "yuba-harm-reduction": "their website does not advertise a picture",
+  "nevada-county-bh": "not a JPEG, PNG or WebP picture",
+  "tahoe-forest-bh": "site returned 403",
+  "eldorado-suds": "site returned 403",
+  "nevada-county-naloxone": "not a JPEG, PNG or WebP picture",
+  "marshall-cares": "site returned 403",
+  "barton-mat": "site returned 403",
+  "new-morning-yfs": "site returned 403",
+  "edchc-placerville": "site returned 403",
+  "vista-rise": "not a JPEG, PNG or WebP picture",
+  "progress-house": "the connection's certificate was not trusted (UNABLE_TO_GET_ISSUER_CERT_LOCALLY). A proxy that inspects HTTPS needs its certificate given to Node with NODE_EXTRA_CA_CERTS.",
+  "only-kindness": "site returned 401",
+  "common-goals": "not a JPEG, PNG or WebP picture",
+  "sacramento-recovery-house": "their website does not advertise a picture",
+  "saint-johns": "site returned 403",
+  "sane-sacramento": "their website does not advertise a picture",
+  "sacramento-food-bank": "their website does not advertise a picture",
+  "lsnc-sacramento": "not a JPEG, PNG or WebP picture",
+  "sacramento-covered": "site returned 403",
+  "211-sacramento": "file is too large",
+  "fourth-and-hope-shelter": "not a JPEG, PNG or WebP picture",
+  "walters-house": "not a JPEG, PNG or WebP picture",
+  "yolo-access-line": "site returned 403",
+  "yolo-sud-services": "site returned 403",
+  "davis-community-meals": "site returned 403",
+  "empower-yolo": "their website does not advertise a picture",
+  "lsnc-woodland": "not a JPEG, PNG or WebP picture",
+  "granite-auburn": "site returned 403",
+  "granite-roseville": "site returned 403",
+  "sybh-crisis": "site returned 403",
+  "sybh-options-for-change": "site returned 403",
+  "placer-sud-services": "not a JPEG, PNG or WebP picture",
+  "sybh-wellness-recovery": "site returned 403",
+  "twin-cities-rescue": "not a JPEG, PNG or WebP picture",
+  "hands-of-hope": "not a JPEG, PNG or WebP picture",
+  "sutter-eesb": "site returned 403",
+  "yuba-hhsd": "site returned 404",
+  "ys-harm-reduction": "the computer running SUDS could not reach the internet (ENOTFOUND). If the office network only reaches the internet through a proxy, set HTTPS_PROXY and NODE_USE_ENV_PROXY=1 (docs/DEPLOYMENT.md, \"Outbound internet\").",
+  "colusa-bh": "not a JPEG, PNG or WebP picture"
+ }
+}

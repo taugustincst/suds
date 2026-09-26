@@ -1,0 +1,16 @@
+{
+  "name": "SUDS — on this device",
+  "short_name": "SUDS",
+  "description": "Outreach, visits, naloxone and supplies, referrals and grant reporting for harm-reduction and prevention programmes",
+  "start_url": "./?local=1",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f6f9",
+  "theme_color": "#1f5f8b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

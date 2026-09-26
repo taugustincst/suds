@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1f5f8b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="SUDS">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Outreach, visits, naloxone and supplies, referrals and grant reporting for harm-reduction and prevention programmes, with the privacy substance-use records need.">
+  <title>SUDS — SUD Navigator Services Tracker</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!--
+    Static shell for first paint, before main.js hydrates: shaped like the real sign-in screen
+    (public/views/login.js) rather than a bare "Loading..." message, so a first-time visitor and a
+    returning one whose session already covers them both land on something that already looks like
+    the app, not a blank flash in between. render() replaces all of #app's children once it runs,
+    whichever screen (sign-in, or straight to their dashboard if already signed in) that turns out to be.
+  -->
+  <div id="app" class="app" aria-busy="true">
+    <main class="login-wrap" id="main">
+      <div class="card login">
+        <div class="brand"><img src="favicon.svg" alt=""><div><h1 class="brand-title">SUDS</h1><small>SUD Navigator Services Tracker</small></div></div>
+        <div class="form-grid" style="grid-template-columns:1fr">
+          <div class="field"><label for="boot-username">Username</label><input id="boot-username" disabled></div>
+          <div class="field"><label for="boot-password">Password</label><input id="boot-password" type="password" disabled></div>
+        </div>
+        <button class="btn primary" disabled style="width:100%">Sign in</button>
+        <p class="small muted center mt" role="status">Loading…</p>
+      </div>
+    </main>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="modal-root"></div>
+  <script src="local-boot.js"></script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
