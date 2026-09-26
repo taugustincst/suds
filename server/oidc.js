@@ -35,7 +35,14 @@ async function checkEndpoint(u) {
   try { const href = outbound.assertPublicHttps(url.href); await outbound.assertResolvesPublic(href); return href; }
   catch (e) { throw new Error(`The identity provider's discovery document names an endpoint SUDS will not contact (${url.host}): ${e.message}`); }
 }
-async function idpFetch(u, opts = {}) { return fetch(await checkEndpoint(u), { ...opts, redirect: 'error' }); }
+// An endpoint on the issuer's origin is the operator's own and fetched as is; one elsewhere was checked as
+// public, and the connection is pinned to the checked address (outbound.transport), so the name cannot
+// resolve somewhere else between the check and the request.
+async function idpFetch(u, opts = {}) {
+  const href = await checkEndpoint(u);
+  if (new URL(href).origin === checkIssuer().origin) return fetch(href, { ...opts, redirect: 'error' });
+  return outbound.transport(href, { ...opts, redirect: 'error' });
+}
 
 async function discover() {
   if (discoveryCache && Date.now() - discoveryCache.at < CACHE_MS) return discoveryCache.doc;

@@ -32,6 +32,18 @@ or newer; `NO_PROXY` is honoured too). A proxy that inspects HTTPS presents its 
 does not trust by default: give it the proxy's CA with `NODE_EXTRA_CA_CERTS=/path/to/county-proxy-ca.pem`.
 The download says which of these it ran into.
 
+**How the address checks work with and without a proxy** (`server/outbound.js`; the same guard covers a
+picture added from a web address, a FHIR client's JWKS URL and identity-provider endpoints off the issuer's
+origin). Without a proxy SUDS connects itself: the name is resolved and every address checked (never this
+machine, a private network or the cloud metadata service) in the same step that opens the connection, and the
+connection goes to the checked address, so a name that re-resolves somewhere private a moment later (DNS
+rebinding) is refused; a name that cannot be resolved is refused. With a proxy in use (`HTTPS_PROXY` **and**
+`NODE_USE_ENV_PROXY=1`), the proxy resolves and connects: SUDS still checks the name when it can resolve it
+itself, and lets the request go to the proxy unresolved only when this machine cannot resolve outside names
+at all (`ENOTFOUND`/`EAI_AGAIN`). In that mode the proxy is the last line: configure it to refuse
+private and link-local destinations (RFC 1918, 127/8, 169.254/16, fc00::/7). `HTTPS_PROXY` without
+`NODE_USE_ENV_PROXY=1` is not a proxy in use (Node connects directly), so an unresolvable name is refused.
+
 ### Single instance only
 
 SUDS is one process, one SQLite database file: there is no clustering, no shared session store, and no distributed rate limiter — sessions, login lockout counters and the API rate limiter all live in that one process's memory. This is a deliberate scope, not a temporary gap: a second process against the same data directory does not add capacity, it risks corrupting the database, so it is refused outright (`server/instance-lock.js`, a pidfile at `data/.suds.lock`) rather than merely discouraged in a document nobody reads before scaling a container to more replicas. A process that exits cleanly releases the lock; a lock left behind by one that crashed is detected as stale and taken over, so a crash never leaves a data directory permanently unable to start. The lock records the pid, the **hostname** (`os.hostname()`), the **container identity** (a digest of the root mount as `/proc/self/mountinfo` describes it — for a container, its own overlay upper directory, kept by a restart of that container and shared with no other — plus the pid namespace, `/proc/self/ns/pid`, and `/etc/machine-id`), the kernel boot id and the process start time, and the running process refreshes the lock file's modification time every 10 seconds (a **heartbeat**). How a leftover lock is judged depends on where it was written:
