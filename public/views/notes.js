@@ -167,7 +167,7 @@ export async function openNote(id, { onChange } = {}) {
  * the county sign-in and comes back to `returnTo` (the note) ready to sign with the confirmation alone.
  * `send(body)` makes the request; `fields` come before the identity field.
  */
-export async function signatureDialog({ title, intro, submitText, send, done, fields = [], returnTo }) {
+export async function signatureDialog({ title, intro, submitText, send, done, fields = [], returnTo, verb = 'sign' }) {
   let st = { recent: false, method: 'password' };
   try { st = await get('/api/auth/reauth', { quiet: true }); } catch { /* ask for the password */ }
   const ssoButton = (label, primary) => {
@@ -183,7 +183,7 @@ export async function signatureDialog({ title, intro, submitText, send, done, fi
     const viaSso = !st.recent && st.method === 'sso';
     const identity = st.recent ? []
       : st.method === 'totp' ? [{ name: 'code', label: 'Code from your authenticator app', required: true, autocomplete: 'one-time-code', pattern: '[0-9]{6}', help: 'It has been a while since you confirmed it is you.' }]
-      : [{ name: 'password', label: 'Re-enter your password to sign', type: 'password', required: true, autocomplete: 'current-password', help: 'It has been a while since you confirmed it is you.' }];
+      : [{ name: 'password', label: `Re-enter your password to ${verb}`, type: 'password', required: true, autocomplete: 'current-password', help: 'It has been a while since you confirmed it is you.' }];
     const f = viaSso ? null : form([...fields, ...identity], { submitText, onCancel: () => m.close(), onSubmit: async (d) => {
       try { await send(st.recent ? { ...d, confirm: true } : d); }
       catch (e) {
@@ -199,7 +199,7 @@ export async function signatureDialog({ title, intro, submitText, send, done, fi
       st.recent ? h('p', { class: 'small muted' }, st.method === 'sso' ? 'You confirmed it is you a few minutes ago, so you do not need to sign in again.' : 'You confirmed it is you a few minutes ago, so your password is not needed again.') : null,
       viaSso ? (() => {
         const [btn, status] = ssoButton('Confirm with single sign-on', true);
-        return [h('p', {}, 'It has been a while since you confirmed it is you. Your account signs in through single sign-on, so confirm with the county sign-in. You will come back here and sign with one click.'),
+        return [h('p', {}, 'It has been a while since you confirmed it is you. Your account signs in through single sign-on, so confirm with the county sign-in. You will come back here and ' + (verb === 'sign' ? 'sign' : 'continue') + ' with one click.'),
           status, h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', onClick: () => m.close() }, 'Cancel'), btn)];
       })() : f,
       !viaSso && !st.recent && st.sso && st.method === 'password' ? h('div', { class: 'mt' }, ...ssoButton('Confirm with single sign-on instead', false)) : null));

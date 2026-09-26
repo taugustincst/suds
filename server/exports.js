@@ -225,7 +225,7 @@ function datasets(ctx, { from, to, ts, tsP, identified }) {
       rows: () => db.all(`SELECT * FROM resources ORDER BY category, name LIMIT ?`, MAX_ROWS) },
     consents: { label: 'Consents', columns: ['client_code', 'type', 'recipient', 'purpose', 'scope', 'signed_at', 'expires_at', 'expires_event', 'revoked_at', 'document_ref', 'redisclosure_notice_given'],
       rows: () => db.all(`SELECT co.*, c.client_code, co.client_id AS _client_id FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.signed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY co.signed_at LIMIT ?`, from, to, ...cf.params, MAX_ROWS)
-        .map(r => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), scope: phi(r.scope_enc) })) },
+        .map(r => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), scope: phi(r.scope_enc), document_ref: phi(r.document_ref_enc) })) },
     disclosures: { label: 'Accounting of disclosures', columns: ['client_code', 'disclosed_at', 'recipient', 'purpose', 'what', 'method', 'basis', 'justification', 'source', 'disclosed_by'],
       rows: () => db.all(`SELECT d.*, c.client_code, d.client_id AS _client_id, u.display_name disclosed_by FROM disclosures d JOIN clients c ON c.id=d.client_id JOIN users u ON u.id=d.disclosed_by WHERE ${ts('d.disclosed_at')} AND ${cf.sql} ORDER BY d.disclosed_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS)
         .map(r => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), what: phi(r.what_enc), justification: phi(r.justification_enc) })) },

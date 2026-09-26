@@ -32,6 +32,18 @@ or newer; `NO_PROXY` is honoured too). A proxy that inspects HTTPS presents its 
 does not trust by default: give it the proxy's CA with `NODE_EXTRA_CA_CERTS=/path/to/county-proxy-ca.pem`.
 The download says which of these it ran into.
 
+**How the address checks work with and without a proxy** (`server/outbound.js`; the same guard covers a
+picture added from a web address, a FHIR client's JWKS URL and identity-provider endpoints off the issuer's
+origin). Without a proxy SUDS connects itself: the name is resolved and every address checked (never this
+machine, a private network or the cloud metadata service) in the same step that opens the connection, and the
+connection goes to the checked address, so a name that re-resolves somewhere private a moment later (DNS
+rebinding) is refused; a name that cannot be resolved is refused. With a proxy in use (`HTTPS_PROXY` **and**
+`NODE_USE_ENV_PROXY=1`), the proxy resolves and connects: SUDS still checks the name when it can resolve it
+itself, and lets the request go to the proxy unresolved only when this machine cannot resolve outside names
+at all (`ENOTFOUND`/`EAI_AGAIN`). In that mode the proxy is the last line: configure it to refuse
+private and link-local destinations (RFC 1918, 127/8, 169.254/16, fc00::/7). `HTTPS_PROXY` without
+`NODE_USE_ENV_PROXY=1` is not a proxy in use (Node connects directly), so an unresolvable name is refused.
+
 ### Single instance only
 
 SUDS is one process, one SQLite database file: there is no clustering, no shared session store, and no distributed rate limiter — sessions, login lockout counters and the API rate limiter all live in that one process's memory. This is a deliberate scope, not a temporary gap: a second process against the same data directory does not add capacity, it risks corrupting the database, so it is refused outright (`server/instance-lock.js`, a pidfile at `data/.suds.lock`) rather than merely discouraged in a document nobody reads before scaling a container to more replicas. A process that exits cleanly releases the lock; a lock left behind by one that crashed is detected as stale and taken over, so a crash never leaves a data directory permanently unable to start. The lock records the pid, the **hostname** (`os.hostname()`), the **container identity** (a digest of the root mount as `/proc/self/mountinfo` describes it — for a container, its own overlay upper directory, kept by a restart of that container and shared with no other — plus the pid namespace, `/proc/self/ns/pid`, and `/etc/machine-id`), the kernel boot id and the process start time, and the running process refreshes the lock file's modification time every 10 seconds (a **heartbeat**). How a leftover lock is judged depends on where it was written:
@@ -92,7 +104,7 @@ Copy `.env.example` to `.env` and set:
 | `METRICS_TOKEN`, `LOG_FORMAT` | optional | Prometheus metrics and JSON logging for an existing monitoring stack. See "Monitoring and logs" below. |
 | `AUDIT_RETENTION_DAYS` | no | Default 2555 (7 years). Minimum 2190 (6 years, 45 CFR §164.316(b)(2)): a lower value is raised to 2190 with a startup warning and flagged in Security status. |
 | `AUDIT_ANCHOR_DIR` | **yes in production** | Where audit anchors are written (`server/audit-anchor.js`): the head of the audit hash chain, sealed with the index key, one write-once file per anchor. Point it at storage the database's administrator cannot rewrite — a WORM / immutable-snapshot NAS share or an object-lock bucket mounted as a directory (how, per storage product: security/LOGGING-AND-AUDIT.md, "Pointing AUDIT_ANCHOR_DIR at write-once storage"). SUDS never creates a configured directory (an unmounted share is an empty mount point); it reports the failure instead. Unset: `<data>/audit-anchors`, which catches a rewrite of the database but not of the whole data directory — **with `SUDS_ENV=production`, unset or inside the data directory is reported as a failure**: red on Security status, a `/api/health` warning (503) and a startup-log warning. The Docker image sets it to the separate `/anchors` volume. |
-| `AUDIT_ANCHOR_HOURS` | no | Default 6. Hours between anchors; every scheduled backup also writes one. `0` = at backups only. |
+| `AUDIT_ANCHOR_HOURS` | no | Default 1 (6 before 1.12.5). Hours between anchors — the most recent audit entries a database-and-key attacker could delete undetected; every scheduled backup also writes one. `0` = at backups only. |
 | `AUDIT_SYSLOG` | no | Also send each anchor to a syslog collector over UDP (RFC 5424, facility *log audit*), e.g. `udp://siem.county.gov:514`. |
 | `DR_DRILL_TIMEOUT_MS` | no | Default 900000 (15 min). How long a recovery drill's restored copy may take before the drill is failed. |
 | `SUDS_ADMIN_USERNAME`, `SUDS_ADMIN_PASSWORD` | first run only | Initial admin, called `guest` unless `SUDS_ADMIN_USERNAME` names another. Without `SUDS_ADMIN_PASSWORD` a temporary password is printed once to stdout (never to the log file) and, in production, also written to `data/first-admin-password.txt` (mode 0600), which is deleted the moment an administrator changes their password. |

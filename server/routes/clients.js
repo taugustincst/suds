@@ -106,6 +106,23 @@ function readmitOffers(ctx, hidden) {
   });
 }
 
+// A match the caller may not open: 8(c) of the 1.12.4 security review. The duplicate check stays (two
+// records for one person is a safety problem), but it must not become a way to ask "is this person a client
+// here?": the caller's answer is the same as for no match at all, and a supervisor gets a review task instead.
+const mayOpen = (user, id) => auth.canAccessClient(user, id) || auth.hasPerm(user, 'clients:all');
+/**
+ * Record possible duplicates of a new client for a supervisor: audited by code and reason (never names), and
+ * one high-priority task to compare them. The task goes on a matching record the creator cannot open when
+ * there is one, so it is on a supervisor's list and not on the creator's (its title names both codes).
+ */
+function flagForReview(user, { id, client_code, matches, source, ip }) {
+  if (!matches.length) return;
+  audit.log({ user, action: 'client.possible_duplicate', entity: 'client', entityId: id, clientId: id, ip, details: { client_code, matches: matches.map(m => ({ id: m.id, client_code: m.client_code, reasons: m.reasons })), source } });
+  const hidden = matches.find(m => !mayOpen(user, m.id));
+  db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,priority) VALUES(?,?,?,?,?,?)`, uuid(), hidden ? hidden.id : id, null, user.id,
+    encrypt(`Possible duplicate record: compare ${client_code} with ${matches.map(m => m.client_code).join(', ')}`), 'high');
+}
+
 module.exports = (r) => {
   r.get('/api/clients', auth.requireAuth, auth.requirePerm('clients:read', 'clients:list-deidentified'), (ctx) => {
     const deidentify = !auth.hasPerm(ctx.user, 'clients:read');
@@ -173,12 +190,12 @@ module.exports = (r) => {
   r.post('/api/clients/check-duplicates', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
     const v = validate(ctx.body, { first_name: { type: 'string', maxLen: 100 }, last_name: { type: 'string', maxLen: 100 }, dob: { type: 'date' }, phone: { type: 'string', maxLen: 40 }, exclude_id: { type: 'string' } });
     const all = possibleDuplicates(v, v.exclude_id || null);
-    const visible = (m) => auth.canAccessClient(ctx.user, m.id) || auth.hasPerm(ctx.user, 'clients:all');
-    const matches = all.filter(visible);
-    const hidden = all.filter(m => !visible(m));
+    const matches = all.filter(m => mayOpen(ctx.user, m.id));
+    const hidden = all.filter(m => !mayOpen(ctx.user, m.id));
     const readmit = readmitOffers(ctx, hidden);
     if (all.length) audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { matches: all.length, hidden: hidden.length, shown: matches.map(m => m.client_code), readmit_offered: readmit.map(m => m.client_code) } });
-    return { matches, hidden_duplicates: hidden.length, readmit };
+    // No count of the matches the caller cannot open: that answered "is this person a client here?".
+    return { matches, readmit };
   });
 
   r.post('/api/clients', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
@@ -186,17 +203,15 @@ module.exports = (r) => {
     checkContactFields(v);
     // Refuse a likely duplicate unless the worker has looked at the match and said it is a different person.
     if (!v.confirm_duplicate) {
-      // Exactly the filter /check-duplicates applies: a match outside the caller's caseload is a fact they
-      // may be told exists, never a record they may be shown. The check is audited before anything is
-      // returned, whichever way it goes, because it is a read of other people's records.
+      // Exactly the filter /check-duplicates applies: a match the caller can open is shown; one they cannot is
+      // neither shown nor counted (the intake goes ahead and a supervisor is asked to compare, below). The
+      // check is audited before anything is returned, whichever way it goes: it reads other people's records.
       const all = possibleDuplicates(v);
-      const visible = all.filter(m => auth.canAccessClient(ctx.user, m.id) || auth.hasPerm(ctx.user, 'clients:all'));
-      const hidden = all.length - visible.length;
+      const visible = all.filter(m => mayOpen(ctx.user, m.id));
       const readmit = readmitOffers(ctx, all.filter(m => !visible.includes(m)));
-      if (all.length) audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { matches: all.length, hidden, shown: visible.map(m => m.client_code), readmit_offered: readmit.length ? readmit.map(m => m.client_code) : undefined } });
-      if (visible.length) throw badRequest('A client with these details may already exist', { duplicates: visible, hidden_duplicates: hidden, readmit, confirm_field: 'confirm_duplicate' });
-      if (readmit.length) throw badRequest('An earlier record exists for this person and they were discharged. Re-admit it to carry on their record rather than starting a new one.', { hidden_duplicates: hidden, readmit, confirm_field: 'confirm_duplicate' });
-      if (hidden) throw badRequest('A possible duplicate exists that is outside your caseload — ask a supervisor', { hidden_duplicates: hidden, confirm_field: 'confirm_duplicate' });
+      if (all.length) audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { matches: all.length, hidden: all.length - visible.length, shown: visible.map(m => m.client_code), readmit_offered: readmit.length ? readmit.map(m => m.client_code) : undefined } });
+      if (visible.length) throw badRequest('A client with these details may already exist', { duplicates: visible, readmit, confirm_field: 'confirm_duplicate' });
+      if (readmit.length) throw badRequest('An earlier record exists for this person and they were discharged. Re-admit it to carry on their record rather than starting a new one.', { readmit, confirm_field: 'confirm_duplicate' });
     }
     delete v.confirm_duplicate;
     const noEpisode = !!v.no_episode; delete v.no_episode;
@@ -224,6 +239,8 @@ module.exports = (r) => {
     });
     audit.log({ user: ctx.user, action: 'client.create', entity: 'client', entityId: id, clientId: id, ip: ctx.ip, details: episodeId ? { episode: episodeId } : undefined });
     if (episodeId) audit.log({ user: ctx.user, action: 'episode.open', entity: 'episode', entityId: episodeId, clientId: id, ip: ctx.ip, details: { at_intake: true } });
+    // Matches the creator cannot open (whether or not they confirmed a visible one): a supervisor compares.
+    flagForReview(ctx.user, { id, client_code: cols.client_code, matches: possibleDuplicates(v, id).filter(m => !mayOpen(ctx.user, m.id)), source: 'intake', ip: ctx.ip });
     ctx.status = 201;
     return { id, client_code: cols.client_code, episode_id: episodeId };
   });
@@ -474,3 +491,5 @@ module.exports = (r) => {
   });
 };
 module.exports.possibleDuplicates = possibleDuplicates;
+module.exports.flagForReview = flagForReview;
+module.exports.mayOpen = mayOpen;

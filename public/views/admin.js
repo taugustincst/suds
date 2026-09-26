@@ -4,6 +4,24 @@ import { listsTab } from './lists.js';
 import { securityTab, drillCard } from './security.js';
 import { instrumentsCard } from './clinical.js';
 
+/**
+ * The key backup opens every backup of this database, so the server asks the administrator to prove it is
+ * them first (POST /api/admin/keys-backup, auth.verifySigner): the password or authenticator code again, or a
+ * confirmation within a few minutes of the last one. The same dialog as signing a note.
+ */
+export async function downloadKeyBackup(done) {
+  const { signatureDialog } = await import('./notes.js');
+  return signatureDialog({ title: 'Download the key backup', submitText: 'Download the key backup', verb: 'download the key backup', returnTo: '#/admin?tab=system',
+    intro: h('p', {}, 'This file opens every backup of this database. Keep it somewhere separate from this computer, such as the county password manager, and never email it.'),
+    send: async (body) => {
+      const keys = await post('/api/admin/keys-backup', body);
+      const u = URL.createObjectURL(new Blob([JSON.stringify(keys, null, 2)], { type: 'application/json' }));
+      const a = h('a', { href: u, download: 'suds-keys-KEEP-SECRET.json' }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 5000);
+      toast('Key backup downloaded. Store it somewhere safe, away from this computer.', 'ok');
+    },
+    done });
+}
+
 let oidcStatusPromise;
 function oidcStatusCached() {
   if (!oidcStatusPromise) oidcStatusPromise = get('/api/auth/oidc/status', { quiet: true }).catch(() => ({ enabled: false }));
@@ -318,7 +336,7 @@ route('admin', async (r) => {
       };
       return h('div', { class: 'grid cols-2' }, h('div', { class: 'grid cols-2' }, stat('Active users', s.users, '', 'admin?tab=users'), stat('Clients', s.clients, '', 'clients?status=all'), stat('Notes', s.notes, '', 'notes'), stat('Audit entries', s.audit_rows, '', 'admin?tab=audit'), stat('Active sessions', s.active_sessions)),
         h('div', { class: 'card' }, h('h2', {}, 'Backups'), h('p', { class: 'small muted' }, 'Download an encrypted copy of the database at least weekly and store it off this computer. Backups can only be opened with the encryption keys, so keep the key backup somewhere separate (e.g. the county password manager).'),
-          h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '/api/admin/backup', download: '' }, 'Download encrypted backup'), s.key_source === 'file' ? h('a', { class: 'btn danger', href: '/api/admin/keys-backup', download: '' }, 'Download key backup (keep secret)') : null),
+          h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '/api/admin/backup', download: '' }, 'Download encrypted backup'), s.key_source === 'file' ? h('button', { type: 'button', class: 'btn danger', onClick: () => downloadKeyBackup() }, 'Download key backup (keep secret)') : null),
           h('p', { class: 'small mt' }, 'Scheduled backups: ', s.last_scheduled_backup_at ? [badge(/^ok/.test(s.last_scheduled_backup_status || '') ? 'Configured' : 'Attention needed', /^ok/.test(s.last_scheduled_backup_status || '') ? 'ok' : 'danger'), ` last ran ${fmt.dt(s.last_scheduled_backup_at)}${s.last_scheduled_backup_status ? ` — ${s.last_scheduled_backup_status}` : ''}`] : badge('Off — turn on under Settings → Program settings'), ' ', h('button', { class: 'btn sm', onClick: runBackupNow }, 'Run a backup now'), ' ', runNow),
           restoreCard(),
           h('div', { class: 'mt' }, await drillCard()),

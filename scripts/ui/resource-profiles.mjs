@@ -92,7 +92,7 @@ async function run(label, url, login) {
   // reach it from the browser and says what to do instead.
   await dialog.getByLabel('Address of the picture').fill('https://127.0.0.1:9/x.png');
   await dialog.getByRole('button', { name: 'Add picture', exact: true }).click();
-  const expectMsg = label === 'office' ? /not on the public internet/ : /does not allow its pictures to be copied from a browser.*drag it onto this card/;
+  const expectMsg = label === 'office' ? /not on the public internet/ : /cannot be copied from this browser.*drag it onto this card/;
   const why = await until(() => dialog.locator('.banner.danger').textContent().then(t => expectMsg.test(t) ? t : null).catch(() => null), { timeout: 15000 });
   ok(why, `${label}: an address it cannot fetch explains itself`, why || await dialog.locator('.banner.danger').textContent().catch(() => ''));
   eq(await photoCount(), n0 + 2, `${label}: and adds nothing`);

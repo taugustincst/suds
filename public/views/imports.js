@@ -22,7 +22,9 @@ route('imports', async (r) => {
   const pasteBtn = h('button', { class: 'btn', onClick: async () => { if (!pasteArea.value.trim()) return; try { const res = await post('/api/imports/upload', { source: srcSel.value, filename: 'pasted.txt', text: pasteArea.value }); nav(`imports/${res.id}`); } catch (e) { toast(e.message, 'error'); } } }, 'Stage pasted text');
   // --- OneNote Graph
   const graph = h('div', {});
-  if (one.configured) {
+  if (one.configured && !one.shared_allowed) {
+    graph.append(h('div', { class: 'muted small' }, 'Importing from the shared OneNote notebook is for supervisors and administrators. Export your own pages from OneNote (File → Export → Single File Web Page) and upload them above.'));
+  } else if (one.configured) {
     const status = h('div', { class: 'muted small' }, `Connected as ${one.user}`);
     const nbBox = h('div', {});
     graph.append(status, h('button', { class: 'btn sm', onClick: async () => { nbBox.replaceChildren(h('div', { class: 'muted' }, 'Loading notebooks…')); try { const { notebooks } = await get('/api/imports/onenote/notebooks'); nbBox.replaceChildren(notebooks.length ? notebooks.map(nb => h('details', { class: 'list-item' }, h('summary', {}, h('b', {}, nb.name), ' ', h('span', { class: 'muted small' }, `${nb.sections.length} sections`)), nb.sections.map(s => h('div', { style: { paddingLeft: '1rem' } }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); await pickPages(s); } }, s.name))))) : h('div', { class: 'muted' }, 'No notebooks found')); } catch (e) { nbBox.replaceChildren(h('div', { class: 'banner danger' }, e.message)); } } }, 'Browse notebooks'), nbBox);

@@ -112,6 +112,10 @@ test('security headers on the app shell, the API and static files', async () => 
     assert.ok(!Object.entries(csp).some(([k, v]) => k !== 'script-src' && v.includes("'wasm-unsafe-eval'")), 'wasm only where scripts are');
     assert.deepEqual(csp['default-src'], ["'self'"]);
     assert.deepEqual(csp['frame-ancestors'], ["'none'"]);
+    // Nothing in the browser talks to another origin (OneNote, OIDC discovery, pictures and the release
+    // check are server-side fetches; a device syncs with the office that served it), so an injected script
+    // has nowhere to send what it reads. It used to be 'self' https: (any https host).
+    assert.deepEqual(csp['connect-src'], ["'self'"], `${p}: connect-src is this origin only`);
     assert.deepEqual(csp['base-uri'], ["'none'"]);
     assert.deepEqual(csp['form-action'], ["'self'"]);
     assert.equal(csp['object-src'], undefined, 'object-src falls back to default-src self');

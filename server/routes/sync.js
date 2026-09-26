@@ -43,7 +43,14 @@ function scopeSql(t, user, alias) {
   // re-points what it holds, exactly as the office did.
   if (t.name === 'clients' && cf.sql !== '1=1') { const kf = auth.caseloadFilter(user, `${alias}.merged_into`); return { sql: `(${cf.sql} OR (${alias}.merged_into IS NOT NULL AND ${kf.sql}))`, params: [...cf.params, ...kf.params] }; }
   if (t.scope === 'via-note') { const nf = auth.caseloadFilter(user, 'n.client_id'); return { sql: `${alias}.note_id IN (SELECT n.id FROM notes n WHERE ${nf.sql})`, params: nf.params }; }
-  if (t.scope === 'client-or-null') return { sql: `(${alias}.${t.clientCol} IS NULL OR ${cf.sql})`, params: cf.params };
+  if (t.scope === 'client-or-null') {
+    // A row with no client is its owners' unless the role holds the table's `all` permission (crud.js applies
+    // the same rule to the REST routes).
+    const u = t.unlinked && !auth.hasPerm(user, t.unlinked.all) ? t.unlinked : null;
+    if (!u) return { sql: `(${alias}.${t.clientCol} IS NULL OR ${cf.sql})`, params: cf.params };
+    const own = u.owners.map(c => `${alias}.${c}=?`).join(' OR ');
+    return { sql: `((${alias}.${t.clientCol} IS NULL AND (${own})) OR (${alias}.${t.clientCol} IS NOT NULL AND ${cf.sql}))`, params: [...u.owners.map(() => user.id), ...cf.params] };
+  }
   return cf;
 }
 
@@ -221,7 +228,8 @@ function exportInto(out, user, raw, cursor) {
     if (cursor) rows = rows.filter(r => r.updated_at <= cursor);
     if (t.name === 'users') rows = rows.map(r => ({ ...(r.id === user.id ? r : { ...r, password_hash: 'scrypt$0$0$0$AA==$AA==' }), mfa_secret_enc: null, mfa_enabled: 0 })); // devices get own password hash for offline login; never MFA secrets
     if (t.name === 'notes' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => r.kind !== 'clinical'); // minimum necessary
-    if (t.readPerm && !auth.hasPerm(user, t.readPerm)) rows = []; // minimum necessary (clinical assessments, the care plan)
+    if (t.readPerm && !auth.hasPerm(user, t.readPerm)) rows = []; // minimum necessary (clinical assessments, the care plan, spending)
+    if (t.redact && !auth.hasPerm(user, t.redact.perm)) rows = rows.map(r => ({ ...r, ...t.redact.cols })); // fund names without their money
     if (t.name === 'note_addenda' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => db.one(`SELECT kind FROM notes WHERE id=?`, r.note_id)?.kind !== 'clinical');
     const exported = [];
     for (const r of rows) {
@@ -302,7 +310,7 @@ function consentPushProblem(raw) {
   const unknownCat = cats.find(x => !require('../constants').CONSENT_INFO_CATEGORIES.includes(x));
   if (unknownCat) return `has a value the office does not accept (information category "${unknownCat.slice(0, 40)}")`;
   if (!require('../constants').PART2_CONSENT_TYPES.includes(raw.type)) return null;
-  const v = { discloser: raw.discloser, recipient: raw.recipient_enc, purpose: raw.purpose_enc, scope: raw.scope_enc, expires_at: raw.expires_at, expires_event: raw.expires_event, document_ref: raw.document_ref,
+  const v = { discloser: raw.discloser, recipient: raw.recipient_enc, purpose: raw.purpose_enc, scope: raw.scope_enc, expires_at: raw.expires_at, expires_event: raw.expires_event, document_ref: raw.document_ref_enc ?? raw.document_ref,
     signed_on_paper: raw.signed_on_paper, witness: raw.witness_enc ?? raw.witness, signer_relationship: raw.signer_relationship, signer_name: raw.signer_name_enc, revocation_right_given: raw.revocation_right_given,
     redisclosure_notice_given: raw.redisclosure_notice_given, refusal_consequences_given: raw.refusal_consequences_given, signed_at: raw.signed_at };
   const missing = raw.rule_version === '2024' ? disclosure.missingPart2Elements(v) : disclosure.missingLegacyElements(v);
@@ -447,8 +455,11 @@ function push(user, payload) {
           // Caseload scoping applies to everything that carries a client, including the tables where the
           // client is optional (calls, tasks, time, expenditures) — those were previously unchecked.
           // (A self-assignment is what puts the new client on the caseload, so it cannot be judged by it.)
-          if ((t.scope === 'client' || t.scope === 'client-or-null') && raw[t.clientCol] && t.name !== 'clients' && !selfAssignmentIds.has(raw.id) && !auth.canAccessClient(user, raw[t.clientCol])) { reject(t.name, raw.id, 'not on caseload'); return false; }
+          // deidentified: as over REST (crud.js), finance may file an expenditure against a client it knows by code.
+          if ((t.scope === 'client' || t.scope === 'client-or-null') && raw[t.clientCol] && t.name !== 'clients' && !selfAssignmentIds.has(raw.id) && !auth.canAccessClient(user, raw[t.clientCol], { deidentified: true })) { reject(t.name, raw.id, 'not on caseload'); return false; }
           if (t.name === 'clients' && existing && !auth.canAccessClient(user, raw.id)) { reject(t.name, raw.id, 'not on caseload'); return false; }
+          // Another worker's record with no client is not this device's to change (sync-tables.js `unlinked`, as over REST).
+          if (existing && t.unlinked && !existing[t.clientCol] && !auth.hasPerm(user, t.unlinked.all) && !t.unlinked.owners.some(c => existing[c] === user.id)) { reject(t.name, raw.id, 'not permitted'); return false; }
           // A self-assignment the device made for a client it created (see isSelfAssignment). A matching
           // open assignment under another id — the office's own, from a sync before this rule existed —
           // makes the device's row a duplicate, which is refused for good so the device stops offering it.
@@ -659,7 +670,9 @@ function push(user, payload) {
 /**
  * A client created on a device that matches an existing record by the same rules as the intake form's
  * duplicate check. There is no way to ask the worker in the field, so the row is accepted, audited (codes
- * and reasons only, never names) and a task is raised for a supervisor to compare the two.
+ * and reasons only, never names) and a task is raised for a supervisor to compare the two (clients.js
+ * flagForReview). The device is told only about matches its user may open: naming one they may not would
+ * say that person is a client here.
  */
 function flagPossibleDuplicate(user, raw, clientCode, warnings) {
   let matches = [];
@@ -671,10 +684,10 @@ function flagPossibleDuplicate(user, raw, clientCode, warnings) {
     return;
   }
   if (!matches.length) return;
-  const codes = matches.map(m => m.client_code);
-  audit.log({ user, action: 'client.possible_duplicate', entity: 'client', entityId: raw.id, clientId: raw.id, ip: 'device', details: { client_code: clientCode, matches: matches.map(m => ({ id: m.id, client_code: m.client_code, reasons: m.reasons })), source: 'sync' } });
-  db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,priority) VALUES(?,?,?,?,?,?)`, require('../crypto').uuid(), raw.id, null, user.id, encrypt(`Possible duplicate record: compare ${clientCode} with ${codes.join(', ')}`), 'high');
-  warnings.push({ table: 'clients', id: raw.id, reason: `possible duplicate of ${codes.length} existing record${codes.length === 1 ? '' : 's'} (${codes.join(', ')}); a supervisor has been asked to check` });
+  const C = require('./clients');
+  C.flagForReview(user, { id: raw.id, client_code: clientCode, matches, source: 'sync', ip: 'device' });
+  const codes = matches.filter(m => C.mayOpen(user, m.id)).map(m => m.client_code);
+  if (codes.length) warnings.push({ table: 'clients', id: raw.id, reason: `possible duplicate of ${codes.length} existing record${codes.length === 1 ? '' : 's'} (${codes.join(', ')}); a supervisor has been asked to check` });
 }
 
 /** Find a client code no other client is using. Devices generate codes offline, so collisions are normal. */

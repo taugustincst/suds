@@ -9,6 +9,8 @@ const { encrypt, decrypt, uuid, blindIndex } = require('../crypto');
 const pocket = require('../importers/pocketai');
 const onenote = require('../importers/onenote');
 const M = require('../clients-model');
+// An import's file name is often the person's (a OneNote export named after them): encrypted (migration 42).
+const importView = (i) => { let filename = null; try { filename = i.filename_enc ? decrypt(i.filename_enc) : null; } catch { filename = null; } return { ...i, filename, filename_enc: undefined }; };
 
 // Suggest a client for an imported item from hints (client code or "Last, First"/"First Last")
 function suggestClient(ctx, hints) {
@@ -27,7 +29,7 @@ function stage(ctx, { source, filename, items, importedBy, metadata }) {
   if (items.length > 500) throw badRequest('Too many items in one import (max 500)');
   const id = uuid();
   db.transaction(() => {
-    db.run(`INSERT INTO imports(id,source,filename,imported_by,item_count,metadata) VALUES(?,?,?,?,?,?)`, id, source, filename || null, importedBy || null, items.length, metadata ? JSON.stringify(metadata) : null);
+    db.run(`INSERT INTO imports(id,source,filename_enc,imported_by,item_count,metadata) VALUES(?,?,?,?,?,?)`, id, source, filename ? encrypt(filename) : null, importedBy || null, items.length, metadata ? JSON.stringify(metadata) : null);
     for (const it of items) {
       const suggested = ctx ? suggestClient(ctx, it.metadata?.hints) : null;
       db.run(`INSERT INTO import_items(id,import_id,external_id,title_enc,content_enc,captured_at,metadata_enc,suggested_client_id) VALUES(?,?,?,?,?,?,?,?)`,
@@ -83,7 +85,7 @@ module.exports = (r) => {
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='committed') AS committed,
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='discarded') AS discarded
       FROM imports i LEFT JOIN users u ON u.id=i.imported_by ${auth.hasPerm(ctx.user, 'clients:all') ? '' : 'WHERE i.imported_by=? OR i.imported_by IS NULL'} ORDER BY i.created_at DESC LIMIT 200`, ...(auth.hasPerm(ctx.user, 'clients:all') ? [] : [ctx.user.id]));
-    return { imports: rows };
+    return { imports: rows.map(importView) };
   });
 
   r.get('/api/imports/:id', auth.requireAuth, auth.requirePerm('imports:read', 'imports:write'), (ctx) => {
@@ -93,7 +95,7 @@ module.exports = (r) => {
     // decorate suggested client display names
     for (const it of items) if (it.suggested_client_id) { const c = db.one(`SELECT * FROM clients WHERE id=?`, it.suggested_client_id); it.suggested_client_name = c ? M.summary(c).display_name : null; }
     audit.log({ user: ctx.user, action: 'import.view', entity: 'import', entityId: imp.id, ip: ctx.ip });
-    return { import: imp, items };
+    return { import: importView(imp), items };
   });
 
   // Commit one staged item as a note
@@ -149,16 +151,25 @@ module.exports = (r) => {
   });
 
   // ---- OneNote via Microsoft Graph ----
-  r.get('/api/imports/onenote/status', auth.requireAuth, auth.requirePerm('imports:write'), () => ({ configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), user: config.msGraph.user ? config.msGraph.user.replace(/(.{2}).+(@.+)/, '$1***$2') : null }));
-  r.get('/api/imports/onenote/notebooks', auth.requireAuth, auth.requirePerm('imports:write'), async (ctx) => {
+  // The server's Graph credentials open one shared notebook, which holds every worker's pages about every
+  // client. Browsing and fetching it is for supervisors and administrators (graph:import); anyone else with
+  // imports:write stages only what they upload themselves, or pages their own Microsoft token can read
+  // (X-MS-Access-Token: their own delegated access, not the programme's). Imports stay their importer's.
+  const sharedNotebook = (ctx) => {
+    if (ctx.headers['x-ms-access-token'] || auth.hasPerm(ctx.user, 'graph:import')) return;
+    audit.log({ user: ctx.user, action: 'authz.denied', ip: ctx.ip, success: false, details: { perms: ['graph:import'], path: ctx.path } });
+    throw forbidden('Importing from the shared OneNote notebook is for supervisors and administrators. Export your own pages from OneNote and upload them instead.');
+  };
+  r.get('/api/imports/onenote/status', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => ({ configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), user: config.msGraph.user ? config.msGraph.user.replace(/(.{2}).+(@.+)/, '$1***$2') : null, shared_allowed: auth.hasPerm(ctx.user, 'graph:import') }));
+  r.get('/api/imports/onenote/notebooks', auth.requireAuth, auth.requirePerm('imports:write'), sharedNotebook, async (ctx) => {
     try { return { notebooks: await onenote.listNotebooks({ token: ctx.headers['x-ms-access-token'] }) }; }
     catch (e) { throw new HttpError(502, e.message); }
   });
-  r.get('/api/imports/onenote/sections/:id/pages', auth.requireAuth, auth.requirePerm('imports:write'), async (ctx) => {
+  r.get('/api/imports/onenote/sections/:id/pages', auth.requireAuth, auth.requirePerm('imports:write'), sharedNotebook, async (ctx) => {
     try { return { pages: await onenote.listPages(ctx.params.id, { token: ctx.headers['x-ms-access-token'], since: ctx.query.get('since') || undefined }) }; }
     catch (e) { throw new HttpError(502, e.message); }
   });
-  r.post('/api/imports/onenote/fetch', auth.requireAuth, auth.requirePerm('imports:write'), async (ctx) => {
+  r.post('/api/imports/onenote/fetch', auth.requireAuth, auth.requirePerm('imports:write'), sharedNotebook, async (ctx) => {
     const { page_ids } = validate(ctx.body, { page_ids: { type: 'array', required: true } });
     if (!page_ids.length || page_ids.length > 200) throw badRequest('Select 1–200 pages');
     let items;
