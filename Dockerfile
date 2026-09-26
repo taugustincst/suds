@@ -6,7 +6,7 @@
 # filesystem read-only, drops every capability and forbids privilege escalation. Everything SUDS writes goes
 # to /data (database, backups, logs, keys.json when keys are not in the environment) and /anchors (audit
 # anchors — mount write-once storage there; docs/security/LOGGING-AND-AUDIT.md).
-FROM node:22.22-alpine
+FROM node:26.10-alpine
 ENV NODE_ENV=production SUDS_ENV=production HOST=0.0.0.0 PORT=8080 SUDS_DATA_DIR=/data AUDIT_ANCHOR_DIR=/anchors
 WORKDIR /app
 COPY package.json ./
