@@ -41,6 +41,9 @@ eq(await page.$eval('select[name=local_mode]', e => e.value).catch(() => null), 
 ok(/offline copy on their devices\? Recommended: No/.test(await page.textContent('#app')), 'with the recommendation in the question');
 // The programme profile: harm reduction & outreach unless the county says it is treatment-adjacent.
 eq(await page.$eval('select[name=programme_profile]', e => e.value).catch(() => null), 'harm_reduction', 'the wizard asks what kind of programme this is and defaults to harm reduction & outreach');
+// The programme's main fund (optional) becomes the default for new visits.
+ok(await page.$('input[name=main_fund_name]'), 'the wizard asks for the programme\'s main funding source');
+await page.fill('input[name=main_fund_name]', 'County SUD Navigation Grant');
 await page.click('button[type=submit]');
 ok(await until(() => page.textContent('#app').then(t => /Setup complete/.test(t)), { timeout: 20000 }), 'the wizard completes');
 const done = (await page.textContent('#app')).replace(/\s+/g, ' ');
@@ -59,6 +62,10 @@ ok(await page.$('.layout'), 'the administrator signs in over HTTPS at the new ad
   const me = await page.evaluate(() => fetch('/api/auth/me', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()));
   eq(me.programme && me.programme.profile, 'harm_reduction', 'the new install is a harm-reduction programme');
   eq(Object.values((me.programme && me.programme.modules) || { x: true }).some(Boolean), false, 'with every clinical module switched off');
+  const funds = await page.evaluate(() => fetch('/api/budget/funds', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()));
+  const main = (funds.funds || []).find(f => f.name === 'County SUD Navigation Grant');
+  ok(main, 'the main funding source named in the wizard exists', JSON.stringify(funds).slice(0, 200));
+  eq(me.default_fund_id, main && main.id, 'and is the default fund for new visits');
 }
 // The wizard's No is honoured straight away: the server serves the explanation, not the kernel.
 {

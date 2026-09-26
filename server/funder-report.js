@@ -159,6 +159,9 @@ async function build(ctx, { from, to, ts, tsP }) {
       // Where to fix it: the visits in this period with no fund (public/views/interventions.js), and the time
       // sheets waiting for approval.
       fix_link: `#/interventions?from=${from}&to=${to}&funding=none`, approve_link: `#/time?from=${from}&to=${to}`,
+      // With no programme default fund, a visit nobody charges goes to no fund; Settings → Programme →
+      // Reporting is where one is set.
+      default_fund_set: !!require('./routes/budget').defaultFundFor(null), settings_link: '#/admin?tab=settings&section=reporting',
     };
 
     // Small-cell suppression (server/small-cells.js): every count of people, in every table, with

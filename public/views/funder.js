@@ -63,7 +63,11 @@ route('funder', async (r) => {
     // has approved yet (approved hours are what a county would invoice, so unapproved time counts as none).
     d.attribution.unattributed_services ? h('div', { class: 'banner warn small', 'data-unattributed': String(d.attribution.unattributed_services) },
       `${num(d.attribution.unattributed_services)} service${d.attribution.unattributed_services === 1 ? '' : 's'} in this period ${d.attribution.unattributed_services === 1 ? 'has' : 'have'} no funding source, so no fund reports ${d.attribution.unattributed_services === 1 ? 'it' : 'them'} (the "No funding source" row below). `,
-      h('a', { href: d.attribution.fix_link }, 'Review those visits')) : null,
+      h('a', { href: d.attribution.fix_link }, 'Review those visits'),
+      // Why it keeps happening on a new install: no programme default fund, so a visit nobody charges goes to
+      // none. Settings → Programme → Reporting is where one is set.
+      d.attribution.default_fund_set ? null : [' No default funding source is set for the programme, so a new visit is charged to none unless the worker chooses one. ',
+        can('settings:manage') ? h('a', { href: d.attribution.settings_link, 'data-default-fund-link': '1' }, 'Set a default funding source in Settings') : 'An administrator can set one in Settings → Programme → Reporting.']) : null,
     d.attribution.unapproved_minutes ? h('div', { class: 'banner warn small', 'data-unapproved-hours': String(d.attribution.unapproved_minutes) },
       `${(d.attribution.unapproved_minutes / 60).toFixed(1)} staff hours logged in this period are not yet approved (${(d.attribution.approved_minutes / 60).toFixed(1)} approved). Only approved hours count toward a fund. `,
       can('time:approve') ? h('a', { href: d.attribution.approve_link }, 'Review time sheets') : null) : null,

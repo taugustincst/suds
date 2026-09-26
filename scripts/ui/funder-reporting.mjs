@@ -69,5 +69,19 @@ const ro = await signIn('rreader', 'Navigator2026!!');
 await ro.goto(base + '/#/reports'); await settle(ro);
 ok(!(await ro.$('[data-harm-reduction-reports]')), 'a read-only account is not offered the exports');
 await api(admin, 'PUT', '/api/admin/settings', { default_fund_id: null });
+
+// ---- no programme default fund: the warning says where to set one ----
+await admin.goto(`${base}/#/funder?from=${yearStart}&to=${today}`); await settle(admin);
+ok(await admin.$('[data-unattributed] [data-default-fund-link]'), 'with no default fund, the "no funding source" warning links to Settings');
+await admin.click('[data-default-fund-link]'); await settle(admin);
+ok(/tab=settings/.test(admin.url()), 'the link opens Settings', admin.url());
+eq(await admin.$eval('details[data-section=Reporting]', d => d.open).catch(() => null), true, 'with the Reporting section, where the default fund is set, open');
+ok(await admin.$eval('select[name=default_fund_id]', s => s.offsetParent !== null).catch(() => false), 'and the default fund field visible');
+// A filtered report says which fund, and the small-cell note is shown when counts are suppressed.
+await sup.goto(`${base}/#/funder?from=${yearStart}&to=${today}&funding_source_id=${fund.id}`); await settle(sup);
+ok(!(await sup.$('[data-no-fund-row]')), 'filtered to one fund, the table has no "No funding source" row');
+ok(!(await sup.$('[data-unattributed]')), 'nor the warning about visits charged to no fund');
+await sup.goto(`${base}/#/funder?from=${yearStart}&to=${today}`); await settle(sup);
+ok(!/NaN/.test(await sup.textContent('#app')), 'suppressed figures are shown as sent, never as NaN');
 finish(errors);
 await browser.close();

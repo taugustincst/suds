@@ -61,6 +61,8 @@ module.exports = (r) => {
       local_mode: { type: 'boolean' },
       // What kind of programme this is (server/programme.js); omitted means harm reduction & outreach.
       programme_profile: { type: 'string', enum: Object.keys(require('../programme').PROFILES) },
+      // The programme's main fund (optional): created and made the default fund for new visits.
+      main_fund_name: { type: 'string', maxLen: 200 },
       // port omitted → 'auto' (standard port with fallback)
     });
     const errs = auth.passwordPolicy(v.admin_password);
@@ -77,12 +79,14 @@ module.exports = (r) => {
     if (!(setupNeeded() && onlyBootstrapAdmin())) throw new HttpError(403, 'Setup has already been completed');
     // The wizard replaces the bootstrap administrator, so the password file left for it (server/bootstrap.js) is retired with it.
     require('../bootstrap').discardPasswordFile();
+    let mainFund = null;
     db.transaction(() => {
       db.run(`DELETE FROM users WHERE username='admin' AND must_change_password=1 AND last_login_at IS NULL`);
       db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid(), v.admin_username, adminHash, v.admin_display_name, 'admin', db.now());
       db.setSetting('org_name', v.org_name); if (v.county_name) db.setSetting('county_name', v.county_name); if (v.program_contact) db.setSetting('program_contact', v.program_contact);
       db.setSetting('caseload_restriction', '1');
       db.setSetting('programme_profile', v.programme_profile || require('../programme').DEFAULT_PROFILE);
+      mainFund = require('./budget').createProgrammeFund(v.main_fund_name);
     });
     const defaults = applyProductionDefaults();
     // 3. network + TLS
@@ -105,7 +109,7 @@ module.exports = (r) => {
     // in the environment decides it — then the environment keeps winning and the answer is only recorded.
     const localMode = v.local_mode === true;
     if (!config.localModeFromEnv) config.localModeEnabled = localMode;
-    audit.log({ user: { username: v.admin_username }, action: 'setup.complete', ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config.localModeEnabled, programme_profile: require('../programme').profile(), defaults } });
+    audit.log({ user: { username: v.admin_username }, action: 'setup.complete', ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config.localModeEnabled, programme_profile: require('../programme').profile(), defaults, main_fund: mainFund } });
     // (network switch below persists the final port)
     // 4. switch listener
     let desc;

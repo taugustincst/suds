@@ -31,6 +31,7 @@ For anything other staff depend on, run SUDS as a service instead so it survives
 The wizard asks for:
 1. **Program name**, county and privacy officer contact.
    **What kind of program is this?** *Harm reduction & outreach* (the default: outreach, visits, supplies, referrals and grant reporting) or *Treatment-adjacent* (adds care plans, assessments, CalOMS Tx, the FHIR API and the county EHR hand-off). It changes only what the screens show; an administrator can change it, or switch single modules on, under **Settings → Programme** (docs/USER_GUIDE.md, *Programme profile and modules*).
+   **Main funding source** (optional) — the fund most of the work is charged to. It is created for the current July–June fiscal year and becomes the default for new visits, so they are not charged to *No funding source*; add its amount, grant number and any other funds under **Budget**, and change the default under **Settings → Programme → Reporting**.
 2. **Your administrator account** — username and a strong password (12+ characters with upper and lower case, a number and a symbol).
 3. **Who can reach SUDS**:
    * *Only this computer* — safest; staff use SUDS on this machine only.

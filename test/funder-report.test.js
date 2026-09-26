@@ -219,3 +219,31 @@ test('filtered to one fund: its staff hours, its services and no other fund\'s',
   assert.match(csv, /Funding attribution,"?Approved staff hours"?,1\r?\n/);
 });
 
+// ---- no programme default fund: the report says where to set one ----
+test('with no programme default fund, the attribution warning points to Settings', async () => {
+  await admin.put('/api/admin/settings', { default_fund_id: null });
+  let d = (await sup.get('/api/reports/funder?from=2027-01-01&to=2027-01-31')).data;
+  assert.equal(d.attribution.default_fund_set, false);
+  assert.equal(d.attribution.settings_link, '#/admin?tab=settings&section=reporting');
+  const f = (await admin.post('/api/budget/funds', { name: 'Main fund', fiscal_year_start: '2027-01-01', fiscal_year_end: '2027-12-31', total_amount: 1000 })).data.id;
+  await admin.put('/api/admin/settings', { default_fund_id: f });
+  try {
+    d = (await sup.get('/api/reports/funder?from=2027-01-01&to=2027-01-31')).data;
+    assert.equal(d.attribution.default_fund_set, true);
+  } finally { await admin.put('/api/admin/settings', { default_fund_id: null }); }
+});
+
+test('first-run setup can name the programme\'s main fund and make it the default', () => {
+  const budget = require('../server/routes/budget');
+  H.db.run(`DELETE FROM settings WHERE key='default_fund_id'`);
+  assert.equal(budget.createProgrammeFund('', { today: '2026-09-25' }), null, 'optional: a blank name creates nothing');
+  const id = budget.createProgrammeFund('  County SUD Navigation Grant  ', { today: '2026-09-25' });
+  const f = H.db.one(`SELECT * FROM funding_sources WHERE id=?`, id);
+  assert.equal(f.name, 'County SUD Navigation Grant');
+  assert.equal(f.is_active, 1);
+  assert.deepEqual([f.fiscal_year_start, f.fiscal_year_end], ['2026-07-01', '2027-06-30'], 'the California fiscal year it falls in, editable under Budget');
+  assert.equal(H.db.getSetting('default_fund_id', null), id, 'and it is the programme default');
+  assert.equal(budget.defaultFundFor(null), id);
+  assert.deepEqual(budget.createProgrammeFund('x', { today: '2026-03-01' }) && H.db.getSetting('default_fund_id', null), id, 'an existing default is kept');
+  H.db.run(`DELETE FROM settings WHERE key='default_fund_id'`);
+});
