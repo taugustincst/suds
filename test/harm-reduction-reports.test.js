@@ -46,9 +46,9 @@ test('the NDP log: distribution and reversals reported, aggregated, with no name
   const may2 = r.data.rows.find(x => x.date === '2026-05-02' && x.entry === 'distribution');
   assert.equal(may2.kits, 15, 'the two community hand-outs on the same day and site are one row');
   assert.equal(may2.recipient_type, 'Community member (anonymous)');
-  assert.ok(r.data.rows.some(x => x.recipient_type === 'Programme participant' && x.kits === 1));
-  // Reversal sites use the same coded location list as distribution: typed-in "street" is not one of its
-  // codes, so it is "other"; "residence" likewise.
+  assert.ok(r.data.rows.some(x => x.recipient_type === 'Program participant' && x.kits === 1));
+  // Reversal sites use the same coded location list as distribution: typed-in "residence" is not one of its
+  // codes, so it is "other" ("street" is now Street / Outdoor).
   assert.ok(r.data.rows.some(x => x.entry === 'reversal' && x.site_type === 'other' && x.reversals === 1));
   const text = JSON.stringify(r.data);
   assert.ok(!text.includes('Loxone') && !text.includes('Nadia'), 'no names');

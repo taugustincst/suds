@@ -120,7 +120,7 @@ route('reports', async (r) => {
   const harmReduction = (rv = hrReview()) => h('div', { class: 'mt', 'data-harm-reduction-reports': '1' }, h('h4', { class: 'small', style: { margin: '.75rem 0 .25rem' } }, 'Harm-reduction reporting'),
       h('p', { class: 'small muted' }, 'For the range above. Aggregate counts and amounts only: no names or client codes. Kits and amounts are always exact.'),
       h('p', { class: 'small muted', 'data-hr-publication-note': '1' }, submissionOk
-        ? 'A file is the programme\'s own submission to its funder, not for publication, unless you choose a publication release: that is only for a range of one calendar month, quarter or fiscal year (starting in January, April, July or October) that has ended. It screens small counts, withholds any table whose protection the automatic check cannot confirm, and gives the NDP log by month for all sites.'
+        ? 'A file is the program\'s own submission to its funder, not for publication, unless you choose a publication release: that is only for a range of one calendar month, quarter or fiscal year (starting in January, April, July or October) that has ended. It screens small counts, withholds any table whose protection the automatic check cannot confirm, and gives the NDP log by month for all sites.'
         : 'A file is a publication release only when the range above is one calendar month, quarter or fiscal year (starting in January, April, July or October) that has ended; the NDP log is then by month, for all sites, and small counts are screened. Any other range gives a file marked internal, not for publication.'),
       hrKind ? h('div', { class: 'field mb' }, h('label', { for: 'hr-kind' }, 'Kind of file'), hrKind) : null,
       guide,
@@ -131,7 +131,7 @@ route('reports', async (r) => {
         settlementOk ? [h('button', { class: 'btn sm', 'data-settlement-export': 'xlsx', onClick: () => hrDownload(rv, `/api/reports/opioid-settlement/export?from=${from}&to=${to}&format=xlsx${hrQs()}`) }, 'Settlement report (Excel)'), h('button', { class: 'btn sm ghost', 'data-settlement-export': 'csv', onClick: () => hrDownload(rv, `/api/reports/opioid-settlement/export?from=${from}&to=${to}${hrQs()}`) }, 'CSV')] : onlyPublication.cloneNode(true)) : null);
   const exportsCard = () => h('div', { class: 'card', 'data-exports': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Export to Excel or CSV')),
     h('p', { class: 'small muted' }, 'The range above chooses the rows (clients, resources and to-dos are complete lists).'),
-    exportGroup('Funder & programme', 'For grant reports and the programme\'s own books: everything in one workbook, staff time and the resource directory, and — for roles that see the budget — funding, budget lines and spending.', { 'data-export-group': 'programme' },
+    exportGroup('Funder & program', 'For grant reports and the program\'s own books: everything in one workbook, staff time and the resource directory, and — for roles that see the budget — funding, budget lines and spending.', { 'data-export-group': 'programme' },
       h('button', { class: 'btn primary', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Everything as one Excel workbook'),
       h('a', { class: 'btn', href: '#/funder' }, 'Funder report (unduplicated counts)'),
       exportRow('time', 'Time'), exportRow('resources', 'Resources'),

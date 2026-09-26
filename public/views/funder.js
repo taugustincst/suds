@@ -83,7 +83,7 @@ export function runKindBanner(d, extra = null) {
     ? 'Exact counts, including groups of fewer than ' + T + ' people. Send it to your funder; do not publish or share it further.'
     : kind === 'publication'
       ? `Counts of fewer than ${T} people show as "<${T}", and a few more are hidden so they cannot be worked out. Review it before you share it.`
-      : `Counts of fewer than ${T} people show as "<${T}", and a few more are hidden so they cannot be worked out. It stays within the programme${kind === 'submission' ? ' and its funder' : ''}.`;
+      : `Counts of fewer than ${T} people show as "<${T}", and a few more are hidden so they cannot be worked out. It stays within the program${kind === 'submission' ? ' and its funder' : ''}.`;
   return h('div', { class: `banner run-kind ${kind === 'publication' ? 'info' : 'warn'}`, 'data-counting-mode': d.suppression.mode, 'data-purpose': kind, 'data-run-kind': kind },
     h('h2', { class: 'run-kind-title' }, label),
     h('p', { class: 'run-kind-line' }, line),
@@ -118,7 +118,7 @@ route('funder', async (r) => {
   const suppressedAsked = r.query.get('counts') === 'suppressed' && can('reports:exact');
   const countQs = wantPublication ? '&purpose=publication' : suppressedAsked ? '&counts=suppressed' : '';
   const qs = `from=${from}&to=${to}${fund ? `&funding_source_id=${fund}` : ''}${countQs}`;
-  const periodButtons = (onPick, label = 'Periods you can publish (whole programme, ended):') => h('div', { class: 'filters', role: 'group', 'aria-label': 'Periods you can publish', 'data-publishable-periods': '1' },
+  const periodButtons = (onPick, label = 'Periods you can publish (whole program, ended):') => h('div', { class: 'filters', role: 'group', 'aria-label': 'Periods you can publish', 'data-publishable-periods': '1' },
     h('span', { class: 'small muted' }, label),
     h('button', { class: 'btn ghost sm', 'data-period': 'month', onClick: () => onPick(lastMonth()) }, 'Last month'),
     h('button', { class: 'btn ghost sm', 'data-period': 'quarter', onClick: () => onPick(lastQuarter()) }, 'Last quarter'),
@@ -170,9 +170,9 @@ route('funder', async (r) => {
   const canPublishThis = isPublishablePeriod(from, to) && !fund;
   const preparePublication = submissionOk && !publishable ? h('section', { class: 'card', 'data-prepare-publication': '1' },
     h('h2', {}, 'Prepare a publication release'),
-    h('p', { class: 'small muted' }, 'Only when figures will be published or shared beyond your funder: a public dashboard, a board pack, a county website. A publication release covers the whole programme for one month, quarter or fiscal year that has ended. Small counts are screened; a table the automatic check cannot confirm is protected is withheld and listed with the reason; and you confirm you have reviewed it before its files are exported. The submission above is what your funder asks for.'),
+    h('p', { class: 'small muted' }, 'Only when figures will be published or shared beyond your funder: a public dashboard, a board pack, a county website. A publication release covers the whole program for one month, quarter or fiscal year that has ended. Small counts are screened; a table the automatic check cannot confirm is protected is withheld and listed with the reason; and you confirm you have reviewed it before its files are exported. The submission above is what your funder asks for.'),
     canPublishThis ? h('p', {}, h('button', { class: 'btn', 'data-prepare-publication-button': '1', onClick: () => publish([from, to]) }, `Prepare a publication release for ${fmt.date(from)} – ${fmt.date(to)}`)) : null,
-    periodButtons(publish, canPublishThis ? 'Or another period (whole programme, ended):' : 'Choose a period (whole programme, ended):')) : null;
+    periodButtons(publish, canPublishThis ? 'Or another period (whole program, ended):' : 'Choose a period (whole program, ended):')) : null;
   return h('div', {},
     pageHead('Funder report',
       can('export:read') ? h('button', { class: 'btn', 'data-funder-export': 'xlsx', onClick: () => review.download(`/api/reports/funder/export?${qs}&format=xlsx`, downloadCsv) }, 'This report (Excel)') : null,
@@ -198,7 +198,7 @@ route('funder', async (r) => {
       h('button', { class: 'btn ghost sm', onClick: () => { const [s, e] = fy(10); go(s, e); } }, 'Fiscal year (Oct–Sep)'),
       h('button', { class: 'btn ghost sm', onClick: () => go(`${to.slice(0, 4)}-01-01`, to) }, 'Calendar year'))
       : null,
-    internalOk ? null : h('p', { class: 'small muted', 'data-publication-only': '1' }, 'Your role runs publication releases only: the whole programme for one month, quarter or fiscal year that has ended, with small counts screened. The programme\'s submission to its funder, custom ranges and single funds are run by a supervisor or administrator.',
+    internalOk ? null : h('p', { class: 'small muted', 'data-publication-only': '1' }, 'Your role runs publication releases only: the whole program for one month, quarter or fiscal year that has ended, with small counts screened. The program\'s submission to its funder, custom ranges and single funds are run by a supervisor or administrator.',
       can('budget:read') ? ' Money and staff hours for any period or fund are on Funding & spending.' : ''),
     // Other periods: a supervisor preparing a release picks another period to publish; a publication-only role
     // runs one of them; a caseload-scoped role's runs are internal, so it gets none.
@@ -213,8 +213,8 @@ route('funder', async (r) => {
       h('a', { href: d.attribution.fix_link }, 'Review those visits'),
       // Why it keeps happening on a new install: no programme default fund, so a visit nobody charges goes to
       // none. Settings → Programme → Reporting is where one is set.
-      d.attribution.default_fund_set ? null : [' No default funding source is set for the programme, so a new visit is charged to none unless the worker chooses one. ',
-        can('settings:manage') ? h('a', { href: d.attribution.settings_link, 'data-default-fund-link': '1' }, 'Set a default funding source in Settings') : 'An administrator can set one in Settings → Programme → Reporting.']) : null,
+      d.attribution.default_fund_set ? null : [' No default funding source is set for the program, so a new visit is charged to none unless the worker chooses one. ',
+        can('settings:manage') ? h('a', { href: d.attribution.settings_link, 'data-default-fund-link': '1' }, 'Set a default funding source in Settings') : 'An administrator can set one in Settings → Program → Reporting.']) : null,
     d.attribution.unapproved_minutes ? h('div', { class: 'banner warn small', 'data-unapproved-hours': String(d.attribution.unapproved_minutes) },
       `${(d.attribution.unapproved_minutes / 60).toFixed(1)} staff hours logged in this period are not yet approved (${(d.attribution.approved_minutes / 60).toFixed(1)} approved). Only approved hours count toward a fund. `,
       can('time:approve') ? h('a', { href: d.attribution.approve_link }, 'Review time sheets') : null) : null,
@@ -286,5 +286,5 @@ route('funder', async (r) => {
         { label: 'Approved staff hours', render: f => (f.approved_minutes / 60).toFixed(1), num: true },
         { label: 'Logged, not yet approved', render: f => (f.unapproved_minutes / 60).toFixed(1), num: true },
       ], d.by_funding_source, { empty: 'No active funding sources.' }),
-      h('p', { class: 'small muted' }, 'Staff hours count only time that has been approved, so this matches what a county would invoice; time logged but still waiting for approval is shown beside it. A visit is charged to the worker\'s default fund (Settings → Users) or the programme\'s (Settings → Program) unless another is chosen.')));
+      h('p', { class: 'small muted' }, 'Staff hours count only time that has been approved, so this matches what a county would invoice; time logged but still waiting for approval is shown beside it. A visit is charged to the worker\'s default fund (Settings → Users) or the program\'s (Settings → Program) unless another is chosen.')));
 });

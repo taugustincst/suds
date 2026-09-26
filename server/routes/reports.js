@@ -59,7 +59,7 @@ function requireReportRun({ caseloadScoped, fund = false }) {
     if (!internal || auth.reportRunAllowed(ctx.user, { caseloadScoped })) return;
     audit.log({ user: ctx.user, action: 'authz.denied', ip: ctx.ip, success: false, details: { perms: ['reports:internal'], path: ctx.path, purpose: asked || 'internal', counts: ctx.query.get('counts') || 'suppressed' } });
     const why = asked ? `it asks for ${exact ? 'exact counts' : `purpose=${asked}`}` : rel.not_publishable.join(' and ');
-    throw forbidden(`Your role can run this report only as a publication release: the whole programme (all funding sources) for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended. This run is not one, because ${why}. Internal and submission runs, and exact counts, are for supervisors and administrators.`);
+    throw forbidden(`Your role can run this report only as a publication release: the whole program (all funding sources) for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended. This run is not one, because ${why}. Internal and submission runs, and exact counts, are for supervisors and administrators.`);
   };
 }
 

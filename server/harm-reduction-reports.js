@@ -56,7 +56,7 @@ function distributionRows(ctx, { ts, tsP }, monthly) {
   for (const x of db.all(`SELECT i.occurred_at, i.location, i.client_id IS NULL AS anon, i.naloxone_kits kits FROM interventions i LEFT JOIN clients c ON c.id=i.client_id
       WHERE ${ts('i.occurred_at')} AND i.naloxone_kits > 0 AND (i.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
     const day = dayOf(x.occurred_at); const date = monthly ? day.slice(0, 7) : day; const site = x.location || 'unknown';
-    const recipient = x.anon ? 'Community member (anonymous)' : 'Programme participant';
+    const recipient = x.anon ? 'Community member (anonymous)' : 'Program participant';
     const key = `d|${date}|${site}|${recipient}`;
     if (!rows.has(key)) rows.set(key, { date, entry: 'distribution', site_type: site, recipient_type: recipient, kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null });
     const r = rows.get(key); r.kits += x.kits; r.doses += x.kits * perKit;
@@ -182,7 +182,7 @@ async function settlement(ctx, range) {
 // The counting mode travels with the file, as with the funder report: in the filename, a response header
 // and (Excel) the About sheet.
 const countsSuffix = (d) => (d.suppression.mode === 'exact' ? 'exact-counts' : d.suppression.purpose === 'publication' ? 'publication-screened-review-before-sharing' : 'internal-suppressed');
-const purposeLine = (d) => ({ k: 'Purpose', v: d.suppression.purpose === 'publication' ? `${FR.PUBLICATION_LABEL} (whole programme, one standard period)` : d.suppression.purpose === 'submission' ? 'The programme\'s own submission, not for publication' : 'Internal, not for publication' });
+const purposeLine = (d) => ({ k: 'Purpose', v: d.suppression.purpose === 'publication' ? `${FR.PUBLICATION_LABEL} (whole program, one standard period)` : d.suppression.purpose === 'submission' ? 'The program\'s own submission, not for publication' : 'Internal, not for publication' });
 // The About rows every file of a run carries about what it is for (and, for a publication release, what to do before sharing it).
 const purposeRows = (d) => [purposeLine(d), ...(d.suppression.purpose === 'publication' ? [{ k: 'Before publishing', v: FR.PUBLICATION_GUIDANCE }] : [])];
 function send(ctx, { body, filename, xlsx, classification, suppression }) {
