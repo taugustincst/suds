@@ -2,6 +2,31 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Engineering
+
+- **Liveness and readiness probes.** `GET /api/health/live` (the process is up and its database answers) and
+  `GET /api/health/ready` (database open, at this build's schema, no restore in progress) are new, and are
+  what the Dockerfile `HEALTHCHECK` and the new `docker-compose.yml` healthcheck call. `/api/health` is
+  unchanged but is for alerting only: it answers 503 for warnings a restart cannot fix (a certificate near
+  expiry, a failed backup), so as a liveness probe it restart-looped SUDS. **Administrators:** point
+  Kubernetes/ECS/load-balancer probes at the new endpoints (DEPLOYMENT.md, 4b). New routes, no migration.
+- **Release policy enforced.** The release gate refuses a patch release that adds a schema migration, a
+  permission or a route, unless the release is run with `allow_patch_changes` (the reason is printed at the top
+  of the release notes). RELEASE.md records that 1.12.0–1.12.4 broke the cadence policy.
+- **Tests.** Timing-dependent tests use condition waits and bounds relative to the machine; pure performance
+  checks moved to `test/thorough/`, run by the `thorough` CI job (`npm run test:thorough`) instead of
+  `npm test`. Migrations are now also tested from databases written by 1.9.4 and 1.11.0 (records present,
+  ciphertext decrypts, audit chain verifies). A new test runs the browser kernel under sql.js in Node and
+  requires the same answers as the office server for sign-up, client, visit, note, consent, referral and the
+  funder report.
+- **CI.** The Node 24 job installs a pinned version checked against a pinned SHA-256 (RELEASE.md says how to
+  bump it). The WebKit job reports two service-worker cache checks that Playwright's WebKit on Linux cannot
+  reproduce as skipped, with their diagnostics; iPhone offline-after-update is on the real-device checklist.
+- **Docs.** The architecture overview describes the code after 1.12.4; RELEASE.md gives the browser suite's
+  real size (30 scripts).
+
 ## 1.12.4 — 2026-09-26
 
 - **The first user is "guest".** A new office server creates its first administrator as `guest`
