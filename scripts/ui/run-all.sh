@@ -51,7 +51,7 @@ export SUDS_URL="http://127.0.0.1:$PORT"
 # wizard restarts it on SETUP_PORT with a self-signed certificate, so that port must be free too.
 export SETUP_PORT=${SETUP_PORT:-8496}
 rm -rf $T/suds-setup-data; mkdir -p $T/suds-setup-data
-SUDS_ENV=production SUDS_DATA_DIR=$T/suds-setup-data PORT=$SETUP_BOOT_PORT SUDS_ADMIN_PASSWORD= LOCAL_MODE_ENABLED= node --no-warnings=ExperimentalWarning server/index.js > $T/suds-setup-server.log 2>&1 &
+SUDS_ENV=production SUDS_DATA_DIR=$T/suds-setup-data PORT=$SETUP_BOOT_PORT SUDS_ADMIN_PASSWORD= SUDS_ADMIN_USERNAME= LOCAL_MODE_ENABLED= node --no-warnings=ExperimentalWarning server/index.js > $T/suds-setup-server.log 2>&1 &
 SETUP_SERVER=$!
 for i in $(seq 1 40); do curl -sf "http://127.0.0.1:$SETUP_BOOT_PORT/api/setup/status" >/dev/null && break; sleep 0.5; done
 export SUDS_SETUP_URL="http://127.0.0.1:$SETUP_BOOT_PORT"

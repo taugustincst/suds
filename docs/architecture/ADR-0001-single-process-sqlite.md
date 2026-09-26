@@ -54,5 +54,5 @@ something a security reviewer must assess. Node 22 ships SQLite (`node:sqlite`),
 ## Tests that pin it
 
 `test/instance-lock.test.js` (second process refused; stale lock taken over; another host's live heartbeat refused and stale one taken over; the same hostname with another container identity refused, the same container restarted taken over; old lock formats; double-release ordering),
-`test/perf.test.js` and `test/load-review.test.js` (the sizing assumption), `test/backup.test.js` and
+`test/thorough/perf.test.js` and `test/load-review.test.js` (the sizing assumption), `test/backup.test.js` and
 `test/snapshot.test.js` (online backup without stopping the process).

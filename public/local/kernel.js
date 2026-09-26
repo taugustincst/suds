@@ -6464,6 +6464,14 @@ function flush({ urgent = false, force = false } = {}) {
   if (!sealer) return Promise.resolve();
   if (saving && !urgent) return saving.then(() => flush({ force }));
   if (inTransaction) return Promise.resolve();
+  if (!urgent && tempObjectsOpen()) {
+    if (!saveTimer) saveTimer = setTimeout(() => {
+      saveTimer = null;
+      flush({ force }).catch(() => {
+      });
+    }, COALESCE_MS);
+    return saving || Promise.resolve();
+  }
   clearTimeout(saveTimer);
   saveTimer = null;
   const seq = writeSeq;
@@ -6506,6 +6514,14 @@ function flush({ urgent = false, force = false } = {}) {
   });
   saving = p;
   return p;
+}
+function tempObjectsOpen() {
+  try {
+    const r = current.exec("SELECT 1 FROM temp.sqlite_master LIMIT 1");
+    return !!(r.length && r[0].values.length);
+  } catch {
+    return false;
+  }
 }
 function isDirty() {
   return dirty;
@@ -14886,7 +14902,37 @@ var require_app = __commonJS({
       if (!given || given.length !== config2.metricsToken.length) return false;
       return crypto3.timingSafeEqual(import_buffer.Buffer.from(config2.metricsToken), import_buffer.Buffer.from(given));
     }
+    function notReadyReason() {
+      if (!db3.isOpen()) return "database not open";
+      const holder = require_backup_lock().current();
+      if (holder && holder.name === "restore") return "restore in progress";
+      const schema = Number(db3.getSetting("schema_version", "0"));
+      if (schema !== db3.LATEST_SCHEMA_VERSION) return `schema ${schema}, this build needs ${db3.LATEST_SCHEMA_VERSION}`;
+      return null;
+    }
     module.exports = (r) => {
+      r.get("/api/health/live", (ctx) => {
+        try {
+          if (db3.one("SELECT 1 AS ok").ok !== 1) throw new Error("unexpected answer");
+          return { ok: true };
+        } catch {
+          ctx.status = 503;
+          return { ok: false };
+        }
+      });
+      r.get("/api/health/ready", (ctx) => {
+        let reason;
+        try {
+          reason = notReadyReason();
+        } catch {
+          reason = "database error";
+        }
+        if (reason) {
+          ctx.status = 503;
+          return { ok: false, reason };
+        }
+        return { ok: true };
+      });
       r.get("/api/health", (ctx) => {
         const detailed = ctx.user && auth3.hasPerm(ctx.user, "settings:manage") && !ctx.session?.mfa_pending || metricsTokenPresented(ctx);
         const out2 = { ok: true, uptime_seconds: Math.round(proc.uptime()) };
@@ -32073,8 +32119,9 @@ var require_setup = __commonJS({
     function setupNeeded() {
       return !config2.setupComplete && !config2.isTest && config2.keySource !== "env" && !proc.env.SUDS_SKIP_SETUP;
     }
+    var bootstrapName = () => (init_bootstrap(), __toCommonJS(bootstrap_exports)).adminUsername();
     function onlyBootstrapAdmin() {
-      return db3.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0;
+      return db3.one(`SELECT COUNT(*) n FROM users WHERE NOT (username=? AND must_change_password=1 AND last_login_at IS NULL)`, bootstrapName()).n === 0;
     }
     var PRODUCTION_DEFAULTS = { backup_schedule_hours: "4" };
     function applyProductionDefaults({ isProd = config2.isProd } = {}) {
@@ -32130,7 +32177,7 @@ var require_setup = __commonJS({
         (init_bootstrap(), __toCommonJS(bootstrap_exports)).discardPasswordFile();
         let mainFund = null;
         db3.transaction(() => {
-          db3.run(`DELETE FROM users WHERE username='admin' AND must_change_password=1 AND last_login_at IS NULL`);
+          db3.run(`DELETE FROM users WHERE username=? AND must_change_password=1 AND last_login_at IS NULL`, bootstrapName());
           db3.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid2(), v.admin_username, adminHash, v.admin_display_name, "admin", db3.now());
           db3.setSetting("org_name", v.org_name);
           if (v.county_name) db3.setSetting("county_name", v.county_name);
@@ -35838,6 +35885,9 @@ var require_db = __commonJS({
         db3 = void 0;
       }
     }
+    function isOpen() {
+      return !!db3;
+    }
     function now2() {
       return (/* @__PURE__ */ new Date()).toISOString();
     }
@@ -35910,7 +35960,7 @@ var require_db = __commonJS({
     function tombstone(table, id) {
       run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now2());
     }
-    module.exports = { open: open3, openWith, get, close, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
+    module.exports = { open: open3, openWith, get, close, isOpen, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
   }
 });
 

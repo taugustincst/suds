@@ -417,6 +417,15 @@ export function flush({ urgent = false, force = false } = {}) {
   if (!sealer) return Promise.resolve(); // no key to seal with yet: withheld, never written in the clear
   if (saving && !urgent) return saving.then(() => flush({ force }));
   if (inTransaction) return Promise.resolve(); // saved after the COMMIT; exporting now would end it
+  // export() also drops every TEMP table (it closes and reopens the database). The funder report keeps its
+  // served set in one across the turns of the event loop it yields between phases (server/funder-report.js),
+  // so a coalesced save landing between two phases failed the report with "no such table" — intermittently,
+  // on a busy device (found by test/kernel-parity.test.js). Wait for the temp objects to go; the unload save
+  // cannot wait, and a page going away has no report left to finish.
+  if (!urgent && tempObjectsOpen()) {
+    if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = null; flush({ force }).catch(() => { /* reported by onSaveError */ }); }, COALESCE_MS);
+    return saving || Promise.resolve();
+  }
   clearTimeout(saveTimer); saveTimer = null;
   const seq = writeSeq; const mine = ++ticket;
   const t0 = now(); const bytes = current.export(); const t1 = now();
@@ -444,6 +453,10 @@ export function flush({ urgent = false, force = false } = {}) {
     .finally(() => { if (saving === p) saving = null; });
   saving = p;
   return p;
+}
+/** Does the open database hold a TEMP table, index or view (which an export would silently drop)? */
+function tempObjectsOpen() {
+  try { const r = current.exec('SELECT 1 FROM temp.sqlite_master LIMIT 1'); return !!(r.length && r[0].values.length); } catch { return false; }
 }
 /** Is there anything written in memory and not yet saved? */
 export function isDirty() { return dirty; }

@@ -678,6 +678,8 @@ function migrate(d, dbPath) {
 
 function get() { if (!db) open(); return db; }
 function close() { if (db) { db.close(); db = undefined; } }
+/** Is a database handle open now? Does not open one (unlike get()) — /api/health/ready asks this. */
+function isOpen() { return !!db; }
 
 // helpers
 function now() { return new Date().toISOString(); }
@@ -728,4 +730,4 @@ function setSetting(key, value) {
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
+module.exports = { open, openWith, get, close, isOpen, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
