@@ -487,7 +487,7 @@ class Statement {
 export class DatabaseSync {
   constructor(path, bytes) {
     if (!SQL) throw new Error('sqlite shim not initialised');
-    if (!openAllowed) throw new Error('The on-device database is locked: sign in first.');
+    if (!openAllowed) { const e = new Error('The on-device database is locked: sign in first.'); e.code = 'DEVICE_LOCKED'; throw e; }
     this.db = bytes ? new SQL.Database(bytes) : new SQL.Database();
     // node:sqlite enforces foreign keys by default; sql.js does not, and the pragma is per connection, so
     // an existing database reopened here (the schema's own PRAGMA only runs on a fresh one) had no

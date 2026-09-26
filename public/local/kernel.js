@@ -6623,7 +6623,11 @@ var init_sqlite = __esm({
     DatabaseSync = class {
       constructor(path, bytes3) {
         if (!SQL) throw new Error("sqlite shim not initialised");
-        if (!openAllowed) throw new Error("The on-device database is locked: sign in first.");
+        if (!openAllowed) {
+          const e = new Error("The on-device database is locked: sign in first.");
+          e.code = "DEVICE_LOCKED";
+          throw e;
+        }
         this.db = bytes3 ? new SQL.Database(bytes3) : new SQL.Database();
         this.db.exec("PRAGMA foreign_keys = ON");
         current = this.db;
@@ -38185,6 +38189,7 @@ async function handle(method, path, body, headers = {}) {
       }
     } else await afterFailedPasswordWrite(method, url.pathname, body, ctx);
     if (err2 instanceof import_http2.HttpError) return { status: err2.status, headers: { "content-type": "application/json" }, json: { error: err2.message, ...err2.extra || {} } };
+    if (err2 && err2.code === "DEVICE_LOCKED") return { status: 401, headers: { "content-type": "application/json" }, json: { error: "This device is locked. Sign in to continue.", locked: true } };
     console.error("[suds-local]", method, path, err2);
     return { status: 500, headers: { "content-type": "application/json" }, json: { error: "Something went wrong on this device. Try again, and sync if it keeps happening." } };
   }

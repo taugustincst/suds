@@ -669,6 +669,10 @@ async function handle(method, path, body, headers = {}) {
     if (relockOnFail) { try { await lockDevice(); } catch {} }
     else await afterFailedPasswordWrite(method, url.pathname, body, ctx);
     if (err instanceof HttpError) return { status: err.status, headers: { 'content-type': 'application/json' }, json: { error: err.message, ...(err.extra || {}) } };
+    // The device locked while this request was on its way (sign-out, idle, a page-load before sign-in, or a
+    // report that yields between queries and resumes after the lock): an expected state, answered like any
+    // signed-out request, which sends the app to sign-in. Not an error worth a console line.
+    if (err && err.code === 'DEVICE_LOCKED') return { status: 401, headers: { 'content-type': 'application/json' }, json: { error: 'This device is locked. Sign in to continue.', locked: true } };
     // Same as the office server: log the detail, tell the caller nothing. The message can carry SQL, file
     // paths, or fragments of the record being written.
     console.error('[suds-local]', method, path, err);
