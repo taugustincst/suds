@@ -6682,7 +6682,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.12.2" : "local",
+      version: true ? "1.12.3" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -8978,11 +8978,13 @@ var require_constants = __commonJS({
       { code: "hiaa_5", label: "5. Interventions to prevent drug addiction in vulnerable youth" },
       { code: "hiaa_6", label: "6. The purchase of naloxone for distribution and efforts to expand access to naloxone for opioid overdose reversals" }
     ];
+    var NALOXONE_DOSES_MAX = 20;
     module.exports = {
       RACE_CODES,
       ETHNICITY_CODES,
       SETTLEMENT_USES,
       SETTLEMENT_HIAA,
+      NALOXONE_DOSES_MAX,
       INTERVENTION_TYPES: ["outreach", "screening_sbirt", "assessment", "intake", "care_coordination", "warm_handoff", "referral", "case_management", "harm_reduction", "naloxone_distribution", "peer_support", "crisis_response", "post_overdose_follow_up", "transport", "housing_assistance", "benefits_enrollment", "employment_support", "family_support", "education", "court_or_probation", "hospital_or_ed_visit", "jail_in_reach", "recovery_check_in", "discharge_planning", "other"],
       // The services that can be recorded with no identified client: street outreach and community naloxone
       // distribution (a kit handed to a stranger). Every other type is work with a person on the caseload, and
@@ -20186,6 +20188,7 @@ var require_episodes = __commonJS({
         });
         const cal = calomsPart(v.caloms, "discharge");
         const when = v.closed_at || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        if (e.opened_at && when < String(e.opened_at).slice(0, 10)) throw badRequest(`The discharge date cannot be before the episode was opened (${String(e.opened_at).slice(0, 10)})`);
         const openNotes = db3.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND status='draft' AND deleted_at IS NULL`, e.client_id).n;
         let endedAssignments = 0;
         let cancelledTasks = 0;
@@ -23284,14 +23287,14 @@ var require_sdc = __commonJS({
       for (let j = 0; j < n; j++) value += (c[j] || 0) * x[j];
       return { status: "optimal", x, value };
     }
-    function intMax(prob, c, known, { enough = Infinity, budget = 4e3 } = {}) {
+    function intMax(prob, c, known, { enough = Infinity, budget = 4e3, deadline = Infinity } = {}) {
       const dot = (x) => c.reduce((s, cj, j) => s + cj * x[j], 0);
       let best = known ? Math.round(dot(known)) : -Infinity;
       if (best >= enough) return { value: best, exact: true };
       const stack = [[prob.lb.slice(), prob.ub.slice()]];
       let nodes = 0;
       while (stack.length) {
-        if (++nodes > budget) return { value: best, exact: false };
+        if (++nodes > budget || Date.now() > deadline) return { value: best, exact: false };
         const [lb, ub] = stack.pop();
         const r = simplex(prob.n, prob.rows, lb, ub, c);
         if (r.status === "infeasible") continue;
@@ -23317,13 +23320,13 @@ var require_sdc = __commonJS({
       }
       return { value: best, exact: true };
     }
-    function intFeasible(prob, c, v, { budget = 4e3 } = {}) {
+    function intFeasible(prob, c, v, { budget = 4e3, deadline = Infinity } = {}) {
       const rows = [...prob.rows, { a: c, op: "=", b: v }];
       const zero = new Array(prob.n).fill(0);
       const stack = [[prob.lb.slice(), prob.ub.slice()]];
       let nodes = 0;
       while (stack.length) {
-        if (++nodes > budget) return { feasible: false, exact: false };
+        if (++nodes > budget || Date.now() > deadline) return { feasible: false, exact: false };
         const [lb, ub] = stack.pop();
         const r = simplex(prob.n, rows, lb, ub, zero);
         if (r.status !== "optimal") {
@@ -23345,7 +23348,8 @@ var require_sdc = __commonJS({
       }
       return { feasible: false, exact: true };
     }
-    function protect(model, T, { budget = 4e3 } = {}) {
+    function protect(model, T, { budget = 4e3, timeLimitMs = Infinity } = {}) {
+      const deadline = Date.now() + timeLimitMs;
       const { vars, derived = [], mirror = [] } = model;
       const cons = model.cons.filter((k) => {
         const lhs = k.terms.reduce((s2, [i, c]) => s2 + c * vars[i].value, 0);
@@ -23434,12 +23438,12 @@ var require_sdc = __commonJS({
         } else if (q.kind === "small") {
           for (const v of [1, T - 1]) {
             if (q.truth === v) continue;
-            const r = intFeasible(p.prob, p.c, v - p.constant, { budget });
+            const r = intFeasible(p.prob, p.c, v - p.constant, { budget, deadline });
             if (!r.feasible) d += 1;
           }
         } else {
-          const lo = -intMax(p.prob, p.c.map((x) => -x), p.truth, { budget }).value + p.constant;
-          const hiR = intMax(p.prob, p.c, p.truth, { budget, enough: lo - p.constant + P2 });
+          const lo = -intMax(p.prob, p.c.map((x) => -x), p.truth, { budget, deadline }).value + p.constant;
+          const hiR = intMax(p.prob, p.c, p.truth, { budget, deadline, enough: lo - p.constant + P2 });
           const hi = hiR.value + p.constant;
           d = Math.max(0, P2 - (hi - lo));
         }
@@ -23490,7 +23494,12 @@ var require_sdc = __commonJS({
       const TRIES = 12;
       applyMirror(st);
       let s = st;
+      let outOfTime = false;
       for (let guard = 0; guard < 5e3; guard++) {
+        if (Date.now() > deadline) {
+          outOfTime = true;
+          break;
+        }
         let bad = null;
         let bd = 0;
         for (const q of quantities(s)) {
@@ -23542,7 +23551,16 @@ var require_sdc = __commonJS({
         withheldTables.add(t);
         s = withTable(s, t);
       }
-      return { status: s, withheldTables: [...withheldTables] };
+      const unprotected = [];
+      if (!outOfTime) for (const q of quantities(s)) {
+        if (deficit(s, q) > 0) unprotected.push(q.id);
+        if (Date.now() > deadline) {
+          outOfTime = true;
+          break;
+        }
+      }
+      const verified = !outOfTime && !unprotected.length;
+      return { status: s, withheldTables: [...withheldTables], verified, unprotected, outOfTime };
     }
     module.exports = { simplex, intMax, intFeasible, protect };
   }
@@ -23605,11 +23623,19 @@ var require_harm_reduction_reports = __commonJS({
       return rows;
     }
     var byDate = (a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type));
-    function ndpPublished({ from, to }, counting, dist, od, shown) {
-      const sc = { threshold: counting.threshold, exact: false };
-      const rev2 = od.by_month.map((x, i) => ({ x, r: shown.by_month[i] })).filter(({ x }) => x.reversals > 0).map(({ x, r }) => ({ date: x.month, entry: "reversal", site_type: "all", recipient_type: null, kits: null, doses: null, reversals: r, reversal_doses: x.reversal_doses, administered_by: null, ...typeof r === "number" ? {} : { suppressed: true } }));
-      const totalDoses = rev2.reduce((n, r) => n + r.reversal_doses, 0);
-      const t = SC.table(rev2, [], { ...sc, totals: { reversal_doses: totalDoses }, mirror: { reversal_doses: "reversals" } });
+    function ndpPublished({ from, to }, counting, dist, shown) {
+      const rev2 = shown.rows.map((x) => ({
+        date: x.month,
+        entry: "reversal",
+        site_type: "all",
+        recipient_type: null,
+        kits: null,
+        doses: null,
+        reversals: x.reversals,
+        reversal_doses: x.reversal_doses,
+        administered_by: null,
+        ...typeof x.reversals === "number" && typeof x.reversal_doses === "number" ? {} : { suppressed: true }
+      }));
       const d = [...dist.values()];
       return {
         from,
@@ -23617,14 +23643,14 @@ var require_harm_reduction_reports = __commonJS({
         county: db3.getSetting("county_name", "") || null,
         doses_per_kit: dosesPerKit(),
         template_note: NDP_TEMPLATE_NOTE,
-        rows: [...d, ...t.rows].sort(byDate),
+        rows: [...d, ...rev2].sort(byDate),
         by: "month",
         ...header(counting),
         totals: {
           kits: d.reduce((n, r) => n + r.kits, 0),
           doses: d.reduce((n, r) => n + r.doses, 0),
           reversals: shown.reversals,
-          reversal_doses: t.totals.reversal_doses,
+          reversal_doses: shown.reversal_doses,
           community_kits: d.filter((r) => r.recipient_type === "Community member (anonymous)").reduce((n, r) => n + r.kits, 0)
         }
       };
@@ -23707,7 +23733,8 @@ var require_harm_reduction_reports = __commonJS({
         by_hiaa: hiaaRows,
         detail: [...detail.values()].map((x) => ({ ...x, approved_amount: money(x.approved_amount), pending_amount: money(x.pending_amount), schedule: USE_LABEL[x.use]?.schedule || "Uncategorised", use_label: USE_LABEL[x.use]?.label || "No settlement category recorded", hiaa_label: HIAA_LABEL[x.hiaa] || "No High Impact Abatement Activity recorded" })).sort((a, b) => a.schedule.localeCompare(b.schedule) || a.use.localeCompare(b.use) || a.hiaa.localeCompare(b.hiaa)),
         // People per allowable use are counts of people (protected in settlement() below); services and kits are not.
-        services_by_use: services.map((x) => ({ ...x, label: USE_LABEL[x.use_code]?.label || "No settlement category recorded" })),
+        // In key order, never by size: a release lists rows in a fixed order (server/publication-release.js).
+        services_by_use: services.map((x) => ({ ...x, label: USE_LABEL[x.use_code]?.label || "No settlement category recorded" })).sort((a, b) => a.use_code < b.use_code ? -1 : a.use_code > b.use_code ? 1 : 0),
         fundKeys: funds.map((f) => ({ id: f.id, key: f.settlement_use || "uncategorised", active: !!f.is_active })),
         totals: {
           approved_amount: approved,
@@ -23732,6 +23759,7 @@ var require_harm_reduction_reports = __commonJS({
     }
     var countsSuffix = (d) => d.suppression.mode === "exact" ? "exact-counts" : d.suppression.purpose === "publication" ? "publication-suppressed" : "internal-suppressed";
     var purposeLine = (d) => ({ k: "Purpose", v: d.suppression.purpose === "publication" ? "Publication release (whole programme, one standard period)" : d.suppression.purpose === "submission" ? "The programme's own submission, not for publication" : "Internal, not for publication" });
+    var purposeRows = (d) => [purposeLine(d), ...d.suppression.purpose === "publication" ? [{ k: "Before publishing", v: FR.PUBLICATION_GUIDANCE }] : []];
     function send(ctx, { body, filename, xlsx, classification, suppression }) {
       ctx.res.writeHead(200, {
         "Content-Type": xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8",
@@ -23769,7 +23797,7 @@ var require_harm_reduction_reports = __commonJS({
           { k: "County", v: d.county || "" },
           { k: "Doses per kit", v: `${d.doses_per_kit} (Settings: naloxone doses per kit)` },
           { k: "Totals", v: `${d.totals.kits} kits, ${d.totals.doses} doses distributed (${d.totals.community_kits} kits to anonymous community members); ${d.totals.reversals} reversals reported` },
-          purposeLine(d),
+          ...purposeRows(d),
           { k: "Counts", v: d.counting_statement },
           { k: "Classification", v: d.by === "month" ? "Aggregate counts by month (distribution also by site type and recipient type; reversals for all sites together): no names, client codes or record ids." : "Aggregate counts by day, site type and recipient type: no names, client codes or record ids." }
         ])]) : S.toCsv(rows, NDP_COLUMNS);
@@ -23793,7 +23821,7 @@ var require_harm_reduction_reports = __commonJS({
             { k: "Approved or reimbursed", v: d.totals.approved_amount },
             { k: "Of which High Impact Abatement Activities", v: `${d.totals.hiaa_amount} (${d.totals.hiaa_share ?? 0}%)` },
             { k: "Sources and verification", v: d.source_note },
-            purposeLine(d),
+            ...purposeRows(d),
             { k: "Counts", v: d.counting_statement }
           ]),
           { name: "By allowable use", columns: [["schedule", "Schedule"], ["label", "Category"], ["approved_amount", "Approved or reimbursed ($)"], ["pending_amount", "Pending ($)"], ["expenditures", "Expenditures"]].map(([key, label]) => ({ key, label })), rows: d.by_use },
@@ -23816,7 +23844,53 @@ var require_publication_release = __commonJS({
     var FR = require_funder_report();
     var SC = require_small_cells();
     var SDC = require_sdc();
+    var C = require_constants();
+    var { HttpError: HttpError3 } = require_http();
     var PARTITIONS = ["by_gender", "by_language", "by_housing", "by_insurance", "by_ethnicity"];
+    var DOSES_MAX = C.NALOXONE_DOSES_MAX;
+    var AUDIT_TIME_LIMIT_MS = 5e3;
+    var byKey = (a, b) => {
+      const x = String(a);
+      const y = String(b);
+      return x < y ? -1 : x > y ? 1 : 0;
+    };
+    function monthsOf(from, to) {
+      const out2 = [];
+      let y = Number(from.slice(0, 4));
+      let m = Number(from.slice(5, 7));
+      const end = to.slice(0, 7);
+      while (out2.length < 1200) {
+        const k = `${y}-${String(m).padStart(2, "0")}`;
+        if (k > end) break;
+        out2.push(k);
+        if (++m > 12) {
+          m = 1;
+          y++;
+        }
+      }
+      return out2;
+    }
+    function onDomain(rows, keys, key, zero, byKeyAll = false) {
+      const have = new Map(rows.map((x) => [x[key], x]));
+      const set = new Set(keys || []);
+      const out2 = (keys || []).map((k) => ({ row: have.get(k) || zero(k), fixed: true })).concat(rows.filter((x) => !set.has(x[key])).sort((a, b) => byKey(a[key], b[key])).map((x) => ({ row: x, fixed: false })));
+      return byKeyAll ? out2.sort((a, b) => byKey(a.row[key], b.row[key])) : out2;
+    }
+    var keyOrder = (rows) => rows.slice().sort((a, b) => (a.k === FR.FOLDED) - (b.k === FR.FOLDED) || byKey(a.k, b.k));
+    function prepare(raw, domains = {}) {
+      const od = raw.overdose;
+      const ep = raw.episodes;
+      const months = onDomain(od.by_month, domains.months, "month", (month) => ({ month, n: 0, reversals: 0, reversal_doses: 0 }), true);
+      const by = onDomain(od.by_administered_by, domains.administered_by, "k", (k) => ({ k, n: 0 }));
+      const dis = onDomain(ep.by_discharge_reason, domains.discharge_reasons, "k", (k) => ({ k, n: 0 }));
+      return {
+        ...raw,
+        demographics: Object.fromEntries(Object.entries(raw.demographics).map(([k, rows]) => [k, keyOrder(rows)])),
+        episodes: { ...ep, by_discharge_reason: dis.map((x) => x.row) },
+        overdose: { ...od, by_month: months.map((x) => x.row), by_administered_by: by.map((x) => x.row) },
+        fixed: { months: months.map((x) => x.fixed), by: by.map((x) => x.fixed), dis: dis.map((x) => x.fixed) }
+      };
+    }
     function buildModel({ funder: raw, perFund, settlement }) {
       const vars = [];
       const cons = [];
@@ -23827,6 +23901,11 @@ var require_publication_release = __commonJS({
         return vars.length - 1;
       };
       const rel = (terms, op, rhs = 0) => cons.push({ terms, op, rhs });
+      const soft = (terms, op, rhs = 0) => cons.push({ terms, op, rhs, soft: true });
+      const fixed = raw.fixed || {};
+      const present = (idx, f = []) => idx.forEach((i, j) => {
+        if (!f[j]) rel([[i, 1]], ">=", 1);
+      });
       const h = {};
       const u = raw.unduplicated;
       const N = h.N = v("served", u.served, { total: true, table: "unduplicated.served" });
@@ -23861,7 +23940,7 @@ var require_publication_release = __commonJS({
         fundVars.set(f.id, { p, s });
         return { p, s };
       });
-      const byKey = /* @__PURE__ */ new Map();
+      const byUseKey = /* @__PURE__ */ new Map();
       for (const f of settlement.fundKeys) {
         const act = perFund.get(f.id);
         if (!act || !act.services) continue;
@@ -23871,15 +23950,15 @@ var require_publication_release = __commonJS({
           rel([[p, 1], [s, -1]], "<=");
           fundVars.set(f.id, { p, s });
         }
-        if (!byKey.has(f.key)) byKey.set(f.key, []);
-        byKey.get(f.key).push(fundVars.get(f.id));
+        if (!byUseKey.has(f.key)) byUseKey.set(f.key, []);
+        byUseKey.get(f.key).push(fundVars.get(f.id));
       }
       h.uses = settlement.services_by_use.map((x) => {
         const p = subset(`use.${x.use_code}.people`, x.people, "settlement.services_by_use");
         const s = v(`use.${x.use_code}.services`, x.services, { people: false, table: "settlement.services_by_use" });
         rel([[p, 1], [s, -1]], "<=");
         mirror.push([p, s]);
-        const fs = byKey.get(x.use_code) || [];
+        const fs = byUseKey.get(x.use_code) || [];
         if (fs.length) {
           rel([[s, 1], ...fs.map((f) => [f.s, -1])], "=");
           rel([[p, 1], ...fs.map((f) => [f.p, -1])], "<=");
@@ -23896,6 +23975,9 @@ var require_publication_release = __commonJS({
       h.D = v("episodes.discharges", ep.discharges, { total: true, table: "episodes.discharges" });
       h.dis = ep.by_discharge_reason.map((x) => v(`discharge.${x.k}`, x.n, { table: "episodes.by_discharge_reason" }));
       rel([...h.dis.map((i) => [i, 1]), [h.D, -1]], "=");
+      present(h.dis, fixed.dis);
+      soft([[h.epAdm, 1], [h.D, -1], [h.epOpen, -1]], "<=");
+      derived.push({ id: "episodes.carried_in", terms: [[h.D, 1], [h.epOpen, 1], [h.epAdm, -1]] });
       const od = raw.overdose;
       const E = h.E = v("overdose.events", od.events, { total: true, table: "overdose.events" });
       const R = h.R = v("overdose.reversals", od.reversals, { total: true, table: "overdose.reversals" });
@@ -23907,19 +23989,34 @@ var require_publication_release = __commonJS({
       rel([...h.n.map((i) => [i, 1]), [E, -1]], "=");
       rel([...h.r.map((i) => [i, 1]), [R, -1]], "=");
       rel([...h.by.map((i) => [i, 1]), [R, -1]], "=");
+      present(h.n, fixed.months);
+      present(h.by, fixed.by);
       h.n.forEach((n, m) => {
         rel([[h.r[m], 1], [n, -1]], "<=");
         derived.push({ id: `overdose.${od.by_month[m].month}.not_reversed`, terms: [[n, 1], [h.r[m], -1]] });
       });
       rel([[F, 1], [E, -1]], "<=");
       rel([[Cm, 1], [E, -1]], "<=");
-      cons.push({ terms: [[F, 1], [R, 1], [E, -1]], op: "<=", rhs: 0, soft: true });
+      soft([[F, 1], [R, 1], [E, -1]], "<=");
       derived.push(
         { id: "overdose.not_reversed", terms: [[E, 1], [R, -1]] },
         { id: "overdose.not_fatal", terms: [[E, 1], [F, -1]] },
         { id: "overdose.not_community", terms: [[E, 1], [Cm, -1]] },
         { id: "overdose.neither", terms: [[E, 1], [R, -1], [F, -1]] }
       );
+      h.d = od.by_month.map((x) => v(`ndp.${x.month}.reversal_doses`, x.reversal_doses || 0, { people: false, table: "ndp.by_month.reversal_doses" }));
+      const Dr = h.Dr = v("ndp.reversal_doses", od.by_month.reduce((a, x) => a + (x.reversal_doses || 0), 0), { people: false, total: true, table: "ndp.reversal_doses" });
+      const Dall = h.Dall = v("overdose.naloxone_doses", od.naloxone_doses || 0, { people: false, total: true, table: "overdose.naloxone_doses" });
+      rel([...h.d.map((i) => [i, 1]), [Dr, -1]], "=");
+      h.d.forEach((d, m) => {
+        soft([[d, 1], [h.r[m], -1]], ">=");
+        soft([[d, 1], [h.r[m], -DOSES_MAX]], "<=");
+        mirror.push([h.r[m], d]);
+      });
+      soft([[Dall, 1], [Dr, -1]], ">=");
+      soft([[Dall, 1], [E, -DOSES_MAX]], "<=");
+      soft([[Dall, 1], [Dr, -1], [E, -DOSES_MAX], [R, DOSES_MAX]], "<=");
+      mirror.push([R, Dr], [R, Dall], [E, Dall]);
       return { model: { vars, cons, derived, mirror }, h };
     }
     function digest(text) {
@@ -23932,12 +24029,20 @@ var require_publication_release = __commonJS({
       }
       return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
     }
-    function protectFigures(inputs, T, { strict = false } = {}) {
-      const { model, h } = buildModel(inputs);
+    function refusalMessage(r) {
+      const why = r.outOfTime ? "the check of this period's figures did not finish in time" : "the check could not confirm that every small count in it is protected";
+      return `This period cannot be published: ${why}, so no publication release was made. Publish a longer standard period (a quarter or a year), or ask a supervisor or an administrator for an internal report or the programme's own submission, which are not for publication.`;
+    }
+    function protectFigures(inputs, T, { strict = false, budget, timeLimitMs = AUDIT_TIME_LIMIT_MS } = {}) {
+      const raw = prepare(inputs.funder, inputs.domains);
+      const { model, h } = buildModel({ ...inputs, funder: raw });
       model.strict = strict;
-      const { status, withheldTables } = SDC.protect(model, T);
+      const audit3 = SDC.protect(model, T, { ...budget === void 0 ? {} : { budget }, timeLimitMs });
+      const { status, withheldTables } = audit3;
+      if (!audit3.verified) {
+        return { refused: { out_of_time: audit3.outOfTime, unprotected: audit3.unprotected.length, message: refusalMessage(audit3) }, withheld_tables: withheldTables, status, model };
+      }
       const show = (i) => status[i] === "vis" ? model.vars[i].value : status[i] === "pri" ? SC.primary(T) : status[i] === "sec" ? SC.SECONDARY : SC.WITHHELD;
-      const raw = inputs.funder;
       const gone = new Set(withheldTables);
       const withheld = [];
       const demographics = {};
@@ -23952,6 +24057,13 @@ var require_publication_release = __commonJS({
       }
       const ep = raw.episodes;
       const od = raw.overdose;
+      const disGone = gone.has("episodes.by_discharge_reason");
+      const byGone = gone.has("overdose.by_administered_by");
+      const monthsGone = gone.has("overdose.by_month.n") && gone.has("overdose.by_month.reversals");
+      const revGone = gone.has("overdose.by_month.reversals");
+      if (disGone) withheld.push("by_discharge_reason");
+      if (byGone) withheld.push("by_administered_by");
+      if (monthsGone) withheld.push("by_month");
       const smallGroup = ep.discharges > 0 && ep.discharges < T;
       const byFund = raw.by_funding_source.map((f, i) => ({ ...FR.withCell(f, "clients_served", show(h.funds[i].p)), services: show(h.funds[i].s) }));
       const none = byFund.find((f) => f.id === null);
@@ -23964,7 +24076,7 @@ var require_publication_release = __commonJS({
           admissions: show(h.epAdm),
           discharges: show(h.D),
           open_at_end: show(h.epOpen),
-          by_discharge_reason: ep.by_discharge_reason.map((x, i) => FR.withCell(x, "n", show(h.dis[i]))),
+          by_discharge_reason: disGone ? [] : ep.by_discharge_reason.map((x, i) => FR.withCell(x, "n", show(h.dis[i]))),
           // A median over fewer people than the threshold is one of them.
           median_length_of_stay_days: smallGroup || show(h.D) === SC.WITHHELD ? SC.SECONDARY : ep.median_length_of_stay_days
         },
@@ -23974,29 +24086,47 @@ var require_publication_release = __commonJS({
           reversals: show(h.R),
           fatal: show(h.F),
           community_reported: show(h.C),
-          by_month: od.by_month.map((x, m) => {
+          naloxone_doses: show(h.Dall),
+          by_month: monthsGone ? [] : od.by_month.map((x, m) => {
             const n = show(h.n[m]);
             const r = show(h.r[m]);
             return { month: x.month, n, reversals: r, ...typeof n === "number" && typeof r === "number" ? {} : { suppressed: true } };
           }),
-          by_administered_by: od.by_administered_by.map((x, i) => FR.withCell(x, "n", show(h.by[i])))
+          by_administered_by: byGone ? [] : od.by_administered_by.map((x, i) => FR.withCell(x, "n", show(h.by[i])))
         },
         naloxone_distribution: raw.naloxone_distribution,
         by_funding_source: byFund,
         attribution: { ...raw.attribution, unattributed_clients: none ? none.clients_served : 0, unattributed_services: none ? none.services : raw.attribution.unattributed_services }
       };
       const uses = h.uses.map((x) => ({ people: show(x.p), services: show(x.s) }));
-      const ndp = { by_month: h.r.map(show), reversals: show(h.R) };
+      const ndp = { rows: revGone ? [] : od.by_month.map((x, m) => ({ month: x.month, reversals: show(h.r[m]), reversal_doses: show(h.d[m]) })), reversals: show(h.R), reversal_doses: show(h.Dr) };
       const id = digest(JSON.stringify(model.vars.map((x, i) => x.published ? [x.id, show(i)] : null).filter(Boolean)));
       return { funder, uses, ndp, withheld_tables: withheldTables, id, status, model };
     }
+    var CACHE_MS = 5 * 60 * 1e3;
+    var CACHE_MAX = 4;
+    var cache = /* @__PURE__ */ new Map();
+    function audited(inputs, T) {
+      const key = JSON.stringify([T, inputs.domains, inputs.funder, [...inputs.perFund], inputs.settlement.services_by_use, inputs.settlement.fundKeys]);
+      const hit = cache.get(key);
+      if (hit && Date.now() - hit.at < CACHE_MS) return hit.p;
+      const p = protectFigures(inputs, T);
+      cache.delete(key);
+      cache.set(key, { p, at: Date.now() });
+      while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+      return p;
+    }
+    var clearCache = () => cache.clear();
     function release(ctx, range, counting) {
       const HR = require_harm_reduction_reports();
+      const O = require_options();
       const T = counting.threshold;
-      const { raw, perFund } = FR.runSync(FR.figures(ctx, range, null));
+      const { raw, perFund } = FR.runSync(FR.figures(ctx, range, null, { fold: T }));
       const settle = HR.settlementFigures(range);
       const dist = HR.distributionRows(ctx, range, true);
-      const p = protectFigures({ funder: raw, perFund, settlement: settle }, T);
+      const domains = { months: monthsOf(range.from, range.to), administered_by: O.known("ADMINISTERED_BY"), discharge_reasons: O.known("DISCHARGE_REASONS") };
+      const p = audited({ funder: raw, perFund, settlement: settle, domains }, T);
+      if (p.refused) throw new HttpError3(422, p.refused.message, { code: "publication_refused" });
       const rel = { ...counting.release, id: p.id, reports: ["funder", "naloxone-ndp", "opioid-settlement"], withheld: p.withheld_tables };
       const withRelease = (d) => ({ ...d, release: rel });
       const { fundKeys, ...s } = settle;
@@ -24009,10 +24139,10 @@ var require_publication_release = __commonJS({
           ...HR.header(counting),
           services_by_use: s.services_by_use.map((x, i) => ({ ...FR.withCell(x, "people", p.uses[i].people), services: p.uses[i].services }))
         }),
-        ndp: withRelease(HR.ndpPublished(range, counting, dist, raw.overdose, p.ndp))
+        ndp: withRelease(HR.ndpPublished(range, counting, dist, p.ndp))
       };
     }
-    module.exports = { release, protectFigures, buildModel, digest };
+    module.exports = { release, protectFigures, buildModel, prepare, digest, monthsOf, clearCache, AUDIT_TIME_LIMIT_MS };
   }
 });
 
@@ -24073,21 +24203,31 @@ var require_funder_report = __commonJS({
       return { mode, threshold, purpose, release: rel };
     }
     var suppressionOf = (c) => ({ mode: c.mode, threshold: c.threshold, purpose: c.purpose });
+    var PUBLICATION_GUIDANCE = "Before publishing: publish each standard period once, after its data are complete, and never two periods that overlap or where one contains the other (a quarter and the year that contains it): two such releases, or the same period run again after late entries, can be subtracted from each other to reveal a small group, which suppression within one release cannot prevent. Review the withheld and suppressed tables before release. This suppression is a conservative automated default, not a statistical expert determination (45 CFR 164.514(b)(1)).";
     function countingStatement(s) {
       const T = s.threshold;
-      const how = `every count of people under ${T} (people served, each breakdown row, people per fund, episodes, discharges, overdose events and reversals, who gave the naloxone) is shown as "<${T}" so nobody can be picked out of a small group, and wherever a hidden figure could still be worked out from the figures published with it (a total, a breakdown that adds up to it, or the people left when one fund's are taken from the total) more is hidden, shown as "suppressed", the total itself only when nothing else will do, so that it cannot be worked out by subtraction. Counts of naloxone kits, doses, test strips, services, staff hours and money are not counts of people and are exact.`;
+      const how = `every count of people under ${T} (people served, each breakdown row, people per fund, episodes, discharges, overdose events and reversals, who gave the naloxone) is shown as "<${T}" so nobody can be picked out of a small group, and wherever a hidden figure could still be worked out from the figures published with it (a total, a breakdown that adds up to it, or the people left when one fund's are taken from the total) more is hidden, shown as "suppressed", the total itself only when nothing else will do, so that it cannot be worked out by subtraction. Counts of naloxone kits, test strips, services, staff hours and money are not counts of people and are exact${s.purpose === "publication" ? "; naloxone doses are exact unless they would show a hidden count of reversals, and are then hidden with it" : ", and so are naloxone doses"}.`;
       const rel = s.release || { publishable: false, not_publishable: [] };
       const why = rel.not_publishable.length ? ` (${rel.not_publishable.join("; ")})` : "";
       if (s.mode === "exact") {
         return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the programme's own ${s.purpose === "submission" ? "submission to its funder" : "internal use"}; not for publication or sharing.`;
       }
       if (s.purpose === "publication") {
-        return `Publication release: the whole programme, ${PERIOD_LABEL[rel.period] || "one standard period"}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: nothing any of them prints says more about a small hidden count of people than "fewer than ${T}" (a count of services that would is hidden with it, and a table that cannot be protected is withheld). Suitable for publication or sharing. Publish one release per period, once: two releases for nested or overlapping periods (a quarter and the year that contains it) or the same period run again after late entries can be subtracted from each other to reveal a small group, which suppression within one release cannot prevent.`;
+        return `Publication release: the whole programme, ${PERIOD_LABEL[rel.period] || "one standard period"}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: nothing any of them prints says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it, and a table that cannot be protected is withheld and prints no rows). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Suitable for publication or sharing. ${PUBLICATION_GUIDANCE}`;
       }
       return `${s.purpose === "submission" ? "The programme's own submission to its funder" : "Internal"}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole programme minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the programme and its funder.`;
     }
     var DIMENSIONS = [["by_gender", "gender", "gender"], ["by_language", "preferred_language", "language"], ["by_housing", "housing_status", "housing"], ["by_insurance", "insurance", "insurance"], ["by_ethnicity", "race_ethnicity", "ethnicity"]];
     var byCount = (a, b) => b.n - a.n || String(a.k).localeCompare(String(b.k));
+    var FOLD_KEEP = 10;
+    var FOLDED = "Other (combined)";
+    function foldOf(counts, T) {
+      if (!T) return null;
+      const small = [...counts].filter(([k, n]) => n > 0 && n < T && k !== "unknown" && k !== FOLDED).map(([k]) => String(k)).sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+      if (small.length <= FOLD_KEEP) return null;
+      const combined = new Set(small.slice(FOLD_KEEP));
+      return (k) => combined.has(String(k)) ? FOLDED : k;
+    }
     var NALOXONE = `(o.naloxone_used=1 OR o.kind='reversal')`;
     function overdoseFigures(ts, tsP, cf = null) {
       const scope = cf ? ` AND o.client_id IN (SELECT c.id FROM clients c WHERE ${cf.sql})` : "";
@@ -24151,7 +24291,7 @@ var require_funder_report = __commonJS({
       return db3.one(`SELECT COUNT(*) n FROM clients c WHERE c.deleted_at IS NULL AND (c.id IN (SELECT i.client_id FROM interventions i WHERE ${ts("i.occurred_at")})
     OR c.id IN (SELECT ca.client_id FROM calls ca WHERE ${ts("ca.started_at")}))`, ...tsP, ...tsP).n;
     }
-    function* figures(ctx, { from, to, ts, tsP }, fund) {
+    function* figures(ctx, { from, to, ts, tsP }, fund, opts = {}) {
       const cf = auth3.caseloadFilter(ctx.user, "c.id");
       const fundJoin = fund ? "AND i.funding_source_id=?" : "";
       const fundP = fund ? [fund] : [];
@@ -24165,18 +24305,34 @@ var require_funder_report = __commonJS({
         yield;
         const people = db3.all(`SELECT c.gender, c.preferred_language, c.housing_status, c.insurance, c.race_ethnicity, c.race_codes, c.mat_status FROM clients c WHERE c.id IN (SELECT id FROM ${served})`);
         const demographics = {};
+        const valueOf = (col) => (p) => p[col] === null || p[col] === "" ? "unknown" : p[col];
         for (const [key, col, label] of DIMENSIONS) {
           const n = /* @__PURE__ */ new Map();
+          const of = valueOf(col);
           for (const p of people) {
-            const k = p[col] === null || p[col] === "" ? "unknown" : p[col];
+            const k = of(p);
             n.set(k, (n.get(k) || 0) + 1);
+          }
+          const fold = foldOf(n, opts.fold);
+          if (fold) {
+            n.clear();
+            for (const p of people) {
+              const k = fold(of(p));
+              n.set(k, (n.get(k) || 0) + 1);
+            }
           }
           demographics[key] = [...n].map(([k, v]) => ({ k, n: v, dimension: label })).sort(byCount);
         }
-        const byRace = /* @__PURE__ */ new Map();
-        for (const p of people) {
+        const codesOf = (p) => {
           const codes = String(p.race_codes || "").split(",").map((x) => x.trim()).filter(Boolean);
-          for (const code of codes.length ? codes : ["unknown"]) byRace.set(code, (byRace.get(code) || 0) + 1);
+          return codes.length ? codes : ["unknown"];
+        };
+        let byRace = /* @__PURE__ */ new Map();
+        for (const p of people) for (const code of codesOf(p)) byRace.set(code, (byRace.get(code) || 0) + 1);
+        const foldRace = foldOf(byRace, opts.fold);
+        if (foldRace) {
+          byRace = /* @__PURE__ */ new Map();
+          for (const p of people) for (const code of new Set(codesOf(p).map(foldRace))) byRace.set(code, (byRace.get(code) || 0) + 1);
         }
         demographics.by_race_code = [...byRace].map(([k, n]) => ({ k, n })).sort(byCount);
         yield;
@@ -24351,6 +24507,7 @@ var require_funder_report = __commonJS({
         { k: "Funding source", v: fundName || "All funding sources" },
         { k: "Purpose", v: d.suppression.purpose === "publication" ? "Publication release (whole programme, one standard period)" : d.suppression.purpose === "submission" ? "The programme's own submission to its funder, not for publication" : "Internal, not for publication" },
         { k: "Counts", v: d.counting_statement },
+        ...d.suppression.purpose === "publication" ? [{ k: "Before publishing", v: PUBLICATION_GUIDANCE }] : [],
         ...d.caseload_scope_note ? [{ k: "Scope", v: d.caseload_scope_note }] : [],
         { k: "Classification", v: "Aggregate counts: no names, client codes or dates of service." },
         { k: "Generated", v: db3.now() },
@@ -24407,7 +24564,7 @@ var require_funder_report = __commonJS({
         csvColumns: long
       };
     }
-    module.exports = { build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT };
+    module.exports = { build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, PUBLICATION_GUIDANCE };
   }
 });
 
@@ -26868,7 +27025,7 @@ var require_overdose = __commonJS({
           kind: { type: "string", enum: KINDS, list: "OVERDOSE_KINDS", required: true },
           substances: { type: "string", maxLen: 200 },
           naloxone_used: { type: "boolean" },
-          naloxone_doses: { type: "number", integer: true, min: 0, max: 20 },
+          naloxone_doses: { type: "number", integer: true, min: 0, max: C.NALOXONE_DOSES_MAX },
           administered_by: { type: "string", list: "ADMINISTERED_BY" },
           ems_called: { type: "boolean" },
           hospitalized: { type: "boolean" },

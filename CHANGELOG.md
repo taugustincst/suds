@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.12.3 — 2026-09-26
 
 - **Which rows a publication release lists no longer gives anything away.** An independent attack on 1.12.2
   read the rows themselves: the NDP log listed only the months with a reversal, and the funder report only

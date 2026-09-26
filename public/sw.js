@@ -1,5 +1,5 @@
 // SUDS service worker: caches the application shell only. API responses (PHI) are NEVER cached.
-const VERSION = 'suds-shell-1.12.2';
+const VERSION = 'suds-shell-1.12.3';
 // The local-mode kernel and its WebAssembly are cached too, so a device set up for local mode boots with
 // no connection at all (they are only ever *downloaded* when local mode is used; index.html never loads
 // them). The versioned URL is what app.js requests, so the cache key matches without a second download.
