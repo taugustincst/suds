@@ -47,6 +47,36 @@ function encryptPlain(plain, { encryptionKey } = {}) {
 }
 
 /**
+ * Encrypt the plaintext database file `srcFile` into `outFile` (created 0600) in the backup frame, 4 MB at a
+ * time, synchronously: for server/db.js, which seals its pre-migration snapshots while opening the database
+ * (before the server listens). The result opens like any backup (`node scripts/backup.js --restore`).
+ */
+function encryptFileSync(srcFile, outFile, { encryptionKey } = {}) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', backupKey(encryptionKey), iv);
+  const src = fs.openSync(srcFile, 'r'); let out = null; let written = 0; let pos = 0;
+  try {
+    out = fs.openSync(outFile, 'wx', 0o600);
+    fs.writeSync(out, Buffer.concat([iv, Buffer.alloc(16)]), 0, 28, 0); written = 28; // tag written last
+    const chunk = Buffer.alloc(4 << 20);
+    for (;;) {
+      const n = fs.readSync(src, chunk, 0, chunk.length, pos);
+      if (!n) break;
+      pos += n;
+      const enc = c.update(chunk.subarray(0, n));
+      fs.writeSync(out, enc, 0, enc.length, written); written += enc.length;
+    }
+    chunk.fill(0);
+    const fin = c.final();
+    if (fin.length) { fs.writeSync(out, fin, 0, fin.length, written); written += fin.length; }
+    fs.writeSync(out, c.getAuthTag(), 0, 16, 12);
+    fs.fsyncSync(out);
+  } catch (e) { if (out !== null) { try { fs.closeSync(out); } catch {} out = null; try { fs.unlinkSync(outFile); } catch {} } throw e; }
+  finally { fs.closeSync(src); if (out !== null) fs.closeSync(out); }
+  return written;
+}
+
+/**
  * The same encrypted snapshot as create(), without holding the event loop while it is made: SQLite's online
  * backup API (node:sqlite backup(), which copies `rate` pages per step and yields between steps) where this
  * Node has it, else VACUUM INTO; then the copy is read, encrypted in 4 MB slices with a turn of the event
@@ -404,4 +434,4 @@ function restoreHeld(plainBytes) {
   return { ...info, previous_database_kept_at: aside };
 }
 
-module.exports = { create, createAsync, encryptPlain, decrypt, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect, restore, restoreWhenIdle, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
+module.exports = { create, createAsync, encryptPlain, encryptFileSync, decrypt, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect, restore, restoreWhenIdle, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };

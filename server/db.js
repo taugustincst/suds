@@ -12,7 +12,9 @@ function open(dbPath = config.dbPath) {
   db = new DatabaseSync(dbPath);
   try {
     db.exec('PRAGMA busy_timeout = 5000');
+    db.exec(SECURE_DELETE);
     initialise(db, fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'), dbPath);
+    sealSnapshots(dbPath);
   } catch (e) {
     // A file this build refuses (a newer schema, a failed migration) must not be left as the open handle:
     // every later db.get() would then serve the rejected database as if the open had succeeded.
@@ -32,6 +34,7 @@ function openWith(bytes) {
   if (db) { try { db.close(); } catch {} db = undefined; }
   db = bytes ? new DatabaseSync(':memory:', bytes) : new DatabaseSync(':memory:');
   try { db.exec('PRAGMA busy_timeout = 5000'); } catch {}
+  try { db.exec(SECURE_DELETE); } catch {}
   initialise(db, safeSchema());
   return db;
 }
@@ -47,12 +50,24 @@ const addColumn = (d, table, col, def) => { const cols = d.prepare(`PRAGMA table
 const tableCols = (d, table) => d.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
 const tableExists = (d, table) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(table);
 
+// Deleted and overwritten content is zeroed, not left in the file's free pages and freelist, where anyone with
+// the database file could read it back without the key: a plaintext column dropped by encryptColumn, a row
+// the retention purge removed, the previous value of an edited field. Security review of 1.13.0, finding 3
+// (all 50 file names of a 1.12 install were still readable in suds.db after migration 42 encrypted them).
+// Measured on a SUDS-like write mix (20,000 ~600-byte rows inserted one transaction each, half updated, a
+// quarter deleted, WAL mode): within the run-to-run noise of about 7% either way, so it is on for every
+// connection, not only around migrations (docs/security/ENCRYPTION-AND-KEYS.md).
+const SECURE_DELETE = 'PRAGMA secure_delete = ON';
+// Set by encryptColumn when it moved a column: the upgrade then ends with a VACUUM (scrubFreePages).
+let encryptedColumns = 0;
+
 // Move a plaintext column's contents into an encrypted column and drop the plaintext one.
 // No-op on a database where schema.sql already created the encrypted form (a fresh install).
 function encryptColumn(d, table, oldCol, newCol) {
   if (!tableExists(d, table)) return;
   const cols = tableCols(d, table);
   if (!cols.includes(oldCol)) return;
+  encryptedColumns++;
   const { encrypt } = require('./crypto');
   addColumn(d, table, newCol, 'TEXT');
   const rows = d.prepare(`SELECT id, ${oldCol} AS v FROM ${table} WHERE ${oldCol} IS NOT NULL AND ${oldCol} <> ''`).all();
@@ -578,11 +593,18 @@ function initialise(d, schemaText, dbPath) {
   if (fresh) {
     d.exec(schemaText);
     d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
+    // Nothing was ever deleted from a new database, so there is nothing in its free pages to scrub.
+    d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('${SCRUBBED}',?)`).run(new Date().toISOString());
     // A new install is a harm-reduction & outreach programme until someone says otherwise (the setup
     // wizard asks; Settings › Programme changes it). server/programme.js.
     d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('programme_profile',?)`).run(require('./programme').DEFAULT_PROFILE);
   } else {
+    encryptedColumns = 0;
     migrate(d, dbPath);
+    // An upgrade that encrypted a column, and (once) any database from before 1.13.1 — a 1.13.0 install at
+    // schema 43 already carries the plaintext its upgrades left in free pages — is vacuumed. Data hygiene,
+    // not schema: a setting records it, like reindexNameParts below; no migration.
+    if (encryptedColumns || !d.prepare(`SELECT 1 FROM settings WHERE key='${SCRUBBED}'`).get()) scrubFreePages(d, encryptedColumns ? 'column encrypted' : 'once, after upgrading to 1.13.1');
     // A database from before programme profiles: decided once from what it holds, so an upgrade never hides
     // a module the programme was using (server/programme.js defaultForExisting). Data, not schema.
     if (!d.prepare(`SELECT 1 FROM settings WHERE key='programme_profile'`).get()) {
@@ -591,6 +613,24 @@ function initialise(d, schemaText, dbPath) {
   }
   reindexNameParts(d);
   ensureIndexes(d, schemaText);
+}
+
+// Rebuild the file so nothing deleted survives in it: VACUUM writes every live page afresh and drops the free
+// ones (secure_delete zeroes what is deleted from now on, but not what earlier versions left behind), then the
+// WAL is checkpointed and truncated so the old pages are not kept there either. A failure (no disk space for
+// the copy VACUUM needs) is logged and leaves the setting unset, to be tried at the next start.
+const SCRUBBED = 'free_pages_scrubbed_at';
+function scrubFreePages(d, reason) {
+  const t0 = Date.now();
+  try {
+    d.exec('VACUUM');
+    try { d.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {}
+    d.prepare(`INSERT INTO settings(key,value) VALUES('${SCRUBBED}',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(new Date().toISOString());
+    try { d.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {}
+    console.log(`[suds] ${JSON.stringify({ event: 'db.free_pages_scrubbed', reason, ms: Date.now() - t0 })}`);
+  } catch (e) {
+    console.warn(`[suds] ${JSON.stringify({ event: 'db.free_pages_scrub_failed', reason, error: String(e && e.message || e).slice(0, 200) })}`);
+  }
 }
 
 // Once per database: a compound surname ("Quintero-Vasquez") is found by either part, because its
@@ -668,6 +708,39 @@ function snapshotBeforeMigration(d, dbPath, fromVersion) {
     for (const f of old.slice(0, Math.max(0, old.length - SNAPSHOTS_KEPT))) fs.unlinkSync(path.join(dir, f));
   } catch {}
   return file;
+}
+
+// After a successful open (every migration applied and checked), the snapshots are sealed: each plaintext
+// one is encrypted with the backup key into `<name>.enc`, the frame every SUDS backup uses (it is restored
+// like one: `node scripts/backup.js --restore <file>.enc`), and the plaintext is overwritten and removed. A
+// sealed snapshot is kept SNAPSHOT_KEEP_DAYS, then deleted; off-host backups are the long-term copies. So a
+// plaintext snapshot exists only from the start of an upgrade until the upgrade has succeeded; if one fails,
+// it stays as it is for the operator (docs/INSTALL.md), and is sealed at the next successful start. Up to
+// 1.13.0 they stayed in plaintext, five at a time, forever: every value a later migration encrypted was
+// readable in them (security review of 1.13.0, finding 3). Best effort: a failure is logged, never fatal.
+const SNAPSHOT_KEEP_DAYS = 14;
+function sealSnapshots(dbPath) {
+  if (!dbPath || dbPath === ':memory:') return;
+  const dir = path.join(path.dirname(dbPath), 'pre-migration');
+  let files; try { files = fs.readdirSync(dir); } catch { return; }
+  const base = path.basename(dbPath) + '.v';
+  const backup = require('./backup');
+  for (const f of files.filter(n => n.startsWith(base) && n.endsWith('.db'))) {
+    const plain = path.join(dir, f); const sealed = `${plain}.enc`;
+    try {
+      try { fs.unlinkSync(sealed); } catch {}
+      backup.encryptFileSync(plain, sealed);
+      backup.secureUnlink(plain);
+      console.log(`[suds] ${JSON.stringify({ event: 'db.snapshot_sealed', file: path.basename(sealed) })}`);
+    } catch (e) {
+      console.warn(`[suds] ${JSON.stringify({ event: 'db.snapshot_seal_failed', file: f, error: String(e && e.message || e).slice(0, 200) })}`);
+    }
+  }
+  const cutoff = Date.now() - SNAPSHOT_KEEP_DAYS * 86400000;
+  for (const f of files.filter(n => n.startsWith(base) && n.endsWith('.db.enc'))) {
+    const p = path.join(dir, f);
+    try { if (fs.statSync(p).mtimeMs < cutoff) { fs.unlinkSync(p); console.log(`[suds] ${JSON.stringify({ event: 'db.snapshot_expired', file: f, days: SNAPSHOT_KEEP_DAYS })}`); } } catch {}
+  }
 }
 
 // A stable identity for one foreign_key_check violation, so the same pre-existing orphan can be recognised
