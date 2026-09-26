@@ -30,7 +30,7 @@ function rng(seed) { let x = seed >>> 0; return () => { x = (x * 1664525 + 10139
 // ---- through the API: the three reports serve one audited release ----
 const AUG = 'from=2026-08-01&to=2026-08-31';
 const EXACT = '&purpose=submission&counts=exact';
-// A supervisor's default run is the programme's submission to its funder (1.12.5): a publication release is asked for.
+// A supervisor's default run is the programme's submission to its funder (1.13.0): a publication release is asked for.
 const PUB = '&purpose=publication';
 async function seedAugust() {
   const fund = (await admin.post('/api/budget/funds', { name: 'Settlement', source_type: 'opioid_settlement', fiscal_year_start: '2025-07-01', fiscal_year_end: '2026-06-30', total_amount: 1000 })).data.id;
@@ -437,7 +437,7 @@ test('property: nothing any report of a release publishes lets an attacker narro
   if (process.env.SUDS_PERF_VERBOSE) console.log(`[release] random programmes: ${refused} of ${runs} refused`);
 });
 
-// ---- realistic programmes (1.12.5) ----
+// ---- realistic programmes (1.13.0) ----
 // 1.12.4 refused the publication release of most quarters of 60 to 100 people: with six race codes of ten or
 // so people each, one hidden to protect the small ones was hidden only when it pinned them, which said the
 // small ones were at least 2, and the check (rightly) refused the release. The cover's complement is now

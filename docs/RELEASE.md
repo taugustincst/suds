@@ -61,6 +61,11 @@ tested in `test/release-policy.test.js`.
 fixes from an independent review, shipped as soon as each was ready rather than batched. The check above
 exists so the next exception is an explicit, recorded decision rather than an oversight.
 
+**Record: 1.13.0 broke the monthly limit too.** It was a feature release (migrations 42 and 43, the
+`graph:import` permission) about a day after 1.12.0, made a minor release so that the patch check above did
+not have to be overridden. The limit itself was not checked by anything; see *Feature releases are checked
+too* below.
+
 ## Cutting a release
 ```bash
 git checkout main && git pull

@@ -33,7 +33,7 @@ const ALLOWED = {
   finance: ['default (no purpose asked)', 'publication'],
   readonly: ['default (no purpose asked)', 'publication'],
 };
-// What each role's first click is (no purpose asked), for a period that could be published (1.12.5): a
+// What each role's first click is (no purpose asked), for a period that could be published (1.13.0): a
 // supervisor's or an administrator's is the programme's own submission to its funder, with exact counts; a
 // caseload-scoped role's is internal (its caseload); finance and read-only get the publication release.
 const DEFAULT = { admin: ['submission', 'exact'], supervisor: ['submission', 'exact'], clinician: ['internal', 'suppressed'], navigator: ['internal', 'suppressed'], finance: ['publication', 'suppressed'], readonly: ['publication', 'suppressed'] };

@@ -1,7 +1,7 @@
 # SUDS — SUD Navigator Services Tracker
 
 **The operations system for harm-reduction and prevention programmes — outreach encounters, naloxone and supply
-distribution, and grant/funder reporting — with Part 2-grade privacy.**
+distribution, and grant/funder reporting — with privacy controls built to the 42 CFR Part 2 standard.**
 
 SUDS is for community-based organisations and county programmes doing outreach, harm reduction, naloxone and
 test-strip distribution and prevention, usually on opioid-settlement, SOR / Naloxone Distribution Project or
@@ -103,10 +103,10 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 | Resources & referrals | Community resource directory (detox, residential, OTP/OBOT, housing, harm reduction, legal, …) with treatment center profiles: services-offered tags, plain-language summary, levels of care, how to refer, cost and a picture gallery; verification dates; referrals with status pipeline, urgency, warm handoff, consent linkage, barriers, days-to-admit |
 | To-dos & timelines | To-dos with priorities, due dates, milestones; unified per-client timeline of every event |
 | Budget | Funding sources (opioid settlement, SOR, SAMHSA, county…), budget lines, expenditures with approval workflow and separation of duties, burn-rate vs. period elapsed, staff-cost allocation |
-| Notes | Clinical vs. administrative notes with role-based visibility, SOAP / DAP / BIRP / GIRP structured formats, electronic signature with tamper-evident hash, addenda, break-glass access for administrators |
+| Notes | Administrative and clinical notes (the structured clinical formats matter to treatment-adjacent programmes; outreach staff mostly write short administrative notes) with role-based visibility, SOAP / DAP / BIRP / GIRP structured formats, electronic signature with tamper-evident hash, addenda, break-glass access for administrators |
 | Consents | 42 CFR Part 2 disclosure consents, releases of information, expirations/revocations, and an accounting of disclosures |
 | Imports | Pocket AI JSON/Markdown/text exports, OneNote MHT/HTML/DOCX/text exports, Microsoft Graph OneNote sync, pasted text, and an API-key intake endpoint — all staged for review and client matching before becoming notes |
-| EHR integration | Read-only FHIR R4 API (Patient, EpisodeOfCare, Encounter, Consent, ServiceRequest, Task, Observation, DocumentReference, the resource directory, Bulk Data `$export`) for the county EHR or an HIE, with OAuth2 client-credentials clients and scopes; a client's records are shared only under a live 42 CFR Part 2 consent naming the recipient, labelled and recorded in the accounting of disclosures (docs/integration/FHIR.md) |
+| EHR integration | *Treatment-adjacent module, off by default (Settings › Program › Modules).* Read-only FHIR R4 API (Patient, EpisodeOfCare, Encounter, Consent, ServiceRequest, Task, Observation, DocumentReference, the resource directory, Bulk Data `$export`) for the county EHR or an HIE, with OAuth2 client-credentials clients and scopes; a client's records are shared only under a live 42 CFR Part 2 consent naming the recipient, labelled and recorded in the accounting of disclosures (docs/integration/FHIR.md) |
 | Reports | Dashboard, program summary, monthly trends, Excel / CSV exports of every table or one workbook (de-identified by default) |
 | Spreadsheets | Import clients, resources, visits, calls, time, to-dos and expenditures from Excel or CSV with templates, automatic column matching and row validation |
 | Administration | Users and roles, MFA enforcement, settings, tamper-evident audit log viewer, API keys |

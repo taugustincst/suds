@@ -95,7 +95,7 @@ test('the default run: a supervisor\'s is the submission to the funder, exact; s
   const SUB = 'Submission to your funder — not for publication';
   const r = await sup.get('/api/reports/funder?from=2026-02-14&to=2026-02-14');
   assert.equal(r.status, 200);
-  // A supervisor's first click is the programme's own submission to its funder, with exact counts (1.12.5).
+  // A supervisor's first click is the programme's own submission to its funder, with exact counts (1.13.0).
   assert.deepEqual(r.data.suppression, { mode: 'exact', threshold: 11, purpose: 'submission', label: SUB });
   assert.equal(r.data.release.publishable, false);
   const s = await sup.get('/api/reports/funder?from=2026-02-14&to=2026-02-14&counts=suppressed');

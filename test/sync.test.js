@@ -601,7 +601,7 @@ test('the intake duplicate check never names a client outside the caller\'s case
   // Regression (PHI leak): POST /api/clients threw with the full display name and date of birth of every
   // match, including clients the caller could not otherwise see, and before any audit row was written.
   const theirs = (await nav2.post('/api/clients', { first_name: 'Hidden', last_name: 'Match', dob: '1980-02-02' })).data.id;
-  // Since 1.12.5 a match outside the caseload is not even counted to the caller (that said the person is a
+  // Since 1.13.0 a match outside the caseload is not even counted to the caller (that said the person is a
   // client here): the intake goes ahead and a supervisor is asked to compare (test/duplicate-review.test.js).
   const r = await nav.post('/api/clients', { first_name: 'Hidden', last_name: 'Match', dob: '1980-02-02' });
   assert.equal(r.status, 201);

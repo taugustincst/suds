@@ -82,8 +82,8 @@ export function runKindBanner(d, extra = null) {
   const line = exact
     ? 'Exact counts, including groups of fewer than ' + T + ' people. Send it to your funder; do not publish or share it further.'
     : kind === 'publication'
-      ? `Counts of fewer than ${T} people show as "<${T}", and a few more are hidden so they cannot be worked out. Review it before you share it.`
-      : `Counts of fewer than ${T} people show as "<${T}", and a few more are hidden so they cannot be worked out. It stays within the program${kind === 'submission' ? ' and its funder' : ''}.`;
+      ? `Counts of fewer than ${T} people show as "<${T}", and a few more are hidden so they cannot easily be worked out from the other figures. Review it before you share it.`
+      : `Counts of fewer than ${T} people show as "<${T}", and a few more are hidden so they cannot easily be worked out from the other figures. It stays within the program${kind === 'submission' ? ' and its funder' : ''}.`;
   return h('div', { class: `banner run-kind ${kind === 'publication' ? 'info' : 'warn'}`, 'data-counting-mode': d.suppression.mode, 'data-purpose': kind, 'data-run-kind': kind },
     h('h2', { class: 'run-kind-title' }, label),
     h('p', { class: 'run-kind-line' }, line),

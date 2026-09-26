@@ -1,7 +1,7 @@
 # ADR-0009: One audited publication release per ended period
 
 - **Status:** accepted (independent statistical review pending; see *Known limits*)
-- **Date recorded:** 2026-09-26 (the release object in 1.12.2, the check against the method in 1.12.4, the defaults, degrade step, work budget and worker thread in 1.12.5; written down retrospectively)
+- **Date recorded:** 2026-09-26 (the release object in 1.12.2, the check against the method in 1.12.4, the defaults, degrade step, work budget and worker thread in 1.13.0; written down retrospectively)
 
 ## Context
 
