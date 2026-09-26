@@ -12,20 +12,25 @@ All three reports are aggregate. None contains names, client codes, dates of bir
 | --- | --- |
 | Unduplicated clients served | Clients (not deleted, within the caller's caseload) with a visit or a call in the period; with a fund chosen, only visits charged to it. Each person once. |
 | Demographic breakdowns | Those people's gender, language, housing, insurance, race codes (a person may report several) and ethnicity. |
-| By funding source | Visits in the period grouped by `interventions.funding_source_id`, with an explicit **No funding source** row; staff time from `time_entries` in the period: *approved* minutes and *logged, not yet approved* (draft or submitted) minutes. |
+| By funding source | Visits in the period grouped by `interventions.funding_source_id`, with an explicit **No funding source** row; staff time from `time_entries` in the period: *approved* minutes and *logged, not yet approved* (draft or submitted) minutes. With a fund chosen, the table, the staff hours on the page and on the Summary sheet, and the attribution figures are that fund's alone (visits charged to no fund are not in a report about one fund). |
 | Overdose & naloxone | `overdose_events` and the naloxone kits and test strips on visits. |
 
-**Small-cell suppression** (`purpose`, `counts`):
+**Small-cell suppression** (`purpose`, `counts`; the same for all three reports, `server/small-cells.js`):
 
-* Default, and always for `purpose=publication` (to publish or share): a breakdown row counting fewer people than the threshold is reported as `<N`; totals stay exact. The threshold is the `small_cell_threshold` setting (default 11, from 2 to 50).
-* `purpose=submission&counts=exact`: the programme's own submission to its funder, with exact counts. Needs the `reports:exact` permission (supervisor, administrator, finance). `counts=exact` with `purpose=publication` is refused.
-* The response's `suppression` (`mode`, `threshold`, `purpose`) and `counting_statement` say which was used; the export repeats it on its About sheet (CSV: the first rows), in its filename (`…-suppressed` / `…-exact-counts`) and in the `X-SUDS-Report-Counts` header.
+* Default, and always for `purpose=publication` (to publish or share): **every count of people** that is above 0 and below the threshold is reported as `<N`, in every table and headline figure. The threshold is the `small_cell_threshold` setting (default 11, from 2 to 50).
+  * Counts of people: unduplicated people served and each demographic row; new admissions, people referred, admitted after a referral and on MAT; episodes opened, closed and open at the end, and each discharge reason; people per fund (including the *No funding source* row) and per settlement allowable use; overdose events (in total and per month), reversals (in total, per month and per NDP row), fatal and community-reported overdoses, and who gave the naloxone. An overdose or a reversal is an event that happened to one person, so it is counted as one.
+  * Not counts of people, always exact: naloxone kits and doses distributed, fentanyl test strips, services (visits), staff hours and money.
+  * **Complementary suppression.** Wherever a hidden cell could still be worked out — the table's visible cells subtracted from a published total (gender rows from people served, discharge reasons from discharges, months from overdose events and reversals, NDP reversal rows from total reversals), or two `<N` cells under a total that leaves only one possible value for each — the next-smallest visible cell is hidden too, shown as `suppressed`; if no cell is left to hide, the total is. A breakdown without a published total (race codes, who gave the naloxone, people per fund or per allowable use) never has exactly one hidden cell beside visible ones either. The doses used in a hidden NDP reversal row are hidden with it, and protected the same way against the total doses.
+  * A median length of stay over fewer people than the threshold is shown as `suppressed`.
+  * A total that is itself a small count of people is shown as `<N`. Zero is shown as 0.
+* `purpose=submission&counts=exact`: the programme's own submission to its funder (or to the NDP), with exact counts. Needs the `reports:exact` permission (supervisor, administrator, finance); the Reports page offers the choice beside the harm-reduction exports. `counts=exact` with `purpose=publication` is refused.
+* The response's `suppression` (`mode`, `threshold`, `purpose`) and `counting_statement` say which was used; each export repeats it on its About sheet (funder report CSV: the first rows), in its filename (`…-suppressed` / `…-exact-counts`) and in the `X-SUDS-Report-Counts` header.
 
-**Funding attribution.** A visit is charged to the fund the worker chooses; a new visit form is pre-filled with the worker's default fund (`users.default_fund_id`) or the programme's (`default_fund_id` setting), and a visit posted without the field (a role not shown it, an API client) is charged to that default. The report's `attribution` block counts the services with no fund and links to them (`#/interventions?funding=none`).
+**Funding attribution.** A visit is charged to the fund the worker chooses; a new visit form is pre-filled with the worker's default fund (`users.default_fund_id`) or the programme's (`default_fund_id` setting), and a visit posted without the field (a role not shown it, an API client) is charged to that default. The report's `attribution` block counts the services with no fund and links to them (`#/interventions?funding=none`); when the programme has no default fund it says so (`default_fund_set`) and links to where one is set (`settings_link`, Settings → Programme → Reporting). The first-run setup wizard asks for the programme's main funding source (optional): it is created for the current July–June fiscal year and made the default, so a new install's visits are not all *No funding source*.
 
 ## 2. Naloxone Distribution Project log (Reports → Harm-reduction reporting)
 
-`GET /api/reports/naloxone-ndp` (reports:read), `GET /api/reports/naloxone-ndp/export?format=xlsx|csv` (also export:read).
+`GET /api/reports/naloxone-ndp` (reports:read), `GET /api/reports/naloxone-ndp/export?format=xlsx|csv` (also export:read). Small cells as in section 1: reversals per row are suppressed, so a read-only account sees only suppressed rows.
 
 The DHCS Naloxone Distribution Project (NDP) supplies naloxone to organisations that report back on what they distributed and on the overdose reversals reported to them. SUDS already records both, so no new data entry was added:
 
@@ -33,11 +38,11 @@ The DHCS Naloxone Distribution Project (NDP) supplies naloxone to organisations 
 | --- | --- |
 | Date | The day of the visit or event, in the programme's time zone. |
 | Entry | *Distribution* (kits handed out) or *Reversal reported*. |
-| Site type | Distribution: the visit's *Location* (field, community, shelter…). Reversal: the overdose event's location type. |
+| Site type | The same coded *Location* list for both (field, community, shelter…): distribution, the visit's; reversal, the overdose form's *Where*. A place typed in before *Where* was a list is matched to a code whatever its case (*Shelter* → shelter), or else counted as *Other*; the record keeps its words. |
 | Recipient type | *Community member (anonymous)* — community distribution with no client — or *Programme participant* (a client on the caseload). |
 | Kits distributed | Sum of *Naloxone kits given* (`interventions.naloxone_kits`). |
 | Naloxone doses distributed | Kits × the `naloxone_doses_per_kit` setting (default 2: a standard nasal-spray kit holds two doses). |
-| Reversals reported | Overdose events (Overdose & naloxone form, including community reports with no client) where naloxone was used and the person survived. |
+| Reversals reported | Overdose events (Overdose & naloxone form, including community reports with no client) where naloxone was used and the person survived. An event recorded as a *Reversal* had naloxone by definition: the form ticks *Naloxone was given* when Reversal is chosen, the server records it so, and one saved before that rule with the box unticked is counted too. |
 | Doses used in reversals | `overdose_events.naloxone_doses`. |
 | Naloxone given by | The overdose form's *Given by*. |
 
@@ -47,7 +52,7 @@ Rows are aggregated by day, site type and recipient type (distribution) or day, 
 
 ## 3. Opioid settlement expenditure report (Reports → Harm-reduction reporting)
 
-`GET /api/reports/opioid-settlement` (budget:read), `GET /api/reports/opioid-settlement/export?format=xlsx|csv` (also export:read).
+`GET /api/reports/opioid-settlement` (budget:read), `GET /api/reports/opioid-settlement/export?format=xlsx|csv` (also export:read). Small cells as in section 1: people per allowable use are suppressed; amounts, services and kits are not.
 
 A **settlement fund** is a funding source whose type is *Opioid settlement*, or one given a settlement category. Each fund has an **allowable use** and a **California High Impact Abatement Activity** (`funding_sources.settlement_use`, `settlement_hiaa`; migration 38); an expenditure has its own (`expenditures.settlement_use`, `settlement_hiaa`) only when it differs from its fund's. `none` means "not one of these" (for example an administrative cost, or spending that is not a High Impact Abatement Activity).
 

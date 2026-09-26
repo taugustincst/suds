@@ -272,7 +272,8 @@ test('the funder report counts people once, and counts overdose events', async (
   const community = await nav2.post('/api/overdose-events', { occurred_at: '2026-09-09T10:00:00Z', kind: 'reversal', naloxone_used: true, naloxone_doses: 1, administered_by: 'first_responder', city: 'Marysville' });
   assert.equal(community.status, 201);
 
-  const rep = await admin.get('/api/reports/funder?from=2026-09-01&to=2026-09-30');
+  // Exact counts: the programme's own submission (small cells are tested in test/small-cell-suppression.test.js).
+  const rep = await admin.get('/api/reports/funder?from=2026-09-01&to=2026-09-30&purpose=submission&counts=exact');
   assert.equal(rep.status, 200);
   assert.ok(rep.data.unduplicated.served >= 1);
   const services = H.db.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, c).n;
@@ -280,7 +281,7 @@ test('the funder report counts people once, and counts overdose events', async (
   // Three services, one person: the "served" count must not move with the number of visits.
   const servedBefore = rep.data.unduplicated.served;
   await nav2.post('/api/interventions', { client_id: c, type: 'case_management', occurred_at: '2026-09-11T10:00:00Z', duration_minutes: 30 });
-  const again = await admin.get('/api/reports/funder?from=2026-09-01&to=2026-09-30');
+  const again = await admin.get('/api/reports/funder?from=2026-09-01&to=2026-09-30&purpose=submission&counts=exact');
   assert.equal(again.data.unduplicated.served, servedBefore, 'a fourth service does not make a fifth person');
   assert.equal(rep.data.overdose.reversals, 2);
   assert.equal(rep.data.overdose.community_reported, 1);

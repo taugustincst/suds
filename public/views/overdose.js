@@ -1,6 +1,10 @@
 // Overdose and reversal events. Every SUD funder asks for these counts, and a community reversal reported
 // by an outreach worker — with nobody identified — is exactly the kind a program most needs to record.
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, discardDraft } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, discardDraft, listEntries } from '../app.js';
+
+// "Where" is the visit form's Location list, so the NDP log counts reversals and distribution by the same
+// sites. An event recorded when it was free text keeps its words, shown as typed.
+const where = (v) => (v && listEntries('LOCATIONS').some(e => e.code === v) ? fmt.label(v, 'LOCATIONS') : v);
 
 // "What happened" and "Given by" are documentation lists (Settings → Lists): the choices and their wording
 // come from the office's setup with the rest of the lists (GET /api/meta/constants; the same lists are on
@@ -15,13 +19,15 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
     // record a countable naloxone reversal that never happened.
     { name: 'kind', label: 'What happened', type: 'select', required: true, placeholder: '— choose —', list: 'OVERDOSE_KINDS' },
     { name: 'substances', label: 'Substances involved', placeholder: 'e.g. fentanyl, benzodiazepines' },
-    { name: 'naloxone_used', label: 'Naloxone was given', type: 'checkbox' },
+    // A reversal is a naloxone reversal: choosing it ticks this box, and the server records it so either way
+    // (an unticked reversal used to be saved and then counted nowhere).
+    { name: 'naloxone_used', label: 'Naloxone was given', type: 'checkbox', help: 'A reversal means naloxone was given, so choosing "Reversal" above ticks this and it is counted as a naloxone reversal.' },
     { name: 'naloxone_doses', label: 'Doses given', type: 'number', min: 0, max: 20 },
     { name: 'administered_by', label: 'Given by', type: 'select', list: 'ADMINISTERED_BY' },
     { name: 'ems_called', label: 'EMS was called', type: 'checkbox' },
     { name: 'hospitalized', label: 'Taken to hospital', type: 'checkbox' },
     { name: 'survived', label: 'The person survived', type: 'checkbox', value: row ? row.survived : 1 },
-    { name: 'location_type', label: 'Where', placeholder: 'e.g. shelter, street, home, encampment' },
+    { name: 'location_type', label: 'Where', type: 'select', placeholder: '— choose —', list: 'LOCATIONS', help: 'The same places as a visit\'s Location, so the naloxone log counts reversals and kits by the same sites. Somewhere not on the list: choose Other and say where in the notes.' },
     { name: 'city', label: 'City' },
     { name: 'funding_source_id', label: 'Funding source', type: 'fund' },
     { name: 'notes', label: 'Notes', type: 'textarea', span: true, help: 'Stored encrypted.' },
@@ -46,6 +52,8 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
       toast(row ? 'Event updated' : 'Event recorded', 'ok'); m.close(); onDone && onDone();
     },
   });
+  const kindI = f.inputs.kind; const naloxoneI = f.inputs.naloxone_used;
+  if (kindI && naloxoneI) kindI.addEventListener('change', () => { if (kindI.value === 'reversal') naloxoneI.checked = true; });
   const remove = row ? h('div', { class: 'btn-row', style: { justifyContent: 'flex-start', marginTop: '.5rem' } },
     h('button', { type: 'button', class: 'btn danger', onClick: async () => {
       const fatal = row.kind === 'fatal' && row.client_id;
@@ -79,7 +87,7 @@ route('overdose', async () => {
       { label: 'Naloxone', render: r => (r.naloxone_used ? `${r.naloxone_doses || 1} dose${(r.naloxone_doses || 1) === 1 ? '' : 's'}` : 'none') },
       { label: 'Given by', render: r => (r.administered_by ? fmt.label(r.administered_by, 'ADMINISTERED_BY') : '—') },
       { label: 'EMS', render: r => (r.ems_called ? 'yes' : 'no') },
-      { label: 'Where', render: r => [r.location_type, r.city].filter(Boolean).join(', ') || '—' },
+      { label: 'Where', render: r => [where(r.location_type), r.city].filter(Boolean).join(', ') || '—' },
       { label: 'Reported by', render: r => r.reporter || '—' },
     ], rows, {
       onRow: can('overdose:write') ? (r) => openOverdoseForm(r, { onDone: refresh }) : null,

@@ -16,6 +16,7 @@ const { uuid } = require('./crypto');
 // Between the report's phases the event loop is let go, so a health check or a colleague's page load waits
 // for one phase (tens of milliseconds) rather than the whole report. setImmediate is not in the browser kernel.
 const { defer } = require('./spreadsheet');
+const SC = require('./small-cells');
 const breathe = () => new Promise((resolve) => defer(resolve));
 
 const SMALL_CELL_DEFAULT = 11;
@@ -43,7 +44,7 @@ function countingMode(ctx) {
 function countingStatement(s) {
   return s.mode === 'exact'
     ? `Exact counts: every figure is the true number, including groups of fewer than ${s.threshold} people. For the programme's own submission to its funder; not for publication or sharing.`
-    : `Small cells suppressed: a breakdown row counting fewer than ${s.threshold} people is shown as "<${s.threshold}" so nobody can be picked out of a small group; totals are exact. Suitable for publication or sharing.`;
+    : `Small cells suppressed: every count of people under ${s.threshold} (people served, each breakdown row, people per fund, episodes, discharges, overdose events and reversals, who gave the naloxone) is shown as "<${s.threshold}" so nobody can be picked out of a small group, and wherever a hidden figure could still be worked out from a total, another figure (or the total) is hidden with it, shown as "suppressed", so that it cannot be worked out by subtraction. Counts of naloxone kits, doses, test strips, services, staff hours and money are not counts of people and are exact. Suitable for publication or sharing.`;
 }
 
 // Demographic columns read from each person served, in one pass.
@@ -109,13 +110,16 @@ async function build(ctx, { from, to, ts, tsP }) {
       })(),
     };
 
-    const od = db.one(`SELECT COUNT(*) events, COALESCE(SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END),0) reversals,
+    // A reversal: naloxone used and the person survived. An event recorded as kind "reversal" had naloxone
+    // by definition, whether or not the box was ticked (older records, or rows pushed from a device).
+    const NALOXONE = `(o.naloxone_used=1 OR o.kind='reversal')`;
+    const od = db.one(`SELECT COUNT(*) events, COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END),0) reversals,
         COALESCE(SUM(CASE WHEN o.kind='fatal' OR o.survived=0 THEN 1 ELSE 0 END),0) fatal, COALESCE(SUM(CASE WHEN o.client_id IS NULL THEN 1 ELSE 0 END),0) community_reported,
         COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts('o.occurred_at')}`, ...tsP);
     const overdose = {
       ...od,
-      by_month: db.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts('o.occurred_at')} GROUP BY month ORDER BY month`, ...tsP),
-      by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, ...tsP),
+      by_month: db.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts('o.occurred_at')} GROUP BY month ORDER BY month`, ...tsP),
+      by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND ${NALOXONE} GROUP BY k ORDER BY n DESC`, ...tsP),
     };
 
     // One grouped pass over the period's visits, read from the covering index (idx_interventions_period):
@@ -139,32 +143,62 @@ async function build(ctx, { from, to, ts, tsP }) {
     const hrs = new Map(db.all(`SELECT t.funding_source_id f, COALESCE(SUM(CASE WHEN t.status='approved' THEN t.minutes END),0) approved_minutes,
       COALESCE(SUM(CASE WHEN t.status IN ('draft','submitted') THEN t.minutes END),0) unapproved_minutes FROM time_entries t WHERE t.work_date BETWEEN ? AND ? GROUP BY t.funding_source_id`, from, to).map(x => [x.f, x]));
     const figures = (id) => ({ clients_served: svc.get(id)?.clients_served || 0, services: svc.get(id)?.services || 0, approved_minutes: hrs.get(id)?.approved_minutes || 0, unapproved_minutes: hrs.get(id)?.unapproved_minutes || 0 });
-    const byFund = db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`).map(f => ({ ...f, ...figures(f.id) }));
+    // Filtered to one fund, the report is about that fund: its row, its staff hours, and no "No funding
+    // source" row (a visit charged to no fund is not work charged to this one). Unfiltered, every active fund
+    // and the "No funding source" row.
+    const byFund = fund
+      ? db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.id=?`, fund).map(f => ({ ...f, ...figures(f.id) }))
+      : db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`).map(f => ({ ...f, ...figures(f.id) }));
     const none = { id: null, name: 'No funding source', grant_number: null, fiscal_year_start: null, fiscal_year_end: null, ...figures(null) };
-    byFund.push(none);
-    let approved = 0, unapproved = 0; for (const x of hrs.values()) { approved += x.approved_minutes; unapproved += x.unapproved_minutes; }
+    if (!fund) byFund.push(none);
+    let approved = 0, unapproved = 0;
+    for (const [f, x] of hrs) if (!fund || f === fund) { approved += x.approved_minutes; unapproved += x.unapproved_minutes; }
     const attribution = {
-      unattributed_services: none.services, unattributed_clients: none.clients_served,
+      unattributed_services: fund ? 0 : none.services, unattributed_clients: fund ? 0 : none.clients_served,
       approved_minutes: approved, unapproved_minutes: unapproved,
       // Where to fix it: the visits in this period with no fund (public/views/interventions.js), and the time
       // sheets waiting for approval.
       fix_link: `#/interventions?from=${from}&to=${to}&funding=none`, approve_link: `#/time?from=${from}&to=${to}`,
+      // With no programme default fund, a visit nobody charges goes to no fund; Settings → Programme →
+      // Reporting is where one is set.
+      default_fund_set: !!require('./routes/budget').defaultFundFor(null), settings_link: '#/admin?tab=settings&section=reporting',
     };
 
-    const suppress = (rows) => (counting.mode === 'exact' ? rows : rows.map(x => (typeof x.n === 'number' && x.n > 0 && x.n < counting.threshold ? { ...x, n: `<${counting.threshold}`, suppressed: true } : x)));
+    // Small-cell suppression (server/small-cells.js): every count of people, in every table, with
+    // complementary suppression against the published totals. Exact mode returns the figures unchanged.
+    const sc = { threshold: counting.threshold, exact: counting.mode === 'exact' };
+    const one = (v) => SC.cell(v, sc);
+    // Each single-valued breakdown of the people served adds up to the number served; if one of them can
+    // only be protected by hiding that total, it is hidden everywhere.
+    let servedOut = one(unduplicated.served);
+    const demo = {};
+    for (const k of ['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_ethnicity']) {
+      const t = SC.table(demographics[k], ['n'], { ...sc, totals: { n: servedOut } });
+      demo[k] = t.rows; if (typeof t.totals.n !== 'number') servedOut = t.totals.n;
+    }
+    // A person may report several race codes, so that breakdown has no total to subtract from.
+    demo.by_race_code = SC.table(demographics.by_race_code, ['n'], sc).rows;
+    const discharges = SC.table(episodes.by_discharge_reason, ['n'], { ...sc, totals: { n: one(episodes.discharges) } });
+    const months = SC.table(overdose.by_month, ['n', 'reversals'], { ...sc, totals: { n: one(overdose.events), reversals: one(overdose.reversals) } });
+    const funds = SC.table(byFund, ['clients_served'], sc).rows;
+    const noneRow = funds.find(f => f.id === null);
+    // A median over fewer people than the threshold is one of them.
+    const smallGroup = !sc.exact && typeof episodes.discharges === 'number' && episodes.discharges > 0 && episodes.discharges < counting.threshold;
     return {
       from, to, funding_source_id: fund,
       suppression: counting,
       // Kept for the screens and files that read it: the threshold applied, or null when counts are exact.
       small_cell_threshold: counting.mode === 'exact' ? null : counting.threshold,
       counting_statement: countingStatement(counting),
-      unduplicated,
-      demographics: Object.fromEntries(['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_race_code', 'by_ethnicity'].map(k => [k, suppress(demographics[k])])),
-      episodes: { ...episodes, by_discharge_reason: suppress(episodes.by_discharge_reason) },
-      overdose: { ...overdose, by_administered_by: suppress(overdose.by_administered_by) },
+      unduplicated: { served: servedOut, new_admissions: one(unduplicated.new_admissions), with_a_referral: one(unduplicated.with_a_referral), admitted_after_referral: one(unduplicated.admitted_after_referral), on_mat: one(unduplicated.on_mat) },
+      demographics: Object.fromEntries(['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_race_code', 'by_ethnicity'].map(k => [k, demo[k]])),
+      episodes: { ...episodes, admissions: one(episodes.admissions), discharges: discharges.totals.n, open_at_end: one(episodes.open_at_end), by_discharge_reason: discharges.rows,
+        median_length_of_stay_days: smallGroup ? SC.SECONDARY : episodes.median_length_of_stay_days },
+      overdose: { ...overdose, events: months.totals.n, reversals: months.totals.reversals, fatal: one(overdose.fatal), community_reported: one(overdose.community_reported),
+        by_month: months.rows, by_administered_by: SC.table(overdose.by_administered_by, ['n'], sc).rows },
       naloxone_distribution: distribution,
-      by_funding_source: byFund,
-      attribution,
+      by_funding_source: funds,
+      attribution: { ...attribution, unattributed_clients: noneRow ? noneRow.clients_served : 0 },
     };
   } finally { db.run(`DROP TABLE IF EXISTS ${served}`); }
 }

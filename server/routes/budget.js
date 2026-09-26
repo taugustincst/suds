@@ -358,6 +358,22 @@ function defaultFundFor(userId) {
   return null;
 }
 module.exports.defaultFundFor = defaultFundFor;
+/**
+ * The programme's main fund, named in the first-run wizard (optional): created for the California fiscal
+ * year (July to June) that `today` falls in, with no amount yet, and made the programme default unless one
+ * is already set, so a new install's visits are charged to it rather than to "No funding source". Its dates,
+ * amount and type are changed under Budget. Returns the new fund's id, or null for a blank name.
+ */
+function createProgrammeFund(name, { today = localDate() } = {}) {
+  const n = String(name || '').trim().slice(0, 200);
+  if (!n) return null;
+  const y = Number(today.slice(0, 4)); const start = Number(today.slice(5, 7)) >= 7 ? y : y - 1;
+  const id = uuid();
+  db.run(`INSERT INTO funding_sources(id,name,source_type,fiscal_year_start,fiscal_year_end,total_amount) VALUES(?,?,?,?,?,0)`, id, n, 'other', `${start}-07-01`, `${start + 1}-06-30`);
+  if (!defaultFundFor(null)) db.setSetting('default_fund_id', id);
+  return id;
+}
+module.exports.createProgrammeFund = createProgrammeFund;
 // Reused by server/routes/sync.js: the REST route validates a re-parent through this, but a sync push
 // applies budget_lines rows straight through importRow() with no such check — see that file for why.
 module.exports.wouldCycle = wouldCycle;

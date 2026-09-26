@@ -72,6 +72,17 @@ function revertFatal(ctx, event) {
   audit.log({ user: ctx.user, action: FATAL_REVERTED, entity: 'overdose_event', entityId: event.id, clientId: c.id, ip: ctx.ip, details: { restored_status: applied.prior_status || 'active', reopened_episode: reopened } });
 }
 
+// A reversal is a naloxone reversal: every report counts it only with naloxone used (and the person
+// surviving), so "reversal" with the box unticked used to be saved and then counted nowhere. The kind
+// decides it. Where it happened is the same coded location list as a visit's (the NDP log's site type), so
+// "Street" and "street" no longer make two rows: typed-in text is matched to a code, whatever its case, or
+// else recorded as "other". A legacy value already on a record is kept while it is left unchanged.
+function normalise(v, row = null) {
+  const kind = v.kind !== undefined ? v.kind : row && row.kind;
+  if (kind === 'reversal') v.naloxone_used = 1;
+  if (v.location_type !== undefined && v.location_type !== null && !(row && v.location_type === row.location_type)) v.location_type = O.codeFor('LOCATIONS', v.location_type);
+}
+
 module.exports = (r) => {
   crud.build(r, {
     table: 'overdose_events', entity: 'overdose_event', base: '/api/overdose-events', perm: 'overdose',
@@ -86,6 +97,7 @@ module.exports = (r) => {
       naloxone_used: { type: 'boolean' }, naloxone_doses: { type: 'number', integer: true, min: 0, max: 20 },
       administered_by: { type: 'string', list: 'ADMINISTERED_BY' }, ems_called: { type: 'boolean' },
       hospitalized: { type: 'boolean' }, survived: { type: 'boolean' },
+      // A code from the LOCATIONS list; typed-in text is matched to one (normalise, below).
       location_type: { type: 'string', maxLen: 60 }, city: { type: 'string', maxLen: 100 },
       funding_source_id: { type: 'string' }, notes: { type: 'string', maxLen: 4000 },
     },
@@ -99,11 +111,13 @@ module.exports = (r) => {
       if (v.substances !== undefined) { v.substances_enc = v.substances ? encrypt(v.substances) : null; delete v.substances; }
       if (v.kind === 'fatal') v.survived = 0;
       if (v.naloxone_doses > 0) v.naloxone_used = 1;
+      normalise(v);
     },
-    beforeUpdate: (ctx, v) => {
+    beforeUpdate: (ctx, v, row) => {
       if (v.notes !== undefined) { v.notes_enc = v.notes ? encrypt(v.notes) : null; delete v.notes; }
       if (v.substances !== undefined) { v.substances_enc = v.substances ? encrypt(v.substances) : null; delete v.substances; }
       if (v.kind === 'fatal') v.survived = 0;
+      normalise(v, row);
     },
     afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt(row.notes_enc) : null, substances: row.substances_enc ? decrypt(row.substances_enc) : null, notes_enc: undefined, substances_enc: undefined }),
     afterInsert: (ctx, row) => {

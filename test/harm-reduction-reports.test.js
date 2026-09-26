@@ -33,7 +33,9 @@ after(async () => { await H.stop(); });
 
 // ---- (a) Naloxone Distribution Project log ----
 test('the NDP log: distribution and reversals reported, aggregated, with no names or client codes', async () => {
-  const r = await sup.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31');
+  // Exact counts: the programme's own submission to the NDP (small-cell suppression is tested in
+  // test/small-cell-suppression.test.js).
+  const r = await sup.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31&purpose=submission&counts=exact');
   assert.equal(r.status, 200, JSON.stringify(r.data));
   // A navigator sees community distribution and their own caseload's, as with every other report.
   assert.equal((await nav.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31')).data.totals.kits, 23, 'the enrolled client is not on this navigator\'s caseload');
@@ -45,7 +47,9 @@ test('the NDP log: distribution and reversals reported, aggregated, with no name
   assert.equal(may2.kits, 15, 'the two community hand-outs on the same day and site are one row');
   assert.equal(may2.recipient_type, 'Community member (anonymous)');
   assert.ok(r.data.rows.some(x => x.recipient_type === 'Programme participant' && x.kits === 1));
-  assert.ok(r.data.rows.some(x => x.entry === 'reversal' && x.site_type === 'street' && x.reversals === 1));
+  // Reversal sites use the same coded location list as distribution: typed-in "street" is not one of its
+  // codes, so it is "other"; "residence" likewise.
+  assert.ok(r.data.rows.some(x => x.entry === 'reversal' && x.site_type === 'other' && x.reversals === 1));
   const text = JSON.stringify(r.data);
   assert.ok(!text.includes('Loxone') && !text.includes('Nadia'), 'no names');
   assert.ok(!text.includes(H.db.one(`SELECT client_code FROM clients WHERE id=?`, clientId).client_code), 'no client codes');
@@ -56,7 +60,7 @@ test('the NDP log: distribution and reversals reported, aggregated, with no name
 test('the NDP log: doses per kit is a setting', async () => {
   assert.equal((await admin.put('/api/admin/settings', { naloxone_doses_per_kit: 0 })).status, 400);
   assert.equal((await admin.put('/api/admin/settings', { naloxone_doses_per_kit: 1 })).status, 200);
-  try { assert.equal((await sup.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31')).data.totals.doses, 24); }
+  try { assert.equal((await sup.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31&purpose=submission&counts=exact')).data.totals.doses, 24); }
   finally { await admin.put('/api/admin/settings', { naloxone_doses_per_kit: null }); }
 });
 
@@ -73,6 +77,44 @@ test('the NDP log exports to CSV and Excel, labelled as not the official templat
   assert.equal((await ro.get('/api/reports/naloxone-ndp/export?from=2026-05-01&to=2026-05-31')).status, 403, 'an export needs export:read');
   assert.equal((await ro.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31')).status, 200, 'the on-screen totals need only reports:read');
   assert.equal((await nav.get('/api/reports/naloxone-ndp?from=bad')).status, 400);
+});
+
+test('a reversal is a naloxone reversal: saved with "Naloxone was given" unticked, it is still counted', async () => {
+  const q = '/api/reports/naloxone-ndp?from=2026-06-01&to=2026-06-30&purpose=submission&counts=exact';
+  const r = await sup.post('/api/overdose-events', { occurred_at: '2026-06-03T10:00:00Z', kind: 'reversal', naloxone_used: false, survived: true, location_type: 'field' });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(H.db.one(`SELECT naloxone_used FROM overdose_events WHERE id=?`, r.data.id).naloxone_used, 1, 'kind=reversal implies naloxone was used');
+  assert.equal((await sup.get(q)).data.totals.reversals, 1);
+  // Editing it to untick naloxone does not take it out of the count either.
+  assert.equal((await sup.put(`/api/overdose-events/${r.data.id}`, { naloxone_used: false })).status, 200);
+  assert.equal(H.db.one(`SELECT naloxone_used FROM overdose_events WHERE id=?`, r.data.id).naloxone_used, 1);
+  // A reversal recorded before this (or pushed from a device) with the box unticked is counted as well.
+  H.db.run(`INSERT INTO overdose_events(id,occurred_at,kind,naloxone_used,survived,location_type) VALUES(?,?,?,?,?,?)`, require('node:crypto').randomUUID(), '2026-06-04T10:00:00Z', 'reversal', 0, 1, 'Shelter');
+  const d = (await sup.get(q)).data;
+  assert.equal(d.totals.reversals, 2);
+  assert.equal((await sup.get('/api/reports/funder?from=2026-06-01&to=2026-06-30&purpose=submission&counts=exact')).data.overdose.reversals, 2, 'the funder report counts it the same way');
+  // Legacy typed-in "Shelter" is the shelter code, whatever its case.
+  assert.ok(d.rows.some(x => x.entry === 'reversal' && x.site_type === 'shelter'), JSON.stringify(d.rows));
+});
+
+test('reversal sites are the coded location list: "Street" and "street" are one row, not two', async () => {
+  const q = '/api/reports/naloxone-ndp?from=2026-07-01&to=2026-07-31&purpose=submission&counts=exact';
+  const ids = [];
+  for (const where of ['Street', 'street', 'Field', 'field']) {
+    const r = await sup.post('/api/overdose-events', { occurred_at: '2026-07-02T10:00:00Z', kind: 'reversal', naloxone_used: true, survived: true, administered_by: 'staff', location_type: where });
+    assert.equal(r.status, 201, JSON.stringify(r.data)); ids.push(r.data.id);
+  }
+  assert.deepEqual(ids.map(id => H.db.one(`SELECT location_type FROM overdose_events WHERE id=?`, id).location_type), ['other', 'other', 'field', 'field'], 'mapped to a code, case-insensitively; else other');
+  const rows = (await sup.get(q)).data.rows.filter(x => x.entry === 'reversal');
+  assert.deepEqual(rows.map(x => [x.site_type, x.reversals]).sort(), [['field', 2], ['other', 2]]);
+  // A legacy value already on a record is kept when the record is edited without changing it.
+  const legacy = require('node:crypto').randomUUID();
+  H.db.run(`INSERT INTO overdose_events(id,occurred_at,kind,naloxone_used,survived,location_type,reported_by) VALUES(?,?,?,?,?,?,(SELECT id FROM users WHERE username='hrsup'))`, legacy, '2026-07-03T10:00:00Z', 'overdose', 0, 1, 'Encampment by the river');
+  assert.equal((await sup.put(`/api/overdose-events/${legacy}`, { location_type: 'Encampment by the river', city: 'Yuba City' })).status, 200);
+  assert.equal(H.db.one(`SELECT location_type FROM overdose_events WHERE id=?`, legacy).location_type, 'Encampment by the river', 'still readable on the record');
+  // The NDP export labels reversal sites with the location list's wording, like distribution.
+  const csv = String((await sup.get('/api/reports/naloxone-ndp/export?from=2026-07-01&to=2026-07-31&purpose=submission&counts=exact&format=csv')).data);
+  assert.match(csv, /Reversal reported,Field,/);
 });
 
 // ---- (b) Opioid settlement expenditure report ----

@@ -248,8 +248,10 @@ test('the funder report suppresses small cells but keeps totals', async () => {
   const r = await sup.get('/api/reports/funder?from=2026-01-01&to=2026-12-31');
   assert.equal(r.status, 200);
   assert.equal(r.data.small_cell_threshold, 11);
-  for (const rows of Object.values(r.data.demographics)) for (const x of rows) assert.ok(x.n === '<11' || x.n >= 11, `${x.k}: ${x.n}`);
-  assert.equal(typeof r.data.unduplicated.served, 'number', 'totals are exact');
+  for (const rows of Object.values(r.data.demographics)) for (const x of rows) assert.ok(x.n === '<11' || x.n === 'suppressed' || x.n >= 11, `${x.k}: ${x.n}`);
+  // A total is exact unless it is itself a small count of people (test/small-cell-suppression.test.js).
+  const served = r.data.unduplicated.served;
+  assert.ok(served === '<11' || served === 'suppressed' || served === 0 || served >= 11, `served: ${served}`);
 });
 
 // ---- 5. 'other' and medical-emergency bases must be justified ----

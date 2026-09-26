@@ -2,7 +2,10 @@
 // the platform previously could not produce: it could say "1,400 services" but not "310 people".
 import { h, route, get, state, fmt, can, pageHead, bars, stat, table, downloadCsv, nav, emptyState } from '../app.js';
 
-const num = (n) => Number(n || 0).toLocaleString();
+// A suppressed small cell arrives as a string ("<11", or "suppressed" when it is hidden only so that another
+// cannot be worked out from a total) and is shown as sent.
+const num = (n) => (typeof n === 'string' ? n : Number(n || 0).toLocaleString());
+const isNum = (n) => typeof n === 'number';
 
 route('funder', async (r) => {
   const to = r.query.get('to') || fmt.today();
@@ -35,7 +38,7 @@ route('funder', async (r) => {
   };
 
   const u = d.unduplicated;
-  const admitRate = u.with_a_referral ? Math.round((u.admitted_after_referral / u.with_a_referral) * 100) : null;
+  const admitRate = isNum(u.with_a_referral) && isNum(u.admitted_after_referral) && u.with_a_referral ? Math.round((u.admitted_after_referral / u.with_a_referral) * 100) : null;
 
   return h('div', {},
     pageHead('Funder report',
@@ -60,7 +63,11 @@ route('funder', async (r) => {
     // has approved yet (approved hours are what a county would invoice, so unapproved time counts as none).
     d.attribution.unattributed_services ? h('div', { class: 'banner warn small', 'data-unattributed': String(d.attribution.unattributed_services) },
       `${num(d.attribution.unattributed_services)} service${d.attribution.unattributed_services === 1 ? '' : 's'} in this period ${d.attribution.unattributed_services === 1 ? 'has' : 'have'} no funding source, so no fund reports ${d.attribution.unattributed_services === 1 ? 'it' : 'them'} (the "No funding source" row below). `,
-      h('a', { href: d.attribution.fix_link }, 'Review those visits')) : null,
+      h('a', { href: d.attribution.fix_link }, 'Review those visits'),
+      // Why it keeps happening on a new install: no programme default fund, so a visit nobody charges goes to
+      // none. Settings → Programme → Reporting is where one is set.
+      d.attribution.default_fund_set ? null : [' No default funding source is set for the programme, so a new visit is charged to none unless the worker chooses one. ',
+        can('settings:manage') ? h('a', { href: d.attribution.settings_link, 'data-default-fund-link': '1' }, 'Set a default funding source in Settings') : 'An administrator can set one in Settings → Programme → Reporting.']) : null,
     d.attribution.unapproved_minutes ? h('div', { class: 'banner warn small', 'data-unapproved-hours': String(d.attribution.unapproved_minutes) },
       `${(d.attribution.unapproved_minutes / 60).toFixed(1)} staff hours logged in this period are not yet approved (${(d.attribution.approved_minutes / 60).toFixed(1)} approved). Only approved hours count toward a fund. `,
       can('time:approve') ? h('a', { href: d.attribution.approve_link }, 'Review time sheets') : null) : null,
@@ -92,7 +99,8 @@ route('funder', async (r) => {
         stat('Fentanyl test strips', num(d.naloxone_distribution.strips))),
       d.overdose.by_administered_by.length ? h('div', { class: 'grid cols-2 mt' },
         h('div', {}, h('h2', {}, 'Who gave the naloxone'), bars(d.overdose.by_administered_by, { valueKey: 'n', labelKey: 'k', list: 'ADMINISTERED_BY' })),
-        h('div', {}, h('h2', {}, 'By month'), bars(d.overdose.by_month.map(x => ({ k: x.month, n: x.n })), { valueKey: 'n', labelKey: 'k' }))) : null),
+        h('div', {}, h('h2', {}, 'By month'), bars(d.overdose.by_month.map(x => ({ k: x.month, n: x.n })), { valueKey: 'n', labelKey: 'k' }))) : null,
+      d.suppression.mode === 'exact' ? null : h('p', { class: 'small muted', 'data-suppression-note': '1' }, `"<${d.suppression.threshold}" is a count of fewer than ${d.suppression.threshold} people; "suppressed" is hidden so that such a count cannot be worked out from a total. Kits, doses and test strips are not counts of people and are exact.`)),
 
     h('section', { class: 'card' },
       h('h2', {}, 'Who was served'),
@@ -107,7 +115,9 @@ route('funder', async (r) => {
 
     h('section', { class: 'card' },
       h('h2', {}, 'Discharges'),
-      d.episodes.median_length_of_stay_days !== null
+      typeof d.episodes.median_length_of_stay_days === 'string'
+        ? h('p', {}, `Median length of stay: suppressed (fewer than ${d.suppression.threshold} people were discharged).`)
+        : d.episodes.median_length_of_stay_days !== null
         ? h('p', {}, `Median length of stay: ${d.episodes.median_length_of_stay_days} days.`)
         : h('p', { class: 'muted' }, 'No episodes were closed in this period.'),
       d.episodes.by_discharge_reason.length

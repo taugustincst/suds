@@ -28,7 +28,12 @@ before(async () => {
 after(async () => { await H.stop(); });
 
 // What the earlier implementation returned, and only that: fields added since are left out, fund ids are
-// random per run (names are not), and rows that tie on their count may come back in either order.
+// random per run (names are not), and rows that tie on their count may come back in either order. The golden
+// answers are exact counts (the programme's own submission): how small cells are suppressed for publication
+// is tested on its own below, so a change to suppression is not a change to what the report counts. A
+// report filtered to one fund shows that fund's row only. An event of kind "reversal" counts as
+// a naloxone reversal whether or not its box was ticked (the fixture has such rows), which moved the reversal
+// figures and nothing else.
 const FUND_KEYS = ['name', 'grant_number', 'fiscal_year_start', 'fiscal_year_end', 'clients_served', 'services', 'approved_minutes'];
 const sortRows = (rows) => [...rows].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 function normalise(d) {
@@ -40,9 +45,10 @@ function normalise(d) {
     episodes: { ...d.episodes, by_discharge_reason: sortRows(d.episodes.by_discharge_reason) },
     overdose: { ...d.overdose, by_administered_by: sortRows(d.overdose.by_administered_by) },
     naloxone_distribution: d.naloxone_distribution,
-    by_funding_source: d.by_funding_source.filter(f => f.id).map(f => pick(f, FUND_KEYS)),
+    by_funding_source: d.by_funding_source.filter(f => f.id && (!d.funding_source_id || f.id === d.funding_source_id)).map(f => pick(f, FUND_KEYS)),
   };
 }
+const EXACT = '&purpose=submission&counts=exact';
 const CASES = [
   ['fiscal year', 'from=2025-07-01&to=2026-06-30'],
   ['a quarter', 'from=2026-01-01&to=2026-03-31'],
@@ -52,13 +58,13 @@ const CASES = [
 async function runCases() {
   const out = {};
   for (const [name, q] of CASES) {
-    const r = await admin.get(`/api/reports/funder?${q.replace('{F0}', fx.funds[0])}`);
+    const r = await admin.get(`/api/reports/funder?${q.replace('{F0}', fx.funds[0])}${EXACT}`);
     assert.equal(r.status, 200, JSON.stringify(r.data));
     out[name] = normalise(r.data);
   }
   // Report days are local days: the same fiscal year in Los Angeles moves visits across the boundaries.
   const was = config.orgTimezone; config.orgTimezone = 'America/Los_Angeles';
-  try { out['fiscal year, Los Angeles'] = normalise((await admin.get('/api/reports/funder?from=2025-07-01&to=2026-06-30')).data); }
+  try { out['fiscal year, Los Angeles'] = normalise((await admin.get(`/api/reports/funder?from=2025-07-01&to=2026-06-30${EXACT}`)).data); }
   finally { config.orgTimezone = was; }
   const d = (await admin.get('/api/reports/dashboard?from=2025-07-01&to=2026-06-30')).data;
   out.dashboard = { interventions: { total: d.interventions.total, minutes: d.interventions.minutes, naloxone_kits: d.interventions.naloxone_kits }, calls: { total: d.calls.total }, referrals: { total: d.referrals.total } };
@@ -114,7 +120,7 @@ test('the small-cell threshold is a setting (default 11)', async () => {
     const r = await sup.get('/api/reports/funder?from=2026-02-14&to=2026-02-14');
     assert.equal(r.data.suppression.threshold, 5);
     assert.equal(r.data.small_cell_threshold, 5);
-    for (const x of Object.values(r.data.demographics).flat()) assert.ok(x.n === '<5' || x.n >= 5, `${x.k}: ${x.n}`);
+    for (const x of Object.values(r.data.demographics).flat()) assert.ok(x.n === '<5' || x.n === 'suppressed' || x.n >= 5, `${x.k}: ${x.n}`);
   } finally { await admin.put('/api/admin/settings', { small_cell_threshold: null }); }
   assert.equal((await nav.get('/api/reports/funder?from=2026-02-14&to=2026-02-14')).data.suppression.threshold, 11);
 });
@@ -187,4 +193,57 @@ test('a default fund per worker and for the programme pre-fills new visits', asy
   const w = await nav.post('/api/interventions', { type: 'outreach', occurred_at: '2026-08-05T10:00:00Z', funding_source_id: null });
   assert.equal(H.db.one(`SELECT funding_source_id FROM interventions WHERE id=?`, w.data.id).funding_source_id, null);
   await admin.put('/api/admin/settings', { default_fund_id: null });
+});
+
+// ---- a report filtered to one fund reports that fund only ----
+test('filtered to one fund: its staff hours, its services and no other fund\'s', async () => {
+  const x = (await admin.post('/api/budget/funds', { name: 'Filter fund X', fiscal_year_start: '2027-01-01', fiscal_year_end: '2027-12-31', total_amount: 1000 })).data.id;
+  const y = (await admin.post('/api/budget/funds', { name: 'Filter fund Y', fiscal_year_start: '2027-01-01', fiscal_year_end: '2027-12-31', total_amount: 1000 })).data.id;
+  const worker = H.makeUser('frfilter', 'navigator');
+  for (const [m, s, f] of [[120, 'submitted', x], [60, 'approved', x], [300, 'draft', y], [90, 'approved', y], [30, 'submitted', null]]) {
+    H.db.run(`INSERT INTO time_entries(id,user_id,work_date,minutes,funding_source_id,status) VALUES(?,?,?,?,?,?)`, require('node:crypto').randomUUID(), worker.id, '2027-01-12', m, f, s);
+  }
+  assert.equal((await admin.post('/api/interventions', { type: 'outreach', occurred_at: '2027-01-12T18:00:00Z', funding_source_id: null })).status, 201);
+  assert.equal((await admin.post('/api/interventions', { type: 'outreach', occurred_at: '2027-01-12T18:00:00Z', funding_source_id: x })).status, 201);
+  const all = (await admin.get('/api/reports/funder?from=2027-01-01&to=2027-01-31')).data;
+  assert.equal(all.attribution.unapproved_minutes, 450, 'programme-wide: every fund\'s time and time charged to none');
+  assert.equal(all.attribution.approved_minutes, 150);
+  assert.equal(all.attribution.unattributed_services, 1);
+  const one = (await admin.get(`/api/reports/funder?from=2027-01-01&to=2027-01-31&funding_source_id=${x}`)).data;
+  assert.equal(one.attribution.unapproved_minutes, 120, 'only fund X\'s time waiting for approval');
+  assert.equal(one.attribution.approved_minutes, 60);
+  assert.equal(one.attribution.unattributed_services, 0, 'a visit charged to no fund is not in a report about fund X');
+  assert.deepEqual(one.by_funding_source.map(f => f.id), [x], 'the fund table shows the chosen fund');
+  const csv = String((await admin.get(`/api/reports/funder/export?from=2027-01-01&to=2027-01-31&funding_source_id=${x}&format=csv`)).data);
+  assert.match(csv, /Funding attribution,"?Staff hours logged, not yet approved"?,2\r?\n/, 'the Summary sheet: two hours, fund X\'s');
+  assert.match(csv, /Funding attribution,"?Approved staff hours"?,1\r?\n/);
+});
+
+// ---- no programme default fund: the report says where to set one ----
+test('with no programme default fund, the attribution warning points to Settings', async () => {
+  await admin.put('/api/admin/settings', { default_fund_id: null });
+  let d = (await sup.get('/api/reports/funder?from=2027-01-01&to=2027-01-31')).data;
+  assert.equal(d.attribution.default_fund_set, false);
+  assert.equal(d.attribution.settings_link, '#/admin?tab=settings&section=reporting');
+  const f = (await admin.post('/api/budget/funds', { name: 'Main fund', fiscal_year_start: '2027-01-01', fiscal_year_end: '2027-12-31', total_amount: 1000 })).data.id;
+  await admin.put('/api/admin/settings', { default_fund_id: f });
+  try {
+    d = (await sup.get('/api/reports/funder?from=2027-01-01&to=2027-01-31')).data;
+    assert.equal(d.attribution.default_fund_set, true);
+  } finally { await admin.put('/api/admin/settings', { default_fund_id: null }); }
+});
+
+test('first-run setup can name the programme\'s main fund and make it the default', () => {
+  const budget = require('../server/routes/budget');
+  H.db.run(`DELETE FROM settings WHERE key='default_fund_id'`);
+  assert.equal(budget.createProgrammeFund('', { today: '2026-09-25' }), null, 'optional: a blank name creates nothing');
+  const id = budget.createProgrammeFund('  County SUD Navigation Grant  ', { today: '2026-09-25' });
+  const f = H.db.one(`SELECT * FROM funding_sources WHERE id=?`, id);
+  assert.equal(f.name, 'County SUD Navigation Grant');
+  assert.equal(f.is_active, 1);
+  assert.deepEqual([f.fiscal_year_start, f.fiscal_year_end], ['2026-07-01', '2027-06-30'], 'the California fiscal year it falls in, editable under Budget');
+  assert.equal(H.db.getSetting('default_fund_id', null), id, 'and it is the programme default');
+  assert.equal(budget.defaultFundFor(null), id);
+  assert.deepEqual(budget.createProgrammeFund('x', { today: '2026-03-01' }) && H.db.getSetting('default_fund_id', null), id, 'an existing default is kept');
+  H.db.run(`DELETE FROM settings WHERE key='default_fund_id'`);
 });

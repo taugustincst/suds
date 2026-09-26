@@ -2,7 +2,7 @@
  "fiscal year": {
   "from": "2025-07-01",
   "to": "2026-06-30",
-  "small_cell_threshold": 11,
+  "small_cell_threshold": null,
   "unduplicated": {
    "served": 2963,
    "new_admissions": 1910,
@@ -165,7 +165,7 @@
   },
   "overdose": {
    "events": 300,
-   "reversals": 216,
+   "reversals": 245,
    "fatal": 102,
    "community_reported": 156,
    "naloxone_doses": 448,
@@ -173,80 +173,80 @@
     {
      "month": "2025-07",
      "n": 22,
-     "reversals": 17
+     "reversals": 18
     },
     {
      "month": "2025-08",
      "n": 25,
-     "reversals": 15
+     "reversals": 20
     },
     {
      "month": "2025-09",
      "n": 25,
-     "reversals": 17
+     "reversals": 22
     },
     {
      "month": "2025-10",
      "n": 22,
-     "reversals": 18
+     "reversals": 20
     },
     {
      "month": "2025-11",
      "n": 26,
-     "reversals": 18
+     "reversals": 21
     },
     {
      "month": "2025-12",
      "n": 24,
-     "reversals": 19
+     "reversals": 21
     },
     {
      "month": "2026-01",
      "n": 31,
-     "reversals": 25
+     "reversals": 27
     },
     {
      "month": "2026-02",
      "n": 22,
-     "reversals": 16
+     "reversals": 20
     },
     {
      "month": "2026-03",
      "n": 30,
-     "reversals": 22
+     "reversals": 24
     },
     {
      "month": "2026-04",
      "n": 27,
-     "reversals": 16
+     "reversals": 17
     },
     {
      "month": "2026-05",
      "n": 24,
-     "reversals": 19
+     "reversals": 20
     },
     {
      "month": "2026-06",
      "n": 22,
-     "reversals": 14
+     "reversals": 15
     }
    ],
    "by_administered_by": [
     {
      "k": "bystander",
-     "n": 63
+     "n": 71
     },
     {
      "k": "first_responder",
-     "n": 54
+     "n": 67
     },
     {
      "k": "staff",
-     "n": 60
+     "n": 65
     },
     {
      "k": "unknown",
-     "n": 56
+     "n": 64
     }
    ]
   },
@@ -288,7 +288,7 @@
  "a quarter": {
   "from": "2026-01-01",
   "to": "2026-03-31",
-  "small_cell_threshold": 11,
+  "small_cell_threshold": null,
   "unduplicated": {
    "served": 2290,
    "new_admissions": 481,
@@ -451,7 +451,7 @@
   },
   "overdose": {
    "events": 83,
-   "reversals": 63,
+   "reversals": 71,
    "fatal": 29,
    "community_reported": 46,
    "naloxone_doses": 119,
@@ -459,28 +459,27 @@
     {
      "month": "2026-01",
      "n": 31,
-     "reversals": 25
+     "reversals": 27
     },
     {
      "month": "2026-02",
      "n": 22,
-     "reversals": 16
+     "reversals": 20
     },
     {
      "month": "2026-03",
      "n": 30,
-     "reversals": 22
+     "reversals": 24
     }
    ],
    "by_administered_by": [
     {
      "k": "bystander",
-     "n": 16
+     "n": 17
     },
     {
      "k": "first_responder",
-     "n": "<11",
-     "suppressed": true
+     "n": 14
     },
     {
      "k": "staff",
@@ -488,7 +487,7 @@
     },
     {
      "k": "unknown",
-     "n": 26
+     "n": 29
     }
    ]
   },
@@ -530,7 +529,7 @@
  "one day": {
   "from": "2026-02-14",
   "to": "2026-02-14",
-  "small_cell_threshold": 11,
+  "small_cell_threshold": null,
   "unduplicated": {
    "served": 40,
    "new_admissions": 12,
@@ -542,9 +541,8 @@
    "by_gender": [
     {
      "k": "female",
-     "n": "<11",
-     "dimension": "gender",
-     "suppressed": true
+     "n": 6,
+     "dimension": "gender"
     },
     {
      "k": "male",
@@ -553,9 +551,8 @@
     },
     {
      "k": "nonbinary",
-     "n": "<11",
-     "dimension": "gender",
-     "suppressed": true
+     "n": 10,
+     "dimension": "gender"
     },
     {
      "k": "unknown",
@@ -571,9 +568,8 @@
     },
     {
      "k": "Spanish",
-     "n": "<11",
-     "dimension": "language",
-     "suppressed": true
+     "n": 4,
+     "dimension": "language"
     },
     {
      "k": "Tagalog",
@@ -582,17 +578,15 @@
     },
     {
      "k": "Vietnamese",
-     "n": "<11",
-     "dimension": "language",
-     "suppressed": true
+     "n": 8,
+     "dimension": "language"
     }
    ],
    "by_housing": [
     {
      "k": "housed",
-     "n": "<11",
-     "dimension": "housing",
-     "suppressed": true
+     "n": 8,
+     "dimension": "housing"
     },
     {
      "k": "unhoused",
@@ -601,9 +595,8 @@
     },
     {
      "k": "unknown",
-     "n": "<11",
-     "dimension": "housing",
-     "suppressed": true
+     "n": 6,
+     "dimension": "housing"
     },
     {
      "k": "unstably_housed",
@@ -619,15 +612,13 @@
     },
     {
      "k": "medicare",
-     "n": "<11",
-     "dimension": "insurance",
-     "suppressed": true
+     "n": 6,
+     "dimension": "insurance"
     },
     {
      "k": "none",
-     "n": "<11",
-     "dimension": "insurance",
-     "suppressed": true
+     "n": 9,
+     "dimension": "insurance"
     },
     {
      "k": "private",
@@ -638,28 +629,23 @@
    "by_race_code": [
     {
      "k": "american_indian_alaska_native",
-     "n": "<11",
-     "suppressed": true
+     "n": 5
     },
     {
      "k": "asian",
-     "n": "<11",
-     "suppressed": true
+     "n": 6
     },
     {
      "k": "black_african_american",
-     "n": "<11",
-     "suppressed": true
+     "n": 5
     },
     {
      "k": "other",
-     "n": "<11",
-     "suppressed": true
+     "n": 8
     },
     {
      "k": "unknown",
-     "n": "<11",
-     "suppressed": true
+     "n": 9
     },
     {
      "k": "white",
@@ -679,9 +665,8 @@
     },
     {
      "k": "unknown",
-     "n": "<11",
-     "dimension": "ethnicity",
-     "suppressed": true
+     "n": 7,
+     "dimension": "ethnicity"
     }
    ]
   },
@@ -708,8 +693,7 @@
    "by_administered_by": [
     {
      "k": "bystander",
-     "n": "<11",
-     "suppressed": true
+     "n": 1
     }
    ]
   },
@@ -751,7 +735,7 @@
  "one fund": {
   "from": "2025-07-01",
   "to": "2026-06-30",
-  "small_cell_threshold": 11,
+  "small_cell_threshold": null,
   "unduplicated": {
    "served": 2153,
    "new_admissions": 1910,
@@ -914,7 +898,7 @@
   },
   "overdose": {
    "events": 300,
-   "reversals": 216,
+   "reversals": 245,
    "fatal": 102,
    "community_reported": 156,
    "naloxone_doses": 448,
@@ -922,80 +906,80 @@
     {
      "month": "2025-07",
      "n": 22,
-     "reversals": 17
+     "reversals": 18
     },
     {
      "month": "2025-08",
      "n": 25,
-     "reversals": 15
+     "reversals": 20
     },
     {
      "month": "2025-09",
      "n": 25,
-     "reversals": 17
+     "reversals": 22
     },
     {
      "month": "2025-10",
      "n": 22,
-     "reversals": 18
+     "reversals": 20
     },
     {
      "month": "2025-11",
      "n": 26,
-     "reversals": 18
+     "reversals": 21
     },
     {
      "month": "2025-12",
      "n": 24,
-     "reversals": 19
+     "reversals": 21
     },
     {
      "month": "2026-01",
      "n": 31,
-     "reversals": 25
+     "reversals": 27
     },
     {
      "month": "2026-02",
      "n": 22,
-     "reversals": 16
+     "reversals": 20
     },
     {
      "month": "2026-03",
      "n": 30,
-     "reversals": 22
+     "reversals": 24
     },
     {
      "month": "2026-04",
      "n": 27,
-     "reversals": 16
+     "reversals": 17
     },
     {
      "month": "2026-05",
      "n": 24,
-     "reversals": 19
+     "reversals": 20
     },
     {
      "month": "2026-06",
      "n": 22,
-     "reversals": 14
+     "reversals": 15
     }
    ],
    "by_administered_by": [
     {
      "k": "bystander",
-     "n": 63
+     "n": 71
     },
     {
      "k": "first_responder",
-     "n": 54
+     "n": 67
     },
     {
      "k": "staff",
-     "n": 60
+     "n": 65
     },
     {
      "k": "unknown",
-     "n": 56
+     "n": 64
     }
    ]
   },
@@ -1006,15 +990,6 @@
   },
   "by_funding_source": [
    {
-    "name": "County general 7",
-    "grant_number": null,
-    "fiscal_year_start": "2025-07-01",
-    "fiscal_year_end": "2026-06-30",
-    "clients_served": 2133,
-    "services": 3968,
-    "approved_minutes": 8340
-   },
-   {
     "name": "Opioid settlement 7",
     "grant_number": null,
     "fiscal_year_start": "2025-07-01",
@@ -1022,22 +997,13 @@
     "clients_served": 2153,
     "services": 4006,
     "approved_minutes": 7740
-   },
-   {
-    "name": "SOR 7",
-    "grant_number": null,
-    "fiscal_year_start": "2025-07-01",
-    "fiscal_year_end": "2026-06-30",
-    "clients_served": 2184,
-    "services": 4031,
-    "approved_minutes": 6540
    }
   ]
  },
  "fiscal year, Los Angeles": {
   "from": "2025-07-01",
   "to": "2026-06-30",
-  "small_cell_threshold": 11,
+  "small_cell_threshold": null,
   "unduplicated": {
    "served": 2963,
    "new_admissions": 1910,
@@ -1200,7 +1166,7 @@
   },
   "overdose": {
    "events": 300,
-   "reversals": 216,
+   "reversals": 245,
    "fatal": 102,
    "community_reported": 156,
    "naloxone_doses": 448,
@@ -1208,80 +1174,80 @@
     {
      "month": "2025-07",
      "n": 22,
-     "reversals": 17
+     "reversals": 18
     },
     {
      "month": "2025-08",
      "n": 25,
-     "reversals": 15
+     "reversals": 20
     },
     {
      "month": "2025-09",
      "n": 25,
-     "reversals": 17
+     "reversals": 22
     },
     {
      "month": "2025-10",
      "n": 22,
-     "reversals": 18
+     "reversals": 20
     },
     {
      "month": "2025-11",
      "n": 26,
-     "reversals": 18
+     "reversals": 21
     },
     {
      "month": "2025-12",
      "n": 24,
-     "reversals": 19
+     "reversals": 21
     },
     {
      "month": "2026-01",
      "n": 31,
-     "reversals": 25
+     "reversals": 27
     },
     {
      "month": "2026-02",
      "n": 22,
-     "reversals": 16
+     "reversals": 20
     },
     {
      "month": "2026-03",
      "n": 30,
-     "reversals": 22
+     "reversals": 24
     },
     {
      "month": "2026-04",
      "n": 27,
-     "reversals": 16
+     "reversals": 17
     },
     {
      "month": "2026-05",
      "n": 24,
-     "reversals": 19
+     "reversals": 20
     },
     {
      "month": "2026-06",
      "n": 22,
-     "reversals": 14
+     "reversals": 15
     }
    ],
    "by_administered_by": [
     {
      "k": "bystander",
-     "n": 63
+     "n": 71
     },
     {
      "k": "first_responder",
-     "n": 54
+     "n": 67
     },
     {
      "k": "staff",
-     "n": 60
+     "n": 65
     },
     {
      "k": "unknown",
-     "n": 56
+     "n": 64
     }
    ]
   },

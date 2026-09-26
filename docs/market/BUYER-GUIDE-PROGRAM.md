@@ -39,7 +39,7 @@ CalOMS Tx, and the county EHR hand-off. Most harm-reduction programmes will not 
 
 - **Funder report**: unduplicated people served (people, not services) by fiscal period and funding source;
   demographics with race/ethnicity codes a funder can count; overdose and naloxone figures including community
-  distribution. Breakdown rows counting fewer than 11 people are suppressed (`<11`) while totals stay exact.
+  distribution. Every count of people under 11 is suppressed (`<11`), with complementary suppression so that a hidden cell cannot be worked out from a total; kits, doses and money stay exact.
   (Only the funder report suppresses small cells; the other reports show exact counts.)
 - **Naloxone distribution log** in the style of the DHCS Naloxone Distribution Project reporting, and an
   **opioid-settlement expenditure report** by allowable-use category. Both are built from the records above;

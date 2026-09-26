@@ -15,6 +15,8 @@ const auth = require('./auth');
 const audit = require('./audit');
 const C = require('./constants');
 const O = require('./options');
+const FR = require('./funder-report');
+const SC = require('./small-cells');
 
 const NDP_TEMPLATE_NOTE = 'The column layout follows the fields the DHCS Naloxone Distribution Project (NDP) asks distributors to report, as SUDS understands them (date, site type, recipient type, kits and doses distributed, overdose reversals reported). It is not the official NDP template: it must be checked against the current NDP reporting template before it is submitted.';
 const SETTLEMENT_SOURCE_NOTE = 'Categories follow Exhibit E ("List of Opioid Remediation Uses") of the national opioid settlement agreements and California\'s High Impact Abatement Activities list, as summarised by DHCS. Both need verification against the agreement governing each fund before the report is submitted; SUDS does not decide whether a cost is allowable.';
@@ -28,7 +30,11 @@ function dayOf(at) {
   return require('./routes/budget').localDate(at);
 }
 
+/** The counting mode for this run (as the funder report: suppressed unless reports:exact asks for exact). */
+function counts(ctx) { const counting = FR.countingMode(ctx); return { counting, sc: { threshold: counting.threshold, exact: counting.mode === 'exact' } }; }
+
 function ndp(ctx, { from, to, ts, tsP }) {
+  const { counting, sc } = counts(ctx);
   const cf = auth.caseloadFilter(ctx.user, 'c.id');
   const perKit = dosesPerKit();
   const rows = new Map();
@@ -42,14 +48,24 @@ function ndp(ctx, { from, to, ts, tsP }) {
     add(`d|${date}|${site}|${recipient}`, { date, entry: 'distribution', site_type: site, recipient_type: recipient, kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null }, (r) => { r.kits += x.kits; r.doses += x.kits * perKit; });
   }
   for (const x of db.all(`SELECT o.occurred_at, o.location_type, o.naloxone_doses, o.administered_by FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id
-      WHERE ${ts('o.occurred_at')} AND o.naloxone_used=1 AND o.survived=1 AND (o.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
-    const date = dayOf(x.occurred_at); const site = x.location_type || 'unknown'; const by = x.administered_by || 'unknown';
+      WHERE ${ts('o.occurred_at')} AND (o.naloxone_used=1 OR o.kind='reversal') AND o.survived=1 AND (o.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
+    // The same coded site list as distribution; a place typed in before "Where" was a list is matched to
+    // a code whatever its case, or counted as "other".
+    const date = dayOf(x.occurred_at); const site = O.codeFor('LOCATIONS', x.location_type) || 'unknown'; const by = x.administered_by || 'unknown';
     add(`r|${date}|${site}|${by}`, { date, entry: 'reversal', site_type: site, recipient_type: null, kits: null, doses: null, reversals: 0, reversal_doses: 0, administered_by: by }, (r) => { r.reversals += 1; r.reversal_doses += x.naloxone_doses || 0; });
   }
   const list = [...rows.values()].sort((a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type)));
   const sum = (k) => list.reduce((n, r) => n + (r[k] || 0), 0);
-  return { from, to, county: db.getSetting('county_name', '') || null, doses_per_kit: perKit, template_note: NDP_TEMPLATE_NOTE, rows: list,
-    totals: { kits: sum('kits'), doses: sum('doses'), reversals: sum('reversals'), reversal_doses: sum('reversal_doses'), community_kits: list.filter(r => r.recipient_type === 'Community member (anonymous)').reduce((n, r) => n + r.kits, 0) } };
+  const totals = { kits: sum('kits'), doses: sum('doses'), reversals: sum('reversals'), reversal_doses: sum('reversal_doses'), community_kits: list.filter(r => r.recipient_type === 'Community member (anonymous)').reduce((n, r) => n + r.kits, 0) };
+  // Small cells (server/small-cells.js): a reversal is an event that happened to a person, so reversals per
+  // row are counts of people, protected against the published total; the doses used in a hidden reversal
+  // row go with it. Kits and doses distributed are not people and stay exact.
+  const rev = list.filter(r => r.entry === 'reversal');
+  const t = SC.table(rev, ['reversals'], { ...sc, totals: { reversals: totals.reversals, reversal_doses: totals.reversal_doses }, mirror: { reversal_doses: 'reversals' } });
+  const out = list.map(r => (r.entry === 'reversal' ? t.rows[rev.indexOf(r)] : r));
+  return { from, to, county: db.getSetting('county_name', '') || null, doses_per_kit: perKit, template_note: NDP_TEMPLATE_NOTE, rows: out,
+    suppression: counting, counting_statement: FR.countingStatement(counting),
+    totals: { ...totals, reversals: t.totals.reversals, reversal_doses: t.totals.reversal_doses } };
 }
 
 const money = (n) => Math.round((n || 0) * 100) / 100;
@@ -57,6 +73,7 @@ const USE_LABEL = Object.fromEntries(C.SETTLEMENT_USES.map(x => [x.code, x]));
 const HIAA_LABEL = Object.fromEntries([...C.SETTLEMENT_HIAA.map(x => [x.code, x.label]), ['none', 'Not a High Impact Abatement Activity']]);
 
 function settlement(ctx, { from, to, ts, tsP }) {
+  const { counting, sc } = counts(ctx);
   // A settlement fund: one marked as opioid settlement money, or one given a settlement category.
   const isFund = `(f.source_type='opioid_settlement' OR f.settlement_use IS NOT NULL OR f.settlement_hiaa IS NOT NULL)`;
   const funds = db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end, f.total_amount, f.settlement_use, f.settlement_hiaa FROM funding_sources f WHERE ${isFund} ORDER BY f.name`);
@@ -87,14 +104,21 @@ function settlement(ctx, { from, to, ts, tsP }) {
     by_use: useRows, by_hiaa: hiaaRows,
     detail: [...detail.values()].map(x => ({ ...x, approved_amount: money(x.approved_amount), pending_amount: money(x.pending_amount), schedule: USE_LABEL[x.use]?.schedule || 'Uncategorised', use_label: USE_LABEL[x.use]?.label || 'No settlement category recorded', hiaa_label: HIAA_LABEL[x.hiaa] || 'No High Impact Abatement Activity recorded' }))
       .sort((a, b) => a.schedule.localeCompare(b.schedule) || a.use.localeCompare(b.use) || a.hiaa.localeCompare(b.hiaa)),
-    services_by_use: services.map(x => ({ ...x, label: USE_LABEL[x.use_code]?.label || 'No settlement category recorded' })),
+    // People per allowable use are counts of people; services and kits are not. No total of people is
+    // published (a person may be served under several uses).
+    services_by_use: SC.table(services, ['people'], sc).rows.map(x => ({ ...x, label: USE_LABEL[x.use_code]?.label || 'No settlement category recorded' })),
+    suppression: counting, counting_statement: FR.countingStatement(counting),
     totals: { approved_amount: approved, pending_amount: money(exps.filter(e => e.status === 'pending').reduce((n, e) => n + e.amount, 0)), hiaa_amount: hiaaAmount,
       hiaa_share: approved ? Math.round(1000 * hiaaAmount / approved) / 10 : null, uncategorised_amount: byUse.get('uncategorised').approved_amount + byUse.get('uncategorised').pending_amount },
   };
 }
 
-function send(ctx, { body, filename, xlsx, classification }) {
-  ctx.res.writeHead(200, { 'Content-Type': xlsx ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'X-SUDS-Export': classification });
+// The counting mode travels with the file, as with the funder report: in the filename, a response header
+// and (Excel) the About sheet.
+const countsSuffix = (d) => (d.suppression.mode === 'exact' ? 'exact-counts' : 'suppressed');
+function send(ctx, { body, filename, xlsx, classification, suppression }) {
+  ctx.res.writeHead(200, { 'Content-Type': xlsx ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'X-SUDS-Export': classification,
+    'X-SUDS-Report-Counts': suppression.mode === 'exact' ? 'exact' : `suppressed (threshold ${suppression.threshold})` });
   ctx.res.end(body);
 }
 const aboutSheet = (ctx, rows) => ({ name: 'About', columns: [{ key: 'k', label: 'Field' }, { key: 'v', label: 'Value' }], rows: [...rows, { k: 'Generated', v: db.now() }, { k: 'Generated by', v: ctx.user.display_name || ctx.user.username }] });
@@ -102,42 +126,43 @@ const aboutSheet = (ctx, rows) => ({ name: 'About', columns: [{ key: 'k', label:
 function routes(r, range) {
   const S = require('./spreadsheet');
   const NDP_COLUMNS = [['date', 'Date'], ['entry', 'Entry'], ['site_type', 'Site type'], ['recipient_type', 'Recipient type'], ['kits', 'Kits distributed'], ['doses', 'Naloxone doses distributed'], ['reversals', 'Reversals reported'], ['reversal_doses', 'Doses used in reversals'], ['administered_by', 'Naloxone given by']].map(([key, label]) => ({ key, label }));
-  const ndpRows = (d) => d.rows.map(x => ({ ...x, entry: x.entry === 'distribution' ? 'Distribution' : 'Reversal reported', site_type: x.entry === 'distribution' ? O.labelOf('LOCATIONS', x.site_type) : x.site_type,
+  const ndpRows = (d) => d.rows.map(x => ({ ...x, entry: x.entry === 'distribution' ? 'Distribution' : 'Reversal reported', site_type: x.site_type === 'unknown' ? 'Unknown' : O.labelOf('LOCATIONS', x.site_type),
     administered_by: x.administered_by ? O.labelOf('ADMINISTERED_BY', x.administered_by) : null }));
 
   r.get('/api/reports/naloxone-ndp', auth.requireAuth, auth.requirePerm('reports:read'), (ctx) => {
     const d = ndp(ctx, range(ctx));
-    audit.log({ user: ctx.user, action: 'report.naloxone_ndp', ip: ctx.ip, details: { from: d.from, to: d.to, rows: d.rows.length } });
+    audit.log({ user: ctx.user, action: 'report.naloxone_ndp', ip: ctx.ip, details: { from: d.from, to: d.to, rows: d.rows.length, counts: d.suppression.mode } });
     return d;
   });
   r.get('/api/reports/naloxone-ndp/export', auth.requireAuth, auth.requirePerm('reports:read'), auth.requirePerm('export:read'), (ctx) => {
     const d = ndp(ctx, range(ctx)); const xlsx = ctx.query.get('format') === 'xlsx'; const rows = ndpRows(d);
-    audit.log({ user: ctx.user, action: 'report.naloxone_ndp.export', ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, format: xlsx ? 'xlsx' : 'csv' } });
+    audit.log({ user: ctx.user, action: 'report.naloxone_ndp.export', ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, counts: d.suppression.mode, format: xlsx ? 'xlsx' : 'csv' } });
     const body = xlsx ? S.writeWorkbook([{ name: 'NDP log', columns: NDP_COLUMNS, rows }, aboutSheet(ctx, [
       { k: 'Report', v: 'Naloxone distribution and reversal log (NDP-style)' }, { k: 'Template', v: d.template_note }, { k: 'Period', v: `${d.from} to ${d.to}` }, { k: 'County', v: d.county || '' },
       { k: 'Doses per kit', v: `${d.doses_per_kit} (Settings: naloxone doses per kit)` }, { k: 'Totals', v: `${d.totals.kits} kits, ${d.totals.doses} doses distributed (${d.totals.community_kits} kits to anonymous community members); ${d.totals.reversals} reversals reported` },
+      { k: 'Counts', v: d.counting_statement },
       { k: 'Classification', v: 'Aggregate counts by day, site type and recipient type: no names, client codes or record ids.' }])]) : S.toCsv(rows, NDP_COLUMNS);
-    send(ctx, { body, xlsx, filename: `suds-naloxone-ndp-log-${d.from}_${d.to}.${xlsx ? 'xlsx' : 'csv'}`, classification: 'NDP-style log (not the official NDP template; check it against the current NDP reporting template). Aggregate, no identifiers.' });
+    send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-naloxone-ndp-log-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? 'xlsx' : 'csv'}`, classification: 'NDP-style log (not the official NDP template; check it against the current NDP reporting template). Aggregate, no identifiers.' });
   });
 
   r.get('/api/reports/opioid-settlement', auth.requireAuth, auth.requirePerm('budget:read'), (ctx) => {
     const d = settlement(ctx, range(ctx));
-    audit.log({ user: ctx.user, action: 'report.opioid_settlement', ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length } });
+    audit.log({ user: ctx.user, action: 'report.opioid_settlement', ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode } });
     return d;
   });
   r.get('/api/reports/opioid-settlement/export', auth.requireAuth, auth.requirePerm('budget:read'), auth.requirePerm('export:read'), (ctx) => {
     const d = settlement(ctx, range(ctx)); const xlsx = ctx.query.get('format') === 'xlsx';
-    audit.log({ user: ctx.user, action: 'report.opioid_settlement.export', ip: ctx.ip, details: { from: d.from, to: d.to, format: xlsx ? 'xlsx' : 'csv' } });
+    audit.log({ user: ctx.user, action: 'report.opioid_settlement.export', ip: ctx.ip, details: { from: d.from, to: d.to, counts: d.suppression.mode, format: xlsx ? 'xlsx' : 'csv' } });
     const detailCols = [['schedule', 'Schedule'], ['use_label', 'Category'], ['hiaa_label', 'High Impact Abatement Activity'], ['approved_amount', 'Approved or reimbursed ($)'], ['pending_amount', 'Pending ($)'], ['expenditures', 'Expenditures']].map(([key, label]) => ({ key, label }));
     const body = xlsx ? S.writeWorkbook([
       aboutSheet(ctx, [{ k: 'Report', v: 'Opioid settlement expenditures by allowable use' }, { k: 'Period', v: `${d.from} to ${d.to}` }, { k: 'Funds', v: d.funds.map(f => f.name).join('; ') || 'No settlement funds' },
-        { k: 'Approved or reimbursed', v: d.totals.approved_amount }, { k: 'Of which High Impact Abatement Activities', v: `${d.totals.hiaa_amount} (${d.totals.hiaa_share ?? 0}%)` }, { k: 'Sources and verification', v: d.source_note }]),
+        { k: 'Approved or reimbursed', v: d.totals.approved_amount }, { k: 'Of which High Impact Abatement Activities', v: `${d.totals.hiaa_amount} (${d.totals.hiaa_share ?? 0}%)` }, { k: 'Sources and verification', v: d.source_note }, { k: 'Counts', v: d.counting_statement }]),
       { name: 'By allowable use', columns: [['schedule', 'Schedule'], ['label', 'Category'], ['approved_amount', 'Approved or reimbursed ($)'], ['pending_amount', 'Pending ($)'], ['expenditures', 'Expenditures']].map(([key, label]) => ({ key, label })), rows: d.by_use },
       { name: 'By HIAA', columns: [['label', 'High Impact Abatement Activity'], ['approved_amount', 'Approved or reimbursed ($)'], ['pending_amount', 'Pending ($)'], ['expenditures', 'Expenditures']].map(([key, label]) => ({ key, label })), rows: d.by_hiaa },
       { name: 'Detail', columns: detailCols, rows: d.detail },
       { name: 'Services', columns: [['label', 'Category'], ['services', 'Services'], ['people', 'People served'], ['naloxone_kits', 'Naloxone kits']].map(([key, label]) => ({ key, label })), rows: d.services_by_use },
     ]) : S.toCsv(d.detail, detailCols);
-    send(ctx, { body, xlsx, filename: `suds-opioid-settlement-${d.from}_${d.to}.${xlsx ? 'xlsx' : 'csv'}`, classification: 'Opioid settlement expenditures by category (categories need verification against the governing agreement). No client information.' });
+    send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-opioid-settlement-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? 'xlsx' : 'csv'}`, classification: 'Opioid settlement expenditures by category (categories need verification against the governing agreement). No client information.' });
   });
 }
 
