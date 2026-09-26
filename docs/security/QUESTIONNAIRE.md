@@ -87,3 +87,4 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 | --- | --- | --- |
 | 44 | Mobile apps? | No native apps (removed in 1.9.3); the web app works on phones. |
 | 45 | Offline data on devices? | Local mode is **off by default**; if enabled, caseload-scoped encrypted copies on approved devices, revocable and remotely wipeable. [../PLATFORM.md](../PLATFORM.md) |
+| 45a | SUDS on this device (the GitHub Pages build): shared origin? | Browser storage (IndexedDB, Cache Storage) and same-origin framing are per origin, and `<owner>.github.io/<repo>/` shares its origin with every other Pages site of that owner. The records are sealed with the device password and the service worker reads and deletes only its own caches within its own path, but a dedicated origin (a custom domain, or a host name of its own) is recommended for real records. [../WEB_APP.md](../WEB_APP.md) |
