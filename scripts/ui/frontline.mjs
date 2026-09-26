@@ -177,11 +177,21 @@ await nav.close();
   const text = list ? await list.textContent() : '';
   ok(/Batch note 1/.test(text) && /Batch note 2/.test(text), 'with each note\'s text to read before signing');
   eq(await page.getAttribute('.modal [data-signature-dialog]', 'data-signature-dialog'), 'confirm', 'one confirmation, no password just after signing in');
-  await page.fill('.modal textarea[name=note]', 'Reviewed in supervision');
+  // Each note has its own comment field under it; there is no one comment copied onto every note.
+  ok(!(await page.$('.modal textarea[name=note]')), 'no shared "comment for every note" field in a batch');
+  eq((await page.$$('.modal [data-cosign-comment]')).length, 2, 'one comment field per note');
+  for (const id of ids) {
+    const lbl = await page.evaluate((id) => { const t = document.querySelector(`.modal [data-cosign-comment="${id}"]`); return t && t.labels && t.labels[0] ? t.labels[0].textContent : ''; }, id);
+    ok(/^Comment on note \d \(optional\)$/.test(lbl), 'each comment field has its own visible label', lbl);
+    ok(await page.$(`.modal [data-cosign-content="${id}"] [data-cosign-comment="${id}"]`), 'and sits inside that note\'s section');
+  }
+  await page.fill(`.modal [data-cosign-comment="${ids[0]}"]`, 'Reviewed in supervision');
   await page.click('.modal [data-signature-dialog] button[type=submit]');
   await until(async () => !(await page.$('.modal-bg')));
   const after = await Promise.all(ids.map(id => api('GET', `/api/notes/${id}`)));
   ok(after.every(r => r.data.note.cosigned), 'both notes are countersigned', after.map(r => r.data.note.cosigned));
+  eq(after[0].data.note.cosign_note, 'Reviewed in supervision', 'the first note keeps its comment');
+  ok(!after[1].data.note.cosign_note, 'the second note does not get a copy of it', after[1].data.note.cosign_note);
   // Referrals: the completed one is not "waiting for an outcome"; the scheduled one opens its outcome form.
   await go(page, 'supervision');
   const waiting = await page.$('[data-awaiting-outcome]');
@@ -192,6 +202,18 @@ await nav.close();
   ok(row, 'its row names the client');
   if (row) { await row.focus(); await page.keyboard.press('Enter'); ok(await until(() => page.$('.modal select[name=status]')), 'Enter on the referral row opens its outcome form'); await closeModals(page); }
   await sup.close();
+}
+
+// ---- 6. a safety flag stored as a code shows its label in the client header, not "no_home_visits" ----
+{
+  const { page, api } = admin;
+  const before = (await api('GET', `/api/clients/${client.id}`)).data.client.flags || null;
+  ok((await api('PUT', `/api/clients/${client.id}`, { flags: 'no_home_visits, allergy: naltrexone' })).status < 300, 'a client with a coded flag and a typed one');
+  await go(page, `client/${client.id}`);
+  const badgeText = await until(() => page.$eval('[data-client-flags]', el => el.textContent).catch(() => null));
+  ok(badgeText && badgeText.includes('No home visits alone') && badgeText.includes('allergy: naltrexone'), 'the header shows the label from the Safety flags list and the typed flag as typed', badgeText);
+  ok(badgeText && !/no_home_visits/.test(badgeText), 'never the raw code', badgeText);
+  await api('PUT', `/api/clients/${client.id}`, { flags: before || '' });
 }
 
 await admin.api('PUT', `/api/users/${navUser.id}`, { requires_cosign: 0 });

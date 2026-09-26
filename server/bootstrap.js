@@ -39,7 +39,7 @@ function ensureBootstrap() {
     process.stdout.write(lines.join('\n') + '\n');
   }
   db.setSetting('caseload_restriction', '1');
-  db.setSetting('org_name', process.env.SUDS_ORG_NAME || 'County SUD Navigation Program');
+  db.setSetting('org_name', process.env.SUDS_ORG_NAME || 'County Harm Reduction and Outreach Program');
   return { username, password };
 }
 module.exports = { ensureBootstrap, discardPasswordFile, passwordFilePath, PASSWORD_FILE };

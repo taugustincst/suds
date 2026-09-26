@@ -1,6 +1,17 @@
 import { h, route, get, post, state, form, toast, nav, render, loadSession, badge } from '../app.js';
 import { qrSvg } from '../qr.js';
 
+// The offline-copy question's advice for each programme profile.
+const OFFLINE_TRADEOFF = 'The copy is encrypted under each person\'s own password: if they forget it, anything on that device that has not been synced yet cannot be recovered, so staff should sync often. IT can change this later with LOCAL_MODE_ENABLED.';
+const OFFLINE = {
+  harm_reduction: { value: 'yes', label: 'Allow staff to keep an offline copy on their devices? Recommended: Yes',
+    options: [{ value: 'yes', label: 'Yes — outreach staff may keep an encrypted offline copy in their browser and sync it later (recommended for field work)' }, { value: 'no', label: 'No — staff use SUDS only while connected to this server' }],
+    help: `Outreach happens where there is no signal: an offline copy lets staff record visits and supplies there and sync when back in range. ${OFFLINE_TRADEOFF}` },
+  treatment: { value: 'no', label: 'Allow staff to keep an offline copy on their devices? Recommended: No',
+    options: [{ value: 'no', label: 'No — staff use SUDS while connected to this server (recommended)' }, { value: 'yes', label: 'Yes — navigators may keep an encrypted offline copy in their browser and sync it later' }],
+    help: `Only say Yes for a documented field-work need, on county-managed devices with a passcode and remote wipe. ${OFFLINE_TRADEOFF}` },
+};
+
 route('setup', async () => {
   const status = await get('/api/setup/status', { quiet: true });
   if (!status.needed) { nav('login'); return h('div'); }
@@ -25,12 +36,14 @@ route('setup', async () => {
     { name: 'network', label: 'Access', type: 'select', noBlank: true, required: true, value: 'lan', options: [{ value: 'lan', label: 'Phones, tablets and other computers on the office network (recommended for mobile use)' }, { value: 'local', label: 'Only this computer' }], span: true },
     { name: 'https', label: 'Encrypt connections (HTTPS) — recommended, created automatically', type: 'checkbox', value: true, span: true },
     // The web app on this server is the system of record (docs/PLATFORM.md). An offline copy keeps an encrypted
-    // caseload in a browser whose keys sit beside it, so it is off unless the county has a field-work need.
-    // With LOCAL_MODE_ENABLED set on the server the environment decides, and the page says so instead.
+    // caseload in a browser, sealed under each person's password (docs/architecture/ADR-0008-device-encryption.md).
+    // Field outreach works where there is no signal, so a harm-reduction programme is advised to allow it; a
+    // treatment-adjacent one keeps the stricter "No". The advice follows the profile chosen above until the
+    // answer is changed by hand. With LOCAL_MODE_ENABLED set on the server the environment decides, and the
+    // page says so instead. Left unanswered (an API call without it), the server keeps it off.
     status.local_mode_env ? null : { type: 'section', label: 'Working offline' },
-    status.local_mode_env ? null : { name: 'local_mode', label: 'Allow staff to keep an offline copy on their devices? Recommended: No', type: 'select', noBlank: true, required: true, value: 'no', span: true,
-        options: [{ value: 'no', label: 'No — staff use SUDS while connected to this server (recommended)' }, { value: 'yes', label: 'Yes — navigators may keep an encrypted offline copy in their browser and sync it later' }],
-        help: 'Only say Yes for a documented field-work need, on county-managed devices with a passcode and remote wipe. IT can change this later with LOCAL_MODE_ENABLED.' },
+    status.local_mode_env ? null : { name: 'local_mode', label: OFFLINE.harm_reduction.label, type: 'select', noBlank: true, required: true, value: OFFLINE.harm_reduction.value, span: true,
+        options: OFFLINE.harm_reduction.options, help: OFFLINE.harm_reduction.help },
     { type: 'section', label: 'Advanced (usually not needed)', collapsible: true },
     // With PORT set in the environment the port is IT's decision (Settings → Network & devices says the same
     // afterwards), so the wizard does not offer a field it would then ignore.
@@ -57,6 +70,23 @@ route('setup', async () => {
       h('div', { class: 'btn-row' }, h('a', { class: 'btn primary', href: primary + '#/login' }, 'Go to sign-in')));
     setTimeout(() => { location.href = primary + '#/login'; }, 8000);
   } });
+  // The offline-copy advice follows the programme profile until someone answers the question themselves.
+  const profileSel = f.querySelector('select[name=programme_profile]'); const offlineSel = f.querySelector('select[name=local_mode]');
+  if (profileSel && offlineSel) {
+    let touched = false;
+    offlineSel.addEventListener('change', () => { touched = true; });
+    profileSel.addEventListener('change', () => {
+      const a = OFFLINE[profileSel.value] || OFFLINE.harm_reduction;
+      const field = offlineSel.closest('.field');
+      const lbl = field && field.querySelector(':scope > label'); if (lbl) lbl.textContent = `${a.label} *`;
+      const help = field && field.querySelector(':scope > .help'); if (help) help.textContent = a.help;
+      const current = offlineSel.value;
+      offlineSel.replaceChildren(...a.options.map(o => h('option', { value: o.value }, o.label)));
+      offlineSel.value = touched ? current : a.value;
+      offlineSel.dataset.recommended = a.value;
+    });
+  }
+  if (offlineSel) offlineSel.dataset.recommended = OFFLINE.harm_reduction.value;
   return h('main', { class: 'login-wrap', id: 'main', tabindex: '-1' }, h('div', { class: 'card', style: { maxWidth: '760px', width: '100%' } },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('h1', { class: 'brand-title' }, 'Welcome to SUDS'), h('small', {}, 'First-run setup — about 2 minutes'))),
     h('p', { class: 'muted' }, `A few quick questions and SUDS is ready on this computer and on staff phones. (Running on ${status.hostname}; setup can only be completed from this computer.)`),

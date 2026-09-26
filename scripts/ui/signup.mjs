@@ -102,6 +102,22 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   await p.waitForSelector('.layout', { timeout: 10000 }).catch(() => {});
   ok(await p.$('.layout'), 'after approval the account signs in');
   ok(await until(() => p.$('[data-banner="mfa-required"]'), { timeout: 5000 }), 'and is told its role requires two-step verification, with the grace period to set it up');
+  // On a 390×844 phone the reminder is one compact line: the deadline, "Set up" and dismiss, not a third of the screen.
+  {
+    const vp = p.viewportSize();
+    await p.setViewportSize({ width: 390, height: 844 }); await settle(p);
+    const b = await p.$eval('[data-banner="mfa-required"]', (el) => ({ h: el.getBoundingClientRect().height, text: el.querySelector('span').textContent,
+      visible: [...el.querySelector('span').childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(''),
+      setup: el.querySelector('a[data-mfa-setup]')?.getAttribute('href'), setupText: el.querySelector('a[data-mfa-setup]')?.textContent, dismiss: !!el.querySelector('button[aria-label=Dismiss]'),
+      linkH: el.querySelector('a[data-mfa-setup]')?.getBoundingClientRect().height, sw: document.documentElement.scrollWidth }));
+    ok(b.h <= 64, `the two-step banner is one compact line at 390 px (${Math.round(b.h)}px tall)`, b);
+    ok(/Two-step verification required (by .*\d{4}|now)/.test(b.visible), 'the deadline is in the visible text', b.visible);
+    ok(/will not let you in until it is done/.test(b.text), 'and what happens after it is said to a screen reader', b.text);
+    eq(b.setup, '#/profile?mfa=1', 'a "Set up" action goes to enrolment'); eq(b.setupText, 'Set up', 'labelled "Set up"');
+    ok(b.dismiss, 'and it can be dismissed');
+    ok(b.sw <= 390, 'nothing scrolls sideways', b.sw);
+    if (vp) await p.setViewportSize(vp);
+  }
   const me = await p.evaluate(() => fetch('/api/auth/me').then(r => r.json()));
   eq(me.user.role, 'navigator', 'with the role the administrator chose');
   // The grace period runs out while they are signed in: the next page sends them to enrolment instead of

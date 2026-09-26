@@ -176,3 +176,14 @@ test('devices receive the lists but can never change them', async () => {
   assert.ok(push.data.rejected.some(x => x.id === id && x.reason === 'server-owned'), 'a device\'s copy is never accepted');
   assert.notEqual(db.one(`SELECT label FROM option_overrides WHERE id=?`, id).label, 'Hacked');
 });
+
+test('a client safety flag stored as a code has a label in the Safety flags list, rewordable like any other', async () => {
+  const m = (await nav.get('/api/meta/constants')).data;
+  assert.equal(entry(m.option_lists.CLIENT_FLAGS, 'no_home_visits').label, 'No home visits alone', 'the code a flag may be stored as has words');
+  const put = await nav.put(`/api/clients/${clientId}`, { flags: 'no_home_visits, allergy: naltrexone' });
+  assert.ok(put.status < 300, JSON.stringify(put.data));
+  assert.equal((await nav.get(`/api/clients/${clientId}`)).data.client.flags, 'no_home_visits, allergy: naltrexone', 'the stored text is unchanged; only the display uses the label');
+  assert.equal((await admin.put('/api/admin/lists/CLIENT_FLAGS/entries/no_home_visits', { label: 'Never visit at home alone' })).status, 200);
+  assert.equal(entry((await nav.get('/api/meta/constants')).data.option_lists.CLIENT_FLAGS, 'no_home_visits').label, 'Never visit at home alone');
+  assert.equal((await admin.post('/api/admin/lists/CLIENT_FLAGS/reset', {})).status, 200);
+});

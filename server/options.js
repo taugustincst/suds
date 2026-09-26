@@ -59,6 +59,8 @@ const LISTS = [
       BIRP: 'has its own structured sections', GIRP: 'has its own structured sections', handoff: 'listed in shift hand-offs', safety_plan: 'shown as the client\'s safety plan' } },
   { key: 'SUBSTANCES', group: 'Clients', name: 'Primary substance', codes: C.SUBSTANCES,
     protect: { unknown: 'a blank answer is counted as Unknown in reports and filters' } },
+  { key: 'CLIENT_FLAGS', group: 'Clients', name: 'Safety flags', codes: C.CLIENT_FLAGS,
+    labels: { no_home_visits: 'No home visits alone', visit_in_pairs: 'Visit in pairs', do_not_contact_family: 'Do not contact through family', no_voicemail: 'No voicemail', safety_plan: 'Safety plan in place' } },
   { key: 'DISCHARGE_REASONS', group: 'Episodes of care', name: 'Reason for discharge', codes: C.DISCHARGE_REASONS,
     labels: { completed: 'Completed the program', transferred: 'Transferred to another provider', incarcerated: 'Incarcerated', moved: 'Moved out of the area', lost_contact: 'Lost contact',
       declined: 'Declined further services', deceased: 'Deceased', administrative: 'Administrative closure', other: 'Other' },

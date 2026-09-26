@@ -57,7 +57,8 @@ module.exports = (r) => {
       org_name: { type: 'string', required: true, maxLen: 200 }, county_name: { type: 'string', maxLen: 120 }, program_contact: { type: 'string', maxLen: 200 },
       admin_username: { type: 'string', required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, admin_display_name: { type: 'string', required: true, maxLen: 120 }, admin_password: { type: 'string', required: true, maxLen: 500 },
       network: { type: 'string', required: true, enum: ['local', 'lan'] }, port: { type: 'number', integer: true, min: 1, max: 65535 }, https: { type: 'boolean' }, extra_hosts: { type: 'string', maxLen: 300 },
-      // "Allow staff to keep an offline copy on their devices?" — omitted means No, the recommended answer.
+      // "Allow staff to keep an offline copy on their devices?" — omitted means No: without an answer local mode stays off
+      // (the wizard itself recommends Yes for a harm-reduction programme and No for a treatment-adjacent one).
       local_mode: { type: 'boolean' },
       // What kind of programme this is (server/programme.js); omitted means harm reduction & outreach.
       programme_profile: { type: 'string', enum: Object.keys(require('../programme').PROFILES) },

@@ -117,7 +117,7 @@ route('dashboard', async () => {
         steps.push(['Put a consent form in the library', 'Including a 42 CFR Part 2 release, which you need before any record can be shared with another agency.', 'Add starter forms', async () => { (await import('./forms.js')).openStarters(() => nav('dashboard?_=' + Date.now())); }]);
       }
       if (!resources.total) {
-        steps.push(['Fill the resource directory', 'Load a regional starter directory of treatment programs, or enter your own referral partners.', 'Open the directory', () => nav('resources')]);
+        steps.push(['Fill the resource directory', 'Load a regional starter directory (shelters, syringe services, MAT and treatment programmes), or enter your own referral partners.', 'Open the directory', () => nav('resources')]);
       }
       if (!(funds.funds || []).length) {
         steps.push(['Add your funding sources', 'Grants and budgets, so services and staff time can be charged to the right one and reported per fund.', 'Add funding', () => nav('budget')]);

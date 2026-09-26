@@ -35,10 +35,25 @@ if (status.port_env) {
 }
 eq(await page.$eval('input[name=https]', e => e.checked), true, 'HTTPS is on by default');
 eq(await page.$eval('select[name=network]', e => e.value), 'lan', 'phones on the office network are allowed by default');
-// Offline copies are a deliberate choice: the wizard asks, and the recommended answer (No) is preselected.
+// Offline copies are a deliberate choice: the wizard asks, and preselects the answer it recommends for the
+// programme profile — Yes for harm reduction & outreach (field work without signal), No for treatment-adjacent.
 eq(status.local_mode_env, false, 'LOCAL_MODE_ENABLED is not set for the wizard server, so the wizard decides local mode');
-eq(await page.$eval('select[name=local_mode]', e => e.value).catch(() => null), 'no', 'the wizard asks about offline copies and defaults to No');
-ok(/offline copy on their devices\? Recommended: No/.test(await page.textContent('#app')), 'with the recommendation in the question');
+const offlineField = () => page.$eval('[data-field=local_mode]', e => ({ value: e.querySelector('select').value, label: e.querySelector('label').textContent, help: (e.querySelector('.help') || {}).textContent || '', options: [...e.querySelectorAll('option')].map(o => o.value) })).catch(() => null);
+let off = await offlineField();
+eq(off && off.value, 'yes', 'for a harm-reduction programme the wizard recommends offline copies and preselects Yes');
+ok(off && /offline copy on their devices\? Recommended: Yes/.test(off.label), 'with the recommendation in the question', off);
+ok(off && /forget it, anything on that device that has not been synced yet cannot be recovered/.test(off.help), 'and says honestly what a forgotten password costs', off && off.help);
+await page.selectOption('select[name=programme_profile]', 'treatment');
+off = await offlineField();
+eq(off && off.value, 'no', 'a treatment-adjacent programme keeps the recommendation No');
+ok(off && /Recommended: No/.test(off.label) && /forget it/.test(off.help), 'its question and help say so', off);
+await page.selectOption('select[name=programme_profile]', 'harm_reduction');
+eq((await offlineField())?.value, 'yes', 'back to harm reduction: Yes again');
+// An answer given by hand is kept when the profile changes; this run answers No, which the rest checks.
+await page.selectOption('select[name=local_mode]', 'no');
+await page.selectOption('select[name=programme_profile]', 'treatment');
+await page.selectOption('select[name=programme_profile]', 'harm_reduction');
+eq((await offlineField())?.value, 'no', 'a hand-picked answer is not overwritten by the profile');
 // The programme profile: harm reduction & outreach unless the county says it is treatment-adjacent.
 eq(await page.$eval('select[name=programme_profile]', e => e.value).catch(() => null), 'harm_reduction', 'the wizard asks what kind of programme this is and defaults to harm reduction & outreach');
 // The programme's main fund (optional) becomes the default for new visits.

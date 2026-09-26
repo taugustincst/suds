@@ -102,7 +102,8 @@ test('a supervisor countersigns several notes at once: one re-authentication, ea
   const stale = await sup.post('/api/notes/cosign-batch', { ids, confirm: true });
   assert.equal(stale.status, 403); assert.equal(stale.data.reauthRequired, true);
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM notes WHERE id IN (?,?,?) AND cosigned_at IS NOT NULL`, ...ids).n, 0, 'nothing countersigned without it');
-  const r = await sup.post('/api/notes/cosign-batch', { ids: [...ids, own, 'no-such-note'], password: PW, note: 'Reviewed in supervision' });
+  const comments = Object.fromEntries(ids.map((id, i) => [id, `Reviewed in supervision ${i}`]));
+  const r = await sup.post('/api/notes/cosign-batch', { ids: [...ids, own, 'no-such-note'], password: PW, comments });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.deepEqual([...r.data.cosigned].sort(), [...ids].sort());
   assert.equal(r.data.skipped.length, 2, 'their own note and an unknown id are skipped, with a reason');
@@ -110,11 +111,29 @@ test('a supervisor countersigns several notes at once: one re-authentication, ea
   for (const id of ids) {
     const n = H.db.one(`SELECT cosigned_at, cosignature_hash, cosign_note_enc FROM notes WHERE id=?`, id);
     assert.ok(n.cosigned_at && n.cosignature_hash && n.cosign_note_enc, 'each note carries its own countersignature');
+    assert.equal((await sup.get(`/api/notes/${id}`)).data.note.cosign_note, comments[id], 'and its own comment, not another note\'s');
     const a = H.db.all(`SELECT details FROM audit_log WHERE action='note.cosign' AND entity_id=?`, id);
     assert.equal(a.length, 1); assert.equal(JSON.parse(a[0].details).batch, true);
     assert.ok(!/Reviewed in supervision/.test(a[0].details), 'the comment stays out of the audit entry');
   }
   assert.equal((await sup.get('/api/supervision/queue')).data.awaiting_cosignature.filter(x => ids.includes(x.id)).length, 0, 'they leave the queue');
+});
+
+test('a batch countersignature never copies one comment onto notes about different clients', async () => {
+  const other = (await nav.post('/api/clients', { first_name: 'Ines', last_name: 'Otherclient' })).data.id;
+  await admin.post(`/api/clients/${other}/assignments`, { user_id: traineeId, role_on_case: 'clinician' });
+  const a = await draft(trainee, { title: 'Visit A' }); await trainee.post(`/api/notes/${a}/sign`, { confirm: true });
+  const b = await draft(trainee, { title: 'Visit B', client_id: other }); await trainee.post(`/api/notes/${b}/sign`, { confirm: true });
+  const shared = await sup.post('/api/notes/cosign-batch', { ids: [a, b], password: PW, note: 'Talked about the housing application' });
+  assert.equal(shared.status, 400, 'one shared comment across two clients is refused');
+  assert.match(shared.data.error, /different clients/);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM notes WHERE id IN (?,?) AND cosigned_at IS NOT NULL`, a, b).n, 0, 'and nothing was countersigned');
+  assert.equal((await sup.post('/api/notes/cosign-batch', { ids: [a, b], password: PW, comments: { 'not-in-batch': 'x' } })).status, 400, 'a comment for a note outside the batch is refused');
+  assert.equal((await sup.post('/api/notes/cosign-batch', { ids: [a, b], password: PW, comments: ['x'] })).status, 400);
+  const r = await sup.post('/api/notes/cosign-batch', { ids: [a, b], password: PW, comments: { [a]: 'Housing application discussed' } });
+  assert.equal(r.status, 200, JSON.stringify(r.data)); assert.equal(r.data.cosigned.length, 2);
+  assert.equal((await sup.get(`/api/notes/${a}`)).data.note.cosign_note, 'Housing application discussed');
+  assert.ok(!(await sup.get(`/api/notes/${b}`)).data.note.cosign_note, 'the other client\'s note has no comment');
 });
 
 test('the supervision queue names the client for roles that can open the client, and only for them', async () => {

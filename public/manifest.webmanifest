@@ -1,7 +1,7 @@
 {
   "name": "SUDS — SUD Navigator Services Tracker",
   "short_name": "SUDS",
-  "description": "County substance use disorder navigation services tracker",
+  "description": "Outreach, visits, naloxone and supplies, referrals and grant reporting for harm-reduction and prevention programmes",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

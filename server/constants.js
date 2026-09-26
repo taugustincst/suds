@@ -131,6 +131,9 @@ module.exports = {
   OVERDOSE_KINDS: ['overdose', 'reversal', 'fatal'],
   ADMINISTERED_BY: ['bystander', 'first_responder', 'staff', 'self', 'family', 'unknown'],
   // Why an episode of care ended ('deceased' also marks the client deceased: server/routes/episodes.js).
+  // Safety flags on a client (free text, comma separated; these are the codes a flag may also be stored
+  // as, e.g. by an import or the sample data, shown with their label rather than the code).
+  CLIENT_FLAGS: ['no_home_visits', 'visit_in_pairs', 'do_not_contact_family', 'no_voicemail', 'safety_plan'],
   DISCHARGE_REASONS: ['completed', 'transferred', 'incarcerated', 'moved', 'lost_contact', 'declined', 'deceased', 'administrative', 'other'],
   // A referral outcome's "If it did not happen, why" (stored encrypted in referrals.barrier_enc).
   REFERRAL_BARRIERS: ['none', 'transportation', 'insurance', 'waitlist', 'no_beds', 'client_declined', 'childcare', 'documentation', 'legal', 'phone_access', 'other'],

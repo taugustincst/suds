@@ -45,7 +45,7 @@ test('§2.31: a Part 2 consent records every element, including the 2024 additio
   assert.equal(byParent.status, 201);
   const row = H.db.one(`SELECT * FROM consents WHERE id=?`, byParent.data.id);
   assert.match(row.signer_name_enc, /^v1:/); assert.equal(row.rule_version, '2024');
-  assert.equal(row.discloser, 'County SUD Navigation Program', 'who may disclose defaults to this programme');
+  assert.equal(row.discloser, 'County Harm Reduction and Outreach Program', 'who may disclose defaults to this programme');
   assert.equal((await post(consent('part2_tpo', { expires_at: '2020-01-01' }))).status, 400, 'cannot expire before it was signed');
   // A legacy consent (recorded before migration 29) is listed as such.
   H.db.run(`UPDATE consents SET rule_version=NULL WHERE id=?`, byParent.data.id);
@@ -192,7 +192,7 @@ test('identified exports state a lawful basis, carry the §2.32 notice, and are 
   const bearer = (await H.client().post('/api/auth/login', { username: 'p2sup', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' })).data.token;
   // "internal" is this program or its staff, never an outside recipient.
   assert.equal((await sup.get(`/api/reports/export/clients?identified=1&basis=internal&restriction_reviewed=1&${q}`)).status, 400);
-  const wb = await fetch(`${await H.start()}/api/reports/export/workbook?identified=1&basis=internal&restriction_reviewed=1&from=2026-01-01&to=2026-12-31&recipient=County%20SUD%20Navigation%20Program&purpose=Case%20review`, { headers: { Authorization: `Bearer ${bearer}` } });
+  const wb = await fetch(`${await H.start()}/api/reports/export/workbook?identified=1&basis=internal&restriction_reviewed=1&from=2026-01-01&to=2026-12-31&recipient=County%20Harm%20Reduction%20and%20Outreach%20Program&purpose=Case%20review`, { headers: { Authorization: `Bearer ${bearer}` } });
   assert.equal(wb.status, 200);
   const about = require('../server/spreadsheet').readWorkbook(Buffer.from(await wb.arrayBuffer())).find(s => s.name === 'About');
   assert.ok(JSON.stringify(about.rows).includes('Notice to recipient (42 CFR §2.32)'), 'the About sheet carries the notice');
@@ -202,7 +202,7 @@ test('identified exports state a lawful basis, carry the §2.32 notice, and are 
 
 test('an identified export past the threshold opens a draft incident for review', async () => {
   await admin.put('/api/part2/settings', { mass_export_threshold: 2 });
-  const q = 'from=2026-01-01&to=2026-12-31&recipient=County%20SUD%20Navigation%20Program&purpose=Migration&basis=internal&restriction_reviewed=1';
+  const q = 'from=2026-01-01&to=2026-12-31&recipient=County%20Harm%20Reduction%20and%20Outreach%20Program&purpose=Migration&basis=internal&restriction_reviewed=1';
   assert.equal((await sup.get(`/api/reports/export/clients?identified=1&${q}`)).status, 200);
   const inc = H.db.one(`SELECT * FROM privacy_incidents WHERE source='mass_export' ORDER BY created_at DESC LIMIT 1`);
   assert.ok(inc, 'a draft incident was opened'); assert.equal(inc.determination, 'pending'); assert.match(inc.description_enc, /^v1:/);
@@ -217,7 +217,7 @@ test('§2.22 patient notice: an editable template, a record per client, and a re
   assert.equal(s.status, 200); assert.equal(s.data.part2_program, true); assert.equal(s.data.notice_template.is_default, true);
   assert.match(s.data.notice_template.text, /Secretary/); assert.match(s.data.notice_template.text, /not retaliate/);
   const rendered = (await nav.get('/api/part2/notice')).data.rendered;
-  assert.ok(rendered.includes('County SUD Navigation Program') && !rendered.includes('{org}'), 'placeholders are filled in');
+  assert.ok(rendered.includes('County Harm Reduction and Outreach Program') && !rendered.includes('{org}'), 'placeholders are filled in');
   assert.equal((await sup.put('/api/part2/settings', { notice_text: 'x'.repeat(300) })).status, 403, 'only an administrator edits it');
   assert.equal((await admin.put('/api/part2/settings', { notice_text: 'too short' })).status, 400);
   const v0 = s.data.notice_template.version;
