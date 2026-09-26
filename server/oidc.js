@@ -96,8 +96,11 @@ function stateCookie(token, { clear = false } = {}) {
 }
 
 /** Build the authorize redirect URL and the signed cookie that goes with it. `acrValues`: ask the provider
- *  for these authentication context classes (a step-up to multi-factor, where the administrator named one). */
-async function startAuth({ acrValues = [] } = {}) {
+ *  for these authentication context classes (a step-up to multi-factor, where the administrator named one).
+ *  `reauth`: this is not a sign-in but a signed-in person proving again who they are (the electronic
+ *  signature, server/routes/oidc.js): the provider is told to ask for their credentials now (prompt=login,
+ *  max_age=0), and the signed state carries which session to mark ({ sid, uid, ret }) and when it started. */
+async function startAuth({ acrValues = [], reauth = null } = {}) {
   const doc = await discover();
   const { verifier, challenge } = pkcePair();
   const state = crypto.randomUUID();
@@ -112,7 +115,13 @@ async function startAuth({ acrValues = [] } = {}) {
   url.searchParams.set('code_challenge', challenge);
   url.searchParams.set('code_challenge_method', 'S256');
   if (acrValues.length) url.searchParams.set('acr_values', acrValues.join(' '));
-  const cookie = stateCookie(signState({ state, nonce, verifier, exp: Date.now() + 600_000 }));
+  const payload = { state, nonce, verifier, exp: Date.now() + 600_000 };
+  if (reauth) {
+    url.searchParams.set('prompt', 'login');
+    url.searchParams.set('max_age', '0');
+    Object.assign(payload, { purpose: 'reauth', sid: reauth.sid, uid: reauth.uid, ret: reauth.ret, at: Date.now() });
+  }
+  const cookie = stateCookie(signState(payload));
   return { url: url.toString(), cookie };
 }
 
@@ -194,4 +203,7 @@ function idpMfa(claims, { acrValues = [] } = {}) {
   return { ok: false, via: null, amr, acr };
 }
 
-module.exports = { checkEndpoint, discover, startAuth, completeAuth, stateCookie, COOKIE, idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => { discoveryCache = null; jwksCache = null; } };
+/** The verified state a callback's cookie carries (or null): tells a sign-in from a re-authentication. */
+function readState(cookieToken) { return verifyState(cookieToken); }
+
+module.exports = { checkEndpoint, discover, startAuth, completeAuth, readState, stateCookie, COOKIE, idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => { discoveryCache = null; jwksCache = null; } };

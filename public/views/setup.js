@@ -14,7 +14,10 @@ const OFFLINE = {
 
 route('setup', async () => {
   const status = await get('/api/setup/status', { quiet: true });
-  if (!status.needed) { nav('login'); return h('div'); }
+  // Setup is done (here, or in another tab): the app must stop thinking it is needed, or its router sends
+  // #/login straight back to #/setup, which sends it to #/login again — a loop of status requests that had
+  // the server refusing everything from this computer (429) for a minute. scripts/ui/setup-same-origin.mjs.
+  if (!status.needed) { state.setupNeeded = false; nav('login'); return h('div'); }
   const done = h('div', { class: 'hidden' });
   const f = form([
     { type: 'section', label: 'Your program' },
@@ -55,6 +58,7 @@ route('setup', async () => {
     delete d.confirm;
     if ('local_mode' in d) d.local_mode = d.local_mode === 'yes';
     const r = await post('/api/setup/complete', d);
+    state.setupNeeded = false; // "Go to sign-in" may be the same page with only a new #hash
     f.classList.add('hidden'); done.classList.remove('hidden');
     const L = r.listener;
     // suds.local depends on mDNS, which Windows PCs without Bonjour and Android browsers do not have; the

@@ -17,6 +17,8 @@
 
 **SSO and MFA together.** By default an SSO sign-in still passes SUDS's own TOTP step for roles that require it, so a county that enforces MFA at the IdP sees a second prompt. A county whose identity provider enforces MFA for SUDS (an Entra ID conditional-access policy, an Okta sign-on policy) can turn on *Trust the identity provider's multi-factor sign-in* instead; SUDS then relies on the provider's assertion in the ID token, which it verifies (RS256 signature against the provider's published keys, issuer, audience, expiry, nonce). Do not turn it on unless the provider really enforces MFA for this application: SUDS can only check that the provider *said* MFA was used. Keep the break-glass accounts on SUDS TOTP.
 
+**Signing as a single sign-on user.** The electronic signature asks the signer to prove again who they are once the quick-signing window (`sign_reauth_minutes`) has passed. An account linked to the identity provider that has no SUDS password (SCIM-provisioned) and no SUDS authenticator is offered *Confirm with single sign-on* instead of a password field (`GET /api/auth/reauth` → `method: "sso"`; a linked account that also has a password gets it as an alternative). `POST /api/auth/oidc/reauth` starts an Authorization Code + PKCE round-trip with `prompt=login` and `max_age=0`; the callback accepts it only if the ID token verifies, names the same `sub` as the account, carries an `auth_time` no earlier than the start of the round-trip (60 s clock skew allowed; a provider that hands back an existing sign-in is refused) and the session that asked is still live (it is named in the signed state cookie, since the `SameSite=Strict` session cookie does not travel on the provider's redirect back). Then that session's `reauth_at` is set and the browser returns to the note (`?sso_reauth=ok`). Every outcome is audited (`auth.oidc.reauth`). If the provider cannot be reached the dialog says so and the note stays a draft (`server/routes/oidc.js`; `test/oidc-reauth.test.js`).
+
 ## Sessions
 
 * Server-side sessions; the cookie carries a random 256-bit token, only its SHA-256 is stored (`server/auth.js`).
@@ -28,7 +30,7 @@ These are visible in Settings → Security policy and on Settings → Security s
 
 ## Brute force and enumeration
 
-Account lockout after 5 failures for 15 minutes; 20 failed sign-ins per source address per 15 minutes (`LOGIN_RATE_LIMIT`); 10 MFA attempts per user per 10 minutes; API 600 requests/min per address; unknown usernames pay the same hashing cost and get the same answer; the audit log records unknown usernames only truncated and hashed (`server/auth.js` `auditUsername`).
+Account lockout after 5 failures for 15 minutes; 20 failed sign-ins per source address per 15 minutes (`LOGIN_RATE_LIMIT`); 10 MFA attempts per user per 10 minutes. The password or authenticator code given to sign a note (`auth.verifySigner`) counts toward the same lockout and limits, a locked account cannot sign at all, and a failed signature attempt ends the session's quick-signing window. Each authenticator code is accepted once — at sign-in, at signing or at enrolment — and never one from a time-step at or before the last one accepted (`users.totp_last_step`, RFC 6238 §5.2; `test/signer-hardening.test.js`); API 600 requests/min per address; unknown usernames pay the same hashing cost and get the same answer; the audit log records unknown usernames only truncated and hashed (`server/auth.js` `auditUsername`).
 
 ## Authorisation
 

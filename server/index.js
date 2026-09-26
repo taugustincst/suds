@@ -17,7 +17,13 @@ if (config.dbPath !== ':memory:') require('./log').start(config.dataDir);
 // One process per database, enforced (server/instance-lock.js) — not just documented — because a second
 // one against the same data directory can corrupt it, not merely waste resources.
 if (config.dbPath !== ':memory:') {
-  try { require('./instance-lock').acquire(config.dataDir); }
+  // If the heartbeat finds another process has taken the lock over (this one was suspended for longer than
+  // the stale window, or the lock file was replaced), stop rather than keep writing next to it.
+  try {
+    require('./instance-lock').acquire(config.dataDir, {
+      onLost: (why) => { console.error(`[suds] instance lock lost: ${why}. Stopping.`); process.exit(1); },
+    });
+  }
   catch (e) { console.error(`[suds] ${e.message}`); process.exit(1); }
 }
 

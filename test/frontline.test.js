@@ -78,7 +78,7 @@ test('with two-step verification on, a stale session re-authenticates with the a
   const u = H.makeUser('flmfa', 'navigator');
   const c = H.client(); await c.login('flmfa', PW);
   const setup = await c.post('/api/auth/mfa/setup', {});
-  assert.equal((await c.post('/api/auth/mfa/enable', { code: totp(setup.data.secret) })).status, 200);
+  assert.equal((await c.post('/api/auth/mfa/enable', { code: totp(setup.data.secret, Date.now() - 30_000) })).status, 200);
   await admin.post(`/api/clients/${clientId}/assignments`, { user_id: u.id, role_on_case: 'secondary' });
   makeStale(u.id);
   const id = await draft(c);
@@ -89,7 +89,7 @@ test('with two-step verification on, a stale session re-authenticates with the a
   assert.equal(JSON.parse(H.db.one(`SELECT details FROM audit_log WHERE action='note.sign' AND entity_id=?`, id).details).identity, 'totp');
   // The code a session's sign-in completed with counts as a re-authentication as well.
   const fresh = H.client(); await fresh.login('flmfa', PW);
-  await fresh.post('/api/auth/mfa/verify', { code: totp(setup.data.secret) });
+  await fresh.post('/api/auth/mfa/verify', { code: totp(setup.data.secret, Date.now() + 30_000) });
   assert.equal((await fresh.get('/api/auth/reauth')).data.recent, true);
 });
 
