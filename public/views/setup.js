@@ -33,7 +33,7 @@ route('setup', async () => {
     { name: 'main_fund_name', label: 'Main funding source (optional)', placeholder: 'e.g. County opioid settlement allocation', span: true, maxLen: 200,
       help: 'New visits are charged to it unless the worker chooses another. Add its amount, grant number and dates, and any other funds, under Budget; change the default in Settings › Programme › Reporting.' },
     { type: 'section', label: 'Administrator account (you)' },
-    { name: 'admin_display_name', label: 'Your name', required: true }, { name: 'admin_username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', placeholder: 'e.g. jsmith' },
+    { name: 'admin_display_name', label: 'Your name', required: true }, { name: 'admin_username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', value: 'guest', help: 'The first administrator is called guest unless you choose another name. You set its password below.' },
     { name: 'admin_password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: '12+ characters with upper and lower case, a number and a symbol.' }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
     { type: 'section', label: 'Who can reach SUDS' },
     { name: 'network', label: 'Access', type: 'select', noBlank: true, required: true, value: 'lan', options: [{ value: 'lan', label: 'Phones, tablets and other computers on the office network (recommended for mobile use)' }, { value: 'local', label: 'Only this computer' }], span: true },

@@ -4,7 +4,7 @@
 const config = require('../server/config');
 if (config.isProd) { console.error('Refusing to seed a production database'); process.exit(1); }
 const db = require('../server/db');
-const { ensureBootstrap } = require('../server/bootstrap');
+const { ensureBootstrap, adminUsername } = require('../server/bootstrap');
 const { hashPassword, uuid } = require('../server/crypto');
 const demo = require('../server/demo');
 
@@ -23,7 +23,7 @@ const clin = user('kpatel', 'Dr. Kiran Patel', 'clinician', 'LCSW, Clinical Supe
 const sup = user('jwalker', 'Jordan Walker', 'supervisor', 'Program Manager', 58);
 user('afinance', 'Alex Finance', 'finance', 'Fiscal Analyst', 40);
 user('rreader', 'Robin Reader', 'readonly', 'County Analyst', 0);
-db.run(`UPDATE users SET must_change_password=0 WHERE username='admin'`);
+db.run(`UPDATE users SET must_change_password=0 WHERE username=?`, adminUsername());
 
 if (demo.status().loaded) console.log('Sample data already loaded; skipping.');
 else if (db.one(`SELECT COUNT(*) n FROM clients`).n > 0) console.log('Database already has clients; not adding sample data.');

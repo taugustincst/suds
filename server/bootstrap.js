@@ -14,10 +14,16 @@ function passwordFilePath() { return path.join(config.dataDir, PASSWORD_FILE); }
 /** Remove the first-admin password file, if it is still there. Safe to call any time. */
 function discardPasswordFile() { try { fs.unlinkSync(passwordFilePath()); return true; } catch { return false; } }
 
+// The first administrator a new office server creates is called "guest" unless SUDS_ADMIN_USERNAME says
+// otherwise. Its password is random (printed once, never shared between installs) and must be changed at the
+// first sign-in, so the name is well known but no working credential is.
+const DEFAULT_ADMIN_USERNAME = 'guest';
+function adminUsername() { return process.env.SUDS_ADMIN_USERNAME || DEFAULT_ADMIN_USERNAME; }
+
 function ensureBootstrap() {
   const count = db.one(`SELECT COUNT(*) AS n FROM users`).n;
   if (count > 0) return null;
-  const username = process.env.SUDS_ADMIN_USERNAME || 'admin';
+  const username = adminUsername();
   const generated = !process.env.SUDS_ADMIN_PASSWORD;
   const password = process.env.SUDS_ADMIN_PASSWORD || (randomToken(12) + 'Aa1!');
   db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,1,?)`,
@@ -42,4 +48,4 @@ function ensureBootstrap() {
   db.setSetting('org_name', process.env.SUDS_ORG_NAME || 'County Harm Reduction and Outreach Program');
   return { username, password };
 }
-module.exports = { ensureBootstrap, discardPasswordFile, passwordFilePath, PASSWORD_FILE };
+module.exports = { ensureBootstrap, discardPasswordFile, passwordFilePath, PASSWORD_FILE, DEFAULT_ADMIN_USERNAME, adminUsername };

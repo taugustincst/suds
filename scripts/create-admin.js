@@ -1,11 +1,11 @@
 'use strict';
 // Creates (or resets) an administrator account. Usage:
-//   SUDS_ADMIN_USERNAME=admin SUDS_ADMIN_PASSWORD='...' npm run create-admin
+//   SUDS_ADMIN_USERNAME=guest SUDS_ADMIN_PASSWORD='...' npm run create-admin   (guest is the default name)
 const db = require('../server/db');
 const { hashPassword, uuid } = require('../server/crypto');
 const auth = require('../server/auth');
 const audit = require('../server/audit');
-const username = process.env.SUDS_ADMIN_USERNAME || 'admin';
+const username = process.env.SUDS_ADMIN_USERNAME || 'guest';
 const password = process.env.SUDS_ADMIN_PASSWORD;
 if (!password) { console.error('Set SUDS_ADMIN_PASSWORD'); process.exit(1); }
 const errs = auth.passwordPolicy(password);

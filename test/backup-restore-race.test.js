@@ -11,6 +11,7 @@ process.env.SUDS_ENV = 'test';
 process.env.SUDS_ENCRYPTION_KEY = '11'.repeat(32);
 process.env.SUDS_INDEX_KEY = '22'.repeat(32);
 process.env.SUDS_ADMIN_PASSWORD = 'AdminPassw0rd!x';
+process.env.SUDS_ADMIN_USERNAME = 'admin'; // a real install's first administrator is "guest"
 process.env.MFA_REQUIRED_ROLES = '';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');

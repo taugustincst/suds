@@ -95,7 +95,7 @@ Copy `.env.example` to `.env` and set:
 | `AUDIT_ANCHOR_HOURS` | no | Default 6. Hours between anchors; every scheduled backup also writes one. `0` = at backups only. |
 | `AUDIT_SYSLOG` | no | Also send each anchor to a syslog collector over UDP (RFC 5424, facility *log audit*), e.g. `udp://siem.county.gov:514`. |
 | `DR_DRILL_TIMEOUT_MS` | no | Default 900000 (15 min). How long a recovery drill's restored copy may take before the drill is failed. |
-| `SUDS_ADMIN_USERNAME`, `SUDS_ADMIN_PASSWORD` | first run only | Initial admin. Otherwise a temporary password is printed once to stdout (never to the log file) and, in production, also written to `data/first-admin-password.txt` (mode 0600), which is deleted the moment an administrator changes their password. |
+| `SUDS_ADMIN_USERNAME`, `SUDS_ADMIN_PASSWORD` | first run only | Initial admin, called `guest` unless `SUDS_ADMIN_USERNAME` names another. Without `SUDS_ADMIN_PASSWORD` a temporary password is printed once to stdout (never to the log file) and, in production, also written to `data/first-admin-password.txt` (mode 0600), which is deleted the moment an administrator changes their password. |
 | `SUDS_SKIP_SETUP=1` | no | Never show the browser setup wizard (it is already skipped when keys come from the environment). |
 | `SUDS_ORG_NAME` | first run only | The programme name written into settings (`org_name`) when the first administrator is created — the programme name the app shows. Default "County Harm Reduction and Outreach Program". Afterwards change it in Settings; the variable is not read again. |
 | `SUDS_MAX_RESTORE_BYTES` | no | Largest request body accepted by the in-browser restore (`/api/admin/restore*`, the backup file base64-encoded in JSON, so about 4/3 of the file). Default 629145600 (600 MB), enough for a backup of about 450 MB. Raise it for a larger database, or restore on the host (`node scripts/backup.js --restore`, no limit). Other routes keep their own limits. |
@@ -209,7 +209,7 @@ Network settings can be changed at runtime under Administration → Network & de
 
 ## 3. First login
 
-1. Sign in as `admin` with the initial password; you must change it immediately.
+1. Sign in as `guest` (or the `SUDS_ADMIN_USERNAME` you set) with the initial password; you must change it immediately.
 2. Enroll MFA (Profile → Multi-factor authentication) — required for admins.
 3. Administration → Settings: set the organization name, county, privacy officer contact, and confirm **Caseload restriction = On**.
 4. Administration → Users: create staff accounts. Share temporary passwords in person or by phone, never by email.

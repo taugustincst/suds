@@ -10,7 +10,7 @@ set -u
 # SUDS_UPGRADE_PORT/SUDS_MULTITAB_PORT, to run two suites side by side on one machine without them sharing
 # a database.
 T=${SUDS_UI_TMP:-/tmp}; SETUP_BOOT_PORT=${SETUP_BOOT_PORT:-8095}
-export SUDS_ENV=development SUDS_DATA_DIR=$T/suds-ui-data PORT=${PORT:-8090} SUDS_ADMIN_PASSWORD='AdminPassw0rd!x'
+export SUDS_ENV=development SUDS_DATA_DIR=$T/suds-ui-data PORT=${PORT:-8090} SUDS_ADMIN_PASSWORD='AdminPassw0rd!x' SUDS_ADMIN_USERNAME=admin
 # Every script signs in afresh, several as more than one person; the office default of 20 sign-ins per
 # address per 15 minutes was being hit part-way through the run and failing the later scripts at login.
 export LOGIN_RATE_LIMIT=1000

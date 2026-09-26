@@ -1377,3 +1377,15 @@ test('changing an administrator password deletes the first-admin password file',
     assert.ok(!fs.existsSync(bootstrap.passwordFilePath()), 'gone once an administrator has changed their password');
   } finally { try { fs.unlinkSync(bootstrap.passwordFilePath()); } catch {} }
 });
+
+test('a new office server\'s first administrator is called guest unless SUDS_ADMIN_USERNAME names another', () => {
+  const B = require('../server/bootstrap');
+  const saved = process.env.SUDS_ADMIN_USERNAME;
+  try {
+    delete process.env.SUDS_ADMIN_USERNAME;
+    assert.equal(B.DEFAULT_ADMIN_USERNAME, 'guest');
+    assert.equal(B.adminUsername(), 'guest', 'with nothing configured the first administrator is "guest"');
+    process.env.SUDS_ADMIN_USERNAME = 'itadmin';
+    assert.equal(B.adminUsername(), 'itadmin', 'SUDS_ADMIN_USERNAME still names it');
+  } finally { if (saved === undefined) delete process.env.SUDS_ADMIN_USERNAME; else process.env.SUDS_ADMIN_USERNAME = saved; }
+});

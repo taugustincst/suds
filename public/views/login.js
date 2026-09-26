@@ -170,7 +170,7 @@ function firstRun() {
   const stat = isStaticHost();
   const f = oneColumn(form([
     { name: 'org_name', label: 'Program name (optional)', placeholder: 'e.g. Clark County Harm Reduction Outreach', span: true },
-    { name: 'display_name', label: 'Your name', required: true }, { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', help: stat ? 'You will use this to log in on this device.' : 'Use the same username as on the office SUDS if you have one.' },
+    { name: 'display_name', label: 'Your name', required: true }, { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', value: 'guest', help: stat ? 'Suggested: guest. You will use this to log in on this device.' : 'Use the same username as on the office SUDS if you have one.' },
     { name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: `${PASSWORD_HELP} It encrypts the records on this device: nobody can recover them if it is forgotten, except from a backup.` }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
     // Asked for rather than assumed: a clinician set up as a navigator loses access to clinical notes,
     // including notes they wrote themselves, and only finds out when they try to open one.

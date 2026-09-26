@@ -2,6 +2,8 @@
 process.env.SUDS_ENV = 'test';
 process.env.SUDS_DB_PATH = ':memory:';
 process.env.SUDS_ADMIN_PASSWORD = 'AdminPassw0rd!x';
+// The suite's own first administrator keeps the name its tests sign in with; a real install's is "guest".
+process.env.SUDS_ADMIN_USERNAME = process.env.SUDS_ADMIN_USERNAME || 'admin';
 // Mandatory two-factor is enforced for real (see the dedicated test); the rest of the suite opts out so
 // every other assertion is not about enrolment.
 process.env.MFA_REQUIRED_ROLES = '';
