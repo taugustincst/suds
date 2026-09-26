@@ -38,7 +38,7 @@ await sup.keyboard.press('Escape'); await settle(sup);
 eq((await api(sup, 'POST', '/api/interventions', { type: 'outreach', occurred_at: new Date().toISOString(), funding_source_id: null })).status, 201, 'a visit charged to no fund');
 const today = new Date().toISOString().slice(0, 10); const yearStart = `${today.slice(0, 4)}-01-01`;
 await sup.goto(`${base}/#/funder?from=${yearStart}&to=${today}`); await settle(sup);
-// A supervisor's first view is the programme's own submission to its funder, with exact counts (1.12.5).
+// A supervisor's first view is the programme's own submission to its funder, with exact counts (1.13.0).
 eq(await sup.$eval('[data-counting-mode]', e => e.dataset.purpose), 'submission', 'a supervisor\'s funder report opens as the submission to the funder');
 eq(await sup.$eval('[data-counting-mode]', e => e.dataset.countingMode), 'exact', 'with exact counts');
 eq(await sup.$eval('[data-run-kind] .run-kind-title', e => e.textContent), 'Submission to your funder — not for publication', 'and says prominently what kind of run it is');
