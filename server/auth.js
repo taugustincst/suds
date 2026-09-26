@@ -62,17 +62,24 @@ function ssoPolicy() {
 // reports:exact lets such a run use exact counts instead of small-cell suppression, for the programme's own
 // submission to its funder (server/routes/reports.js); publication always suppresses. It is only ever held
 // with reports:internal, since exact counts are never a publication release.
+// reports:funder (1.14.0) lets a role write the funder report without seeing anyone: the programme's own
+// SUBMISSION runs of the funder report, the NDP log and the settlement report — exact aggregate counts, by
+// fund and for any range — and nothing else. In a small organisation the grants or finance person writes the
+// funder report, and before this needed the supervisor role, which opens every client record. It is not
+// reports:internal (no purpose=internal runs) nor reports:exact: the dashboard and monthly trends stay
+// masked for it (server/dashboard-mask.js reads reportRunAllowed, submissionRunAllowed, which it does not change), and it unlocks
+// no identified export and no client-level screen. Every such run is audited with the purpose, fund and period.
 const PERMS = {
   admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
                'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve','budget:manage',
                'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','graph:import','reports:read','assignments:manage','export:read','export:identified','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','clients:legal-hold','patient-requests:*','careplan:read',
-               'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact'],
+               'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder'],
   supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
                'consents:*','imports:*','graph:import','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*',
-               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact'],
+               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder'],
   // Front-line staff hold export:read so the Export buttons on their own screens work; without
   // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
   clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
@@ -83,9 +90,11 @@ const PERMS = {
                'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','court-orders:read','agreements:read'],
   // finance sees money, not people: export:read without export:identified means every export it can run
   // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
-  // Its people counts are publication releases only (no reports:internal, so no reports:exact): money and hours
-  // are exact in those, and on Budget and Time for any range or fund.
-  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','budget:manage','time:read','time:all','time:approve','reports:read','export:read','users:read','documents:read','documents:write'],
+  // Its people counts are aggregate only: publication releases, and (reports:funder) the programme's own
+  // submission runs of the funder, NDP and settlement reports, exact, by fund and for any range. It holds no
+  // reports:internal or reports:exact, so no internal runs, and its dashboard stays masked. Money and hours
+  // are exact everywhere, and on Budget and Time for any range or fund.
+  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','budget:manage','time:read','time:all','time:approve','reports:read','reports:funder','export:read','users:read','documents:read','documents:write'],
   // readonly is for oversight (a county analyst, an auditor's dashboard): aggregate reports and the resource
   // directory, keyed by client code. It holds neither clients:read nor export:read, so it can identify nobody
   // and take nothing off the system. Its funder, NDP and settlement reports are publication releases only.
@@ -123,6 +132,9 @@ function reportRunAllowed(user, { caseloadScoped = false } = {}) {
   if (hasPerm(user, 'reports:internal')) return true;
   return hasPerm(user, 'clients:read') && (caseloadScoped || !caseloadRestricted(user));
 }
+// May this user run the programme's own submission of the funder report, the NDP log or the settlement
+// report (purpose=submission, exact counts, by fund, any range) without client-level access? reports:funder.
+function submissionRunAllowed(user) { return hasPerm(user, 'reports:funder'); }
 
 // Caseload scoping: roles without clients:all only see clients assigned to them (setting can disable).
 // A de-identified role (finance) is not caseload-scoped because it never sees who the client is — which is
@@ -501,5 +513,5 @@ function passwordPolicy(pw) {
   return errors;
 }
 
-module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed,
+module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
   createSession, markReauth, reauthStatus, verifySigner, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

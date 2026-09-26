@@ -1,6 +1,6 @@
 // The report a funder actually asks for. Every count here is unduplicated — people, not services — which
 // the platform previously could not produce: it could say "1,400 services" but not "310 people".
-import { h, route, get, state, fmt, can, pageHead, bars, stat, table, downloadCsv, nav, emptyState } from '../app.js';
+import { h, route, get, state, fmt, can, pageHead, bars, stat, table, downloadCsv, nav, emptyState, moduleOn } from '../app.js';
 
 // A suppressed small cell arrives as a string ("<11", or "suppressed" when it is hidden only so that another
 // cannot be worked out from a total) and is shown as sent.
@@ -36,6 +36,12 @@ export function isPublishablePeriod(from, to) {
 export function mayRunInternalReports({ caseloadScoped = true } = {}) {
   return can('reports:internal') || (can('clients:read') && (caseloadScoped || can('clients:all')));
 }
+/**
+ * Whether this role runs the program's own submission to its funder (server/auth.js submissionRunAllowed):
+ * reports:internal (supervisor, administrator) or reports:funder (finance, 1.14.0) — exact aggregate counts,
+ * for any range or fund, and nothing client-level.
+ */
+export function maySubmit() { return can('reports:internal') || can('reports:funder'); }
 
 /** What to do before sharing a publication release (docs/HIPAA.md "Small cells in aggregate reports"). */
 export function publicationGuidance() {
@@ -102,12 +108,14 @@ export function withheldTables(d) {
 }
 
 route('funder', async (r) => {
-  const internalOk = mayRunInternalReports();
-  // A supervisor or an administrator opens the programme's own submission to its funder; publication is a step
-  // they choose ("Prepare a publication release"). Finance and read-only accounts run publication releases only.
-  const submissionOk = can('reports:internal');
+  // A supervisor, an administrator or finance (reports:funder) opens the programme's own submission to its
+  // funder, for any range or fund; publication is a step they choose ("Prepare a publication release"), while
+  // publication releases are switched on (Settings › Program › Modules). Read-only runs publication releases only.
+  const submissionOk = maySubmit();
+  const internalOk = mayRunInternalReports() || submissionOk;
+  const pubOn = moduleOn('publication');
   const { lastMonth, lastQuarter, lastYear } = publishablePeriods();
-  const wantPublication = submissionOk && r.query.get('purpose') === 'publication';
+  const wantPublication = submissionOk && pubOn && r.query.get('purpose') === 'publication';
   // A role that runs publication releases only opens on the last quarter that has ended, not a year to date.
   const [dFrom, dTo] = internalOk ? [null, null] : lastQuarter();
   const to = r.query.get('to') || dTo || fmt.today();
@@ -115,7 +123,8 @@ route('funder', async (r) => {
   const fund = internalOk && !wantPublication ? r.query.get('funding_source_id') || '' : '';
   // A submission counts exactly for a role that holds reports:exact (the server's default); it can choose
   // small cells suppressed instead. counts=exact (older links) is the default already.
-  const suppressedAsked = r.query.get('counts') === 'suppressed' && can('reports:exact');
+  const exactOk = can('reports:exact') || can('reports:funder');
+  const suppressedAsked = r.query.get('counts') === 'suppressed' && exactOk;
   const countQs = wantPublication ? '&purpose=publication' : suppressedAsked ? '&counts=suppressed' : '';
   const qs = `from=${from}&to=${to}${fund ? `&funding_source_id=${fund}` : ''}${countQs}`;
   const periodButtons = (onPick, label = 'Periods you can publish (whole program, ended):') => h('div', { class: 'filters', role: 'group', 'aria-label': 'Periods you can publish', 'data-publishable-periods': '1' },
@@ -132,15 +141,16 @@ route('funder', async (r) => {
     if (err.status !== 403 && err.status !== 422 && err.status !== 400) throw err;
     // A role that runs publication releases only, given a link to any other run, or a publication release that
     // was refused: say why, and offer what can be run instead of an error page.
+    // With publication releases switched off there is no period to offer a publication-only role.
     return h('div', {}, pageHead('Funder report'),
       h('div', { class: 'banner warn', role: 'alert', 'data-funder-refused': '1' }, err.message),
       submissionOk ? h('p', {}, backToSubmission()) : null,
-      periodButtons(submissionOk ? publish : ([s, e]) => nav(`funder?from=${s}&to=${e}`)));
+      pubOn ? periodButtons(submissionOk ? publish : ([s, e]) => nav(`funder?from=${s}&to=${e}`)) : null);
   }
 
   const fromI = h('input', { type: 'date', value: from, 'aria-label': 'From' });
   const toI = h('input', { type: 'date', value: to, 'aria-label': 'To' });
-  const countsI = can('reports:exact') ? h('select', { 'aria-label': 'Counts', 'data-counts': '1' },
+  const countsI = exactOk ? h('select', { 'aria-label': 'Counts', 'data-counts': '1' },
     h('option', { value: '', selected: !suppressedAsked }, 'Exact counts (for your funder)'),
     h('option', { value: 'suppressed', selected: suppressedAsked }, 'Small cells suppressed')) : null;
   const go = (f, t) => nav(`funder?from=${f}&to=${t}${fundI.value ? `&funding_source_id=${fundI.value}` : ''}${countsI && countsI.value === 'suppressed' ? '&counts=suppressed' : ''}`);
@@ -168,7 +178,7 @@ route('funder', async (r) => {
   // "Prepare a publication release": only to publish or share beyond the funder. It covers the whole programme
   // for one standard period that has ended; the current range when it is one, or one of the periods offered.
   const canPublishThis = isPublishablePeriod(from, to) && !fund;
-  const preparePublication = submissionOk && !publishable ? h('section', { class: 'card', 'data-prepare-publication': '1' },
+  const preparePublication = submissionOk && pubOn && !publishable ? h('section', { class: 'card', 'data-prepare-publication': '1' },
     h('h2', {}, 'Prepare a publication release'),
     h('p', { class: 'small muted' }, 'Only when figures will be published or shared beyond your funder: a public dashboard, a board pack, a county website. A publication release covers the whole program for one month, quarter or fiscal year that has ended. Small counts are screened; a table the automatic check cannot confirm is protected is withheld and listed with the reason; and you confirm you have reviewed it before its files are exported. The submission above is what your funder asks for.'),
     canPublishThis ? h('p', {}, h('button', { class: 'btn', 'data-prepare-publication-button': '1', onClick: () => publish([from, to]) }, `Prepare a publication release for ${fmt.date(from)} – ${fmt.date(to)}`)) : null,
@@ -180,6 +190,7 @@ route('funder', async (r) => {
       can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Export everything to Excel') : null),
     // Which kind of run this is, first: the exported file says the same on its About sheet.
     runKindBanner(d, publishable || submissionOk ? null : h('p', { class: 'small' }, 'To publish or share figures, a supervisor or an administrator prepares a publication release.')),
+    pubOn ? null : h('p', { class: 'small muted', 'data-publication-off': '1' }, 'Publication releases are switched off for this program (Settings › Program › Modules): this report is for your funder, not for publishing or sharing.'),
     h('p', { class: 'muted' }, 'Counts of people, each counted once however many times they were served. This is the shape most grant reporting asks for. It is not a CalOMS Tx submission: CalOMS records are collected, checked and extracted under Reports → State reporting.'),
     // A publication release: what was withheld and why, what to do before sharing it, and the confirmation its files need.
     publishable ? h('section', { class: 'card', 'data-publication-review-step': '1' },
@@ -198,11 +209,11 @@ route('funder', async (r) => {
       h('button', { class: 'btn ghost sm', onClick: () => { const [s, e] = fy(10); go(s, e); } }, 'Fiscal year (Oct–Sep)'),
       h('button', { class: 'btn ghost sm', onClick: () => go(`${to.slice(0, 4)}-01-01`, to) }, 'Calendar year'))
       : null,
-    internalOk ? null : h('p', { class: 'small muted', 'data-publication-only': '1' }, 'Your role runs publication releases only: the whole program for one month, quarter or fiscal year that has ended, with small counts screened. The program\'s submission to its funder, custom ranges and single funds are run by a supervisor or administrator.',
+    internalOk ? null : h('p', { class: 'small muted', 'data-publication-only': '1' }, 'Your role runs publication releases only: the whole program for one month, quarter or fiscal year that has ended, with small counts screened. The program\'s submission to its funder, custom ranges and single funds are run by a supervisor, an administrator or finance.',
       can('budget:read') ? ' Money and staff hours for any period or fund are on Funding & spending.' : ''),
     // Other periods: a supervisor preparing a release picks another period to publish; a publication-only role
     // runs one of them; a caseload-scoped role's runs are internal, so it gets none.
-    publishable ? periodButtons(submissionOk ? publish : ([s, e]) => nav(`funder?from=${s}&to=${e}`)) : internalOk ? null : periodButtons(([s, e]) => nav(`funder?from=${s}&to=${e}`)),
+    publishable ? periodButtons(submissionOk ? publish : ([s, e]) => nav(`funder?from=${s}&to=${e}`)) : internalOk || !pubOn ? null : periodButtons(([s, e]) => nav(`funder?from=${s}&to=${e}`)),
     preparePublication,
     d.caseload_scope_note ? h('p', { class: 'small muted', 'data-caseload-scope': '1' }, d.caseload_scope_note) : null,
 

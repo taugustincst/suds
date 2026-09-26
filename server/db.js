@@ -568,6 +568,18 @@ const migrations = [
     encryptColumn(d, 'court_orders', 'document_ref', 'document_ref_enc');
     encryptColumn(d, 'disclosure_agreements', 'document_ref', 'document_ref_enc');
   },
+  // 44: SUPRT-A records for a State Opioid Response grant (server/suprt.js). A new table; nothing to backfill.
+  //     Self-contained and idempotent, so it can be renumbered when merged beside other 1.14.0 migrations.
+  (d) => {
+    d.exec(`CREATE TABLE IF NOT EXISTS suprt_assessments (id TEXT PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      assessment_type TEXT NOT NULL CHECK (assessment_type IN ('baseline','reassessment','annual','closeout')), assessment_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','complete')), answers_enc TEXT, derived_keys TEXT, exported_at TEXT,
+      created_by TEXT REFERENCES users(id), updated_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_suprt_assessments_client ON suprt_assessments(client_id, assessment_date)`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_suprt_assessments_date ON suprt_assessments(assessment_date)`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_suprt_assessments_updated ON suprt_assessments(updated_at)`);
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

@@ -1246,3 +1246,25 @@ CREATE TABLE IF NOT EXISTS disclosure_agreements (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_disclosure_agreements_updated ON disclosure_agreements(updated_at);
+
+-- SUPRT-A (1.14.0, server/suprt.js, docs/compliance/SUPRT.md): SAMHSA's client-level performance record for a
+-- State Opioid Response (SOR) grant, at baseline, reassessment, annual and closeout. The answers (the client
+-- code, diagnoses, date of birth, services) are PHI and live only in answers_enc, as JSON; what stays readable
+-- is what the due list and the completion rates need: which assessment, on what day, and whether it is done.
+CREATE TABLE IF NOT EXISTS suprt_assessments (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  assessment_type TEXT NOT NULL CHECK (assessment_type IN ('baseline','reassessment','annual','closeout')),
+  assessment_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','complete')),
+  answers_enc TEXT,                    -- encrypted JSON: { item key: answer }
+  derived_keys TEXT,                   -- comma separated item keys whose answer came from the client record (not PHI)
+  exported_at TEXT,                    -- when it was last put in a SPARS entry file (a disclosure, accounted for)
+  created_by TEXT REFERENCES users(id),
+  updated_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_suprt_assessments_client ON suprt_assessments(client_id, assessment_date);
+CREATE INDEX IF NOT EXISTS idx_suprt_assessments_date ON suprt_assessments(assessment_date);
+CREATE INDEX IF NOT EXISTS idx_suprt_assessments_updated ON suprt_assessments(updated_at);

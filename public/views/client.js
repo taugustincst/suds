@@ -41,7 +41,7 @@ route('client', async (r) => {
   // The everyday sections first, in the order a visit is worked (and the same on every width): what
   // happened, what was written, what is owed, whether it may be shared, where they were sent. Consents used to
   // sit under "More" at 1280 px while Problems and Care plan took the room.
-  const tabs = [['overview', 'Overview'], ['interventions', `Visits (${c.counts.interventions})`], ['notes', `Notes (${c.counts.notes})`], ['tasks', `To-dos (${c.counts.open_tasks})`], ['consents', 'Consents'], ['referrals', `Referrals (${c.counts.referrals})`], ['calls', `Calls (${c.counts.calls})`], ['timeline', 'Timeline'], can('careplan:read') && shows('careplan', 'problems') ? ['problems', 'Problems'] : null, can('careplan:read') && shows('careplan', 'careplan') ? ['careplan', 'Care plan'] : null, can('assessments:read') && shows('assessments', 'assessments') ? ['assessments', 'Assessments'] : null, ['forms', `Forms (${c.counts.forms || 0})`], ['episodes', 'Episodes'], ['requests', 'Requests'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team']].filter(Boolean);
+  const tabs = [['overview', 'Overview'], ['interventions', `Visits (${c.counts.interventions})`], ['notes', `Notes (${c.counts.notes})`], ['tasks', `To-dos (${c.counts.open_tasks})`], ['consents', 'Consents'], ['referrals', `Referrals (${c.counts.referrals})`], ['calls', `Calls (${c.counts.calls})`], ['timeline', 'Timeline'], can('careplan:read') && shows('careplan', 'problems') ? ['problems', 'Problems'] : null, can('careplan:read') && shows('careplan', 'careplan') ? ['careplan', 'Care plan'] : null, can('assessments:read') && shows('assessments', 'assessments') ? ['assessments', 'Assessments'] : null, shows('suprt', 'suprt') ? ['suprt', 'SUPRT-A'] : null, ['forms', `Forms (${c.counts.forms || 0})`], ['episodes', 'Episodes'], ['requests', 'Requests'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team']].filter(Boolean);
   // What can be added to this record. On a wide screen each is its own button; on a phone (styles.css,
   // .client-actions) they fold into one "Add…" button that opens the same list, so the section tabs are not
   // pushed below the fold by a wall of buttons.
@@ -121,6 +121,7 @@ route('client', async (r) => {
     async problems() { return (await import('./clinical.js')).problemsTab(id, { refresh }); },
     async careplan() { return (await import('./clinical.js')).carePlanTab(id, { refresh, clientDisplay: disp }); },
     async assessments() { return (await import('./clinical.js')).assessmentsTab(id, { refresh, clientDisplay: disp }); },
+    async suprt() { return (await import('./suprt.js')).suprtTab(id, { refresh, clientDisplay: disp }); },
     async timeline() {
       const { events } = await get(`/api/clients/${id}/timeline`);
       if (!events.length) return h('div', { class: 'empty' }, 'No activity yet.');

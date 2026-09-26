@@ -184,16 +184,19 @@ function programmeCard(s, refresh) {
       options: p.profiles.map(x => ({ value: x.value, label: x.label })), help: (p.profiles.find(x => x.value === p.profile) || {}).help },
     { type: 'section', label: 'Modules', heading: false },
     ...p.module_list.map(m => ({ name: `module_${m.key}`, label: m.label, type: 'select', noBlank: true, value: p.overrides[m.key] ?? '', help: m.help,
-      options: [{ value: '', label: `As the profile has it (${p.profile === 'treatment' ? 'on' : 'off'} for ${profileLabel(p.profile)})` }, { value: '1', label: 'On' }, { value: '0', label: 'Off' }] })),
+      // A clinical module follows the profile; SUPRT-A and publication releases have their own default.
+      options: [{ value: '', label: m.clinical === false ? `Default (${m.default_on ? 'on' : 'off'}: ${m.defaultWhy})` : `As the profile has it (${p.profile === 'treatment' ? 'on' : 'off'} for ${profileLabel(p.profile)})` }, { value: '1', label: 'On' }, { value: '0', label: 'Off' }] })),
   ], { submitText: 'Save program profile', onSubmit: async (d) => {
     await put('/api/admin/settings', d);
     try { state.programme = (await get('/api/auth/me')).programme || state.programme; } catch { /* the next sign-in picks it up */ }
     toast('Program profile saved', 'ok'); refresh();
   } });
-  const onNow = p.module_list.filter(m => p.modules[m.key]).map(m => m.label);
+  const onNow = p.module_list.filter(m => m.clinical !== false && p.modules[m.key]).map(m => m.label);
+  const othersOn = p.module_list.filter(m => m.clinical === false && p.modules[m.key]).map(m => m.label);
   return h('div', { class: 'card', 'data-programme-profile': p.profile }, h('h2', {}, 'Program profile & modules'),
     h('p', { class: 'small muted' }, 'Decides what the menus, client records and Home lead with. Permissions do not change: a module switched off hides it and stops new records in it; anything already recorded can still be read.'),
     h('p', { class: 'small', 'data-modules-on': onNow.length }, onNow.length ? `Switched on: ${onNow.join(', ')}.` : 'No clinical modules are switched on.'),
+    h('p', { class: 'small', 'data-other-modules-on': othersOn.join(',') }, othersOn.length ? `Also on: ${othersOn.join(', ')}.` : 'SUPRT-A and publication releases are both off.'),
     f);
 }
 // On a device copy, the settings the office server has elsewhere: backups and restore are on This device,
@@ -252,7 +255,7 @@ route('admin', async (r) => {
         // Opened when the funder report's "no default funding source" warning links here (section=reporting).
         { type: 'section', label: 'Reporting', hint: 'default fund, small cells, naloxone doses', collapsible: true, heading: true, open: r.query.get('section') === 'reporting' },
         { name: 'default_fund_id', label: 'Default funding source for new visits', type: 'select', placeholder: '— none —', options: (state.funds || []).map(f => ({ value: f.id, label: f.name })), span: true, help: 'Pre-filled on the visit form, and charged when the worker does not choose a fund. A worker\'s own default (Users & roles → Edit) comes first.' },
-        { name: 'small_cell_threshold', label: 'Small-cell threshold (funder, NDP and settlement reports)', type: 'number', min: 2, max: 50, step: 1, value: s.small_cell_threshold || '11', help: 'Every count of people (or of overdoses and reversals) under this is shown as "<N", with another figure hidden beside it wherever it could be worked out from a total, unless a supervisor or administrator runs the report with exact counts for the program\'s own submission. Finance and read-only accounts run publication releases only.' },
+        { name: 'small_cell_threshold', label: 'Small-cell threshold (funder, NDP and settlement reports)', type: 'number', min: 2, max: 50, step: 1, value: s.small_cell_threshold || '11', help: 'Every count of people (or of overdoses and reversals) under this is shown as "<N", with another figure hidden beside it wherever it could be worked out from a total, unless a supervisor, an administrator or finance runs the report with exact counts for the program\'s own submission. Read-only accounts run publication releases only.' },
         { name: 'naloxone_doses_per_kit', label: 'Naloxone doses per kit (NDP log)', type: 'number', min: 1, max: 20, step: 1, value: s.naloxone_doses_per_kit || '2' },
         // Scheduled server backups belong to the office server. A device copy has no backup schedule and no
         // backup folder: it showed "every 0 hours, keep 0" fields that did nothing. Its backups are on the

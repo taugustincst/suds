@@ -1,6 +1,6 @@
-import { h, route, get, state, fmt, can, pageHead, bars, stat, table, downloadCsv, nav, sparkline, form, modal, toast, moduleOn } from '../app.js';
+import { h, route, get, put, state, fmt, can, pageHead, bars, stat, table, downloadCsv, nav, sparkline, form, modal, toast, moduleOn } from '../app.js';
 import { withRestrictionCheck } from './part2.js';
-import { isPublishablePeriod, mayRunInternalReports, publicationGuidance, publicationReview } from './funder.js';
+import { isPublishablePeriod, mayRunInternalReports, maySubmit, publicationGuidance, publicationReview } from './funder.js';
 
 // An identified export is a disclosure: fetched here rather than followed as a link, so a refusal (no lawful
 // basis, a client without consent, an agreed restriction to check) is shown as a message, not saved as a file.
@@ -95,17 +95,21 @@ route('reports', async (r) => {
   // one. A role that runs publication releases only (finance, read-only; a caseload-scoped role for the
   // whole-programme settlement report) gets the buttons only for a range that is one: any other is refused
   // (server/routes/reports.js requireReportRun), and a refusal fetched anyway is shown as its message.
-  const pubRange = isPublishablePeriod(from, to);
+  // Publication releases can be switched off (Settings › Program › Modules); then only submissions are made.
+  const pubOn = moduleOn('publication');
+  const pubRange = pubOn && isPublishablePeriod(from, to);
   const wholeProgramme = !can('clients:read') || can('clients:all');
-  const ndpOk = mayRunInternalReports({ caseloadScoped: true }) || pubRange;
-  const settlementOk = mayRunInternalReports({ caseloadScoped: false }) || (pubRange && wholeProgramme);
-  const onlyPublication = h('span', { class: 'small muted', 'data-hr-publication-only': '1' }, ' Your role can download this only as a publication release: set the range above to one calendar month, quarter or fiscal year that has ended.');
-  const submissionOk = can('reports:internal');
+  // reports:funder (finance): the programme's submission of both reports, for any range.
+  const submissionOk = maySubmit();
+  const ndpOk = submissionOk || mayRunInternalReports({ caseloadScoped: true }) || pubRange;
+  const settlementOk = submissionOk || mayRunInternalReports({ caseloadScoped: false }) || (pubRange && wholeProgramme);
+  const onlyPublication = h('span', { class: 'small muted', 'data-hr-publication-only': '1' }, pubOn ? ' Your role can download this only as a publication release: set the range above to one calendar month, quarter or fiscal year that has ended.' : ' Publication releases are switched off for this program, and your role runs no other kind of this report.');
+  const exactOk = can('reports:exact') || can('reports:funder');
   // What kind of file: the submission (default), the submission with small cells suppressed, or a publication release.
   const hrKind = submissionOk ? h('select', { id: 'hr-kind', 'data-hr-kind': '1' },
-    h('option', { value: '' }, can('reports:exact') ? 'Submission to your funder, exact counts — not for publication' : 'Submission to your funder — not for publication'),
-    can('reports:exact') ? h('option', { value: 'suppressed' }, 'Submission to your funder, small cells suppressed — not for publication') : null,
-    h('option', { value: 'publication', disabled: !pubRange }, pubRange ? 'Publication release — to publish or share' : 'Publication release (only for a month, quarter or fiscal year that has ended)')) : null;
+    h('option', { value: '' }, exactOk ? 'Submission to your funder, exact counts — not for publication' : 'Submission to your funder — not for publication'),
+    exactOk ? h('option', { value: 'suppressed' }, 'Submission to your funder, small cells suppressed — not for publication') : null,
+    h('option', { value: 'publication', disabled: !pubRange }, !pubOn ? 'Publication release (switched off for this program)' : pubRange ? 'Publication release — to publish or share' : 'Publication release (only for a month, quarter or fiscal year that has ended)')) : null;
   const kindOf = () => (hrKind ? hrKind.value : pubRange && wholeProgramme ? 'publication' : '');
   const hrQs = () => ({ suppressed: '&counts=suppressed', publication: '&purpose=publication' }[hrKind ? hrKind.value : ''] || '');
   // A publication release's file needs the review confirmed first; the box and the guidance are shown only for one.
@@ -128,7 +132,14 @@ route('reports', async (r) => {
       h('div', { class: 'row mb' }, h('span', {}, h('b', {}, 'Naloxone distribution & reversal log (NDP-style)'), h('span', { class: 'small muted' }, ' — kits and doses by day, site and recipient type; reversals reported. Check the columns against the current NDP reporting template before submitting.')),
         ndpOk ? [h('button', { class: 'btn sm', 'data-ndp-export': 'xlsx', onClick: () => hrDownload(rv, `/api/reports/naloxone-ndp/export?from=${from}&to=${to}&format=xlsx${hrQs()}`) }, 'NDP log (Excel)'), h('button', { class: 'btn sm ghost', 'data-ndp-export': 'csv', onClick: () => hrDownload(rv, `/api/reports/naloxone-ndp/export?from=${from}&to=${to}${hrQs()}`) }, 'CSV')] : onlyPublication),
       can('budget:read') ? h('div', { class: 'row' }, h('span', {}, h('b', {}, 'Opioid settlement expenditures'), h('span', { class: 'small muted' }, ' — spending from settlement funds by allowable use (Exhibit E) and California High Impact Abatement Activity. Categories need verification against each fund\'s agreement.')),
-        settlementOk ? [h('button', { class: 'btn sm', 'data-settlement-export': 'xlsx', onClick: () => hrDownload(rv, `/api/reports/opioid-settlement/export?from=${from}&to=${to}&format=xlsx${hrQs()}`) }, 'Settlement report (Excel)'), h('button', { class: 'btn sm ghost', 'data-settlement-export': 'csv', onClick: () => hrDownload(rv, `/api/reports/opioid-settlement/export?from=${from}&to=${to}${hrQs()}`) }, 'CSV')] : onlyPublication.cloneNode(true)) : null);
+        settlementOk ? [h('button', { class: 'btn sm', 'data-settlement-export': 'xlsx', onClick: () => hrDownload(rv, `/api/reports/opioid-settlement/export?from=${from}&to=${to}&format=xlsx${hrQs()}`) }, 'Settlement report (Excel)'), h('button', { class: 'btn sm ghost', 'data-settlement-export': 'csv', onClick: () => hrDownload(rv, `/api/reports/opioid-settlement/export?from=${from}&to=${to}${hrQs()}`) }, 'CSV')] : onlyPublication.cloneNode(true)) : null,
+      // The same spending in the DHCS settlement expenditure layout, or a county's own template: the program's
+      // own report (a submission), never a publication release.
+      can('budget:read') && submissionOk ? h('div', { class: 'row mt', 'data-settlement-layouts': '1' }, h('span', {}, h('b', {}, 'For DHCS or your county'), h('span', { class: 'small muted' }, ' — the settlement spending one row per activity, in the DHCS settlement expenditure layout or your county\'s template. SUDS fills the categories, amounts and people served; the narrative columns are left for you to write.')),
+        h('button', { class: 'btn sm', 'data-settlement-layout': 'dhcs', onClick: () => fetchDownload(`/api/reports/opioid-settlement/export?from=${from}&to=${to}&layout=dhcs&format=xlsx${hrKind && hrKind.value === 'suppressed' ? '&counts=suppressed' : ''}`).catch(e => toast(e.message, 'danger')) }, 'DHCS settlement expenditure layout (Excel)'),
+        h('button', { class: 'btn sm ghost', 'data-settlement-layout': 'dhcs-csv', onClick: () => fetchDownload(`/api/reports/opioid-settlement/export?from=${from}&to=${to}&layout=dhcs${hrKind && hrKind.value === 'suppressed' ? '&counts=suppressed' : ''}`).catch(e => toast(e.message, 'danger')) }, 'CSV'),
+        h('button', { class: 'btn sm', 'data-settlement-layout': 'county', onClick: () => fetchDownload(`/api/reports/opioid-settlement/export?from=${from}&to=${to}&layout=county&format=xlsx`).catch(e => toast(e.message, 'danger')) }, 'County template (Excel)'),
+        can('budget:manage') ? h('button', { class: 'btn sm ghost', 'data-county-template': '1', onClick: () => openCountyTemplate() }, 'Set up the county template') : null) : null);
   const exportsCard = () => h('div', { class: 'card', 'data-exports': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Export to Excel or CSV')),
     h('p', { class: 'small muted' }, 'The range above chooses the rows (clients, resources and to-dos are complete lists).'),
     exportGroup('Funder & program', 'For grant reports and the program\'s own books: everything in one workbook, staff time and the resource directory, and — for roles that see the budget — funding, budget lines and spending.', { 'data-export-group': 'programme' },
@@ -160,5 +171,50 @@ route('reports', async (r) => {
     (seesEpisodes && moduleOn('caloms')) || (can('export:identified') && (moduleOn('caloms') || moduleOn('handoff'))) ? h('div', { class: 'card mb', 'data-state-reporting-link': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'State reporting & county EHR hand-off'), h('a', { class: 'btn sm primary', href: '#/caloms' }, 'Open')),
       h('p', { class: 'small muted' }, 'CalOMS Tx admission, discharge and annual update records: the validation report and the extract for DHCS. And the encounter hand-off for the county EHR — SUDS does not submit Drug Medi-Cal claims.')) : null,
     h('div', { class: 'card mb' }, h('div', { class: 'card-head' }, h('h2', {}, `Monthly trend (last ${months} months)`), h('div', { class: 'row' }, [6, 12, 24].map(n => h('button', { class: `btn sm ${n === months ? 'primary' : ''}`, onClick: () => nav(`reports?from=${from}&to=${to}&months=${n}`) }, `${n}m`)))), monthTable()),
+    moduleOn('suprt') && can('clients:read') ? h('div', { class: 'card mb', 'data-suprt-link': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'SUPRT-A (SOR client-level reporting)'), h('a', { class: 'btn sm primary', href: '#/suprt' }, 'Open')),
+      h('p', { class: 'small muted' }, 'Completion of baselines, reassessments, annual assessments and closeouts, and the file for entry into SPARS.')) : null,
     can('export:read') ? exportsCard() : null);
 });
+
+/**
+ * The county's own settlement template, matched without code: its name and, in order, each column's heading
+ * and where its value comes from (a field of the DHCS layout, blank for the program to write, or fixed text).
+ */
+async function openCountyTemplate() {
+  const d = await get('/api/reports/settlement-layout');
+  const cur = d.county || { name: '', columns: [] };
+  const rows = cur.columns.length ? cur.columns.map(c => ({ ...c })) : [{ label: '', source: 'exhibit_e_category' }];
+  const list = h('div', { 'data-county-columns': '1' });
+  const nameI = h('input', { type: 'text', id: 'county-template-name', value: cur.name, maxlength: 100, required: true, 'aria-required': 'true' });
+  const err = h('div', { class: 'banner danger hidden', role: 'alert', tabindex: '-1' });
+  const draw = () => {
+    list.replaceChildren(...rows.map((c, i) => {
+      const labelI = h('input', { type: 'text', id: `county-col-${i}`, value: c.label, maxlength: 100, onInput: (e) => { c.label = e.target.value; } });
+      const srcI = h('select', { id: `county-src-${i}`, onChange: (e) => { c.source = e.target.value; draw(); } }, d.sources.map(o => h('option', { value: o.value, selected: o.value === c.source }, o.label)));
+      const textI = c.source === 'text' ? h('input', { type: 'text', id: `county-text-${i}`, value: c.text || '', maxlength: 200, onInput: (e) => { c.text = e.target.value; } }) : null;
+      return h('fieldset', { class: 'section', 'data-county-column': String(i) }, h('legend', {}, `Column ${i + 1}`),
+        h('div', { class: 'form-grid' },
+          h('div', { class: 'field' }, h('label', { for: `county-col-${i}` }, 'Heading in the county template'), labelI),
+          h('div', { class: 'field' }, h('label', { for: `county-src-${i}` }, 'Filled with'), srcI),
+          textI ? h('div', { class: 'field' }, h('label', { for: `county-text-${i}` }, 'Text'), textI) : null),
+        h('div', { class: 'row' },
+          i > 0 ? h('button', { class: 'btn sm ghost', type: 'button', onClick: () => { [rows[i - 1], rows[i]] = [rows[i], rows[i - 1]]; draw(); } }, `Move column ${i + 1} up`) : null,
+          h('button', { class: 'btn sm ghost', type: 'button', onClick: () => { rows.splice(i, 1); draw(); } }, `Remove column ${i + 1}`)));
+    }));
+  };
+  draw();
+  const save = async (county) => {
+    err.classList.add('hidden');
+    try { await put('/api/reports/settlement-layout', { county }); m.close(); toast(county ? 'County template saved' : 'County template removed', 'ok'); }
+    catch (e) { err.textContent = e.message; err.classList.remove('hidden'); err.focus(); }
+  };
+  const m = modal('County settlement template', h('div', { 'data-county-template-form': '1' },
+    h('p', { class: 'small muted' }, 'Match your county\'s subrecipient report without code: name it, then give each of its columns in order, and say what SUDS fills it with. Columns SUDS cannot fill are left blank for you to write. Check the result against the county\'s current template.'),
+    err,
+    h('div', { class: 'field' }, h('label', { for: 'county-template-name' }, 'Template name *'), nameI),
+    list,
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn', type: 'button', onClick: () => { rows.push({ label: '', source: 'blank' }); draw(); list.lastElementChild?.querySelector('input')?.focus(); } }, '+ Add a column'),
+      d.county ? h('button', { class: 'btn ghost', type: 'button', onClick: () => save(null) }, 'Remove the template') : null,
+      h('button', { class: 'btn primary', type: 'button', 'data-county-template-save': '1', onClick: () => save({ name: nameI.value, columns: rows }) }, 'Save template'))), { wide: true });
+}
