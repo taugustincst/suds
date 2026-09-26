@@ -59,6 +59,21 @@ await sup.click('[data-publishable-periods] [data-period=month]'); await settle(
 ok(await until(async () => (await sup.$eval('[data-counting-mode]', e => e.dataset.purpose)) === 'publication'), 'last month, whole programme, is a publication release');
 ok(/Publication release/.test(await sup.$eval('[data-counting-mode]', e => e.textContent)), 'and the banner says so');
 ok(/from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}/.test(sup.url()), 'for one calendar month', sup.url());
+ok(/small cells screened; review before sharing/.test(await sup.$eval('[data-counting-mode]', e => e.textContent)), 'labelled as screened, to be reviewed before sharing');
+// Its file needs the review confirmed first: without the tick nothing downloads and the page says why.
+ok(await sup.$('[data-publication-review] input[type=checkbox]'), 'a publication release asks for the review to be confirmed before export');
+let early = null; sup.once('download', d => { early = d; });
+await sup.click('[data-funder-export=xlsx]'); await settle(sup);
+eq(early, null, 'without the confirmation, the file is not exported');
+ok(/Tick/.test(await sup.$eval('[data-publication-review-why]', e => e.textContent)), 'and the page says what to do');
+eq(await sup.evaluate(() => document.activeElement && document.activeElement.dataset.publicationReviewed), '1', 'with focus on the confirmation');
+await sup.check('[data-publication-review] input[type=checkbox]');
+const [px] = await Promise.all([sup.waitForEvent('download'), sup.click('[data-funder-export=xlsx]')]);
+ok(/publication-screened-review-before-sharing\.xlsx$/.test(px.suggestedFilename()), 'confirmed, the release downloads, named as screened and to be reviewed', px.suggestedFilename());
+const pab = readWorkbook(fs.readFileSync(await px.path())).find(s => s.name === 'About');
+ok(pab && pab.rows.some(r => /small cells screened; review before sharing/.test(r.join(' '))), 'and its About sheet says so');
+const reviewed = await api(admin, 'GET', '/api/admin/audit?action=report.publication.reviewed');
+ok(reviewed.data.rows.some(r => r.action === 'report.publication.reviewed' && r.details && r.details.release_id && r.details.report === 'funder'), 'the confirmation is in the audit log, with the release id', JSON.stringify(reviewed.data).slice(0, 300));
 
 // ---- harm-reduction reports on the Reports page ----
 await sup.goto(`${base}/#/reports?from=${yearStart}&to=${today}`); await settle(sup);

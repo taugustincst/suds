@@ -42,7 +42,9 @@ CalOMS Tx, and the county EHR hand-off. Most harm-reduction programmes will not 
   distribution. Every count of people under 11 is suppressed (`<11`), with complementary suppression across
   every table that shares a total, so that a hidden cell cannot be worked out from the rest of the report; kits,
   doses and money stay exact. Only a run for the whole programme and one month, quarter or fiscal year that has
-  ended is labelled for publication; a run for one fund or a custom range is marked internal, not for
+  ended is a publication release, labelled *small cells screened; review before sharing*: its file downloads
+  only after the person confirms they reviewed the withheld and small figures, and it is a conservative screen,
+  not a guarantee or an expert determination; a run for one fund or a custom range is marked internal, not for
   publication. Two releases for nested periods (a quarter and its year) can still be subtracted from each other,
   so publish one period per funder cycle ([docs/HIPAA.md](../HIPAA.md#small-cells-in-aggregate-reports)).
   (Only the funder report, the naloxone log and the settlement report suppress small cells; the other reports

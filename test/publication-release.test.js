@@ -83,13 +83,42 @@ test('API: determinism - asking again, or for the export, serves the identical r
   assert.deepEqual(strip(again.pub.funder), strip(first.pub.funder));
   assert.deepEqual(again.pub.settlement.services_by_use, first.pub.settlement.services_by_use);
   // The files print the same cells.
-  const csv = String((await sup.get(`/api/reports/funder/export?${AUG}&format=csv`)).data);
+  const csv = String((await sup.get(`/api/reports/funder/export?${AUG}&format=csv&reviewed=1`)).data);
   assert.match(csv, /publication/i);
   for (const x of first.pub.funder.demographics.by_gender) assert.ok(csv.includes(`Gender,${x.k},${x.n}`), `${x.k} ${x.n}`);
-  const sx = await sup.raw(`/api/reports/opioid-settlement/export?${AUG}&format=xlsx`);
+  const sx = await sup.raw(`/api/reports/opioid-settlement/export?${AUG}&format=xlsx&reviewed=1`);
   const wb = require('../server/spreadsheet').readWorkbook(Buffer.from(await sx.arrayBuffer()));
   const services = wb.find(s => s.name === 'Services');
   for (const x of first.pub.settlement.services_by_use) assert.ok(services.rows.some(row => row.map(String).includes(String(x.people))), `${x.people} in ${JSON.stringify(services.rows)}`);
+});
+
+test('API: a publication release\'s file is exported only once its review is confirmed, which the audit log records with the release id', async () => {
+  const rel = (await sup.get(`/api/reports/funder?${AUG}`)).data;
+  assert.equal(rel.suppression.purpose, 'publication');
+  assert.match(rel.counting_statement, /Publication release — small cells screened; review before sharing/);
+  assert.doesNotMatch(rel.counting_statement, /Suitable for publication/i);
+  const before = H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='report.publication.reviewed'`).n;
+  for (const p of ['/api/reports/funder/export', '/api/reports/naloxone-ndp/export', '/api/reports/opioid-settlement/export']) {
+    const r = await sup.get(`${p}?${AUG}&format=csv`);
+    assert.equal(r.status, 428, `${p}: ${r.status}`);
+    assert.equal(r.data.code, 'publication_review_required');
+    assert.match(r.data.error, /I have reviewed the withheld and small figures before sharing/);
+  }
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='report.publication.reviewed'`).n, before, 'a refused export records no review');
+  for (const [p, report] of [['/api/reports/funder/export', 'funder'], ['/api/reports/naloxone-ndp/export', 'naloxone-ndp'], ['/api/reports/opioid-settlement/export', 'opioid-settlement']]) {
+    const r = await sup.raw(`${p}?${AUG}&format=xlsx&reviewed=1`);
+    assert.equal(r.status, 200, p);
+    assert.match(r.headers.get('content-disposition'), /publication-screened-review-before-sharing\.xlsx/);
+    assert.equal(r.headers.get('x-suds-report-purpose'), 'publication');
+    const row = H.db.one(`SELECT details FROM audit_log WHERE action='report.publication.reviewed' ORDER BY id DESC LIMIT 1`);
+    const d = JSON.parse(row.details);
+    assert.equal(d.report, report); assert.equal(d.release_id, rel.release.id); assert.equal(d.from, '2026-08-01');
+  }
+  const wb = require('../server/spreadsheet').readWorkbook(Buffer.from(await (await sup.raw(`/api/reports/funder/export?${AUG}&format=xlsx&reviewed=1`)).arrayBuffer()));
+  const about = wb.find(s => s.name === 'About').rows.map(r => r.join(' ')).join('\n');
+  assert.match(about, /Publication release — small cells screened; review before sharing \(whole programme, one standard period\)/);
+  // Internal and submission runs are exported as before, with no confirmation.
+  for (const q of [`${AUG}&purpose=internal`, `${AUG}${EXACT}`]) assert.equal((await sup.get(`/api/reports/funder/export?${q}&format=csv`)).status, 200, q);
 });
 
 test('API: a navigator\'s caseload run counts the caseload\'s overdoses and people per fund, not the programme\'s', async () => {
@@ -154,10 +183,10 @@ test('API: reviewer year2 - one reversal a month and nine discharge reasons; the
   const { pub, truth } = await releaseOf(q);
   assert.equal(pub.funder.suppression.purpose, 'publication');
   assert.deepEqual(attack(pub, truth, 11), [], JSON.stringify({ od: pub.funder.overdose, ep: pub.funder.episodes, withheld: pub.funder.release.withheld }));
-  const ndpCsv = (await sup.get(`/api/reports/naloxone-ndp/export?${q}&format=csv`)).data;
+  const ndpCsv = (await sup.get(`/api/reports/naloxone-ndp/export?${q}&format=csv&reviewed=1`)).data;
   const revRows = csvLines(ndpCsv, /Reversal reported/);
   assert.ok(revRows.length === 12 || revRows.length === 0, revRows.join('\n'));
-  const fCsv = (await sup.get(`/api/reports/funder/export?${q}&format=csv`)).data;
+  const fCsv = (await sup.get(`/api/reports/funder/export?${q}&format=csv&reviewed=1`)).data;
   const reasons = csvLines(fCsv, /^Discharge reason,/); const givenBy = csvLines(fCsv, /^Naloxone given by,/);
   assert.ok(reasons.length === 0 || reasons.length >= 9, reasons.join('\n'));
   assert.ok(givenBy.length === 0 || givenBy.length >= 6, givenBy.join('\n'));
@@ -269,50 +298,7 @@ test('the attacker\'s own solver agrees with brute force', () => {
 
 // ---- the release, as a pure function of its figures ----
 const PARTS = ['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_ethnicity'];
-const count = (people, f) => { const m = new Map(); for (const p of people) for (const k of [].concat(f(p))) m.set(k, (m.get(k) || 0) + 1); return [...m].map(([k, n]) => ({ k, n })).sort((a, b) => (b.n - a.n) || String(a.k).localeCompare(String(b.k))); };
-const QUARTER = ['2025-01', '2025-02', '2025-03'];
-const lastDay = (month) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
-/**
- * A programme's figures, computed from its records the way the reports count them. people: [{ gender, ...,
- * visits: { fundId|null: services } }]; anon: { fundId|null: services with no client }; events: [{ month,
- * reversed, fatal, community, by, doses }]; discharges: [reason] (episodes opened before the period, closed
- * in it); episodes: [{ opened: 'before'|'in', state: 'closed'|'open', reason }]; funds: [{ id, use (null: not
- * settlement), active }]; period: the months of the period (the release lists every one).
- */
-function figuresOf({ people, anon = {}, events = [], discharges = [], episodes = [], funds, period = QUARTER }) {
-  const C = require('../server/constants');
-  const eps = [...discharges.map(reason => ({ opened: 'before', state: 'closed', reason })), ...episodes];
-  const closed = eps.filter(e => e.state === 'closed');
-  const doses = (e) => (e.doses !== undefined ? e.doses : e.reversed ? 1 : 0);
-  const perFund = new Map();
-  for (const f of [...funds.map(x => x.id), null]) {
-    const services = people.reduce((a, p) => a + (p.visits[f] || 0), 0) + (anon[f] || 0);
-    const clients = people.filter(p => p.visits[f]).length;
-    if (services) perFund.set(f, { services, clients_served: clients });
-  }
-  const months = [...new Set(events.map(e => e.month))].sort();
-  const raw = {
-    unduplicated: { served: people.length, new_admissions: 0, with_a_referral: people.filter(p => p.referred).length, admitted_after_referral: people.filter(p => p.admitted).length, on_mat: people.filter(p => p.mat).length },
-    demographics: { by_gender: count(people, p => p.gender), by_language: count(people, p => p.language), by_housing: count(people, p => p.housing), by_insurance: count(people, p => p.insurance), by_ethnicity: count(people, p => p.ethnicity), by_race_code: count(people, p => (p.race.length ? p.race : ['unknown'])) },
-    episodes: { admissions: eps.filter(e => e.opened === 'in').length, discharges: closed.length, open_at_end: eps.filter(e => e.state === 'open').length, by_discharge_reason: count(closed.map(e => ({ k: e.reason })), x => x.k), median_length_of_stay_days: null },
-    overdose: { events: events.length, reversals: events.filter(e => e.reversed).length, fatal: events.filter(e => e.fatal).length, community_reported: events.filter(e => e.community).length, naloxone_doses: events.reduce((a, e) => a + doses(e), 0),
-      by_month: months.map(m => ({ month: m, n: events.filter(e => e.month === m).length, reversals: events.filter(e => e.month === m && e.reversed).length, reversal_doses: events.filter(e => e.month === m && e.reversed).reduce((a, e) => a + doses(e), 0) })),
-      by_administered_by: count(events.filter(e => e.reversed), e => e.by) },
-    naloxone_distribution: { kits: 0, strips: 0, community_kits: 0 },
-    by_funding_source: [...funds.filter(f => f.active).map(f => ({ id: f.id, name: f.id, ...(perFund.get(f.id) || { services: 0, clients_served: 0 }) })), { id: null, name: 'No funding source', ...(perFund.get(null) || { services: 0, clients_served: 0 }) }]
-      .map(f => ({ ...f, approved_minutes: 0, unapproved_minutes: 0 })),
-    attribution: { unattributed_services: perFund.get(null)?.services || 0, unattributed_clients: perFund.get(null)?.clients_served || 0, approved_minutes: 0, unapproved_minutes: 0 },
-  };
-  const uses = [...new Set(funds.filter(f => f.use).map(f => f.use))].sort();
-  const services_by_use = uses.map(u => {
-    const ids = funds.filter(f => f.use === u).map(f => f.id);
-    return { use_code: u, services: ids.reduce((a, id) => a + (perFund.get(id)?.services || 0), 0), people: people.filter(p => ids.some(id => p.visits[id])).length, naloxone_kits: 0 };
-  }).filter(x => x.services > 0);
-  const settlement = { services_by_use, fundKeys: funds.filter(f => f.use).map(f => ({ id: f.id, key: f.use, active: f.active })) };
-  const inactiveFunds = Object.fromEntries(funds.filter(f => !f.active).map(f => [f.id, { people: perFund.get(f.id)?.clients_served || 0, services: perFund.get(f.id)?.services || 0 }]));
-  const domains = { months: period, administered_by: C.ADMINISTERED_BY, discharge_reasons: C.DISCHARGE_REASONS };
-  return { inputs: { funder: raw, perFund, settlement, domains }, inactiveFunds, funds, range: { from: `${period[0]}-01`, to: lastDay(period[period.length - 1]) } };
-}
+const { figuresOf, QUARTER, person, plain, many, pattern } = require('./fixtures/release-worlds');
 /** Protect a programme's figures and put them the way the three reports publish them (the NDP log through its own code). */
 function publish(prog, T, opts = {}) {
   const PR = require('../server/publication-release');
@@ -338,6 +324,8 @@ function honest(shown, truth, T, people = true) {
   return shown === 'withheld';
 }
 const noPeople = (over = {}) => ({ people: [], funds: [], ...over });
+/** A refused release publishes nothing (and says why): nothing to attack. */
+const refusedRelease = (x) => { if (!x.p.refused) return false; assert.match(x.p.refused.message, /cannot be published/); assert.equal(x.p.funder, undefined); return true; };
 
 test('reviewer reproduction: the overdose months, reversals at most the events of their month', () => {
   // Found against 1.12.1: [events, reversals] per month, reversals by who gave the naloxone, fatal events.
@@ -352,7 +340,9 @@ test('reviewer reproduction: the overdose months, reversals at most the events o
     c.months.forEach(([n, rv], m) => { for (let i = 0; i < n; i++) events.push({ month: `2026-0${m + 1}`, reversed: i < rv }); });
     let f = c.fatal; for (const e of events) if (!e.reversed && f > 0) { e.fatal = true; f--; }
     let b = 0; for (const e of events) if (e.reversed) { e.by = b < c.by[0] ? 'staff' : 'bystander'; b++; }
-    const { pub, truth } = publish(figuresOf(noPeople({ events, period: ['2026-01', '2026-02', '2026-03'] })), 11);
+    const x = publish(figuresOf(noPeople({ events, period: ['2026-01', '2026-02', '2026-03'] })), 11);
+    if (refusedRelease(x)) continue;
+    const { pub, truth } = x;
     assert.deepEqual(attack(pub, truth, 11), [], `${JSON.stringify(c)} published as ${JSON.stringify(pub.funder.overdose)}`);
   }
 });
@@ -370,8 +360,10 @@ test('reviewer reproduction: the funder report and the settlement report of one 
   const two = figuresOf({ people: Array.from({ length: 50 }, (_, i) => ({ gender: 'm', language: 'en', housing: 'u', insurance: 'a', ethnicity: 'u', race: [], visits: i < 2 ? { A: 1, B: 1 } : i < 20 ? { B: 1 } : { C: 1 } })),
     funds: [{ id: 'A', use: 'u1', active: true }, { id: 'B', use: 'u1', active: true }, { id: 'C', use: null, active: true }] });
   const t2 = publish(two, 11);
-  assert.deepEqual(attack(t2.pub, t2.truth, 11), [], JSON.stringify({ funds: t2.pub.funder.by_funding_source, settlement: t2.pub.settlement.services_by_use }));
-  assert.equal(t2.pub.funder.by_funding_source.find(f => f.id === 'A').clients_served, '<11');
+  if (!refusedRelease(t2)) {
+    assert.deepEqual(attack(t2.pub, t2.truth, 11), [], JSON.stringify({ funds: t2.pub.funder.by_funding_source, settlement: t2.pub.settlement.services_by_use }));
+    assert.equal(t2.pub.funder.by_funding_source.find(f => f.id === 'A').clients_served, '<11');
+  }
   // And the cross-report cases found by random search (cross.js): a fund, a use, and the total they share.
   const r = rng(5);
   for (let run = 0; run < 60; run++) {
@@ -379,6 +371,7 @@ test('reviewer reproduction: the funder report and the settlement report of one 
     const ppl = Array.from({ length: n }, () => ({ gender: r() < 0.5 ? 'm' : 'f', language: r() < 0.8 ? 'en' : 'es', housing: 'u', insurance: 'a', ethnicity: 'u', race: [], visits: r() < 0.7 ? { S: 1 + Math.floor(r() * 2) } : { C: 1 } }));
     const pr = figuresOf({ people: ppl, funds: [{ id: 'S', use: 'u1', active: true }, { id: 'C', use: null, active: true }] });
     const x = publish(pr, 11);
+    if (refusedRelease(x)) continue;
     assert.deepEqual(attack(x.pub, x.truth, 11), [], `run ${run}`);
   }
 });
@@ -416,19 +409,25 @@ function randomProgramme(r) {
 test('property: nothing any report of a release publishes lets an attacker narrow a hidden count beyond the rule', () => {
   const r = rng(Number(process.env.PR_SEED) || 20260926);
   const runs = Number(process.env.PR_RUNS) || 250;
-  let hidden = 0; let withheld = 0;
+  let hidden = 0; let secondary = 0; let withheld = 0; let refused = 0;
   for (let run = 0; run < runs; run++) {
     const { T, prog } = randomProgramme(r);
-    const { p, pub, truth } = publish(prog, T);
+    const x = publish(prog, T);
+    if (refusedRelease(x)) { refused++; continue; }
+    const { p, pub, truth } = x;
     // Every published symbol is true.
     const m = p.model;
     m.vars.forEach((v, i) => { if (v.published) assert.ok(honest(p.status[i] === 'vis' ? v.value : p.status[i] === 'pri' ? `<${T}` : p.status[i] === 'sec' ? 'suppressed' : 'withheld', v.value, T, v.people), `run ${run}: ${v.id}`); });
     const leaks = attack(pub, truth, T);
     assert.deepEqual(leaks, [], `run ${run}, T=${T}: ${JSON.stringify(prog.inputs.funder.unduplicated)} ${JSON.stringify(prog.inputs.funder.overdose.by_month)}`);
-    hidden += p.status.filter(s => s === 'pri' || s === 'sec').length; withheld += p.withheld_tables.length;
+    hidden += p.status.filter(s => s === 'pri' || s === 'sec').length; secondary += p.status.filter(s => s === 'sec').length; withheld += p.withheld_tables.length;
   }
-  // The runs exercised the audit (something was hidden, and something withheld, somewhere).
-  assert.ok(hidden > runs, `hidden ${hidden}`); assert.ok(withheld > 0, `withheld ${withheld}`);
+  // The runs exercised the audit (something was hidden, some of it to protect another count). These are tiny
+  // programmes at thresholds of 3 to 5, where the check refuses some releases it cannot show protected
+  // (docs/HIPAA.md): about seven in ten of these, which the tests count; the rest are published.
+  assert.ok(hidden > runs / 2, `hidden ${hidden}`); assert.ok(secondary > 0, `secondary ${secondary}, withheld ${withheld}`);
+  assert.ok(runs - refused >= runs / 5, `refused ${refused} of ${runs}`);
+  if (process.env.SUDS_PERF_VERBOSE) console.log(`[release] random programmes: ${refused} of ${runs} refused`);
 });
 
 test('determinism: the same figures give the same release, cell for cell', () => {
@@ -444,7 +443,6 @@ test('determinism: the same figures give the same release, cell for cell', () =>
 
 // ---- the reviewer's shapes against 1.12.2 (row presence, episodes, doses) ----
 const YEAR_2024 = Array.from({ length: 12 }, (_, i) => `2024-${String(i + 1).padStart(2, '0')}`);
-const person = (over = {}) => ({ gender: 'm', language: 'en', housing: 'u', insurance: 'a', ethnicity: 'u', race: [], visits: { C: 1 }, ...over });
 const shapes = {
   // One reversal by staff in each of the first k months of the year (1.12.2: ten "withheld" NDP month rows,
   // each at least 1, and "staff <11" made the reversals exactly 10, one a month).
@@ -467,8 +465,11 @@ test('property: the reviewer\'s shapes - one reversal a month, many discharge re
       const T = [3, 5, 11][run % 3];
       const people = Array.from({ length: Math.floor(r() * 30) }, () => person());
       const prog = figuresOf({ people, funds: [{ id: 'C', use: null, active: true }], ...make(r) });
-      const { p, pub, truth } = publish(prog, T);
-      assert.ok(!p.refused, `${name} run ${run}: refused`);
+      const x = publish(prog, T);
+      // At the default threshold every one of these is published; at 3 and 5 the check may refuse one.
+      if (T === 11) assert.ok(!x.p.refused, `${name} run ${run}: refused`);
+      if (refusedRelease(x)) continue;
+      const { pub, truth } = x;
       assert.deepEqual(attack(pub, truth, T), [], `${name} run ${run}, T=${T}: ${JSON.stringify({ od: pub.funder.overdose, ep: pub.funder.episodes, ndp: pub.ndp.rows, withheld: pub.withheld })}`);
       // Every month of the period and every code of the lists has a row, or the table has none.
       const months = pub.funder.overdose.by_month.map(x => x.month);
@@ -565,4 +566,43 @@ test('the audit stays fast with many free-text categories, and a runaway audit i
   assert.ok(!fast.refused, JSON.stringify(fast.refused));
   assert.ok(ms < 1000, `folded, K=${K}: ${ms} ms`);
   if (process.env.SUDS_PERF_VERBOSE) console.log(`[perf] K=${K} small languages: unfolded refused after ${slowMs} ms, folded audited in ${ms} ms`);
+});
+
+// ---- the algorithm-aware attacker (1.12.4): every world behind a printout, through the real release ----
+// SUDS is open source: an attacker can run the audit on every programme that could lie behind a printout and
+// keep those that print the same (test/fixtures/pattern-attacker.js). Against 1.12.3, whose decisions to hide
+// more depended on counts it did not print, "served 12" beside "on MAT <11" was printed only when one person
+// was on MAT.
+const { attackAll } = require('./fixtures/pattern-attacker');
+function assertNoPatternLeak(name, worlds, T) {
+  const { leaks, checked, refused } = attackAll(worlds, T);
+  assert.ok(checked > 0, `${name}: nothing published`);
+  assert.deepEqual(leaks, [], `${name}, T=${T}: ${JSON.stringify(leaks.slice(0, 6), null, 1)}`);
+  return { inner: worlds.filter(w => w.inner).length, refused };
+}
+test('algorithm-aware attacker: the reviewer\'s cases - 12 beside <11, events 12 beside reversals <11, withheld tables', () => {
+  // Reviewer, 1.12.3: 12 served with 1 on MAT printed 12 and "<11"; with 2 on MAT, "suppressed". Now what is
+  // printed beside "<11" does not depend on how many are on MAT.
+  const PR = require('../server/publication-release');
+  const served = (n, k) => JSON.stringify(PR.protectFigures(figuresOf({ funds: [], people: many(n, i => plain({ mat: i < k })) }).inputs, 11).funder.unduplicated.served);
+  for (const n of [12, 15, 20]) { const shown = [1, 2, 5, 10].map(k => served(n, k)); assert.ok(shown.every(x => x === shown[0]), `${n} served printed ${shown} with 1, 2, 5 and 10 on MAT`); }
+  // Events 12, reversals "<11": the events printed the same whatever the reversals.
+  const events = (e, r) => JSON.stringify(PR.protectFigures(figuresOf({ funds: [], period: ['2025-01'], people: many(20, () => plain()), events: many(e, i => ({ month: '2025-01', reversed: i < r, by: 'staff', doses: i < r ? 1 : 0 })) }).inputs, 11).funder.overdose.events);
+  for (const e of [12, 16]) { const shown = [1, 2, 5, 10].map(r => events(e, r)); assert.ok(shown.every(x => x === shown[0]), `${e} events printed ${shown} with 1, 2, 5 and 10 reversals`); }
+  // Every world of each family, through the real release: nothing narrows a hidden count beyond the rule.
+  assertNoPatternLeak('served and on MAT', pattern.subset(25, 35, 'mat'), 11);
+  assertNoPatternLeak('events and reversals', pattern.events(22, 44, 20), 11);
+  // The withheld-table shapes: "served <11" with MAT and gender (1.12.3 withheld them when served was 2 or
+  // more, which said it was not 1; and when MAT was not all of them, which said all were on MAT).
+  assertNoPatternLeak('gender and MAT', pattern.genderMat(10, 18), 11);
+});
+test('algorithm-aware attacker: small programmes at thresholds 3 and 5', () => {
+  for (const T of [3, 5]) {
+    assertNoPatternLeak('served and on MAT', pattern.subset(3 * T + 4, 5 * T + 4, 'mat'), T);
+    assertNoPatternLeak('served and referred', pattern.subset(2 * T + 2, 4 * T + 2, 'referred'), T);
+    assertNoPatternLeak('gender and MAT', pattern.genderMat(2 * T + 1, 3 * T + 1), T);
+    assertNoPatternLeak('events and reversals', pattern.events(3 * T, 5 * T, 20), T);
+    assertNoPatternLeak('two months', pattern.months(T + 2, 2 * T + 1), T);
+    assertNoPatternLeak('two funds', pattern.funds(T + 1, 2 * T), T);
+  }
 });
