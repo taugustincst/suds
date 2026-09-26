@@ -157,7 +157,7 @@ try {
     ok(await admin.page.$('[data-programme-profile=treatment]'), 'the seeded programme is treatment-adjacent');
     ok(await admin.page.$('.main nav.tabs button[data-tab=fhir]'), 'with the FHIR clients tab');
     await admin.page.selectOption('select[name=programme_profile]', 'harm_reduction');
-    await admin.page.click('button[type=submit]:has-text("Save programme profile")');
+    await admin.page.click('button[type=submit]:has-text("Save program profile")');
     ok(await until(() => admin.page.$('[data-programme-profile=harm_reduction]')), 'switching to harm reduction & outreach saves');
     ok(!(await admin.page.$('.main nav.tabs button[data-tab=fhir]')), 'and the FHIR clients tab goes with the FHIR module');
     eq(await admin.page.$eval('[data-modules-on]', e => e.dataset.modulesOn), '0', 'no clinical module is on');
@@ -178,7 +178,7 @@ try {
     await n2.ctx.close();
     // One module back on its own.
     await admin.page.selectOption('select[name=module_careplan]', '1');
-    await admin.page.click('button[type=submit]:has-text("Save programme profile")');
+    await admin.page.click('button[type=submit]:has-text("Save program profile")');
     ok(await until(async () => (await admin.page.$eval('[data-modules-on]', e => e.dataset.modulesOn).catch(() => '0')) === '1'), 'the care plan module switches on by itself');
     const n3 = await session('mrivera', PW);
     await n3.go(`client/${cid}/overview`);
