@@ -561,6 +561,13 @@ const migrations = [
     encryptColumn(d, 'imports', 'filename', 'filename_enc');
     encryptColumn(d, 'consents', 'document_ref', 'document_ref_enc');
   },
+  // 43: the same document reference on a court order and on a registered agreement ("court order, J. Smith
+  //     case file") was still plaintext. Moved as migration 42 moved a consent's; the API keeps the name
+  //     document_ref, and a device on an older kernel still sends it (sync-tables legacy).
+  (d) => {
+    encryptColumn(d, 'court_orders', 'document_ref', 'document_ref_enc');
+    encryptColumn(d, 'disclosure_agreements', 'document_ref', 'document_ref_enc');
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

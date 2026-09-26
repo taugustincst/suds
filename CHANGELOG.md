@@ -158,6 +158,7 @@ Fixes from the security review of 1.12.4.
   are what someone holding the database and the index key could delete undetected; the window is now
   documented (docs/security/LOGGING-AND-AUDIT.md). A year of hourly anchors is about 4 MB; writing one takes
   ~0.1 s and a full verification ~0.2 s.
+- **A court order's and a registered agreement's document reference are encrypted (migration 43)**, as a consent's was: `document_ref` ("court order, J. Smith case file") moves to `document_ref_enc`; the API field keeps its name, and older kernels' pushes are mapped (sync-tables legacy).
 
 ## 1.12.4 — 2026-09-26
 
