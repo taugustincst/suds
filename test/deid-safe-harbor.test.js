@@ -53,7 +53,8 @@ function assertSafeHarbor(label, header, body) {
   assert.ok(!/\b\d{4}-\d{2}\b/.test(all), `${label}: no month-level (or finer) date may appear: ${all.match(/.{0,30}\b\d{4}-\d{2}\b.{0,10}/)?.[0]}`);
   for (const id of [oldCode, youngCode, oldId, youngId]) assert.ok(!all.includes(id), `${label}: the real client code / id ${id} must not appear`);
   assert.ok(!header.includes('Client Code'), `${label}: no client code column`);
-  assert.ok(!all.includes('036'), `${label}: a restricted ZIP3 is never written`);
+  // Per cell, not a substring of the whole file: a random record id (R-XXXXXXXXXX) can contain "036" by chance.
+  assert.ok(!body.some(r => r.some(c => /^036/.test(String(c).trim()))), `${label}: a restricted ZIP3 is never written`);
 }
 
 test('client free-text discharge reasons are refused on new writes, legacy values still read and update', async () => {
