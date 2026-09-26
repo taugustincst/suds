@@ -8,7 +8,7 @@
 // is now built once into a per-request temporary table, the per-person breakdowns are read from it in one
 // pass, and the per-fund figures are one grouped pass over the period instead of three correlated subqueries
 // per fund. test/funder-report.test.js holds the answers to those of the earlier version (a golden file);
-// test/funder-perf.test.js holds the time.
+// test/thorough/funder-perf.test.js holds the time.
 const db = require('./db');
 const auth = require('./auth');
 const { badRequest, forbidden, HttpError } = require('./http');

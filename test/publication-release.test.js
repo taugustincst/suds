@@ -437,6 +437,88 @@ test('property: nothing any report of a release publishes lets an attacker narro
   if (process.env.SUDS_PERF_VERBOSE) console.log(`[release] random programmes: ${refused} of ${runs} refused`);
 });
 
+// ---- realistic programmes (1.12.5) ----
+// 1.12.4 refused the publication release of most quarters of 60 to 100 people: with six race codes of ten or
+// so people each, one hidden to protect the small ones was hidden only when it pinned them, which said the
+// small ones were at least 2, and the check (rightly) refused the release. The cover's complement is now
+// chosen from the printout alone (server/sdc.js run), and a table the check cannot show protected is withheld
+// rather than the release refused.
+function realistic(r, N, { months = QUARTER, od = Math.max(2, Math.round(N / 10)) } = {}) {
+  const pick = (xs) => xs[Math.floor(r() * xs.length)];
+  const people = Array.from({ length: N }, () => person({ gender: pick(['male', 'male', 'female', 'nonbinary']), race: [pick(['1', '2', '3', '5', '6', '7'])], language: pick(['en', 'en', 'en', 'es']),
+    housing: pick(['unsheltered', 'sheltered', 'housed']), mat: r() < 0.3, visits: r() < 0.7 ? { S: 1 + Math.floor(r() * 3) } : { F: 1 + Math.floor(r() * 3) } }));
+  const events = Array.from({ length: od }, () => { const reversed = r() < 0.7; return { month: pick(months), reversed, by: pick(['staff', 'bystander']), doses: reversed ? 2 : 0 }; });
+  return figuresOf({ people, events, period: months, funds: [{ id: 'S', use: 'uncategorised', active: true }, { id: 'F', use: null, active: true }] });
+}
+test('realistic programmes: a quarter or a month of 40 to 100 people publishes its headline and its tables, and survives the attacker', () => {
+  const r = rng(Number(process.env.PR_SEED) || 777);
+  const sizes = THOROUGH ? [40, 60, 80, 100, 200] : [40, 60, 80, 100];
+  let runs = 0; let withheld = 0; let refused = 0;
+  for (const N of sizes) {
+    for (let k = 0; k < (THOROUGH ? 6 : 2); k++) {
+      for (const months of [QUARTER, [QUARTER[1]]]) {
+        const prog = realistic(r, N, { months });
+        const x = publish(prog, 11);
+        const where = `N=${N}, ${months.length} month(s), run ${k}`;
+        runs++;
+        // The target (docs/HIPAA.md): the headline published in at least 19 releases in 20. A refusal is
+        // never a leak; it is counted.
+        if (refusedRelease(x)) { refused++; continue; }
+        assert.equal(typeof x.pub.funder.unduplicated.served, 'number', `${where}: the headline is published`);
+        assert.ok(x.p.withheld_tables.length <= 1, `${where}: withheld ${x.p.withheld_tables}`);
+        assert.ok(x.pub.funder.demographics.by_race_code.length > 0, `${where}: the race codes are published`);
+        assert.deepEqual(attack(x.pub, x.truth, 11), [], where);
+        withheld += x.p.withheld_tables.length;
+      }
+    }
+  }
+  assert.ok(refused * 20 <= runs, `${refused} of ${runs} refused`);
+  if (process.env.SUDS_PERF_VERBOSE) console.log(`[release] realistic programmes: ${runs - refused} of ${runs} published, ${withheld} tables withheld`);
+});
+
+test('the headline is never hidden beside figures that bound it: new admissions and episodes opened go with it', () => {
+  // A 13-client programme (frontline review): people served hidden, 13 new admissions and 12 episodes opened shown.
+  const people = many(13, (i) => person({ gender: i < 7 ? 'f' : 'm' }));
+  const prog = figuresOf({ people, episodes: many(12, () => ({ opened: 'in', state: 'open' })), funds: [{ id: 'C', use: null, active: true }] });
+  prog.inputs.funder.unduplicated.new_admissions = 13;
+  const { p, pub, truth } = publish(prog, 11);
+  assert.ok(!p.refused, JSON.stringify(p.refused));
+  const u = pub.funder.unduplicated;
+  assert.equal(typeof u.served, 'string', 'seven women and six men: the total is hidden with them');
+  assert.equal(u.new_admissions, 'suppressed'); assert.equal(pub.funder.episodes.admissions, 'suppressed');
+  assert.deepEqual(attack(pub, truth, 11), []);
+  // The same in a run that is not a publication release (server/funder-report.js suppress): 11 women and one
+  // man hide the total there, and the new admissions and episodes opened go with it. Nothing is hidden in an exact run.
+  const FR = require('../server/funder-report');
+  const twelve = figuresOf({ people: many(12, (i) => person({ gender: i < 11 ? 'f' : 'm' })), episodes: many(12, () => ({ opened: 'in', state: 'open' })), funds: [{ id: 'C', use: null, active: true }] }).inputs.funder;
+  twelve.unduplicated.new_admissions = 12;
+  const sup = FR.suppress(JSON.parse(JSON.stringify(twelve)), { threshold: 11, exact: false });
+  assert.equal(typeof sup.unduplicated.served, 'string');
+  assert.equal(sup.unduplicated.new_admissions, 'suppressed'); assert.equal(sup.episodes.admissions, 'suppressed');
+  const exact = FR.suppress(JSON.parse(JSON.stringify(twelve)), { threshold: 11, exact: true });
+  assert.deepEqual([exact.unduplicated.served, exact.unduplicated.new_admissions, exact.episodes.admissions], [12, 12, 12]);
+});
+
+test('degrade, not refuse: a table the check cannot show protected is withheld with its reason, and the rest of the release is published', () => {
+  const { _about, ...spec } = require('./fixtures/degraded-release.json');
+  const prog = figuresOf(spec);
+  const x = publish(prog, 5);
+  assert.ok(!x.p.refused, JSON.stringify(x.p.refused));
+  assert.deepEqual(x.p.audit.degraded, ['overdose.reversals']);
+  const why = x.p.withheld_reasons.find(r => r.table === 'overdose.reversals');
+  assert.equal(why.reason, 'check'); assert.equal(why.label, 'Reversals'); assert.match(why.why, /could not confirm/);
+  assert.equal(x.pub.funder.overdose.reversals, 'withheld');
+  assert.ok(x.pub.funder.demographics.by_gender.length > 0, 'the rest is published');
+  assert.deepEqual(attack(x.pub, x.truth, 5), []);
+  // Without the degrade step the same figures are refused whole (1.12.4).
+  const whole = publish(prog, 5, { degrade: false });
+  assert.ok(whole.p.refused, 'refused without it');
+  // The withholding depends on figures the release does not print, so the degraded release is checked against
+  // worlds that would have been degraded the same way (server/sdc.js protect): in the two-month family below
+  // (T = 3) every degraded candidate is refused rather than let the withholding say the events not reversed
+  // were not 2.
+});
+
 test('determinism: the same figures give the same release, cell for cell', () => {
   const PR = require('../server/publication-release');
   const r = rng(99);
@@ -621,5 +703,27 @@ test('algorithm-aware attacker: small programmes at thresholds 3 and 5', () => {
     assertNoPatternLeak('events and reversals', pattern.events(3 * T, 5 * T, 20), T);
     assertNoPatternLeak('two months', pattern.months(T + 2, 2 * T + 1), T);
     assertNoPatternLeak('two funds', pattern.funds(T + 1, 2 * T), T);
+    // Race codes, a cover: 1.12.4 refused most 60-100 person quarters here, and let this one leak at T = 3
+    // (a=2 b=2 none=3 printed "<3", "<3", "suppressed": exactly 2 each).
+    assertNoPatternLeak('race codes', T === 3 ? pattern.race(10, 15) : pattern.race(12, 18), T);
   }
+});
+
+test('reviewer reproduction (1.12.4 market review): six race codes of about ten people each publish, with the small one protected', () => {
+  // 80 people, race codes 17, 12, 11, 15, 16 and 9. 1.12.4 hid code 1 only when it pinned code 7 from below
+  // (at most 24), which said code 7 was at least 2, and refused the quarter.
+  const codes = [['1', 17], ['2', 12], ['3', 11], ['5', 15], ['6', 16], ['7', 9]];
+  const people = codes.flatMap(([code, n]) => many(n, (i) => person({ race: [code], gender: i % 3 ? 'm' : 'f', mat: i % 4 === 0 })));
+  const prog = figuresOf({ people, funds: [{ id: 'C', use: null, active: true }] });
+  const { p, pub, truth } = publish(prog, 11);
+  assert.ok(!p.refused, JSON.stringify(p.refused));
+  assert.equal(pub.funder.unduplicated.served, 80);
+  const race = Object.fromEntries(pub.funder.demographics.by_race_code.map(x => [x.k, x.n]));
+  assert.equal(race['7'], '<11');
+  assert.equal(race['1'], 'suppressed', 'the first code shown is hidden whatever it is, because the printout alone would let it pin code 7');
+  assert.deepEqual(p.withheld_tables, []);
+  assert.deepEqual(attack(pub, truth, 11), []);
+  // Whatever code 1 is, from 17 to 40, the release prints the same: its hiding says nothing about code 7.
+  const shown = [17, 25, 40].map((n) => { const ppl = [['1', n], ...codes.slice(1)].flatMap(([code, k]) => many(k, (i) => person({ race: [code], gender: i % 3 ? 'm' : 'f', mat: i % 4 === 0 }))); return JSON.stringify(publish(figuresOf({ people: ppl, funds: [{ id: 'C', use: null, active: true }] }), 11).pub.funder.demographics.by_race_code.find(x => x.k === '1')); });
+  assert.ok(shown.every(x => x === shown[0]), shown.join(' '));
 });

@@ -40,9 +40,10 @@
 // is hidden").
 //
 // The result says whether all passed (`verified`); one that is not verified - a check that could not be
-// settled, nothing left to withhold, the step, search or time limit reached - must not be published
-// (server/publication-release.js refuses it). Everything is deterministic: the same data give the same
-// release, whichever report asks for it.
+// settled, nothing left to withhold, the step, search or work budget reached - must not be published.
+// protect() withholds the tables of what the check could not show protected and checks the rest again
+// (degrade), and server/publication-release.js refuses what still does not pass. Everything is deterministic:
+// the budget is counted in solver work, so the same data give the same release, whichever report asks for it.
 const EPS = 1e-9;
 const FEAS = 1e-7;
 
@@ -132,9 +133,10 @@ function simplex(n, rows, lb, ub, c) {
 // ---------------------------------------------------------------------------------------------------------
 // The audit's budget, in solver work: the simplex tableau cells each linear program's pivots touch (a count
 // that follows the time a solve takes, and is the same on every machine), so that whether a release is
-// published, withheld in part or refused depends on its figures alone, never on how busy the server is. A wall-clock deadline stays behind it
-// only to protect the server (a backstop, far above what the budget allows on any machine SUDS runs on); a
-// release stopped by it is refused and the caller logs it. meter: { steps, limit, deadline, over, backstop }.
+// published, withheld in part or refused depends on its figures alone, never on how busy the server is. A
+// wall-clock deadline stays behind it only to protect the server (a backstop, far above what the budget allows
+// on any machine SUDS runs on); a release stopped by it is refused and the caller logs it.
+// meter: { steps, calls, limit, deadline, over, backstop }.
 function newMeter(limit = Infinity, timeLimitMs = Infinity) { return { steps: 0, calls: 0, limit, deadline: Date.now() + timeLimitMs, over: false, backstop: false }; }
 function tick(m, cost = 1) {
   if (m.over) return true;
@@ -563,10 +565,11 @@ function auditor(model, T, { budget, meter = newMeter() }) {
   // families (test/fixtures/pattern-attacker.js).
   // forced: the tables the release withholds from the start (protect()'s degrade step). validate(vals): what else
   // a world must do to count as one that prints this release (for a degraded release: fail the full release
-  // the same way, so that it would have been degraded to the same tables). derived: hold counts printed
-  // nowhere to the rule against the method too (a degraded release: which tables are withheld depends on
-  // figures it does not print, so the counts worked out from what it does print are checked against it).
-  function consistent(base, forced = [], { validate = null, derived: checkDerived = false } = {}) {
+  // the same way, so that it would have been degraded to the same tables). derived: the variables whose
+  // counts printed nowhere are held to the rule against the method too (a degraded release: which tables are
+  // withheld depends on figures it does not print, so the counts worked out from the withheld tables' cells -
+  // the events not reversed, when the events and reversals are withheld - are checked against it).
+  function consistent(base, forced = [], { validate = null, derived: checkDerived = null } = {}) {
     const S = base.status; const tables = [...base.withheldTables].sort().join('|');
     const w = base.world; const truth = w.values;
     const G = [truth]; const seen = new Map([[truth.join(','), true]]);
@@ -676,7 +679,19 @@ function auditor(model, T, { budget, meter = newMeter() }) {
       if (meter.over) break;
       if (gaveUp) { unprotected.push(q.id); continue; }
       let ok = true;
-      if (q.kind === 'pri' || (q.kind === 'cond' && (!q.derived || checkDerived))) {
+      // A cell of a table a degraded release withholds whose count here is T or more: the withholding says it
+      // is in a table that failed the check, which may say it is not small; that says nothing about a small
+      // group, but like a suppressed count it must still range over P values (of T or more). A small one is
+      // held to the rule below, like every withheld cell.
+      const bigWithheld = checkDerived && q.kind === 'cond' && !q.derived && q.terms.length === 1 && checkDerived.has(q.terms[0][0]) && truth[q.terms[0][0]] >= T;
+      if (bigWithheld) {
+        const x = truth[q.terms[0][0]];
+        let a = x; let b = x;
+        for (const vals of G) { const y = valueOf(vals, q.terms); if (y >= T) { a = Math.min(a, y); b = Math.max(b, y); } }
+        for (let v = a - 1; b - a < P && v >= T && v >= x - 2 * T && !meter.over && witness(q, v, 8); v--) a = v;
+        for (let v = b + 1; b - a < P && v <= x + 2 * T && !meter.over && witness(q, v, 8); v++) b = v;
+        ok = b - a >= P;
+      } else if (q.kind === 'pri' || (q.kind === 'cond' && (!q.derived || (checkDerived && q.terms.some(([i]) => checkDerived.has(i)))))) {
         // A "<T" cell, or a withheld one (or one printed nowhere) when the printout lets it be small: worlds
         // that print the same must show it can be the lowest value its symbols allow (1: the one person)
         // and a value at least P-1 above it (the highest when the range is shorter): a range of P values. run()
@@ -718,8 +733,8 @@ function auditor(model, T, { budget, meter = newMeter() }) {
 // in a worker thread.
 const STEP_LIMIT = 200e6;
 // The degraded release's own check: at most this many times the work the full release's took, plus this much.
-const DEGRADE_BUDGET_FACTOR = 1;
-const DEGRADE_BUDGET_MIN = 1e6;
+const DEGRADE_BUDGET_FACTOR = 8;
+const DEGRADE_BUDGET_MIN = 2e6;
 
 /**
  * Protect one release: suppress (run), then check that the printout protects every sensitive count over the
@@ -727,8 +742,9 @@ const DEGRADE_BUDGET_MIN = 1e6;
  * are withheld whole (degraded: once) and the release is suppressed and checked again with those tables
  * withheld from the start. Which tables that is depends on figures the release does not print, so the second
  * check is stricter: a world counts as printing the degraded release only if the full release fails for it
- * in the same way (it would have been degraded to the same tables), and the counts worked out from what is
- * printed (the people not on MAT, the events not reversed) are held to the rule against the method as well.
+ * in the same way (it would have been degraded to the same tables), and the counts worked out from the
+ * withheld tables' cells (the events not reversed, when events and reversals are withheld) are held to the
+ * rule against the method as well.
  * Refused, never published unverified: when a table to withhold is one of model.keep (the headline, people
  * served), when the degraded release does not pass either, or when the budget runs out.
  * Returns { status, withheldTables, degraded, verified, unprotected, outOfBudget, backstop, headline, steps,
@@ -754,10 +770,10 @@ function protect(model, T, { budget = 4000, stepLimit = STEP_LIMIT, timeLimitMs 
   };
   // The full release for one world: its suppression and check, and what the degrade step would withhold
   // ({ res, forced }: forced null when it would refuse instead, [] when it passes).
-  const full = (vals, first) => {
-    const base = a.run(vals, []);
+  const full = (vals, first, known = null) => {
+    const base = known || a.run(vals, []);
     const { world, ...out } = base;
-    let res = { ...out, runVerified: base.verified };
+    let res = out;
     if (base.verified && consistency) {
       const c = a.consistent(base, []);
       res = { ...out, verified: c.ok, unprotected: c.unprotected, gaveUp: c.gaveUp, consistency: { worlds: c.worlds, tried: c.tried }, ...(first && debug ? { G: c.G } : {}) };
@@ -773,14 +789,17 @@ function protect(model, T, { budget = 4000, stepLimit = STEP_LIMIT, timeLimitMs 
   const first = full(values, true);
   if (!first.forced || !first.forced.length) return stats(first.res, [], 1);
   // Degrade once: the tables withheld from the start, and checked again (see above). A world counts as one
-  // that would have been degraded the same way when the full release prints the same for it: the check that
-  // failed is a question about that printout. (Running the whole check again for every candidate world would
-  // prove more, at a cost no release can afford; test/fixtures/pattern-attacker.js runs it on small families.)
-  const forced = first.forced;
-  const firstSig = (verified, r) => `${verified}|${[...r.withheldTables].sort().join('|')}|${r.status.join(',')}`;
-  const want = firstSig(first.res.runVerified, first.res);
-  const sameFailure = (vals) => { const r = a.run(vals, []); return firstSig(r.verified, r) === want; };
-  // The degraded release's check has a budget of its own, about what the full release's took: one it
+  // that prints the degraded release only if the full release fails for it too, on the same tables: its own
+  // suppression and check are run (once per full printout: the check is a question about the printout).
+  const forced = first.forced; const key = forced.join('|');
+  const memo = new Map();
+  const sameFailure = (vals) => {
+    const r = a.run(vals, []);
+    const printout = `${r.verified}|${r.withheldTables.join('|')}|${r.status.map((x, i) => (x === 'vis' ? vals[i] : x)).join(',')}`;
+    if (!memo.has(printout)) { const f = full(vals, false, r); memo.set(printout, !!f.forced && f.forced.join('|') === key); }
+    return memo.get(printout);
+  };
+  // The degraded release's check has a budget of its own, a few times what the full release's took: one it
   // cannot settle within that is refused (a question of the figures alone, like the rest of the budget).
   const whole = meter.limit;
   meter.limit = Math.min(whole, meter.steps + DEGRADE_BUDGET_FACTOR * meter.steps + DEGRADE_BUDGET_MIN);
@@ -788,7 +807,8 @@ function protect(model, T, { budget = 4000, stepLimit = STEP_LIMIT, timeLimitMs 
   const { world, ...out } = base;
   let res = out;
   if (base.verified) {
-    const c = a.consistent(base, forced, { validate: sameFailure, derived: true });
+    const inForced = new Set(model.vars.map((v, i) => (forced.includes(v.table) ? i : -1)).filter(i => i >= 0));
+    const c = a.consistent(base, forced, { validate: sameFailure, derived: inForced });
     res = { ...out, verified: c.ok, unprotected: c.unprotected, gaveUp: c.gaveUp, consistency: { worlds: c.worlds, tried: c.tried }, ...(debug ? { G: c.G } : {}) };
   }
   if (meter.over && !meter.backstop && meter.limit < whole) { meter.over = false; res = { ...res, verified: false }; }
@@ -797,4 +817,4 @@ function protect(model, T, { budget = 4000, stepLimit = STEP_LIMIT, timeLimitMs 
 }
 
 
-module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect, auditor, STEP_LIMIT };
+module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect, STEP_LIMIT };

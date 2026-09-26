@@ -106,6 +106,25 @@ test('the settlement report: publication releases for finance; internal runs nee
   try { assert.equal((await c.navigator.get(`${path}?${SHORT}`)).status, 200); } finally { await c.admin.put('/api/admin/settings', { caseload_restriction: '1' }); }
 });
 
+test('the settlement report\'s first click per role: the submission for a supervisor or an administrator, the publication release for finance', async () => {
+  const path = '/api/reports/opioid-settlement';
+  for (const role of ['admin', 'supervisor']) {
+    const r = await c[role].get(`${path}?${PUB}`);
+    assert.equal(r.status, 200, role);
+    assert.deepEqual([r.data.suppression.purpose, r.data.suppression.mode], ['submission', 'exact'], role);
+    assert.equal(r.data.suppression.label, 'Submission to your funder — not for publication');
+    assert.equal(typeof r.data.services_by_use[0].people, 'number', `${role}: exact counts for the funder`);
+    const pub = await c[role].get(`${path}?${PUB}&purpose=publication`);
+    assert.equal(pub.data.suppression.purpose, 'publication', `${role}: publication when asked for`);
+    assert.ok(Array.isArray(pub.data.release.withheld_reasons), 'a publication release lists what it withheld, with why');
+  }
+  const f = await c.finance.get(`${path}?${PUB}`);
+  assert.deepEqual([f.data.suppression.purpose, f.data.suppression.mode], ['publication', 'suppressed']);
+  // A supervisor's submission file says what it is, in its name and on its About sheet.
+  const x = await c.supervisor.raw(`${path}/export?${PUB}&format=xlsx`);
+  assert.equal(x.status, 200); assert.match(x.headers.get('content-disposition'), /exact-counts\.xlsx/); assert.equal(x.headers.get('x-suds-report-purpose'), 'submission');
+});
+
 test('a refused run is audited as a denial naming reports:internal', async () => {
   await c.readonly.get(`/api/reports/funder?${SHORT}`);
   const a = H.db.one(`SELECT details FROM audit_log WHERE action='authz.denied' ORDER BY id DESC LIMIT 1`);
