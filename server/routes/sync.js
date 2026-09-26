@@ -43,7 +43,14 @@ function scopeSql(t, user, alias) {
   // re-points what it holds, exactly as the office did.
   if (t.name === 'clients' && cf.sql !== '1=1') { const kf = auth.caseloadFilter(user, `${alias}.merged_into`); return { sql: `(${cf.sql} OR (${alias}.merged_into IS NOT NULL AND ${kf.sql}))`, params: [...cf.params, ...kf.params] }; }
   if (t.scope === 'via-note') { const nf = auth.caseloadFilter(user, 'n.client_id'); return { sql: `${alias}.note_id IN (SELECT n.id FROM notes n WHERE ${nf.sql})`, params: nf.params }; }
-  if (t.scope === 'client-or-null') return { sql: `(${alias}.${t.clientCol} IS NULL OR ${cf.sql})`, params: cf.params };
+  if (t.scope === 'client-or-null') {
+    // A row with no client is its owners' unless the role holds the table's `all` permission (crud.js applies
+    // the same rule to the REST routes).
+    const u = t.unlinked && !auth.hasPerm(user, t.unlinked.all) ? t.unlinked : null;
+    if (!u) return { sql: `(${alias}.${t.clientCol} IS NULL OR ${cf.sql})`, params: cf.params };
+    const own = u.owners.map(c => `${alias}.${c}=?`).join(' OR ');
+    return { sql: `((${alias}.${t.clientCol} IS NULL AND (${own})) OR (${alias}.${t.clientCol} IS NOT NULL AND ${cf.sql}))`, params: [...u.owners.map(() => user.id), ...cf.params] };
+  }
   return cf;
 }
 
@@ -221,7 +228,8 @@ function exportInto(out, user, raw, cursor) {
     if (cursor) rows = rows.filter(r => r.updated_at <= cursor);
     if (t.name === 'users') rows = rows.map(r => ({ ...(r.id === user.id ? r : { ...r, password_hash: 'scrypt$0$0$0$AA==$AA==' }), mfa_secret_enc: null, mfa_enabled: 0 })); // devices get own password hash for offline login; never MFA secrets
     if (t.name === 'notes' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => r.kind !== 'clinical'); // minimum necessary
-    if (t.readPerm && !auth.hasPerm(user, t.readPerm)) rows = []; // minimum necessary (clinical assessments, the care plan)
+    if (t.readPerm && !auth.hasPerm(user, t.readPerm)) rows = []; // minimum necessary (clinical assessments, the care plan, spending)
+    if (t.redact && !auth.hasPerm(user, t.redact.perm)) rows = rows.map(r => ({ ...r, ...t.redact.cols })); // fund names without their money
     if (t.name === 'note_addenda' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => db.one(`SELECT kind FROM notes WHERE id=?`, r.note_id)?.kind !== 'clinical');
     const exported = [];
     for (const r of rows) {
@@ -450,6 +458,8 @@ function push(user, payload) {
           // deidentified: as over REST (crud.js), finance may file an expenditure against a client it knows by code.
           if ((t.scope === 'client' || t.scope === 'client-or-null') && raw[t.clientCol] && t.name !== 'clients' && !selfAssignmentIds.has(raw.id) && !auth.canAccessClient(user, raw[t.clientCol], { deidentified: true })) { reject(t.name, raw.id, 'not on caseload'); return false; }
           if (t.name === 'clients' && existing && !auth.canAccessClient(user, raw.id)) { reject(t.name, raw.id, 'not on caseload'); return false; }
+          // Another worker's record with no client is not this device's to change (sync-tables.js `unlinked`, as over REST).
+          if (existing && t.unlinked && !existing[t.clientCol] && !auth.hasPerm(user, t.unlinked.all) && !t.unlinked.owners.some(c => existing[c] === user.id)) { reject(t.name, raw.id, 'not permitted'); return false; }
           // A self-assignment the device made for a client it created (see isSelfAssignment). A matching
           // open assignment under another id — the office's own, from a sync before this rule existed —
           // makes the device's row a duplicate, which is refused for good so the device stops offering it.
