@@ -48,7 +48,7 @@ module.exports = {
     // A referral may cite the consent it was made under, so consents come first.
     { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc', 'signer_name_enc', 'revoked_reason_enc', 'witness_enc', 'document_ref_enc'], legacy: { revoked_reason: 'revoked_reason_enc', witness: 'witness_enc', document_ref: 'document_ref_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
-    { name: 'court_orders', enc: ['court_enc', 'case_ref_enc', 'recipient_enc', 'purpose_enc', 'scope_enc', 'vacated_reason_enc'], legacy: { vacated_reason: 'vacated_reason_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'court-orders:write', parent: ['clients', 'client_id'] },
+    { name: 'court_orders', enc: ['court_enc', 'case_ref_enc', 'recipient_enc', 'purpose_enc', 'scope_enc', 'vacated_reason_enc', 'document_ref_enc'], legacy: { vacated_reason: 'vacated_reason_enc', document_ref: 'document_ref_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'court-orders:write', parent: ['clients', 'client_id'] },
     { name: 'part2_notices', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     { name: 'referrals', enc: ['outcome_enc', 'barrier_enc', 'notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'referrals:write', parent: ['clients', 'client_id'] },
     // Migration 42 moved client_form_files.filename, imports.filename and consents.document_ref likewise.
@@ -89,7 +89,8 @@ module.exports = {
     { name: 'option_overrides', enc: [], scope: 'all', writePerm: 'settings:manage', serverOwned: true },
     // The QSOA / research / audit register the non-consent disclosure bases rest on (server/disclosure.js):
     // the office's, pull-only, so a device can offer the same agreements on its disclosure form offline.
-    { name: 'disclosure_agreements', enc: [], scope: 'all', writePerm: 'agreements:write', serverOwned: true },
+    // Migration 43 moved its document_ref (and court_orders') into document_ref_enc.
+    { name: 'disclosure_agreements', enc: ['document_ref_enc'], legacy: { document_ref: 'document_ref_enc' }, scope: 'all', writePerm: 'agreements:write', serverOwned: true },
   ],
   // Push rejection reasons that will never succeed on a retry: the office has ruled, and the device must
   // mark the row as exchanged (office wins) rather than resend it every sync forever. Anything else

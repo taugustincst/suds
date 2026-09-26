@@ -601,7 +601,7 @@ CREATE TABLE IF NOT EXISTS court_orders (
   findings_recorded INTEGER NOT NULL DEFAULT 0,       -- the order states the good-cause findings (§2.64(d))
   notice_requirement_met INTEGER NOT NULL DEFAULT 0,  -- the patient/program had the notice and chance to respond the section requires
   covers_counseling_notes INTEGER NOT NULL DEFAULT 0,
-  document_ref TEXT,
+  document_ref_enc TEXT,               -- where the order is filed ("court order, J. Smith case file"): encrypted (migration 43)
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','vacated')),
   vacated_at TEXT,
   vacated_reason_enc TEXT,             -- free text that can describe the case: encrypted
@@ -1226,7 +1226,7 @@ CREATE INDEX IF NOT EXISTS idx_fhir_jwt_assertions_expires ON fhir_jwt_assertion
 -- service organisation agreements (§2.11, §2.12(c)(4)), and the approvals behind research (§2.52: an IRB or
 -- privacy board) and audit or evaluation (§2.53: the oversight body). A disclosure on one of those bases
 -- names a row here whose organisation (or one of its aliases) is the recipient. Organisations and
--- agreements, not clients: nothing here is PHI. Kept by supervisors and administrators; pulled to devices.
+-- agreements, not clients (its free-text document reference is encrypted all the same: it can name someone). Kept by supervisors and administrators; pulled to devices.
 CREATE TABLE IF NOT EXISTS disclosure_agreements (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL CHECK (kind IN ('qsoa','research','audit_evaluation')),
@@ -1237,7 +1237,7 @@ CREATE TABLE IF NOT EXISTS disclosure_agreements (
   reference TEXT,                      -- protocol or approval number
   agreement_date TEXT NOT NULL,        -- signed / approved
   expires_at TEXT,
-  document_ref TEXT,                   -- where the signed agreement or approval letter is kept
+  document_ref_enc TEXT,               -- where the signed agreement or approval letter is kept: free text that can name someone, encrypted (migration 43)
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','ended')),
   ended_at TEXT,
   ended_reason TEXT,

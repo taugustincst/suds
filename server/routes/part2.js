@@ -84,7 +84,7 @@ const AGREEMENT_SHAPE = {
 };
 function presentAgreement(a) {
   const problems = disclosure.agreementProblems(a);
-  return { ...a, label: disclosure.AGREEMENT_KINDS[a.kind], problems, active: !problems.length };
+  return { ...a, document_ref: a.document_ref_enc ? decrypt(a.document_ref_enc) : null, document_ref_enc: undefined, label: disclosure.AGREEMENT_KINDS[a.kind], problems, active: !problems.length };
 }
 // SUDS on this device (the published static build) keeps its own register; a device that syncs with an
 // office receives the office's (disclosure_agreements is pull-only, server/sync-tables.js).
@@ -188,9 +188,9 @@ module.exports = (r) => {
     const v = validate(ctx.body, ORDER_SHAPE);
     if (v.expires_at && v.expires_at < v.issued_at) throw badRequest('An order cannot expire before it was issued');
     const id = uuid();
-    db.run(`INSERT INTO court_orders(id,client_id,order_type,court_enc,case_ref_enc,issued_at,expires_at,recipient_enc,purpose_enc,scope_enc,findings_recorded,notice_requirement_met,covers_counseling_notes,document_ref,recorded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    db.run(`INSERT INTO court_orders(id,client_id,order_type,court_enc,case_ref_enc,issued_at,expires_at,recipient_enc,purpose_enc,scope_enc,findings_recorded,notice_requirement_met,covers_counseling_notes,document_ref_enc,recorded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, ctx.params.id, v.order_type, encrypt(v.court), v.case_ref ? encrypt(v.case_ref) : null, v.issued_at, v.expires_at || null, v.recipient ? encrypt(v.recipient) : null, encrypt(v.purpose), encrypt(v.scope),
-      v.findings_recorded ? 1 : 0, v.notice_requirement_met ? 1 : 0, v.covers_counseling_notes ? 1 : 0, v.document_ref || null, ctx.user.id);
+      v.findings_recorded ? 1 : 0, v.notice_requirement_met ? 1 : 0, v.covers_counseling_notes ? 1 : 0, v.document_ref ? encrypt(v.document_ref) : null, ctx.user.id);
     audit.log({ user: ctx.user, action: 'court_order.create', entity: 'court_order', entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { order_type: v.order_type, qualifying: !!(v.findings_recorded && v.notice_requirement_met) } });
     const row = db.one(`SELECT * FROM court_orders WHERE id=?`, id);
     // Recorded either way (the order exists); the answer says whether it can authorise a disclosure yet.
@@ -226,8 +226,8 @@ module.exports = (r) => {
     if (v.kind !== 'qsoa' && !String(v.approving_body || '').trim()) throw badRequest(`A ${disclosure.AGREEMENT_KINDS[v.kind]} names the IRB, privacy board or body that approved it (§${v.kind === 'research' ? '2.52' : '2.53'})`, { fields: { approving_body: 'required' } });
     if (v.expires_at && v.expires_at < v.agreement_date) throw badRequest('An agreement cannot expire before it was made');
     const id = uuid();
-    db.run(`INSERT INTO disclosure_agreements(id,kind,organisation,aliases,services,approving_body,reference,agreement_date,expires_at,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-      id, v.kind, v.organisation.trim(), v.aliases || null, v.services || null, v.approving_body || null, v.reference || null, v.agreement_date, v.expires_at || null, v.document_ref || null, ctx.user.id);
+    db.run(`INSERT INTO disclosure_agreements(id,kind,organisation,aliases,services,approving_body,reference,agreement_date,expires_at,document_ref_enc,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      id, v.kind, v.organisation.trim(), v.aliases || null, v.services || null, v.approving_body || null, v.reference || null, v.agreement_date, v.expires_at || null, v.document_ref ? encrypt(v.document_ref) : null, ctx.user.id);
     audit.log({ user: ctx.user, action: 'disclosure_agreement.create', entity: 'disclosure_agreement', entityId: id, ip: ctx.ip, details: { kind: v.kind } });
     ctx.status = 201; return { id };
   });
