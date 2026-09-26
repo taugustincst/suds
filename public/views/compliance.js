@@ -36,9 +36,9 @@ route('compliance', async (r) => {
   const T = {
     async overview() {
       const [s, cfg] = await Promise.all([get('/api/part2/summary'), get('/api/part2/settings')]);
-      const settingsCard = can('settings:manage') ? h('div', { class: 'card mt' }, h('h2', {}, 'Programme settings'),
+      const settingsCard = can('settings:manage') ? h('div', { class: 'card mt' }, h('h2', {}, 'Program settings'),
         form([
-          { name: 'part2_program', label: 'This is a 42 CFR Part 2 programme (label records, attach the §2.32 notice, refuse general releases)', type: 'checkbox', value: cfg.part2_program, span: true },
+          { name: 'part2_program', label: 'This is a 42 CFR Part 2 program (label records, attach the §2.32 notice, refuse general releases)', type: 'checkbox', value: cfg.part2_program, span: true },
           { name: 'part2_off_reason', label: 'Reason for switching Part 2 off (required to switch it off)', type: 'textarea', rows: 2, span: true,
             help: 'At least 20 characters — usually counsel\'s determination that this is not a federally assisted Part 2 program. Switching it off is audited, shown to administrators on Home, and opens a draft incident for review.' },
           { name: 'mass_export_threshold', label: 'Open a draft incident when one identified export names this many clients', type: 'number', min: 1, step: 1, value: cfg.mass_export_threshold },
@@ -47,9 +47,9 @@ route('compliance', async (r) => {
           toast(r.incident ? 'Saved. Part 2 is off: a draft incident was opened for review.' : 'Saved', 'ok'); refresh();
         } })) : null;
       return h('div', {},
-        h('p', { class: 'small muted' }, 'SUDS enforces the controls; your programme\'s policies, training and counsel decide how they are used. See docs/compliance/PART2.md for the rule-by-rule matrix.'),
+        h('p', { class: 'small muted' }, 'SUDS enforces the controls; your program\'s policies, training and counsel decide how they are used. See docs/compliance/PART2.md for the rule-by-rule matrix.'),
         h('div', { class: 'grid cols-4' },
-          stat('Part 2 programme', s.part2_program ? 'Yes' : 'No', s.part2_program ? 'ok' : 'warn'),
+          stat('Part 2 program', s.part2_program ? 'Yes' : 'No', s.part2_program ? 'ok' : 'warn'),
           stat('Active clients with no notice', s.clients_missing_notice, s.clients_missing_notice ? 'warn' : '', can('consents:read') ? 'compliance?tab=notices' : null),
           stat('Active consents on the pre-2024 form', s.consents_legacy_active, s.consents_legacy_active ? 'warn' : ''),
           stat('Court orders in force', s.court_orders_active),
@@ -106,7 +106,7 @@ route('compliance', async (r) => {
       return h('div', {},
         h('div', { class: 'grid cols-4 mb' }, stat(`Complaints in ${year}`, rep.total), stat('Still open', rep.open, rep.open ? 'warn' : ''), stat('Told about HHS', rep.hhs_referral_given), stat('Median days to resolve', rep.median_days_to_resolve ?? '—')),
         h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Complaint log (42 CFR §2.4)'), can('complaints:write') ? h('button', { class: 'btn sm primary', 'data-add-complaint': '1', onClick: () => edit(null) }, '+ Complaint') : null),
-          h('p', { class: 'small muted' }, 'Anyone may complain to the programme and to the HHS Secretary about a privacy violation, and may not be retaliated against for it. A complaint is closed with its resolution, never deleted.'),
+          h('p', { class: 'small muted' }, 'Anyone may complain to the program and to the HHS Secretary about a privacy violation, and may not be retaliated against for it. A complaint is closed with its resolution, never deleted.'),
           table([{ label: 'Received', render: x => fmt.date(x.received_at) }, { label: 'From', render: x => fmt.label(x.complainant) }, { label: 'Client', render: x => x.client_code || '—' }, { label: 'Channel', render: x => fmt.label(x.channel) },
             { label: 'Summary', render: x => String(x.summary || '').slice(0, 120) }, { label: 'Status', render: x => badge(fmt.label(x.status), ['open', 'investigating'].includes(x.status) ? 'warn' : 'ok') }, { label: 'HHS told', render: x => (x.hhs_referral_given ? '✓' : '') }],
           list.rows, { empty: 'No complaints recorded.', onRow: can('complaints:write') ? edit : null })));

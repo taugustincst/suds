@@ -127,7 +127,8 @@ for (const [label, base] of surfaces) {
   await page.click('button:has-text("Add a to-do")'); await page.waitForSelector('.modal input[name=title]');
   const pickerHit = () => page.evaluate(() => { const i = document.querySelector('.modal input[name=due_at]'); const r = i.getBoundingClientRect(); const el = document.elementFromPoint(r.right - 10, r.y + r.height / 2); return el === i ? 'input' : (el ? el.tagName.toLowerCase() + (el.className ? '.' + String(el.className).split(/\s+/).join('.') : '') : 'nothing'); });
   eq(await pickerHit(), 'input', `${label}: with the client list closed, the date input's picker region is what a tap there hits`);
-  await page.click('.modal input[role=combobox]');
+  // The list opens on what is typed (an empty search box lists nobody).
+  await page.click('.modal input[role=combobox]'); await page.fill('.modal input[role=combobox]', 'Client');
   await until(async () => page.$('.modal [role=listbox]:not(.hidden)'), { timeout: 5000 });
   eq(await pickerHit(), 'input', `${label}: with the client list open, the picker region is still the date input (the list does not float over it)`);
   // the dialog scrolled so the field sits at the top of the screen, where the sticky banners are
@@ -525,7 +526,7 @@ else if (buildOldSite()) {
     await page.click('button:has-text("Add a to-do")'); await page.waitForSelector('.modal input[name=due_at]');
     const hit = () => page.evaluate(() => { const i = document.querySelector('.modal input[name=due_at]'); const r = i.getBoundingClientRect(); const el = document.elementFromPoint(r.right - 10, r.y + r.height / 2); return el === i ? 'input' : (el ? el.tagName.toLowerCase() + '.' + String(el.className).split(/\s+/).join('.') : 'nothing'); });
     eq(await hit(), 'input', `${label}: the date picker region is the date input (client list closed)`);
-    await page.click('.modal input[role=combobox]'); await until(async () => page.$('.modal [role=listbox]:not(.hidden)'), { timeout: 5000 });
+    await page.click('.modal input[role=combobox]'); await page.fill('.modal input[role=combobox]', 'M26-0001'); await until(async () => page.$('.modal [role=listbox]:not(.hidden)'), { timeout: 5000 });
     eq(await hit(), 'input', `${label}: the date picker region is the date input (client list open)`);
     await page.evaluate(() => { const bg = document.querySelector('.modal-bg'); const el = document.querySelector('.modal input[name=due_at]'); bg.scrollTop += el.getBoundingClientRect().top - 2; });
     eq(await hit(), 'input', `${label}: the date picker region is the date input when scrolled up to the top of the screen`);

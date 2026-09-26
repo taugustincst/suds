@@ -72,14 +72,44 @@ const isLatin = (n) => /^[a-z0-9]*$/.test(n);
 /** HMAC of the first three letters of a surname — lets "Ngu" find "Nguyen" without storing either. Letters,
  *  not UTF-16 code units, so a name outside the Basic Multilingual Plane is not cut through a character. */
 function namePrefixIndex(lastName) { const n = [...normaliseName(lastName)]; return n.length >= 2 ? blindIndex('pfx:' + n.slice(0, 3).join('')) : null; }
-/** HMAC of a surname's Soundex code — lets a misspelling still find the person. Soundex only means anything
- *  for the Latin alphabet; a name in any other script gets an exact, normalised index here instead (so the
- *  column is never empty for it) rather than a code computed from nothing. */
-function namePhoneticIndex(lastName) {
-  const n = normaliseName(lastName);
+/** HMAC of a name's Soundex code (or, outside the Latin alphabet, of the name itself). */
+function phoneticOf(name) {
+  const n = normaliseName(name);
   if (!n) return null;
   if (!isLatin(n)) return blindIndex('nrm:' + n);
   const c = soundex(n); return c ? blindIndex('snd:' + c) : null;
+}
+/** The parts of a compound surname ("Quintero-Vasquez", "De la Cruz"), split on hyphens, spaces and
+ *  apostrophes before folding (folding drops them). Parts under two letters are left out. [] for a surname of
+ *  one part. */
+function nameParts(name) {
+  const parts = String(name || '').split(/[\s\-\u2010-\u2015'\u2019.]+/).map(p => normaliseName(p)).filter(p => [...p].length >= 2);
+  return parts.length > 1 ? parts : [];
+}
+/** The search tokens of one part of a compound surname: its exact index, its 3-letter prefix and its Soundex
+ *  code, each HMAC'd as the whole surname's are. The search compares each word typed against them. */
+function namePartTokens(part) { return [blindIndex('part:' + part), namePrefixIndex(part), phoneticOf(part)].filter(Boolean); }
+/**
+ * HMAC of a surname's Soundex code — lets a misspelling still find the person. Soundex only means anything
+ * for the Latin alphabet; a name in any other script gets an exact, normalised index here instead (so the
+ * column is never empty for it) rather than a code computed from nothing.
+ *
+ * A compound surname also carries the tokens of each of its parts, space-separated after the whole name's
+ * code, so "Vasquez" (or "Vas", or "Vazquez") finds Quintero-Vasquez. The column holds only HMACs either way;
+ * no schema change, and every path that derives it (writes, sync, key rotation, the rebuilds in migrations
+ * 6 and 26 and reindexNameParts below) calls this one function.
+ */
+function namePhoneticIndex(lastName) {
+  const whole = phoneticOf(lastName);
+  const parts = nameParts(lastName);
+  if (!whole || !parts.length) return whole;
+  return [...new Set([whole, ...parts.flatMap(namePartTokens)])].join(' ');
+}
+/** The tokens a word typed into the search box matches a compound surname by (see namePhoneticIndex). */
+function searchPartTokens(word, { exact = false } = {}) {
+  const p = normaliseName(word);
+  if ([...p].length < 2) return [];
+  return exact ? [blindIndex('part:' + p)] : namePartTokens(p);
 }
 
 /** Blind index of a preferred name / alias, normalised the same way first_name_idx is; null when blank.
@@ -139,4 +169,4 @@ function summary(row, opts) {
   return o;
 }
 
-module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes };
+module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes, nameParts, searchPartTokens };

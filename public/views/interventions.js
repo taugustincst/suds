@@ -23,7 +23,7 @@ export function openInterventionForm(values, { clientId, clientDisplay, onDone, 
     { name: 'type', label: 'What did you do?', type: 'select', list: 'INTERVENTION_TYPES', required: true },
     { name: 'occurred_at', label: 'Date & time', type: 'datetime', required: true, value: new Date().toISOString() },
     { name: 'duration_minutes', label: 'Duration (minutes)', type: 'number', min: 0, max: 1440, step: 1, value: 30 },
-    { name: 'location', label: 'Location', type: 'select', list: 'LOCATIONS', value: 'office' }, { name: 'modality', label: 'Modality', type: 'select', list: 'MODALITIES', value: 'in_person' },
+    { name: 'location', label: 'Location', type: 'select', list: 'LOCATIONS', value: C.DEFAULT_LOCATION || 'office' }, { name: 'modality', label: 'Modality', type: 'select', list: 'MODALITIES', value: 'in_person' },
     { name: 'outcome', label: 'Outcome', type: 'select', list: 'OUTCOMES' }, { name: 'stage_of_change', label: 'Stage of change', type: 'select', options: C.STAGES },
     { name: 'naloxone_kits', label: 'Naloxone kits given', type: 'number', min: 0, step: 1, value: 0 }, { name: 'fentanyl_strips', label: 'Fentanyl test strips given', type: 'number', min: 0, step: 1, value: 0 },
     can('budget:read') ? { name: 'funding_source_id', label: 'Funding source', type: 'fund' } : null,
@@ -78,7 +78,7 @@ export function interventionTable(rows, { showClient = true, onChange } = {}) {
     { label: 'Where', render: r => `${fmt.label(r.location, 'LOCATIONS')} · ${fmt.label(r.modality, 'MODALITIES')}` }, { label: 'Outcome', render: r => r.outcome ? badge(fmt.label(r.outcome, 'OUTCOMES'), statusKind(r.outcome)) : '—' },
     { label: 'Supplies', render: r => [r.naloxone_kits ? badge(`${r.naloxone_kits} naloxone`, 'ok') : null, r.fentanyl_strips ? [' ', badge(`${r.fentanyl_strips} FTS`, 'info')] : null] },
     { label: 'Worker', key: 'worker' }, { label: 'Summary', render: r => h('span', { class: 'small' }, (r.summary || '').slice(0, 120)) },
-    { label: '', render: r => (r.user_id === state.user.id || can('clients:all')) && can('interventions:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: (e) => { e.stopPropagation(); openInterventionForm(r, { onDone: onChange }); } }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this intervention', onClick: async (e) => { e.stopPropagation(); if (await confirmDialog('Delete intervention', 'Delete this intervention record? This is logged.', { danger: true, okText: 'Delete' })) { await del(`/api/interventions/${r.id}`); toast('Deleted'); onChange && onChange(); } } }, '✕')) : null },
+    { label: '', render: r => (r.user_id === state.user.id || can('clients:all')) && can('interventions:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: (e) => { e.stopPropagation(); openInterventionForm(r, { onDone: onChange }); } }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this visit', onClick: async (e) => { e.stopPropagation(); if (await confirmDialog('Delete visit', 'Delete this visit? This is logged.', { danger: true, okText: 'Delete' })) { await del(`/api/interventions/${r.id}`); toast('Deleted'); onChange && onChange(); } } }, '✕')) : null },
   ].filter(Boolean), rows, { empty: 'Nothing recorded yet. Use + Log to record a visit, screening, warm handoff or other service.' });
 }
 
@@ -100,5 +100,5 @@ route('interventions', async (r) => {
     noFund ? h('div', { class: 'banner warn small', 'data-no-fund-filter': '1' }, 'Showing only visits with no funding source. Edit each one to choose the fund it was charged to. ', h('a', { href: `#/interventions?type=${type}&from=${from}&to=${to}${mine ? '&mine=1' : ''}` }, 'Show all visits')) : null,
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Type'), typeSel), h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('label', { class: 'check', style: { marginTop: 0 } }, mineI, 'Mine only'), h('button', { class: 'btn', onClick: apply }, 'Apply')),
     pagedList({ first: data, url: `/api/interventions${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => interventionTable(rows, { onChange: refresh }),
-      summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} interventions · ${fmt.mins(rows.reduce((s, x) => s + (x.duration_minutes || 0), 0))} shown`) }));
+      summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} visit${total === 1 ? '' : 's'} · ${fmt.mins(rows.reduce((s, x) => s + (x.duration_minutes || 0), 0))} shown`) }));
 });

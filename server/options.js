@@ -16,6 +16,7 @@ const C = require('./constants');
 // The same wording rules as fmt.label() in public/app.js, for a code nobody has given a label.
 function humanize(s) {
   if (!s) return '';
+  if (C.CODE_LABELS && Object.prototype.hasOwnProperty.call(C.CODE_LABELS, s)) return C.CODE_LABELS[s];
   return String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bRx\b/, 'Rx').replace(/\bIds\b/, 'IDs').replace(/\bRoi\b/, 'ROI').replace(/\bPart2 Disclosure\b/, 'Part 2 disclosure').replace(/\bPart2\b/g, 'Part 2');
 }
 
@@ -71,7 +72,7 @@ const BY_KEY = new Map(LISTS.map(l => [l.key, l]));
 // Lists that are deliberately not editable, and why (shown on the Lists page so nobody goes looking).
 const EXCLUDED = [
   { name: 'Race and ethnicity', why: 'Federal (OMB) reporting categories that funder reports count as they are.' },
-  { name: 'ASAM level of care', why: 'The ASAM criteria levels: a national standard, not a programme choice.' },
+  { name: 'ASAM level of care', why: 'The ASAM criteria levels: a national standard, not a program choice.' },
   { name: 'Screening instruments (PHQ-9, GAD-7, AUDIT-C, DAST-10)', why: 'Validated questionnaires: their wording and scoring cannot change without making the score meaningless.' },
   { name: 'ASAM dimensions and ratings', why: 'The six ASAM dimensions and the 0–4 risk scale: a national standard.' },
   { name: 'Stage of change', why: 'The stages of the transtheoretical model: a clinical standard.' },

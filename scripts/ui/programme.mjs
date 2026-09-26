@@ -65,7 +65,7 @@ try {
     for (const want of ['Home', 'My clients', 'To-dos', 'Visits', 'Calls & texts', 'Supplies', 'Resource directory']) ok(sb.main.includes(want), `the navigator's sidebar has ${want}`, sb.main);
     for (const not of ['Funding & spending', 'Policies & contracts', 'Funder report', 'Settings']) ok(!sb.main.includes(not) && !(sb.more || []).includes(not), `${not} is not in a navigator's sidebar`, sb);
     ok(!sb.main.includes('Import'), 'Import is not in the everyday list', sb.main);
-    ok(!sb.sections.includes('Programme'), 'a navigator has no Programme section', sb.sections);
+    ok(!sb.sections.includes('Program'), 'a navigator has no Program section', sb.sections);
     ok(sb.more && sb.more.includes('Reports') && sb.more.includes('My time') && sb.more.includes('Import'), 'the rest of what a navigator may open is folded under More', sb.more);
     eq(sb.moreOpen, false, 'and More starts closed');
     // More is a native disclosure: the keyboard opens it.
@@ -89,7 +89,7 @@ try {
   const sup = await session('jwalker', PW);
   {
     const sb = await sidebar(sup.page);
-    ok(sb.sections.includes('Programme'), 'a supervisor has the Programme section', sb.sections);
+    ok(sb.sections.includes('Program'), 'a supervisor has the Program section', sb.sections);
     for (const want of ['Funding & spending', 'Policies & contracts', 'Funder report', 'Settings', 'Import', 'Reports']) ok(sb.main.includes(want), `with ${want}`, sb.main);
     eq(sb.more, null, 'and no folded More group');
     ok(/Spent of budget/.test(await sup.page.textContent('#main')), 'a supervisor\'s Home keeps the budget tile');
@@ -108,7 +108,7 @@ try {
       return { top: Math.round(r.top + window.scrollY), shown, wideShown: !!wide && getComputedStyle(wide).display !== 'none', addShown: !!add && add.offsetParent !== null, banner: !!document.querySelector('#banners .banner') };
     });
     ok(m.top < 844 / 2, `at 390×844 the client's tab strip starts in the upper half of the screen (y=${m.top}${m.banner ? ', with the two-step banner showing' : ''})`, m);
-    eq(m.shown.join(','), 'overview,interventions,notes,tasks,consents', 'the strip shows the everyday sections; the rest are under More');
+    eq(m.shown.join(','), 'overview,interventions,notes,tasks,consents,referrals', 'the strip shows the everyday sections; the rest are under More');
     ok(!m.wideShown && m.addShown, 'the row of action buttons is one "Add…" button on a phone', m);
     const labels = await phone.page.$$eval('.main nav.tabs > button[data-tab]:not([hidden])', b => b.map(x => x.textContent.trim()));
     ok(labels.some(t => /^Visits \(\d+\)$/.test(t)) && labels.some(t => /^To-dos \(\d+\)$/.test(t)), 'its tabs say "Visits" and "To-dos"', labels);
@@ -126,15 +126,14 @@ try {
     // Past the everyday tabs: More still reaches every section.
     await phone.page.click('.main nav.tabs .tabs-more');
     const more = await phone.page.$$eval('.main nav.tabs .tabs-menu button', b => b.map(x => x.textContent.trim()));
-    ok(more.includes('Timeline') && more.some(t => /^Referrals/.test(t)), 'the other sections are under More', more);
+    ok(more.includes('Timeline') && more.some(t => /^Calls/.test(t)), 'the other sections are under More', more);
     await phone.page.keyboard.press('Escape');
-    // A dismissed two-step banner comes back as one line.
+    // A dismissed two-step banner comes back as a small link in the header, not a bar.
     if (m.banner && await phone.page.$('#banners [data-banner="mfa-required"] button[aria-label=Dismiss]')) {
-      await phone.page.click('#banners [data-banner="mfa-required"] button[aria-label=Dismiss]');
+      await phone.page.click('#banners [data-banner="mfa-required"] button[aria-label=Dismiss]'); await settle(phone.page);
       await phone.page.reload(); await phone.page.waitForSelector('.layout'); await settle(phone.page);
-      eq(await phone.page.$eval('#banners [data-banner="mfa-required"]', b => b.dataset.compact).catch(() => null), '1', 'the two-step banner, dismissed once, returns compact');
-      const h = await phone.page.$eval('#banners [data-banner="mfa-required"]', b => b.getBoundingClientRect().height);
-      ok(h <= 80, `and short (${Math.round(h)}px)`, h);
+      ok(!(await phone.page.$('#banners [data-banner="mfa-required"]')), 'the two-step banner, dismissed once, does not come back as a bar');
+      ok(await phone.page.$('.appbar [data-mfa-link]'), 'it is a link in the header instead');
     }
   }
 
@@ -143,8 +142,8 @@ try {
   {
     await admin.go('admin?tab=settings');
     const tabs = await admin.page.$$eval('.main nav.tabs button', b => b.map(x => x.textContent.trim()));
-    ok(tabs.includes('Programme') && !tabs.includes('Settings'), 'the Settings tab inside Settings is now "Programme"', tabs);
-    eq(await admin.page.title(), 'Programme · Settings — SUDS', 'and the page title says so');
+    ok(tabs.includes('Program') && !tabs.includes('Settings'), 'the Settings tab inside Settings is now "Program"', tabs);
+    eq(await admin.page.title(), 'Program · Settings — SUDS', 'and the page title says so');
     const secs = await admin.page.$$eval('details.section[data-section]', d => d.map(x => ({ h: x.querySelector('summary h3')?.textContent.trim(), open: x.open })));
     ok(secs.length >= 4 && secs.every(s => s.h), 'the programme settings are in sections, each with a heading', secs);
     ok(secs[0] && secs[0].open && secs.slice(1).every(s => !s.open), 'the first is open and the rest folded', secs);
@@ -153,7 +152,7 @@ try {
     await admin.page.focus('details.section[data-section="Security policy"] > summary'); await admin.page.keyboard.press('Enter');
     eq(await admin.page.$eval('details.section[data-section="Security policy"]', d => d.open), true, 'a section opens from the keyboard');
     await admin.page.evaluate(() => document.querySelectorAll('details.section').forEach(d => { d.open = true; }));
-    await axe(admin.page, 'Settings › Programme, every section open');
+    await axe(admin.page, 'Settings › Program, every section open');
     // The programme profile.
     ok(await admin.page.$('[data-programme-profile=treatment]'), 'the seeded programme is treatment-adjacent');
     ok(await admin.page.$('.main nav.tabs button[data-tab=fhir]'), 'with the FHIR clients tab');

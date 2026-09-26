@@ -75,7 +75,19 @@ module.exports = {
   // distribution (a kit handed to a stranger). Every other type is work with a person on the caseload, and
   // needs the client (server/routes/interventions.js and the visit form enforce the same list).
   CLIENTLESS_INTERVENTION_TYPES: ['outreach', 'naloxone_distribution'],
-  LOCATIONS: ['office', 'field', 'home', 'phone', 'telehealth', 'hospital', 'emergency_dept', 'jail', 'court', 'shelter', 'treatment_facility', 'community', 'other'],
+  // 'street' (Street / Outdoor) is where a harm-reduction programme's visits mostly happen, and the default
+  // Location of its visit and overdose forms (server/programme.js defaultLocation).
+  LOCATIONS: ['office', 'street', 'field', 'home', 'phone', 'telehealth', 'hospital', 'emergency_dept', 'jail', 'court', 'shelter', 'treatment_facility', 'community', 'other'],
+  // Places an overdose cannot happen: not offered as the overdose form's "Where".
+  REMOTE_LOCATIONS: ['phone', 'telehealth'],
+  // The words for codes that the generic wording ("Court Or Probation", "Detox Withdrawal Mgmt") gets wrong:
+  // used by every list (server/options.js) and by fmt.code() in the browser for a code shown outside one.
+  CODE_LABELS: {
+    screening_sbirt: 'Screening (SBIRT)', court_or_probation: 'Court or Probation', hospital_or_ed_visit: 'Hospital or ED Visit', post_overdose_follow_up: 'Post-Overdose Follow-Up',
+    jail_in_reach: 'Jail In-Reach', recovery_check_in: 'Recovery Check-In', declined_by_client: 'Declined by Client', declined_by_provider: 'Declined by Provider', no_show: 'No-Show',
+    detox_withdrawal_mgmt: 'Detox / Withdrawal Management', emergency_dept: 'Emergency Department', street: 'Street / Outdoor', ids_documents: 'IDs and Documents',
+    pregnancy_parenting: 'Pregnancy and Parenting', phones_communication: 'Phones and Communication', food_basic_needs: 'Food and Basic Needs',
+  },
   MODALITIES: ['in_person', 'phone', 'video', 'text', 'email', 'collateral'],
   OUTCOMES: ['completed', 'partial', 'client_declined', 'no_show', 'unable_to_locate', 'rescheduled', 'crisis_resolved', 'transported', 'admitted', 'other'],
   STAGES: ['precontemplation', 'contemplation', 'preparation', 'action', 'maintenance', 'relapse'],

@@ -10,6 +10,10 @@ const where = (v) => (v && listEntries('LOCATIONS').some(e => e.code === v) ? fm
 // come from the office's setup with the rest of the lists (GET /api/meta/constants; the same lists are on
 // GET /api/meta/overdose-options for other callers).
 
+const remote = () => (state.constants || {}).REMOTE_LOCATIONS || ['phone', 'telehealth'];
+/** A new event starts where the program's visits do (server/programme.js defaultLocation), never at a phone. */
+const defaultWhere = () => { const d = (state.constants || {}).DEFAULT_LOCATION; return d && !remote().includes(d) && listEntries('LOCATIONS').some(e => e.code === d && !e.hidden) ? d : ''; };
+
 export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
   const f = form([
     { name: 'client_id', label: 'Client (leave empty for a community report)', type: 'client', span: true,
@@ -27,12 +31,13 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
     { name: 'ems_called', label: 'EMS was called', type: 'checkbox' },
     { name: 'hospitalized', label: 'Taken to hospital', type: 'checkbox' },
     { name: 'survived', label: 'The person survived', type: 'checkbox', value: row ? row.survived : 1 },
-    { name: 'location_type', label: 'Where', type: 'select', placeholder: '— choose —', list: 'LOCATIONS', help: 'The same places as a visit\'s Location, so the naloxone log counts reversals and kits by the same sites. Somewhere not on the list: choose Other and say where in the notes.' },
+    // Phone and telehealth are how a visit happens, not a place an overdose can.
+    { name: 'location_type', label: 'Where', type: 'select', placeholder: '— choose —', list: 'LOCATIONS', exclude: remote(), help: 'The same places as a visit\'s Location, so the naloxone log counts reversals and kits by the same sites. Somewhere not on the list: choose Other and say where in the notes.' },
     { name: 'city', label: 'City' },
     { name: 'funding_source_id', label: 'Funding source', type: 'fund' },
     { name: 'notes', label: 'Notes', type: 'textarea', span: true, help: 'Stored encrypted.' },
   ], {
-    values: row || { client_id: clientId || '', occurred_at: new Date().toISOString(), survived: 1 },
+    values: row || { client_id: clientId || '', occurred_at: new Date().toISOString(), survived: 1, location_type: defaultWhere() },
     submitText: row ? 'Save' : 'Record event',
     draftKey: row ? `overdose:${row.id}` : 'overdose:new',
     onSubmit: async (d) => {
@@ -49,7 +54,8 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
         if (!ok) return;
       }
       if (row) await put(`/api/overdose-events/${row.id}`, { ...d, if_updated_at: row.updated_at }); else await post('/api/overdose-events', d);
-      toast(row ? 'Event updated' : 'Event recorded', 'ok'); m.close(); onDone && onDone();
+      // Said in words, and long enough to read after the list redraws under it.
+      toast(row ? 'Event updated' : `Event recorded: ${fmt.label(d.kind, 'OVERDOSE_KINDS')}${d.client_id ? '' : ' (community report)'}`, 'ok'); m.close(); onDone && onDone();
     },
   });
   const kindI = f.inputs.kind; const naloxoneI = f.inputs.naloxone_used;

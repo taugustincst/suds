@@ -89,7 +89,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   const exp = (await api('POST', '/api/clients', { first_name: 'Expired', last_name: 'Consent' + stamp, confirm_duplicate: true })).data;
   await api('POST', `/api/clients/${exp.id}/consents`, { type: 'part2_disclosure', recipient: 'Granite Detox', purpose: 'referral', scope: 'dates of service', signed_at: day(-400), expires_at: day(-1), signed_on_paper: true, redisclosure_notice_given: true, revocation_right_given: true, refusal_consequences_given: true });
   await go(page, `client/${exp.id}/referrals`);
-  await page.click('button:has-text("+ New referral")'); await page.waitForSelector('.modal select[name=consent_id]');
+  await page.click('button:has-text("+ Referral")'); await page.waitForSelector('.modal select[name=consent_id]');
   eq(await page.$$eval('.modal select[name=consent_id] option', o => o.filter(x => x.value).length), 0, 'the expired consent is not offered');
   ok(/\(expired\)/.test(await page.$eval('.modal select[name=consent_id] option:first-child', o => o.textContent)), 'the empty choice reads "(expired)"');
   ok(await page.$('.modal a[data-add-consent]'), 'with a link to record a new release');

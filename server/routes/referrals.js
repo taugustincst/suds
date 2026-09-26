@@ -7,6 +7,7 @@ const crud = require('../crud');
 const audit = require('../audit');
 const C = require('../constants');
 const disclosure = require('../disclosure');
+const CN = require('../client-name');
 const { badRequest } = require('../http');
 const { uuid, encrypt, decrypt } = require('../crypto');
 
@@ -37,6 +38,25 @@ function resourceName(resourceId) {
 function resourceNames(resourceId) {
   const r = db.one(`SELECT name, organization FROM resources WHERE id=?`, resourceId);
   return r ? [r.name, r.organization].filter(Boolean) : [];
+}
+
+/**
+ * Is there a live consent on file that names this referral's provider (the check the disclosure gate makes:
+ * a Part 2 consent, every §2.31 element, unexpired and not revoked)? The referral list says "Consent on file"
+ * only then: a general release, or a TPO consent that names someone else, is not one. Worked out once per
+ * client and provider in a request.
+ */
+function withConsentOnFile(ctx, row) {
+  const cache = ctx._consentOnFile || (ctx._consentOnFile = new Map());
+  const key = `${row.client_id}|${row.resource_id}`;
+  if (!cache.has(key)) {
+    const names = disclosure.recipientNames(resourceNames(row.resource_id));
+    const today = new Date().toISOString().slice(0, 10);
+    const types = disclosure.disclosingConsentTypes();
+    cache.set(key, !!names.length && db.all(`SELECT * FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, row.client_id, today)
+      .some(c => types.includes(c.type) && !disclosure.consentElementProblems(c).length && disclosure.consentNamesRecipient({ type: c.type, recipient: c.recipient_enc ? decrypt(c.recipient_enc) : null }, names)));
+  }
+  return { ...row, consent_on_file: cache.get(key) };
 }
 
 function encFields(v) { for (const f of ENC) if (v[f] !== undefined) { v[`${f}_enc`] = v[f] === null || v[f] === '' ? null : encrypt(String(v[f])); delete v[f]; } }
@@ -116,7 +136,8 @@ module.exports = (r) => {
   crud.build(r, {
     table: 'referrals', entity: 'referral', perm: 'referrals', dateCol: 'referred_at', restrictOwner: true,
     joins: 'JOIN users u ON u.id=referrals.user_id JOIN clients c ON c.id=referrals.client_id JOIN resources res ON res.id=referrals.resource_id',
-    select: 'referrals.*, u.display_name AS worker, c.client_code, res.name AS resource_name, res.category AS resource_category, res.phone AS resource_phone',
+    // The client's name for a role that can open the client (client-name.js); the code for any other.
+    select: `referrals.*, u.display_name AS worker, c.client_code, ${CN.SELECT}, res.name AS resource_name, res.category AS resource_category, res.phone AS resource_phone`,
     shape: {
       client_id: { type: 'string', required: true }, resource_id: { type: 'string', required: true }, user_id: { type: 'string' }, referred_at: { type: 'datetime', required: true },
       status: { type: 'string', list: 'REFERRAL_STATUSES' }, urgency: { type: 'string', enum: ['routine', 'urgent', 'emergent'] }, appointment_at: { type: 'datetime' }, admitted_at: { type: 'datetime' },
@@ -133,7 +154,7 @@ module.exports = (r) => {
       if (ctx.query.get('awaiting_outcome') === '1') where.push(`referrals.status IN ('admitted','scheduled') AND referrals.outcome_recorded_at IS NULL`);
       const res = ctx.query.get('resource_id'); if (res) { where.push('referrals.resource_id=?'); params.push(res); }
     },
-    afterLoad: (ctx, row) => present(row),
+    afterLoad: (ctx, row) => present(withConsentOnFile(ctx, CN.withClientName(ctx, row))),
     beforeInsert: (ctx, v) => {
       if (!db.one(`SELECT 1 FROM resources WHERE id=?`, v.resource_id)) throw badRequest('Unknown resource');
       if (v.consent_id && !db.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, v.client_id)) throw badRequest('That consent belongs to a different client');

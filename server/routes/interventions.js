@@ -156,5 +156,6 @@ module.exports = (r) => {
   // The lists as this programme has set them up (Settings → Lists): each managed list is the choices a new
   // record may use, in order, and option_lists carries the wording, including for retired choices an old
   // record still shows.
-  r.get('/api/meta/constants', auth.requireAuth, () => { const m = O.meta(); return { ...C, ...m.visible, option_lists: m.option_lists }; });
+  // DEFAULT_LOCATION: where a new visit or overdose event starts (server/programme.js defaultLocation).
+  r.get('/api/meta/constants', auth.requireAuth, () => { const m = O.meta(); return { ...C, ...m.visible, option_lists: m.option_lists, DEFAULT_LOCATION: require('../programme').defaultLocation(m.visible.LOCATIONS || C.LOCATIONS) }; });
 };

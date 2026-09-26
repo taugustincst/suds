@@ -224,7 +224,7 @@ route('caloms', async (r) => {
   // Each half of this page is a module of the programme profile (server/programme.js); one switched off is
   // left out, and says where it is switched on.
   const calOn = moduleOn('caloms'), hoOn = moduleOn('handoff');
-  const offNote = (what) => h('p', { class: 'small muted', 'data-module-off': what }, `${what === 'caloms' ? 'CalOMS Tx state reporting' : 'The county EHR hand-off'} is switched off for this programme.${can('settings:manage') ? ' Switch it on in Settings › Programme › Modules.' : ' An administrator can switch it on in Settings › Programme.'}`);
+  const offNote = (what) => h('p', { class: 'small muted', 'data-module-off': what }, `${what === 'caloms' ? 'CalOMS Tx state reporting' : 'The county EHR hand-off'} is switched off for this program.${can('settings:manage') ? ' Switch it on in Settings › Program › Modules.' : ' An administrator can switch it on in Settings › Program.'}`);
   if (!calOn) return h('div', {}, pageHead('State reporting'), offNote('caloms'), hoOn ? handoffCard() : offNote('handoff'));
   return h('div', {},
     pageHead('State reporting'),

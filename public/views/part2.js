@@ -44,7 +44,12 @@ export async function withRestrictionCheck(send, flag = 'restriction_reviewed') 
   }
 }
 
-export function openConsentForm(clientId, { onDone, discloser } = {}) {
+/**
+ * Record a consent. `preset` fills the form for a particular use — the referral form's "Record a consent
+ * naming <provider>" passes { type: 'part2_disclosure', recipient, purpose } — and the programme's usual
+ * consent (if one is saved) supplies what it covers and when it expires. `onDone(id)` gets the new consent.
+ */
+export function openConsentForm(clientId, { onDone, discloser, preset = null } = {}) {
   const types = (C().CONSENT_TYPES || []).map(v => ({ value: v, label: TYPE_LABELS[v] || fmt.label(v) }));
   const P2 = ' *';
   const f = form([
@@ -73,7 +78,7 @@ export function openConsentForm(clientId, { onDone, discloser } = {}) {
     // A live consent of the same type to the same recipient already covering these dates is most often the
     // same signed form recorded twice: say so and offer it, but let a genuine renewal be recorded.
     if (!(await confirmNotDuplicate(clientId, body, () => m.close()))) return;
-    await post(`/api/clients/${clientId}/consents`, body); toast('Consent recorded', 'ok'); m.close(); onDone && onDone();
+    const res = await post(`/api/clients/${clientId}/consents`, body); toast('Consent recorded', 'ok'); m.close(); onDone && onDone(res && res.id);
   } });
   // The TPO wording is only a default for a TPO consent: switching type clears it, switching back restores it.
   const typeSel = f.querySelector('select[name=type]');
@@ -91,21 +96,64 @@ export function openConsentForm(clientId, { onDone, discloser } = {}) {
     for (const k of ['recipient', 'purpose', 'scope', 'expires_event']) setVal(k, t[k] || '');
     if (t.expires_days) { const from = Date.parse(val('signed_at').value || fmt.today()) || Date.now(); setVal('expires_at', new Date(from + t.expires_days * 86400000).toISOString().slice(0, 10)); }
     for (const code of INFO_CATEGORIES()) { const box = val(`cat_${code}`); if (box) box.checked = (t.info_categories || []).includes(code); }
-    toast('Filled in with the programme\'s usual consent. Check it against the signed form.', 'ok');
+    toast('Filled in with the program\'s usual consent. Check it against the signed form.', 'ok');
   };
+  // A preset (a consent for one referral): the type, recipient and purpose it names; the usual consent's
+  // information, categories and expiry, which say what the program's releases normally cover.
+  const applyPreset = (t) => {
+    const typeEl = val('type'); typeEl.value = preset.type || 'part2_disclosure'; typeEl.dispatchEvent(new Event('change', { bubbles: true }));
+    setVal('recipient', preset.recipient || ''); setVal('purpose', preset.purpose || '');
+    if (t) {
+      setVal('scope', t.scope || ''); setVal('expires_event', t.expires_event || '');
+      if (t.expires_days) { const from = Date.parse(val('signed_at').value || fmt.today()) || Date.now(); setVal('expires_at', new Date(from + t.expires_days * 86400000).toISOString().slice(0, 10)); }
+      for (const code of INFO_CATEGORIES()) { const box = val(`cat_${code}`); if (box) box.checked = (t.info_categories || []).includes(code); }
+    } else for (const code of ['demographics', 'referrals']) { const box = val(`cat_${code}`); if (box) box.checked = true; }
+  };
+  if (preset) applyPreset(null);
   get('/api/consent-template', { quiet: true }).then(({ template }) => {
-    if (template) quick.append(h('button', { class: 'btn sm', type: 'button', 'data-use-template': '1', onClick: () => useTemplate(template) }, 'Fill in the programme\'s usual consent'));
+    if (preset) { if (template) applyPreset(template); return; }
+    if (template) quick.append(h('button', { class: 'btn sm', type: 'button', 'data-use-template': '1', onClick: () => useTemplate(template) }, 'Fill in the program\'s usual consent'));
     if (can('disclosures:override')) quick.append(h('button', { class: 'btn sm ghost', type: 'button', 'data-save-template': '1', onClick: async () => {
       const signed = Date.parse(val('signed_at').value || ''); const expires = Date.parse(val('expires_at').value || '');
       const body = { type: val('type').value, recipient: val('recipient').value || undefined, purpose: val('purpose').value || undefined, scope: val('scope').value || undefined, expires_event: val('expires_event').value || undefined,
         expires_days: Number.isFinite(signed) && Number.isFinite(expires) && expires > signed ? Math.round((expires - signed) / 86400000) : undefined,
         info_categories: INFO_CATEGORIES().filter(code => val(`cat_${code}`)?.checked) };
-      try { await put('/api/consent-template', body); toast('Saved as the programme\'s usual consent', 'ok'); } catch (e) { toast(e.message, 'error'); }
-    } }, 'Save as the programme\'s usual consent'));
+      try { await put('/api/consent-template', body); toast('Saved as the program\'s usual consent', 'ok'); } catch (e) { toast(e.message, 'error'); }
+    } }, 'Save as the program\'s usual consent'));
   }).catch(() => {});
-  const m = modal('Record consent / release of information', h('div', {},
+  const m = modal(preset ? `Record a consent naming ${preset.recipient}` : 'Record consent / release of information', h('div', {},
     h('div', { class: 'banner small' }, '42 CFR §2.31: a Part 2 consent names the patient, who may disclose, what information, to whom (or a class), why, the right to revoke and how, when it expires (a date or an event), the signature and date, the redisclosure statement, and the consequences of refusing to sign. A general release is not enough.'),
     quick, f), { wide: true });
+}
+
+/**
+ * The program's usual consent, set up without a client (the Home page's "Finish setting up" list): what
+ * "Fill in the program's usual consent" puts in the consent form, and what a consent recorded from a
+ * referral takes its information, categories and expiry from. A TPO consent that names the program's
+ * usual referral partners lets a referral to any of them rely on it. Supervisors and administrators.
+ */
+export async function openConsentTemplateForm({ partners = [], onDone } = {}) {
+  let template = null; try { template = (await get('/api/consent-template', { quiet: true })).template; } catch { template = null; }
+  const types = ['part2_tpo', 'part2_disclosure'].map(v => ({ value: v, label: TYPE_LABELS[v] || fmt.label(v) }));
+  const t = template || { type: 'part2_tpo', recipient: partners.length ? `${TPO.recipient}, including ${partners.join(', ')}` : TPO.recipient, purpose: TPO.purpose, info_categories: ['demographics', 'encounters', 'referrals'] };
+  const f = form([
+    { name: 'type', label: 'Consent type', type: 'select', options: types, required: true, noBlank: true, value: t.type },
+    { name: 'recipient', label: 'To whom — name your usual referral partners', type: 'textarea', rows: 3, required: true, span: true, value: t.recipient || '',
+      help: 'A referral can rely on a consent only when it names the provider. Name each partner as it is in the resource directory.' },
+    { name: 'purpose', label: 'Purpose of the disclosure', span: true, value: t.purpose || '' },
+    { name: 'scope', label: 'Information covered', type: 'textarea', rows: 2, span: true, value: t.scope || '' },
+    { name: 'expires_days', label: 'Expires after (days)', type: 'number', min: 1, max: 3660, step: 1, value: t.expires_days || 365 },
+    { name: 'expires_event', label: 'Or expires on this event', value: t.expires_event || '', placeholder: 'e.g. end of treatment' },
+    { type: 'section', label: 'Information it covers' },
+    ...INFO_CATEGORIES().map(code => ({ name: `cat_${code}`, label: CATEGORY_LABELS()[code] || fmt.label(code), type: 'checkbox', span: true, value: (t.info_categories || []).includes(code) })),
+  ], { submitText: 'Save the usual consent', onCancel: () => m.close(), onSubmit: async (v) => {
+    const body = { type: v.type, recipient: v.recipient || undefined, purpose: v.purpose || undefined, scope: v.scope || undefined, expires_event: v.expires_event || undefined,
+      expires_days: v.expires_days ? Number(v.expires_days) : undefined, info_categories: INFO_CATEGORIES().filter(code => v[`cat_${code}`]) };
+    await put('/api/consent-template', body); toast('Saved as the program\'s usual consent', 'ok'); m.close(); onDone && onDone();
+  } });
+  const m = modal('The program\'s usual consent', h('div', { 'data-consent-template-form': '1' },
+    h('p', { class: 'small muted' }, 'Workers fill a new consent in from this in one step; each is still signed and recorded client by client, with its own dates. It shares nothing by itself.'), f), { wide: true });
+  return m;
 }
 
 /** Resolves true to go on recording the consent, false to stop (the existing one was opened, or Cancel). */

@@ -28,7 +28,7 @@ export function timeTable(rows, { showClient = true, onChange } = {}) {
   return table([
     { label: 'Date', render: r => fmt.date(r.work_date) }, { label: 'Worker', key: 'worker' }, showClient ? { label: 'Client', render: r => r.client_id ? h(can('clients:read') ? 'a' : 'span', can('clients:read') ? { href: `#/client/${r.client_id}` } : { class: 'client-plain' }, r.client_name || r.client_code, r.client_name ? h('div', { class: 'muted small mono' }, r.client_code) : null) : '—' } : null,
     { label: 'Category', render: r => fmt.label(r.category, 'TIME_CATEGORIES') }, { label: 'Minutes', key: 'minutes', num: true }, { label: 'Billable', render: r => r.billable ? badge('Yes', 'ok') : '' }, { label: 'Fund', render: r => r.funding_source || '—' },
-    { label: 'Description', render: r => h('span', { class: 'small' }, r.description || '', r.intervention_id ? h('span', { class: 'muted' }, ' (from intervention)') : r.call_id ? h('span', { class: 'muted' }, ' (from call)') : null) },
+    { label: 'Description', render: r => h('span', { class: 'small' }, r.description || '', r.intervention_id ? h('span', { class: 'muted' }, ' (from visit)') : r.call_id ? h('span', { class: 'muted' }, ' (from call)') : null) },
     { label: 'Status', render: r => statusBadge(r) },
     { label: '', render: r => {
       const mine = r.user_id === state.user.id;
