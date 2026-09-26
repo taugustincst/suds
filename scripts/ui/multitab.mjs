@@ -101,7 +101,13 @@ for (const freezeSave of [true, false]) {
   const cdp = await ctx.newCDPSession(A); await cdp.send('Debugger.enable');
   eq((await addClient(A, 'Delta')).status, 201, `tab A records a client, then is frozen before anything else runs${tag}`);
   if (freezeSave) await A.evaluate(() => document.dispatchEvent(new Event('freeze')));
+  // Debugger.pause only takes effect the next time A runs script; an idle A (after the freeze save, nothing is
+  // pending) would never stop, and the case would test nothing. Kick a no-op into A (it stops on it, so it is
+  // not awaited) and wait until A is really paused.
+  const pausedNow = new Promise((resolve) => cdp.once('Debugger.paused', resolve));
   await cdp.send('Debugger.pause');
+  cdp.send('Runtime.evaluate', { expression: 'void 0' }).catch(() => {});
+  ok(await Promise.race([pausedNow.then(() => true), new Promise((r) => setTimeout(() => r(false), 5000))]), `tab A is actually frozen before the second tab opens${tag}`);
   const B = watch(await ctx.newPage(), 'B'); await B.goto(base + '/?local=1#/');
   // A stale or silent holder is never displaced without asking.
   ok(await B.waitForSelector(PROMPT, { timeout: 20000 }).catch(() => null), `a second tab asks before displacing a holder that is not answering${tag}`);

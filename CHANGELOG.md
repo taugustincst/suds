@@ -24,6 +24,9 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 - "Back up now" reports why a backup failed instead of answering with a server error.
 - On a device restored from a backup, an account dropped at the key change is told what happened and who can
   let it back in; the device audit names the accounts dropped.
+- The multitab browser test now waits until the first window is really frozen before a second one takes
+  over; an idle window never stopped at the debugger's pause, so that case sometimes tested nothing and then
+  failed when it tried to resume.
 
 ## 1.12.1 — 2026-09-26
 
