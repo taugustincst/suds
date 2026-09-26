@@ -71,7 +71,7 @@ git tag v1.0.1 && git push origin v1.0.1
 Pushing the tag runs `.github/workflows/release.yml` (or start it from the Actions tab with *Run workflow* → type `release`; it then creates the tag itself), which first passes the release gate (below), then re-runs the tests, packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release with the zip attached. As its last step it starts the web-app (GitHub Pages) workflow for the new tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses marketplace actions, so they run under restrictive Actions policies.
 
 ### Release gate
-QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` runs `scripts/release-gate.js` for the commit being released (`GITHUB_SHA`) before anything is built. It asks the GitHub API (with the workflow's own token — no marketplace action) for the runs of `ci.yml` on that exact commit, counts only `push` runs (a `pull_request` run tests a merge commit, not this one), and passes only when one of them **concluded success with the `test`, `thorough`, `browser`, `node24` and `dr-drill` jobs all successful** (`thorough` runs the publication-release disclosure sweeps at full size, `SUDS_THOROUGH=1`; `npm test` runs a sample of them):
+QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` runs `scripts/release-gate.js` for the commit being released (`GITHUB_SHA`) before anything is built. It asks the GitHub API (with the workflow's own token — no marketplace action) for the runs of `ci.yml` on that exact commit, counts only `push` runs (a `pull_request` run tests a merge commit, not this one), and passes only when one of them **concluded success with the `test`, `thorough`, `browser`, `node24` and `dr-drill` jobs all successful** (`thorough` runs, with `SUDS_THOROUGH=1`, the publication-release disclosure sweeps at full size — `npm test` runs a sample — and the performance checks in `test/thorough/`, which `npm test` leaves out so a busy runner cannot flake it: `npm run test:thorough`):
 
 | CI job | What it proves |
 | --- | --- |
@@ -111,6 +111,22 @@ git add package.json package-lock.json public/local && git commit -m "Update esb
 ```
 
 The remaining kernel libraries (`@noble/*`, `fflate`, `buffer`) come as one grouped monthly Dependabot PR; check it out, run `npm run build:local`, and push the rebuilt kernel to that PR's branch so CI's drift check passes.
+
+## Bumping the pinned Node 24
+The `node24` CI job installs an exact Node 24 release checked against a SHA-256 written in `ci.yml`
+(`NODE24_VERSION`, `NODE24_SHA256`), not whatever `latest-v24.x` is that day against a checksum file from the
+same server. Dependabot cannot see a version in a workflow's `env`, so bump it by hand — monthly with the
+grouped Dependabot PR, and at once for a Node security release (nodejs.org/en/blog/vulnerability):
+
+```bash
+v=v24.x.y                                                     # the newest v24 on https://nodejs.org/dist/
+curl -fsSLO https://nodejs.org/dist/$v/SHASUMS256.txt{,.asc}
+gpg --verify SHASUMS256.txt.asc SHASUMS256.txt                # release keys: github.com/nodejs/release-keys
+grep ' node-'$v'-linux-x64.tar.xz$' SHASUMS256.txt            # the hash for NODE24_SHA256
+```
+
+Change both lines in `.github/workflows/ci.yml` in one commit ("CI: Node 24 → $v"); `test/release-gate.test.js`
+checks their shape. The Node 22 used by the other jobs is the runner's own, checked against `.nvmrc`'s major.
 
 ## Upgrading an existing install
 1. Download an encrypted backup (Settings → System & backups).
