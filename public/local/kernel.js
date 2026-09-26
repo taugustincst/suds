@@ -8310,12 +8310,30 @@ var require_clients_model = __commonJS({
       const n = [...normaliseName(lastName)];
       return n.length >= 2 ? blindIndex2("pfx:" + n.slice(0, 3).join("")) : null;
     }
-    function namePhoneticIndex(lastName) {
-      const n = normaliseName(lastName);
+    function phoneticOf(name) {
+      const n = normaliseName(name);
       if (!n) return null;
       if (!isLatin(n)) return blindIndex2("nrm:" + n);
       const c = soundex(n);
       return c ? blindIndex2("snd:" + c) : null;
+    }
+    function nameParts(name) {
+      const parts = String(name || "").split(/[\s\-\u2010-\u2015'\u2019.]+/).map((p) => normaliseName(p)).filter((p) => [...p].length >= 2);
+      return parts.length > 1 ? parts : [];
+    }
+    function namePartTokens(part) {
+      return [blindIndex2("part:" + part), namePrefixIndex(part), phoneticOf(part)].filter(Boolean);
+    }
+    function namePhoneticIndex(lastName) {
+      const whole = phoneticOf(lastName);
+      const parts = nameParts(lastName);
+      if (!whole || !parts.length) return whole;
+      return [.../* @__PURE__ */ new Set([whole, ...parts.flatMap(namePartTokens)])].join(" ");
+    }
+    function searchPartTokens(word, { exact = false } = {}) {
+      const p = normaliseName(word);
+      if ([...p].length < 2) return [];
+      return exact ? [blindIndex2("part:" + p)] : namePartTokens(p);
     }
     function preferredNameIndex(name) {
       const n = String(name || "").trim().toLowerCase();
@@ -8363,7 +8381,7 @@ var require_clients_model = __commonJS({
       o.days_to_engagement = daysToEngagement(d);
       return o;
     }
-    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes };
+    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes, nameParts, searchPartTokens };
   }
 });
 
@@ -8877,8 +8895,8 @@ var require_clinical = __commonJS({
     var OPTIONAL_INSTRUMENTS = {
       dast10: {
         setting: "instrument_dast10_enabled",
-        notice: "The DAST-10 is \xA9 1982 Harvey A. Skinner, PhD. It may be reproduced free of charge for non-commercial clinical, research and training use, with credit to the author. SUDS may be supplied commercially, so the DAST-10 is off until an administrator confirms this programme holds the rights to use it.",
-        confirmation: "I confirm that this programme holds the rights to use the DAST-10 as it will be used here (for example, non-commercial clinical use with credit to the author, or written permission from the copyright holder)."
+        notice: "The DAST-10 is \xA9 1982 Harvey A. Skinner, PhD. It may be reproduced free of charge for non-commercial clinical, research and training use, with credit to the author. SUDS may be supplied commercially, so the DAST-10 is off until an administrator confirms this program holds the rights to use it.",
+        confirmation: "I confirm that this program holds the rights to use the DAST-10 as it will be used here (for example, non-commercial clinical use with credit to the author, or written permission from the copyright holder)."
       }
     };
     function score(code, responses, { variant } = {}) {
@@ -9011,7 +9029,31 @@ var require_constants = __commonJS({
       // distribution (a kit handed to a stranger). Every other type is work with a person on the caseload, and
       // needs the client (server/routes/interventions.js and the visit form enforce the same list).
       CLIENTLESS_INTERVENTION_TYPES: ["outreach", "naloxone_distribution"],
-      LOCATIONS: ["office", "field", "home", "phone", "telehealth", "hospital", "emergency_dept", "jail", "court", "shelter", "treatment_facility", "community", "other"],
+      // 'street' (Street / Outdoor) is where a harm-reduction programme's visits mostly happen, and the default
+      // Location of its visit and overdose forms (server/programme.js defaultLocation).
+      LOCATIONS: ["office", "street", "field", "home", "phone", "telehealth", "hospital", "emergency_dept", "jail", "court", "shelter", "treatment_facility", "community", "other"],
+      // Places an overdose cannot happen: not offered as the overdose form's "Where".
+      REMOTE_LOCATIONS: ["phone", "telehealth"],
+      // The words for codes that the generic wording ("Court Or Probation", "Detox Withdrawal Mgmt") gets wrong:
+      // used by every list (server/options.js) and by fmt.code() in the browser for a code shown outside one.
+      CODE_LABELS: {
+        screening_sbirt: "Screening (SBIRT)",
+        court_or_probation: "Court or Probation",
+        hospital_or_ed_visit: "Hospital or ED Visit",
+        post_overdose_follow_up: "Post-Overdose Follow-Up",
+        jail_in_reach: "Jail In-Reach",
+        recovery_check_in: "Recovery Check-In",
+        declined_by_client: "Declined by Client",
+        declined_by_provider: "Declined by Provider",
+        no_show: "No-Show",
+        detox_withdrawal_mgmt: "Detox / Withdrawal Management",
+        emergency_dept: "Emergency Department",
+        street: "Street / Outdoor",
+        ids_documents: "IDs and Documents",
+        pregnancy_parenting: "Pregnancy and Parenting",
+        phones_communication: "Phones and Communication",
+        food_basic_needs: "Food and Basic Needs"
+      },
       MODALITIES: ["in_person", "phone", "video", "text", "email", "collateral"],
       OUTCOMES: ["completed", "partial", "client_declined", "no_show", "unable_to_locate", "rescheduled", "crisis_resolved", "transported", "admitted", "other"],
       STAGES: ["precontemplation", "contemplation", "preparation", "action", "maintenance", "relapse"],
@@ -9334,6 +9376,7 @@ var require_options = __commonJS({
     var C = require_constants();
     function humanize(s) {
       if (!s) return "";
+      if (C.CODE_LABELS && Object.prototype.hasOwnProperty.call(C.CODE_LABELS, s)) return C.CODE_LABELS[s];
       return String(s).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bSbirt\b/, "SBIRT").replace(/\bMat\b/g, "MAT").replace(/\bOtp\b/, "OTP").replace(/\bObot\b/, "OBOT").replace(/\bEd\b/, "ED").replace(/\bMh\b/, "MH").replace(/\bRx\b/, "Rx").replace(/\bIds\b/, "IDs").replace(/\bRoi\b/, "ROI").replace(/\bPart2 Disclosure\b/, "Part 2 disclosure").replace(/\bPart2\b/g, "Part 2");
     }
     var OPEN_SHARED = "the provider has been told who the client is (consent check), and the referral counts as open";
@@ -9465,7 +9508,7 @@ var require_options = __commonJS({
     var BY_KEY = new Map(LISTS.map((l) => [l.key, l]));
     var EXCLUDED = [
       { name: "Race and ethnicity", why: "Federal (OMB) reporting categories that funder reports count as they are." },
-      { name: "ASAM level of care", why: "The ASAM criteria levels: a national standard, not a programme choice." },
+      { name: "ASAM level of care", why: "The ASAM criteria levels: a national standard, not a program choice." },
       { name: "Screening instruments (PHQ-9, GAD-7, AUDIT-C, DAST-10)", why: "Validated questionnaires: their wording and scoring cannot change without making the score meaningless." },
       { name: "ASAM dimensions and ratings", why: "The six ASAM dimensions and the 0\u20134 risk scale: a national standard." },
       { name: "Stage of change", why: "The stages of the transtheoretical model: a clinical standard." },
@@ -9751,7 +9794,7 @@ var require_programme = __commonJS({
       return (MODULES.find((m) => m.key === key) || { label: key }).label;
     }
     function offMessage(key) {
-      return `${moduleLabel(key)} is switched off for this programme. An administrator can switch it on in Settings \u203A Programme \u203A Modules.`;
+      return `${moduleLabel(key)} is switched off for this program. An administrator can switch it on in Settings \u203A Program \u203A Modules.`;
     }
     function requireModule(key) {
       return () => {
@@ -9769,7 +9812,12 @@ var require_programme = __commonJS({
       const clinical = has(`SELECT 1 FROM problems LIMIT 1`) || has(`SELECT 1 FROM care_plan_goals LIMIT 1`) || has(`SELECT 1 FROM asam_assessments LIMIT 1`) || has(`SELECT 1 FROM outcome_measures LIMIT 1`) || has(`SELECT 1 FROM caloms_records LIMIT 1`) || has(`SELECT 1 FROM caloms_submissions LIMIT 1`) || has(`SELECT 1 FROM api_keys WHERE scopes LIKE 'fhir%' LIMIT 1`) || has(`SELECT 1 FROM disclosures WHERE source='ehr_handoff' LIMIT 1`) || has(`SELECT 1 FROM settings WHERE key='caloms_enabled' AND value='1'`);
       return clinical ? "treatment" : "harm_reduction";
     }
-    module.exports = { PROFILES, DEFAULT_PROFILE, MODULES, MODULE_KEYS, SETTING_KEYS, profile, moduleOn, modules, describe: describe2, requireModule, offMessage, defaultForExisting };
+    function defaultLocation(visible = []) {
+      const want = profile() === "harm_reduction" ? "street" : "office";
+      if (!visible.length || visible.includes(want)) return want;
+      return visible.includes("office") ? "office" : visible[0];
+    }
+    module.exports = { PROFILES, DEFAULT_PROFILE, MODULES, MODULE_KEYS, SETTING_KEYS, profile, moduleOn, modules, describe: describe2, requireModule, offMessage, defaultForExisting, defaultLocation };
   }
 });
 
@@ -15320,6 +15368,109 @@ var require_app = __commonJS({
   }
 });
 
+// server/dashboard-mask.js
+var require_dashboard_mask = __commonJS({
+  "server/dashboard-mask.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var auth3 = require_auth2();
+    var db3 = require_db();
+    var threshold = () => Number(db3.getSetting("small_cell_threshold", "")) || 11;
+    var masks = (user) => !auth3.reportRunAllowed(user, { caseloadScoped: true });
+    var seesWorkers = (user) => auth3.hasPerm(user, "assignments:manage");
+    function maskerFor(user) {
+      if (!masks(user)) return null;
+      const T = threshold();
+      const small = `<${T}`;
+      const one = (v) => typeof v === "number" && v > 0 && v < T ? small : v;
+      const rows = (list, ...keys) => Array.isArray(list) ? list.map((r) => {
+        const o = { ...r };
+        for (const k of keys) o[k] = one(o[k]);
+        return o;
+      }) : list;
+      return { T, one, rows };
+    }
+    function dashboard(user, out2) {
+      const m = maskerFor(user);
+      const res = { ...out2 };
+      if (res.interventions && !seesWorkers(user)) res.interventions = { ...res.interventions, by_worker: null };
+      if (!auth3.hasPerm(user, "consents:read")) {
+        res.consents_expiring = [];
+        res.consents_expiring_clients = null;
+      }
+      if (!m) return res;
+      const c = res.clients || {};
+      res.clients = {
+        ...c,
+        active: m.one(c.active),
+        waitlist: m.one(c.waitlist),
+        new_in_range: m.one(c.new_in_range),
+        high_risk: m.one(c.high_risk),
+        no_contact_30d: m.one(c.no_contact_30d),
+        by_status: m.rows(c.by_status, "n"),
+        by_substance: m.rows(c.by_substance, "n"),
+        mat: m.rows(c.mat, "n")
+      };
+      if (res.referrals) {
+        const r = res.referrals;
+        const admitted = (r.by_category || []).reduce((s, x) => s + (Number(x.successful) || 0), 0);
+        res.referrals = {
+          ...r,
+          total: m.one(r.total),
+          open: m.one(r.open),
+          by_status: m.rows(r.by_status, "n"),
+          by_category: m.rows(r.by_category, "n", "successful"),
+          median_days_to_admit: admitted < m.T ? null : r.median_days_to_admit
+        };
+      }
+      if (res.patient_requests) res.patient_requests = { ...res.patient_requests, n: m.one(res.patient_requests.n), overdue: m.one(res.patient_requests.overdue) };
+      if (typeof res.part2_notice_missing === "number") res.part2_notice_missing = m.one(res.part2_notice_missing);
+      if (typeof res.consents_expiring_clients === "number") res.consents_expiring_clients = m.one(res.consents_expiring_clients);
+      res.small_cells = { threshold: m.T, masked: true };
+      return res;
+    }
+    function monthly(user, out2) {
+      const m = maskerFor(user);
+      if (!m) return out2;
+      return {
+        ...out2,
+        intakes: m.rows(out2.intakes, "n"),
+        discharges: m.rows(out2.discharges, "n"),
+        interventions: m.rows(out2.interventions, "clients"),
+        referrals: m.rows(out2.referrals, "n", "successful"),
+        overdose_events: m.rows(out2.overdose_events, "n", "reversals", "fatal"),
+        episodes: m.rows(out2.episodes, "admissions", "discharges"),
+        unduplicated_clients: m.rows(out2.unduplicated_clients, "clients"),
+        mat_linkage: m.rows(out2.mat_linkage, "n"),
+        small_cells: { threshold: m.T, masked: true }
+      };
+    }
+    function outcomes(user, instruments) {
+      const m = maskerFor(user);
+      if (!m) return instruments;
+      return instruments.map((x) => {
+        const few = x.clients_with_followup < m.T;
+        return {
+          ...x,
+          clients_screened: m.one(x.clients_screened),
+          clients_with_followup: m.one(x.clients_with_followup),
+          mean_baseline: few ? null : x.mean_baseline,
+          mean_latest: few ? null : x.mean_latest,
+          mean_change: few ? null : x.mean_change,
+          pct_improved: few ? null : x.pct_improved,
+          improved: m.one(x.improved),
+          worse: m.one(x.worse),
+          unchanged: m.one(x.unchanged),
+          positive_at_baseline: m.one(x.positive_at_baseline),
+          positive_at_latest: m.one(x.positive_at_latest),
+          safety_flags: m.one(x.safety_flags)
+        };
+      });
+    }
+    module.exports = { dashboard, monthly, outcomes, masks, seesWorkers };
+  }
+});
+
 // server/exports.js
 var require_exports = __commonJS({
   "server/exports.js"(exports, module) {
@@ -16094,7 +16245,7 @@ var require_assessments = __commonJS({
       return !opt || db3.getSetting(opt.setting, "0") === "1";
     }
     function assertInstrumentEnabled(code) {
-      if (!instrumentEnabled(code)) throw fieldError("instrument", `${CL.INSTRUMENTS[code].name} is not enabled for this programme. An administrator can turn it on under Settings \u2192 Screening instruments, after confirming the programme holds the rights to use it.`);
+      if (!instrumentEnabled(code)) throw fieldError("instrument", `${CL.INSTRUMENTS[code].name} is not enabled for this program. An administrator can turn it on under Settings \u2192 Screening instruments, after confirming the program holds the rights to use it.`);
     }
     function instrumentList() {
       return CL.INSTRUMENT_CODES.map((code) => {
@@ -16152,7 +16303,7 @@ var require_assessments = __commonJS({
         ctx.user.id,
         ctx.user.id,
         encrypt3('Safety follow-up: PHQ-9 question 9 answered above "Not at all"'),
-        encrypt3("Assess risk today and review or write the safety plan with the client. Follow your programme's crisis protocol; for imminent danger call 988 or 911."),
+        encrypt3("Assess risk today and review or write the safety plan with the client. Follow your program's crisis protocol; for imminent danger call 988 or 911."),
         today(),
         "urgent",
         "open"
@@ -16435,7 +16586,7 @@ var require_assessments = __commonJS({
       });
       r.get("/api/reports/outcomes", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
         const p = period(ctx);
-        const instruments = summarise(outcomePairs(ctx, p));
+        const instruments = require_dashboard_mask().outcomes(ctx.user, summarise(outcomePairs(ctx, p)));
         audit3.log({ user: ctx.user, action: "report.outcomes", ip: ctx.ip, details: { from: p.from, to: p.to } });
         return { ...p, instruments };
       });
@@ -18608,7 +18759,7 @@ var require_consents = __commonJS({
       };
       r.get("/api/consent-template", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write"), () => ({ template: readTemplate() }));
       r.put("/api/consent-template", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
-        if (!auth3.hasPerm(ctx.user, "disclosures:override")) throw forbidden("A supervisor or administrator sets the programme's usual consent");
+        if (!auth3.hasPerm(ctx.user, "disclosures:override")) throw forbidden("A supervisor or administrator sets the program's usual consent");
         const v = validate(ctx.body, TEMPLATE_SHAPE);
         const rawCats = ctx.body.info_categories;
         const cats = [...new Set((Array.isArray(rawCats) ? rawCats : []).map(String))];
@@ -18860,10 +19011,10 @@ Effective date: {effective}`;
               incident = require_incidents().draft({
                 source: "part2_program_off",
                 sourceRef: db3.now().slice(0, 10),
-                title: "Part 2 programme protections switched off",
-                description: `${ctx.user.display_name || ctx.user.username} switched this programme's 42 CFR Part 2 protections off. Reason given: ${reason}
+                title: "Part 2 program protections switched off",
+                description: `${ctx.user.display_name || ctx.user.username} switched this program's 42 CFR Part 2 protections off. Reason given: ${reason}
 
-Confirm the determination with counsel. If it was a mistake, switch the programme back on and assess whether anything was disclosed without the Part 2 protections meanwhile.`,
+Confirm the determination with counsel. If it was a mistake, switch the program back on and assess whether anything was disclosed without the Part 2 protections meanwhile.`,
                 user: ctx.user
               });
             }
@@ -19209,6 +19360,10 @@ var require_clients = __commonJS({
             const idxs = parts.map((p) => blindIndex2(p));
             const clauses = [`c.last_name_idx IN (${idxs.map(() => "?").join(",")})`, "c.full_name_idx IN (?,?)", `c.first_name_idx IN (${idxs.map(() => "?").join(",")})`, `c.preferred_name_idx IN (${idxs.map(() => "?").join(",")})`];
             params.push(...idxs, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")), ...parts.map((p) => blindIndex2(p.toLowerCase())), ...parts.map((p) => M.preferredNameIndex(p)));
+            for (const part of parts) for (const t of M.searchPartTokens(part, { exact: ctx.query.get("exact") === "1" })) {
+              clauses.push("instr(c.name_phonetic_idx, ?) > 0");
+              params.push(t);
+            }
             if (ctx.query.get("exact") !== "1") {
               for (const part of parts) {
                 const pfx = M.namePrefixIndex(part);
@@ -24824,7 +24979,7 @@ var require_harm_reduction_reports = __commonJS({
         const day = dayOf(x.occurred_at);
         const date = monthly ? day.slice(0, 7) : day;
         const site = x.location || "unknown";
-        const recipient = x.anon ? "Community member (anonymous)" : "Programme participant";
+        const recipient = x.anon ? "Community member (anonymous)" : "Program participant";
         const key = `d|${date}|${site}|${recipient}`;
         if (!rows.has(key)) rows.set(key, { date, entry: "distribution", site_type: site, recipient_type: recipient, kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null });
         const r = rows.get(key);
@@ -24969,7 +25124,7 @@ var require_harm_reduction_reports = __commonJS({
       return { ...d, funds: d.funds.map(({ is_active, ...f }) => f), services_by_use: d.services_by_use.map((x, i) => FR.withCell(x, "people", people[i])), ...header(counting) };
     }
     var countsSuffix = (d) => d.suppression.mode === "exact" ? "exact-counts" : d.suppression.purpose === "publication" ? "publication-screened-review-before-sharing" : "internal-suppressed";
-    var purposeLine = (d) => ({ k: "Purpose", v: d.suppression.purpose === "publication" ? `${FR.PUBLICATION_LABEL} (whole programme, one standard period)` : d.suppression.purpose === "submission" ? "The programme's own submission, not for publication" : "Internal, not for publication" });
+    var purposeLine = (d) => ({ k: "Purpose", v: d.suppression.purpose === "publication" ? `${FR.PUBLICATION_LABEL} (whole program, one standard period)` : d.suppression.purpose === "submission" ? "The program's own submission, not for publication" : "Internal, not for publication" });
     var purposeRows = (d) => [purposeLine(d), ...d.suppression.purpose === "publication" ? [{ k: "Before publishing", v: FR.PUBLICATION_GUIDANCE }] : []];
     function send(ctx, { body, filename, xlsx, classification, suppression }) {
       ctx.res.writeHead(200, {
@@ -25216,15 +25371,15 @@ var require_funder_report = __commonJS({
       const asked = ctx.query.get("purpose");
       const internalOk = auth3.hasPerm(ctx.user, "reports:internal");
       const purpose = asked || (internalOk ? "submission" : rel.publishable ? "publication" : "internal");
-      if (!PURPOSES.includes(purpose)) throw badRequest("purpose must be publication (a release to publish or share), submission (the programme's own report to its funder) or internal");
+      if (!PURPOSES.includes(purpose)) throw badRequest("purpose must be publication (a release to publish or share), submission (the program's own report to its funder) or internal");
       const mode = ctx.query.get("counts") || (purpose === "submission" && auth3.hasPerm(ctx.user, "reports:exact") ? "exact" : "suppressed");
       if (!["suppressed", "exact"].includes(mode)) throw badRequest("counts must be suppressed or exact");
       if (mode === "exact") {
-        if (purpose === "publication") throw badRequest("Exact counts are only for the programme's own submission to its funder (purpose=submission) or internal use. A report to publish or share keeps small cells suppressed.");
+        if (purpose === "publication") throw badRequest("Exact counts are only for the program's own submission to its funder (purpose=submission) or internal use. A report to publish or share keeps small cells suppressed.");
         if (!auth3.hasPerm(ctx.user, "reports:exact")) throw forbidden("Only a supervisor or an administrator can run the funder report with exact counts");
       }
       if (purpose === "publication" && !rel.publishable) {
-        throw badRequest(`Only a report on the whole programme for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be prepared as a publication release; this one cannot, because ${rel.not_publishable.join(" and ")}. Run it without purpose=publication: it is then ${internalOk ? "the programme's own submission to its funder" : "marked internal"}, not for publication.`);
+        throw badRequest(`Only a report on the whole program for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be prepared as a publication release; this one cannot, because ${rel.not_publishable.join(" and ")}. Run it without purpose=publication: it is then ${internalOk ? "the program's own submission to its funder" : "marked internal"}, not for publication.`);
       }
       const threshold = Number(db3.getSetting("small_cell_threshold", "")) || SMALL_CELL_DEFAULT;
       return { mode, threshold, purpose, release: rel };
@@ -25250,12 +25405,12 @@ var require_funder_report = __commonJS({
       const rel = s.release || { publishable: false, not_publishable: [] };
       const why = rel.not_publishable.length ? ` (${rel.not_publishable.join("; ")})` : "";
       if (s.mode === "exact") {
-        return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the programme's own ${s.purpose === "submission" ? "submission to its funder" : "internal use"}; not for publication or sharing.`;
+        return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the program's own ${s.purpose === "submission" ? "submission to its funder" : "internal use"}; not for publication or sharing.`;
       }
       if (s.purpose === "publication") {
-        return `${PUBLICATION_LABEL}: the whole programme, ${PERIOD_LABEL[rel.period] || "one standard period"}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it; a table that cannot be protected, or whose protection the check cannot confirm, is withheld, prints no rows and is listed with the reason, and the rest of the release is checked again without it). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
+        return `${PUBLICATION_LABEL}: the whole program, ${PERIOD_LABEL[rel.period] || "one standard period"}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it; a table that cannot be protected, or whose protection the check cannot confirm, is withheld, prints no rows and is listed with the reason, and the rest of the release is checked again without it). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
       }
-      return `${s.purpose === "submission" ? "The programme's own submission to its funder" : "Internal"}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole programme minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the programme and its funder.`;
+      return `${s.purpose === "submission" ? "The program's own submission to its funder" : "Internal"}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole program minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the program and its funder.`;
     }
     var DIMENSIONS = [["by_gender", "gender", "gender"], ["by_language", "preferred_language", "language"], ["by_housing", "housing_status", "housing"], ["by_insurance", "insurance", "insurance"], ["by_ethnicity", "race_ethnicity", "ethnicity"]];
     var byCount = (a, b) => b.n - a.n || String(a.k).localeCompare(String(b.k));
@@ -25283,7 +25438,7 @@ var require_funder_report = __commonJS({
         by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND ${NALOXONE} AND o.survived=1${scope} GROUP BY k ORDER BY n DESC`, ...tsP, ...sp)
       };
     }
-    var CASELOAD_NOTE = "Counts only your caseload: people served, and people per funding source, are clients on your caseload; overdose events are those of clients on your caseload, and events reported from the community (with no client) are not counted. Services, naloxone kits and test strips are the whole programme's.";
+    var CASELOAD_NOTE = "Counts only your caseload: people served, and people per funding source, are clients on your caseload; overdose events are those of clients on your caseload, and events reported from the community (with no client) are not counted. Services, naloxone kits and test strips are the whole program's.";
     function overdoseProtect(od, sc) {
       const months = od.by_month.map((x) => ({ month: x.month, n: x.n, reversals: x.reversals }));
       if (sc.exact) return { events: od.events, reversals: od.reversals, fatal: od.fatal, community_reported: od.community_reported, by_month: months, by_administered_by: od.by_administered_by };
@@ -25546,7 +25701,7 @@ var require_funder_report = __commonJS({
         { k: "Report", v: "Funder report (unduplicated people served)" },
         { k: "Period", v: `${d.from} to ${d.to}` },
         { k: "Funding source", v: fundName || "All funding sources" },
-        { k: "Purpose", v: d.suppression.purpose === "publication" ? `${PUBLICATION_LABEL} (whole programme, one standard period)` : d.suppression.purpose === "submission" ? "The programme's own submission to its funder, not for publication" : "Internal, not for publication" },
+        { k: "Purpose", v: d.suppression.purpose === "publication" ? `${PUBLICATION_LABEL} (whole program, one standard period)` : d.suppression.purpose === "submission" ? "The program's own submission to its funder, not for publication" : "Internal, not for publication" },
         { k: "Counts", v: d.counting_statement },
         ...d.suppression.purpose === "publication" ? [{ k: "Before publishing", v: PUBLICATION_GUIDANCE }] : [],
         ...d.caseload_scope_note ? [{ k: "Scope", v: d.caseload_scope_note }] : [],
@@ -25652,7 +25807,7 @@ var require_reports = __commonJS({
         if (!internal || auth3.reportRunAllowed(ctx.user, { caseloadScoped })) return;
         audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms: ["reports:internal"], path: ctx.path, purpose: asked || "internal", counts: ctx.query.get("counts") || "suppressed" } });
         const why = asked ? `it asks for ${exact ? "exact counts" : `purpose=${asked}`}` : rel.not_publishable.join(" and ");
-        throw forbidden(`Your role can run this report only as a publication release: the whole programme (all funding sources) for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended. This run is not one, because ${why}. Internal and submission runs, and exact counts, are for supervisors and administrators.`);
+        throw forbidden(`Your role can run this report only as a publication release: the whole program (all funding sources) for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended. This run is not one, because ${why}. Internal and submission runs, and exact counts, are for supervisors and administrators.`);
       };
     }
     module.exports = (r) => {
@@ -25783,7 +25938,7 @@ var require_reports = __commonJS({
           consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), ...cf.params).map((x) => ({ ...x, recipient: x.recipient_enc ? require_crypto().decrypt(x.recipient_enc) : null, recipient_enc: void 0 }))
         };
         audit3.log({ user: ctx.user, action: "report.dashboard", ip: ctx.ip, details: { from, to } });
-        return out2;
+        return require_dashboard_mask().dashboard(ctx.user, out2);
       });
       r.get("/api/reports/monthly", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
         const months = Math.min(24, Math.max(1, Number(ctx.query.get("months") || 12)));
@@ -25792,7 +25947,7 @@ var require_reports = __commonJS({
         start2.setUTCMonth(start2.getUTCMonth() - months + 1);
         const s = start2.toISOString().slice(0, 10);
         audit3.log({ user: ctx.user, action: "report.monthly", ip: ctx.ip, details: { months } });
-        return {
+        return require_dashboard_mask().monthly(ctx.user, {
           intakes: db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
           discharges: db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),
           interventions: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
@@ -25805,7 +25960,7 @@ var require_reports = __commonJS({
           mat_linkage: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
           spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
           time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s)
-        };
+        });
       });
       r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), requireReportRun({ caseloadScoped: true, fund: true }), async (ctx) => {
         const out2 = await FR.build(ctx, range(ctx));
@@ -26940,7 +27095,7 @@ var require_interventions = __commonJS({
       supplies(r);
       r.get("/api/meta/constants", auth3.requireAuth, () => {
         const m = O.meta();
-        return { ...C, ...m.visible, option_lists: m.option_lists };
+        return { ...C, ...m.visible, option_lists: m.option_lists, DEFAULT_LOCATION: require_programme().defaultLocation(m.visible.LOCATIONS || C.LOCATIONS) };
       });
     };
   }
@@ -28067,6 +28222,7 @@ var require_overdose = __commonJS({
     function normalise(v, row = null) {
       const kind = v.kind !== void 0 ? v.kind : row && row.kind;
       if (kind === "reversal") v.naloxone_used = 1;
+      if (v.naloxone_doses === null) v.naloxone_doses = 0;
       if (v.location_type !== void 0 && v.location_type !== null && !(row && v.location_type === row.location_type)) v.location_type = O.codeFor("LOCATIONS", v.location_type);
     }
     module.exports = (r) => {
@@ -28246,6 +28402,7 @@ var require_referrals = __commonJS({
     var audit3 = require_audit();
     var C = require_constants();
     var disclosure = require_disclosure();
+    var CN = require_client_name();
     var { badRequest } = require_http();
     var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     var SHARED_STATUSES = ["contacted", "accepted", "waitlisted", "scheduled", "admitted", "completed"];
@@ -28266,6 +28423,17 @@ var require_referrals = __commonJS({
     function resourceNames(resourceId) {
       const r = db3.one(`SELECT name, organization FROM resources WHERE id=?`, resourceId);
       return r ? [r.name, r.organization].filter(Boolean) : [];
+    }
+    function withConsentOnFile(ctx, row) {
+      const cache = ctx._consentOnFile || (ctx._consentOnFile = /* @__PURE__ */ new Map());
+      const key = `${row.client_id}|${row.resource_id}`;
+      if (!cache.has(key)) {
+        const names = disclosure.recipientNames(resourceNames(row.resource_id));
+        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const types = disclosure.disclosingConsentTypes();
+        cache.set(key, !!names.length && db3.all(`SELECT * FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, row.client_id, today).some((c) => types.includes(c.type) && !disclosure.consentElementProblems(c).length && disclosure.consentNamesRecipient({ type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null }, names)));
+      }
+      return { ...row, consent_on_file: cache.get(key) };
     }
     function encFields(v) {
       for (const f of ENC) if (v[f] !== void 0) {
@@ -28373,7 +28541,8 @@ var require_referrals = __commonJS({
         dateCol: "referred_at",
         restrictOwner: true,
         joins: "JOIN users u ON u.id=referrals.user_id JOIN clients c ON c.id=referrals.client_id JOIN resources res ON res.id=referrals.resource_id",
-        select: "referrals.*, u.display_name AS worker, c.client_code, res.name AS resource_name, res.category AS resource_category, res.phone AS resource_phone",
+        // The client's name for a role that can open the client (client-name.js); the code for any other.
+        select: `referrals.*, u.display_name AS worker, c.client_code, ${CN.SELECT}, res.name AS resource_name, res.category AS resource_category, res.phone AS resource_phone`,
         shape: {
           client_id: { type: "string", required: true },
           resource_id: { type: "string", required: true },
@@ -28414,7 +28583,7 @@ var require_referrals = __commonJS({
             params.push(res);
           }
         },
-        afterLoad: (ctx, row) => present(row),
+        afterLoad: (ctx, row) => present(withConsentOnFile(ctx, CN.withClientName(ctx, row))),
         beforeInsert: (ctx, v) => {
           if (!db3.one(`SELECT 1 FROM resources WHERE id=?`, v.resource_id)) throw badRequest("Unknown resource");
           if (v.consent_id && !db3.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, v.client_id)) throw badRequest("That consent belongs to a different client");
@@ -36247,7 +36416,44 @@ var require_db = __commonJS({
           d.prepare(`INSERT INTO settings(key,value) VALUES('programme_profile',?)`).run(require_programme().defaultForExisting(d));
         }
       }
+      reindexNameParts(d);
       ensureIndexes(d, schemaText);
+    }
+    function reindexNameParts(d) {
+      try {
+        if (d.prepare(`SELECT 1 FROM settings WHERE key='name_parts_indexed'`).get()) return;
+        const { decrypt: decrypt3 } = require_crypto();
+        const M = require_clients_model();
+        const upd = d.prepare(`UPDATE clients SET name_phonetic_idx=? WHERE id=?`);
+        let n = 0, read = 0, unreadable = 0;
+        d.exec("BEGIN");
+        try {
+          for (const c of d.prepare(`SELECT id, last_name_enc, name_phonetic_idx FROM clients`).all()) {
+            let last;
+            try {
+              last = decrypt3(c.last_name_enc);
+              read++;
+            } catch {
+              unreadable++;
+              continue;
+            }
+            if (!M.nameParts(last).length) continue;
+            const idx = M.namePhoneticIndex(last);
+            if (idx !== c.name_phonetic_idx) {
+              upd.run(idx, c.id);
+              n++;
+            }
+          }
+          if (!unreadable || read) d.prepare(`INSERT INTO settings(key,value) VALUES('name_parts_indexed',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run((/* @__PURE__ */ new Date()).toISOString());
+          d.exec("COMMIT");
+        } catch (e) {
+          d.exec("ROLLBACK");
+          throw e;
+        }
+        if (n) console.log(`[suds] ${JSON.stringify({ event: "db.name_parts_reindexed", clients: n })}`);
+      } catch (e) {
+        console.warn(`[suds] ${JSON.stringify({ event: "db.name_parts_reindex_failed", error: String(e && e.message || e).slice(0, 200) })}`);
+      }
     }
     var lastIndexProblems = [];
     function ensureIndexes(d, schemaText) {
@@ -36424,7 +36630,7 @@ var require_db = __commonJS({
     function tombstone(table, id) {
       run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now2());
     }
-    module.exports = { open: open3, openWith, get, close, isOpen, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
+    module.exports = { open: open3, openWith, get, close, isOpen, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
   }
 });
 
