@@ -209,6 +209,12 @@ module.exports = (r) => {
   r.post('/api/admin/backup/run-now', auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
     const { retain, offsiteDir } = scheduledBackup.settings();
     const out = await scheduledBackup.run({ retain, offsiteDir });
+    // A backup that could not be written comes back with no file and the reason (server/scheduled-backup.js,
+    // which has already recorded it as the last backup status): say so, rather than a 500 from basename(null).
+    if (out.failed || !out.file) {
+      audit.log({ user: ctx.user, action: 'backup.run_now', ip: ctx.ip, success: false, details: { error: String(out.error || 'unknown').slice(0, 300) } });
+      throw new HttpError(500, `The backup failed: ${out.error || 'no backup file was written'}. Nothing was saved; check the disk and the data folder, then try again.`);
+    }
     audit.log({ user: ctx.user, action: 'backup.run_now', ip: ctx.ip, details: { bytes: out.bytes, offsite: out.offsiteOk, verified: out.verified } });
     return { ok: true, file: path.basename(out.file), bytes: out.bytes, offsite_ok: out.offsiteOk, offsite_error: out.offsiteError || null, verified: out.verified, verify_error: out.verifyError || null };
   });
