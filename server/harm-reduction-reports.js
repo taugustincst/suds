@@ -82,13 +82,13 @@ function ndpPublished({ from, to }, counting, dist, shown) {
       community_kits: d.filter(r => r.recipient_type === 'Community member (anonymous)').reduce((n, r) => n + r.kits, 0) } };
 }
 
-function ndp(ctx, range) {
+async function ndp(ctx, range) {
   const { from, to, ts, tsP } = range;
   const { counting, sc } = counts(ctx, { from, to });
   // Published, the log is part of the period's publication release, computed and audited with the funder
   // report and the settlement report. The day-by-day log, by site and by who gave the naloxone, is for the
   // programme's own submission to the NDP (not for publication).
-  if (counting.purpose === 'publication') return require('./publication-release').release(ctx, range, counting).ndp;
+  if (counting.purpose === 'publication') return (await require('./publication-release').release(ctx, range, counting)).ndp;
   const cf = auth.caseloadFilter(ctx.user, 'c.id');
   const rows = distributionRows(ctx, range, false); const dayOf = dayReader();
   const add = (key, init, fn) => { if (!rows.has(key)) rows.set(key, init); fn(rows.get(key)); };
@@ -162,11 +162,11 @@ function settlementFigures({ from, to, ts, tsP }) {
   };
 }
 
-function settlement(ctx, range) {
+async function settlement(ctx, range) {
   const { from, to, ts, tsP } = range;
   const { counting, sc } = counts(ctx, { from, to });
   // Published, the report is part of the period's publication release (server/publication-release.js).
-  if (counting.purpose === 'publication') return require('./publication-release').release(ctx, range, counting).settlement;
+  if (counting.purpose === 'publication') return (await require('./publication-release').release(ctx, range, counting)).settlement;
   const { fundKeys, ...d } = settlementFigures(range);
   // People per allowable use are some of the people the programme served in the period: protected against
   // that total (the people left when one use's are taken from it are a count of people too), and never one
@@ -198,13 +198,13 @@ function routes(r, range) {
   const ndpRows = (d) => d.rows.map(x => ({ ...x, entry: x.entry === 'distribution' ? 'Distribution' : 'Reversal reported', site_type: x.site_type === 'unknown' ? 'Unknown' : x.site_type === 'all' ? 'All sites' : O.labelOf('LOCATIONS', x.site_type),
     administered_by: x.administered_by ? O.labelOf('ADMINISTERED_BY', x.administered_by) : null }));
 
-  r.get('/api/reports/naloxone-ndp', auth.requireAuth, auth.requirePerm('reports:read'), (ctx) => {
-    const d = ndp(ctx, range(ctx));
+  r.get('/api/reports/naloxone-ndp', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
+    const d = await ndp(ctx, range(ctx));
     audit.log({ user: ctx.user, action: 'report.naloxone_ndp', ip: ctx.ip, details: { from: d.from, to: d.to, rows: d.rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
     return d;
   });
-  r.get('/api/reports/naloxone-ndp/export', auth.requireAuth, auth.requirePerm('reports:read'), auth.requirePerm('export:read'), (ctx) => {
-    const d = ndp(ctx, range(ctx)); const xlsx = ctx.query.get('format') === 'xlsx'; const rows = ndpRows(d);
+  r.get('/api/reports/naloxone-ndp/export', auth.requireAuth, auth.requirePerm('reports:read'), auth.requirePerm('export:read'), async (ctx) => {
+    const d = await ndp(ctx, range(ctx)); const xlsx = ctx.query.get('format') === 'xlsx'; const rows = ndpRows(d);
     FR.requirePublicationReview(ctx, d, 'naloxone-ndp');
     audit.log({ user: ctx.user, action: 'report.naloxone_ndp.export', ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv' } });
     const body = xlsx ? S.writeWorkbook([{ name: 'NDP log', columns: NDP_COLUMNS, rows }, aboutSheet(ctx, [
@@ -215,13 +215,13 @@ function routes(r, range) {
     send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-naloxone-ndp-log-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? 'xlsx' : 'csv'}`, classification: 'NDP-style log (not the official NDP template; check it against the current NDP reporting template). Aggregate, no identifiers.' });
   });
 
-  r.get('/api/reports/opioid-settlement', auth.requireAuth, auth.requirePerm('budget:read'), (ctx) => {
-    const d = settlement(ctx, range(ctx));
+  r.get('/api/reports/opioid-settlement', auth.requireAuth, auth.requirePerm('budget:read'), async (ctx) => {
+    const d = await settlement(ctx, range(ctx));
     audit.log({ user: ctx.user, action: 'report.opioid_settlement', ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
     return d;
   });
-  r.get('/api/reports/opioid-settlement/export', auth.requireAuth, auth.requirePerm('budget:read'), auth.requirePerm('export:read'), (ctx) => {
-    const d = settlement(ctx, range(ctx)); const xlsx = ctx.query.get('format') === 'xlsx';
+  r.get('/api/reports/opioid-settlement/export', auth.requireAuth, auth.requirePerm('budget:read'), auth.requirePerm('export:read'), async (ctx) => {
+    const d = await settlement(ctx, range(ctx)); const xlsx = ctx.query.get('format') === 'xlsx';
     FR.requirePublicationReview(ctx, d, 'opioid-settlement');
     audit.log({ user: ctx.user, action: 'report.opioid_settlement.export', ip: ctx.ip, details: { from: d.from, to: d.to, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv' } });
     const detailCols = [['schedule', 'Schedule'], ['use_label', 'Category'], ['hiaa_label', 'High Impact Abatement Activity'], ['approved_amount', 'Approved or reimbursed ($)'], ['pending_amount', 'Pending ($)'], ['expenditures', 'Expenditures']].map(([key, label]) => ({ key, label }));

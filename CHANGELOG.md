@@ -4,6 +4,43 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Funder reporting
+
+- **The submission to your funder comes first.** A supervisor's or an administrator's funder report, NDP log
+  and settlement report now open as the programme's own *Submission to your funder — not for publication*, with
+  exact counts (what a funder asks for; *Small cells suppressed* is a choice). 1.12.4 opened a publication
+  release whenever the period could be one, so the first click was often a refusal or a blank headline.
+  Publication is an explicit step, **Prepare a publication release**, which lists anything withheld with the
+  reason and asks for the review confirmation before a file is exported. Finance and read-only accounts, which
+  run publication releases only, are told so and shown the release. The page says first, prominently, which kind
+  of run it is; the notice above the figures is two plain lines, with the full counting statement behind *Why
+  some numbers are hidden*. On Reports, *Kind of file* beside the NDP log and the settlement report offers the
+  same three. **API:** with no `purpose`, a `reports:internal` role now gets `purpose=submission` (and
+  `counts=exact` where it holds `reports:exact`; `counts=suppressed` turns it off); ask for
+  `purpose=publication` to get a release. `suppression.label` names the kind of run.
+- **Ordinary quarters publish again.** 1.12.4 refused the publication release of most quarters of 60 to 100
+  people (the reviewer's simulation: 7 of 8 at 60, 6 of 8 at 80) and the fiscal year. The cause was the race
+  codes: a code hidden beside a small one was hidden only when it pinned it, which said the small one was at
+  least 2, and the check rightly refused. That hiding is now decided from the printout alone. The same
+  simulation now publishes every quarter and month of 40 to 200 people with the headline shown and nothing
+  withheld (docs/HIPAA.md has the table). The algorithm-aware attacker has a complete race-code family; it found
+  a leak 1.12.4 published at a threshold of 3, and none now.
+- **Degrade, don't refuse.** A table the check cannot show protected is withheld (listed, with a short reason, in
+  `release.withheld_reasons` and on the page) and the rest is checked again and published; the release is refused
+  only when even people served cannot be shown safely, when the degraded release fails too, or when the audit
+  reaches its budget. A degraded release is checked against worlds that would have been degraded the same way.
+- **The headline is never hidden beside figures that bound it.** When people served is hidden, new admissions
+  and episodes opened are hidden with it (a 13-person programme printed served `suppressed` beside 13 new
+  admissions).
+- **Deterministic, and off the main thread.** The audit's budget is counted in solver work, not seconds, so the
+  same figures give the same answer on an idle or a busy server (a 60-second backstop remains, logged). It runs in
+  a worker thread: during a 5,000-person year's release the event loop is held about 120 ms (the read), not
+  640 ms. The browser kernel runs it inline.
+- **Reports dashboard.** A fiscal year's dashboard at 20,000 clients let the event loop go only at the end (0.7 to
+  1.0 s held); it now yields after each query (about 0.18 s at most).
+- **Docs.** docs/architecture/ADR-0009-publication-release.md records the design, its tests, its known limits and
+  the pending independent statistical review.
+
 ### Engineering
 
 - **Liveness and readiness probes.** `GET /api/health/live` (the process is up and its database answers) and

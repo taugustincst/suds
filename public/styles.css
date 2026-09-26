@@ -123,6 +123,12 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
 .login .brand { border: 0; justify-content: center; margin-bottom: .5rem; }
 .banner { border-left: 4px solid var(--primary); background: var(--info-soft); padding: .6rem .8rem; border-radius: 6px; margin-bottom: 1rem; font-size: .88em; }
 .banner.warn { border-color: var(--warn); background: var(--warn-soft); } .banner.danger { border-color: var(--danger); background: var(--danger-soft); }
+/* What kind of funder report run this is (public/views/funder.js runKindBanner): the first thing on the page. */
+.banner.run-kind { font-size: 1em; }
+.banner.run-kind .run-kind-title { font-size: 1.15rem; margin: 0 0 .25rem; }
+.banner.run-kind .run-kind-line { margin: 0 0 .35rem; }
+.banner.run-kind details > summary { cursor: pointer; font-weight: 600; }
+.banner.run-kind details > p { margin: .4rem 0 0; }
 
 /* Timeline */
 .timeline { list-style: none; margin: 0; padding: 0 0 0 1.4rem; border-left: 2px solid var(--border); }

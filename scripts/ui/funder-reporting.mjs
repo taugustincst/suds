@@ -33,33 +33,43 @@ await sup.click('text=+ Log a visit'); await sup.waitForSelector('.modal select[
 eq(await sup.$eval('.modal select[name=funding_source_id]', s => s.value), fund.id, 'a new visit is pre-filled with the default fund');
 await sup.keyboard.press('Escape'); await settle(sup);
 
-// ---- funder report: counting mode, attribution warnings ----
+// ---- funder report: what kind of run it is, counting mode, attribution warnings ----
 // A visit charged to no fund, so the warning has something to point at.
 eq((await api(sup, 'POST', '/api/interventions', { type: 'outreach', occurred_at: new Date().toISOString(), funding_source_id: null })).status, 201, 'a visit charged to no fund');
 const today = new Date().toISOString().slice(0, 10); const yearStart = `${today.slice(0, 4)}-01-01`;
 await sup.goto(`${base}/#/funder?from=${yearStart}&to=${today}`); await settle(sup);
-eq(await sup.$eval('[data-counting-mode]', e => e.dataset.countingMode), 'suppressed', 'the funder report says small cells are suppressed by default');
-eq(await sup.$eval('[data-counting-mode]', e => e.dataset.purpose), 'internal', 'year to date has not ended, so the run is internal, not for publication');
-ok(/not for publication/i.test(await sup.$eval('[data-counting-mode]', e => e.textContent)), 'and the banner says so');
+// A supervisor's first view is the programme's own submission to its funder, with exact counts (1.12.5).
+eq(await sup.$eval('[data-counting-mode]', e => e.dataset.purpose), 'submission', 'a supervisor\'s funder report opens as the submission to the funder');
+eq(await sup.$eval('[data-counting-mode]', e => e.dataset.countingMode), 'exact', 'with exact counts');
+eq(await sup.$eval('[data-run-kind] .run-kind-title', e => e.textContent), 'Submission to your funder — not for publication', 'and says prominently what kind of run it is');
+// The notice is two plain lines; the full statement is behind "About these counts" / "Why some numbers are hidden".
+ok((await sup.$eval('[data-run-kind] .run-kind-line', e => e.textContent)).length < 200, 'the notice above the figures is short');
+eq(await sup.$eval('[data-run-kind] details[data-counting-details]', d => d.open), false, 'the full counting statement is folded away');
 ok(await sup.$('[data-no-fund-row]'), 'By funding source has a "No funding source" row');
 ok(await sup.$('[data-unattributed]'), 'and a warning that services have no funding source');
-await sup.selectOption('select[data-counts]', 'exact'); await sup.click('.filters button.primary'); await settle(sup);
-eq(await sup.$eval('[data-counting-mode]', e => e.dataset.countingMode), 'exact', 'a supervisor can choose exact counts for the programme\'s own submission');
+ok(await sup.$('[data-prepare-publication]'), 'publication is a separate step: "Prepare a publication release"');
 const [fx] = await Promise.all([sup.waitForEvent('download'), sup.click('[data-funder-export=xlsx]')]);
-ok(/exact-counts\.xlsx$/.test(fx.suggestedFilename()), 'the exported report is named for its counting mode', fx.suggestedFilename());
+ok(/exact-counts\.xlsx$/.test(fx.suggestedFilename()), 'the exported submission is named for its counting mode', fx.suggestedFilename());
 const fwb = readWorkbook(fs.readFileSync(await fx.path()));
 const about = fwb.find(s => s.name === 'About');
 ok(about && about.rows.some(r => /Exact counts/.test(r.join(' '))), 'and its About sheet states it', about && about.rows.map(r => r.join(':')).join(' | '));
+ok(about && about.rows.some(r => /submission to its funder, not for publication/.test(r.join(' '))), 'and what it is for');
+await sup.selectOption('select[data-counts]', 'suppressed'); await sup.click('.filters button.primary'); await settle(sup);
+eq(await sup.$eval('[data-counting-mode]', e => e.dataset.countingMode), 'suppressed', 'a supervisor can choose small cells suppressed instead');
+eq(await sup.$eval('[data-counting-mode]', e => e.dataset.purpose), 'submission', 'still the submission, not for publication');
+eq(await sup.$eval('[data-run-kind] details[data-counting-details] summary', e => e.textContent), 'Why some numbers are hidden', 'with a plain link to why some numbers are hidden');
 await sup.click('[data-unattributed] a'); await settle(sup);
 ok(await until(() => sup.$('[data-no-fund-filter]')), 'the warning opens the visits with no funding source');
 ok(/funding=none/.test(sup.url()), 'filtered to them', sup.url());
-// A period that can be published: last month, for the whole programme.
+// Preparing a publication release: last month, for the whole programme.
 await sup.goto(`${base}/#/funder?from=${yearStart}&to=${today}`); await settle(sup);
-await sup.click('[data-publishable-periods] [data-period=month]'); await settle(sup);
-ok(await until(async () => (await sup.$eval('[data-counting-mode]', e => e.dataset.purpose)) === 'publication'), 'last month, whole programme, is a publication release');
-ok(/Publication release/.test(await sup.$eval('[data-counting-mode]', e => e.textContent)), 'and the banner says so');
-ok(/from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}/.test(sup.url()), 'for one calendar month', sup.url());
-ok(/small cells screened; review before sharing/.test(await sup.$eval('[data-counting-mode]', e => e.textContent)), 'labelled as screened, to be reviewed before sharing');
+await sup.click('[data-prepare-publication] [data-publishable-periods] [data-period=month]'); await settle(sup);
+ok(await until(async () => (await sup.$eval('[data-counting-mode]', e => e.dataset.purpose)) === 'publication'), 'last month, whole programme, prepared as a publication release');
+ok(/Publication release/.test(await sup.$eval('[data-run-kind] .run-kind-title', e => e.textContent)), 'and the page says so first');
+ok(/from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}&purpose=publication/.test(sup.url()), 'for one calendar month', sup.url());
+ok(/small cells screened; review before sharing/.test(await sup.$eval('[data-run-kind] .run-kind-title', e => e.textContent)), 'labelled as screened, to be reviewed before sharing');
+ok(await sup.$('[data-publication-review-step] [data-withheld-tables]'), 'the review step lists what was withheld, and why (or says nothing was)');
+ok(await sup.$('[data-back-to-submission]'), 'with a way back to the submission');
 // Its file needs the review confirmed first: without the tick nothing downloads and the page says why.
 ok(await sup.$('[data-publication-review] input[type=checkbox]'), 'a publication release asks for the review to be confirmed before export');
 let early = null; sup.once('download', d => { early = d; });
@@ -78,9 +88,12 @@ ok(reviewed.data.rows.some(r => r.action === 'report.publication.reviewed' && r.
 // ---- harm-reduction reports on the Reports page ----
 await sup.goto(`${base}/#/reports?from=${yearStart}&to=${today}`); await settle(sup);
 ok(await sup.$('[data-harm-reduction-reports]'), 'Reports has the harm-reduction reporting entries');
+eq(await sup.$eval('select[data-hr-kind]', s => s.value), '', 'a supervisor\'s files are the submission to the funder by default');
+ok(/Submission to your funder/.test(await sup.$eval('select[data-hr-kind]', s => s.selectedOptions[0].textContent)), 'and the choice says so');
+eq(await sup.$eval('select[data-hr-kind] option[value=publication]', o => o.disabled), true, 'a range that is not a standard period that has ended cannot be a publication release');
 const [nd] = await Promise.all([sup.waitForEvent('download'), sup.click('[data-ndp-export=xlsx]')]);
 const nwb = readWorkbook(fs.readFileSync(await nd.path()));
-ok(/naloxone-ndp-log/.test(nd.suggestedFilename()), 'the NDP log downloads', nd.suggestedFilename());
+ok(/naloxone-ndp-log.*exact-counts/.test(nd.suggestedFilename()), 'the NDP log downloads, the programme\'s own submission', nd.suggestedFilename());
 eq((nwb[0].rows[0] || []).slice(0, 5).join(','), 'Date,Entry,Site type,Recipient type,Kits distributed', 'with the NDP-style columns');
 ok(nwb.some(s => s.name === 'About' && s.rows.some(r => /not the official NDP template/.test(r.join(' ')))), 'labelled as not the official NDP template');
 const [sd] = await Promise.all([sup.waitForEvent('download'), sup.click('[data-settlement-export=xlsx]')]);
