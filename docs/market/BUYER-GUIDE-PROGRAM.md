@@ -42,7 +42,7 @@ CalOMS Tx, and the county EHR hand-off. Most harm-reduction programmes will not 
   distribution. A programme manager's report opens as the programme's own *submission to your funder*, with
   exact counts, marked not for publication. For figures to be shared publicly, *Prepare a publication release*:
   every count of people under 11 is suppressed (`<11`), with complementary suppression across every table that
-  shares a total, so that a hidden cell cannot be worked out from the rest of the report; kits, doses and money
+  shares a total, checked by an automated audit that tries to work each hidden cell out from everything the release prints (a conservative screen, not an expert determination, and not yet independently reviewed); kits, doses and money
   stay exact. Only a run for the whole programme and one month, quarter or fiscal year that has ended can be a
   publication release, labelled *small cells screened; review before sharing*: a table whose protection the
   automatic check cannot confirm is withheld and listed with the reason, and the file downloads only after the

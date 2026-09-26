@@ -52,3 +52,18 @@ of record for the claim, and SUDS hands encounters over to it:
 
 *Optional module.* Treatment programs that must report **CalOMS Tx** can collect, validate and extract it in SUDS
 (`docs/compliance/CALOMS.md`). That is reporting, not billing. The extract is built, but the layout and code sets are NOT verified against the DHCS data dictionary; do not submit until verified with DHCS/county.
+
+## Reports not yet produced
+
+Named here so nobody assumes them. Each is a candidate for the next feature release once a pilot programme
+confirms it owes the report and provides the current template.
+
+- **SAMHSA SUPRT** (the Unified Performance Reporting Tools that replaced GPRA in 2025; SPARS) for State Opioid
+  Response-funded client services. SUDS captures much of the underlying data but has no SUPRT-A/C export.
+- **HMIS** (HUD homeless management information system) export, for outreach funded through housing and
+  homelessness grants.
+- **County subrecipient templates.** Counties that pass opioid-settlement or SABG money to CBOs often use their
+  own report forms; SUDS's funder report, naloxone log and settlement report are generic and must be checked
+  against (and may need mapping to) each county's form.
+- The naloxone log and the opioid-settlement report follow the published reporting fields as understood, not
+  the official templates themselves (docs/compliance/HARM-REDUCTION-REPORTING.md).
