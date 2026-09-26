@@ -268,12 +268,14 @@ module.exports = (r) => {
     return { ok: true, ...out, note: 'Everyone will need to sign in again. Devices should sync after this.' };
   });
   // The keys open every backup, so a session alone (a cookie on a workstation left unlocked) is not enough:
-  // the administrator gives the password or authenticator code again, or confirms within the few minutes after
-  // the last time they did (auth.verifySigner, the rule for signing a note; SSO-only accounts confirm with the
-  // identity provider). A POST, so no link, prefetch or image tag can fetch it. Every attempt is audited.
+  // the administrator gives the password or authenticator code again with every download. There is no
+  // window after signing in or signing a note, as there is for a signature (1.13.1, security review of
+  // 1.13.0, design weakness 6). An account linked to single sign-on may instead confirm with the identity
+  // provider, and that confirmation covers one download in the next five minutes (auth.verifySigner
+  // `fresh`). A POST, so no link, prefetch or image tag can fetch it. Every attempt is audited.
   r.post('/api/admin/keys-backup', auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
     if (config.keySource !== 'file') throw badRequest('Keys are provided by the environment on this server');
-    const method = await auth.verifySigner(ctx, ctx.body || {}, { action: 'keys.download.failed', purpose: 'download the key backup' });
+    const method = await auth.verifySigner(ctx, ctx.body || {}, { action: 'keys.download.failed', purpose: 'download the key backup', fresh: true });
     audit.log({ user: ctx.user, action: 'keys.download', ip: ctx.ip, details: { method } });
     // Remembered so the dashboard can stop asking — and so an admin can see when it was last done.
     db.setSetting('keys_backup_at', db.now());

@@ -73,6 +73,8 @@ async function finishReauth(ctx, saved) {
   const at = Number(claims.auth_time) * 1000;
   if (!Number.isFinite(at) || at < saved.at - AUTH_TIME_SKEW_MS || at > Date.now() + AUTH_TIME_SKEW_MS) { failed('auth_time_not_fresh'); return back('stale'); }
   db.run(`UPDATE sessions SET reauth_at=? WHERE id=?`, db.now(), session.id);
+  // A fresh proof as well, good for one key-backup download in the next few minutes (auth.verifySigner `fresh`).
+  auth.noteSsoProof(session.id);
   db.run(`UPDATE users SET idp_seen_at=? WHERE id=?`, db.now(), user.id);
   audit.log({ user, action: 'auth.oidc.reauth', ip: ctx.ip });
   return back('ok');

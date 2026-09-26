@@ -344,7 +344,13 @@ test('POST /api/admin/keys-backup downloads keys.json only after the administrat
     assert.ok(H.db.getSetting('keys_backup_at', null), 'the dashboard can stop asking');
     const a = H.db.one(`SELECT * FROM audit_log WHERE action='keys.download' ORDER BY id DESC LIMIT 1`);
     assert.equal(JSON.parse(a.details).method, 'password', 'the audit entry says how the administrator proved it');
-    // Within the few minutes after the password, a confirmation is enough (the same rule as signing).
-    assert.equal((await admin.post('/api/admin/keys-backup', { confirm: true })).status, 200);
+    // 1.13.1 (security review of 1.13.0, design weakness 6): key custody has no window. A confirmation a
+    // moment after the password, or right after signing in, is refused: the password again, every time.
+    const again = await admin.post('/api/admin/keys-backup', { confirm: true });
+    assert.equal(again.status, 403); assert.equal(again.data.reauthRequired, true); assert.equal(again.data.fresh, true);
+    H.db.run(`UPDATE sessions SET reauth_at=? WHERE user_id=?`, new Date().toISOString(), adminId);
+    assert.equal((await admin.post('/api/admin/keys-backup', { confirm: true })).status, 403, 'a sign-in just now is not enough either');
+    assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='keys.download.failed' AND user_id=? AND details LIKE '%fresh proof%'`, adminId), 'audited');
+    assert.equal((await admin.post('/api/admin/keys-backup', { password: 'AdminPassw0rd!x' })).status, 200, 'the password again works');
   } finally { config.keySource = was; fs.rmSync(config.keysJsonPath, { force: true }); }
 });
