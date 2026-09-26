@@ -60,6 +60,17 @@ for (const k of CASES) {
   });
 }
 
+test('an expenditure with no client is its worker\'s, or budget:approve\'s (supervisor, finance), over REST and sync', async () => {
+  const fund = H.db.one(`SELECT id FROM funding_sources WHERE is_active=1 LIMIT 1`).id;
+  const created = await c.unav1.post('/api/budget/expenditures', { funding_source_id: fund, spent_at: new Date().toISOString().slice(0, 10), amount: 12, category: 'transportation', description: 'Bus pass for Ulysses K' });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  assert.ok(!JSON.stringify((await c.unav2.get('/api/budget/expenditures?limit=1000')).data).includes('Ulysses K'));
+  assert.equal((await c.unav2.get(`/api/budget/expenditures/${created.data.id}`)).status, 403);
+  assert.ok(!JSON.stringify(await pullAll(c.unav2)).includes('Ulysses K'));
+  assert.ok(JSON.stringify(await pullAll(c.unav1)).includes('Ulysses K'));
+  assert.equal((await c.usup.get(`/api/budget/expenditures/${created.data.id}`)).status, 200);
+});
+
 test('a device cannot overwrite another worker\'s unlinked call by pushing its id', async () => {
   const created = await c.unav1.post('/api/calls', { direction: 'inbound', method: 'phone', started_at: new Date().toISOString(), summary: 'original words' });
   const id = created.data.id;
