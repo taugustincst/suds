@@ -94,7 +94,7 @@ function countingStatement(s) {
     return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the programme's own ${s.purpose === 'submission' ? 'submission to its funder' : 'internal use'}; not for publication or sharing.`;
   }
   if (s.purpose === 'publication') {
-    return `Publication release: the whole programme, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} Suitable for publication or sharing. Publish one release per period, once: two releases for nested or overlapping periods (a quarter and the year that contains it) or the same period run again after late entries can be subtracted from each other to reveal a small group, which suppression within one release cannot prevent.`;
+    return `Publication release: the whole programme, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: nothing any of them prints says more about a small hidden count of people than "fewer than ${T}" (a count of services that would is hidden with it, and a table that cannot be protected is withheld). Suitable for publication or sharing. Publish one release per period, once: two releases for nested or overlapping periods (a quarter and the year that contains it) or the same period run again after late entries can be subtracted from each other to reveal a small group, which suppression within one release cannot prevent.`;
   }
   return `${s.purpose === 'submission' ? 'The programme\'s own submission to its funder' : 'Internal'}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole programme minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the programme and its funder.`;
 }
@@ -107,18 +107,24 @@ const byCount = (a, b) => (b.n - a.n) || String(a.k).localeCompare(String(b.k));
 // by definition, whether or not the box was ticked (older records, or rows pushed from a device).
 const NALOXONE = `(o.naloxone_used=1 OR o.kind='reversal')`;
 /** The period's overdose events, reversals and naloxone given, true values (the NDP log reads them too). */
-function overdoseFigures(ts, tsP) {
+function overdoseFigures(ts, tsP, cf = null) {
+  // cf: a caseload filter (auth.caseloadFilter on c.id) for a caseload-scoped run: only events of clients on
+  // the caseload count, and events reported from the community (no client) are left out - they are nobody's
+  // caseload, and counting them would put whole-programme figures in a run scoped to one worker.
+  const scope = cf ? ` AND o.client_id IN (SELECT c.id FROM clients c WHERE ${cf.sql})` : '';
+  const sp = cf ? cf.params : [];
   const od = db.one(`SELECT COUNT(*) events, COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END),0) reversals,
       COALESCE(SUM(CASE WHEN o.kind='fatal' OR o.survived=0 THEN 1 ELSE 0 END),0) fatal, COALESCE(SUM(CASE WHEN o.client_id IS NULL THEN 1 ELSE 0 END),0) community_reported,
-      COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts('o.occurred_at')}`, ...tsP);
+      COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts('o.occurred_at')}${scope}`, ...tsP, ...sp);
   return {
     ...od,
     by_month: db.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END) reversals,
-        COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN o.naloxone_doses ELSE 0 END),0) reversal_doses FROM overdose_events o WHERE ${ts('o.occurred_at')} GROUP BY month ORDER BY month`, ...tsP),
+        COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN o.naloxone_doses ELSE 0 END),0) reversal_doses FROM overdose_events o WHERE ${ts('o.occurred_at')}${scope} GROUP BY month ORDER BY month`, ...tsP, ...sp),
     // Who gave the naloxone in each reversal (as the NDP log counts it), so the rows add up to the reversals.
-    by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND ${NALOXONE} AND o.survived=1 GROUP BY k ORDER BY n DESC`, ...tsP),
+    by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND ${NALOXONE} AND o.survived=1${scope} GROUP BY k ORDER BY n DESC`, ...tsP, ...sp),
   };
 }
+const CASELOAD_NOTE = 'Counts only your caseload: people served, and people per funding source, are clients on your caseload; overdose events are those of clients on your caseload, and events reported from the community (with no client) are not counted. Services, naloxone kits and test strips are the whole programme\'s.';
 
 /**
  * The overdose figures, protected. Two stars (server/small-cells.js): the events (total, by month, and the
@@ -127,8 +133,8 @@ function overdoseFigures(ts, tsP) {
  * month, so the difference (events not reversed) is a count of people too. Where a star hides a figure the
  * other shows, the other hides it too, and a month showing both events and reversals that differ by fewer
  * than the threshold hides its reversals; the two are run again until neither changes. Each star is audited
- * exactly; the links between them are enforced by hiding, not audited jointly (docs/HIPAA.md). The NDP log's
- * publication release uses this same call, so the two show the same numbers the same way.
+ * exactly; the links between them are enforced by hiding, not audited jointly. That is enough for a run that is
+ * not for publication; a publication release is audited as one system instead (server/publication-release.js).
  */
 function overdoseProtect(od, sc) {
   const months = od.by_month.map(x => ({ month: x.month, n: x.n, reversals: x.reversals }));
@@ -165,9 +171,12 @@ function servedCount(ts, tsP) {
     OR c.id IN (SELECT ca.client_id FROM calls ca WHERE ${ts('ca.started_at')}))`, ...tsP, ...tsP).n;
 }
 
-async function build(ctx, { from, to, ts, tsP }) {
-  const fund = ctx.query.get('funding_source_id') || null;
-  const counting = countingMode(ctx, { from, to }, { fund });
+/**
+ * The report's true figures, in phases (a generator: `yield` marks where the event loop may be let go).
+ * fund: a funding source to filter to, or null. Returns { raw, perFund } - perFund: services and people per
+ * funding source id, every fund with work in the period (a publication release needs the inactive ones too).
+ */
+function* figures(ctx, { from, to, ts, tsP }, fund) {
   const cf = auth.caseloadFilter(ctx.user, 'c.id');
   const fundJoin = fund ? 'AND i.funding_source_id=?' : '';
   const fundP = fund ? [fund] : [];
@@ -183,7 +192,7 @@ async function build(ctx, { from, to, ts, tsP }) {
     db.run(`INSERT OR IGNORE INTO ${served}(id) SELECT i.client_id FROM interventions i WHERE ${ts('i.occurred_at')} AND i.client_id IS NOT NULL ${fundJoin}`, ...tsP, ...fundP);
     if (!fund) db.run(`INSERT OR IGNORE INTO ${served}(id) SELECT ca.client_id FROM calls ca WHERE ${ts('ca.started_at')} AND ca.client_id IS NOT NULL`, ...tsP);
     db.run(`DELETE FROM ${served} WHERE id NOT IN (SELECT c.id FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql})`, ...cf.params);
-    await breathe();
+    yield;
 
     // Everything about the people served, from one read of their records.
     // (IN, not a join: the planner then walks the clients once and probes the served set, about half the time.)
@@ -202,7 +211,7 @@ async function build(ctx, { from, to, ts, tsP }) {
       for (const code of (codes.length ? codes : ['unknown'])) byRace.set(code, (byRace.get(code) || 0) + 1);
     }
     demographics.by_race_code = [...byRace].map(([k, n]) => ({ k, n })).sort(byCount);
-    await breathe();
+    yield;
 
     const unduplicated = {
       served: people.length,
@@ -224,7 +233,8 @@ async function build(ctx, { from, to, ts, tsP }) {
       })(),
     };
 
-    const overdose = overdoseFigures(ts, tsP);
+    const scoped = auth.caseloadRestricted(ctx.user);
+    const overdose = overdoseFigures(ts, tsP, scoped ? cf : null);
 
     // One grouped pass over the period's visits, read from the covering index (idx_interventions_period):
     // services and people per funding source — with an explicit "No funding source" row, since a visit
@@ -238,7 +248,14 @@ async function build(ctx, { from, to, ts, tsP }) {
     for (const x of db.all(`SELECT i.funding_source_id f, COUNT(DISTINCT i.client_id) n FROM interventions i WHERE i.client_id IN (SELECT id FROM clients WHERE deleted_at IS NOT NULL) AND ${ts('i.occurred_at')} GROUP BY i.funding_source_id`, ...tsP)) {
       if (svc.has(x.f)) svc.get(x.f).clients_served -= x.n;
     }
-    await breathe();
+    // In a caseload-scoped run, the people per fund are the caseload's too (the people served already are).
+    if (scoped) {
+      for (const x of svc.values()) x.clients_served = 0;
+      for (const x of db.all(`SELECT i.funding_source_id f, COUNT(DISTINCT i.client_id) n FROM interventions i WHERE ${ts('i.occurred_at')} AND i.client_id IN (SELECT id FROM ${served}) GROUP BY i.funding_source_id`, ...tsP)) {
+        if (svc.has(x.f)) svc.get(x.f).clients_served = x.n;
+      }
+    }
+    yield;
     const distribution = { kits: 0, strips: 0, community_kits: 0 };
     for (const x of svc.values()) if (!fund || x.f === fund) for (const k of Object.keys(distribution)) distribution[k] += x[k];
     // Staff hours: approved time is what a county would invoice; time logged and not yet approved (draft or
@@ -246,14 +263,14 @@ async function build(ctx, { from, to, ts, tsP }) {
     // that, not as zero.
     const hrs = new Map(db.all(`SELECT t.funding_source_id f, COALESCE(SUM(CASE WHEN t.status='approved' THEN t.minutes END),0) approved_minutes,
       COALESCE(SUM(CASE WHEN t.status IN ('draft','submitted') THEN t.minutes END),0) unapproved_minutes FROM time_entries t WHERE t.work_date BETWEEN ? AND ? GROUP BY t.funding_source_id`, from, to).map(x => [x.f, x]));
-    const figures = (id) => ({ clients_served: svc.get(id)?.clients_served || 0, services: svc.get(id)?.services || 0, approved_minutes: hrs.get(id)?.approved_minutes || 0, unapproved_minutes: hrs.get(id)?.unapproved_minutes || 0 });
+    const fundFigures = (id) => ({ clients_served: svc.get(id)?.clients_served || 0, services: svc.get(id)?.services || 0, approved_minutes: hrs.get(id)?.approved_minutes || 0, unapproved_minutes: hrs.get(id)?.unapproved_minutes || 0 });
     // Filtered to one fund, the report is about that fund: its row, its staff hours, and no "No funding
     // source" row (a visit charged to no fund is not work charged to this one). Unfiltered, every active fund
     // and the "No funding source" row.
     const byFund = fund
-      ? db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.id=?`, fund).map(f => ({ ...f, ...figures(f.id) }))
-      : db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`).map(f => ({ ...f, ...figures(f.id) }));
-    const none = { id: null, name: 'No funding source', grant_number: null, fiscal_year_start: null, fiscal_year_end: null, ...figures(null) };
+      ? db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.id=?`, fund).map(f => ({ ...f, ...fundFigures(f.id) }))
+      : db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`).map(f => ({ ...f, ...fundFigures(f.id) }));
+    const none = { id: null, name: 'No funding source', grant_number: null, fiscal_year_start: null, fiscal_year_end: null, ...fundFigures(null) };
     if (!fund) byFund.push(none);
     let approved = 0, unapproved = 0;
     for (const [f, x] of hrs) if (!fund || f === fund) { approved += x.approved_minutes; unapproved += x.unapproved_minutes; }
@@ -269,21 +286,40 @@ async function build(ctx, { from, to, ts, tsP }) {
     };
 
     const raw = {
+      caseload_scope_note: scoped ? CASELOAD_NOTE : null,
       unduplicated, demographics, episodes, overdose, naloxone_distribution: distribution, by_funding_source: byFund,
       attribution: { ...attribution, unattributed_clients: fund ? 0 : none.clients_served },
     };
-    const sc = { threshold: counting.threshold, exact: counting.mode === 'exact' };
-    return {
-      from, to, funding_source_id: fund,
-      suppression: suppressionOf(counting),
-      // Whether this run could be a publication release, and if not why not.
-      release: counting.release,
-      // Kept for the screens and files that read it: the threshold applied, or null when counts are exact.
-      small_cell_threshold: counting.mode === 'exact' ? null : counting.threshold,
-      counting_statement: countingStatement(counting),
-      ...suppress(raw, sc),
-    };
+    return { raw, perFund: svc };
   } finally { db.run(`DROP TABLE IF EXISTS ${served}`); }
+}
+/** Run a phased computation straight through: nothing else runs in between, so it reads one snapshot. */
+function runSync(gen) { let r = gen.next(); while (!r.done) r = gen.next(); return r.value; }
+/** Run it letting the event loop go between phases. */
+async function runAsync(gen) { let r = gen.next(); while (!r.done) { await breathe(); r = gen.next(); } return r.value; }
+
+async function build(ctx, range) {
+  const { from, to } = range;
+  const fund = ctx.query.get('funding_source_id') || null;
+  const counting = countingMode(ctx, { from, to }, { fund });
+  // A publication release is computed once for all three reports that publish from it (the funder report,
+  // the NDP log and the settlement report) and audited as one (server/publication-release.js).
+  if (counting.purpose === 'publication') return require('./publication-release').release(ctx, range, counting).funder;
+  const { raw } = await runAsync(figures(ctx, range, fund));
+  const sc = { threshold: counting.threshold, exact: counting.mode === 'exact' };
+  return { ...header(counting, from, to, fund), caseload_scope_note: raw.caseload_scope_note, ...suppress(raw, sc) };
+}
+/** What every funder report response starts with. */
+function header(counting, from, to, fund = null) {
+  return {
+    from, to, funding_source_id: fund,
+    suppression: suppressionOf(counting),
+    // Whether this run could be a publication release, and if not why not.
+    release: counting.release,
+    // Kept for the screens and files that read it: the threshold applied, or null when counts are exact.
+    small_cell_threshold: counting.mode === 'exact' ? null : counting.threshold,
+    counting_statement: countingStatement(counting),
+  };
 }
 
 const PARTITIONS = ['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_ethnicity'];
@@ -340,6 +376,7 @@ function sheets(d, ctx, fundName) {
     { k: 'Funding source', v: fundName || 'All funding sources' },
     { k: 'Purpose', v: d.suppression.purpose === 'publication' ? 'Publication release (whole programme, one standard period)' : d.suppression.purpose === 'submission' ? 'The programme\'s own submission to its funder, not for publication' : 'Internal, not for publication' },
     { k: 'Counts', v: d.counting_statement },
+    ...(d.caseload_scope_note ? [{ k: 'Scope', v: d.caseload_scope_note }] : []),
     { k: 'Classification', v: 'Aggregate counts: no names, client codes or dates of service.' },
     { k: 'Generated', v: db.now() }, { k: 'Generated by', v: ctx.user.display_name || ctx.user.username },
   ];
@@ -376,4 +413,4 @@ function sheets(d, ctx, fundName) {
   };
 }
 
-module.exports = { build, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT };
+module.exports = { build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT };

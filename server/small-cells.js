@@ -1,6 +1,9 @@
 'use strict';
 // Small-cell suppression for aggregate reports that may be published or shared (the funder report, the NDP
-// log, the opioid settlement report; docs/HIPAA.md "Small cells in aggregate reports").
+// log, the opioid settlement report; docs/HIPAA.md "Small cells in aggregate reports"), for runs that are not a
+// publication release. A publication release (server/publication-release.js) is audited as one constraint
+// system across all three reports by server/sdc.js instead; the symbols mean the same, the protection rule
+// there is stricter (docs/HIPAA.md).
 //
 // What is a count of people: people served (in total, per fund, per allowable use, per demographic row),
 // referrals, admissions, people on MAT, episodes opened, closed and open (an episode is one person's), each

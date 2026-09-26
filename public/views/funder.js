@@ -115,6 +115,7 @@ route('funder', async (r) => {
       : h('p', { class: 'small muted', 'data-publication-only': '1' }, 'Your role runs publication releases: the whole programme for one month, quarter or fiscal year that has ended. Custom ranges and single funds are internal reports, run by a supervisor or administrator.',
         can('budget:read') ? ' Money and staff hours for any period or fund are on Funding & spending.' : ''),
     periodButtons(([s, e]) => { fundI.value = ''; go(s, e); }),
+    d.caseload_scope_note ? h('p', { class: 'small muted', 'data-caseload-scope': '1' }, d.caseload_scope_note) : null,
 
     // What would otherwise be missing without a word: services charged to no fund, and staff time nobody
     // has approved yet (approved hours are what a county would invoice, so unapproved time counts as none).
