@@ -107,18 +107,24 @@ const byCount = (a, b) => (b.n - a.n) || String(a.k).localeCompare(String(b.k));
 // by definition, whether or not the box was ticked (older records, or rows pushed from a device).
 const NALOXONE = `(o.naloxone_used=1 OR o.kind='reversal')`;
 /** The period's overdose events, reversals and naloxone given, true values (the NDP log reads them too). */
-function overdoseFigures(ts, tsP) {
+function overdoseFigures(ts, tsP, cf = null) {
+  // cf: a caseload filter (auth.caseloadFilter on c.id) for a caseload-scoped run: only events of clients on
+  // the caseload count, and events reported from the community (no client) are left out - they are nobody's
+  // caseload, and counting them would put whole-programme figures in a run scoped to one worker.
+  const scope = cf ? ` AND o.client_id IN (SELECT c.id FROM clients c WHERE ${cf.sql})` : '';
+  const sp = cf ? cf.params : [];
   const od = db.one(`SELECT COUNT(*) events, COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END),0) reversals,
       COALESCE(SUM(CASE WHEN o.kind='fatal' OR o.survived=0 THEN 1 ELSE 0 END),0) fatal, COALESCE(SUM(CASE WHEN o.client_id IS NULL THEN 1 ELSE 0 END),0) community_reported,
-      COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts('o.occurred_at')}`, ...tsP);
+      COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts('o.occurred_at')}${scope}`, ...tsP, ...sp);
   return {
     ...od,
     by_month: db.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END) reversals,
-        COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN o.naloxone_doses ELSE 0 END),0) reversal_doses FROM overdose_events o WHERE ${ts('o.occurred_at')} GROUP BY month ORDER BY month`, ...tsP),
+        COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN o.naloxone_doses ELSE 0 END),0) reversal_doses FROM overdose_events o WHERE ${ts('o.occurred_at')}${scope} GROUP BY month ORDER BY month`, ...tsP, ...sp),
     // Who gave the naloxone in each reversal (as the NDP log counts it), so the rows add up to the reversals.
-    by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND ${NALOXONE} AND o.survived=1 GROUP BY k ORDER BY n DESC`, ...tsP),
+    by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND ${NALOXONE} AND o.survived=1${scope} GROUP BY k ORDER BY n DESC`, ...tsP, ...sp),
   };
 }
+const CASELOAD_NOTE = 'Counts only your caseload: people served, and people per funding source, are clients on your caseload; overdose events are those of clients on your caseload, and events reported from the community (with no client) are not counted. Services, naloxone kits and test strips are the whole programme\'s.';
 
 /**
  * The overdose figures, protected. Two stars (server/small-cells.js): the events (total, by month, and the
@@ -227,7 +233,8 @@ function* figures(ctx, { from, to, ts, tsP }, fund) {
       })(),
     };
 
-    const overdose = overdoseFigures(ts, tsP);
+    const scoped = auth.caseloadRestricted(ctx.user);
+    const overdose = overdoseFigures(ts, tsP, scoped ? cf : null);
 
     // One grouped pass over the period's visits, read from the covering index (idx_interventions_period):
     // services and people per funding source — with an explicit "No funding source" row, since a visit
@@ -240,6 +247,13 @@ function* figures(ctx, { from, to, ts, tsP }, fund) {
     // The few deleted clients among them, found through the client index rather than tested on every visit.
     for (const x of db.all(`SELECT i.funding_source_id f, COUNT(DISTINCT i.client_id) n FROM interventions i WHERE i.client_id IN (SELECT id FROM clients WHERE deleted_at IS NOT NULL) AND ${ts('i.occurred_at')} GROUP BY i.funding_source_id`, ...tsP)) {
       if (svc.has(x.f)) svc.get(x.f).clients_served -= x.n;
+    }
+    // In a caseload-scoped run, the people per fund are the caseload's too (the people served already are).
+    if (scoped) {
+      for (const x of svc.values()) x.clients_served = 0;
+      for (const x of db.all(`SELECT i.funding_source_id f, COUNT(DISTINCT i.client_id) n FROM interventions i WHERE ${ts('i.occurred_at')} AND i.client_id IN (SELECT id FROM ${served}) GROUP BY i.funding_source_id`, ...tsP)) {
+        if (svc.has(x.f)) svc.get(x.f).clients_served = x.n;
+      }
     }
     yield;
     const distribution = { kits: 0, strips: 0, community_kits: 0 };
@@ -272,6 +286,7 @@ function* figures(ctx, { from, to, ts, tsP }, fund) {
     };
 
     const raw = {
+      caseload_scope_note: scoped ? CASELOAD_NOTE : null,
       unduplicated, demographics, episodes, overdose, naloxone_distribution: distribution, by_funding_source: byFund,
       attribution: { ...attribution, unattributed_clients: fund ? 0 : none.clients_served },
     };
@@ -292,7 +307,7 @@ async function build(ctx, range) {
   if (counting.purpose === 'publication') return require('./publication-release').release(ctx, range, counting).funder;
   const { raw } = await runAsync(figures(ctx, range, fund));
   const sc = { threshold: counting.threshold, exact: counting.mode === 'exact' };
-  return { ...header(counting, from, to, fund), ...suppress(raw, sc) };
+  return { ...header(counting, from, to, fund), caseload_scope_note: raw.caseload_scope_note, ...suppress(raw, sc) };
 }
 /** What every funder report response starts with. */
 function header(counting, from, to, fund = null) {
@@ -361,6 +376,7 @@ function sheets(d, ctx, fundName) {
     { k: 'Funding source', v: fundName || 'All funding sources' },
     { k: 'Purpose', v: d.suppression.purpose === 'publication' ? 'Publication release (whole programme, one standard period)' : d.suppression.purpose === 'submission' ? 'The programme\'s own submission to its funder, not for publication' : 'Internal, not for publication' },
     { k: 'Counts', v: d.counting_statement },
+    ...(d.caseload_scope_note ? [{ k: 'Scope', v: d.caseload_scope_note }] : []),
     { k: 'Classification', v: 'Aggregate counts: no names, client codes or dates of service.' },
     { k: 'Generated', v: db.now() }, { k: 'Generated by', v: ctx.user.display_name || ctx.user.username },
   ];

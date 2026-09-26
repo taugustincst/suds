@@ -68,7 +68,7 @@ does not store is the password its people type.
   someone), `vault.rekeyAfterRestore` makes a new DEK, re-seals the column keys under it, wraps it for that
   account, keeps the other carried wraps (each opens the backed-up device's DEK, D0, with its password) and
   re-seals the chain **from D0 to the new DEK**, and drops any other wrap (an account enrolled before, which
-  wraps the backup's key; it is vouched for again). `local/kernel.js` `rekeyIfRestored` swaps the key and stores
+  wraps the backup's key; it is vouched for again). The vault keeps the dropped wraps' lookup names (`dropped_after_restore`, salted hashes, never usernames) until each account has a wrap again, so that account's next sign-in is told *This device was restored from a backup and moved to a new key; your sign-in on this device must be re-approved by someone who can already sign in here* instead of *Username or password is incorrect*, and the `device.key_rotated` audit entry lists the dropped account ids (`dropped_accounts`). `local/kernel.js` `rekeyIfRestored` swaps the key and stores
   the re-sealed image with the new vault in one write, or changes nothing if that write does not land. Why
   this scheme: re-wrapping every account at once is impossible without their passwords, and sealing the new
   key under the backup's key would defeat the rotation; D0 is the one secret every backed-up account can reach

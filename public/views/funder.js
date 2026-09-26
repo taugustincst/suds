@@ -7,16 +7,64 @@ import { h, route, get, state, fmt, can, pageHead, bars, stat, table, downloadCs
 const num = (n) => (typeof n === 'string' ? n : Number(n || 0).toLocaleString());
 const isNum = (n) => typeof n === 'number';
 
+// Periods a publication release can cover (server/funder-report.js standardPeriod): a calendar month, a
+// quarter, or a year starting on a quarter, once it has ended. Anything else, a fund filter or a caseload
+// makes the run internal, not for publication.
+const pad = (m) => String(m).padStart(2, '0');
+const monthEnd = (y, m) => new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+const span = (y, m, months) => { const last = m - 1 + months - 1; return [`${y}-${pad(m)}-01`, monthEnd(y + Math.floor(last / 12), (last % 12) + 1)]; };
+function publishablePeriods() {
+  const today = fmt.today(); const ty = Number(today.slice(0, 4)); const tm = Number(today.slice(5, 7));
+  const lastMonth = () => (tm === 1 ? span(ty - 1, 12, 1) : span(ty, tm - 1, 1));
+  const lastQuarter = () => { const q = Math.floor((tm - 1) / 3) * 3 + 1; return q === 1 ? span(ty - 1, 10, 3) : span(ty, q - 3, 3); };
+  const lastYear = (startMonth) => span((tm >= startMonth ? ty : ty - 1) - 1, startMonth, 12);
+  return { lastMonth, lastQuarter, lastYear };
+}
+/** Whether from–to is a standard period that has ended (a publication release, if run for the whole programme). */
+export function isPublishablePeriod(from, to) {
+  const m = /^(\d{4})-(\d{2})-01$/.exec(from || ''); if (!m || !to || to >= fmt.today()) return false;
+  const y = Number(m[1]); const mo = Number(m[2]);
+  return to === span(y, mo, 1)[1] || ([1, 4, 7, 10].includes(mo) && (to === span(y, mo, 3)[1] || to === span(y, mo, 12)[1]));
+}
+/**
+ * Whether this role may run a report that is not a publication release (server/auth.js reportRunAllowed):
+ * reports:internal (supervisor, administrator), or a role that opens client records itself, for a report
+ * that counts only its own caseload (`caseloadScoped`). A caseload-scoped role's run of a whole-programme
+ * report (the settlement report) is refused while caseloads are restricted. Finance and read-only accounts
+ * run publication releases only.
+ */
+export function mayRunInternalReports({ caseloadScoped = true } = {}) {
+  return can('reports:internal') || (can('clients:read') && (caseloadScoped || can('clients:all')));
+}
+
 route('funder', async (r) => {
-  const to = r.query.get('to') || fmt.today();
-  const from = r.query.get('from') || `${to.slice(0, 4)}-01-01`;
-  const fund = r.query.get('funding_source_id') || '';
+  const internalOk = mayRunInternalReports();
+  const { lastMonth, lastQuarter, lastYear } = publishablePeriods();
+  // A role that runs publication releases only opens on the last quarter that has ended, not a year to date.
+  const [dFrom, dTo] = internalOk ? [null, null] : lastQuarter();
+  const to = r.query.get('to') || dTo || fmt.today();
+  const from = r.query.get('from') || dFrom || `${to.slice(0, 4)}-01-01`;
+  const fund = internalOk ? r.query.get('funding_source_id') || '' : '';
   // Small-cell suppression is on unless this is the programme's own submission to its funder and someone
-  // allowed to (supervisor, administrator, finance: reports:exact) asks for exact counts.
+  // allowed to (supervisor, administrator: reports:exact) asks for exact counts.
   const exact = r.query.get('counts') === 'exact' && can('reports:exact');
   const countQs = exact ? '&purpose=submission&counts=exact' : '';
   const qs = `from=${from}&to=${to}${fund ? `&funding_source_id=${fund}` : ''}${countQs}`;
-  const d = await get(`/api/reports/funder?${qs}`);
+  const periodButtons = (onPick) => h('div', { class: 'filters', role: 'group', 'aria-label': 'Periods you can publish', 'data-publishable-periods': '1' },
+    h('span', { class: 'small muted' }, 'Periods you can publish (whole programme, ended):'),
+    h('button', { class: 'btn ghost sm', 'data-period': 'month', onClick: () => onPick(lastMonth()) }, 'Last month'),
+    h('button', { class: 'btn ghost sm', 'data-period': 'quarter', onClick: () => onPick(lastQuarter()) }, 'Last quarter'),
+    h('button', { class: 'btn ghost sm', 'data-period': 'year-jul', onClick: () => onPick(lastYear(7)) }, 'Last fiscal year (Jul–Jun)'),
+    h('button', { class: 'btn ghost sm', 'data-period': 'year-oct', onClick: () => onPick(lastYear(10)) }, 'Last fiscal year (Oct–Sep)'));
+  let d;
+  try { d = await get(`/api/reports/funder?${qs}`); } catch (err) {
+    if (err.status !== 403) throw err;
+    // A role that runs publication releases only, given a link to any other run: say why, and offer the
+    // periods it can run instead of an error page.
+    return h('div', {}, pageHead('Funder report'),
+      h('div', { class: 'banner warn', role: 'alert', 'data-funder-refused': '1' }, err.message),
+      periodButtons(([s, e]) => nav(`funder?from=${s}&to=${e}`)));
+  }
 
   const fromI = h('input', { type: 'date', value: from, 'aria-label': 'From' });
   const toI = h('input', { type: 'date', value: to, 'aria-label': 'To' });
@@ -28,16 +76,6 @@ route('funder', async (r) => {
     h('option', { value: '' }, 'All funding sources'),
     state.funds.map(f => h('option', { value: f.id, selected: f.id === fund }, f.name)));
 
-  // Periods a publication release can cover (server/funder-report.js standardPeriod): a calendar month, a
-  // quarter, or a year starting on a quarter, once it has ended. Anything else, a fund filter or a caseload
-  // makes the run internal, not for publication.
-  const today = fmt.today(); const ty = Number(today.slice(0, 4)); const tm = Number(today.slice(5, 7));
-  const pad = (m) => String(m).padStart(2, '0');
-  const monthEnd = (y, m) => new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-  const span = (y, m, months) => { const last = m - 1 + months - 1; return [`${y}-${pad(m)}-01`, monthEnd(y + Math.floor(last / 12), (last % 12) + 1)]; };
-  const lastMonth = () => (tm === 1 ? span(ty - 1, 12, 1) : span(ty, tm - 1, 1));
-  const lastQuarter = () => { const q = Math.floor((tm - 1) / 3) * 3 + 1; return q === 1 ? span(ty - 1, 10, 3) : span(ty, q - 3, 3); };
-  const lastYear = (startMonth) => span((tm >= startMonth ? ty : ty - 1) - 1, startMonth, 12);
   const publishable = d.suppression.purpose === 'publication';
 
   // Fiscal-year shortcuts, because that is the period a grant report covers.
@@ -64,7 +102,8 @@ route('funder', async (r) => {
       h('strong', {}, publishable ? 'Publication release. ' : 'Internal, not for publication. '), d.counting_statement,
       publishable ? null : h('span', {}, ' To publish or share figures, run the report for all funding sources and one of the periods under "Periods you can publish".')),
 
-    h('div', { class: 'filters' },
+    // Custom ranges, one fund and year-to-date runs are internal: offered only to a role that may run them.
+    internalOk ? h('div', { class: 'filters', 'data-custom-range': '1' },
       h('div', { class: 'field' }, h('label', {}, 'From'), fromI),
       h('div', { class: 'field' }, h('label', {}, 'To'), toI),
       h('div', { class: 'field' }, h('label', {}, 'Funding source'), fundI),
@@ -72,13 +111,11 @@ route('funder', async (r) => {
       h('button', { class: 'btn primary', onClick: () => go(fromI.value, toI.value) }, 'Apply'),
       h('button', { class: 'btn ghost sm', onClick: () => { const [s, e] = fy(7); go(s, e); } }, 'Fiscal year (Jul–Jun)'),
       h('button', { class: 'btn ghost sm', onClick: () => { const [s, e] = fy(10); go(s, e); } }, 'Fiscal year (Oct–Sep)'),
-      h('button', { class: 'btn ghost sm', onClick: () => go(`${to.slice(0, 4)}-01-01`, to) }, 'Calendar year')),
-    h('div', { class: 'filters', role: 'group', 'aria-label': 'Periods you can publish', 'data-publishable-periods': '1' },
-      h('span', { class: 'small muted' }, 'Periods you can publish (whole programme, ended):'),
-      h('button', { class: 'btn ghost sm', 'data-period': 'month', onClick: () => { const [s, e] = lastMonth(); fundI.value = ''; go(s, e); } }, 'Last month'),
-      h('button', { class: 'btn ghost sm', 'data-period': 'quarter', onClick: () => { const [s, e] = lastQuarter(); fundI.value = ''; go(s, e); } }, 'Last quarter'),
-      h('button', { class: 'btn ghost sm', 'data-period': 'year-jul', onClick: () => { const [s, e] = lastYear(7); fundI.value = ''; go(s, e); } }, 'Last fiscal year (Jul–Jun)'),
-      h('button', { class: 'btn ghost sm', 'data-period': 'year-oct', onClick: () => { const [s, e] = lastYear(10); fundI.value = ''; go(s, e); } }, 'Last fiscal year (Oct–Sep)')),
+      h('button', { class: 'btn ghost sm', onClick: () => go(`${to.slice(0, 4)}-01-01`, to) }, 'Calendar year'))
+      : h('p', { class: 'small muted', 'data-publication-only': '1' }, 'Your role runs publication releases: the whole programme for one month, quarter or fiscal year that has ended. Custom ranges and single funds are internal reports, run by a supervisor or administrator.',
+        can('budget:read') ? ' Money and staff hours for any period or fund are on Funding & spending.' : ''),
+    periodButtons(([s, e]) => { fundI.value = ''; go(s, e); }),
+    d.caseload_scope_note ? h('p', { class: 'small muted', 'data-caseload-scope': '1' }, d.caseload_scope_note) : null,
 
     // What would otherwise be missing without a word: services charged to no fund, and staff time nobody
     // has approved yet (approved hours are what a county would invoice, so unapproved time counts as none).

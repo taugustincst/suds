@@ -83,6 +83,44 @@ test('API: determinism - asking again, or for the export, serves the identical r
   for (const x of first.pub.settlement.services_by_use) assert.ok(services.rows.some(row => row.map(String).includes(String(x.people))), `${x.people} in ${JSON.stringify(services.rows)}`);
 });
 
+test('API: a navigator\'s caseload run counts the caseload\'s overdoses and people per fund, not the programme\'s', async () => {
+  // January 2024: two clients, one on the navigator's caseload, each with an overdose; one community event.
+  H.makeUser('prnav', 'navigator'); const nav = H.client(); await nav.login('prnav', 'StaffPassw0rd!x');
+  const navId = H.db.one(`SELECT id FROM users WHERE username='prnav'`).id;
+  const fund = (await admin.post('/api/budget/funds', { name: 'Jan fund', fiscal_year_start: '2023-07-01', fiscal_year_end: '2024-06-30', total_amount: 10 })).data.id;
+  const ids = [];
+  for (let i = 0; i < 2; i++) {
+    const c = await admin.post('/api/clients', { first_name: `Case${i}`, last_name: 'Load', confirm_duplicate: true }); ids.push(c.data.id);
+    assert.equal((await admin.post('/api/interventions', { client_id: c.data.id, type: 'outreach', occurred_at: '2024-01-10T18:00:00.000Z', funding_source_id: fund })).status, 201);
+    assert.equal((await admin.post('/api/overdose-events', { client_id: c.data.id, occurred_at: '2024-01-11T12:00:00Z', kind: 'reversal', naloxone_used: true, naloxone_doses: 1, administered_by: 'staff', survived: true })).status, 201);
+  }
+  assert.equal((await admin.post('/api/overdose-events', { occurred_at: '2024-01-12T12:00:00Z', kind: 'overdose', survived: true })).status, 201);
+  H.db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date) VALUES(lower(hex(randomblob(16))),?,?,'primary','2023-01-01')`, ids[0], navId);
+  const q = 'from=2024-01-01&to=2024-01-31';
+  const whole = (await sup.get(`/api/reports/funder?${q}${EXACT}`)).data;
+  assert.equal(whole.overdose.events, 3); assert.equal(whole.overdose.community_reported, 1);
+  assert.equal(whole.by_funding_source.find(f => f.id === fund).clients_served, 2);
+  assert.equal(whole.caseload_scope_note, null);
+  const r = await nav.get(`/api/reports/funder?${q}&purpose=internal`);
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const d = r.data;
+  assert.equal(d.suppression.purpose, 'internal');
+  // One person, one event, both on the caseload (shown "<11"); the other client's and the community's are not counted.
+  assert.equal(d.unduplicated.served, '<11');
+  assert.equal(d.overdose.events, '<11'); assert.equal(d.overdose.community_reported, 0);
+  assert.deepEqual(d.overdose.by_month.map(x => x.month), ['2024-01']);
+  assert.match(d.caseload_scope_note, /caseload/); assert.match(d.caseload_scope_note, /community/);
+  // The truth behind the "<11"s, from the same queries: one each.
+  const FR = require('../server/funder-report');
+  const { range } = require('../server/routes/reports');
+  const navUser = H.db.one(`SELECT * FROM users WHERE id=?`, navId);
+  const { raw } = FR.runSync(FR.figures({ user: navUser, query: new URLSearchParams(q) }, range({ query: new URLSearchParams(q) }), null));
+  assert.equal(raw.overdose.events, 1); assert.equal(raw.overdose.reversals, 1); assert.equal(raw.overdose.community_reported, 0);
+  assert.equal(raw.by_funding_source.find(f => f.id === fund).clients_served, 1);
+  const csv = String((await nav.get(`/api/reports/funder/export?${q}&purpose=internal&format=csv`)).data);
+  assert.match(csv, /About,Scope,/);
+});
+
 // ---- the solver ----
 test('the exact integer solver agrees with brute force on random small systems', () => {
   const SDC = require('../server/sdc');

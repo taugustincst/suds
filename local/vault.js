@@ -14,7 +14,9 @@
 //            keys:  { iv, ct },                          AES-GCM(DEK, {"enc":hex,"idx":hex})
 //            hints: { users, signup_enabled, program_contact },   what the locked sign-in page may show
 //            chain: { iv, ct },                          after a restore only: see backupRecord
-//            rekey: 'restore' }                          after a restore only, until rekeyAfterRestore
+//            rekey: 'restore',                           after a restore only, until rekeyAfterRestore
+//            dropped_after_restore: [name] }             the wraps that rotation dropped (lookup names, as in
+//                                                       wraps), until each account is let in again
 //   image  { format, version, iv, ct }                   AES-GCM(DEK, SQLite bytes)
 //
 // Every function here is WebCrypto (crypto.subtle), so it runs the same in a browser and under Node's
@@ -176,9 +178,14 @@ export async function rekeyAfterRestore(v, currentDek, username, password, { use
   if (!prev) return null;
   const dek = newDek(); const key = await importDek(dek);
   const others = v.wraps.filter(w => w.chained && w.user_id !== userId && w.name !== name);
-  const dropped = v.wraps.filter(w => !w.chained && w.user_id !== userId).map(w => w.user_id);
+  const droppedWraps = v.wraps.filter(w => !w.chained && w.user_id !== userId);
+  const dropped = droppedWraps.map(w => w.user_id);
   const own = await wrapDek(dek, password, { userId, name });
   const next = { ...v, keys: await sealKeys(key, keys), wraps: [...others, own], rekeyed_at: new Date().toISOString() };
+  // Remembered by lookup name (a salted hash, never the username), so that account's next sign-in is told the
+  // device was restored and moved to a new key, not that its password is wrong (droppedAfterRestore).
+  const names = [...new Set([...(v.dropped_after_restore || []), ...droppedWraps.map(w => w.name)])];
+  if (names.length) next.dropped_after_restore = names; else delete next.dropped_after_restore;
   if (hints) next.hints = hints;
   delete next.rekey;
   if (others.length) { const c = await seal(await importDek(prev), dek, AAD_CHAIN); next.chain = { iv: c.iv, ct: c.ct }; } else delete next.chain;
@@ -220,9 +227,24 @@ export async function openKeys(dekKey, sealed) {
 export async function create(dekKey, keys, hints = {}) {
   return { format: VAULT_FORMAT, version: VERSION, salt: rand(16), kdf: 'PBKDF2-SHA256', iterations: ITERATIONS, wraps: [], keys: await sealKeys(dekKey, keys), hints, created_at: new Date().toISOString() };
 }
+/**
+ * Was this username's wrap dropped by the key rotation after a restore (rekeyAfterRestore), with no wrap of
+ * its own since? Its sign-in cannot open the device, and it needs someone who can to vouch for it again.
+ */
+export async function droppedAfterRestore(vault, username) {
+  if (!vault || !Array.isArray(vault.dropped_after_restore) || !vault.dropped_after_restore.length || !username) return false;
+  if ((await wrapsFor(vault, username)).length) return false;
+  return vault.dropped_after_restore.includes(await nameHash(vault.salt, username));
+}
+
 /** A copy of `vault` with `wrap` in place of any earlier wrap for the same account. */
 export function withWrap(vault, wrap) {
   const next = { ...vault, wraps: vault.wraps.filter(w => w.user_id !== wrap.user_id).concat(wrap) };
+  // An account dropped at the rotation after a restore has a key again: it is no longer waiting.
+  if (Array.isArray(next.dropped_after_restore)) {
+    const left = next.dropped_after_restore.filter(n => n !== wrap.name);
+    if (left.length) next.dropped_after_restore = left; else delete next.dropped_after_restore;
+  }
   if (!next.wraps.some(w => w.chained)) delete next.chain; // every restored account has its own wrap now
   return next;
 }

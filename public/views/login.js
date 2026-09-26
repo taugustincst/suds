@@ -106,7 +106,7 @@ async function loginPanel(r, noAccount, back = '') {
     // A device account with no key to the encrypted records yet (one made before they were encrypted, or
     // restored from a backup) is let in by someone who has one: the two extra fields appear.
     try { r2 = await post('/api/auth/login', d); }
-    catch (e) { if (e.data && e.data.sponsorRequired && showSponsor && !d.sponsor_username) { showSponsor(true); e.message += ' If your account has not been used on this device since its records were encrypted, someone who can already log in here can let you in below.'; e.labelled = true; } throw e; }
+    catch (e) { if (e.data && e.data.sponsorRequired && showSponsor && !d.sponsor_username) { showSponsor(true); if (!e.data.droppedAfterRestore) e.message += ' If your account has not been used on this device since its records were encrypted, someone who can already log in here can let you in below.'; e.labelled = true; } throw e; }
     await loadSession();
     if (r2.mfaPending) { nav('mfa'); }
     // Past the deadline the server refuses everything else anyway; inside it, the banner on every page says

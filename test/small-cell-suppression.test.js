@@ -120,8 +120,11 @@ test('funder report: exact counts are unchanged for the programme\'s own submiss
   assert.equal((await ro.get(`/api/reports/funder?${PERIOD}${EXACT}`)).status, 403);
 });
 
-test('NDP log: reversal rows are suppressed for publication, complementary cells too; a read-only account sees only that', async () => {
-  for (const c of [ro, sup]) {
+test('NDP log: reversal rows are suppressed, complementary cells too; a read-only account runs publication releases only', async () => {
+  // Two months is not a standard period, so this run is internal: refused to a read-only account, whose
+  // figures could otherwise be subtracted from a release (test/report-access.test.js).
+  assert.equal((await ro.get(`/api/reports/naloxone-ndp?${PERIOD}`)).status, 403);
+  for (const c of [sup]) {
     const d = (await c.get(`/api/reports/naloxone-ndp?${PERIOD}`)).data; const T = d.suppression.threshold;
     assert.equal(d.suppression.mode, 'suppressed');
     const rev = d.rows.filter(r => r.entry === 'reversal');
