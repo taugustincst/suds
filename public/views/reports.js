@@ -90,9 +90,9 @@ route('reports', async (r) => {
   const exportGroup = (title, text, attrs, ...content) => h('div', { class: 'export-group', ...attrs }, h('h3', { class: 'eyebrow' }, title), h('p', { class: 'small muted' }, text), h('div', { class: 'row' }, ...content));
   // California harm-reduction reporting (docs/compliance/HARM-REDUCTION-REPORTING.md): the Naloxone
   // Distribution Project log and the opioid settlement expenditure report, part of "Funder & programme".
-  // Small cells are suppressed in both files (reversals and people are counts of people) unless someone
-  // allowed to (reports:exact) chooses exact counts for the programme's own submission, as on the funder report.
-  // A role that runs publication releases only (finance, read-only; a caseload-scoped role for the
+  // A supervisor's or an administrator's file is the programme's own submission (exact counts, not for
+  // publication) unless they choose small cells suppressed, or a publication release for a range that can be
+  // one. A role that runs publication releases only (finance, read-only; a caseload-scoped role for the
   // whole-programme settlement report) gets the buttons only for a range that is one: any other is refused
   // (server/routes/reports.js requireReportRun), and a refusal fetched anyway is shown as its message.
   const pubRange = isPublishablePeriod(from, to);
@@ -100,18 +100,30 @@ route('reports', async (r) => {
   const ndpOk = mayRunInternalReports({ caseloadScoped: true }) || pubRange;
   const settlementOk = mayRunInternalReports({ caseloadScoped: false }) || (pubRange && wholeProgramme);
   const onlyPublication = h('span', { class: 'small muted', 'data-hr-publication-only': '1' }, ' Your role can download this only as a publication release: set the range above to one calendar month, quarter or fiscal year that has ended.');
-  const hrCounts = can('reports:exact') ? h('select', { id: 'hr-counts', 'data-hr-counts': '1' },
-    h('option', { value: '' }, 'Small cells suppressed'),
-    h('option', { value: 'exact' }, 'Exact counts (our own submission to the funder)')) : null;
-  const hrQs = () => (hrCounts && hrCounts.value === 'exact' ? '&purpose=submission&counts=exact' : '');
-  // A publication release's file (a publication range, counts not exact) needs the review confirmed first.
-  const hrReview = () => { const rv = publicationReview(pubRange); if (rv.box && hrCounts) { const sync = () => { rv.box.hidden = hrCounts.value === 'exact'; }; hrCounts.addEventListener('change', sync); } return rv; };
-  const hrDownload = (rv, url) => (hrCounts && hrCounts.value === 'exact' ? fetchDownload(url) : rv.download(url, fetchDownload));
+  const submissionOk = can('reports:internal');
+  // What kind of file: the submission (default), the submission with small cells suppressed, or a publication release.
+  const hrKind = submissionOk ? h('select', { id: 'hr-kind', 'data-hr-kind': '1' },
+    h('option', { value: '' }, can('reports:exact') ? 'Submission to your funder, exact counts — not for publication' : 'Submission to your funder — not for publication'),
+    can('reports:exact') ? h('option', { value: 'suppressed' }, 'Submission to your funder, small cells suppressed — not for publication') : null,
+    h('option', { value: 'publication', disabled: !pubRange }, pubRange ? 'Publication release — to publish or share' : 'Publication release (only for a month, quarter or fiscal year that has ended)')) : null;
+  const kindOf = () => (hrKind ? hrKind.value : pubRange && wholeProgramme ? 'publication' : '');
+  const hrQs = () => ({ suppressed: '&counts=suppressed', publication: '&purpose=publication' }[hrKind ? hrKind.value : ''] || '');
+  // A publication release's file needs the review confirmed first; the box and the guidance are shown only for one.
+  const guide = h('div', { 'data-hr-publication-guidance': '1' }, pubRange ? publicationGuidance() : null);
+  if (hrKind) guide.hidden = true;
+  const hrReview = () => {
+    const rv = publicationReview(pubRange && (submissionOk || wholeProgramme));
+    if (rv.box && hrKind) { const sync = () => { rv.box.hidden = hrKind.value !== 'publication'; guide.hidden = rv.box.hidden; }; rv.box.hidden = true; hrKind.addEventListener('change', sync); }
+    return rv;
+  };
+  const hrDownload = (rv, url) => (kindOf() === 'publication' ? rv.download(url, fetchDownload) : fetchDownload(url));
   const harmReduction = (rv = hrReview()) => h('div', { class: 'mt', 'data-harm-reduction-reports': '1' }, h('h4', { class: 'small', style: { margin: '.75rem 0 .25rem' } }, 'Harm-reduction reporting'),
-      h('p', { class: 'small muted' }, 'For the range above. Aggregate counts and amounts only: no names or client codes. Reversals and people counted under the small-cell threshold are suppressed, with the naloxone doses that would reveal them; kits and amounts are exact.'),
-      h('p', { class: 'small muted', 'data-hr-publication-note': '1' }, 'A file is a publication release only when the range above is one calendar month, quarter or fiscal year (starting in January, April, July or October) that has ended; the NDP log is then by month, for all sites. Any other range gives a file marked internal, not for publication.'),
-      pubRange ? publicationGuidance() : null,
-      hrCounts ? h('div', { class: 'field mb' }, h('label', { for: 'hr-counts' }, 'Counts'), hrCounts) : null,
+      h('p', { class: 'small muted' }, 'For the range above. Aggregate counts and amounts only: no names or client codes. Kits and amounts are always exact.'),
+      h('p', { class: 'small muted', 'data-hr-publication-note': '1' }, submissionOk
+        ? 'A file is the programme\'s own submission to its funder, not for publication, unless you choose a publication release: that is only for a range of one calendar month, quarter or fiscal year (starting in January, April, July or October) that has ended. It screens small counts, withholds any table whose protection the automatic check cannot confirm, and gives the NDP log by month for all sites.'
+        : 'A file is a publication release only when the range above is one calendar month, quarter or fiscal year (starting in January, April, July or October) that has ended; the NDP log is then by month, for all sites, and small counts are screened. Any other range gives a file marked internal, not for publication.'),
+      hrKind ? h('div', { class: 'field mb' }, h('label', { for: 'hr-kind' }, 'Kind of file'), hrKind) : null,
+      guide,
       rv.box,
       h('div', { class: 'row mb' }, h('span', {}, h('b', {}, 'Naloxone distribution & reversal log (NDP-style)'), h('span', { class: 'small muted' }, ' — kits and doses by day, site and recipient type; reversals reported. Check the columns against the current NDP reporting template before submitting.')),
         ndpOk ? [h('button', { class: 'btn sm', 'data-ndp-export': 'xlsx', onClick: () => hrDownload(rv, `/api/reports/naloxone-ndp/export?from=${from}&to=${to}&format=xlsx${hrQs()}`) }, 'NDP log (Excel)'), h('button', { class: 'btn sm ghost', 'data-ndp-export': 'csv', onClick: () => hrDownload(rv, `/api/reports/naloxone-ndp/export?from=${from}&to=${to}${hrQs()}`) }, 'CSV')] : onlyPublication),

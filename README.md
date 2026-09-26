@@ -80,7 +80,7 @@ Demo logins (password `Navigator2026!!`): `mrivera` / `dchen` (navigators), `kpa
 
 Without a terminal, an administrator can add the same fictional data set from inside the app (**Load sample data** on the empty home screen or under Settings) and remove it again in one click; a local-mode copy offers it on its Sync screen.
 
-Without seeding, the first start creates an `admin` user and prints a temporary password.
+Without seeding, the first start creates the administrator `guest` (or `SUDS_ADMIN_USERNAME`) and prints a temporary password; the setup wizard then replaces it with the account you choose.
 
 ## Production for IT teams
 
@@ -90,6 +90,10 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 
 | Area | Details |
 | --- | --- |
+| Outreach & visits | Anonymous or named encounters in the field on a phone, naloxone kits and fentanyl test strips given, referrals made, follow-ups; works offline on an encrypted device copy |
+| Supplies | Supply cupboard with the quantity on hand of each item (naloxone kits, test strips…), drawn down automatically as visits record kits and strips given |
+| Overdoses & reversals | Overdose and reversal reports (who gave naloxone, doses, where), linked to a client or anonymous |
+| Grant reporting | Funder report (unduplicated people, services, hours, spending by fund; exact counts for your own submission, small-cell screened for publication), a Naloxone Distribution Project-style log and opioid-settlement spending by allowable use — each layout to be checked against the current official template |
 | Clients | Encrypted demographics and contact info, substance use profile, ASAM level, MAT status, overdose / naloxone history, risk level, housing, insurance, safety flags, program status and intake/discharge |
 | Visits | 25 SUD-navigation visit (intervention) types, duration, location/modality, outcome, stage of change, naloxone kits and fentanyl test strips, funding source, cost, follow-up to-do creation, automatic time entry |
 | Calls | Direction, contact type, duration, outcome, crisis flag, encrypted summary, follow-up scheduling |

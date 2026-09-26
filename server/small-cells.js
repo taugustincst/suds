@@ -33,6 +33,8 @@ const SECONDARY = 'suppressed';
 // A table or figure that no pattern of hidden cells could protect: not published at all.
 const WITHHELD = 'withheld';
 const primary = (T) => `<${T}`;
+// The row a publication release lists for the small keys of a free-text breakdown it combines (server/funder-report.js foldOf).
+const FOLDED = 'Other (combined)';
 const isSmall = (v, T) => typeof v === 'number' && v > 0 && v < T;
 const isNum = (v) => typeof v === 'number';
 const BIG = 1e12; // stands in for "no upper bound" where a finite probe is needed
@@ -240,4 +242,7 @@ function table(rows, keys, { threshold: T, exact = false, totals = {}, mirror = 
   return { rows: out, totals: tot };
 }
 
-module.exports = { cell, table, star, noLonely, pinned, isSmall, SECONDARY, WITHHELD, primary };
+/** A row with one of its counts as shown, marked suppressed when that is not a number. */
+const withCell = (x, key, v) => ({ ...x, [key]: v, ...(isNum(v) ? {} : { suppressed: true }) });
+
+module.exports = { cell, table, star, noLonely, pinned, isSmall, withCell, SECONDARY, WITHHELD, FOLDED, primary };

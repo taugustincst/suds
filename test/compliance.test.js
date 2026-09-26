@@ -245,7 +245,8 @@ test('the import template is not an export: it needs the import permission, not 
 });
 
 test('the funder report suppresses small cells but keeps totals', async () => {
-  const r = await sup.get('/api/reports/funder?from=2026-01-01&to=2026-12-31');
+  // A supervisor's default is the submission to the funder, exact (test/report-access.test.js); suppressed on request.
+  const r = await sup.get('/api/reports/funder?from=2026-01-01&to=2026-12-31&counts=suppressed');
   assert.equal(r.status, 200);
   assert.equal(r.data.small_cell_threshold, 11);
   for (const rows of Object.values(r.data.demographics)) for (const x of rows) assert.ok(x.n === '<11' || x.n === 'suppressed' || x.n >= 11, `${x.k}: ${x.n}`);

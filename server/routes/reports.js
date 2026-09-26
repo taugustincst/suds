@@ -64,7 +64,7 @@ function requireReportRun({ caseloadScoped, fund = false }) {
 }
 
 module.exports = (r) => {
-  r.get('/api/reports/dashboard', auth.requireAuth, auth.requirePerm('reports:read'), (ctx) => {
+  r.get('/api/reports/dashboard', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
     const { from, to, ts, tsP } = range(ctx);
     const cf = auth.caseloadFilter(ctx.user, 'c.id');
     // {CF} is expanded to the caseload filter; its bound params are spliced in at the position of the placeholder
@@ -72,35 +72,39 @@ module.exports = (r) => {
     const scoped = (sql, ...p) => { const [q, a] = expand(sql, p); return db.all(q, ...a); };
     const scoped1 = (sql, ...p) => { const [q, a] = expand(sql, p); return db.one(q, ...a); };
     const today = require('./budget').localDate();
+    // At 20,000 clients a fiscal year's dashboard is about a second of queries. The event loop is let go after
+    // each one (as the funder report does between its phases), so a colleague's request waits for one query,
+    // tens of milliseconds, not for all of them. q(fn): run one query, then yield.
+    const q = async (fn) => { const v = fn(); await new Promise((resolve) => defer(resolve)); return v; };
     const out = {
       from, to,
-      clients: { active: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n, waitlist: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n,
-        new_in_range: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n,
+      clients: { active: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n), waitlist: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n),
+        new_in_range: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n),
         // The tiles use the client list's own predicates (server/client-filters.js), so a tile and the list it
         // opens count the same people.
-        high_risk: (() => { const f = CFX.risk('high'); return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n; })(),
-        no_contact_30d: (() => { const f = CFX.noContactSince(); return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND ${f.sql}`, ...f.params).n; })(),
-        by_status: scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`),
-        by_substance: scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`),
-        mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`),
+        high_risk: await q(() => { const f = CFX.risk('high'); return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n; }),
+        no_contact_30d: await q(() => { const f = CFX.noContactSince(); return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND ${f.sql}`, ...f.params).n; }),
+        by_status: await q(() => scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`)),
+        by_substance: await q(() => scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`)),
+        mat: await q(() => scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`)),
       },
       // The period's totals in one pass over its visits, not one pass per figure.
-      interventions: { ...scoped1(`SELECT COUNT(*) total, COALESCE(SUM(duration_minutes),0) minutes, COALESCE(SUM(naloxone_kits),0) naloxone_kits, COALESCE(SUM(fentanyl_strips),0) fentanyl_strips
-          FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND {CF}`, ...tsP),
-        by_type: db.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params),
-        by_week: db.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params),
-        by_worker: db.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params),
+      interventions: { ...await q(() => scoped1(`SELECT COUNT(*) total, COALESCE(SUM(duration_minutes),0) minutes, COALESCE(SUM(naloxone_kits),0) naloxone_kits, COALESCE(SUM(fentanyl_strips),0) fentanyl_strips
+          FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND {CF}`, ...tsP)),
+        by_type: await q(() => db.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params)),
+        by_week: await q(() => db.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params)),
+        by_worker: await q(() => db.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params)),
       },
-      calls: { total: db.one(`SELECT COUNT(*) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n, minutes: db.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n,
+      calls: await q(() => ({ total: db.one(`SELECT COUNT(*) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n, minutes: db.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n,
         crisis: db.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts('started_at')}`, ...tsP).n, by_outcome: db.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE ${ts('started_at')} GROUP BY outcome ORDER BY n DESC`, ...tsP),
         by_direction: db.all(`SELECT direction k, COUNT(*) n FROM calls WHERE ${ts('started_at')} GROUP BY direction`, ...tsP),
         // Texts are logged alongside calls, so say how the total splits rather than reporting them as calls.
-        texts: db.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts('started_at')}`, ...tsP).n },
-      referrals: { total: db.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts('r.referred_at')} AND ${cf.sql}`, ...tsP, ...cf.params).n,
+        texts: db.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts('started_at')}`, ...tsP).n })),
+      referrals: await q(() => ({ total: db.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts('r.referred_at')} AND ${cf.sql}`, ...tsP, ...cf.params).n,
         by_status: db.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts('r.referred_at')} AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, ...tsP, ...cf.params),
         by_category: db.all(`SELECT res.category k, COUNT(*) n, SUM(CASE WHEN r.status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE ${ts('r.referred_at')} AND ${cf.sql} GROUP BY res.category ORDER BY n DESC`, ...tsP, ...cf.params),
         open: db.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.status IN ('pending','contacted','accepted','waitlisted','scheduled') AND ${cf.sql}`, ...cf.params).n,
-        median_days_to_admit: (() => { const d = db.all(`SELECT (julianday(admitted_at)-julianday(referred_at)) d FROM referrals WHERE admitted_at IS NOT NULL AND ${ts('referred_at')} ORDER BY d`, ...tsP).map(x => x.d); return d.length ? d[Math.floor(d.length / 2)] : null; })() },
+        median_days_to_admit: (() => { const d = db.all(`SELECT (julianday(admitted_at)-julianday(referred_at)) d FROM referrals WHERE admitted_at IS NOT NULL AND ${ts('referred_at')} ORDER BY d`, ...tsP).map(x => x.d); return d.length ? d[Math.floor(d.length / 2)] : null; })() })),
       tasks: { open: db.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, auth.hasPerm(ctx.user, 'clients:all') ? 1 : 0).n,
         overdue: db.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db.now(), ctx.user.id, auth.hasPerm(ctx.user, 'clients:all') ? 1 : 0).n,
         due_today: db.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, auth.hasPerm(ctx.user, 'clients:all') ? 1 : 0).n },
@@ -141,7 +145,7 @@ module.exports = (r) => {
         return { open: ob.length, attention: ob.filter(o => o.attention).length, due_soon: ob.filter(o => o.warn && !o.overdue).length, overdue: ob.filter(o => o.overdue).length };
       })() : null,
       // The number of clients the "consent expiring" list shows (the card below lists the first 20 consents).
-      consents_expiring_clients: (() => { const f = CFX.consentExpiring(); return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n; })(),
+      consents_expiring_clients: await q(() => { const f = CFX.consentExpiring(); return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n; }),
       consents_expiring: db.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10), ...cf.params).map(x => ({ ...x, recipient: x.recipient_enc ? require('../crypto').decrypt(x.recipient_enc) : null, recipient_enc: undefined })),
     };
     // The dashboard reads across nearly every PHI table; that is a PHI read like any other.

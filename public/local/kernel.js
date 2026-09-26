@@ -23389,6 +23389,7 @@ var require_small_cells = __commonJS({
     var SECONDARY = "suppressed";
     var WITHHELD = "withheld";
     var primary = (T) => `<${T}`;
+    var FOLDED = "Other (combined)";
     var isSmall = (v, T) => typeof v === "number" && v > 0 && v < T;
     var isNum = (v) => typeof v === "number";
     var BIG = 1e12;
@@ -23603,7 +23604,8 @@ var require_small_cells = __commonJS({
       }
       return { rows: out2, totals: tot };
     }
-    module.exports = { cell, table, star, noLonely, pinned, isSmall, SECONDARY, WITHHELD, primary };
+    var withCell = (x, key, v) => ({ ...x, [key]: v, ...isNum(v) ? {} : { suppressed: true } });
+    module.exports = { cell, table, star, noLonely, pinned, isSmall, withCell, SECONDARY, WITHHELD, FOLDED, primary };
   }
 });
 
@@ -23623,7 +23625,7 @@ var require_sdc = __commonJS({
       }
       for (let j = 0; j < n; j++) {
         if (ub[j] === Infinity) continue;
-        if (ub[j] < lb[j] - FEAS) return { status: "infeasible" };
+        if (ub[j] < lb[j] - FEAS) return { status: "infeasible", work: n };
         const a2 = new Array(n).fill(0);
         a2[j] = 1;
         R.push({ a: a2, op: "<=", b: ub[j] - lb[j] });
@@ -23670,7 +23672,9 @@ var require_sdc = __commonJS({
         }
         T.push(row);
       }
+      let work = m * (W + 1);
       const pivot = (z2, pi, pj) => {
+        work += m + 2 * (W + 1);
         const p = T[pi];
         const v = p[pj];
         for (let k = 0; k <= W; k++) p[k] /= v;
@@ -23680,6 +23684,7 @@ var require_sdc = __commonJS({
           if (Math.abs(f2) < EPS) continue;
           const row = T[i];
           for (let k = 0; k <= W; k++) row[k] -= f2 * p[k];
+          work += W + 1;
         }
         const f = z2[pj];
         if (Math.abs(f) > EPS) for (let k = 0; k <= W; k++) z2[k] -= f * p[k];
@@ -23719,7 +23724,7 @@ var require_sdc = __commonJS({
         const d2 = new Array(W).fill(0);
         for (let j = 0; j < W; j++) if (isArt[j]) d2[j] = -1;
         const { z: z2 } = phase2(d2, () => true);
-        if (-z2[W] < -FEAS) return { status: "infeasible" };
+        if (-z2[W] < -FEAS) return { status: "infeasible", work };
         for (let i = 0; i < m; i++) {
           if (!isArt[basis[i]]) continue;
           for (let j = 0; j < W; j++) if (!isArt[j] && Math.abs(T[i][j]) > FEAS) {
@@ -23731,14 +23736,31 @@ var require_sdc = __commonJS({
       const d = new Array(W).fill(0);
       for (let j = 0; j < n; j++) d[j] = c[j] || 0;
       const { z, bounded } = phase2(d, (j) => !isArt[j]);
-      if (!bounded) return { status: "unbounded" };
+      if (!bounded) return { status: "unbounded", work };
       const x = lb.slice();
       for (let i = 0; i < m; i++) if (basis[i] < n) x[basis[i]] += T[i][W];
       let value = 0;
       for (let j = 0; j < n; j++) value += (c[j] || 0) * x[j];
-      return { status: "optimal", x, value };
+      return { status: "optimal", x, value, work };
     }
-    function intMax(prob, c, known, { enough = Infinity, budget = 4e3, deadline = Infinity } = {}) {
+    function newMeter(limit2 = Infinity, timeLimitMs = Infinity) {
+      return { steps: 0, calls: 0, limit: limit2, deadline: Date.now() + timeLimitMs, over: false, backstop: false };
+    }
+    function tick(m, cost = 1) {
+      if (m.over) return true;
+      m.steps += cost + 1;
+      if (m.steps > m.limit) {
+        m.over = true;
+        return true;
+      }
+      if ((++m.calls & 31) === 0 && Date.now() > m.deadline) {
+        m.over = true;
+        m.backstop = true;
+        return true;
+      }
+      return false;
+    }
+    function intMax(prob, c, known, { enough = Infinity, budget = 4e3, meter = null } = {}) {
       const dot = (x) => c.reduce((s, cj, j) => s + cj * x[j], 0);
       let best = known ? Math.round(dot(known)) : -Infinity;
       let bestX = known ? known.slice() : null;
@@ -23746,9 +23768,10 @@ var require_sdc = __commonJS({
       const stack = [[prob.lb.slice(), prob.ub.slice()]];
       let nodes = 0;
       while (stack.length) {
-        if (++nodes > budget || Date.now() > deadline) return { value: best, exact: false, x: bestX };
+        if (++nodes > budget || meter && meter.over) return { value: best, exact: false, x: bestX };
         const [lb, ub] = stack.pop();
         const r = simplex(prob.n, prob.rows, lb, ub, c);
+        if (meter && tick(meter, r.work)) return { value: best, exact: false, x: bestX };
         if (r.status === "infeasible") continue;
         if (r.status === "unbounded") return { value: Infinity, exact: true, x: null };
         const bound = Math.floor(r.value + 1e-6);
@@ -23776,15 +23799,16 @@ var require_sdc = __commonJS({
       }
       return { value: best, exact: true, x: bestX };
     }
-    function intFeasibleIn(prob, c, lo, hi, { budget = 4e3, deadline = Infinity } = {}) {
+    function intFeasibleIn(prob, c, lo, hi, { budget = 4e3, meter = null } = {}) {
       const rows = lo === hi ? [...prob.rows, { a: c, op: "=", b: lo }] : [...prob.rows, { a: c, op: ">=", b: lo }, { a: c, op: "<=", b: hi }];
       const zero = new Array(prob.n).fill(0);
       const stack = [[prob.lb.slice(), prob.ub.slice()]];
       let nodes = 0;
       while (stack.length) {
-        if (++nodes > budget || Date.now() > deadline) return { feasible: false, exact: false };
+        if (++nodes > budget || meter && meter.over) return { feasible: false, exact: false };
         const [lb, ub] = stack.pop();
         const r = simplex(prob.n, rows, lb, ub, zero);
+        if (meter && tick(meter, r.work)) return { feasible: false, exact: false };
         if (r.status !== "optimal") {
           if (r.status === "unbounded") return { feasible: true, exact: true };
           continue;
@@ -23805,11 +23829,11 @@ var require_sdc = __commonJS({
       return { feasible: false, exact: true };
     }
     var intFeasible = (prob, c, v, opts) => intFeasibleIn(prob, c, v, v, opts);
-    function auditor(model, T, { budget, deadline }) {
+    function auditor(model, T, { budget, meter = newMeter() }) {
       const { vars, derived = [], mirror = [] } = model;
       const P2 = Math.ceil(T / 2);
       const small = (x) => x > 0 && x < T;
-      const opt = { budget, deadline };
+      const opt = { budget, meter };
       const tableOf = /* @__PURE__ */ new Map();
       vars.forEach((v, i) => {
         if (!tableOf.has(v.table)) tableOf.set(v.table, []);
@@ -23950,6 +23974,7 @@ var require_sdc = __commonJS({
           for (const [i, co] of q.terms) c[idx.get(i)] += co;
           const hi = simplex(n, rows, lb, ub, c);
           const lo = simplex(n, rows, lb, ub, c.map((x) => -x));
+          tick(meter, hi.work + lo.work);
           const a = lo.status === "optimal" ? Math.max(1, Math.ceil(-lo.value - 1e-6)) : 1;
           const b = hi.status === "optimal" ? Math.min(T - 1, Math.floor(hi.value + 1e-6)) : T - 1;
           const out2 = a > b ? [] : a === b ? [a] : [a, b];
@@ -24009,9 +24034,9 @@ var require_sdc = __commonJS({
       const WITNESS_TRIES = 8;
       const WORLD_RUNS = 400;
       const WITNESS_RUNS = 24;
-      function run2(values) {
+      function run2(values, forced = []) {
         const w = world(values);
-        const withheldTables = /* @__PURE__ */ new Set();
+        const withheldTables = new Set(forced);
         const hideable = (s2, i) => s2[i] === "vis" && vars[i].published && values[i] > 0 && !withheldTables.has(vars[i].table);
         const withStatus = (s2, i, x) => {
           const t = s2.slice();
@@ -24025,7 +24050,7 @@ var require_sdc = __commonJS({
           w.applyMirror(t);
           return t;
         };
-        let s = vars.map((v, i) => !v.published ? "unpub" : v.people && small(values[i]) ? "pri" : "vis");
+        let s = vars.map((v, i) => !v.published ? "unpub" : withheldTables.has(v.table) ? "withheld" : v.people && small(values[i]) ? "pri" : "vis");
         for (const k of w.cons) {
           if (k.op !== "=" || k.rhs !== 0) continue;
           const tot = k.terms.filter(([, c]) => c === -1);
@@ -24035,6 +24060,14 @@ var require_sdc = __commonJS({
           if (!vars[t].people || s[t] !== "vis" || values[t] === 0) continue;
           if (parts.every(([i]) => s[i] === "pri" || s[i] === "vis" && values[i] === 0) && parts.some(([i]) => s[i] === "pri")) s[t] = "sec";
         }
+        const covers = [];
+        for (const k of w.cons) {
+          if (k.rhs !== 0 || k.op === "=" || k.terms.some(([, c]) => Math.abs(c) !== 1)) continue;
+          const sign2 = k.op === ">=" ? 1 : -1;
+          const parts = k.terms.filter(([, c]) => c === sign2).map(([i]) => i);
+          const tot = k.terms.filter(([, c]) => c === -sign2);
+          if (tot.length === 1 && parts.length >= 2 && vars[tot[0][0]].people && parts.every((i) => vars[i].people)) covers.push({ total: tot[0][0], parts });
+        }
         const hiddenTotals = new Set(vars.map((_, i) => i).filter((i) => s[i] === "sec"));
         for (const k of w.cons) {
           if (k.op !== "<=" || k.rhs !== 0 || k.terms.length !== 2) continue;
@@ -24043,7 +24076,33 @@ var require_sdc = __commonJS({
           if (sub !== null && hiddenTotals.has(tot) && vars[sub].people && s[sub] === "vis" && values[sub] >= T) s[sub] = "sec";
         }
         w.applyMirror(s);
-        let outOfTime = false;
+        for (const cover of covers) {
+          const pri = cover.parts.filter((i) => s[i] === "pri");
+          if (!pri.length) continue;
+          const c = cover.parts.filter((i) => hideable(s, i)).sort((a, b) => vars[b].people - vars[a].people || a - b)[0];
+          if (c === void 0) continue;
+          const t = withStatus(s, c, "sec");
+          const pc = w.problem(t, [[c, 1]]);
+          const low = intMax(pc.prob, pc.c.map((x) => -x), null, opt);
+          let pin = !low.exact || !Number.isFinite(low.value);
+          const cmin = -low.value + pc.constant;
+          for (const q of pri) {
+            if (pin) break;
+            const pq = w.problem(t, [[q, 1]]);
+            if (!pq.idx.has(c)) continue;
+            const a = new Array(pq.n).fill(0);
+            a[pq.idx.get(c)] = 1;
+            const prob = { ...pq.prob, rows: [...pq.prob.rows, { a, op: "=", b: cmin }] };
+            for (const v of w.targets(t, { id: vars[q].id, terms: [[q, 1]] })) {
+              const r = intFeasible(prob, pq.c, v - pq.constant, opt);
+              if (!r.feasible) {
+                pin = true;
+                break;
+              }
+            }
+          }
+          if (pin) s = t;
+        }
         const passed = /* @__PURE__ */ new Map();
         const touchOf = (st, q) => {
           const p = w.problem(st, q.terms);
@@ -24055,11 +24114,26 @@ var require_sdc = __commonJS({
           for (const [i] of q.terms) for (const ci of w.byVar[i]) for (const [j] of w.cons[ci].terms) t.add(j);
           return t;
         };
-        for (let guard = 0; guard < 5e3; guard++) {
-          if (Date.now() > deadline) {
-            outOfTime = true;
-            break;
+        const follow = (st) => {
+          const hl = model.headlineVar;
+          if (hl === void 0 || st[hl] === "vis") return st;
+          let t = null;
+          for (const i of model.companions || []) if (st[i] === "vis" && vars[i].published && values[i] >= T) {
+            t = t || st.slice();
+            t[i] = "sec";
           }
+          if (!t) return st;
+          w.applyMirror(t);
+          const changed = [];
+          t.forEach((x, i) => {
+            if (x !== st[i]) changed.push(i);
+          });
+          for (const [id, touch] of passed) if (changed.some((i) => touch.has(i))) passed.delete(id);
+          return t;
+        };
+        for (let guard = 0; guard < 5e3; guard++) {
+          if (meter.over) break;
+          s = follow(s);
           let bad = null;
           let bd = 0;
           for (const q of w.quantities(s)) {
@@ -24121,23 +24195,19 @@ var require_sdc = __commonJS({
           passed.clear();
         }
         const unprotected = [];
-        if (!outOfTime) for (const q of w.quantities(s)) {
+        if (!meter.over) for (const q of w.quantities(s)) {
           if (!passed.has(q.id) && w.deficit(s, q) > 0) unprotected.push(q.id);
-          if (Date.now() > deadline) {
-            outOfTime = true;
-            break;
-          }
+          if (meter.over) break;
         }
-        return { status: s, withheldTables: [...withheldTables], verified: !outOfTime && !unprotected.length, unprotected, outOfTime, world: w };
+        return { status: s, withheldTables: [...withheldTables], verified: !meter.over && !unprotected.length, unprotected, outOfBudget: meter.over, world: w };
       }
-      function consistent(base) {
+      function consistent(base, forced = [], { validate = null, derived: checkDerived = null } = {}) {
         const S = base.status;
         const tables = [...base.withheldTables].sort().join("|");
         const w = base.world;
         const truth = w.values;
         const G = [truth];
         const seen2 = /* @__PURE__ */ new Map([[truth.join(","), true]]);
-        let outOfTime = false;
         let gaveUp = false;
         const valueOf = (vals, terms) => terms.reduce((a, [i, c]) => a + c * vals[i], 0);
         const same = (r) => r.verified && [...r.withheldTables].sort().join("|") === tables && r.status.every((x, i) => x === S[i]);
@@ -24150,13 +24220,12 @@ var require_sdc = __commonJS({
           }
           let ok = false;
           try {
-            ok = same(run2(vals));
+            ok = same(run2(vals, forced)) && (!validate || validate(vals));
           } catch {
             ok = false;
           }
           seen2.set(key, ok);
           if (ok) G.push(vals);
-          if (Date.now() > deadline) outOfTime = true;
           return ok;
         };
         function* candidates(q, v) {
@@ -24214,7 +24283,7 @@ var require_sdc = __commonJS({
           };
           for (const pr of [keep, prob]) {
             for (const anchor of [truth, ...G.slice(1).slice(-3).reverse()]) {
-              if (outOfTime || gaveUp) return;
+              if (meter.over || gaveUp) return;
               const x = nearest(pr, anchor);
               if (x) yield worldOf(x);
             }
@@ -24223,7 +24292,7 @@ var require_sdc = __commonJS({
           for (const i of p.members) {
             if (!vars[i].people || q.terms.some(([t]) => t === i) || k++ >= 6) continue;
             for (const dir of [1, -1]) {
-              if (outOfTime || gaveUp) return;
+              if (meter.over || gaveUp) return;
               const o = new Array(n).fill(0);
               o[p.idx.get(i)] = dir;
               const r = intMax(keep, o, null, opt);
@@ -24244,7 +24313,7 @@ var require_sdc = __commonJS({
           const corners = [[nonzero, down], [nonzero, tight], [prob, tight], [prob, down]];
           for (let k2 = 0; k2 < WITNESS_TRIES; k2++) corners.push([nonzero, p.members.map(() => -(1 + Math.floor(rnd() * 8)))]);
           for (const [pr, o] of corners) {
-            if (outOfTime || gaveUp) return;
+            if (meter.over || gaveUp) return;
             const r = intMax(pr, o, null, opt);
             if (r.x) yield worldOf(r.x);
           }
@@ -24253,7 +24322,7 @@ var require_sdc = __commonJS({
             if (!vars[i].people || own.has(i) || m++ >= 4) continue;
             const j = p.idx.get(i);
             for (let x = prob.lb[j]; x <= prob.lb[j] + 2 * T && x <= prob.ub[j]; x++) {
-              if (outOfTime || gaveUp) return;
+              if (meter.over || gaveUp) return;
               const fixed = { ...prob, lb: prob.lb.slice(), ub: prob.ub.slice() };
               fixed.lb[j] = x;
               fixed.ub[j] = x;
@@ -24274,16 +24343,28 @@ var require_sdc = __commonJS({
         };
         const unprotected = [];
         for (const q of w.quantities(S)) {
-          if (outOfTime || Date.now() > deadline) {
-            outOfTime = true;
-            break;
-          }
+          if (meter.over) break;
           if (gaveUp) {
             unprotected.push(q.id);
             continue;
           }
           let ok = true;
-          if (q.kind === "pri" || q.kind === "cond" && !q.derived) {
+          const bigWithheld = checkDerived && q.kind === "cond" && !q.derived && q.terms.length === 1 && checkDerived.has(q.terms[0][0]) && truth[q.terms[0][0]] >= T;
+          if (bigWithheld) {
+            const x = truth[q.terms[0][0]];
+            let a = x;
+            let b = x;
+            for (const vals of G) {
+              const y = valueOf(vals, q.terms);
+              if (y >= T) {
+                a = Math.min(a, y);
+                b = Math.max(b, y);
+              }
+            }
+            for (let v = a - 1; b - a < P2 && v >= T && v >= x - 2 * T && !meter.over && witness(q, v, 8); v--) a = v;
+            for (let v = b + 1; b - a < P2 && v <= x + 2 * T && !meter.over && witness(q, v, 8); v++) b = v;
+            ok = b - a >= P2;
+          } else if (q.kind === "pri" || q.kind === "cond" && (!q.derived || checkDerived && q.terms.some(([i]) => checkDerived.has(i)))) {
             const t = q.kind === "pri" || w.reaches(w.problem(S, q.terms)) ? w.targets(S, q) : [];
             if (t.length) {
               const [L, U2] = [t[0], t[t.length - 1]];
@@ -24293,7 +24374,7 @@ var require_sdc = __commonJS({
                 const x = valueOf(vals, q.terms);
                 return x >= top && x <= U2;
               });
-              for (let v = U2; ok && !high() && v >= top && !outOfTime; v--) witness(q, v);
+              for (let v = U2; ok && !high() && v >= top && !meter.over; v--) witness(q, v);
               ok = ok && high();
             }
           } else if (q.kind === "sec") {
@@ -24304,314 +24385,103 @@ var require_sdc = __commonJS({
             const found = G.map((vals) => valueOf(vals, q.terms));
             let a = Math.min(x, ...found);
             let b = Math.max(x, ...found);
-            for (let v = a - 1; b - a < P2 && v >= lo && v >= x - 2 * T && !outOfTime && witness(q, v, 8); v--) a = v;
-            for (let v = b + 1; b - a < P2 && v <= hi && v <= x + 2 * T && !outOfTime && witness(q, v, 8); v++) b = v;
+            for (let v = a - 1; b - a < P2 && v >= lo && v >= x - 2 * T && !meter.over && witness(q, v, 8); v--) a = v;
+            for (let v = b + 1; b - a < P2 && v <= hi && v <= x + 2 * T && !meter.over && witness(q, v, 8); v++) b = v;
             ok = b - a >= P2;
           }
           if (!ok) unprotected.push(q.id);
         }
-        return { ok: !outOfTime && !gaveUp && !unprotected.length, unprotected, outOfTime, worlds: G.length, tried: seen2.size, G };
+        return { ok: !meter.over && !gaveUp && !unprotected.length, unprotected, gaveUp, worlds: G.length, tried: seen2.size, G };
       }
       return { run: run2, consistent };
     }
-    function protect(model, T, { budget = 4e3, timeLimitMs = Infinity, consistency = true, debug = false } = {}) {
-      const deadline = Date.now() + timeLimitMs;
-      const a = auditor(model, T, { budget, deadline });
-      const base = a.run(model.vars.map((v) => v.value));
+    var STEP_LIMIT = 2e8;
+    var DEGRADE_BUDGET_FACTOR = 8;
+    var DEGRADE_BUDGET_MIN = 2e6;
+    function protect(model, T, { budget = 4e3, stepLimit = STEP_LIMIT, timeLimitMs = Infinity, consistency = true, degrade = true, debug = false } = {}) {
+      const meter = newMeter(stepLimit, timeLimitMs);
+      const a = auditor(model, T, { budget, meter });
+      const values = model.vars.map((v) => v.value);
+      const keep = new Set(model.keep || []);
+      const byId = new Map(model.vars.map((v, i) => [v.id, i]));
+      const derivedById = new Map((model.derived || []).map((d) => [d.id, d]));
+      const neighbours = (i) => {
+        const out3 = [];
+        for (const k of model.cons) if (k.terms.some(([j]) => j === i)) {
+          for (const [j] of k.terms) if (j !== i) out3.push(j);
+        }
+        return out3;
+      };
+      const tablesFor = (id) => {
+        let idx = byId.has(id) ? [byId.get(id)] : (derivedById.get(id)?.terms || []).map(([j]) => j);
+        if (idx.some((i) => !model.vars[i].published)) idx = [...idx.filter((i) => model.vars[i].published), ...idx.filter((i) => !model.vars[i].published).flatMap(neighbours)];
+        const t = [...new Set(idx.filter((i) => model.vars[i].published).map((i) => model.vars[i].table))];
+        const other = t.filter((x) => !keep.has(x));
+        return other.length ? other : t;
+      };
+      const full = (vals, first2, known = null) => {
+        const base2 = known || a.run(vals, []);
+        const { world: world2, ...out3 } = base2;
+        let res2 = out3;
+        if (base2.verified && consistency) {
+          const c = a.consistent(base2, []);
+          res2 = { ...out3, verified: c.ok, unprotected: c.unprotected, gaveUp: c.gaveUp, consistency: { worlds: c.worlds, tried: c.tried }, ...first2 && debug ? { G: c.G } : {} };
+        }
+        if (res2.verified) return { res: res2, forced: [] };
+        if (meter.over || res2.gaveUp || !degrade) return { res: res2, forced: null };
+        const done = new Set(res2.withheldTables);
+        const more = [...new Set(res2.unprotected.flatMap(tablesFor))].filter((t) => !done.has(t)).sort();
+        if (!more.length || more.some((t) => keep.has(t))) return { res: { ...res2, headline: more.some((t) => keep.has(t)) }, forced: null };
+        return { res: res2, forced: more };
+      };
+      const stats = (res2, forced2, rounds) => ({ headline: false, ...res2, degraded: forced2, outOfBudget: meter.over, backstop: meter.backstop, steps: meter.steps, rounds });
+      const first = full(values, true);
+      if (!first.forced || !first.forced.length) return stats(first.res, [], 1);
+      const forced = first.forced;
+      const key = forced.join("|");
+      const memo = /* @__PURE__ */ new Map();
+      const sameFailure = (vals) => {
+        const r = a.run(vals, []);
+        const printout = `${r.verified}|${r.withheldTables.join("|")}|${r.status.map((x, i) => x === "vis" ? vals[i] : x).join(",")}`;
+        if (!memo.has(printout)) {
+          const f = full(vals, false, r);
+          memo.set(printout, !!f.forced && f.forced.join("|") === key);
+        }
+        return memo.get(printout);
+      };
+      const whole = meter.limit;
+      meter.limit = Math.min(whole, meter.steps + DEGRADE_BUDGET_FACTOR * meter.steps + DEGRADE_BUDGET_MIN);
+      const base = a.run(values, forced);
       const { world, ...out2 } = base;
-      if (!base.verified || !consistency) return out2;
-      const c = a.consistent(base);
-      return { ...out2, verified: c.ok, unprotected: c.unprotected, outOfTime: c.outOfTime, consistency: { worlds: c.worlds, tried: c.tried }, ...debug ? { G: c.G } : {} };
+      let res = out2;
+      if (base.verified) {
+        const inForced = new Set(model.vars.map((v, i) => forced.includes(v.table) ? i : -1).filter((i) => i >= 0));
+        const c = a.consistent(base, forced, { validate: sameFailure, derived: inForced });
+        res = { ...out2, verified: c.ok, unprotected: c.unprotected, gaveUp: c.gaveUp, consistency: { worlds: c.worlds, tried: c.tried }, ...debug ? { G: c.G } : {} };
+      }
+      if (meter.over && !meter.backstop && meter.limit < whole) {
+        meter.over = false;
+        res = { ...res, verified: false };
+      }
+      meter.limit = whole;
+      return stats(res, forced, 2);
     }
-    module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect };
+    module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect, STEP_LIMIT };
   }
 });
 
-// server/harm-reduction-reports.js
-var require_harm_reduction_reports = __commonJS({
-  "server/harm-reduction-reports.js"(exports, module) {
+// server/release-audit.js
+var require_release_audit = __commonJS({
+  "server/release-audit.js"(exports, module) {
     "use strict";
     init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth2();
-    var audit3 = require_audit();
-    var C = require_constants();
-    var O = require_options();
-    var FR = require_funder_report();
-    var SC = require_small_cells();
-    var NDP_TEMPLATE_NOTE = "The column layout follows the fields the DHCS Naloxone Distribution Project (NDP) asks distributors to report, as SUDS understands them (date, site type, recipient type, kits and doses distributed, overdose reversals reported). It is not the official NDP template: it must be checked against the current NDP reporting template before it is submitted.";
-    var SETTLEMENT_SOURCE_NOTE = `Categories follow Exhibit E ("List of Opioid Remediation Uses") of the national opioid settlement agreements and California's High Impact Abatement Activities list, as summarised by DHCS. Both need verification against the agreement governing each fund before the report is submitted; SUDS does not decide whether a cost is allowable.`;
-    var dosesPerKit = () => Number(db3.getSetting("naloxone_doses_per_kit", "")) || 2;
-    function dayReader() {
-      const B2 = require_budget();
-      const tz = B2.orgTimezone();
-      let fmt = null;
-      try {
-        fmt = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
-      } catch {
-        fmt = null;
-      }
-      return (at) => {
-        if (!at) return null;
-        if (String(at).length === 10) return at;
-        if (!fmt) return B2.localDate(at, tz);
-        const d = new Date(at);
-        return Number.isFinite(d.getTime()) ? fmt.format(d) : null;
-      };
-    }
-    function counts(ctx, period) {
-      const counting = FR.countingMode(ctx, period);
-      return { counting, sc: { threshold: counting.threshold, exact: counting.mode === "exact" } };
-    }
-    var header = (counting) => ({ suppression: FR.suppressionOf(counting), release: counting.release, counting_statement: FR.countingStatement(counting) });
-    function distributionRows(ctx, { ts, tsP }, monthly) {
-      const cf = auth3.caseloadFilter(ctx.user, "c.id");
-      const perKit = dosesPerKit();
-      const dayOf = dayReader();
-      const rows = /* @__PURE__ */ new Map();
-      for (const x of db3.all(`SELECT i.occurred_at, i.location, i.client_id IS NULL AS anon, i.naloxone_kits kits FROM interventions i LEFT JOIN clients c ON c.id=i.client_id
-      WHERE ${ts("i.occurred_at")} AND i.naloxone_kits > 0 AND (i.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
-        const day = dayOf(x.occurred_at);
-        const date = monthly ? day.slice(0, 7) : day;
-        const site = x.location || "unknown";
-        const recipient = x.anon ? "Community member (anonymous)" : "Programme participant";
-        const key = `d|${date}|${site}|${recipient}`;
-        if (!rows.has(key)) rows.set(key, { date, entry: "distribution", site_type: site, recipient_type: recipient, kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null });
-        const r = rows.get(key);
-        r.kits += x.kits;
-        r.doses += x.kits * perKit;
-      }
-      return rows;
-    }
-    var byDate = (a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type));
-    function ndpPublished({ from, to }, counting, dist, shown) {
-      const rev2 = shown.rows.map((x) => ({
-        date: x.month,
-        entry: "reversal",
-        site_type: "all",
-        recipient_type: null,
-        kits: null,
-        doses: null,
-        reversals: x.reversals,
-        reversal_doses: x.reversal_doses,
-        administered_by: null,
-        ...typeof x.reversals === "number" && typeof x.reversal_doses === "number" ? {} : { suppressed: true }
-      }));
-      const d = [...dist.values()];
-      return {
-        from,
-        to,
-        county: db3.getSetting("county_name", "") || null,
-        doses_per_kit: dosesPerKit(),
-        template_note: NDP_TEMPLATE_NOTE,
-        rows: [...d, ...rev2].sort(byDate),
-        by: "month",
-        ...header(counting),
-        totals: {
-          kits: d.reduce((n, r) => n + r.kits, 0),
-          doses: d.reduce((n, r) => n + r.doses, 0),
-          reversals: shown.reversals,
-          reversal_doses: shown.reversal_doses,
-          community_kits: d.filter((r) => r.recipient_type === "Community member (anonymous)").reduce((n, r) => n + r.kits, 0)
-        }
-      };
-    }
-    function ndp(ctx, range) {
-      const { from, to, ts, tsP } = range;
-      const { counting, sc } = counts(ctx, { from, to });
-      if (counting.purpose === "publication") return require_publication_release().release(ctx, range, counting).ndp;
-      const cf = auth3.caseloadFilter(ctx.user, "c.id");
-      const rows = distributionRows(ctx, range, false);
-      const dayOf = dayReader();
-      const add = (key, init2, fn) => {
-        if (!rows.has(key)) rows.set(key, init2);
-        fn(rows.get(key));
-      };
-      for (const x of db3.all(`SELECT o.occurred_at, o.location_type, o.naloxone_doses, o.administered_by FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id
-      WHERE ${ts("o.occurred_at")} AND (o.naloxone_used=1 OR o.kind='reversal') AND o.survived=1 AND (o.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
-        const date = dayOf(x.occurred_at);
-        const site = O.codeFor("LOCATIONS", x.location_type) || "unknown";
-        const by = x.administered_by || "unknown";
-        add(`r|${date}|${site}|${by}`, { date, entry: "reversal", site_type: site, recipient_type: null, kits: null, doses: null, reversals: 0, reversal_doses: 0, administered_by: by }, (r) => {
-          r.reversals += 1;
-          r.reversal_doses += x.naloxone_doses || 0;
-        });
-      }
-      const list = [...rows.values()].sort(byDate);
-      const sum = (k) => list.reduce((n, r) => n + (r[k] || 0), 0);
-      const totals = { kits: sum("kits"), doses: sum("doses"), reversals: sum("reversals"), reversal_doses: sum("reversal_doses"), community_kits: list.filter((r) => r.recipient_type === "Community member (anonymous)").reduce((n, r) => n + r.kits, 0) };
-      const rev2 = list.filter((r) => r.entry === "reversal");
-      const t = SC.table(rev2, ["reversals"], { ...sc, totals: { reversals: totals.reversals, reversal_doses: totals.reversal_doses }, mirror: { reversal_doses: "reversals" } });
-      const out2 = list.map((r) => r.entry === "reversal" ? t.rows[rev2.indexOf(r)] : r);
-      return {
-        from,
-        to,
-        county: db3.getSetting("county_name", "") || null,
-        doses_per_kit: dosesPerKit(),
-        template_note: NDP_TEMPLATE_NOTE,
-        rows: out2,
-        by: "day",
-        ...header(counting),
-        totals: { ...totals, reversals: t.totals.reversals, reversal_doses: t.totals.reversal_doses }
-      };
-    }
-    var money = (n) => Math.round((n || 0) * 100) / 100;
-    var USE_LABEL = Object.fromEntries(C.SETTLEMENT_USES.map((x) => [x.code, x]));
-    var HIAA_LABEL = Object.fromEntries([...C.SETTLEMENT_HIAA.map((x) => [x.code, x.label]), ["none", "Not a High Impact Abatement Activity"]]);
-    function settlementFigures({ from, to, ts, tsP }) {
-      const isFund = `(f.source_type='opioid_settlement' OR f.settlement_use IS NOT NULL OR f.settlement_hiaa IS NOT NULL)`;
-      const funds = db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end, f.total_amount, f.settlement_use, f.settlement_hiaa, f.is_active FROM funding_sources f WHERE ${isFund} ORDER BY f.name`);
-      const exps = db3.all(`SELECT e.amount, e.status, COALESCE(e.settlement_use, f.settlement_use) AS use_code, COALESCE(e.settlement_hiaa, f.settlement_hiaa) AS hiaa_code, f.id AS fund_id
-    FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE ${isFund} AND e.spent_at BETWEEN ? AND ? AND e.status IN ('pending','approved','reimbursed')`, from, to);
-      const bucket = () => ({ approved_amount: 0, pending_amount: 0, expenditures: 0 });
-      const byUse = new Map([...C.SETTLEMENT_USES.map((x) => [x.code, bucket()]), ["uncategorised", bucket()]]);
-      const byHiaa = new Map([...C.SETTLEMENT_HIAA.map((x) => [x.code, bucket()]), ["none", bucket()], ["uncategorised", bucket()]]);
-      const detail = /* @__PURE__ */ new Map();
-      for (const e of exps) {
-        const use = e.use_code && byUse.has(e.use_code) ? e.use_code : "uncategorised";
-        const hiaa = e.hiaa_code && byHiaa.has(e.hiaa_code) ? e.hiaa_code : "uncategorised";
-        const key = `${use}|${hiaa}`;
-        if (!detail.has(key)) detail.set(key, { use, hiaa, ...bucket() });
-        for (const b of [byUse.get(use), byHiaa.get(hiaa), detail.get(key)]) {
-          if (e.status === "pending") b.pending_amount += e.amount;
-          else b.approved_amount += e.amount;
-          b.expenditures += 1;
-        }
-      }
-      const services = db3.all(`SELECT COALESCE(f.settlement_use,'uncategorised') AS use_code, COUNT(*) services, COUNT(DISTINCT CASE WHEN c.deleted_at IS NULL THEN i.client_id END) people, COALESCE(SUM(i.naloxone_kits),0) naloxone_kits
-    FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts("i.occurred_at")} GROUP BY use_code`, ...tsP);
-      const fix = (m) => [...m].map(([code, b]) => ({ code, ...b, approved_amount: money(b.approved_amount), pending_amount: money(b.pending_amount) }));
-      const useRows = fix(byUse).map((x) => ({ ...x, schedule: USE_LABEL[x.code]?.schedule || "Uncategorised", label: USE_LABEL[x.code]?.label || "No settlement category recorded" }));
-      const hiaaRows = fix(byHiaa).map((x) => ({ ...x, label: HIAA_LABEL[x.code] || "No High Impact Abatement Activity recorded" }));
-      const approved = money(exps.filter((e) => e.status !== "pending").reduce((n, e) => n + e.amount, 0));
-      const hiaaAmount = money(hiaaRows.filter((x) => /^hiaa_/.test(x.code)).reduce((n, x) => n + x.approved_amount, 0));
-      return {
-        from,
-        to,
-        source_note: SETTLEMENT_SOURCE_NOTE,
-        funds,
-        by_use: useRows,
-        by_hiaa: hiaaRows,
-        detail: [...detail.values()].map((x) => ({ ...x, approved_amount: money(x.approved_amount), pending_amount: money(x.pending_amount), schedule: USE_LABEL[x.use]?.schedule || "Uncategorised", use_label: USE_LABEL[x.use]?.label || "No settlement category recorded", hiaa_label: HIAA_LABEL[x.hiaa] || "No High Impact Abatement Activity recorded" })).sort((a, b) => a.schedule.localeCompare(b.schedule) || a.use.localeCompare(b.use) || a.hiaa.localeCompare(b.hiaa)),
-        // People per allowable use are counts of people (protected in settlement() below); services and kits are not.
-        // In key order, never by size: a release lists rows in a fixed order (server/publication-release.js).
-        services_by_use: services.map((x) => ({ ...x, label: USE_LABEL[x.use_code]?.label || "No settlement category recorded" })).sort((a, b) => a.use_code < b.use_code ? -1 : a.use_code > b.use_code ? 1 : 0),
-        fundKeys: funds.map((f) => ({ id: f.id, key: f.settlement_use || "uncategorised", active: !!f.is_active })),
-        totals: {
-          approved_amount: approved,
-          pending_amount: money(exps.filter((e) => e.status === "pending").reduce((n, e) => n + e.amount, 0)),
-          hiaa_amount: hiaaAmount,
-          hiaa_share: approved ? Math.round(1e3 * hiaaAmount / approved) / 10 : null,
-          uncategorised_amount: byUse.get("uncategorised").approved_amount + byUse.get("uncategorised").pending_amount
-        }
-      };
-    }
-    function settlement(ctx, range) {
-      const { from, to, ts, tsP } = range;
-      const { counting, sc } = counts(ctx, { from, to });
-      if (counting.purpose === "publication") return require_publication_release().release(ctx, range, counting).settlement;
-      const { fundKeys, ...d } = settlementFigures(range);
-      let people = d.services_by_use.map((x) => x.people);
-      if (!sc.exact) {
-        const served = FR.servedCount(ts, tsP);
-        people = SC.noLonely(SC.star({ total: served, subsets: people.map((n) => Math.min(n, served)) }, { ...sc, fixedTotal: true }).subsets);
-      }
-      return { ...d, funds: d.funds.map(({ is_active, ...f }) => f), services_by_use: d.services_by_use.map((x, i) => FR.withCell(x, "people", people[i])), ...header(counting) };
-    }
-    var countsSuffix = (d) => d.suppression.mode === "exact" ? "exact-counts" : d.suppression.purpose === "publication" ? "publication-screened-review-before-sharing" : "internal-suppressed";
-    var purposeLine = (d) => ({ k: "Purpose", v: d.suppression.purpose === "publication" ? `${FR.PUBLICATION_LABEL} (whole programme, one standard period)` : d.suppression.purpose === "submission" ? "The programme's own submission, not for publication" : "Internal, not for publication" });
-    var purposeRows = (d) => [purposeLine(d), ...d.suppression.purpose === "publication" ? [{ k: "Before publishing", v: FR.PUBLICATION_GUIDANCE }] : []];
-    function send(ctx, { body, filename, xlsx, classification, suppression }) {
-      ctx.res.writeHead(200, {
-        "Content-Type": xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${filename}"`,
-        "X-SUDS-Export": classification,
-        "X-SUDS-Report-Counts": suppression.mode === "exact" ? "exact" : `suppressed (threshold ${suppression.threshold})`,
-        "X-SUDS-Report-Purpose": suppression.purpose
-      });
-      ctx.res.end(body);
-    }
-    var aboutSheet = (ctx, rows) => ({ name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: [...rows, { k: "Generated", v: db3.now() }, { k: "Generated by", v: ctx.user.display_name || ctx.user.username }] });
-    function routes(r, range) {
-      const S = require_spreadsheet();
-      const NDP_COLUMNS = [["date", "Date"], ["entry", "Entry"], ["site_type", "Site type"], ["recipient_type", "Recipient type"], ["kits", "Kits distributed"], ["doses", "Naloxone doses distributed"], ["reversals", "Reversals reported"], ["reversal_doses", "Doses used in reversals"], ["administered_by", "Naloxone given by"]].map(([key, label]) => ({ key, label }));
-      const ndpRows = (d) => d.rows.map((x) => ({
-        ...x,
-        entry: x.entry === "distribution" ? "Distribution" : "Reversal reported",
-        site_type: x.site_type === "unknown" ? "Unknown" : x.site_type === "all" ? "All sites" : O.labelOf("LOCATIONS", x.site_type),
-        administered_by: x.administered_by ? O.labelOf("ADMINISTERED_BY", x.administered_by) : null
-      }));
-      r.get("/api/reports/naloxone-ndp", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
-        const d = ndp(ctx, range(ctx));
-        audit3.log({ user: ctx.user, action: "report.naloxone_ndp", ip: ctx.ip, details: { from: d.from, to: d.to, rows: d.rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
-        return d;
-      });
-      r.get("/api/reports/naloxone-ndp/export", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("export:read"), (ctx) => {
-        const d = ndp(ctx, range(ctx));
-        const xlsx = ctx.query.get("format") === "xlsx";
-        const rows = ndpRows(d);
-        FR.requirePublicationReview(ctx, d, "naloxone-ndp");
-        audit3.log({ user: ctx.user, action: "report.naloxone_ndp.export", ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv" } });
-        const body = xlsx ? S.writeWorkbook([{ name: "NDP log", columns: NDP_COLUMNS, rows }, aboutSheet(ctx, [
-          { k: "Report", v: "Naloxone distribution and reversal log (NDP-style)" },
-          { k: "Template", v: d.template_note },
-          { k: "Period", v: `${d.from} to ${d.to}` },
-          { k: "County", v: d.county || "" },
-          { k: "Doses per kit", v: `${d.doses_per_kit} (Settings: naloxone doses per kit)` },
-          { k: "Totals", v: `${d.totals.kits} kits, ${d.totals.doses} doses distributed (${d.totals.community_kits} kits to anonymous community members); ${d.totals.reversals} reversals reported` },
-          ...purposeRows(d),
-          { k: "Counts", v: d.counting_statement },
-          { k: "Classification", v: d.by === "month" ? "Aggregate counts by month (distribution also by site type and recipient type; reversals for all sites together): no names, client codes or record ids." : "Aggregate counts by day, site type and recipient type: no names, client codes or record ids." }
-        ])]) : S.toCsv(rows, NDP_COLUMNS);
-        send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-naloxone-ndp-log-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? "xlsx" : "csv"}`, classification: "NDP-style log (not the official NDP template; check it against the current NDP reporting template). Aggregate, no identifiers." });
-      });
-      r.get("/api/reports/opioid-settlement", auth3.requireAuth, auth3.requirePerm("budget:read"), (ctx) => {
-        const d = settlement(ctx, range(ctx));
-        audit3.log({ user: ctx.user, action: "report.opioid_settlement", ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
-        return d;
-      });
-      r.get("/api/reports/opioid-settlement/export", auth3.requireAuth, auth3.requirePerm("budget:read"), auth3.requirePerm("export:read"), (ctx) => {
-        const d = settlement(ctx, range(ctx));
-        const xlsx = ctx.query.get("format") === "xlsx";
-        FR.requirePublicationReview(ctx, d, "opioid-settlement");
-        audit3.log({ user: ctx.user, action: "report.opioid_settlement.export", ip: ctx.ip, details: { from: d.from, to: d.to, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv" } });
-        const detailCols = [["schedule", "Schedule"], ["use_label", "Category"], ["hiaa_label", "High Impact Abatement Activity"], ["approved_amount", "Approved or reimbursed ($)"], ["pending_amount", "Pending ($)"], ["expenditures", "Expenditures"]].map(([key, label]) => ({ key, label }));
-        const body = xlsx ? S.writeWorkbook([
-          aboutSheet(ctx, [
-            { k: "Report", v: "Opioid settlement expenditures by allowable use" },
-            { k: "Period", v: `${d.from} to ${d.to}` },
-            { k: "Funds", v: d.funds.map((f) => f.name).join("; ") || "No settlement funds" },
-            { k: "Approved or reimbursed", v: d.totals.approved_amount },
-            { k: "Of which High Impact Abatement Activities", v: `${d.totals.hiaa_amount} (${d.totals.hiaa_share ?? 0}%)` },
-            { k: "Sources and verification", v: d.source_note },
-            ...purposeRows(d),
-            { k: "Counts", v: d.counting_statement }
-          ]),
-          { name: "By allowable use", columns: [["schedule", "Schedule"], ["label", "Category"], ["approved_amount", "Approved or reimbursed ($)"], ["pending_amount", "Pending ($)"], ["expenditures", "Expenditures"]].map(([key, label]) => ({ key, label })), rows: d.by_use },
-          { name: "By HIAA", columns: [["label", "High Impact Abatement Activity"], ["approved_amount", "Approved or reimbursed ($)"], ["pending_amount", "Pending ($)"], ["expenditures", "Expenditures"]].map(([key, label]) => ({ key, label })), rows: d.by_hiaa },
-          { name: "Detail", columns: detailCols, rows: d.detail },
-          { name: "Services", columns: [["label", "Category"], ["services", "Services"], ["people", "People served"], ["naloxone_kits", "Naloxone kits"]].map(([key, label]) => ({ key, label })), rows: d.services_by_use }
-        ]) : S.toCsv(d.detail, detailCols);
-        send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-opioid-settlement-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? "xlsx" : "csv"}`, classification: "Opioid settlement expenditures by category (categories need verification against the governing agreement). No client information." });
-      });
-    }
-    module.exports = { ndp, settlement, settlementFigures, distributionRows, ndpPublished, header, routes, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
-  }
-});
-
-// server/publication-release.js
-var require_publication_release = __commonJS({
-  "server/publication-release.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var FR = require_funder_report();
     var SC = require_small_cells();
     var SDC = require_sdc();
     var C = require_constants();
-    var { HttpError: HttpError3 } = require_http();
     var PARTITIONS = ["by_gender", "by_language", "by_housing", "by_insurance", "by_ethnicity"];
     var DOSES_MAX = C.NALOXONE_DOSES_MAX;
-    var AUDIT_TIME_LIMIT_MS = 5e3;
+    var AUDIT_BACKSTOP_MS = 6e4;
+    var HEADLINE = "unduplicated.served";
     var byKey = (a, b) => {
       const x = String(a);
       const y = String(b);
@@ -24639,7 +24509,7 @@ var require_publication_release = __commonJS({
       const out2 = (keys || []).map((k) => ({ row: have.get(k) || zero(k), fixed: true })).concat(rows.filter((x) => !set.has(x[key])).sort((a, b) => byKey(a[key], b[key])).map((x) => ({ row: x, fixed: false })));
       return byKeyAll ? out2.sort((a, b) => byKey(a.row[key], b.row[key])) : out2;
     }
-    var keyOrder = (rows) => rows.slice().sort((a, b) => (a.k === FR.FOLDED) - (b.k === FR.FOLDED) || byKey(a.k, b.k));
+    var keyOrder = (rows) => rows.slice().sort((a, b) => (a.k === SC.FOLDED) - (b.k === SC.FOLDED) || byKey(a.k, b.k));
     function prepare(raw, domains = {}) {
       const od = raw.overdose;
       const ep = raw.episodes;
@@ -24780,7 +24650,7 @@ var require_publication_release = __commonJS({
       soft([[Dall, 1], [E, -DOSES_MAX]], "<=");
       soft([[Dall, 1], [Dr, -1], [E, -DOSES_MAX], [R, DOSES_MAX]], "<=");
       mirror.push([R, Dr], [R, Dall], [E, Dall]);
-      return { model: { vars, cons, derived, mirror }, h };
+      return { model: { vars, cons, derived, mirror, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] }, h };
     }
     function digest(text) {
       let h1 = 2166136261;
@@ -24792,18 +24662,55 @@ var require_publication_release = __commonJS({
       }
       return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
     }
-    function refusalMessage(r) {
-      const why = r.outOfTime ? "the check of this period's figures did not finish in time" : "the check could not confirm that every small count in it is protected";
-      return `This period cannot be published: ${why}, so no publication release was made. Publish a longer standard period (a quarter or a year), or ask a supervisor or an administrator for an internal report or the programme's own submission, which are not for publication.`;
+    var TABLE_LABEL = {
+      "unduplicated.new_admissions": "New admissions",
+      "unduplicated.on_mat": "On medication for opioid use disorder",
+      "unduplicated.with_a_referral": "Received a referral",
+      "unduplicated.admitted_after_referral": "Admitted after a referral",
+      "demographics.by_gender": "Gender",
+      "demographics.by_language": "Language",
+      "demographics.by_housing": "Housing",
+      "demographics.by_insurance": "Insurance",
+      "demographics.by_ethnicity": "Ethnicity",
+      "demographics.by_race_code": "Race",
+      by_funding_source: "People and services by funding source",
+      "settlement.services_by_use": "Settlement report: people and services by allowable use",
+      "episodes.admissions": "Episodes opened",
+      "episodes.open_at_end": "Episodes open at the end of the period",
+      "episodes.discharges": "Episodes closed",
+      "episodes.by_discharge_reason": "Discharge reasons",
+      "overdose.events": "Overdose events",
+      "overdose.reversals": "Reversals",
+      "overdose.fatal": "Fatal overdoses",
+      "overdose.community_reported": "Overdoses reported from the community",
+      "overdose.by_month.n": "Overdoses by month",
+      "overdose.by_month.reversals": "Reversals by month (and the NDP log's reversals)",
+      "overdose.by_administered_by": "Who gave the naloxone",
+      "ndp.by_month.reversal_doses": "Naloxone doses used in reversals, by month",
+      "ndp.reversal_doses": "Naloxone doses used in reversals",
+      "overdose.naloxone_doses": "Naloxone doses used"
+    };
+    var WITHHELD_WHY = {
+      protect: "Too few people to show it without giving someone away.",
+      check: "The automatic check could not confirm that its small counts are protected, so it was left out and the rest of the release was checked again without it."
+    };
+    function withheldReasons(tables, degraded = []) {
+      const d = new Set(degraded);
+      return [...tables].sort().map((t) => ({ table: t, label: TABLE_LABEL[t] || t, reason: d.has(t) ? "check" : "protect", why: WITHHELD_WHY[d.has(t) ? "check" : "protect"] }));
     }
-    function protectFigures(inputs, T, { strict = false, budget, timeLimitMs = AUDIT_TIME_LIMIT_MS } = {}) {
+    function refusalMessage(r) {
+      const why = r.backstop ? "the check of this period's figures ran past the server's time limit" : r.outOfBudget ? "the check of this period's figures reached its limit before it could finish" : r.headline ? "the number of people served could not be shown without giving someone away" : "the check could not confirm that every small count in it is protected";
+      return `This period cannot be published: ${why}, so no publication release was made. Publish a longer standard period (a quarter or a year). The programme's own submission to its funder, which is not for publication, is unaffected.`;
+    }
+    function protectFigures(inputs, T, { strict = false, budget, stepLimit, timeLimitMs = AUDIT_BACKSTOP_MS, degrade = true } = {}) {
       const raw = prepare(inputs.funder, inputs.domains);
       const { model, h } = buildModel({ ...inputs, funder: raw });
       model.strict = strict;
-      const audit3 = SDC.protect(model, T, { ...budget === void 0 ? {} : { budget }, timeLimitMs });
+      const audit3 = SDC.protect(model, T, { ...budget === void 0 ? {} : { budget }, ...stepLimit === void 0 ? {} : { stepLimit }, timeLimitMs, degrade });
       const { status, withheldTables } = audit3;
+      const stats = { steps: audit3.steps, rounds: audit3.rounds, degraded: audit3.degraded };
       if (!audit3.verified) {
-        return { refused: { out_of_time: audit3.outOfTime, unprotected: audit3.unprotected.length, message: refusalMessage(audit3) }, withheld_tables: withheldTables, status, model };
+        return { refused: { out_of_budget: audit3.outOfBudget, backstop: audit3.backstop, headline: audit3.headline, unprotected: audit3.unprotected.length, message: refusalMessage(audit3) }, withheld_tables: withheldTables, status, model, audit: stats };
       }
       const show = (i) => status[i] === "vis" ? model.vars[i].value : status[i] === "pri" ? SC.primary(T) : status[i] === "sec" ? SC.SECONDARY : SC.WITHHELD;
       const gone = new Set(withheldTables);
@@ -24816,7 +24723,7 @@ var require_publication_release = __commonJS({
           demographics[k] = [];
           continue;
         }
-        demographics[k] = raw.demographics[k].map((x, i) => FR.withCell(x, "n", show(idx[i])));
+        demographics[k] = raw.demographics[k].map((x, i) => SC.withCell(x, "n", show(idx[i])));
       }
       const ep = raw.episodes;
       const od = raw.overdose;
@@ -24828,7 +24735,7 @@ var require_publication_release = __commonJS({
       if (byGone) withheld.push("by_administered_by");
       if (monthsGone) withheld.push("by_month");
       const smallGroup = ep.discharges > 0 && ep.discharges < T;
-      const byFund = raw.by_funding_source.map((f, i) => ({ ...FR.withCell(f, "clients_served", show(h.funds[i].p)), services: show(h.funds[i].s) }));
+      const byFund = raw.by_funding_source.map((f, i) => ({ ...SC.withCell(f, "clients_served", show(h.funds[i].p)), services: show(h.funds[i].s) }));
       const none = byFund.find((f) => f.id === null);
       const funder = {
         unduplicated: { served: show(h.N), new_admissions: show(h.newAdm), with_a_referral: show(h.ref), admitted_after_referral: show(h.adm), on_mat: show(h.mat) },
@@ -24839,7 +24746,7 @@ var require_publication_release = __commonJS({
           admissions: show(h.epAdm),
           discharges: show(h.D),
           open_at_end: show(h.epOpen),
-          by_discharge_reason: disGone ? [] : ep.by_discharge_reason.map((x, i) => FR.withCell(x, "n", show(h.dis[i]))),
+          by_discharge_reason: disGone ? [] : ep.by_discharge_reason.map((x, i) => SC.withCell(x, "n", show(h.dis[i]))),
           // A median over fewer people than the threshold is one of them.
           median_length_of_stay_days: smallGroup || show(h.D) === SC.WITHHELD ? SC.SECONDARY : ep.median_length_of_stay_days
         },
@@ -24855,7 +24762,7 @@ var require_publication_release = __commonJS({
             const r = show(h.r[m]);
             return { month: x.month, n, reversals: r, ...typeof n === "number" && typeof r === "number" ? {} : { suppressed: true } };
           }),
-          by_administered_by: byGone ? [] : od.by_administered_by.map((x, i) => FR.withCell(x, "n", show(h.by[i])))
+          by_administered_by: byGone ? [] : od.by_administered_by.map((x, i) => SC.withCell(x, "n", show(h.by[i])))
         },
         naloxone_distribution: raw.naloxone_distribution,
         by_funding_source: byFund,
@@ -24864,7 +24771,356 @@ var require_publication_release = __commonJS({
       const uses = h.uses.map((x) => ({ people: show(x.p), services: show(x.s) }));
       const ndp = { rows: revGone ? [] : od.by_month.map((x, m) => ({ month: x.month, reversals: show(h.r[m]), reversal_doses: show(h.d[m]) })), reversals: show(h.R), reversal_doses: show(h.Dr) };
       const id = digest(JSON.stringify(model.vars.map((x, i) => x.published ? [x.id, show(i)] : null).filter(Boolean)));
-      return { funder, uses, ndp, withheld_tables: withheldTables, id, status, model };
+      return { funder, uses, ndp, withheld_tables: withheldTables, withheld_reasons: withheldReasons(withheldTables, audit3.degraded), id, status, model, audit: stats };
+    }
+    module.exports = { protectFigures, buildModel, prepare, digest, monthsOf, withheldReasons, refusalMessage, TABLE_LABEL, HEADLINE, AUDIT_BACKSTOP_MS };
+  }
+});
+
+// server/harm-reduction-reports.js
+var require_harm_reduction_reports = __commonJS({
+  "server/harm-reduction-reports.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var O = require_options();
+    var FR = require_funder_report();
+    var SC = require_small_cells();
+    var NDP_TEMPLATE_NOTE = "The column layout follows the fields the DHCS Naloxone Distribution Project (NDP) asks distributors to report, as SUDS understands them (date, site type, recipient type, kits and doses distributed, overdose reversals reported). It is not the official NDP template: it must be checked against the current NDP reporting template before it is submitted.";
+    var SETTLEMENT_SOURCE_NOTE = `Categories follow Exhibit E ("List of Opioid Remediation Uses") of the national opioid settlement agreements and California's High Impact Abatement Activities list, as summarised by DHCS. Both need verification against the agreement governing each fund before the report is submitted; SUDS does not decide whether a cost is allowable.`;
+    var dosesPerKit = () => Number(db3.getSetting("naloxone_doses_per_kit", "")) || 2;
+    function dayReader() {
+      const B2 = require_budget();
+      const tz = B2.orgTimezone();
+      let fmt = null;
+      try {
+        fmt = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+      } catch {
+        fmt = null;
+      }
+      return (at) => {
+        if (!at) return null;
+        if (String(at).length === 10) return at;
+        if (!fmt) return B2.localDate(at, tz);
+        const d = new Date(at);
+        return Number.isFinite(d.getTime()) ? fmt.format(d) : null;
+      };
+    }
+    function counts(ctx, period) {
+      const counting = FR.countingMode(ctx, period);
+      return { counting, sc: { threshold: counting.threshold, exact: counting.mode === "exact" } };
+    }
+    var header = (counting) => ({ suppression: FR.suppressionOf(counting), release: counting.release, counting_statement: FR.countingStatement(counting) });
+    function distributionRows(ctx, { ts, tsP }, monthly) {
+      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+      const perKit = dosesPerKit();
+      const dayOf = dayReader();
+      const rows = /* @__PURE__ */ new Map();
+      for (const x of db3.all(`SELECT i.occurred_at, i.location, i.client_id IS NULL AS anon, i.naloxone_kits kits FROM interventions i LEFT JOIN clients c ON c.id=i.client_id
+      WHERE ${ts("i.occurred_at")} AND i.naloxone_kits > 0 AND (i.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
+        const day = dayOf(x.occurred_at);
+        const date = monthly ? day.slice(0, 7) : day;
+        const site = x.location || "unknown";
+        const recipient = x.anon ? "Community member (anonymous)" : "Programme participant";
+        const key = `d|${date}|${site}|${recipient}`;
+        if (!rows.has(key)) rows.set(key, { date, entry: "distribution", site_type: site, recipient_type: recipient, kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null });
+        const r = rows.get(key);
+        r.kits += x.kits;
+        r.doses += x.kits * perKit;
+      }
+      return rows;
+    }
+    var byDate = (a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type));
+    function ndpPublished({ from, to }, counting, dist, shown) {
+      const rev2 = shown.rows.map((x) => ({
+        date: x.month,
+        entry: "reversal",
+        site_type: "all",
+        recipient_type: null,
+        kits: null,
+        doses: null,
+        reversals: x.reversals,
+        reversal_doses: x.reversal_doses,
+        administered_by: null,
+        ...typeof x.reversals === "number" && typeof x.reversal_doses === "number" ? {} : { suppressed: true }
+      }));
+      const d = [...dist.values()];
+      return {
+        from,
+        to,
+        county: db3.getSetting("county_name", "") || null,
+        doses_per_kit: dosesPerKit(),
+        template_note: NDP_TEMPLATE_NOTE,
+        rows: [...d, ...rev2].sort(byDate),
+        by: "month",
+        ...header(counting),
+        totals: {
+          kits: d.reduce((n, r) => n + r.kits, 0),
+          doses: d.reduce((n, r) => n + r.doses, 0),
+          reversals: shown.reversals,
+          reversal_doses: shown.reversal_doses,
+          community_kits: d.filter((r) => r.recipient_type === "Community member (anonymous)").reduce((n, r) => n + r.kits, 0)
+        }
+      };
+    }
+    async function ndp(ctx, range) {
+      const { from, to, ts, tsP } = range;
+      const { counting, sc } = counts(ctx, { from, to });
+      if (counting.purpose === "publication") return (await require_publication_release().release(ctx, range, counting)).ndp;
+      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+      const rows = distributionRows(ctx, range, false);
+      const dayOf = dayReader();
+      const add = (key, init2, fn) => {
+        if (!rows.has(key)) rows.set(key, init2);
+        fn(rows.get(key));
+      };
+      for (const x of db3.all(`SELECT o.occurred_at, o.location_type, o.naloxone_doses, o.administered_by FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id
+      WHERE ${ts("o.occurred_at")} AND (o.naloxone_used=1 OR o.kind='reversal') AND o.survived=1 AND (o.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
+        const date = dayOf(x.occurred_at);
+        const site = O.codeFor("LOCATIONS", x.location_type) || "unknown";
+        const by = x.administered_by || "unknown";
+        add(`r|${date}|${site}|${by}`, { date, entry: "reversal", site_type: site, recipient_type: null, kits: null, doses: null, reversals: 0, reversal_doses: 0, administered_by: by }, (r) => {
+          r.reversals += 1;
+          r.reversal_doses += x.naloxone_doses || 0;
+        });
+      }
+      const list = [...rows.values()].sort(byDate);
+      const sum = (k) => list.reduce((n, r) => n + (r[k] || 0), 0);
+      const totals = { kits: sum("kits"), doses: sum("doses"), reversals: sum("reversals"), reversal_doses: sum("reversal_doses"), community_kits: list.filter((r) => r.recipient_type === "Community member (anonymous)").reduce((n, r) => n + r.kits, 0) };
+      const rev2 = list.filter((r) => r.entry === "reversal");
+      const t = SC.table(rev2, ["reversals"], { ...sc, totals: { reversals: totals.reversals, reversal_doses: totals.reversal_doses }, mirror: { reversal_doses: "reversals" } });
+      const out2 = list.map((r) => r.entry === "reversal" ? t.rows[rev2.indexOf(r)] : r);
+      return {
+        from,
+        to,
+        county: db3.getSetting("county_name", "") || null,
+        doses_per_kit: dosesPerKit(),
+        template_note: NDP_TEMPLATE_NOTE,
+        rows: out2,
+        by: "day",
+        ...header(counting),
+        totals: { ...totals, reversals: t.totals.reversals, reversal_doses: t.totals.reversal_doses }
+      };
+    }
+    var money = (n) => Math.round((n || 0) * 100) / 100;
+    var USE_LABEL = Object.fromEntries(C.SETTLEMENT_USES.map((x) => [x.code, x]));
+    var HIAA_LABEL = Object.fromEntries([...C.SETTLEMENT_HIAA.map((x) => [x.code, x.label]), ["none", "Not a High Impact Abatement Activity"]]);
+    function settlementFigures({ from, to, ts, tsP }) {
+      const isFund = `(f.source_type='opioid_settlement' OR f.settlement_use IS NOT NULL OR f.settlement_hiaa IS NOT NULL)`;
+      const funds = db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end, f.total_amount, f.settlement_use, f.settlement_hiaa, f.is_active FROM funding_sources f WHERE ${isFund} ORDER BY f.name`);
+      const exps = db3.all(`SELECT e.amount, e.status, COALESCE(e.settlement_use, f.settlement_use) AS use_code, COALESCE(e.settlement_hiaa, f.settlement_hiaa) AS hiaa_code, f.id AS fund_id
+    FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE ${isFund} AND e.spent_at BETWEEN ? AND ? AND e.status IN ('pending','approved','reimbursed')`, from, to);
+      const bucket = () => ({ approved_amount: 0, pending_amount: 0, expenditures: 0 });
+      const byUse = new Map([...C.SETTLEMENT_USES.map((x) => [x.code, bucket()]), ["uncategorised", bucket()]]);
+      const byHiaa = new Map([...C.SETTLEMENT_HIAA.map((x) => [x.code, bucket()]), ["none", bucket()], ["uncategorised", bucket()]]);
+      const detail = /* @__PURE__ */ new Map();
+      for (const e of exps) {
+        const use = e.use_code && byUse.has(e.use_code) ? e.use_code : "uncategorised";
+        const hiaa = e.hiaa_code && byHiaa.has(e.hiaa_code) ? e.hiaa_code : "uncategorised";
+        const key = `${use}|${hiaa}`;
+        if (!detail.has(key)) detail.set(key, { use, hiaa, ...bucket() });
+        for (const b of [byUse.get(use), byHiaa.get(hiaa), detail.get(key)]) {
+          if (e.status === "pending") b.pending_amount += e.amount;
+          else b.approved_amount += e.amount;
+          b.expenditures += 1;
+        }
+      }
+      const services = db3.all(`SELECT COALESCE(f.settlement_use,'uncategorised') AS use_code, COUNT(*) services, COUNT(DISTINCT CASE WHEN c.deleted_at IS NULL THEN i.client_id END) people, COALESCE(SUM(i.naloxone_kits),0) naloxone_kits
+    FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts("i.occurred_at")} GROUP BY use_code`, ...tsP);
+      const fix = (m) => [...m].map(([code, b]) => ({ code, ...b, approved_amount: money(b.approved_amount), pending_amount: money(b.pending_amount) }));
+      const useRows = fix(byUse).map((x) => ({ ...x, schedule: USE_LABEL[x.code]?.schedule || "Uncategorised", label: USE_LABEL[x.code]?.label || "No settlement category recorded" }));
+      const hiaaRows = fix(byHiaa).map((x) => ({ ...x, label: HIAA_LABEL[x.code] || "No High Impact Abatement Activity recorded" }));
+      const approved = money(exps.filter((e) => e.status !== "pending").reduce((n, e) => n + e.amount, 0));
+      const hiaaAmount = money(hiaaRows.filter((x) => /^hiaa_/.test(x.code)).reduce((n, x) => n + x.approved_amount, 0));
+      return {
+        from,
+        to,
+        source_note: SETTLEMENT_SOURCE_NOTE,
+        funds,
+        by_use: useRows,
+        by_hiaa: hiaaRows,
+        detail: [...detail.values()].map((x) => ({ ...x, approved_amount: money(x.approved_amount), pending_amount: money(x.pending_amount), schedule: USE_LABEL[x.use]?.schedule || "Uncategorised", use_label: USE_LABEL[x.use]?.label || "No settlement category recorded", hiaa_label: HIAA_LABEL[x.hiaa] || "No High Impact Abatement Activity recorded" })).sort((a, b) => a.schedule.localeCompare(b.schedule) || a.use.localeCompare(b.use) || a.hiaa.localeCompare(b.hiaa)),
+        // People per allowable use are counts of people (protected in settlement() below); services and kits are not.
+        // In key order, never by size: a release lists rows in a fixed order (server/publication-release.js).
+        services_by_use: services.map((x) => ({ ...x, label: USE_LABEL[x.use_code]?.label || "No settlement category recorded" })).sort((a, b) => a.use_code < b.use_code ? -1 : a.use_code > b.use_code ? 1 : 0),
+        fundKeys: funds.map((f) => ({ id: f.id, key: f.settlement_use || "uncategorised", active: !!f.is_active })),
+        totals: {
+          approved_amount: approved,
+          pending_amount: money(exps.filter((e) => e.status === "pending").reduce((n, e) => n + e.amount, 0)),
+          hiaa_amount: hiaaAmount,
+          hiaa_share: approved ? Math.round(1e3 * hiaaAmount / approved) / 10 : null,
+          uncategorised_amount: byUse.get("uncategorised").approved_amount + byUse.get("uncategorised").pending_amount
+        }
+      };
+    }
+    async function settlement(ctx, range) {
+      const { from, to, ts, tsP } = range;
+      const { counting, sc } = counts(ctx, { from, to });
+      if (counting.purpose === "publication") return (await require_publication_release().release(ctx, range, counting)).settlement;
+      const { fundKeys, ...d } = settlementFigures(range);
+      let people = d.services_by_use.map((x) => x.people);
+      if (!sc.exact) {
+        const served = FR.servedCount(ts, tsP);
+        people = SC.noLonely(SC.star({ total: served, subsets: people.map((n) => Math.min(n, served)) }, { ...sc, fixedTotal: true }).subsets);
+      }
+      return { ...d, funds: d.funds.map(({ is_active, ...f }) => f), services_by_use: d.services_by_use.map((x, i) => FR.withCell(x, "people", people[i])), ...header(counting) };
+    }
+    var countsSuffix = (d) => d.suppression.mode === "exact" ? "exact-counts" : d.suppression.purpose === "publication" ? "publication-screened-review-before-sharing" : "internal-suppressed";
+    var purposeLine = (d) => ({ k: "Purpose", v: d.suppression.purpose === "publication" ? `${FR.PUBLICATION_LABEL} (whole programme, one standard period)` : d.suppression.purpose === "submission" ? "The programme's own submission, not for publication" : "Internal, not for publication" });
+    var purposeRows = (d) => [purposeLine(d), ...d.suppression.purpose === "publication" ? [{ k: "Before publishing", v: FR.PUBLICATION_GUIDANCE }] : []];
+    function send(ctx, { body, filename, xlsx, classification, suppression }) {
+      ctx.res.writeHead(200, {
+        "Content-Type": xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "X-SUDS-Export": classification,
+        "X-SUDS-Report-Counts": suppression.mode === "exact" ? "exact" : `suppressed (threshold ${suppression.threshold})`,
+        "X-SUDS-Report-Purpose": suppression.purpose
+      });
+      ctx.res.end(body);
+    }
+    var aboutSheet = (ctx, rows) => ({ name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: [...rows, { k: "Generated", v: db3.now() }, { k: "Generated by", v: ctx.user.display_name || ctx.user.username }] });
+    function routes(r, range) {
+      const S = require_spreadsheet();
+      const NDP_COLUMNS = [["date", "Date"], ["entry", "Entry"], ["site_type", "Site type"], ["recipient_type", "Recipient type"], ["kits", "Kits distributed"], ["doses", "Naloxone doses distributed"], ["reversals", "Reversals reported"], ["reversal_doses", "Doses used in reversals"], ["administered_by", "Naloxone given by"]].map(([key, label]) => ({ key, label }));
+      const ndpRows = (d) => d.rows.map((x) => ({
+        ...x,
+        entry: x.entry === "distribution" ? "Distribution" : "Reversal reported",
+        site_type: x.site_type === "unknown" ? "Unknown" : x.site_type === "all" ? "All sites" : O.labelOf("LOCATIONS", x.site_type),
+        administered_by: x.administered_by ? O.labelOf("ADMINISTERED_BY", x.administered_by) : null
+      }));
+      r.get("/api/reports/naloxone-ndp", auth3.requireAuth, auth3.requirePerm("reports:read"), async (ctx) => {
+        const d = await ndp(ctx, range(ctx));
+        audit3.log({ user: ctx.user, action: "report.naloxone_ndp", ip: ctx.ip, details: { from: d.from, to: d.to, rows: d.rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
+        return d;
+      });
+      r.get("/api/reports/naloxone-ndp/export", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("export:read"), async (ctx) => {
+        const d = await ndp(ctx, range(ctx));
+        const xlsx = ctx.query.get("format") === "xlsx";
+        const rows = ndpRows(d);
+        FR.requirePublicationReview(ctx, d, "naloxone-ndp");
+        audit3.log({ user: ctx.user, action: "report.naloxone_ndp.export", ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv" } });
+        const body = xlsx ? S.writeWorkbook([{ name: "NDP log", columns: NDP_COLUMNS, rows }, aboutSheet(ctx, [
+          { k: "Report", v: "Naloxone distribution and reversal log (NDP-style)" },
+          { k: "Template", v: d.template_note },
+          { k: "Period", v: `${d.from} to ${d.to}` },
+          { k: "County", v: d.county || "" },
+          { k: "Doses per kit", v: `${d.doses_per_kit} (Settings: naloxone doses per kit)` },
+          { k: "Totals", v: `${d.totals.kits} kits, ${d.totals.doses} doses distributed (${d.totals.community_kits} kits to anonymous community members); ${d.totals.reversals} reversals reported` },
+          ...purposeRows(d),
+          { k: "Counts", v: d.counting_statement },
+          { k: "Classification", v: d.by === "month" ? "Aggregate counts by month (distribution also by site type and recipient type; reversals for all sites together): no names, client codes or record ids." : "Aggregate counts by day, site type and recipient type: no names, client codes or record ids." }
+        ])]) : S.toCsv(rows, NDP_COLUMNS);
+        send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-naloxone-ndp-log-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? "xlsx" : "csv"}`, classification: "NDP-style log (not the official NDP template; check it against the current NDP reporting template). Aggregate, no identifiers." });
+      });
+      r.get("/api/reports/opioid-settlement", auth3.requireAuth, auth3.requirePerm("budget:read"), async (ctx) => {
+        const d = await settlement(ctx, range(ctx));
+        audit3.log({ user: ctx.user, action: "report.opioid_settlement", ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
+        return d;
+      });
+      r.get("/api/reports/opioid-settlement/export", auth3.requireAuth, auth3.requirePerm("budget:read"), auth3.requirePerm("export:read"), async (ctx) => {
+        const d = await settlement(ctx, range(ctx));
+        const xlsx = ctx.query.get("format") === "xlsx";
+        FR.requirePublicationReview(ctx, d, "opioid-settlement");
+        audit3.log({ user: ctx.user, action: "report.opioid_settlement.export", ip: ctx.ip, details: { from: d.from, to: d.to, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv" } });
+        const detailCols = [["schedule", "Schedule"], ["use_label", "Category"], ["hiaa_label", "High Impact Abatement Activity"], ["approved_amount", "Approved or reimbursed ($)"], ["pending_amount", "Pending ($)"], ["expenditures", "Expenditures"]].map(([key, label]) => ({ key, label }));
+        const body = xlsx ? S.writeWorkbook([
+          aboutSheet(ctx, [
+            { k: "Report", v: "Opioid settlement expenditures by allowable use" },
+            { k: "Period", v: `${d.from} to ${d.to}` },
+            { k: "Funds", v: d.funds.map((f) => f.name).join("; ") || "No settlement funds" },
+            { k: "Approved or reimbursed", v: d.totals.approved_amount },
+            { k: "Of which High Impact Abatement Activities", v: `${d.totals.hiaa_amount} (${d.totals.hiaa_share ?? 0}%)` },
+            { k: "Sources and verification", v: d.source_note },
+            ...purposeRows(d),
+            { k: "Counts", v: d.counting_statement }
+          ]),
+          { name: "By allowable use", columns: [["schedule", "Schedule"], ["label", "Category"], ["approved_amount", "Approved or reimbursed ($)"], ["pending_amount", "Pending ($)"], ["expenditures", "Expenditures"]].map(([key, label]) => ({ key, label })), rows: d.by_use },
+          { name: "By HIAA", columns: [["label", "High Impact Abatement Activity"], ["approved_amount", "Approved or reimbursed ($)"], ["pending_amount", "Pending ($)"], ["expenditures", "Expenditures"]].map(([key, label]) => ({ key, label })), rows: d.by_hiaa },
+          { name: "Detail", columns: detailCols, rows: d.detail },
+          { name: "Services", columns: [["label", "Category"], ["services", "Services"], ["people", "People served"], ["naloxone_kits", "Naloxone kits"]].map(([key, label]) => ({ key, label })), rows: d.services_by_use }
+        ]) : S.toCsv(d.detail, detailCols);
+        send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-opioid-settlement-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? "xlsx" : "csv"}`, classification: "Opioid settlement expenditures by category (categories need verification against the governing agreement). No client information." });
+      });
+    }
+    module.exports = { ndp, settlement, settlementFigures, distributionRows, ndpPublished, header, routes, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
+  }
+});
+
+// server/publication-release.js
+var require_publication_release = __commonJS({
+  "server/publication-release.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var FR = require_funder_report();
+    var SC = require_small_cells();
+    var RA = require_release_audit();
+    var { HttpError: HttpError3 } = require_http();
+    var auditOptions = {};
+    function setAuditOptions(o = {}) {
+      auditOptions = { ...o };
+      clearCache();
+    }
+    var WorkerCtor = null;
+    try {
+      WorkerCtor = (init_empty(), __toCommonJS(empty_exports)).Worker;
+    } catch {
+      WorkerCtor = null;
+    }
+    var inline = () => typeof WorkerCtor !== "function" || proc.env.SUDS_AUDIT_INLINE === "1" || !!require_config().local;
+    var worker = null;
+    var seq = 0;
+    var pending = /* @__PURE__ */ new Map();
+    function failAll(err2) {
+      for (const [, p] of pending) {
+        clearTimeout(p.timer);
+        p.reject(err2);
+      }
+      pending.clear();
+    }
+    function auditWorker() {
+      if (worker) return worker;
+      const w = new WorkerCtor((init_path(), __toCommonJS(path_exports)).join("/", "release-audit-worker.js"));
+      w.on("message", ({ id, result, error }) => {
+        const p = pending.get(id);
+        if (!p) return;
+        pending.delete(id);
+        clearTimeout(p.timer);
+        if (error) p.reject(new Error(error));
+        else p.resolve(result);
+      });
+      w.on("error", (e) => {
+        if (worker === w) worker = null;
+        failAll(e);
+      });
+      w.on("exit", () => {
+        if (worker === w) worker = null;
+        failAll(new Error("the publication audit worker stopped"));
+      });
+      w.unref();
+      worker = w;
+      return w;
+    }
+    function runAudit(inputs, T) {
+      const opts = { ...auditOptions };
+      if (inline()) return Promise.resolve().then(() => RA.protectFigures(inputs, T, opts));
+      return new Promise((resolve2, reject) => {
+        const id = ++seq;
+        const w = auditWorker();
+        const timer = setTimeout(() => {
+          console.warn(`[suds] a publication release audit did not answer within ${Math.round((RA.AUDIT_BACKSTOP_MS + 15e3) / 1e3)} s; its worker was stopped and the release refused`);
+          pending.delete(id);
+          w.terminate().catch(() => {
+          });
+          if (worker === w) worker = null;
+          resolve2({ refused: { out_of_budget: true, backstop: true, message: RA.refusalMessage({ backstop: true }) } });
+        }, RA.AUDIT_BACKSTOP_MS + 15e3);
+        if (timer.unref) timer.unref();
+        pending.set(id, { resolve: resolve2, reject, timer });
+        w.postMessage({ id, inputs, T, opts });
+      });
     }
     var CACHE_MS = 5 * 60 * 1e3;
     var CACHE_MAX = 4;
@@ -24873,24 +25129,30 @@ var require_publication_release = __commonJS({
       const key = JSON.stringify([T, inputs.domains, inputs.funder, [...inputs.perFund], inputs.settlement.services_by_use, inputs.settlement.fundKeys]);
       const hit = cache.get(key);
       if (hit && Date.now() - hit.at < CACHE_MS) return hit.p;
-      const p = protectFigures(inputs, T);
+      const p = runAudit(inputs, T).then((r) => {
+        if (r.refused && r.refused.backstop) console.warn(`[suds] a publication release (${inputs.domains.months[0] || ""} to ${inputs.domains.months[inputs.domains.months.length - 1] || ""}) was refused: its audit ran past the wall-clock backstop`);
+        return r;
+      });
+      p.catch(() => cache.delete(key));
       cache.delete(key);
       cache.set(key, { p, at: Date.now() });
       while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
       return p;
     }
-    var clearCache = () => cache.clear();
-    function release(ctx, range, counting) {
+    function clearCache() {
+      cache.clear();
+    }
+    async function release(ctx, range, counting) {
       const HR = require_harm_reduction_reports();
       const O = require_options();
       const T = counting.threshold;
       const { raw, perFund } = FR.runSync(FR.figures(ctx, range, null, { fold: T }));
       const settle = HR.settlementFigures(range);
       const dist = HR.distributionRows(ctx, range, true);
-      const domains = { months: monthsOf(range.from, range.to), administered_by: O.known("ADMINISTERED_BY"), discharge_reasons: O.known("DISCHARGE_REASONS") };
-      const p = audited({ funder: raw, perFund, settlement: settle, domains }, T);
+      const domains = { months: RA.monthsOf(range.from, range.to), administered_by: O.known("ADMINISTERED_BY"), discharge_reasons: O.known("DISCHARGE_REASONS") };
+      const p = await audited({ funder: raw, perFund, settlement: settle, domains }, T);
       if (p.refused) throw new HttpError3(422, p.refused.message, { code: "publication_refused" });
-      const rel = { ...counting.release, id: p.id, reports: ["funder", "naloxone-ndp", "opioid-settlement"], withheld: p.withheld_tables };
+      const rel = { ...counting.release, id: p.id, reports: ["funder", "naloxone-ndp", "opioid-settlement"], withheld: p.withheld_tables, withheld_reasons: p.withheld_reasons };
       const withRelease = (d) => ({ ...d, release: rel });
       const { fundKeys, ...s } = settle;
       return {
@@ -24900,12 +25162,12 @@ var require_publication_release = __commonJS({
           ...s,
           funds: s.funds.map(({ is_active, ...f }) => f),
           ...HR.header(counting),
-          services_by_use: s.services_by_use.map((x, i) => ({ ...FR.withCell(x, "people", p.uses[i].people), services: p.uses[i].services }))
+          services_by_use: s.services_by_use.map((x, i) => ({ ...SC.withCell(x, "people", p.uses[i].people), services: p.uses[i].services }))
         }),
         ndp: withRelease(HR.ndpPublished(range, counting, dist, p.ndp))
       };
     }
-    module.exports = { release, protectFigures, buildModel, prepare, digest, monthsOf, clearCache, AUDIT_TIME_LIMIT_MS };
+    module.exports = { release, runAudit, setAuditOptions, clearCache, protectFigures: RA.protectFigures, buildModel: RA.buildModel, prepare: RA.prepare, digest: RA.digest, monthsOf: RA.monthsOf, AUDIT_BACKSTOP_MS: RA.AUDIT_BACKSTOP_MS };
   }
 });
 
@@ -24951,21 +25213,27 @@ var require_funder_report = __commonJS({
     }
     function countingMode(ctx, period = { from: "", to: "" }, opts = {}) {
       const rel = release(ctx, period, opts);
-      const purpose = ctx.query.get("purpose") || (rel.publishable ? "publication" : "internal");
+      const asked = ctx.query.get("purpose");
+      const internalOk = auth3.hasPerm(ctx.user, "reports:internal");
+      const purpose = asked || (internalOk ? "submission" : rel.publishable ? "publication" : "internal");
       if (!PURPOSES.includes(purpose)) throw badRequest("purpose must be publication (a release to publish or share), submission (the programme's own report to its funder) or internal");
-      const mode = ctx.query.get("counts") || "suppressed";
+      const mode = ctx.query.get("counts") || (purpose === "submission" && auth3.hasPerm(ctx.user, "reports:exact") ? "exact" : "suppressed");
       if (!["suppressed", "exact"].includes(mode)) throw badRequest("counts must be suppressed or exact");
       if (mode === "exact") {
         if (purpose === "publication") throw badRequest("Exact counts are only for the programme's own submission to its funder (purpose=submission) or internal use. A report to publish or share keeps small cells suppressed.");
-        if (!auth3.hasPerm(ctx.user, "reports:exact")) throw forbidden("Only a supervisor, an administrator or finance can run the funder report with exact counts");
+        if (!auth3.hasPerm(ctx.user, "reports:exact")) throw forbidden("Only a supervisor or an administrator can run the funder report with exact counts");
       }
       if (purpose === "publication" && !rel.publishable) {
-        throw badRequest(`Only a report on the whole programme for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be labelled for publication; this one cannot, because ${rel.not_publishable.join(" and ")}. Run it without purpose=publication: it is then marked internal, not for publication.`);
+        throw badRequest(`Only a report on the whole programme for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be prepared as a publication release; this one cannot, because ${rel.not_publishable.join(" and ")}. Run it without purpose=publication: it is then ${internalOk ? "the programme's own submission to its funder" : "marked internal"}, not for publication.`);
       }
       const threshold = Number(db3.getSetting("small_cell_threshold", "")) || SMALL_CELL_DEFAULT;
       return { mode, threshold, purpose, release: rel };
     }
-    var suppressionOf = (c) => ({ mode: c.mode, threshold: c.threshold, purpose: c.purpose });
+    var RUN_LABEL = {
+      submission: "Submission to your funder \u2014 not for publication",
+      internal: "Internal \u2014 not for publication"
+    };
+    var suppressionOf = (c) => ({ mode: c.mode, threshold: c.threshold, purpose: c.purpose, label: c.purpose === "publication" ? PUBLICATION_LABEL : RUN_LABEL[c.purpose] });
     var PUBLICATION_LABEL = "Publication release \u2014 small cells screened; review before sharing";
     var REVIEW_CONFIRMATION = "I have reviewed the withheld and small figures before sharing";
     function requirePublicationReview(ctx, d, report) {
@@ -24985,14 +25253,14 @@ var require_funder_report = __commonJS({
         return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the programme's own ${s.purpose === "submission" ? "submission to its funder" : "internal use"}; not for publication or sharing.`;
       }
       if (s.purpose === "publication") {
-        return `${PUBLICATION_LABEL}: the whole programme, ${PERIOD_LABEL[rel.period] || "one standard period"}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it, and a table that cannot be protected is withheld and prints no rows). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
+        return `${PUBLICATION_LABEL}: the whole programme, ${PERIOD_LABEL[rel.period] || "one standard period"}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it; a table that cannot be protected, or whose protection the check cannot confirm, is withheld, prints no rows and is listed with the reason, and the rest of the release is checked again without it). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
       }
       return `${s.purpose === "submission" ? "The programme's own submission to its funder" : "Internal"}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole programme minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the programme and its funder.`;
     }
     var DIMENSIONS = [["by_gender", "gender", "gender"], ["by_language", "preferred_language", "language"], ["by_housing", "housing_status", "housing"], ["by_insurance", "insurance", "insurance"], ["by_ethnicity", "race_ethnicity", "ethnicity"]];
     var byCount = (a, b) => b.n - a.n || String(a.k).localeCompare(String(b.k));
     var FOLD_KEEP = 10;
-    var FOLDED = "Other (combined)";
+    var FOLDED = SC.FOLDED;
     function foldOf(counts, T) {
       if (!T) return null;
       const small = [...counts].filter(([k, n]) => n > 0 && n < T && k !== "unknown" && k !== FOLDED).map(([k]) => String(k)).sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
@@ -25200,7 +25468,7 @@ var require_funder_report = __commonJS({
       const { from, to } = range;
       const fund = ctx.query.get("funding_source_id") || null;
       const counting = countingMode(ctx, { from, to }, { fund });
-      if (counting.purpose === "publication") return require_publication_release().release(ctx, range, counting).funder;
+      if (counting.purpose === "publication") return (await require_publication_release().release(ctx, range, counting)).funder;
       const { raw } = await runAsync(figures(ctx, range, fund));
       const sc = { threshold: counting.threshold, exact: counting.mode === "exact" };
       return { ...header(counting, from, to, fund), caseload_scope_note: raw.caseload_scope_note, ...suppress(raw, sc) };
@@ -25219,7 +25487,7 @@ var require_funder_report = __commonJS({
       };
     }
     var PARTITIONS = ["by_gender", "by_language", "by_housing", "by_insurance", "by_ethnicity"];
-    var withCell = (x, key, v) => ({ ...x, [key]: v, ...isNum(v) ? {} : { suppressed: true } });
+    var withCell = SC.withCell;
     function suppress(raw, sc) {
       const dem = raw.demographics;
       const order = ["by_gender", "by_language", "by_housing", "by_insurance", "by_race_code", "by_ethnicity"];
@@ -25253,13 +25521,14 @@ var require_funder_report = __commonJS({
       const od = raw.overdose;
       const o = overdoseProtect(od, sc);
       const smallGroup = isNum(ep.discharges) && ep.discharges > 0 && ep.discharges < sc.threshold;
+      const follows = (v) => !isNum(s.total) && isNum(v) && v >= sc.threshold ? SC.SECONDARY : one(v);
       return {
-        unduplicated: { served: s.total, new_admissions: one(u.new_admissions), with_a_referral: s.subsets[1], admitted_after_referral: s.subsets[2], on_mat: s.subsets[0] },
+        unduplicated: { served: s.total, new_admissions: follows(u.new_admissions), with_a_referral: s.subsets[1], admitted_after_referral: s.subsets[2], on_mat: s.subsets[0] },
         demographics: Object.fromEntries(order.map((k) => [k, demographics[k]])),
         withheld,
         episodes: {
           ...ep,
-          admissions: one(ep.admissions),
+          admissions: follows(ep.admissions),
           discharges: discharges.totals.n,
           open_at_end: one(ep.open_at_end),
           by_discharge_reason: discharges.rows,
@@ -25336,7 +25605,7 @@ var require_funder_report = __commonJS({
         csvColumns: long
       };
     }
-    module.exports = { build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };
+    module.exports = { RUN_LABEL, build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };
   }
 });
 
@@ -25387,7 +25656,7 @@ var require_reports = __commonJS({
       };
     }
     module.exports = (r) => {
-      r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+      r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), async (ctx) => {
         const { from, to, ts, tsP } = range(ctx);
         const cf = auth3.caseloadFilter(ctx.user, "c.id");
         const expand = (sql, p) => {
@@ -25396,44 +25665,49 @@ var require_reports = __commonJS({
           return [sql.replace("{CF}", cf.sql), [...p.slice(0, n), ...cf.params, ...p.slice(n)]];
         };
         const scoped = (sql, ...p) => {
-          const [q, a] = expand(sql, p);
-          return db3.all(q, ...a);
+          const [q2, a] = expand(sql, p);
+          return db3.all(q2, ...a);
         };
         const scoped1 = (sql, ...p) => {
-          const [q, a] = expand(sql, p);
-          return db3.one(q, ...a);
+          const [q2, a] = expand(sql, p);
+          return db3.one(q2, ...a);
         };
         const today = require_budget().localDate();
+        const q = async (fn) => {
+          const v = fn();
+          await new Promise((resolve2) => defer(resolve2));
+          return v;
+        };
         const out2 = {
           from,
           to,
           clients: {
-            active: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n,
-            waitlist: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n,
-            new_in_range: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n,
+            active: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n),
+            waitlist: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n),
+            new_in_range: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n),
             // The tiles use the client list's own predicates (server/client-filters.js), so a tile and the list it
             // opens count the same people.
-            high_risk: (() => {
+            high_risk: await q(() => {
               const f = CFX.risk("high");
               return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
-            })(),
-            no_contact_30d: (() => {
+            }),
+            no_contact_30d: await q(() => {
               const f = CFX.noContactSince();
               return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND ${f.sql}`, ...f.params).n;
-            })(),
-            by_status: scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`),
-            by_substance: scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`),
-            mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`)
+            }),
+            by_status: await q(() => scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`)),
+            by_substance: await q(() => scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`)),
+            mat: await q(() => scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`))
           },
           // The period's totals in one pass over its visits, not one pass per figure.
           interventions: {
-            ...scoped1(`SELECT COUNT(*) total, COALESCE(SUM(duration_minutes),0) minutes, COALESCE(SUM(naloxone_kits),0) naloxone_kits, COALESCE(SUM(fentanyl_strips),0) fentanyl_strips
-          FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP),
-            by_type: db3.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params),
-            by_week: db3.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params),
-            by_worker: db3.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params)
+            ...await q(() => scoped1(`SELECT COUNT(*) total, COALESCE(SUM(duration_minutes),0) minutes, COALESCE(SUM(naloxone_kits),0) naloxone_kits, COALESCE(SUM(fentanyl_strips),0) fentanyl_strips
+          FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP)),
+            by_type: await q(() => db3.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params)),
+            by_week: await q(() => db3.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params)),
+            by_worker: await q(() => db3.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params))
           },
-          calls: {
+          calls: await q(() => ({
             total: db3.one(`SELECT COUNT(*) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
             minutes: db3.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
             crisis: db3.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts("started_at")}`, ...tsP).n,
@@ -25441,8 +25715,8 @@ var require_reports = __commonJS({
             by_direction: db3.all(`SELECT direction k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY direction`, ...tsP),
             // Texts are logged alongside calls, so say how the total splits rather than reporting them as calls.
             texts: db3.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts("started_at")}`, ...tsP).n
-          },
-          referrals: {
+          })),
+          referrals: await q(() => ({
             total: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql}`, ...tsP, ...cf.params).n,
             by_status: db3.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, ...tsP, ...cf.params),
             by_category: db3.all(`SELECT res.category k, COUNT(*) n, SUM(CASE WHEN r.status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY res.category ORDER BY n DESC`, ...tsP, ...cf.params),
@@ -25451,7 +25725,7 @@ var require_reports = __commonJS({
               const d = db3.all(`SELECT (julianday(admitted_at)-julianday(referred_at)) d FROM referrals WHERE admitted_at IS NOT NULL AND ${ts("referred_at")} ORDER BY d`, ...tsP).map((x) => x.d);
               return d.length ? d[Math.floor(d.length / 2)] : null;
             })()
-          },
+          })),
           tasks: {
             open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
             overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db3.now(), ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
@@ -25502,10 +25776,10 @@ var require_reports = __commonJS({
             return { open: ob.length, attention: ob.filter((o) => o.attention).length, due_soon: ob.filter((o) => o.warn && !o.overdue).length, overdue: ob.filter((o) => o.overdue).length };
           })() : null,
           // The number of clients the "consent expiring" list shows (the card below lists the first 20 consents).
-          consents_expiring_clients: (() => {
+          consents_expiring_clients: await q(() => {
             const f = CFX.consentExpiring();
             return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
-          })(),
+          }),
           consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), ...cf.params).map((x) => ({ ...x, recipient: x.recipient_enc ? require_crypto().decrypt(x.recipient_enc) : null, recipient_enc: void 0 }))
         };
         audit3.log({ user: ctx.user, action: "report.dashboard", ip: ctx.ip, details: { from, to } });

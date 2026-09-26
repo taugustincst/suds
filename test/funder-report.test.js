@@ -91,15 +91,23 @@ test('the report period predicate is sargable: it reads the date index, not the 
 });
 
 // ---- small-cell suppression, per run ----
-test('small cells are suppressed by default and the report says which mode it used', async () => {
+test('the default run: a supervisor\'s is the submission to the funder, exact; suppressed on request; publication only when asked', async () => {
+  const SUB = 'Submission to your funder — not for publication';
   const r = await sup.get('/api/reports/funder?from=2026-02-14&to=2026-02-14');
   assert.equal(r.status, 200);
-  // One day is not a standard period, so the run is internal (not for publication), and suppressed all the same.
-  assert.deepEqual(r.data.suppression, { mode: 'suppressed', threshold: 11, purpose: 'internal' });
+  // A supervisor's first click is the programme's own submission to its funder, with exact counts (1.12.5).
+  assert.deepEqual(r.data.suppression, { mode: 'exact', threshold: 11, purpose: 'submission', label: SUB });
   assert.equal(r.data.release.publishable, false);
+  const s = await sup.get('/api/reports/funder?from=2026-02-14&to=2026-02-14&counts=suppressed');
+  assert.deepEqual(s.data.suppression, { mode: 'suppressed', threshold: 11, purpose: 'submission', label: SUB }, 'small cells suppressed, on request');
+  assert.ok(Object.values(s.data.demographics).flat().some(x => x.n === '<11'), 'a one-day report has small cells');
   const month = await sup.get('/api/reports/funder?from=2026-02-01&to=2026-02-28');
-  assert.deepEqual(month.data.suppression, { mode: 'suppressed', threshold: 11, purpose: 'publication' }, 'a whole month that has ended is a publication release');
-  assert.ok(Object.values(r.data.demographics).flat().some(x => x.n === '<11'), 'a one-day report has small cells');
+  assert.deepEqual([month.data.suppression.purpose, month.data.suppression.mode], ['submission', 'exact'], 'a whole month that has ended is a submission too, unless a publication release is asked for');
+  const pub = await sup.get('/api/reports/funder?from=2026-02-01&to=2026-02-28&purpose=publication');
+  assert.deepEqual(pub.data.suppression, { mode: 'suppressed', threshold: 11, purpose: 'publication', label: 'Publication release — small cells screened; review before sharing' });
+  // A navigator's run counts its caseload: internal, suppressed. Read-only gets the publication release.
+  assert.deepEqual((await nav.get('/api/reports/funder?from=2026-02-14&to=2026-02-14')).data.suppression, { mode: 'suppressed', threshold: 11, purpose: 'internal', label: 'Internal — not for publication' });
+  assert.equal((await ro.get('/api/reports/funder?from=2026-02-01&to=2026-02-28')).data.suppression.purpose, 'publication');
 });
 
 test('exact counts: only for the programme\'s own submission, and only supervisor or administrator', async () => {
@@ -109,7 +117,7 @@ test('exact counts: only for the programme\'s own submission, and only superviso
   for (const c of [sup, admin]) {
     const r = await c.get(q);
     assert.equal(r.status, 200, JSON.stringify(r.data));
-    assert.deepEqual(r.data.suppression, { mode: 'exact', threshold: 11, purpose: 'submission' });
+    assert.deepEqual(r.data.suppression, { mode: 'exact', threshold: 11, purpose: 'submission', label: 'Submission to your funder — not for publication' });
     assert.equal(r.data.small_cell_threshold, null, 'no threshold applied');
     assert.ok(Object.values(r.data.demographics).flat().every(x => typeof x.n === 'number'), 'every cell is a number');
   }
@@ -124,7 +132,7 @@ test('the small-cell threshold is a setting (default 11)', async () => {
   assert.equal((await admin.put('/api/admin/settings', { small_cell_threshold: 1 })).status, 400, 'below 2 would suppress nothing');
   assert.equal((await admin.put('/api/admin/settings', { small_cell_threshold: 5 })).status, 200);
   try {
-    const r = await sup.get('/api/reports/funder?from=2026-02-14&to=2026-02-14');
+    const r = await sup.get('/api/reports/funder?from=2026-02-14&to=2026-02-14&counts=suppressed');
     assert.equal(r.data.suppression.threshold, 5);
     assert.equal(r.data.small_cell_threshold, 5);
     for (const x of Object.values(r.data.demographics).flat()) assert.ok(x.n === '<5' || x.n === 'suppressed' || x.n >= 5, `${x.k}: ${x.n}`);

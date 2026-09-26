@@ -18,7 +18,7 @@ these programmes do every day and that no EHR does well:
 
 It does this with privacy controls built to the **42 CFR Part 2** standard (consent that names the recipient,
 a disclosure gate and accounting, field-level encryption of identifiers and notes, an append-only audit log),
-so a programme whose records *are* Part 2 records is covered, and one whose records are not gets the same care.
+so a programme whose records *are* Part 2 records has the controls the rule calls for, and one whose records are not gets the same care. Whether a programme's own records and workflows meet Part 2 is for its counsel to confirm; the control matrix (docs/compliance/PART2.md) has not had an independent legal review.
 
 ## Who it is for, in order
 

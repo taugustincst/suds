@@ -39,13 +39,15 @@ CalOMS Tx, and the county EHR hand-off. Most harm-reduction programmes will not 
 
 - **Funder report**: unduplicated people served (people, not services) by fiscal period and funding source;
   demographics with race/ethnicity codes a funder can count; overdose and naloxone figures including community
-  distribution. Every count of people under 11 is suppressed (`<11`), with complementary suppression across
-  every table that shares a total, so that a hidden cell cannot be worked out from the rest of the report; kits,
-  doses and money stay exact. Only a run for the whole programme and one month, quarter or fiscal year that has
-  ended is a publication release, labelled *small cells screened; review before sharing*: its file downloads
-  only after the person confirms they reviewed the withheld and small figures, and it is a conservative screen,
-  not a guarantee or an expert determination; a run for one fund or a custom range is marked internal, not for
-  publication. Two releases for nested periods (a quarter and its year) can still be subtracted from each other,
+  distribution. A programme manager's report opens as the programme's own *submission to your funder*, with
+  exact counts, marked not for publication. For figures to be shared publicly, *Prepare a publication release*:
+  every count of people under 11 is suppressed (`<11`), with complementary suppression across every table that
+  shares a total, checked by an automated audit that tries to work each hidden cell out from everything the release prints (a conservative screen, not an expert determination, and not yet independently reviewed); kits, doses and money
+  stay exact. Only a run for the whole programme and one month, quarter or fiscal year that has ended can be a
+  publication release, labelled *small cells screened; review before sharing*: a table whose protection the
+  automatic check cannot confirm is withheld and listed with the reason, and the file downloads only after the
+  person confirms they reviewed the withheld and small figures; it is a conservative screen, not a guarantee or
+  an expert determination. Two releases for nested periods (a quarter and its year) can still be subtracted from each other,
   so publish one period per funder cycle ([docs/HIPAA.md](../HIPAA.md#small-cells-in-aggregate-reports)).
   (Only the funder report, the naloxone log and the settlement report suppress small cells; the other reports
   show exact counts.)
@@ -83,8 +85,11 @@ line. It waits for her supervisor's approval.
 **16:30, James, supervisor.** Approves the bus pass and the week's time, reviews the
 list of people waiting for a follow-up. Moves a caseload from a navigator who is leaving.
 
-**Quarter end, the programme manager.** Chooses the quarter and the SOR funding source in the funder report,
-checks the numbers and exports the workbook. How long that takes compared with today's spreadsheet
+**Quarter end, the programme manager.** Chooses the quarter and the SOR funding source in the funder report.
+It opens as the programme's own *submission to your funder*, with exact counts, which is what the funder asks
+for; she checks the numbers and exports the workbook (marked not for publication). Only for figures that will be
+shared publicly - a board pack, a county dashboard - does she use *Prepare a publication release*, which screens
+small counts, lists anything withheld and asks her to confirm she has reviewed it. How long that takes compared with today's spreadsheet
 reconciliation is **not yet measured**: it is the pilot's main metric, against the hours your last report
 actually took ([PILOT-KIT.md](PILOT-KIT.md), section 5).
 
