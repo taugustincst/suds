@@ -87,6 +87,8 @@ const PERMS = {
   // readonly is for oversight (a county analyst, an auditor's dashboard): aggregate reports and the resource
   // directory, keyed by client code. It holds neither clients:read nor export:read, so it can identify nobody
   // and take nothing off the system. Its funder, NDP and settlement reports are publication releases only.
+  // forms:read is the form library (templates, blank forms); a client's filled forms are client records and
+  // need clients:read as well (server/routes/forms.js), which readonly does not hold.
   readonly:   ['clients:list-deidentified','resources:read','reports:read','users:read','forms:read','documents:read'],
 };
 
@@ -134,7 +136,11 @@ function caseloadRestricted(user) {
 const ACTIVE_ASSIGNMENT = `((end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
 const activeAssignment = (prefix = '') => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
 
+// A role without clients:read (finance, readonly: clients:list-deidentified) is not caseload-scoped because
+// it never sees who a client is — so it can open no single client's record at all. caseloadRestricted() is
+// false for it, which used to make this answer "yes" for every client (readonly read identified forms).
 function canAccessClient(user, clientId) {
+  if (!hasPerm(user, 'clients:read')) return false;
   if (!caseloadRestricted(user)) return true;
   const r = db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${activeAssignment()}`, clientId, user.id);
   return !!r;

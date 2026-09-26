@@ -117,6 +117,11 @@ function printFooter() {
     : `${printed} Contains protected health information; handle per HIPAA.`;
 }
 
+// forms:read / forms:write are about the form library; a form filled out for a client is part of that
+// client's record, so every route that touches one also needs clients:read (and the client on the caseload,
+// loadForm / assertClientAccess). readonly holds forms:read for the library only.
+const clientRecords = auth.requirePerm('clients:read');
+
 module.exports = (r) => {
   // ---------- template library ----------
   // Starter templates, so a new installation is not left with an empty form library and no consent form.
@@ -182,7 +187,7 @@ module.exports = (r) => {
   });
 
   // ---------- forms filled out for a client ----------
-  r.get('/api/clients/:id/forms', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
+  r.get('/api/clients/:id/forms', auth.requireAuth, clientRecords, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
     auth.assertClientAccess(ctx, ctx.params.id);
     const rows = db.all(`SELECT f.id, f.template_id, f.template_name, f.status, f.completed_at, f.created_at, f.updated_at, f.notes_enc, cu.display_name completed_by_name, cr.display_name created_by_name, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.client_id=? AND f.deleted_at IS NULL ORDER BY f.updated_at DESC`, ctx.params.id)
       .map(f => ({ ...f, notes: formNotes(f), notes_enc: undefined }));
@@ -190,7 +195,7 @@ module.exports = (r) => {
     return { forms: rows };
   });
   // Start a form for a client: pre-filled from the chart
-  r.post('/api/clients/:id/forms', auth.requireAuth, auth.requirePerm('forms:write'), (ctx) => {
+  r.post('/api/clients/:id/forms', auth.requireAuth, clientRecords, auth.requirePerm('forms:write'), (ctx) => {
     const client = db.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id); if (!client) throw notFound();
     auth.assertClientAccess(ctx, client.id);
     const { template_id } = validate(ctx.body, { template_id: { type: 'string', required: true } });
@@ -201,14 +206,14 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'client_form.create', entity: 'client_form', entityId: id, clientId: client.id, ip: ctx.ip, details: { template: t.name } });
     ctx.status = 201; return { id, fields, values };
   });
-  r.get('/api/forms/:id', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
+  r.get('/api/forms/:id', auth.requireAuth, clientRecords, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id);
     audit.log({ user: ctx.user, action: 'client_form.view', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip });
     const files = db.all(`SELECT id, filename, content_type, bytes, created_at, uploaded_by FROM client_form_files WHERE client_form_id=? ORDER BY created_at`, f.id);
     const t = f.template_id ? db.one(`SELECT id, name, instructions, (file_b64 IS NOT NULL) has_file, content_type FROM form_templates WHERE id=?`, f.template_id) : null;
     return { form: { ...formOut(f), files, template: t } };
   });
-  r.put('/api/forms/:id', auth.requireAuth, auth.requirePerm('forms:write'), (ctx) => {
+  r.put('/api/forms/:id', auth.requireAuth, clientRecords, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id);
     if (f.status === 'completed' && !auth.hasPerm(ctx.user, 'forms:manage')) throw badRequest('This form is completed. Ask a supervisor to reopen it.');
     require('../crud').assertFresh(ctx, f, 'client_form');
@@ -227,7 +232,7 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: v.status === 'completed' ? 'client_form.complete' : 'client_form.update', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { status: v.status, fields_changed: ctx.body.values ? Object.keys(ctx.body.values).length : 0 } });
     return { ok: true, missing: missingRequired(fields, values), updated_at: stamp };
   });
-  r.delete('/api/forms/:id', auth.requireAuth, auth.requirePerm('forms:write'), (ctx) => {
+  r.delete('/api/forms/:id', auth.requireAuth, clientRecords, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id);
     if (f.status === 'completed' && !auth.hasPerm(ctx.user, 'forms:manage')) throw badRequest('Completed forms can only be removed by a supervisor');
     db.run(`UPDATE client_forms SET deleted_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), f.id);
@@ -235,7 +240,7 @@ module.exports = (r) => {
     return { ok: true };
   });
   // Printable / downloadable PDF of the filled form
-  r.get('/api/forms/:id/pdf', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
+  r.get('/api/forms/:id/pdf', auth.requireAuth, clientRecords, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id); const client = M.decryptRow(db.one(`SELECT * FROM clients WHERE id=?`, f.client_id));
     const values = parseJson(decrypt(f.values_enc), {}); const by = f.completed_by ? db.one(`SELECT display_name FROM users WHERE id=?`, f.completed_by) : null;
     audit.log({ user: ctx.user, action: 'client_form.print', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip });
@@ -243,7 +248,7 @@ module.exports = (r) => {
     ctx.res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': contentDisposition(ctx.query.get('download') === '1' ? 'attachment' : 'inline', `${client.client_code}-${f.template_name}.pdf`) }); ctx.res.end(body); return null;
   });
   // Signed / scanned copies attached to the filled form (stored encrypted)
-  r.post('/api/forms/:id/files', auth.requireAuth, auth.requirePerm('forms:write'), (ctx) => {
+  r.post('/api/forms/:id/files', auth.requireAuth, clientRecords, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id);
     if (db.one(`SELECT COUNT(*) n FROM client_form_files WHERE client_form_id=?`, f.id).n >= 10) throw badRequest('At most 10 attachments per form');
     const v = validate(ctx.body, { filename: { type: 'string', maxLen: 200 } });
@@ -256,12 +261,12 @@ module.exports = (r) => {
     // form_updated_at: the form's new version, so the open filler's next autosave is not refused as stale.
     ctx.status = 201; return { id, filename: name, content_type: file.type, bytes: file.buf.length, form_updated_at: stamp };
   });
-  r.get('/api/forms/:id/files/:fid', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
+  r.get('/api/forms/:id/files/:fid', auth.requireAuth, clientRecords, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();
     audit.log({ user: ctx.user, action: 'client_form.file.view', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
     ctx.res.writeHead(200, { 'Content-Type': safeContentType(x.content_type), 'Content-Disposition': contentDisposition(ctx.query.get('download') === '1' ? 'attachment' : 'inline', x.filename, 'attachment'), 'X-Content-Type-Options': 'nosniff' }); ctx.res.end(Buffer.from(decrypt(x.data_enc), 'base64')); return null;
   });
-  r.delete('/api/forms/:id/files/:fid', auth.requireAuth, auth.requirePerm('forms:write'), (ctx) => {
+  r.delete('/api/forms/:id/files/:fid', auth.requireAuth, clientRecords, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT id FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();
     const stamp = db.now();
     db.run(`DELETE FROM client_form_files WHERE id=?`, x.id); db.tombstone('client_form_files', x.id); db.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, stamp, f.id);
