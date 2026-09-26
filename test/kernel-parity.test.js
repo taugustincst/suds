@@ -184,6 +184,26 @@ test('the browser kernel (sql.js and the shims) answers a representative flow ex
   assert.equal(device.funderExact.naloxone_distribution.kits, 2);
 });
 
+test('a save during the funder report does not drop its working table (sql.js export reopens the database)', async () => {
+  // Found by the parity test on a loaded machine: the report keeps its served set in a TEMP table across the
+  // event-loop turns it yields between phases, and a coalesced save in one of those turns (sql.js export()
+  // closes and reopens the database, dropping TEMP tables) failed it with "no such table". Here a save is
+  // asked for at every point where the report lets the event loop go (server/funder-report.js breathe(), which
+  // is setImmediate here), instead of waiting for a busy machine to line one up.
+  await L.flush({ force: true }); // nothing in flight, so the next save exports at once
+  const realSetImmediate = globalThis.setImmediate;
+  let turns = 0;
+  globalThis.setImmediate = (f, ...a) => realSetImmediate(() => { turns++; L.flush({ force: true }).catch(() => {}); f(...a); });
+  let r;
+  try { r = await L.handle('GET', '/api/reports/funder?from=2026-08-01&to=2026-08-31&purpose=submission&counts=exact', null); }
+  finally { globalThis.setImmediate = realSetImmediate; }
+  assert.ok(turns > 0, 'the report yielded (and a save was asked for) at least once');
+  assert.equal(r.status, 200, `the report survived ${turns} save attempts: ${JSON.stringify(r.json)}`);
+  assert.equal(r.json.unduplicated.served, 1);
+  await L.flush({ force: true });
+  assert.equal(L.isDirty(), false, 'and the deferred save still happens once the report is done');
+});
+
 test('the device database is really sql.js behind the shim, sealed in the store it was given', async () => {
   // Guard against the test passing because the kernel quietly fell back to something else: the device
   // saved its database sealed (no SQLite header in the clear) under its epoch, with the vault that opens it.
