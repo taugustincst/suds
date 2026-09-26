@@ -5951,6 +5951,7 @@ __export(sqlite_exports, {
   forceAcquireLock: () => forceAcquireLock,
   getMeta: () => getMeta,
   hasLock: () => hasLock,
+  hasPendingExtra: () => hasPendingExtra,
   hasSealer: () => hasSealer,
   init: () => init,
   inspect: () => inspect,
@@ -6199,6 +6200,9 @@ function setSealer(s, { extra = null } = {}) {
 }
 function hasSealer() {
   return !!sealer;
+}
+function hasPendingExtra() {
+  return !!pendingExtra;
 }
 function setOpenAllowed(v) {
   openAllowed = !!v;
@@ -6669,7 +6673,7 @@ var init_sqlite = __esm({
         return this.db.export();
       }
     };
-    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
+    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, hasPendingExtra, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
   }
 });
 
@@ -10678,6 +10682,93 @@ var init_empty = __esm({
   }
 });
 
+// server/backup-lock.js
+var require_backup_lock = __commonJS({
+  "server/backup-lock.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var WHAT = {
+      backup: "A scheduled backup is running",
+      snapshot: "An online snapshot of the database is being taken",
+      "dr-drill": "A recovery drill is running",
+      restore: "A restore is running"
+    };
+    var holder = null;
+    var queue = [];
+    function busyError(name, forWhat) {
+      const e = new Error(`${WHAT[name] || `${name} is running`}; the ${forWhat || "operation"} was not started. Try again when it has finished.`);
+      e.code = "EBUSY";
+      e.holder = name;
+      return e;
+    }
+    function grantNext() {
+      holder = null;
+      const next = queue.shift();
+      if (next) next.grant();
+    }
+    function makeRelease(name) {
+      let done = false;
+      return () => {
+        if (done) return;
+        done = true;
+        if (holder && holder.name === name) grantNext();
+      };
+    }
+    function tryAcquire(name) {
+      if (holder || queue.length) return null;
+      holder = { name, since: Date.now() };
+      return makeRelease(name);
+    }
+    function acquire(name, { waitMs = Infinity, forWhat } = {}) {
+      const now2 = tryAcquire(name);
+      if (now2) return Promise.resolve(now2);
+      return new Promise((resolve2, reject) => {
+        let timer = null;
+        const entry = { name, grant: () => {
+          if (timer) clearTimeout(timer);
+          holder = { name, since: Date.now() };
+          resolve2(makeRelease(name));
+        } };
+        queue.push(entry);
+        if (Number.isFinite(waitMs)) {
+          timer = setTimeout(() => {
+            const i = queue.indexOf(entry);
+            if (i < 0) return;
+            queue.splice(i, 1);
+            reject(busyError(holder ? holder.name : "backup", forWhat));
+          }, Math.max(0, waitMs));
+          if (timer.unref) timer.unref();
+        }
+      });
+    }
+    async function run2(name, fn, opts) {
+      const release = await acquire(name, opts);
+      try {
+        return await fn();
+      } finally {
+        release();
+      }
+    }
+    function current2() {
+      return holder ? { ...holder } : null;
+    }
+    function paused() {
+      return !!holder && holder.name === "restore" || queue.some((q) => q.name === "restore");
+    }
+    module.exports = {
+      tryAcquire,
+      acquire,
+      run: run2,
+      current: current2,
+      paused,
+      busyError,
+      // How long a restore from the Administration page waits for work in flight before it is refused with a 409.
+      // A scheduled backup of a county-sized database takes seconds to a minute; a recovery drill can take longer.
+      restoreWaitMs: 12e4
+    };
+  }
+});
+
 // local/shims/os.js
 var os_exports = {};
 __export(os_exports, {
@@ -11361,6 +11452,24 @@ try {
       }
     }
     function restore(plainBytes) {
+      const release = require_backup_lock().tryAcquire("restore");
+      if (!release) throw require_backup_lock().busyError(require_backup_lock().current()?.name || "backup", "restore");
+      try {
+        return restoreHeld(plainBytes);
+      } finally {
+        release();
+      }
+    }
+    async function restoreWhenIdle(plainBytes, { waitMs } = {}) {
+      const lock = require_backup_lock();
+      const release = await lock.acquire("restore", { waitMs: waitMs ?? lock.restoreWaitMs, forWhat: "restore" });
+      try {
+        return restoreHeld(plainBytes);
+      } finally {
+        release();
+      }
+    }
+    function restoreHeld(plainBytes) {
       const info = inspect2(plainBytes);
       const dbPath = config2.dbPath;
       if (dbPath === ":memory:") throw new Error("This server is running on an in-memory database; there is nothing to restore into.");
@@ -11376,16 +11485,16 @@ try {
       };
       const rollBack = (cause) => {
         try {
+          db3.close();
+        } catch {
+        }
+        try {
           if (fs.existsSync(aside)) {
             fs.copyFileSync(aside, dbPath);
             dropJournal();
           }
         } catch (e) {
           cause.message += ` (and the previous database could not be put back from ${aside}: ${e.message})`;
-        }
-        try {
-          db3.close();
-        } catch {
         }
         try {
           db3.open();
@@ -11413,12 +11522,17 @@ try {
         rollBack(e);
         throw new Error(`The backup could not be opened after it was restored, so the previous database was put back: ${e.message}`);
       }
-      const restoredGen = db3.getSetting("db_generation", null) || "initial";
-      db3.setSetting("db_generation", require_crypto().uuid());
-      if (!config2.local) require_audit_anchor().safeWrite("restore", { prevGen: restoredGen });
+      try {
+        const restoredGen = db3.getSetting("db_generation", null) || "initial";
+        db3.setSetting("db_generation", require_crypto().uuid());
+        if (!config2.local) require_audit_anchor().write("restore", { prevGen: restoredGen });
+      } catch (e) {
+        rollBack(e);
+        throw new Error(`The restore could not be completed (${e.message}), so the previous database was put back. Nothing was changed.`);
+      }
       return { ...info, previous_database_kept_at: aside };
     }
-    module.exports = { create: create3, createAsync, encryptPlain, decrypt: decrypt3, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect: inspect2, restore, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
+    module.exports = { create: create3, createAsync, encryptPlain, decrypt: decrypt3, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect: inspect2, restore, restoreWhenIdle, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
   }
 });
 
@@ -11433,6 +11547,7 @@ var require_scheduled_backup = __commonJS({
     var db3 = require_db();
     var audit3 = require_audit();
     var backup = require_backup();
+    var lock = require_backup_lock();
     var FILE_RE = /^suds-\d.*\.db\.enc$/;
     var SNAP_RE = /^suds-snap-.*\.db\.enc$/;
     var OFFSITE_MISSING = "offsite directory does not exist (is the share mounted?)";
@@ -11453,7 +11568,7 @@ var require_scheduled_backup = __commonJS({
     }
     async function runIfDue(now2 = Date.now()) {
       const { hours, retain, offsiteDir } = settings();
-      if (!hours) return null;
+      if (!hours || lock.paused()) return null;
       const last = db3.getSetting("last_scheduled_backup_at", null);
       if (last && now2 - Date.parse(last) < hours * 36e5) return null;
       return run2({ retain, offsiteDir });
@@ -11461,10 +11576,13 @@ var require_scheduled_backup = __commonJS({
     var inFlight = null;
     function run2(opts = {}) {
       if (inFlight) return inFlight;
-      inFlight = runOnce(opts).finally(() => {
+      inFlight = lock.run("backup", () => runOnce(opts)).finally(() => {
         inFlight = null;
       });
       return inFlight;
+    }
+    function runHeld(opts = {}) {
+      return runOnce(opts);
     }
     async function runOnce({ retain = 14, offsiteDir = "" } = {}) {
       const dir = path.join(config2.dataDir, "backups");
@@ -11527,17 +11645,16 @@ var require_scheduled_backup = __commonJS({
       audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3, method, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || void 0, kept, verified } });
       return { file, bytes: bytes3, method, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, verified, verifyError };
     }
-    var snapshotting = false;
     async function snapshotIfDue(now2 = Date.now()) {
       const s = settings();
-      if (!s.minutes || snapshotting) return null;
+      if (!s.minutes || lock.current() || lock.paused()) return null;
       const last = db3.getSetting("last_snapshot_at", null);
       if (last && now2 - Date.parse(last) < s.minutes * 6e4) return null;
       return snapshot(s);
     }
     async function snapshot(s = settings()) {
-      if (snapshotting) return null;
-      snapshotting = true;
+      const release = lock.tryAcquire("snapshot");
+      if (!release) return null;
       const localDir = path.join(config2.dataDir, "backups");
       let target = localDir;
       let where = "local";
@@ -11575,7 +11692,7 @@ var require_scheduled_backup = __commonJS({
         if (!/^failed/.test(prev)) audit3.log({ user: { username: "system" }, action: "backup.snapshot.failed", success: false, details: { error: reason.slice(0, 300) } });
         return { file: null, failed: true, error: reason };
       } finally {
-        snapshotting = false;
+        release();
       }
     }
     function pruneMatching(dir, re, retain) {
@@ -11600,7 +11717,7 @@ var require_scheduled_backup = __commonJS({
       }
       return Math.min(files.length, retain);
     }
-    module.exports = { runIfDue, run: run2, settings, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };
+    module.exports = { runIfDue, run: run2, runHeld, settings, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };
   }
 });
 
@@ -11932,13 +12049,23 @@ var require_dr_drill = __commonJS({
         child.send({ keys: { enc: keys.enc.toString("hex"), idx: keys.idx.toString("hex"), sig: config2.signingKey.toString("hex") }, anchorDir: config2.auditAnchorDir });
       });
     }
-    async function run2({ backupFile = null, fresh = false, by = "system", trigger = "manual", record = true, keysFile = null, keysText = null, keysLabel = null, copy = "auto" } = {}) {
+    async function run2(opts = {}) {
       if (current2) {
         const e = new Error("A recovery drill is already running");
         e.code = "EBUSY";
         throw e;
       }
-      const job = current2 = { started_at: (/* @__PURE__ */ new Date()).toISOString(), by, steps: [] };
+      const job = current2 = { started_at: (/* @__PURE__ */ new Date()).toISOString(), by: opts.by || "system", steps: [] };
+      let release = null;
+      try {
+        release = await require_backup_lock().acquire("dr-drill");
+        return await runJob(job, opts);
+      } finally {
+        if (release) release();
+        if (current2 === job) current2 = null;
+      }
+    }
+    async function runJob(job, { backupFile = null, fresh = false, by = "system", trigger = "manual", record = true, keysFile = null, keysText = null, keysLabel = null, copy = "auto" } = {}) {
       const step = (s) => {
         job.steps.push({ at: (/* @__PURE__ */ new Date()).toISOString(), step: s });
       };
@@ -11997,7 +12124,7 @@ var require_dr_drill = __commonJS({
         }
         if (!file) {
           step("No backup on disk; taking one first");
-          const made = await require_scheduled_backup().run({ retain: sched.retain, offsiteDir: sched.offsiteDir });
+          const made = await require_scheduled_backup().runHeld({ retain: sched.retain, offsiteDir: sched.offsiteDir });
           if (!made.file) throw new Error(`a backup could not be taken: ${made.error}`);
           madeBackup = true;
           if (made.offsiteFile && copy !== "local") {
@@ -12094,7 +12221,6 @@ var require_dr_drill = __commonJS({
         db3.setSetting("dr_last_drill", JSON.stringify(summary));
         audit3.log({ user: typeof by === "object" ? by : { username: String(by) }, action: "dr.drill", success: report.ok, details: { trigger, backup: report.backup.file, copy: source.copy, keys: keyInfo.source, rto_seconds: rtoSeconds, rpo_seconds: rpoSeconds, checks_passed: summary.checks_passed, checks_total: summary.checks_total, report: files.json || null, sha256: doc.integrity.sha256 } });
       }
-      if (current2 === job) current2 = null;
       return { ...doc, files };
     }
     function fmtDur(s) {
@@ -12148,7 +12274,7 @@ var require_dr_drill = __commonJS({
       return p;
     }
     function runIfDue(now2 = Date.now()) {
-      if (db3.getSetting("dr_drill_monthly", "0") !== "1" || current2) return null;
+      if (db3.getSetting("dr_drill_monthly", "0") !== "1" || current2 || require_backup_lock().paused()) return null;
       const last = lastDrill();
       if (last && last.at && now2 - Date.parse(last.at) < MONTH_MS) return null;
       return start2({ by: "system", trigger: "monthly" });
@@ -14337,7 +14463,7 @@ var require_admin = __commonJS({
     var auth3 = require_auth2();
     var audit3 = require_audit();
     var config2 = require_config();
-    var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
+    var { badRequest, notFound, forbidden, conflict, HttpError: HttpError3 } = require_http();
     var { validate, paging } = require_validate();
     var { uuid: uuid2, randomToken, sha256: sha2562 } = require_crypto();
     var SETTING_KEYS = [
@@ -14593,7 +14719,17 @@ var require_admin = __commonJS({
         const plain = backupFromUpload(ctx);
         asBadRequest(() => backup.inspect(plain));
         audit3.log({ user: ctx.user, action: "backup.restore.start", ip: ctx.ip, details: { bytes: plain.length } });
-        const out2 = backup.restore(plain);
+        let out2;
+        try {
+          out2 = await backup.restoreWhenIdle(plain);
+        } catch (e) {
+          try {
+            audit3.log({ user: ctx.user, action: "backup.restore.failed", ip: ctx.ip, success: false, details: { error: String(e && e.message || e).slice(0, 300) } });
+          } catch {
+          }
+          if (e && e.code === "EBUSY") throw conflict(e.message);
+          throw badRequest(e.message);
+        }
         audit3.log({ user: ctx.user, action: "backup.restore", ip: ctx.ip, details: { clients: out2.counts.clients, schema_version: out2.schema_version, kept: path.basename(out2.previous_database_kept_at) } });
         return { ok: true, ...out2, note: "Everyone will need to sign in again. Devices should sync after this." };
       });
@@ -31337,36 +31473,84 @@ var require_sync = __commonJS({
       const sc = scopeSql(SYNC2.tables.find((t) => t.name === "clients"), user, "c");
       return ids.filter((id) => !db3.one(`SELECT 1 FROM clients c WHERE c.id=? AND ${sc.sql}`, id, ...sc.params));
     }
+    function newlyInScopeSql(user, since, cursor) {
+      return {
+        sql: `SELECT DISTINCT a.client_id FROM assignments a WHERE a.user_id=? AND ${auth3.activeAssignment("a.")} AND a.updated_at > ? AND a.updated_at <= ?
+    AND NOT EXISTS (SELECT 1 FROM assignments b WHERE b.client_id=a.client_id AND b.user_id=? AND b.updated_at <= ? AND ${auth3.activeAssignment("b.")})`,
+        params: [user.id, since, cursor, user.id, since]
+      };
+    }
     function newlyInScope(user, since, cursor) {
       if (!auth3.caseloadRestricted(user) || since === NEVER2) return [];
-      return db3.all(
-        `SELECT DISTINCT a.client_id FROM assignments a WHERE a.user_id=? AND ${auth3.activeAssignment("a.")} AND a.updated_at > ? AND a.updated_at <= ?
-    AND NOT EXISTS (SELECT 1 FROM assignments b WHERE b.client_id=a.client_id AND b.user_id=? AND b.updated_at <= ? AND ${auth3.activeAssignment("b.")})`,
-        user.id,
-        since,
-        cursor,
-        user.id,
-        since
-      ).map((r) => r.client_id);
+      const q = newlyInScopeSql(user, since, cursor);
+      return db3.all(q.sql, ...q.params).map((r) => r.client_id);
     }
-    function backfillRows(t, user, clientIds, since) {
-      let col;
-      if (t.name === "clients") col = "x.id";
-      else if ((t.scope === "client" || t.scope === "client-or-null") && t.clientCol) col = `x.${t.clientCol}`;
-      else if (t.scope === "via-note") col = null;
-      else return [];
-      const sc = scopeSql(t, user, "x");
-      const out2 = [];
-      for (let i = 0; i < clientIds.length; i += 400) {
-        const chunk = clientIds.slice(i, i + 400);
-        const marks = chunk.map(() => "?").join(",");
-        const where = col ? `${col} IN (${marks})` : `x.note_id IN (SELECT n.id FROM notes n WHERE n.client_id IN (${marks}))`;
-        out2.push(...db3.all(`SELECT x.* FROM ${t.name} x WHERE ${where} AND x.updated_at <= ? AND ${sc.sql} ORDER BY x.updated_at`, ...chunk, since, ...sc.params));
+    var BF_MARK = "~bf.";
+    function backfillKey(t) {
+      if (t.name === "clients") return { key: "id", where: (arrived) => `x.id IN (${arrived})` };
+      if ((t.scope === "client" || t.scope === "client-or-null") && t.clientCol) return { key: t.clientCol, where: (arrived) => `x.${t.clientCol} IN (${arrived})` };
+      if (t.scope === "via-note") return { key: "note_id", where: (arrived) => `x.note_id IN (SELECT n.id FROM notes n WHERE n.client_id IN (${arrived}))` };
+      return null;
+    }
+    var bfTables = () => SYNC2.tables.filter(backfillKey);
+    function encodeCursor(ts, bf) {
+      return ts + BF_MARK + import_buffer.Buffer.from(JSON.stringify({ v: 1, ...bf })).toString("base64url");
+    }
+    function parseCursor(raw) {
+      const at = raw.indexOf(BF_MARK);
+      if (at < 0) return { since: raw, bf: null };
+      const since = raw.slice(0, at);
+      let bf = null;
+      try {
+        bf = JSON.parse(import_buffer.Buffer.from(raw.slice(at + BF_MARK.length), "base64url").toString("utf8"));
+      } catch {
+        bf = null;
       }
-      return out2;
+      const str = (v) => typeof v === "string" && v.length <= 200;
+      const ok = bf && typeof bf === "object" && bf.v === 1 && str(bf.from) && bf.from < since && bfTables().some((t) => t.name === bf.t) && (bf.k === null || str(bf.k)) && (bf.i === null || str(bf.i)) && bf.k === null === (bf.i === null);
+      if (!ok) throw badRequest("This device's sync position is damaged. Sync again; if this repeats, reset the device's sync from This device.");
+      return { since, bf: { from: bf.from, t: bf.t, k: bf.k, i: bf.i } };
     }
-    function pull(user, since, { limit: limit2 = PULL_LIMIT } = {}) {
+    function backfillPage(user, until, bf, limit2) {
+      const arrivedQ = newlyInScopeSql(user, bf.from, until);
+      const tables = bfTables();
+      const raw = {};
+      let budget = limit2;
+      let next = null;
+      for (let ti = tables.findIndex((t) => t.name === bf.t); ti < tables.length; ti++) {
+        const t = tables[ti];
+        const { key, where } = backfillKey(t);
+        const resume = t.name === bf.t && bf.k !== null;
+        if (budget <= 0) {
+          next = resume ? { ...bf } : { from: bf.from, t: t.name, k: null, i: null };
+          break;
+        }
+        const sc = scopeSql(t, user, "x");
+        const after = resume ? `AND (x.${key} > ? OR (x.${key} = ? AND x.id > ?))` : "";
+        const rows = db3.all(
+          `SELECT x.* FROM ${t.name} x WHERE ${where(arrivedQ.sql)} AND x.updated_at <= ? AND ${sc.sql} ${after} ORDER BY x.${key}, x.id LIMIT ?`,
+          ...arrivedQ.params,
+          bf.from,
+          ...sc.params,
+          ...resume ? [bf.k, bf.k, bf.i] : [],
+          budget + 1
+        );
+        if (rows.length > budget) {
+          const sent = rows.slice(0, budget);
+          const last = sent[sent.length - 1];
+          raw[t.name] = sent;
+          next = { from: bf.from, t: t.name, k: last[key], i: last.id };
+          break;
+        }
+        raw[t.name] = rows;
+        budget -= rows.length;
+      }
+      return { raw, next };
+    }
+    function pull(user, sinceRaw, { limit: limit2 = PULL_LIMIT } = {}) {
       const serverNow = db3.now();
+      const { since, bf } = parseCursor(String(sinceRaw || NEVER2));
+      if (bf) return pullBackfill(user, since, bf, limit2, serverNow);
       const raw = {};
       const capped = [];
       for (const t of SYNC2.tables) {
@@ -31387,15 +31571,43 @@ var require_sync = __commonJS({
         capped.push(boundary);
       }
       const cursor = capped.length ? capped.reduce((a, b) => a < b ? a : b) : serverNow;
-      const complete = capped.length === 0;
-      const arrived = newlyInScope(user, since, cursor);
-      if (arrived.length) for (const t of SYNC2.tables) {
-        const extra = backfillRows(t, user, arrived, since);
-        if (extra.length) raw[t.name] = raw[t.name].concat(extra);
+      const out2 = baseAnswer(cursor, serverNow, capped.length === 0);
+      exportInto(out2, user, raw, cursor);
+      if (newlyInScope(user, since, cursor).length) {
+        out2.cursor = encodeCursor(cursor, { from: since, t: bfTables()[0].name, k: null, i: null });
+        out2.complete = false;
+        out2.backfill = true;
       }
-      const out2 = { cursor, server_now: serverNow, complete, db_generation: db3.getSetting("db_generation", null), tables: {}, tombstones: [], settings: {}, skipped: [] };
+      out2.dropped_clients = droppedClients(user, since);
+      out2.tombstones = db3.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ? AND deleted_at <= ? ORDER BY deleted_at`, since, cursor);
+      resyncCheck(out2, since);
+      return out2;
+    }
+    function baseAnswer(cursor, serverNow, complete) {
+      const out2 = { cursor, server_now: serverNow, complete, db_generation: db3.getSetting("db_generation", null), tables: {}, tombstones: [], settings: {}, skipped: [], dropped_clients: [] };
+      for (const k of SYNC2.settings_keys) out2.settings[k] = db3.getSetting(k, null);
+      out2.settings.org_timezone = require_budget().orgTimezone() || null;
+      return out2;
+    }
+    function resyncCheck(out2, since) {
+      const horizon = db3.getSetting("tombstone_purged_before", null);
+      if (horizon && since !== NEVER2 && since < horizon) {
+        out2.full_resync_required = true;
+        out2.reason = "This device has been offline longer than deletions are kept; it will rebuild from the office copy.";
+      }
+    }
+    function pullBackfill(user, since, bf, limit2, serverNow) {
+      const { raw, next } = backfillPage(user, since, bf, limit2);
+      const out2 = baseAnswer(next ? encodeCursor(since, next) : since, serverNow, false);
+      out2.backfill = !!next;
+      exportInto(out2, user, raw, null);
+      resyncCheck(out2, bf.from);
+      return out2;
+    }
+    function exportInto(out2, user, raw, cursor) {
       for (const t of SYNC2.tables) {
-        let rows = raw[t.name].filter((r) => r.updated_at <= cursor);
+        let rows = raw[t.name] || [];
+        if (cursor) rows = rows.filter((r) => r.updated_at <= cursor);
         if (t.name === "users") rows = rows.map((r) => ({ ...r.id === user.id ? r : { ...r, password_hash: "scrypt$0$0$0$AA==$AA==" }, mfa_secret_enc: null, mfa_enabled: 0 }));
         if (t.name === "notes" && !auth3.hasPerm(user, "notes:clinical:read")) rows = rows.filter((r) => r.kind !== "clinical");
         if (t.readPerm && !auth3.hasPerm(user, t.readPerm)) rows = [];
@@ -31408,16 +31620,6 @@ var require_sync = __commonJS({
         }
         out2.tables[t.name] = exported;
       }
-      out2.dropped_clients = droppedClients(user, since);
-      out2.tombstones = db3.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ? AND deleted_at <= ? ORDER BY deleted_at`, since, cursor);
-      const horizon = db3.getSetting("tombstone_purged_before", null);
-      if (horizon && since !== NEVER2 && since < horizon) {
-        out2.full_resync_required = true;
-        out2.reason = "This device has been offline longer than deletions are kept; it will rebuild from the office copy.";
-      }
-      for (const k of SYNC2.settings_keys) out2.settings[k] = db3.getSetting(k, null);
-      out2.settings.org_timezone = require_budget().orgTimezone() || null;
-      return out2;
     }
     function changedColumns2(t, existing, raw, existingCols) {
       const out2 = [];
@@ -31932,7 +32134,7 @@ var require_sync = __commonJS({
         const since = ctx.query.get("since") || NEVER2;
         const limit2 = Math.min(Number(ctx.query.get("limit")) || PULL_LIMIT, PULL_LIMIT);
         const out2 = pull(ctx.user, since, { limit: limit2 });
-        audit3.log({ user: ctx.user, action: "sync.pull", ip: ctx.ip, details: { since, complete: out2.complete, rows: Object.fromEntries(Object.entries(out2.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
+        audit3.log({ user: ctx.user, action: "sync.pull", ip: ctx.ip, details: { since: since.split(BF_MARK)[0], backfill: since.includes(BF_MARK) || void 0, complete: out2.complete, rows: Object.fromEntries(Object.entries(out2.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
         return out2;
       });
       r.post("/api/sync/push", requireLocalMode, auth3.requireAuth, (ctx) => {
@@ -34562,6 +34764,8 @@ function deviceId() {
   return id;
 }
 var NEVER = "1970-01-01T00:00:00.000Z";
+var BACKFILL_MARK = "~bf.";
+var MAX_BACKFILL_PAGES = 2e3;
 var PUSH_BYTES = 4 * 1024 * 1024;
 var BLOBS_PER_SYNC = 25;
 var DUMMY_HASH = "scrypt$0$0$0$AA==$AA==";
@@ -34934,8 +35138,10 @@ async function run({ server, username, password, code, onProgress = () => {
     let pages = 0;
     let serverNow = null;
     let generationReset = false;
+    let backfillPages = 0;
     for (; ; ) {
-      onProgress(pages ? `Downloading changes from the office (page ${pages + 1})\u2026` : "Downloading changes from the office\u2026");
+      const backfilling = String(since).includes(BACKFILL_MARK);
+      onProgress(backfilling ? `Downloading the records of newly assigned clients (page ${backfillPages + 1})\u2026` : pages ? `Downloading changes from the office (page ${pages + 1})\u2026` : "Downloading changes from the office\u2026");
       const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}`, {}, token2);
       const generation = generationOf(pulled);
       const known = import_db.default.getSetting("office_db_generation", null);
@@ -34967,8 +35173,12 @@ async function run({ server, username, password, code, onProgress = () => {
       serverNow = pulled.server_now;
       since = pulled.cursor;
       import_db.default.setSetting(cursorKey(officeUserId), since);
-      pages++;
-      if (pulled.complete || pages > 200) break;
+      if (pulled.complete) break;
+      if (backfilling || pulled.backfill) {
+        if (++backfillPages > MAX_BACKFILL_PAGES) break;
+        continue;
+      }
+      if (++pages > 200) break;
     }
     onProgress("Uploading this device's changes\u2026");
     const deviceNow = import_db.default.now();
@@ -35229,7 +35439,43 @@ async function fromBackupRecord(rec, keys, hints2 = {}) {
   v.salt = unb642(rec.salt);
   v.chain = { iv: unb642(rec.chain.iv), ct: unb642(rec.chain.ct) };
   v.wraps = rec.wraps.map((w) => ({ user_id: w.user_id, name: w.name, kdf: w.kdf, iterations: w.iterations, salt: unb642(w.salt), iv: unb642(w.iv), ct: unb642(w.ct), chained: true }));
+  v.rekey = "restore";
   return { dek: dek2, key, vault: v };
+}
+async function rekeyAfterRestore(v, currentDek, username, password, { userId, keys, hints: hints2 } = {}) {
+  if (!v || v.rekey !== "restore" || !v.chain || !userId || !keys) return null;
+  const name = await nameHash(v.salt, username);
+  let prev = null;
+  for (const w of v.wraps.filter((x) => x.chained && x.name === name)) {
+    const d0 = await unwrapDek(w, password);
+    if (!d0) continue;
+    try {
+      const d1 = await open2(await importDek(d0), { format: IMAGE_FORMAT, version: VERSION2, iv: v.chain.iv, ct: v.chain.ct }, AAD_CHAIN);
+      const same = d1.length === u83(currentDek).length && d1.every((b, i) => b === u83(currentDek)[i]);
+      d1.fill(0);
+      if (same) {
+        prev = d0;
+        break;
+      }
+    } catch {
+    }
+    d0.fill(0);
+  }
+  if (!prev) return null;
+  const dek2 = newDek();
+  const key = await importDek(dek2);
+  const others = v.wraps.filter((w) => w.chained && w.user_id !== userId && w.name !== name);
+  const dropped = v.wraps.filter((w) => !w.chained && w.user_id !== userId).map((w) => w.user_id);
+  const own = await wrapDek(dek2, password, { userId, name });
+  const next = { ...v, keys: await sealKeys(key, keys), wraps: [...others, own], rekeyed_at: (/* @__PURE__ */ new Date()).toISOString() };
+  if (hints2) next.hints = hints2;
+  delete next.rekey;
+  if (others.length) {
+    const c = await seal(await importDek(prev), dek2, AAD_CHAIN);
+    next.chain = { iv: c.iv, ct: c.ct };
+  } else delete next.chain;
+  prev.fill(0);
+  return { dek: dek2, key, vault: next, dropped };
 }
 async function wrapsFor(vault, username) {
   if (!hasAccounts(vault)) return [];
@@ -35438,6 +35684,37 @@ async function enrol(userId, username, password) {
   phase = "open";
   if (wasLegacy) await eraseLegacyCopies();
 }
+async function rekeyIfRestored(userId, username, password) {
+  if (phase !== "open" || !theVault || theVault.rekey !== "restore" || !dek || typeof password !== "string") return false;
+  const run2 = vaultQueue.then(async () => {
+    if (phase !== "open" || !theVault || theVault.rekey !== "restore") return false;
+    const out2 = await rekeyAfterRestore(theVault, dek, username, password, { userId, keys: keysHex(), hints: hints() });
+    if (!out2) return false;
+    const before = { dek, dekKey, theVault };
+    dek = out2.dek;
+    dekKey = out2.key;
+    theVault = out2.vault;
+    sqlite_default.setSealer(sealer2(), { extra: { [VAULT_KEY]: out2.vault } });
+    try {
+      await sqlite_default.flush({ force: true });
+    } catch {
+    }
+    if (sqlite_default.hasPendingExtra()) {
+      out2.dek.fill(0);
+      dek = before.dek;
+      dekKey = before.dekKey;
+      theVault = before.theVault;
+      sqlite_default.setSealer(sealer2());
+      return false;
+    }
+    before.dek.fill(0);
+    import_audit2.default.log({ user: { username: "device" }, action: "device.key_rotated", details: { reason: "restore", carried_accounts_waiting: out2.vault.wraps.filter((w) => w.chained).length, wraps_dropped: out2.dropped.length } });
+    return true;
+  });
+  vaultQueue = run2.catch(() => {
+  });
+  return run2;
+}
 async function eraseLegacyCopies() {
   for (const k of LEGACY_KEYS) {
     try {
@@ -35550,6 +35827,7 @@ async function afterPasswordEvent(method, path, body, ctx, result) {
     const u = ctx.user || result && result.user || byName(b.username);
     const id = u && u.id;
     if (!id) return;
+    await rekeyIfRestored(id, u.username || b.username, b.password);
     if (phase !== "open" || !theVault || !theVault.wraps.some((w) => w.user_id === id && !w.chained)) await enrol(id, u.username || b.username, b.password);
   } else if (path === "/api/auth/password" && ctx.user) await enrol(ctx.user.id, ctx.user.username, b.new_password);
   else if ((path === "/api/local/signup" || path === "/api/local/setup") && b.username) {
@@ -35583,6 +35861,13 @@ async function lockedAnswer(method, path, body) {
     }
     if (!r) return refused(401, "Username or password is incorrect.", { sponsorRequired: !(await wrapsFor(theVault, b.username)).length });
     await unlockWith(r.dek);
+    if (b.sponsor_username && r.wrap.chained) {
+      try {
+        await rekeyIfRestored(r.wrap.user_id, b.sponsor_username, b.sponsor_password);
+      } catch (e) {
+        reportError(e);
+      }
+    }
     return { done: false, relockOnFail: true };
   }
   if (method === "POST" && path === "/api/local/signup") {
@@ -35595,6 +35880,13 @@ async function lockedAnswer(method, path, body) {
     if (!s || !s.is_active || s.locked_until && s.locked_until > import_db2.default.now() || !await verifyPasswordAsync(b.sponsor_password, s.password_hash)) {
       await lockDevice();
       return refused(401, "The account unlocking this device could not sign in: check its username and password.", { sponsorRequired: true });
+    }
+    if (r.wrap.chained) {
+      try {
+        await rekeyIfRestored(r.wrap.user_id, b.sponsor_username, b.sponsor_password);
+      } catch (e) {
+        reportError(e);
+      }
     }
     return { done: false, relockOnFail: true };
   }
@@ -35860,10 +36152,12 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     sync: (opts) => run(opts),
     isWiped: () => sqlite_default.isWiped(),
     isFrozen: () => sqlite_default.isFrozen(),
-    // Diagnostics only: whether the database is open, and the sizes and timings of the last save (no contents).
+    // Diagnostics only: whether the database is open, and the sizes and timings of the last save (no contents);
+    // whether a restored device still runs under the key its backup carried (no key material).
     phase: () => phase,
     saveStats: () => sqlite_default.saveStats(),
-    lock: () => lockDevice()
+    lock: () => lockDevice(),
+    rekeyPending: () => !!(theVault && theVault.rekey)
   };
   return window.SUDS_LOCAL;
 }
