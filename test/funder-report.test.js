@@ -116,9 +116,12 @@ test('the default run: a supervisor\'s is the submission to the funder, exact; s
 
 test('exact counts: only for the programme\'s own submission, and only supervisor or administrator', async () => {
   const q = '/api/reports/funder?from=2026-02-14&to=2026-02-14&purpose=submission&counts=exact';
-  // Finance runs publication releases only (test/report-access.test.js): its money and hours are exact there.
-  for (const c of [nav, ro, fin]) assert.equal((await c.get(q)).status, 403, 'a navigator, finance or read-only account cannot switch suppression off');
-  for (const c of [sup, admin]) {
+  // Finance writes the funder report (reports:funder, 1.14.0): the programme's own submission, exact, and
+  // nothing client-level (test/report-access.test.js). A navigator or a read-only account cannot switch
+  // suppression off.
+  for (const c of [nav, ro]) assert.equal((await c.get(q)).status, 403, 'a navigator or read-only account cannot switch suppression off');
+  assert.equal((await fin.get(q.replace('purpose=submission', 'purpose=internal'))).status, 403, 'finance: never an internal run');
+  for (const c of [sup, admin, fin]) {
     const r = await c.get(q);
     assert.equal(r.status, 200, JSON.stringify(r.data));
     assert.deepEqual(r.data.suppression, { mode: 'exact', threshold: 11, purpose: 'submission', label: 'Submission to your funder — not for publication' });

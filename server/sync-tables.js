@@ -19,6 +19,8 @@ module.exports = {
   // and discharge forms) and its provider IDs — a device needs both to offer the same forms offline.
   // default_fund_id: the fund a visit recorded on the device is charged to when the worker has none of their own.
   settings_keys: ['org_name', 'county_name', 'program_contact', 'note_lock_days', 'caloms_enabled', 'caloms_providers', 'caloms_start_date', 'default_fund_id',
+    // SUPRT-A's grant and site IDs and reassessment interval: a device pre-fills and schedules the same way.
+    'suprt_grant_id', 'suprt_site_id', 'suprt_reassessment_months',
     // The programme profile and module switches (server/programme.js): a device shows what its office shows.
     ...require('./programme').SETTING_KEYS],
   tables: [
@@ -78,6 +80,8 @@ module.exports = {
     { name: 'care_plan_steps', enc: ['step_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'careplan:write', readPerm: 'careplan:read', parent: ['care_plan_goals', 'goal_id'] },
     { name: 'asam_assessments', enc: ['dimension_notes_enc', 'discrepancy_notes_enc', 'summary_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'assessments:write', readPerm: 'assessments:read', parent: ['clients', 'client_id'] },
     { name: 'outcome_measures', enc: ['responses_enc', 'notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'assessments:write', readPerm: 'assessments:read', parent: ['clients', 'client_id'] },
+    // SUPRT-A records (server/suprt.js): recorded on a visit, offline too, by whoever works with the client.
+    { name: 'suprt_assessments', enc: ['answers_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'clients:write', parent: ['clients', 'client_id'] },
     // Harm-reduction supply counts: shared program state. Pull-only (serverOwned): the office copy is the
     // one shelf count, drawn down there when a pushed visit lands (server/routes/sync.js calls the same
     // draw-down the REST route does). A device's absolute count is never accepted — two phones each
@@ -131,7 +135,7 @@ module.exports = {
     ['supply_stock', 'updated_by'], ['option_overrides', 'updated_by'],
     ['problems', 'added_by'], ['problems', 'updated_by'], ['problem_history', 'changed_by'], ['care_plan_goals', 'created_by'], ['care_plan_goals', 'updated_by'],
     ['care_plan_steps', 'owner_user_id'], ['care_plan_steps', 'created_by'], ['asam_assessments', 'assessed_by'], ['outcome_measures', 'administered_by'],
-    ['caloms_records', 'created_by'], ['caloms_records', 'updated_by'],
+    ['caloms_records', 'created_by'], ['caloms_records', 'updated_by'], ['suprt_assessments', 'created_by'], ['suprt_assessments', 'updated_by'],
     ['court_orders', 'recorded_by'], ['part2_notices', 'given_by'], ['complaints', 'handled_by'], ['complaints', 'created_by'],
     ['privacy_incidents', 'determined_by'], ['privacy_incidents', 'reported_by'], ['disclosure_agreements', 'created_by'], ['caloms_submissions', 'created_by'],
   ],

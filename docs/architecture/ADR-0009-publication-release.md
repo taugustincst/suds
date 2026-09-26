@@ -93,6 +93,34 @@ queued behind it on that worker start again on a new one (1.13.1; in 1.13.0 they
   independent statistical disclosure-control review of the rule, the model and the check is pending; until then
   every publication release's export asks the person to confirm they reviewed it.
 
+## Addendum (1.14.0): publication releases can be switched off
+
+**Context.** The engineering reviewer asked for "the option to switch publication releases off" while
+`server/sdc.js` awaits the independent statistical review named under *Known limits*: a programme whose
+governance will not publish from an unreviewed method must be able to say so in the product, not just in a
+policy, and must not be one careless click from a release.
+
+**Decision.** Publication releases are a programme module (`server/programme.js`, key `publication`, setting
+`module_publication`), on by default so nothing changes for a programme that does nothing. An administrator
+switches it off in Settings › Program › Modules. While it is off:
+
+* every publication run of the funder report, the NDP log and the settlement report, and every file of one, is
+  refused (403, `module: 'publication'`) in `FR.countingMode`, the one place every publication path goes
+  through, with a message saying releases are switched off and what the role can run instead;
+* supervisors, administrators and finance (`reports:funder`) still run the programme's own **submission** to
+  its funder, which never was a release; their first click is the submission already, so nothing moves;
+* a read-only account, which runs publication releases only, is refused with a message that says it has
+  nothing to run until releases are switched back on (`server/routes/reports.js` `requireReportRun`), and its
+  screens offer no periods to publish;
+* the screens drop "Prepare a publication release" and the publication choice, and say releases are off.
+
+**Consequences.** Switching releases off removes the only aggregate report read-only accounts could run;
+that is the intended trade-off while the method is unreviewed. It changes no audit, threshold or release
+shape: switching back on restores exactly the behaviour above. The switch is audited as a programme settings
+change (`settings.programme`) and synchronised to device copies with the other module switches.
+`test/report-access.test.js` ("publication releases switched off") and `scripts/ui/funder-reporting.mjs`
+cover it.
+
 ## Read
 
 `server/publication-release.js`, `server/release-audit.js`, `server/sdc.js`, `server/funder-report.js`

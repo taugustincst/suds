@@ -155,7 +155,11 @@ test('the opioid settlement report groups settlement spending by allowable use a
   assert.equal(r.data.totals.hiaa_share, 60);
   assert.match(r.data.source_note, /verif/i);
   assert.equal((await nav.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'a navigator holds budget:read, but an internal run of a whole-programme report needs reports:internal');
-  assert.equal((await fin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'so does finance');
+  // Finance writes the funder report (reports:funder, 1.14.0): its run is the programme's own submission.
+  const f = await fin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31');
+  assert.equal(f.status, 200, 'finance runs the submission');
+  assert.equal(f.data.suppression.purpose, 'submission');
+  assert.equal((await fin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31&purpose=internal')).status, 403, 'but never an internal run');
   assert.equal((await clin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'a clinician holds no budget permission');
   assert.equal((await ro.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403);
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='report.opioid_settlement'`));
