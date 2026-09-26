@@ -182,8 +182,8 @@ const INSTRUMENT_CODES = Object.keys(INSTRUMENTS);
 const OPTIONAL_INSTRUMENTS = {
   dast10: {
     setting: 'instrument_dast10_enabled',
-    notice: 'The DAST-10 is © 1982 Harvey A. Skinner, PhD. It may be reproduced free of charge for non-commercial clinical, research and training use, with credit to the author. SUDS may be supplied commercially, so the DAST-10 is off until an administrator confirms this programme holds the rights to use it.',
-    confirmation: 'I confirm that this programme holds the rights to use the DAST-10 as it will be used here (for example, non-commercial clinical use with credit to the author, or written permission from the copyright holder).',
+    notice: 'The DAST-10 is © 1982 Harvey A. Skinner, PhD. It may be reproduced free of charge for non-commercial clinical, research and training use, with credit to the author. SUDS may be supplied commercially, so the DAST-10 is off until an administrator confirms this program holds the rights to use it.',
+    confirmation: 'I confirm that this program holds the rights to use the DAST-10 as it will be used here (for example, non-commercial clinical use with credit to the author, or written permission from the copyright holder).',
   },
 };
 

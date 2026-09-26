@@ -27,11 +27,11 @@ route('setup', async () => {
     // Settings › Programme changes it, and switches single clinical modules on, at any time.
     { name: 'programme_profile', label: 'What kind of program is this?', type: 'select', noBlank: true, required: true, value: 'harm_reduction', span: true,
       options: [{ value: 'harm_reduction', label: 'Harm reduction & outreach — outreach, visits, supplies, referrals and grant reporting (recommended)' }, { value: 'treatment', label: 'Treatment-adjacent — adds care plans, assessments (ASAM), CalOMS Tx, the FHIR API and the county EHR hand-off' }],
-      help: 'Changes only what the screens show. You can switch any clinical module on later in Settings › Programme.' },
+      help: 'Changes only what the screens show. You can switch any clinical module on later in Settings › Program.' },
     // Optional: the fund most of the work is charged to. Created for this fiscal year (July–June) and made the
     // default for new visits, so they are not all "No funding source" until someone finds Settings.
     { name: 'main_fund_name', label: 'Main funding source (optional)', placeholder: 'e.g. County opioid settlement allocation', span: true, maxLen: 200,
-      help: 'New visits are charged to it unless the worker chooses another. Add its amount, grant number and dates, and any other funds, under Budget; change the default in Settings › Programme › Reporting.' },
+      help: 'New visits are charged to it unless the worker chooses another. Add its amount, grant number and dates, and any other funds, under Budget; change the default in Settings › Program › Reporting.' },
     { type: 'section', label: 'Administrator account (you)' },
     { name: 'admin_display_name', label: 'Your name', required: true }, { name: 'admin_username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', value: 'guest', help: 'The first administrator is called guest unless you choose another name. You set its password below.' },
     { name: 'admin_password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: '12+ characters with upper and lower case, a number and a symbol.' }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },

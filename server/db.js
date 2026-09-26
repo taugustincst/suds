@@ -582,7 +582,38 @@ function initialise(d, schemaText, dbPath) {
       d.prepare(`INSERT INTO settings(key,value) VALUES('programme_profile',?)`).run(require('./programme').defaultForExisting(d));
     }
   }
+  reindexNameParts(d);
   ensureIndexes(d, schemaText);
+}
+
+// Once per database: a compound surname ("Quintero-Vasquez") is found by either part, because its
+// name_phonetic_idx now carries each part's tokens (clients-model namePhoneticIndex). Clients written before
+// that are re-derived here, from the decrypted surname, the way migration 26 rebuilt every index. Data, not
+// schema, so it is not a numbered migration; the setting records that it ran. A row that cannot be decrypted
+// keeps what it had; a failure leaves the setting unset, to be tried at the next start.
+function reindexNameParts(d) {
+  try {
+    if (d.prepare(`SELECT 1 FROM settings WHERE key='name_parts_indexed'`).get()) return;
+    const { decrypt } = require('./crypto');
+    const M = require('./clients-model');
+    const upd = d.prepare(`UPDATE clients SET name_phonetic_idx=? WHERE id=?`);
+    let n = 0, read = 0, unreadable = 0;
+    d.exec('BEGIN');
+    try {
+      for (const c of d.prepare(`SELECT id, last_name_enc, name_phonetic_idx FROM clients`).all()) {
+        let last; try { last = decrypt(c.last_name_enc); read++; } catch { unreadable++; continue; }
+        if (!M.nameParts(last).length) continue;
+        const idx = M.namePhoneticIndex(last);
+        if (idx !== c.name_phonetic_idx) { upd.run(idx, c.id); n++; }
+      }
+      // Nothing readable at all (the wrong keys for this file) is not "done": try again next time.
+      if (!unreadable || read) d.prepare(`INSERT INTO settings(key,value) VALUES('name_parts_indexed',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(new Date().toISOString());
+      d.exec('COMMIT');
+    } catch (e) { d.exec('ROLLBACK'); throw e; }
+    if (n) console.log(`[suds] ${JSON.stringify({ event: 'db.name_parts_reindexed', clients: n })}`);
+  } catch (e) {
+    console.warn(`[suds] ${JSON.stringify({ event: 'db.name_parts_reindex_failed', error: String(e && e.message || e).slice(0, 200) })}`);
+  }
 }
 
 // Every index schema.sql declares, checked at every open. Migration 5 creates them all with the errors
@@ -738,4 +769,4 @@ function setSetting(key, value) {
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, isOpen, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
+module.exports = { open, openWith, get, close, isOpen, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };

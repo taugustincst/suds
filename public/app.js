@@ -298,7 +298,7 @@ window.addEventListener('resize', scrollCheckSoon);
  * A message that stays until it is dismissed, for conditions the user has to act on rather than
  * acknowledge in passing — a device that has stopped saving, a consent that was revoked.
  */
-export function banner(message, kind = 'warn', { id = message, short = null, compact: always = false, announceText = null } = {}) {
+export function banner(message, kind = 'warn', { id = message, short = null, compact: always = false, announceText = null, onDismiss = null } = {}) {
   // After the skip link, which stays the first thing a keyboard reaches on every page.
   const host = document.getElementById('banners') || (() => { const b = h('div', { id: 'banners' }); skipLink().after(b); return b; })();
   if (host.querySelector(`[data-banner="${CSS.escape(String(id))}"]`)) return;
@@ -309,7 +309,7 @@ export function banner(message, kind = 'warn', { id = message, short = null, com
   let compact = always; try { compact = compact || (!!short && sessionStorage.getItem(key) === '1'); } catch { /* storage blocked: full banner */ }
   const el = h('div', { class: `banner ${kind}${compact ? ' compact' : ''}`, 'data-banner': String(id), 'data-compact': compact ? '1' : null, role: compact ? null : 'alert' },
     h('span', {}, compact && short ? short : message),
-    h('button', { class: 'btn ghost sm', 'aria-label': 'Dismiss', onClick: () => { el.remove(); if (short) { try { sessionStorage.setItem(key, '1'); } catch { /* not remembered */ } } } }, '✕'));
+    h('button', { class: 'btn ghost sm', 'aria-label': 'Dismiss', onClick: () => { el.remove(); if (short) { try { sessionStorage.setItem(key, '1'); } catch { /* not remembered */ } } if (onDismiss) onDismiss(); } }, '✕'));
   host.append(el);
   if (!compact) announce(message);
   else if (always && announceText) { let said = false; try { said = sessionStorage.getItem(`${key}.said`) === '1'; sessionStorage.setItem(`${key}.said`, '1'); } catch { /* say it */ } if (!said) announce(announceText); }
@@ -510,7 +510,8 @@ export const fmt = {
   isPast: (s) => { const d = fmt.parse(s); if (!d) return false; if (fmt.isDateOnly(s)) d.setHours(23, 59, 59, 999); return d.getTime() < Date.now(); },
   money: (n) => (n === null || n === undefined) ? '—' : Number(n).toLocaleString(undefined, { style: 'currency', currency: 'USD' }),
   bytes: (n) => { n = Number(n || 0); const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return `${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${u[i]}`; },
-  num: (n) => Number(n || 0).toLocaleString(),
+  // A count may arrive as "<11" (a small count of people shown to a role that runs publication releases only).
+  num: (n) => (typeof n === 'string' && n && !Number.isFinite(Number(n)) ? n : Number(n || 0).toLocaleString()),
   mins: (m) => { m = Number(m || 0); const hh = Math.floor(m / 60), mm = m % 60; return hh ? `${hh}h ${mm}m` : `${mm}m`; },
   // A code in words. With `list` (a documentation list: 'INTERVENTION_TYPES', 'CALL_OUTCOMES'…) it is the
   // wording the programme set under Settings → Lists, which is the only wording a programme's own choice
@@ -522,7 +523,8 @@ export const fmt = {
   // ('no_home_visits', from an import or the sample data) shows its label from the Safety flags list; a
   // flag typed in words is shown as typed.
   flags: (s) => String(s || '').split(',').map(x => x.trim()).filter(Boolean).map(x => { const L = ((state.constants || {}).option_lists || {}).CLIENT_FLAGS || []; const e = L.find(o => o.code === x); return e ? e.label : /^[a-z0-9]+(_[a-z0-9]+)+$/.test(x) ? fmt.code(x) : x; }).join(', '),
-  code: (s) => s ? String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bRx\b/, 'Rx').replace(/\bIds\b/, 'IDs').replace(/\bRoi\b/, 'ROI').replace(/\bPart2 Disclosure\b/, 'Part 2 disclosure').replace(/\bPart2\b/g, 'Part 2') : '—',
+  code: (s) => { const L = (state.constants || {}).CODE_LABELS; return L && s && Object.prototype.hasOwnProperty.call(L, s) ? L[s] : fmt.codeWords(s); },
+  codeWords: (s) => s ? String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bRx\b/, 'Rx').replace(/\bIds\b/, 'IDs').replace(/\bRoi\b/, 'ROI').replace(/\bPart2 Disclosure\b/, 'Part 2 disclosure').replace(/\bPart2\b/g, 'Part 2') : '—',
   ago: (s) => { const p = fmt.parse(s); if (!p) return 'never'; const d = (Date.now() - p.getTime()) / 86400000; if (d < 1) return 'today'; if (d < 2) return 'yesterday'; return `${Math.floor(d)}d ago`; },
   isoLocal: (d = new Date()) => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; },
   today: () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; },
@@ -642,7 +644,9 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       continue;
     }
     let input; const v = values[f.name] ?? f.value ?? '';
-    const opts = f.list ? listOptions(f.list, values[f.name] ?? f.current) : (f.options || []).map(o => typeof o === 'string' ? { value: o, label: fmt.label(o) } : o);
+    // `exclude`: codes of the list this field never offers (an overdose's "Where" is never Phone), unless the
+    // record already has one.
+    const opts = f.list ? listOptions(f.list, values[f.name] ?? f.current).filter(o => !(f.exclude || []).includes(o.value) || o.value === (values[f.name] ?? f.current)) : (f.options || []).map(o => typeof o === 'string' ? { value: o, label: fmt.label(o) } : o);
     switch (f.type) {
       case 'select': input = h('select', { name: f.name, required: !!f.required }, f.noBlank ? null : h('option', { value: '' }, f.placeholder || '—'), opts.map(o => h('option', { value: o.value, selected: String(o.value) === String(v), disabled: !!o.disabled, title: o.title || null }, o.label))); break;
       case 'textarea': input = h('textarea', { name: f.name, required: !!f.required, rows: f.rows || 4, placeholder: f.placeholder || '' }, v || ''); break;
@@ -844,7 +848,7 @@ export function clientPicker(name, value, f = {}) {
   if (value && f.display) text.value = f.display;
   else if (value) get(`/api/clients/${value}`, { quiet: true }).then(r => { text.value = `${r.client.display_name} (${r.client.client_code})`; }).catch(() => {});
 
-  let timer; let options = []; let active = -1;
+  let timer; let options = []; let active = -1; let seq = 0;
   const openList = (open) => { if (!open) msg.classList.add('hidden'); list.classList.toggle('hidden', !open || !options.length); text.setAttribute('aria-expanded', String(open && options.length > 0)); if (!open) { active = -1; text.removeAttribute('aria-activedescendant'); } };
   const highlight = (i) => {
     options.forEach((o, n) => { o.el.classList.toggle('active', n === i); o.el.setAttribute('aria-selected', String(n === i)); });
@@ -852,13 +856,16 @@ export function clientPicker(name, value, f = {}) {
     if (options[i]) { text.setAttribute('aria-activedescendant', options[i].el.id); options[i].el.scrollIntoView({ block: 'nearest' }); }
   };
   const choose = (c) => {
+    // A search still in flight (typed just before choosing) must not reopen the list over the next field.
+    clearTimeout(timer); seq++;
     hidden.value = c.id; text.value = `${c.display_name} (${c.client_code})`;
     openList(false); wrap.dispatchEvent(new Event('change'));
     announce(`${c.display_name} selected`);
   };
 
-  text.addEventListener('input', () => { hidden.value = ''; clearTimeout(timer); timer = setTimeout(search, 250); });
-  text.addEventListener('focus', () => { if (!hidden.value) search(); });
+  // Nothing typed lists nobody: the list of every client used to open on focus and stay open under the form.
+  text.addEventListener('input', () => { hidden.value = ''; clearTimeout(timer); if (!text.value.trim()) { seq++; openList(false); return; } timer = setTimeout(search, 250); });
+  text.addEventListener('focus', () => { if (!hidden.value && text.value.trim()) search(); });
   // The open list is positioned over whatever sits below the field — on a phone that is the next field
   // down (a task's due date, for one), and it kept intercepting taps meant for that field's date picker
   // because the "click outside" handler saw those taps as inside this picker. Close it when focus
@@ -880,8 +887,17 @@ export function clientPicker(name, value, f = {}) {
 
   async function search() {
     const q = text.value.trim();
+    const mine = ++seq;
+    if (!q) {
+      clear(list); options = []; active = -1;
+      msg.textContent = 'Type a name, client code, date of birth or phone number.'; msg.classList.remove('hidden');
+      list.classList.add('hidden'); text.setAttribute('aria-expanded', 'false');
+      return;
+    }
     try {
-      const r = await get(`/api/clients?limit=15&status=all${q ? '&q=' + encodeURIComponent(q) : ''}`);
+      const r = await get(`/api/clients?limit=15&status=all&q=${encodeURIComponent(q)}`);
+      // An answer that arrives after the person chose someone, typed on, or left the field is not shown.
+      if (mine !== seq || document.activeElement !== text) return;
       clear(list); options = []; active = -1; msg.classList.add('hidden');
       if (!r.clients.length) {
         msg.textContent = q ? 'No matches. Try a first, last or preferred name, the full phone number, date of birth or client code.' : 'Type to search';
@@ -1041,10 +1057,11 @@ export function tabStrip(tabs, active, onPick, { label = 'Sections', core = null
     let used = 0; const overflow = [];
     buttons.forEach((b, i) => { if (!overflow.length && used + widths[i] <= limit) used += widths[i]; else overflow.push(i); });
     const activeIdx = buttons.findIndex(b => b.classList.contains('active'));
+    // The active tab, when it would be under More, takes the place of the last one that fits. It is already
+    // after every visible tab in the strip, so the strip still reads in order. (It used to be moved before
+    // More whether or not it had been swapped, so Overview, the first tab, was shown last, after Forms.)
     if (overflow.includes(activeIdx) && overflow[0] > 0) { overflow[overflow.indexOf(activeIdx)] = overflow[0] - 1; }
     for (const i of overflow.sort((a, b) => a - b)) { buttons[i].hidden = true; menu.append(menuItem(i)); }
-    // The active tab, if it was swapped in, goes right before the More button so the strip reads in order.
-    if (!buttons[activeIdx]?.hidden) strip.insertBefore(buttons[activeIdx], wrap);
     moreText(overflow.length);
   }
   function menuItem(i) {
@@ -1164,6 +1181,12 @@ export function globalSearch() {
 // focus: a tab left open overnight used to ask once a minute all night for an answer nobody was looking at.
 const DUE_POLL_MS = 5 * 60000;
 let dueCache = { at: 0, data: null }; const notifiedDue = new Set(); let dueTimer; let duePoll = null; let dueListening = false;
+/** The header's reminder that two-step verification is owed, once its banner has been dismissed. */
+export function mfaLink() {
+  if (!state.mfaDue || !prefs.get('mfa_banner_collapsed') || (state.user && state.user.mfa_enabled)) return null;
+  return h('a', { class: 'btn ghost sm mfa-link', href: '#/profile?mfa=1', 'data-mfa-link': '1', title: state.mfaDue.full },
+    h('span', { 'aria-hidden': 'true' }, '🔐 '), '2-step', h('span', { class: 'sr-only' }, ` verification: set it up ${state.mfaDue.when}`));
+}
 export function dueBell() {
   if (!can('tasks:read')) return null;
   const count = h('span', { class: 'bell-count hidden', 'aria-hidden': 'true' });
@@ -1206,7 +1229,7 @@ export function maybeTour() {
   if (paused || prefs.get('tour_done') || tourOpen || document.querySelector('.modal-bg')) return;
   tourOpen = true;
   const steps = [
-    ['Welcome to SUDS', `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS keeps your programme's outreach, visits, naloxone and supplies, referrals and follow-ups in one place, with the privacy substance-use records need. ${window.SUDS_STATIC_HOST
+    ['Welcome to SUDS', `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS keeps your program's outreach, visits, naloxone and supplies, referrals and follow-ups in one place, with the privacy substance-use records need. ${window.SUDS_STATIC_HOST
       // The on-device app never syncs with anything (local/sync.js): promising "shows up on the other right
       // away" there sent people looking for their entries on a second device.
       ? 'Everything you record stays in this browser on this device, encrypted. Download a backup regularly from This device so a cleared browser or a lost phone does not take your records with it.'
@@ -1297,8 +1320,8 @@ export const NAV = [
   { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
   { sec: 'Connect clients' },
   { name: 'referrals', label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
-  { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Syringe services, drop-ins, shelters, MAT and treatment programmes, legal aid and the other partners you refer people to.' },
-  { sec: 'Programme' },
+  { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Syringe services, drop-ins, shelters, MAT and treatment programs, legal aid and the other partners you refer people to.' },
+  { sec: 'Program' },
   { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', more: true, help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
   { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', programme: true, help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
   { name: 'budget', label: 'Funding & spending', ico: '$', perm: 'budget:read', programme: true, help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
@@ -1400,7 +1423,7 @@ async function renderPage() {
   const main = h('main', { class: 'main', id: 'main', tabindex: '-1' }, h('div', { class: 'boot' }, 'Loading…'));
   const side = sidebar(r);
   const qa = quickActions();
-  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), dueBell(), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
+  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), dueBell(), mfaLink(), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
   if (qa) layout.querySelector('.fab button')?.addEventListener('click', () => qa.click());
   const focusWas = focusKey(document.activeElement, app);
   clear(app).append(layout);
@@ -1541,6 +1564,7 @@ export async function loadSession() {
     // Two-step verification is required of this role but not set up yet. There is a grace period, after which
     // the server refuses every request until it is done -- so say when that is, and where to do it, instead of
     // a vague "please enroll" that reads as advisory right up until the day everything stops working.
+    state.mfaDue = null;
     if (state.user.mfa_required && !state.user.mfa_enabled && !state.mfaPending && !state.local) {
       const due = state.user.mfa_setup_deadline ? fmt.parse(state.user.mfa_setup_deadline) : null;
       const when = due ? (due.getTime() < Date.now() ? 'now' : `by ${fmt.date(state.user.mfa_setup_deadline)}`) : 'now';
@@ -1548,7 +1572,11 @@ export async function loadSession() {
       // deadline stays visible, the consequence is said to a screen reader in the same line and announced
       // once, and "Set up" goes straight to enrolment.
       const full = `Your role requires two-step verification. Set it up ${when} — after that, SUDS will not let you in until it is done.`;
-      const el = banner(`Two-step verification required ${when}.`, 'warn', { id: 'mfa-required', compact: true, announceText: full });
+      // Once dismissed, the bar (about 50 px above every page on a phone) becomes a small "2-step" link in the
+      // header, kept for this person on every device (a preference), until two-step verification is set up.
+      state.mfaDue = { when, full };
+      const collapse = () => { prefs.set('mfa_banner_collapsed', true); prefs.flush(); const bar = document.querySelector('.appbar'); if (bar && !bar.querySelector('[data-mfa-link]')) bar.insertBefore(mfaLink(), bar.querySelector('.bell')?.nextSibling || null); };
+      const el = prefs.get('mfa_banner_collapsed') ? null : banner(`Two-step verification required ${when}.`, 'warn', { id: 'mfa-required', compact: true, announceText: full, onDismiss: collapse });
       if (el) {
         el.firstChild.append(h('span', { class: 'sr-only' }, ' After that, SUDS will not let you in until it is done.'));
         el.insertBefore(h('a', { href: '#/profile?mfa=1', class: 'btn sm primary', 'data-mfa-setup': '1' }, 'Set up'), el.lastChild);

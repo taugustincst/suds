@@ -73,15 +73,15 @@ function countingMode(ctx, period = { from: '', to: '' }, opts = {}) {
   const asked = ctx.query.get('purpose');
   const internalOk = auth.hasPerm(ctx.user, 'reports:internal');
   const purpose = asked || (internalOk ? 'submission' : rel.publishable ? 'publication' : 'internal');
-  if (!PURPOSES.includes(purpose)) throw badRequest('purpose must be publication (a release to publish or share), submission (the programme\'s own report to its funder) or internal');
+  if (!PURPOSES.includes(purpose)) throw badRequest('purpose must be publication (a release to publish or share), submission (the program\'s own report to its funder) or internal');
   const mode = ctx.query.get('counts') || (purpose === 'submission' && auth.hasPerm(ctx.user, 'reports:exact') ? 'exact' : 'suppressed');
   if (!['suppressed', 'exact'].includes(mode)) throw badRequest('counts must be suppressed or exact');
   if (mode === 'exact') {
-    if (purpose === 'publication') throw badRequest('Exact counts are only for the programme\'s own submission to its funder (purpose=submission) or internal use. A report to publish or share keeps small cells suppressed.');
+    if (purpose === 'publication') throw badRequest('Exact counts are only for the program\'s own submission to its funder (purpose=submission) or internal use. A report to publish or share keeps small cells suppressed.');
     if (!auth.hasPerm(ctx.user, 'reports:exact')) throw forbidden('Only a supervisor or an administrator can run the funder report with exact counts');
   }
   if (purpose === 'publication' && !rel.publishable) {
-    throw badRequest(`Only a report on the whole programme for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be prepared as a publication release; this one cannot, because ${rel.not_publishable.join(' and ')}. Run it without purpose=publication: it is then ${internalOk ? 'the programme\'s own submission to its funder' : 'marked internal'}, not for publication.`);
+    throw badRequest(`Only a report on the whole program for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be prepared as a publication release; this one cannot, because ${rel.not_publishable.join(' and ')}. Run it without purpose=publication: it is then ${internalOk ? 'the program\'s own submission to its funder' : 'marked internal'}, not for publication.`);
   }
   const threshold = Number(db.getSetting('small_cell_threshold', '')) || SMALL_CELL_DEFAULT;
   return { mode, threshold, purpose, release: rel };
@@ -120,12 +120,12 @@ function countingStatement(s) {
   const rel = s.release || { publishable: false, not_publishable: [] };
   const why = rel.not_publishable.length ? ` (${rel.not_publishable.join('; ')})` : '';
   if (s.mode === 'exact') {
-    return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the programme's own ${s.purpose === 'submission' ? 'submission to its funder' : 'internal use'}; not for publication or sharing.`;
+    return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the program's own ${s.purpose === 'submission' ? 'submission to its funder' : 'internal use'}; not for publication or sharing.`;
   }
   if (s.purpose === 'publication') {
-    return `${PUBLICATION_LABEL}: the whole programme, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it; a table that cannot be protected, or whose protection the check cannot confirm, is withheld, prints no rows and is listed with the reason, and the rest of the release is checked again without it). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
+    return `${PUBLICATION_LABEL}: the whole program, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it; a table that cannot be protected, or whose protection the check cannot confirm, is withheld, prints no rows and is listed with the reason, and the rest of the release is checked again without it). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
   }
-  return `${s.purpose === 'submission' ? 'The programme\'s own submission to its funder' : 'Internal'}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole programme minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the programme and its funder.`;
+  return `${s.purpose === 'submission' ? 'The program\'s own submission to its funder' : 'Internal'}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole program minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the program and its funder.`;
 }
 
 // Demographic columns read from each person served, in one pass.
@@ -169,7 +169,7 @@ function overdoseFigures(ts, tsP, cf = null) {
     by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND ${NALOXONE} AND o.survived=1${scope} GROUP BY k ORDER BY n DESC`, ...tsP, ...sp),
   };
 }
-const CASELOAD_NOTE = 'Counts only your caseload: people served, and people per funding source, are clients on your caseload; overdose events are those of clients on your caseload, and events reported from the community (with no client) are not counted. Services, naloxone kits and test strips are the whole programme\'s.';
+const CASELOAD_NOTE = 'Counts only your caseload: people served, and people per funding source, are clients on your caseload; overdose events are those of clients on your caseload, and events reported from the community (with no client) are not counted. Services, naloxone kits and test strips are the whole program\'s.';
 
 /**
  * The overdose figures, protected. Two stars (server/small-cells.js): the events (total, by month, and the
@@ -432,7 +432,7 @@ function sheets(d, ctx, fundName) {
     { k: 'Report', v: 'Funder report (unduplicated people served)' },
     { k: 'Period', v: `${d.from} to ${d.to}` },
     { k: 'Funding source', v: fundName || 'All funding sources' },
-    { k: 'Purpose', v: d.suppression.purpose === 'publication' ? `${PUBLICATION_LABEL} (whole programme, one standard period)` : d.suppression.purpose === 'submission' ? 'The programme\'s own submission to its funder, not for publication' : 'Internal, not for publication' },
+    { k: 'Purpose', v: d.suppression.purpose === 'publication' ? `${PUBLICATION_LABEL} (whole program, one standard period)` : d.suppression.purpose === 'submission' ? 'The program\'s own submission to its funder, not for publication' : 'Internal, not for publication' },
     { k: 'Counts', v: d.counting_statement },
     ...(d.suppression.purpose === 'publication' ? [{ k: 'Before publishing', v: PUBLICATION_GUIDANCE }] : []),
     ...(d.caseload_scope_note ? [{ k: 'Scope', v: d.caseload_scope_note }] : []),

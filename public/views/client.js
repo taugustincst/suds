@@ -38,7 +38,10 @@ route('client', async (r) => {
   // The clinical modules show only when the programme uses them (server/programme.js); an address that names
   // one still opens it, so a record made before a module was switched off can be read.
   const shows = (mod, k) => moduleOn(mod) || tab === k;
-  const tabs = [['overview', 'Overview'], ['timeline', 'Timeline'], ['interventions', `Visits (${c.counts.interventions})`], ['calls', `Calls (${c.counts.calls})`], ['notes', `Notes (${c.counts.notes})`], can('careplan:read') && shows('careplan', 'problems') ? ['problems', 'Problems'] : null, can('careplan:read') && shows('careplan', 'careplan') ? ['careplan', 'Care plan'] : null, can('assessments:read') && shows('assessments', 'assessments') ? ['assessments', 'Assessments'] : null, ['referrals', `Referrals (${c.counts.referrals})`], ['forms', `Forms (${c.counts.forms || 0})`], ['tasks', `To-dos (${c.counts.open_tasks})`], ['episodes', 'Episodes'], ['consents', 'Consents & ROI'], ['requests', 'Requests'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team']].filter(Boolean);
+  // The everyday sections first, in the order a visit is worked (and the same on every width): what
+  // happened, what was written, what is owed, whether it may be shared, where they were sent. Consents used to
+  // sit under "More" at 1280 px while Problems and Care plan took the room.
+  const tabs = [['overview', 'Overview'], ['interventions', `Visits (${c.counts.interventions})`], ['notes', `Notes (${c.counts.notes})`], ['tasks', `To-dos (${c.counts.open_tasks})`], ['consents', 'Consents'], ['referrals', `Referrals (${c.counts.referrals})`], ['calls', `Calls (${c.counts.calls})`], ['timeline', 'Timeline'], can('careplan:read') && shows('careplan', 'problems') ? ['problems', 'Problems'] : null, can('careplan:read') && shows('careplan', 'careplan') ? ['careplan', 'Care plan'] : null, can('assessments:read') && shows('assessments', 'assessments') ? ['assessments', 'Assessments'] : null, ['forms', `Forms (${c.counts.forms || 0})`], ['episodes', 'Episodes'], ['requests', 'Requests'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team']].filter(Boolean);
   // What can be added to this record. On a wide screen each is its own button; on a phone (styles.css,
   // .client-actions) they fold into one "Add…" button that opens the same list, so the section tabs are not
   // pushed below the fold by a wall of buttons.
@@ -83,7 +86,7 @@ route('client', async (r) => {
         c.safety_plan ? h('button', { class: 'chip', type: 'button', 'data-safety-plan': c.safety_plan.id, title: 'Open the safety plan', onClick: async () => (await import('./notes.js')).openNote(c.safety_plan.id, { onChange: refresh }) }, `🛟 Safety plan on file (${fmt.date(c.safety_plan.occurred_at)})`) : null].filter(Boolean).map(x => h('li', {}, x)))),
       actionBar()),
     // On a phone the strip leads with the sections used every day; the rest are under More.
-    tabStrip(tabs, tab, (k) => nav(`client/${id}/${k}`), { label: 'Client record sections', core: ['overview', 'interventions', 'notes', 'tasks', 'consents'] }),
+    tabStrip(tabs, tab, (k) => nav(`client/${id}/${k}`), { label: 'Client record sections', core: ['overview', 'interventions', 'notes', 'tasks', 'consents', 'referrals'] }),
     body);
 
   // Free text such as "Rosa (sister) 555-0134" gets its number turned into a tel: link.
@@ -142,7 +145,7 @@ route('client', async (r) => {
       } }, 'Emergency access to clinical notes') : null;
       return h('div', {}, !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are hidden from your role. ', breakGlass) : null, noteTable(d.rows, { showClient: false, onChange: refresh }), h('div', { id: 'breakglass-notes', class: 'mt' }));
     },
-    async referrals() { const d = await get(`/api/referrals?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, ctxOpts) }, '+ New referral') : null), referralTable(d.rows, { showClient: false, onChange: refresh })); },
+    async referrals() { const d = await get(`/api/referrals?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, ctxOpts) }, '+ Referral') : null), referralTable(d.rows, { showClient: false, onChange: refresh })); },
     async tasks() { const d = await get(`/api/tasks?client_id=${id}&limit=500`); return taskTable(d.rows, { showClient: false, onChange: refresh }); },
     async time() { const d = await get(`/api/time?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('time:write') ? h('button', { class: 'btn primary', onClick: () => openTimeForm(null, ctxOpts) }, '+ Log time') : null), timeTable(d.rows, { showClient: false, onChange: refresh })); },
     async budget() { const d = await get(`/api/budget/expenditures?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('budget:write') ? h('button', { class: 'btn primary', onClick: () => openExpenditureForm(null, ctxOpts) }, '+ Record client assistance') : null, h('span', { class: 'muted' }, `Total approved: ${fmt.money(c.counts.spent)}`)), expenditureTable(d.rows, { showClient: false, onChange: refresh })); },

@@ -101,7 +101,7 @@ function instrumentEnabled(code) {
   return !opt || db.getSetting(opt.setting, '0') === '1';
 }
 function assertInstrumentEnabled(code) {
-  if (!instrumentEnabled(code)) throw fieldError('instrument', `${CL.INSTRUMENTS[code].name} is not enabled for this programme. An administrator can turn it on under Settings → Screening instruments, after confirming the programme holds the rights to use it.`);
+  if (!instrumentEnabled(code)) throw fieldError('instrument', `${CL.INSTRUMENTS[code].name} is not enabled for this program. An administrator can turn it on under Settings → Screening instruments, after confirming the program holds the rights to use it.`);
 }
 function instrumentList() {
   return CL.INSTRUMENT_CODES.map((code) => {
@@ -145,7 +145,7 @@ function raiseSafetyAlert(ctx, clientId, measureId) {
   const taskId = uuid();
   db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,status) VALUES(?,?,?,?,?,?,?,?,?)`,
     taskId, clientId, ctx.user.id, ctx.user.id, encrypt('Safety follow-up: PHQ-9 question 9 answered above "Not at all"'),
-    encrypt('Assess risk today and review or write the safety plan with the client. Follow your programme\'s crisis protocol; for imminent danger call 988 or 911.'), today(), 'urgent', 'open');
+    encrypt('Assess risk today and review or write the safety plan with the client. Follow your program\'s crisis protocol; for imminent danger call 988 or 911.'), today(), 'urgent', 'open');
   audit.log({ user: ctx.user, action: 'outcome.safety_alert', entity: 'outcome_measure', entityId: measureId, clientId, ip: ctx.ip, details: { task_id: taskId } });
   return taskId;
 }
@@ -348,7 +348,7 @@ module.exports = (r) => {
   // Baseline is each client's first administration of an instrument in the period, latest their last.
   r.get('/api/reports/outcomes', auth.requireAuth, auth.requirePerm('reports:read'), (ctx) => {
     const p = period(ctx);
-    const instruments = summarise(outcomePairs(ctx, p));
+    const instruments = require('../dashboard-mask').outcomes(ctx.user, summarise(outcomePairs(ctx, p)));
     audit.log({ user: ctx.user, action: 'report.outcomes', ip: ctx.ip, details: { from: p.from, to: p.to } });
     return { ...p, instruments };
   });

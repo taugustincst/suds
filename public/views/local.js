@@ -6,7 +6,7 @@ const column = (x) => fmt.label(String(x).replace(/_enc$/, '').replace(/_idx$/, 
 import { sampleDataCard } from './admin.js';
 import { isStaticHost } from './login.js';
 // Must match local/sync.js (the kernel says the same when a sync is attempted from the on-device app).
-const STATIC_HOST_MESSAGE = 'SUDS on this device does not sync with an office server: your records stay in this browser. Keep them safe with "Download a backup" on this page. If your programme runs an office SUDS server, use SUDS at its address instead.';
+const STATIC_HOST_MESSAGE = 'SUDS on this device does not sync with an office server: your records stay in this browser. Keep them safe with "Download a backup" on this page. If your program runs an office SUDS server, use SUDS at its address instead.';
 const BACKUP_EVERY_DAYS = 7;
 const MIN_PASSPHRASE = 12; // local/backup.js
 

@@ -130,7 +130,7 @@ module.exports = (r) => {
   const readTemplate = () => { try { return JSON.parse(db.getSetting('consent_template', 'null')); } catch { return null; } };
   r.get('/api/consent-template', auth.requireAuth, auth.requirePerm('consents:read', 'consents:write'), () => ({ template: readTemplate() }));
   r.put('/api/consent-template', auth.requireAuth, auth.requirePerm('consents:write'), (ctx) => {
-    if (!auth.hasPerm(ctx.user, 'disclosures:override')) throw forbidden('A supervisor or administrator sets the programme\'s usual consent');
+    if (!auth.hasPerm(ctx.user, 'disclosures:override')) throw forbidden('A supervisor or administrator sets the program\'s usual consent');
     const v = validate(ctx.body, TEMPLATE_SHAPE);
     const rawCats = ctx.body.info_categories;
     const cats = [...new Set((Array.isArray(rawCats) ? rawCats : []).map(String))];

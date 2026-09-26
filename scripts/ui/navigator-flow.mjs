@@ -90,7 +90,7 @@ await page.check('.modal input[name=revocation_right_given]'); await page.check(
 ok(await toastSays(/saved|recorded|✓/i), 'a 42 CFR Part 2 release is recorded once every element is present');
 await page.waitForURL(/[?&]_=\d+/, { timeout: 5000 }).catch(() => {});
 // 7. referral with consent
-await page.goto(`${base}/#/client/${cid}/referrals`); await page.waitForSelector('text=+ New referral', { timeout: 10000 }).catch(() => {}); await page.click('text=+ New referral'); await page.waitForSelector('.modal');
+await page.goto(`${base}/#/client/${cid}/referrals`); await page.waitForSelector('text=+ Referral', { timeout: 10000 }).catch(() => {}); await page.click('text=+ Referral'); await page.waitForSelector('.modal');
 // The provider list must offer a way in when the wanted provider is not on it — a phone that has not
 // synced has an empty directory, and a referral cannot wait for that. Its options load asynchronously
 // once the modal opens, so wait for more than the placeholder before reading them.

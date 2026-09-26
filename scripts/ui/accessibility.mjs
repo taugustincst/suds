@@ -305,6 +305,9 @@ const DIALOGS = [
   ['New referral', 'referrals:write', async (p) => p.evaluate(async () => (await import('./views/referrals.js')).openReferralForm(null, {}))],
   ['New resource', 'resources:write', async (p) => p.evaluate(async () => (await import('./views/resources.js')).openResourceForm(null))],
   ['Overdose report', 'overdose:write', async (p) => p.evaluate(async () => (await import('./views/overdose.js')).openOverdoseForm(null, {}))],
+  // The referral form's "Record a consent naming <provider>", and the program's usual consent (Home checklist).
+  ['Consent naming a provider', 'consents:write', async (p) => p.evaluate(async () => (await import('./views/part2.js')).openConsentForm('x', { preset: { type: 'part2_disclosure', recipient: 'Hope Street Detox', purpose: 'Referral and care coordination' } }))],
+  ['Usual consent', 'disclosures:override', async (p) => p.evaluate(async () => (await import('./views/part2.js')).openConsentTemplateForm({ partners: ['County OTP', 'Hope Street Detox'] }))],
   ['§2.32 notice with a disclosure', 'consents:write', async (p) => p.evaluate(async () => (await import('./views/part2.js')).showNotice({ text: 'This record which has been disclosed to you is protected by Federal confidentiality rules (42 CFR part 2).' }))],
   ['Expenditure', 'budget:write', async (p) => p.evaluate(async () => (await import('./views/budget.js')).openExpenditureForm(null, {}))],
   // The electronic-signature dialog as it opens soon after signing in (the attestation and one button).
@@ -663,7 +666,7 @@ async function keyboardRun() {
   const cons = await api(page, 'GET', `/api/clients/${clientId}/consents`);
   eq((cons.data?.consents || []).length, 1, `${K}: the consent is recorded`, cons.data);
   await go(page, office, `client/${clientId}/referrals`);
-  ok(await tabTo(page, 'button', { text: '+ New referral' }), `${K}: Tab reaches "+ New referral"`);
+  ok(await tabTo(page, 'button', { text: '+ Referral' }), `${K}: Tab reaches "+ Referral"`);
   await page.keyboard.press('Enter'); await page.waitForSelector('.modal [name=resource_id]');
   await tabTo(page, '.modal select[name=resource_id]'); await page.keyboard.press('ArrowDown');
   await tabTo(page, '.modal select[name=consent_id]'); await page.keyboard.press('ArrowDown');

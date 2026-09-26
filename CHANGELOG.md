@@ -4,6 +4,45 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Frontline
+
+From a second hands-on frontline review of 1.12.4.
+
+- **A consent that backs a referral, from the referral.** When no live consent names the provider, the
+  referral form offers **Record a consent naming <provider>**: the consent form opens filled in for it (a Part
+  2 consent to disclose, the provider as recipient, "Referral and care coordination", and what the program's
+  usual consent covers and when it expires), and on saving the worker is back in the referral with the new
+  consent chosen. It used to open on the TPO class wording, which names nobody, so the referral was refused and
+  the worker had to leave it and start again. Home's **Finish setting up** asks an administrator to save the
+  program's usual consent naming its referral partners (filled in from the directory).
+- **Small counts of people on Home and Reports for finance and read-only.** Those accounts run the funder
+  report as publication releases only, yet the dashboard, monthly trends and outcome measures showed them exact
+  small counts for any range. They now see a count of people from 1 to 10 as "<11" (the report's threshold),
+  and a mean or rate over fewer people not at all; visits, calls, kits, hours and money stay exact. **Visits by
+  worker** is shown only to supervisors and administrators. Consents expiring (client codes, recipients) are for
+  roles that work with consents. Display-level consistency for insiders (docs/HIPAA.md), in
+  `server/dashboard-mask.js`.
+- **Client tabs in working order:** Overview, Visits, Notes, To-dos, Consents, Referrals, then the rest, on
+  every width; Overview is no longer moved after Forms when the strip overflows. The tab is called **Consents**.
+- **Referral list:** the client's name for roles that can open the client; **Consent on file** only when a live
+  Part 2 consent names the provider, otherwise **No Part 2 consent** (was "ROI ✓" for any consent); **+ Referral**.
+- **Finish setting up** also asks for a **default fund** when none is set, and for **the opioid-settlement
+  category** of each settlement fund the settlement report would list as *Uncategorised*.
+- **Wording:** "visit(s)" for the remaining "intervention(s)" (the Visits page count, Delete visit, imports'
+  "Also log a visit"); **Program** for "Programme" in the screens and the user guide (code and setting keys
+  unchanged); proper labels for coded choices ("Court or Probation", "Declined by Client", "Detox / Withdrawal
+  Management", "Screening (SBIRT)", …) from `CODE_LABELS` in server/constants.js; badges wrap between words,
+  never inside one, and stay on one line in a table on a wide screen.
+- **Field defaults and small fixes:** a new Location, **Street / Outdoor**, is where a harm-reduction
+  program's visits and overdose events start (the office for a treatment-adjacent one); the overdose *Where*
+  never offers Phone or Telehealth; an overdose saved with *Doses given* empty no longer fails with a server
+  error, and the confirmation says what was recorded; the client picker lists nobody until something is typed
+  and closes when someone is chosen or focus moves on (a late answer no longer reopens it); either part of a
+  double surname finds the client (*Vasquez* finds *Quintero-Vasquez*: each part's blind-index tokens are kept
+  in `name_phonetic_idx`, no schema change, and existing clients are re-indexed once at start-up); a device copy
+  no longer says "Also signed in on another computer … stays in sync"; the two-step verification bar, once
+  dismissed, becomes a small **🔐 2-step** link in the header on every device instead of a 50 px bar.
+
 ### Funder reporting
 
 - **The submission to your funder comes first.** A supervisor's or an administrator's funder report, NDP log

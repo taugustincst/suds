@@ -80,6 +80,8 @@ function revertFatal(ctx, event) {
 function normalise(v, row = null) {
   const kind = v.kind !== undefined ? v.kind : row && row.kind;
   if (kind === 'reversal') v.naloxone_used = 1;
+  // "Doses given" left empty is none recorded, not a database error (the column is NOT NULL DEFAULT 0).
+  if (v.naloxone_doses === null) v.naloxone_doses = 0;
   if (v.location_type !== undefined && v.location_type !== null && !(row && v.location_type === row.location_type)) v.location_type = O.codeFor('LOCATIONS', v.location_type);
 }
 

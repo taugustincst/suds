@@ -59,7 +59,7 @@ function requireReportRun({ caseloadScoped, fund = false }) {
     if (!internal || auth.reportRunAllowed(ctx.user, { caseloadScoped })) return;
     audit.log({ user: ctx.user, action: 'authz.denied', ip: ctx.ip, success: false, details: { perms: ['reports:internal'], path: ctx.path, purpose: asked || 'internal', counts: ctx.query.get('counts') || 'suppressed' } });
     const why = asked ? `it asks for ${exact ? 'exact counts' : `purpose=${asked}`}` : rel.not_publishable.join(' and ');
-    throw forbidden(`Your role can run this report only as a publication release: the whole programme (all funding sources) for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended. This run is not one, because ${why}. Internal and submission runs, and exact counts, are for supervisors and administrators.`);
+    throw forbidden(`Your role can run this report only as a publication release: the whole program (all funding sources) for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended. This run is not one, because ${why}. Internal and submission runs, and exact counts, are for supervisors and administrators.`);
   };
 }
 
@@ -150,7 +150,7 @@ module.exports = (r) => {
     };
     // The dashboard reads across nearly every PHI table; that is a PHI read like any other.
     audit.log({ user: ctx.user, action: 'report.dashboard', ip: ctx.ip, details: { from, to } });
-    return out;
+    return require('../dashboard-mask').dashboard(ctx.user, out);
   });
 
   // Outcomes / monthly program report
@@ -160,7 +160,7 @@ module.exports = (r) => {
     const s = start.toISOString().slice(0, 10);
     // Exact programme-wide counts of people by month: an insider view (docs/HIPAA.md, small cells), so it is audited.
     audit.log({ user: ctx.user, action: 'report.monthly', ip: ctx.ip, details: { months } });
-    return {
+    return require('../dashboard-mask').monthly(ctx.user, {
       intakes: db.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
       discharges: db.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),
       interventions: db.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
@@ -173,7 +173,7 @@ module.exports = (r) => {
       mat_linkage: db.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
       spend: auth.hasPerm(ctx.user, 'budget:read') ? db.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
       time: db.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s),
-    };
+    });
   });
 
   // The report a funder actually asks for (server/funder-report.js): unduplicated people served, broken down

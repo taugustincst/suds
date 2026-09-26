@@ -23,19 +23,22 @@ route('dashboard', async () => {
   const who = greetingName(state.user.display_name, state.user.username);
   const hour = new Date().getHours(); const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const alerts = [];
+  // A count of people can come back as "<11" for a role that runs publication releases only
+  // (server/dashboard-mask.js): plural, since it stands for more than one.
+  const many = (n) => typeof n === 'string' || n > 1;
   if (d.tasks.overdue) alerts.push(['danger', `${d.tasks.overdue} overdue to-do${d.tasks.overdue > 1 ? 's' : ''}`, '#/tasks?overdue=1']);
   if (d.notes.unsigned) alerts.push([d.notes.unsigned_overdue ? 'danger' : 'warn', `${d.notes.unsigned} unsigned note${d.notes.unsigned > 1 ? 's' : ''}${d.notes.team ? ' across your team' : ''}`, d.notes.team ? '#/supervision' : '#/notes?status=draft&mine=1']);
   if (cont.staged_imports) alerts.push(['info', `${cont.staged_imports} imported note${cont.staged_imports > 1 ? 's' : ''} to review`, '#/imports']);
-  if (c.no_contact_30d) alerts.push(['warn', `${c.no_contact_30d} client${c.no_contact_30d > 1 ? 's' : ''} not contacted in 30 days`, '#/clients?stale=1']);
-  { const n = d.consents_expiring_clients ?? d.consents_expiring.length; if (n) alerts.push(['warn', `${n} client${n > 1 ? 's have' : ' has'} a consent expiring soon`, '#/clients?consent_expiring=1']); }
+  if (c.no_contact_30d) alerts.push(['warn', `${c.no_contact_30d} client${many(c.no_contact_30d) ? 's' : ''} not contacted in 30 days`, '#/clients?stale=1']);
+  { const n = d.consents_expiring_clients ?? d.consents_expiring.length; if (n) alerts.push(['warn', `${n} client${many(n) ? 's have' : ' has'} a consent expiring soon`, '#/clients?consent_expiring=1']); }
   // Break-glass reads of clinical notes and re-admissions of a discharged client from outside a caseload.
   if (d.breakglass_pending) alerts.push(['danger', `${d.breakglass_pending} emergency access${d.breakglass_pending > 1 ? 'es' : ''} / re-admission${d.breakglass_pending > 1 ? 's' : ''} to review`, '#/supervision?tab=breakglass']);
   // Patient-rights requests run a 30-day clock: an overdue one is a compliance failure, not a to-do.
   const pr = d.patient_requests;
-  if (pr && pr.n) alerts.push([pr.overdue ? 'danger' : 'warn', `${pr.n} open patient request${pr.n > 1 ? 's' : ''}${pr.overdue ? ` (${pr.overdue} overdue)` : ''}`, '#/clients?status=all&patient_requests=1']);
+  if (pr && pr.n) alerts.push([pr.overdue ? 'danger' : 'warn', `${pr.n} open patient request${many(pr.n) ? 's' : ''}${pr.overdue ? ` (${pr.overdue} overdue)` : ''}`, '#/clients?status=all&patient_requests=1']);
   // 42 CFR Part 2: active clients never given the §2.22 notice; the breach clock (60 days from discovery) on
   // open incidents; and complaints still open (docs/compliance/PART2.md).
-  if (d.part2_notice_missing) alerts.push(['warn', `${d.part2_notice_missing} active client${d.part2_notice_missing > 1 ? 's have' : ' has'} no Part 2 notice on record`, '#/compliance?tab=notices']);
+  if (d.part2_notice_missing) alerts.push(['warn', `${d.part2_notice_missing} active client${many(d.part2_notice_missing) ? 's have' : ' has'} no Part 2 notice on record`, '#/compliance?tab=notices']);
   const inc = d.incidents;
   if (inc && (inc.overdue || inc.due_soon)) alerts.push(['danger', `${inc.overdue ? `${inc.overdue} privacy incident${inc.overdue > 1 ? 's' : ''} past the notification deadline` : `${inc.due_soon} privacy incident${inc.due_soon > 1 ? 's' : ''} due within 14 days`}`, '#/compliance?tab=incidents']);
   else if (inc && inc.attention) alerts.push(['warn', `${inc.attention} privacy incident${inc.attention > 1 ? 's' : ''} need a determination or notice`, '#/compliance?tab=incidents']);
@@ -89,13 +92,14 @@ route('dashboard', async () => {
   let setupCard = null;
   if (can('settings:manage') && !state.local) {
     try {
-      const [forms, users, funds, resources, sys, settings] = await Promise.all([
+      const [forms, users, funds, resources, sys, settings, consentTemplate] = await Promise.all([
         get('/api/forms/starters', { quiet: true }).catch(() => null),
         get('/api/users', { quiet: true }).catch(() => ({ users: [] })),
         get('/api/budget/funds', { quiet: true }).catch(() => ({ funds: [] })),
-        get('/api/resources?limit=1', { quiet: true }).catch(() => ({ total: 0 })),
+        get('/api/resources?limit=8', { quiet: true }).catch(() => ({ total: 0, rows: [] })),
         get('/api/admin/stats', { quiet: true }).catch(() => ({})),
         get('/api/admin/settings', { quiet: true }).catch(() => null),
+        get('/api/consent-template', { quiet: true }).catch(() => null),
       ]);
       const steps = [];
       // Nothing about the deployment was ever going to point an administrator at these. Backups off and no
@@ -117,10 +121,29 @@ route('dashboard', async () => {
         steps.push(['Put a consent form in the library', 'Including a 42 CFR Part 2 release, which you need before any record can be shared with another agency.', 'Add starter forms', async () => { (await import('./forms.js')).openStarters(() => nav('dashboard?_=' + Date.now())); }]);
       }
       if (!resources.total) {
-        steps.push(['Fill the resource directory', 'Load a regional starter directory (shelters, syringe services, MAT and treatment programmes), or enter your own referral partners.', 'Open the directory', () => nav('resources')]);
+        steps.push(['Fill the resource directory', 'Load a regional starter directory (shelters, syringe services, MAT and treatment programs), or enter your own referral partners.', 'Open the directory', () => nav('resources')]);
       }
+      // A referral can rely on a consent only when it names the provider. The usual consent, naming the
+      // program's regular referral partners, is what a worker fills a new consent in from in one step.
+      if (consentTemplate && !consentTemplate.template) {
+        const partners = (resources.rows || []).map(x => x.name).filter(Boolean).slice(0, 6);
+        steps.push(['Save a usual consent naming your referral partners', 'A referral can share a client\'s details only under a consent that names the provider. Name the partners you refer to most, and workers can record such a consent in one step.', 'Set up the usual consent',
+          async () => { (await import('./part2.js')).openConsentTemplateForm({ partners, onDone: () => nav('dashboard?_=' + Date.now()) }); }]);
+      }
+      const activeFunds = (funds.funds || []).filter(f => f.is_active !== 0 && f.is_active !== false);
       if (!(funds.funds || []).length) {
         steps.push(['Add your funding sources', 'Grants and budgets, so services and staff time can be charged to the right one and reported per fund.', 'Add funding', () => nav('budget')]);
+      } else {
+        // Without a default, a visit nobody charged to a fund is reported under "No funding source".
+        if (settings && !(settings.default_fund_id && activeFunds.some(f => f.id === settings.default_fund_id))) {
+          steps.push(['Set a default fund', 'New visits are charged to it unless the worker chooses another, so the funder report does not count them under "No funding source".', 'Choose the default fund', () => nav('admin?tab=settings&section=reporting')]);
+        }
+        // A settlement fund with no allowable use is reported as "Uncategorised" in the settlement report.
+        const uncategorised = activeFunds.filter(f => (f.source_type === 'opioid_settlement' || f.settlement_hiaa) && !f.settlement_use);
+        if (uncategorised.length) {
+          const names = uncategorised.map(x => x.name);
+          steps.push([`Set the opioid-settlement category of ${names.length <= 3 ? names.join(names.length === 2 ? ' and ' : ', ') : `${names.length} settlement funds`}`, 'The opioid settlement report lists its spending as "Uncategorised" until the fund says which allowable use (Exhibit E) it pays for.', 'Edit funding', () => nav('budget')]);
+        }
       }
       if (steps.length) {
         setupCard = h('section', { class: 'card mb' },
@@ -146,7 +169,10 @@ route('dashboard', async () => {
     backupReminder,
     sample,
     setupCard,
-    cont.other_device ? h('div', { class: 'muted small mb' }, `Also signed in on ${cont.other_device.mobile ? 'your phone' : 'another computer'} (${fmt.ago(cont.other_device.last_seen_at) === 'today' ? 'active today' : fmt.ago(cont.other_device.last_seen_at)}). Everything stays in sync.`) : null,
+    // A device copy keeps its own sign-ins, all on this device, and syncs with nothing on its own: "another
+    // computer … stays in sync" was wrong there.
+    cont.other_device && !state.local ? h('div', { class: 'muted small mb' }, `Also signed in on ${cont.other_device.mobile ? 'your phone' : 'another computer'} (${fmt.ago(cont.other_device.last_seen_at) === 'today' ? 'active today' : fmt.ago(cont.other_device.last_seen_at)}). Everything stays in sync.`) : null,
+    d.small_cells ? h('p', { class: 'small muted mb', 'data-small-cells': '1' }, `Counts of people from 1 to ${d.small_cells.threshold - 1} are shown as "<${d.small_cells.threshold}" for your role, as they are in the funder report.`) : null,
     alerts.length ? h('div', { class: 'row mb' }, alerts.map(([k, t, href]) => h('a', { href, class: `badge ${k}`, style: { fontSize: '.9rem', padding: '.4rem .8rem' } }, t))) : null,
     h('div', { class: 'grid cols-2 mb' },
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Today'), can('tasks:read') ? h('a', { href: '#/tasks' }, 'All to-dos') : null),

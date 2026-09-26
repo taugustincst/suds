@@ -272,7 +272,7 @@ test('attack 1, differencing: a fund-filtered or custom-period run is never a pu
   assert.ok(a.data.release.not_publishable.some(x => /fund/i.test(x)), JSON.stringify(a.data.release));
   const asked = await sup.get(`/api/reports/funder?${JAN}&funding_source_id=${fundA}&purpose=publication`);
   assert.equal(asked.status, 400, 'asking for the publication label on a fund-filtered run is refused');
-  assert.match(asked.data.error, /whole programme/i);
+  assert.match(asked.data.error, /whole program\b/i);
   // The same by two date ranges: January to June minus January to May.
   for (const q of ['from=2025-01-01&to=2025-06-30', 'from=2025-01-01&to=2025-05-31', 'from=2025-01-05&to=2025-01-31']) {
     assert.equal((await sup.get(`/api/reports/funder?${q}&purpose=publication`)).status, 400, `${q} is not a standard period`);

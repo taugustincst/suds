@@ -424,7 +424,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--focus); out
 /* The idle sign-out warning (2.2.1) reads in either theme, with its button. */
 .idle-warn { background: #7a4a00; color: #fff; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: center; }
 .idle-warn .btn { background: #fff; color: #5a3600; border-color: #fff; }
-.badge { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+/* A badge wraps between words, never inside one ("Cont-acted" at 1280 px): break-word, unlike anywhere, does
+   not shrink a table column below its longest word. In a table on a wide screen (inside its scrolling
+   wrapper) a status badge stays on one line. */
+.badge { max-width: 100%; white-space: normal; overflow-wrap: break-word; }
+@media (min-width: 901px) { table .badge { white-space: nowrap; } }
+.mfa-link { text-decoration: none; white-space: nowrap; }
 /* A button's words wrap inside it rather than running out of it at large text sizes. */
 .btn { white-space: normal; }
 .kv dt { overflow-wrap: anywhere; }

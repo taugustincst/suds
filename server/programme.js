@@ -56,7 +56,7 @@ function describe() {
   };
 }
 function moduleLabel(key) { return (MODULES.find(m => m.key === key) || { label: key }).label; }
-function offMessage(key) { return `${moduleLabel(key)} is switched off for this programme. An administrator can switch it on in Settings › Programme › Modules.`; }
+function offMessage(key) { return `${moduleLabel(key)} is switched off for this program. An administrator can switch it on in Settings › Program › Modules.`; }
 /** Route guard for a module's write routes: 403, with the module named, while it is switched off. */
 function requireModule(key) {
   return () => { if (!moduleOn(key)) throw new HttpError(403, offMessage(key), { module: key, module_off: true }); };
@@ -78,4 +78,16 @@ function defaultForExisting(d) {
   return clinical ? 'treatment' : 'harm_reduction';
 }
 
-module.exports = { PROFILES, DEFAULT_PROFILE, MODULES, MODULE_KEYS, SETTING_KEYS, profile, moduleOn, modules, describe, requireModule, offMessage, defaultForExisting };
+/**
+ * The Location a new visit (and the "Where" of a new overdose event) starts on: the street for a
+ * harm-reduction program, whose work mostly happens there, the office for a treatment-adjacent one. A choice
+ * the program has hidden under Settings › Lists is not offered, so then the first one it does offer.
+ * `visible` is the list's codes in the program's order.
+ */
+function defaultLocation(visible = []) {
+  const want = profile() === 'harm_reduction' ? 'street' : 'office';
+  if (!visible.length || visible.includes(want)) return want;
+  return visible.includes('office') ? 'office' : visible[0];
+}
+
+module.exports = { PROFILES, DEFAULT_PROFILE, MODULES, MODULE_KEYS, SETTING_KEYS, profile, moduleOn, modules, describe, requireModule, offMessage, defaultForExisting, defaultLocation };

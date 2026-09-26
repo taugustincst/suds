@@ -59,7 +59,7 @@ test('a switched-off module refuses new records with a message that says where t
   for (const [mod, call] of cases) {
     const r = await call();
     assert.equal(r.status, 403, `${mod}: ${JSON.stringify(r.data)}`);
-    assert.match(r.data.error, /switched off for this programme.*Settings › Programme/, mod);
+    assert.match(r.data.error, /switched off for this program.*Settings › Program/, mod);
   }
   // Permissions are checked first: a role that could never write care plans is told that, not about modules.
   const fin = H.makeUser('pgfin', 'finance'); const f = H.client(); await f.login(fin.username, fin.password);

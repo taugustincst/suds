@@ -39,7 +39,7 @@ async function openUserForm(values, onDone) {
     { name: 'role', label: 'Role', type: 'select', required: true, options: [['navigator', 'Navigator — own caseload, admin notes, referrals, budget entry'], ['clinician', 'Clinician — clinical notes, own caseload'], ['supervisor', 'Supervisor — all clients, all notes, approvals, audit'], ['finance', 'Finance — budget & de-identified data only'], ['readonly', 'Read-only — reports and client summaries'], ['admin', 'Administrator — users, settings, audit (no clinical notes)']].map(([v, l]) => ({ value: v, label: l })) },
     { name: 'hourly_cost', label: 'Loaded hourly cost ($, for budget)', type: 'number', min: 0, step: 0.01 }, { name: 'is_active', label: 'Active', type: 'checkbox', value: values ? values.is_active : true },
     { name: 'supervisor_id', label: 'Supervisor', type: 'select', placeholder: '— none —', options: state.users.filter(u => u.is_active !== 0 && ['supervisor', 'admin'].includes(u.role) && u.id !== values?.id).map(u => ({ value: u.id, label: u.display_name })), help: 'Whose Supervision page their unfinished work shows on.' },
-    (state.funds || []).length ? { name: 'default_fund_id', label: 'Default funding source for their visits', type: 'select', placeholder: '— the programme default —', options: state.funds.map(f => ({ value: f.id, label: f.name })), help: 'Pre-filled on the visit form; they can still choose another.' } : null,
+    (state.funds || []).length ? { name: 'default_fund_id', label: 'Default funding source for their visits', type: 'select', placeholder: '— the program default —', options: state.funds.map(f => ({ value: f.id, label: f.name })), help: 'Pre-filled on the visit form; they can still choose another.' } : null,
     { name: 'requires_cosign', label: 'Notes need a supervisor\'s countersignature (trainee or unlicensed staff)', type: 'checkbox', span: true },
     { name: 'password', label: isNew ? 'Temporary password (blank = generate)' : 'Reset password (blank = keep)', type: 'password', autocomplete: 'new-password', help: '12+ chars with upper, lower, number, symbol. User must change at next login.' },
     !isNew ? { name: 'wipe_devices', label: `Also wipe this person's synced devices when deactivating or resetting the password (${deviceCount} device${deviceCount === 1 ? '' : 's'})`, type: 'checkbox', value: true, span: true, help: 'Each device they sync from in local mode is told to erase its local copy of client records the next time it connects.' } : null,
@@ -185,13 +185,13 @@ function programmeCard(s, refresh) {
     { type: 'section', label: 'Modules', heading: false },
     ...p.module_list.map(m => ({ name: `module_${m.key}`, label: m.label, type: 'select', noBlank: true, value: p.overrides[m.key] ?? '', help: m.help,
       options: [{ value: '', label: `As the profile has it (${p.profile === 'treatment' ? 'on' : 'off'} for ${profileLabel(p.profile)})` }, { value: '1', label: 'On' }, { value: '0', label: 'Off' }] })),
-  ], { submitText: 'Save programme profile', onSubmit: async (d) => {
+  ], { submitText: 'Save program profile', onSubmit: async (d) => {
     await put('/api/admin/settings', d);
     try { state.programme = (await get('/api/auth/me')).programme || state.programme; } catch { /* the next sign-in picks it up */ }
-    toast('Programme profile saved', 'ok'); refresh();
+    toast('Program profile saved', 'ok'); refresh();
   } });
   const onNow = p.module_list.filter(m => p.modules[m.key]).map(m => m.label);
-  return h('div', { class: 'card', 'data-programme-profile': p.profile }, h('h2', {}, 'Programme profile & modules'),
+  return h('div', { class: 'card', 'data-programme-profile': p.profile }, h('h2', {}, 'Program profile & modules'),
     h('p', { class: 'small muted' }, 'Decides what the menus, client records and Home lead with. Permissions do not change: a module switched off hides it and stops new records in it; anything already recorded can still be read.'),
     h('p', { class: 'small', 'data-modules-on': onNow.length }, onNow.length ? `Switched on: ${onNow.join(', ')}.` : 'No clinical modules are switched on.'),
     f);
@@ -218,7 +218,7 @@ route('admin', async (r) => {
     },
     async settings() {
       const s = await get('/api/admin/settings');
-      const f = form([{ type: 'section', label: 'Your programme', collapsible: true, open: true, heading: true },
+      const f = form([{ type: 'section', label: 'Your program', collapsible: true, open: true, heading: true },
         { name: 'org_name', label: 'Organization / program name', required: true }, { name: 'county_name', label: 'County' }, { name: 'program_contact', label: 'Privacy officer / program contact' },
         { name: 'caseload_restriction', label: 'Caseload restriction', type: 'select', options: [{ value: '1', label: 'On — navigators & clinicians see assigned clients only (recommended)' }, { value: '0', label: 'Off — all staff see all clients' }], noBlank: true },
         { name: 'note_lock_days', label: 'Days before unsigned drafts are flagged', type: 'number', min: 0, step: 1 },
@@ -252,7 +252,7 @@ route('admin', async (r) => {
         // Opened when the funder report's "no default funding source" warning links here (section=reporting).
         { type: 'section', label: 'Reporting', hint: 'default fund, small cells, naloxone doses', collapsible: true, heading: true, open: r.query.get('section') === 'reporting' },
         { name: 'default_fund_id', label: 'Default funding source for new visits', type: 'select', placeholder: '— none —', options: (state.funds || []).map(f => ({ value: f.id, label: f.name })), span: true, help: 'Pre-filled on the visit form, and charged when the worker does not choose a fund. A worker\'s own default (Users & roles → Edit) comes first.' },
-        { name: 'small_cell_threshold', label: 'Small-cell threshold (funder, NDP and settlement reports)', type: 'number', min: 2, max: 50, step: 1, value: s.small_cell_threshold || '11', help: 'Every count of people (or of overdoses and reversals) under this is shown as "<N", with another figure hidden beside it wherever it could be worked out from a total, unless a supervisor or administrator runs the report with exact counts for the programme\'s own submission. Finance and read-only accounts run publication releases only.' },
+        { name: 'small_cell_threshold', label: 'Small-cell threshold (funder, NDP and settlement reports)', type: 'number', min: 2, max: 50, step: 1, value: s.small_cell_threshold || '11', help: 'Every count of people (or of overdoses and reversals) under this is shown as "<N", with another figure hidden beside it wherever it could be worked out from a total, unless a supervisor or administrator runs the report with exact counts for the program\'s own submission. Finance and read-only accounts run publication releases only.' },
         { name: 'naloxone_doses_per_kit', label: 'Naloxone doses per kit (NDP log)', type: 'number', min: 1, max: 20, step: 1, value: s.naloxone_doses_per_kit || '2' },
         // Scheduled server backups belong to the office server. A device copy has no backup schedule and no
         // backup folder: it showed "every 0 hours, keep 0" fields that did nothing. Its backups are on the
@@ -371,8 +371,8 @@ route('admin', async (r) => {
   const pending = full && !state.local ? await get('/api/users/access-requests', { quiet: true }).then(x => x.requests.length).catch(() => 0) : 0;
   let tabs = !full ? [['caseload', 'Move a caseload'], ...(can('audit:read') ? [['audit', 'Audit log']] : [])]
     // "Programme", not a second "Settings" inside Settings: the programme's name, profile, modules and policies.
-    : state.local ? [['users', 'Users & roles'], ['settings', 'Programme'], ['caseload', 'Move a caseload'], ['audit', 'Audit log']]
-    : [['users', pending ? `Users & roles (${pending})` : 'Users & roles'], ['settings', 'Programme'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups'], ['security', 'Security status']];
+    : state.local ? [['users', 'Users & roles'], ['settings', 'Program'], ['caseload', 'Move a caseload'], ['audit', 'Audit log']]
+    : [['users', pending ? `Users & roles (${pending})` : 'Users & roles'], ['settings', 'Program'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups'], ['security', 'Security status']];
   // Moving a caseload needs assignments:manage; a role that manages users without it does not get a tab
   // whose form it could not submit (the deactivate dialog tells it a supervisor must move the clients).
   if (!can('assignments:manage')) tabs = tabs.filter(([k]) => k !== 'caseload');

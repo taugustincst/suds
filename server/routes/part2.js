@@ -122,8 +122,8 @@ module.exports = (r) => {
           // Recorded with who and when for Home; the reason itself goes into the draft incident (encrypted),
           // which a privacy officer reviews and closes — never into the audit log.
           db.setSetting('part2_program_off', JSON.stringify({ since: db.now(), by: ctx.user.display_name || ctx.user.username }));
-          incident = require('../incidents').draft({ source: 'part2_program_off', sourceRef: db.now().slice(0, 10), title: 'Part 2 programme protections switched off',
-            description: `${ctx.user.display_name || ctx.user.username} switched this programme's 42 CFR Part 2 protections off. Reason given: ${reason}\n\nConfirm the determination with counsel. If it was a mistake, switch the programme back on and assess whether anything was disclosed without the Part 2 protections meanwhile.`, user: ctx.user });
+          incident = require('../incidents').draft({ source: 'part2_program_off', sourceRef: db.now().slice(0, 10), title: 'Part 2 program protections switched off',
+            description: `${ctx.user.display_name || ctx.user.username} switched this program's 42 CFR Part 2 protections off. Reason given: ${reason}\n\nConfirm the determination with counsel. If it was a mistake, switch the program back on and assess whether anything was disclosed without the Part 2 protections meanwhile.`, user: ctx.user });
         }
         if (v.part2_program) db.run(`DELETE FROM settings WHERE key='part2_program_off'`);
       }

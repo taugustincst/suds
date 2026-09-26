@@ -121,7 +121,7 @@ test('API: a publication release\'s file is exported only once its review is con
   }
   const wb = require('../server/spreadsheet').readWorkbook(Buffer.from(await (await sup.raw(`/api/reports/funder/export?${AUG}${PUB}&format=xlsx&reviewed=1`)).arrayBuffer()));
   const about = wb.find(s => s.name === 'About').rows.map(r => r.join(' ')).join('\n');
-  assert.match(about, /Publication release — small cells screened; review before sharing \(whole programme, one standard period\)/);
+  assert.match(about, /Publication release — small cells screened; review before sharing \(whole program, one standard period\)/);
   // Internal and submission runs are exported as before, with no confirmation.
   for (const q of [AUG, `${AUG}&purpose=internal`, `${AUG}${EXACT}`]) assert.equal((await sup.get(`/api/reports/funder/export?${q}&format=csv`)).status, 200, q);
 });

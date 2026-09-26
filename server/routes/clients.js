@@ -144,6 +144,9 @@ module.exports = (r) => {
         const idxs = parts.map(p => blindIndex(p));
         const clauses = [`c.last_name_idx IN (${idxs.map(() => '?').join(',')})`, 'c.full_name_idx IN (?,?)', `c.first_name_idx IN (${idxs.map(() => '?').join(',')})`, `c.preferred_name_idx IN (${idxs.map(() => '?').join(',')})`];
         params.push(...idxs, blindIndex(parts.join('')), blindIndex([...parts].reverse().join('')), ...parts.map(p => blindIndex(p.toLowerCase())), ...parts.map(p => M.preferredNameIndex(p)));
+        // A word of a compound surname ("Vasquez" for Quintero-Vasquez): its tokens sit after the whole
+        // surname's code in name_phonetic_idx (clients-model namePhoneticIndex), so they are looked for in it.
+        for (const part of parts) for (const t of M.searchPartTokens(part, { exact: ctx.query.get('exact') === '1' })) { clauses.push('instr(c.name_phonetic_idx, ?) > 0'); params.push(t); }
         if (ctx.query.get('exact') !== '1') {
           for (const part of parts) {
             const pfx = M.namePrefixIndex(part); if (pfx) { clauses.push('c.name_prefix_idx=?'); params.push(pfx); clauses.push('c.first_name_prefix_idx=?'); params.push(pfx); }

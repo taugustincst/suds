@@ -3,7 +3,7 @@ import { h, route, get, pagedList, post, put, del, state, form, modal, toast, ta
 // so it is not one of the bases offered here. A referral may rest only on the client's consent (which must
 // name the provider), a medical emergency, a court order or a supervisor's justified override — never a
 // QSOA, research, audit or a report to the authorities (server/disclosure.js REFERRAL_BASES).
-import { withRestrictionCheck, consentTypeLabel } from './part2.js';
+import { withRestrictionCheck, consentTypeLabel, openConsentForm } from './part2.js';
 
 /** The lawful bases other than consent a referral form offers this user. */
 function referralBases() {
@@ -46,10 +46,24 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     const valid = all.filter(c => !c.expires_at || c.expires_at >= today);
     return { clientId, all, valid, expiredOnly: !!(clientId && !valid.length && all.length), suggested: (list && list.suggested_consent_id) || null };
   };
+  // The provider chosen, for "Record a consent naming <provider>": a referral can rest on a consent only when
+  // it names the provider, and a worker used to have to leave the referral, start a consent from scratch on
+  // the Consents tab (it opened on the TPO wording) and come back.
+  let providerId = resourceId || values?.resource_id || '';
+  const addedNames = {};
+  const providerName = () => { const x = res.find(r => r.id === providerId); return x ? x.name : (addedNames[providerId] || ''); };
+  const namesProvider = (st) => st.valid.some(c => c.names_resource);
+  const recordNaming = (st) => (st.clientId && providerId && !String(providerId).startsWith('__') && can('consents:write') && providerName() && !namesProvider(st)
+    ? h('button', { type: 'button', class: 'btn sm', 'data-record-consent-naming': '1', onClick: () => recordConsentFor(st.clientId) }, `Record a consent naming ${providerName()}`) : null);
   const consentOption = (c) => ({ value: c.id, label: `${consentTypeLabel(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)}${c.expires_at ? `, expires ${fmt.date(c.expires_at)}` : ''})` });
-  const consentHelpContent = ({ clientId, all, valid, expiredOnly }) => valid.length ? ['Required before the provider is told who this client is, and it must name this provider (or its organisation). A referral left as "pending" with no warm handoff — just a phone number handed to the client — needs none.']
-    : clientId ? [expiredOnly ? `${all.length === 1 ? 'The consent on file has' : 'All consents on file have'} expired. ` : 'No consent is on file. ', h('a', { href: `#/client/${clientId}/consents`, 'data-add-consent': '1', onClick: () => m.close() }, 'Record a new release on the Consents tab'), ' before the provider is told who this client is.']
-    : ['Choose the client first to see their consents on file.'];
+  const consentHelpContent = (st) => {
+    const { clientId, all, valid, expiredOnly } = st; const button = recordNaming(st);
+    if (valid.length) return ['Required before the provider is told who this client is, and it must name this provider (or its organization). A referral left as "pending" with no warm handoff — just a phone number handed to the client — needs none.',
+      ...(button ? [h('span', { style: { display: 'block', marginTop: '.35rem' }, 'data-no-consent-names': '1' }, `None of the consents on file names ${providerName()}. `, button)] : [])];
+    if (!clientId) return ['Choose the client first to see their consents on file.'];
+    return [expiredOnly ? `${all.length === 1 ? 'The consent on file has' : 'All consents on file have'} expired. ` : 'No consent is on file. ',
+      button || h('a', { href: `#/client/${clientId}/consents`, 'data-add-consent': '1', onClick: () => m.close() }, 'Record a new release on the Consents tab'), ' before the provider is told who this client is.'];
+  };
   consentState = consentStateFor(theClientId, Object.assign(consentsResult.consents || [], { suggested_consent_id: consentsResult.suggested_consent_id }));
   const consents = consentState.valid; const expiredOnly = consentState.expiredOnly;
   const consentHelp = h('span', { 'data-consent-help': '1' }, consentHelpContent(consentState));
@@ -79,9 +93,10 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     } catch (e) {
       // The commonest failure by far is sharing without a consent; say what to do about it, once (the
       // server's message already ends in its own advice, and appending ours repeated it).
-      if (/valid, unexpired consent/i.test(e.message || '')) {
-        const err = new Error(consentState.valid.length
+      if (/valid, unexpired consent/i.test(e.message || '') || (e.data && e.data.recipientNotCovered && !namesProvider(consentState))) {
+        const err = new Error(consentState.valid.length && namesProvider(consentState)
           ? 'Choose the client\'s consent under "Consent / ROI on file" before the provider is told who this client is — or, if you are relying on something else, choose the lawful basis.'
+          : providerName() && can('consents:write') ? `No consent on file names ${providerName()}. Use "Record a consent naming ${providerName()}" under Consent, or choose a lawful basis above.`
           : 'This client has no valid consent on file. Record the release on the client\'s Consents tab, or choose a lawful basis above.');
         err.status = e.status; err.data = e.data; throw err;
       }
@@ -99,7 +114,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     const { openResourceForm } = await import('./resources.js');
     openResourceForm(null, async (id) => {
       try {
-        const added = (await get(`/api/resources/${id}`)).row;
+        const added = (await get(`/api/resources/${id}`)).row; addedNames[id] = added.name;
         sel.insertBefore(h('option', { value: id }, resourceLabel(added)), sel.querySelector(`option[value="${ADD}"]`));
       } catch { sel.insertBefore(h('option', { value: id }, 'New provider'), sel.querySelector(`option[value="${ADD}"]`)); }
       sel.value = id; last = id;
@@ -144,6 +159,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   let seq = 0;
   const reloadConsents = async () => {
     const id = f.inputs.client_id.value; const mine = ++seq;
+    if (sel.value !== ADD) providerId = sel.value;
     if (!id) { rebuildConsents(consentStateFor(null, [])); return; }
     try {
       const r = await get(consentsUrl(id, sel.value));
@@ -151,6 +167,14 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     } catch (e) { if (mine === seq) rebuildConsents(consentStateFor(id, [])); toast(e.message || 'Could not load this client\'s consents', 'error'); }
   };
   f.inputs.client_id.addEventListener('change', reloadConsents);
+  // The consent form opens over this one, filled in for this provider; once recorded, the referral relies on it.
+  const recordConsentFor = (clientId) => openConsentForm(clientId, {
+    preset: { type: 'part2_disclosure', recipient: providerName(), purpose: 'Referral and care coordination' },
+    onDone: async (newId) => {
+      await reloadConsents();
+      if (newId && consentState.valid.some(c => c.id === newId)) { consentSel.value = newId; autoPicked = false; consentSel.dispatchEvent(new Event('input', { bubbles: true })); showUsed(); }
+      toast('Consent recorded — carry on with the referral', 'ok');
+    } });
   sel.addEventListener('change', () => { if (sel.value !== ADD) reloadConsents(); });
   const m = modal(isNew ? 'New referral' : 'Edit referral', f, { wide: true });
 }
@@ -184,10 +208,12 @@ export async function openOutcomeForm(r, onDone) {
 
 export function referralTable(rows, { showClient = true, onChange } = {}) {
   return table([
-    { label: 'Date', render: r => fmt.date(r.referred_at) }, showClient ? { label: 'Client', render: r => h('a', { href: `#/client/${r.client_id}` }, r.client_code) } : null,
+    { label: 'Date', render: r => fmt.date(r.referred_at) }, showClient ? { label: 'Client', render: r => (can('clients:read') ? h('span', {}, h('a', { href: `#/client/${r.client_id}` }, r.client_name || r.client_code), r.client_name ? h('span', { class: 'small muted nowrap' }, ` ${r.client_code}`) : null) : h('span', { class: 'mono' }, r.client_code)) } : null,
     { label: 'Resource', render: r => h('div', {}, r.resource_name, h('div', { class: 'small muted' }, fmt.label(r.resource_category), r.resource_phone ? ` · ${r.resource_phone}` : '')) },
     { label: 'Status', render: r => badge(fmt.label(r.status, 'REFERRAL_STATUSES'), statusKind(r.status)) }, { label: 'Urgency', render: r => r.urgency !== 'routine' ? badge(fmt.label(r.urgency), 'danger') : '' },
-    { label: 'Appt', render: r => r.appointment_at ? fmt.dt(r.appointment_at) : '—' }, { label: 'Consent', render: r => r.consent_revoked ? badge('Consent revoked', 'danger') : r.consent_id ? badge('ROI ✓', 'ok') : badge('No ROI', 'warn') }, { label: 'Barrier', render: r => r.barrier && r.barrier !== 'none' ? fmt.label(r.barrier) : '' }, { label: 'Worker', key: 'worker' },
+    { label: 'Appt', render: r => r.appointment_at ? fmt.dt(r.appointment_at) : '—' }, // "Consent on file" only when a live Part 2 consent names this provider (server/routes/referrals.js
+    // withConsentOnFile): a general release, or a consent naming someone else, does not let the referral share.
+    { label: 'Consent', render: r => r.consent_revoked ? badge('Consent revoked', 'danger') : r.consent_on_file ? badge('Consent on file', 'ok') : badge('No Part 2 consent', 'warn') }, { label: 'Barrier', render: r => r.barrier && r.barrier !== 'none' ? fmt.label(r.barrier) : '' }, { label: 'Worker', key: 'worker' },
     { label: 'Outcome', render: r => (r.outcome_recorded_at ? badge('Recorded', 'ok') : badge('Not yet', 'warn')) },
     { label: '', render: r => can('referrals:write') ? h('div', { class: 'row nowrap' },
       !r.outcome_recorded_at ? h('button', { class: 'btn sm primary', onClick: () => openOutcomeForm(r, onChange) }, 'Record outcome') : null,
@@ -202,7 +228,7 @@ route('referrals', async (r) => {
   const refresh = () => nav(`referrals?status=${status}&_=${Date.now()}`);
   const sel = h('select', { onChange: () => nav(`referrals?status=${sel.value}`) }, [['open', 'Open (pending → scheduled)'], ['all', 'All'], ...listFilterOptions('REFERRAL_STATUSES').map(o => [o.value, o.label])].map(([v, l]) => h('option', { value: v, selected: v === status }, l)));
   return h('div', {},
-    pageHead('Referrals', can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, { onDone: refresh }) }, '+ New referral') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/referrals?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
+    pageHead('Referrals', can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, { onDone: refresh }) }, '+ Referral') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/referrals?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel)),
     pagedList({ first: data, url: `/api/referrals${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => referralTable(rows, { onChange: refresh }), summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} referrals`) }));
 });
