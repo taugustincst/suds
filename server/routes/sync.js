@@ -63,31 +63,83 @@ function droppedClients(user, since) {
 // created (or re-opened, or otherwise changed) in this page's window (since, cursor], and no assignment of
 // theirs that was already active before `since` kept the client in scope then. Assigning an existing client
 // changes no client row, so a pull by updated_at alone sent the assignment and nothing else: the client, and
-// every note, consent and visit recorded before the assignment, never reached the device. The page that
-// carries the assignment carries the client's whole current record set too (pull, below). Detected per page
-// window, not against the first `since`, because the device's cursor moves on after every page.
+// every note, consent and visit recorded before the assignment, never reached the device. Those rows follow
+// as backfill pages (below). Detected per page window, not against the first `since`, because the device's
+// cursor moves on after every page. As SQL, so the backfill can re-derive the same set on every page
+// without carrying a list of client ids.
+function newlyInScopeSql(user, since, cursor) {
+  return { sql: `SELECT DISTINCT a.client_id FROM assignments a WHERE a.user_id=? AND ${auth.activeAssignment('a.')} AND a.updated_at > ? AND a.updated_at <= ?
+    AND NOT EXISTS (SELECT 1 FROM assignments b WHERE b.client_id=a.client_id AND b.user_id=? AND b.updated_at <= ? AND ${auth.activeAssignment('b.')})`,
+  params: [user.id, since, cursor, user.id, since] };
+}
 function newlyInScope(user, since, cursor) {
   if (!auth.caseloadRestricted(user) || since === NEVER) return [];
-  return db.all(`SELECT DISTINCT a.client_id FROM assignments a WHERE a.user_id=? AND ${auth.activeAssignment('a.')} AND a.updated_at > ? AND a.updated_at <= ?
-    AND NOT EXISTS (SELECT 1 FROM assignments b WHERE b.client_id=a.client_id AND b.user_id=? AND b.updated_at <= ? AND ${auth.activeAssignment('b.')})`,
-  user.id, since, cursor, user.id, since).map(r => r.client_id);
+  const q = newlyInScopeSql(user, since, cursor);
+  return db.all(q.sql, ...q.params).map(r => r.client_id);
 }
-// The rows of `t` that belong to `clientIds` and are not newer than `since` (anything newer is in the page
-// already, or in a later one), still limited by the table's own scope.
-function backfillRows(t, user, clientIds, since) {
-  let col;
-  if (t.name === 'clients') col = 'x.id';
-  else if ((t.scope === 'client' || t.scope === 'client-or-null') && t.clientCol) col = `x.${t.clientCol}`;
-  else if (t.scope === 'via-note') col = null;
-  else return [];
-  const sc = scopeSql(t, user, 'x');
-  const out = [];
-  for (let i = 0; i < clientIds.length; i += 400) {
-    const chunk = clientIds.slice(i, i + 400); const marks = chunk.map(() => '?').join(',');
-    const where = col ? `${col} IN (${marks})` : `x.note_id IN (SELECT n.id FROM notes n WHERE n.client_id IN (${marks}))`;
-    out.push(...db.all(`SELECT x.* FROM ${t.name} x WHERE ${where} AND x.updated_at <= ? AND ${sc.sql} ORDER BY x.updated_at`, ...chunk, since, ...sc.params));
+
+// ---- backfill: the rows of newly assigned clients, in pages ----
+// Up to 1.12.0 the whole record set of every newly assigned client rode on the page that carried the
+// assignment, whatever its size: one client with 40,000 visits made a single pull of 40,531 rows (25.5 MB of
+// JSON, 810 ms of synchronous work) against a page limit of 2,000, and a bulk caseload transfer did the same
+// for every client moved. Now the page that finds new clients says so and ends there; the backfill follows in
+// pages of at most `limit` rows in all, walked table by table in a keyset order (the row's client -- or note,
+// for addenda -- then its id), and resumed from a position carried inside the pull cursor:
+//
+//     <timestamp>~bf.<base64url JSON { v: 1, from, t, k, i }>
+//
+// `timestamp` is the page's own cursor (the end of the window the clients arrived in), `from` the start of
+// that window (only rows not newer than it are backfilled; anything newer comes with the ordinary pages), `t`
+// the table and `k`/`i` the last key sent. While a backfill is under way the ordinary pages wait; when it is
+// done the cursor is the plain timestamp again and the device carries on from there. An older kernel stores
+// and echoes the cursor without reading it and loops until `complete`, so it receives the same pages; if it
+// stops early (its page cap), its stored cursor resumes the backfill at the next sync. The position is only a
+// place in a keyset: every row still passes the table's scope and read rules, so a forged cursor cannot
+// fetch anything a full resync would not.
+const BF_MARK = '~bf.';
+function backfillKey(t) {
+  if (t.name === 'clients') return { key: 'id', where: (arrived) => `x.id IN (${arrived})` };
+  if ((t.scope === 'client' || t.scope === 'client-or-null') && t.clientCol) return { key: t.clientCol, where: (arrived) => `x.${t.clientCol} IN (${arrived})` };
+  if (t.scope === 'via-note') return { key: 'note_id', where: (arrived) => `x.note_id IN (SELECT n.id FROM notes n WHERE n.client_id IN (${arrived}))` };
+  return null;
+}
+const bfTables = () => SYNC.tables.filter(backfillKey);
+function encodeCursor(ts, bf) { return ts + BF_MARK + Buffer.from(JSON.stringify({ v: 1, ...bf })).toString('base64url'); }
+function parseCursor(raw) {
+  const at = raw.indexOf(BF_MARK);
+  if (at < 0) return { since: raw, bf: null };
+  const since = raw.slice(0, at);
+  let bf = null;
+  try { bf = JSON.parse(Buffer.from(raw.slice(at + BF_MARK.length), 'base64url').toString('utf8')); } catch { bf = null; }
+  const str = (v) => typeof v === 'string' && v.length <= 200;
+  const ok = bf && typeof bf === 'object' && bf.v === 1 && str(bf.from) && bf.from < since && bfTables().some(t => t.name === bf.t)
+    && (bf.k === null || str(bf.k)) && (bf.i === null || str(bf.i)) && (bf.k === null) === (bf.i === null);
+  if (!ok) throw badRequest('This device\'s sync position is damaged. Sync again; if this repeats, reset the device\'s sync from This device.');
+  return { since, bf: { from: bf.from, t: bf.t, k: bf.k, i: bf.i } };
+}
+/** One backfill page: at most `limit` rows in all, from position `bf`. Returns { raw, next } (next null when done). */
+function backfillPage(user, until, bf, limit) {
+  const arrivedQ = newlyInScopeSql(user, bf.from, until);
+  const tables = bfTables();
+  const raw = {}; let budget = limit; let next = null;
+  for (let ti = tables.findIndex(t => t.name === bf.t); ti < tables.length; ti++) {
+    const t = tables[ti]; const { key, where } = backfillKey(t);
+    const resume = t.name === bf.t && bf.k !== null;
+    if (budget <= 0) { next = resume ? { ...bf } : { from: bf.from, t: t.name, k: null, i: null }; break; }
+    const sc = scopeSql(t, user, 'x');
+    const after = resume ? `AND (x.${key} > ? OR (x.${key} = ? AND x.id > ?))` : '';
+    const rows = db.all(`SELECT x.* FROM ${t.name} x WHERE ${where(arrivedQ.sql)} AND x.updated_at <= ? AND ${sc.sql} ${after} ORDER BY x.${key}, x.id LIMIT ?`,
+      ...arrivedQ.params, bf.from, ...sc.params, ...(resume ? [bf.k, bf.k, bf.i] : []), budget + 1);
+    if (rows.length > budget) {
+      // More in this table than the page has room for: send what fits and remember where it stopped.
+      const sent = rows.slice(0, budget); const last = sent[sent.length - 1];
+      raw[t.name] = sent;
+      next = { from: bf.from, t: t.name, k: last[key], i: last.id };
+      break;
+    }
+    raw[t.name] = rows; budget -= rows.length;
   }
-  return out;
+  return { raw, next };
 }
 
 // Pull everything changed since `since` that the user may see, in bounded pages.
@@ -96,8 +148,10 @@ function backfillRows(t, user, clientIds, since) {
 // instant. Cutting a page in the middle of one timestamp would lose every row after the cut, because the
 // next request asks for `> cursor`. So a page always ends on a timestamp boundary — and when a single
 // timestamp is itself bigger than a page, that timestamp is sent whole rather than split.
-function pull(user, since, { limit = PULL_LIMIT } = {}) {
+function pull(user, sinceRaw, { limit = PULL_LIMIT } = {}) {
   const serverNow = db.now();
+  const { since, bf } = parseCursor(String(sinceRaw || NEVER));
+  if (bf) return pullBackfill(user, since, bf, limit, serverNow);
   const raw = {}; const capped = [];
 
   for (const t of SYNC.tables) {
@@ -120,18 +174,51 @@ function pull(user, since, { limit = PULL_LIMIT } = {}) {
 
   // Every table stops at the same instant, so the cursor stays a single point in time.
   const cursor = capped.length ? capped.reduce((a, b) => (a < b ? a : b)) : serverNow;
-  const complete = capped.length === 0;
+  const out = baseAnswer(cursor, serverNow, capped.length === 0);
+  exportInto(out, user, raw, cursor);
+  // Newly assigned clients arrive whole: everything recorded about them before `since` as well, in the
+  // backfill pages that follow this one (backfillPage). The cursor carries where they start.
+  if (newlyInScope(user, since, cursor).length) {
+    out.cursor = encodeCursor(cursor, { from: since, t: bfTables()[0].name, k: null, i: null });
+    out.complete = false;
+    out.backfill = true;
+  }
+  out.dropped_clients = droppedClients(user, since);
+  out.tombstones = db.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ? AND deleted_at <= ? ORDER BY deleted_at`, since, cursor);
+  resyncCheck(out, since);
+  return out;
+}
 
-  // Newly assigned clients arrive whole: everything recorded about them before `since` as well.
-  const arrived = newlyInScope(user, since, cursor);
-  if (arrived.length) for (const t of SYNC.tables) { const extra = backfillRows(t, user, arrived, since); if (extra.length) raw[t.name] = raw[t.name].concat(extra); }
-
-  // db_generation changes when the office database is restored from a backup (server/backup.js). A device
-  // that sees a value it did not expect knows the office may have lost rows it had already accepted, forgets
-  // what it thought was exchanged, and offers everything it holds again.
-  const out = { cursor, server_now: serverNow, complete, db_generation: db.getSetting('db_generation', null), tables: {}, tombstones: [], settings: {}, skipped: [] };
+// db_generation changes when the office database is restored from a backup (server/backup.js). A device
+// that sees a value it did not expect knows the office may have lost rows it had already accepted, forgets
+// what it thought was exchanged, and offers everything it holds again.
+function baseAnswer(cursor, serverNow, complete) {
+  const out = { cursor, server_now: serverNow, complete, db_generation: db.getSetting('db_generation', null), tables: {}, tombstones: [], settings: {}, skipped: [], dropped_clients: [] };
+  for (const k of SYNC.settings_keys) out.settings[k] = db.getSetting(k, null);
+  // The office's calendar goes to its devices, so "today" and a visit's service date are the same day on
+  // both (the zone in force: the setting, else ORG_TIMEZONE).
+  out.settings.org_timezone = require('./budget').orgTimezone() || null;
+  return out;
+}
+// A device that has been away longer than tombstones are kept cannot be told what was deleted, so it is
+// sent for a full resync instead of quietly keeping rows everyone else has dropped.
+function resyncCheck(out, since) {
+  const horizon = db.getSetting('tombstone_purged_before', null);
+  if (horizon && since !== NEVER && since < horizon) { out.full_resync_required = true; out.reason = 'This device has been offline longer than deletions are kept; it will rebuild from the office copy.'; }
+}
+/** A backfill page (backfillPage): rows only -- the ordinary page before it carried the tombstones and drops. */
+function pullBackfill(user, since, bf, limit, serverNow) {
+  const { raw, next } = backfillPage(user, since, bf, limit);
+  const out = baseAnswer(next ? encodeCursor(since, next) : since, serverNow, false);
+  out.backfill = !!next;
+  exportInto(out, user, raw, null);
+  resyncCheck(out, bf.from);
+  return out;
+}
+function exportInto(out, user, raw, cursor) {
   for (const t of SYNC.tables) {
-    let rows = raw[t.name].filter(r => r.updated_at <= cursor);
+    let rows = raw[t.name] || [];
+    if (cursor) rows = rows.filter(r => r.updated_at <= cursor);
     if (t.name === 'users') rows = rows.map(r => ({ ...(r.id === user.id ? r : { ...r, password_hash: 'scrypt$0$0$0$AA==$AA==' }), mfa_secret_enc: null, mfa_enabled: 0 })); // devices get own password hash for offline login; never MFA secrets
     if (t.name === 'notes' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => r.kind !== 'clinical'); // minimum necessary
     if (t.readPerm && !auth.hasPerm(user, t.readPerm)) rows = []; // minimum necessary (clinical assessments, the care plan)
@@ -144,17 +231,6 @@ function pull(user, since, { limit = PULL_LIMIT } = {}) {
     }
     out.tables[t.name] = exported;
   }
-  out.dropped_clients = droppedClients(user, since);
-  out.tombstones = db.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ? AND deleted_at <= ? ORDER BY deleted_at`, since, cursor);
-  // A device that has been away longer than tombstones are kept cannot be told what was deleted, so it is
-  // sent for a full resync instead of quietly keeping rows everyone else has dropped.
-  const horizon = db.getSetting('tombstone_purged_before', null);
-  if (horizon && since !== NEVER && since < horizon) { out.full_resync_required = true; out.reason = 'This device has been offline longer than deletions are kept; it will rebuild from the office copy.'; }
-  for (const k of SYNC.settings_keys) out.settings[k] = db.getSetting(k, null);
-  // The office's calendar goes to its devices, so "today" and a visit's service date are the same day on
-  // both (the zone in force: the setting, else ORG_TIMEZONE).
-  out.settings.org_timezone = require('./budget').orgTimezone() || null;
-  return out;
 }
 
 // Apply rows from a device. Last write wins by updated_at; users are never overwritten from devices.
@@ -650,7 +726,7 @@ module.exports = (r) => {
     const since = ctx.query.get('since') || NEVER;
     const limit = Math.min(Number(ctx.query.get('limit')) || PULL_LIMIT, PULL_LIMIT);
     const out = pull(ctx.user, since, { limit });
-    audit.log({ user: ctx.user, action: 'sync.pull', ip: ctx.ip, details: { since, complete: out.complete, rows: Object.fromEntries(Object.entries(out.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
+    audit.log({ user: ctx.user, action: 'sync.pull', ip: ctx.ip, details: { since: since.split(BF_MARK)[0], backfill: since.includes(BF_MARK) || undefined, complete: out.complete, rows: Object.fromEntries(Object.entries(out.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
     return out;
   });
 

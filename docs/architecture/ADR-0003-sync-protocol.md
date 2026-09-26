@@ -21,10 +21,19 @@ indexes are recomputed by the receiver. What syncs, per table, is declared once 
 2,000 per table per response, each page ending on an `updated_at` boundary so no row with the same timestamp
 is lost; `complete: false` means "come back". Other users' password hashes are replaced with a dummy. A
 client that came onto the user's caseload inside a page's window (an active assignment of theirs created or
-changed after the cursor, with none of theirs active before it) arrives whole: that page also carries every
-row about the client older than the cursor — notes, consents, visits and the rest, within each table's scope
-and read permission (`newlyInScope`, `backfillRows`). Assigning an existing client changes no client row, so
-before this the device received the assignment and nothing it pointed at. A client taken off the caseload is
+changed after the cursor, with none of theirs active before it) arrives whole: every row about the client
+older than the cursor — notes, consents, visits and the rest, within each table's scope and read permission —
+follows in **backfill pages** (`newlyInScope`, `backfillPage`). Assigning an existing client changes no client
+row, so before this the device received the assignment and nothing it pointed at. The page that finds new
+clients ends there with `complete: false` and a cursor that carries the backfill position
+(`<timestamp>~bf.<base64url JSON {v, from, t, k, i}>`: the window the clients arrived in, and the last
+table/key/id sent); each backfill page holds at most the page limit in all, walked table by table in
+(client — or note, for addenda — , id) keyset order, and the last one hands back the plain timestamp. Up to
+1.12.0 the whole backfill rode on one page (a client with 40,000 visits: one 40,531-row, 25.5 MB answer). The
+device treats the cursor as opaque and stores it after every page, so an older kernel that only echoes it back
+until `complete` gets the same pages, and a sync cut short resumes the backfill at the next one; a damaged
+cursor is refused (400), and a forged position fetches nothing a full resync would not (every row still passes
+scope and read rules). A client taken off the caseload is
 listed in `dropped_clients` for the device to purge; assigned again later, it arrives whole again.
 
 **Push.** Each row is applied in its own savepoint; a failure rejects that row (with a reason the device
@@ -67,6 +76,7 @@ lost. Nothing is marked sent until the server acknowledges it — rows, tombston
 ## Tests that pin it
 
 `test/sync.test.js` (permission and caseload on push, conflicts, tombstones, paging, generation, every
-`_enc` column declared), `test/concurrency.test.js`, `test/device-audit.test.js`, `test/devices.test.js`
+`_enc` column declared), `test/sync-scope.test.js` and `test/sync-backfill.test.js` (newly assigned clients
+arrive whole, in pages within the limit; a caseload transfer; a sync cut short resumes), `test/concurrency.test.js`, `test/device-audit.test.js`, `test/devices.test.js`
 (revoke / remote wipe), `test/disclosure-gates.test.js` (a device's consent push re-checked); browser scripts
 `scripts/ui/sync-two-way.mjs`, `scripts/ui/multitab.mjs`.
