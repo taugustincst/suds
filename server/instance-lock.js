@@ -8,24 +8,33 @@
 // against, not a theoretical one: it can corrupt the database. Enforced with a lock file rather than
 // documented and hoped for.
 //
-// The lock file records {pid, hostname, bootId, startTime, at}, and its holder touches it (mtime) every
-// HEARTBEAT_MS while it runs. Whether a lock left in place is stale is decided in one of two ways:
+// The lock file records {pid, hostname, rootId, pidNs, machineId, bootId, startTime, at}, and its holder
+// touches it (mtime) every HEARTBEAT_MS while it runs. Whether a lock left in place is stale is decided in one
+// of two ways:
 //
-//   * Written on THIS host (same os.hostname()): local process facts are conclusive. A lock naming this very
+//   * Written by THIS host or container -- the same os.hostname() AND the same container identity: a digest
+//     of the root mount as /proc/self/mountinfo describes it (filesystem type, source and options: for a
+//     container, its own overlay upper directory, which a restart of the same container keeps and no other
+//     container has), else the pid namespace (/proc/self/ns/pid) when no root digest is recorded; and, when
+//     both sides have one, the same /etc/machine-id. Hostnames alone are not enough: network_mode: host, a
+//     fixed `hostname:` or a StatefulSet pod rescheduled onto another node gives two containers the same
+//     hostname and the same pid (1), and up to 1.12.0 the second took the first's live lock over as "own pid"
+//     (the first then stopped, and with restart policies the two alternated). Here local process facts are
+//     conclusive. A lock naming this very
 //     process's pid (and not held by this process — node is PID 1, or tini's child, on every container
 //     start), a lock from a previous boot (kernel boot id), a pid that is not running, or a pid now owned by
 //     a process that started at a different time (/proc/<pid>/stat field 22) is stale at once. Otherwise the
 //     holder is alive and the lock is refused.
-//   * Written by ANOTHER host — a different machine on shared storage, or another container (Docker gives
-//     every container its own hostname; a restarted container keeps it, a new replica or a fresh
-//     `docker run` gets a new one): its pid, boot id and start time say nothing about processes here (every
+//   * Written by ANOTHER host or container — a different machine on shared storage, or another container
+//     (a different hostname, or the same hostname with a different container identity): its pid, boot id and start time say nothing about processes here (every
 //     replica's node has the same pid and they share the host's boot id), so only the heartbeat counts. The
 //     lock is stale when its mtime is older than STALE_MS (3 heartbeats + margin for clock skew and a slow
 //     disk). Start-up waits up to WAIT_MS for that to happen and otherwise refuses with a message naming the
 //     host and the heartbeat's age.
 //
-// Lock files from 1.12.0 and earlier (a plain pid, or JSON without a hostname) were only ever meant for one
-// host, and are judged as written on this one (the rules those versions applied themselves).
+// Lock files from 1.12.0 and earlier (a plain pid, or JSON without a hostname or identity) are judged as
+// written on this host when the hostname matches or is absent (the rules those versions applied themselves).
+// Without /proc (not Linux) there is no identity to compare, and the hostname decides, as before.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -41,6 +50,48 @@ function bootId() {
 
 function hostname() {
   try { return os.hostname() || null; } catch { return null; }
+}
+
+/**
+ * A digest of the mount on "/" (the last one listed wins, as the kernel does): filesystem type, source and
+ * super-block options, not the device number (an overlay's is allocated afresh at every mount). For a
+ * container that is its own overlay upper directory: kept by a restart of the same container, never shared
+ * with another. Null without /proc.
+ */
+function rootId() {
+  try {
+    let desc = null;
+    for (const line of fs.readFileSync('/proc/self/mountinfo', 'utf8').split('\n')) {
+      const f = line.split(' ');
+      if (f[4] !== '/') continue;
+      const dash = f.indexOf('-', 6);
+      if (dash > 0) desc = f.slice(dash + 1).join(' ');
+    }
+    return desc ? require('node:crypto').createHash('sha256').update(desc).digest('hex').slice(0, 16) : null;
+  } catch { return null; }
+}
+/** The pid namespace, e.g. "pid:[4026532001]": a container's own, unless it shares the host's. */
+function pidNs() {
+  try { return fs.readlinkSync('/proc/self/ns/pid') || null; } catch { return null; }
+}
+function machineId() {
+  try { return fs.readFileSync('/etc/machine-id', 'utf8').trim() || null; } catch { return null; }
+}
+function identity() {
+  return { hostname: hostname(), rootId: rootId(), pidNs: pidNs(), machineId: machineId() };
+}
+
+/**
+ * Was the lock `rec` written by this host or container (so local process facts apply)? The hostname must
+ * match; then the machine id, when both sides have one; then the root mount digest when both have one, else
+ * the pid namespace when both have one. A lock with none of these (older formats) is judged by hostname alone.
+ */
+function sameInstance(rec, me) {
+  if (rec.hostname && rec.hostname !== me.hostname) return false;
+  if (rec.machineId && me.machineId && rec.machineId !== me.machineId) return false;
+  if (rec.rootId && me.rootId) return rec.rootId === me.rootId;
+  if (rec.pidNs && me.pidNs) return rec.pidNs === me.pidNs;
+  return true;
 }
 
 /** Process start time in clock ticks since boot (a string), or null when /proc is not available. */
@@ -65,16 +116,17 @@ function parseLock(text) {
       const o = JSON.parse(t);
       const pid = Number(o.pid);
       if (!Number.isInteger(pid) || pid <= 0) return null;
+      const str = (v) => (typeof v === 'string' && v ? v : null);
       return {
         pid,
-        hostname: typeof o.hostname === 'string' && o.hostname ? o.hostname : null,
+        hostname: str(o.hostname), rootId: str(o.rootId), pidNs: str(o.pidNs), machineId: str(o.machineId),
         bootId: o.bootId || null,
         startTime: o.startTime != null ? String(o.startTime) : null,
       };
     } catch { return null; }
   }
   const pid = parseInt(t, 10);
-  return pid > 0 ? { pid, hostname: null, bootId: null, startTime: null } : null;
+  return pid > 0 ? { pid, hostname: null, rootId: null, pidNs: null, machineId: null, bootId: null, startTime: null } : null;
 }
 
 // Lock files this process currently holds: a second acquire of the same one in this process is refused.
@@ -120,8 +172,10 @@ function acquire(dataDir, opts = {}) {
   if (held.has(key)) {
     throw new Error(`This SUDS process (pid ${process.pid}) is already running against this data directory (${dataDir}); it cannot be opened twice.`);
   }
-  const me = hostname();
-  const mine = JSON.stringify({ pid: process.pid, hostname: me, bootId: bootId(), startTime: startTime(process.pid), at: new Date().toISOString() });
+  // `opts.identity` stands in for this process's own (tests).
+  const ident = { ...identity(), ...(opts.identity || {}) };
+  const me = ident.hostname;
+  const mine = JSON.stringify({ pid: process.pid, hostname: me, rootId: ident.rootId, pidNs: ident.pidNs, machineId: ident.machineId, bootId: bootId(), startTime: startTime(process.pid), at: new Date().toISOString() });
   const started = Date.now();
   let told = false;
   for (;;) {
@@ -136,24 +190,26 @@ function acquire(dataDir, opts = {}) {
       const rec = parseLock(text);
       let reason;
       if (!rec) reason = 'unreadable';
-      else if (!rec.hostname || rec.hostname === me) {
+      else if (sameInstance(rec, ident)) {
         reason = localStaleReason(rec);
         if (!reason) {
           throw new Error(`Another SUDS process (pid ${rec.pid}${rec.hostname ? ` on ${rec.hostname}` : ''}) is already running against this data directory (${dataDir}). Running more than one instance against the same database is not supported (see docs/DEPLOYMENT.md, "Single instance only") and can corrupt it. If that process has actually stopped, remove ${file} and start again.`);
         }
       } else {
-        // Another host or container: only its heartbeat tells us whether it is alive.
+        // Another host or container (perhaps under the same hostname): only its heartbeat tells us whether it
+        // is alive.
         const age = Math.max(0, Date.now() - mtimeMs); // negative = clock skew; treat as fresh
+        const where = rec.hostname === me ? `another container or host under this same hostname "${rec.hostname}"` : `host/container "${rec.hostname}"`;
         if (age > staleMs) reason = 'heartbeat-stale';
         else {
           const waited = Date.now() - started;
           if (waited < waitMs) {
-            if (!told) console.warn(`[suds] instance lock: held by pid ${rec.pid} on ${rec.hostname} (last heartbeat ${secs(age)} s ago); waiting up to ${secs(waitMs)} s for it to stop or go stale (${secs(staleMs)} s without a heartbeat)`);
+            if (!told) console.warn(`[suds] instance lock: held by pid ${rec.pid} on ${where} (last heartbeat ${secs(age)} s ago); waiting up to ${secs(waitMs)} s for it to stop or go stale (${secs(staleMs)} s without a heartbeat)`);
             told = true;
             sleepSync(Math.min(Math.max(staleMs - age + 10, 10), waitMs - waited, 1000));
             continue;
           }
-          throw new Error(`Another SUDS process (pid ${rec.pid} on host/container "${rec.hostname}") is already running against this data directory (${dataDir}): its last heartbeat was ${secs(age)} s ago (waited ${secs(waited)} s). Running more than one instance against the same database is not supported (see docs/DEPLOYMENT.md, "Single instance only") and can corrupt it — stop the other instance or scale to one replica. If "${rec.hostname}" has really stopped (e.g. it crashed moments ago), this start will succeed once ${secs(staleMs)} s have passed without a heartbeat; a restart policy will retry on its own.`);
+          throw new Error(`Another SUDS process (pid ${rec.pid} on ${where}) is already running against this data directory (${dataDir}): its last heartbeat was ${secs(age)} s ago (waited ${secs(waited)} s). Running more than one instance against the same database is not supported (see docs/DEPLOYMENT.md, "Single instance only") and can corrupt it — stop the other instance or scale to one replica. If "${rec.hostname}" has really stopped (e.g. it crashed moments ago), this start will succeed once ${secs(staleMs)} s have passed without a heartbeat; a restart policy will retry on its own.`);
         }
       }
       // A lock from a process that is no longer running (it crashed, the container was killed, the machine
@@ -200,4 +256,4 @@ function acquire(dataDir, opts = {}) {
   return release;
 }
 
-module.exports = { acquire, HEARTBEAT_MS, STALE_MS, WAIT_MS, _internals: { bootId, startTime, parseLock, hostname } };
+module.exports = { acquire, HEARTBEAT_MS, STALE_MS, WAIT_MS, _internals: { bootId, startTime, parseLock, hostname, rootId, pidNs, machineId, identity, sameInstance } };
