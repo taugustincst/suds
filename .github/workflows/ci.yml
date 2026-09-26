@@ -37,8 +37,11 @@ jobs:
       - name: Syntax-check browser modules
         working-directory: src
         run: for f in public/*.js public/views/*.js; do node --input-type=module --check < "$f" || exit 1; done
-  # The publication-release disclosure sweeps at full size (SUDS_THOROUGH=1): the random-programme property
-  # test, the algorithm-aware attacker at thresholds 3 and 5, and the refusal sweep. npm test runs a sample.
+  # Everything with SUDS_THOROUGH=1 (scripts/test-thorough.js finds it by convention): the publication-release
+  # disclosure sweeps at full size (the random-programme property test, the algorithm-aware attacker at
+  # thresholds 3 and 5, the refusal sweep; npm test runs a sample), every other test/*.test.js that reads
+  # SUDS_THOROUGH (timing budgets), and the pure performance checks in test/thorough/, which npm test does
+  # not run so that a busy runner cannot flake the required `test` job.
   thorough:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -53,11 +56,11 @@ jobs:
       - name: Install
         working-directory: src
         run: npm ci --no-audit --no-fund
-      - name: Disclosure sweeps, full size
+      - name: Thorough tests (full-size disclosure sweeps, performance checks)
         working-directory: src
         env:
           SUDS_THOROUGH: '1'
-        run: node --no-warnings=ExperimentalWarning --test test/publication-release.test.js
+        run: node scripts/test-thorough.js
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -85,22 +88,27 @@ jobs:
   # the next LTS line (docs/DEPLOYMENT.md, "Node.js support and the move to 24"). Required (it passed on the
   # 1.11.0 release commit); the release gate (scripts/release-gate.js) refuses a commit where it
   # failed, so a Node 24 break is fixed before the move rather than discovered by it. There is no setup-node
-  # action (marketplace actions are off), so the official tarball is downloaded and checked against SHASUMS.
+  # action (marketplace actions are off), so the official tarball is downloaded and checked against a SHA-256
+  # pinned HERE, not one read from the same server as the tarball. The version is exact, so no push is tested
+  # on a different Node from the one before it without a commit saying so. To bump it (docs/RELEASE.md,
+  # "Bumping the pinned Node 24"): take the version and the linux-x64 .tar.xz line of
+  # https://nodejs.org/dist/v<version>/SHASUMS256.txt (after checking its signature, SHASUMS256.txt.asc) and
+  # change both lines below in one commit. test/release-gate.test.js checks their shape.
   node24:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      NODE24_VERSION: v24.21.0
+      NODE24_SHA256: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
     steps:
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
-      - name: Install Node 24 (official tarball, checksum verified)
+      - name: Install Node 24 (pinned version, pinned checksum)
         run: |
-          base=https://nodejs.org/dist/latest-v24.x
+          file="node-${NODE24_VERSION}-linux-x64.tar.xz"
           cd "$RUNNER_TEMP"
-          curl -fsSLO "$base/SHASUMS256.txt"
-          file="$(grep -o 'node-v24\.[0-9.]*-linux-x64\.tar\.xz' SHASUMS256.txt | head -1)"
-          [ -n "$file" ] || { echo "::error::No linux-x64 tarball listed in $base/SHASUMS256.txt"; exit 1; }
-          curl -fsSLO "$base/$file"
-          grep " $file\$" SHASUMS256.txt | sha256sum -c -
+          curl -fsSLO "https://nodejs.org/dist/${NODE24_VERSION}/${file}"
+          echo "${NODE24_SHA256}  ${file}" | sha256sum -c - || { echo "::error::${file} does not match the SHA-256 pinned in ci.yml"; exit 1; }
           mkdir -p node24 && tar -xJf "$file" -C node24 --strip-components=1
           echo "$RUNNER_TEMP/node24/bin" >> "$GITHUB_PATH"
       - name: Install

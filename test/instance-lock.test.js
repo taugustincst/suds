@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { acquire } = require('../server/instance-lock');
+const { waitFor } = require('./wait');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-lock-'));
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -173,11 +174,13 @@ test('another host whose heartbeat is older than the stale window is taken over'
 
 test('start-up waits for another host\'s heartbeat to go stale, then takes over', () => {
   const d = fs.mkdtempSync(path.join(dir, 'wait-'));
-  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: 7, hostname: 'gone' }));
-  ageLock(d, 200); // 200 ms old; stale at 400 ms
-  const t0 = Date.now();
-  const release = acquire(d, { ...fast, waitMs: 3000 });
-  assert.ok(Date.now() - t0 >= 150, 'it waited');
+  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: 7, hostname: 'gone' })); // a fresh heartbeat
+  // That it waited is read from what it said, not from a stopwatch (a lower bound on elapsed time depends on
+  // the file system's mtime precision and on how quickly this line runs after the write).
+  const warned = []; const warn = console.warn; console.warn = (m) => warned.push(String(m));
+  let release;
+  try { release = acquire(d, { ...fast, staleMs: 600, waitMs: 10_000 }); } finally { console.warn = warn; }
+  assert.ok(warned.some((m) => /held by pid 7 on host\/container "gone".*waiting up to/.test(m)), `it waited for the heartbeat to go stale: ${warned.join(' | ')}`);
   assert.equal(lockOf(d).hostname, HOST);
   release();
 });
@@ -186,9 +189,9 @@ test('the holder refreshes the heartbeat (the lock file\'s mtime) while it runs'
   const d = fs.mkdtempSync(path.join(dir, 'beat-'));
   const release = acquire(d, fast);
   ageLock(d, 5000);
-  await new Promise((r) => setTimeout(r, 200));
-  const age = Date.now() - fs.statSync(path.join(d, '.suds.lock')).mtimeMs;
-  assert.ok(age < 1000, `heartbeat refreshed (age ${age} ms)`);
+  const aged = fs.statSync(path.join(d, '.suds.lock')).mtimeMs;
+  // Refreshed means the mtime moved forward from the aged value — waited for, not slept on.
+  await waitFor(() => fs.statSync(path.join(d, '.suds.lock')).mtimeMs > aged + 4000, { message: 'the heartbeat to refresh the lock' });
   release();
 });
 
@@ -197,7 +200,7 @@ test('a holder whose lock was taken over is told (onLost), so it can stop writin
   let lost = null;
   const release = acquire(d, { ...fast, onLost: (why) => { lost = why; } });
   fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: 99, hostname: 'usurper' }));
-  await new Promise((r) => setTimeout(r, 200));
+  await waitFor(() => lost, { message: 'onLost' });
   assert.ok(lost, 'onLost was called');
   release();
   assert.equal(lockOf(d).hostname, 'usurper', 'release leaves the new holder\'s lock alone');

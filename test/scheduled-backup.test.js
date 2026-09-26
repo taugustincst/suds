@@ -144,8 +144,12 @@ test('a scheduled backup does not hold the event loop while it copies, encrypts 
   const ins = db.get().prepare('INSERT INTO zz_filler(b) VALUES (randomblob(1048576))');
   for (let i = 0; i < 48; i++) ins.run(); // ~48 MB
   const offsiteDir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-sched-backup-big-'));
-  let maxGap = 0; let last = performance.now();
-  const timer = setInterval(() => { const t = performance.now(); maxGap = Math.max(maxGap, t - last); last = t; }, 5);
+  // The yardstick is this machine, not a number of milliseconds: the synchronous backup (one frozen turn of
+  // the event loop, as the old scheduled path was) is timed on the same database first. A loaded CI runner
+  // slows both alike.
+  const s0 = performance.now(); require('../server/backup').create(); const blockingMs = performance.now() - s0;
+  let maxGap = 0; let last = performance.now(); let turns = 0;
+  const timer = setInterval(() => { const t = performance.now(); maxGap = Math.max(maxGap, t - last); last = t; turns++; }, 5);
   try {
     const t0 = performance.now();
     const pending = scheduled.run({ retain: 3, offsiteDir });
@@ -155,8 +159,11 @@ test('a scheduled backup does not hold the event loop while it copies, encrypts 
     assert.equal(out.verified, true, 'the read-back verification still runs');
     assert.equal(out.offsiteOk, true);
     // The blocking implementation's longest stall was the whole run. The non-blocking one yields between
-    // online-backup steps and encryption slices; generous slack for a loaded CI machine.
-    assert.ok(maxGap < Math.max(250, total / 3), `longest event-loop stall ${Math.round(maxGap)} ms of a ${Math.round(total)} ms backup`);
+    // online-backup steps and encryption slices, so the loop keeps turning and no single stall comes near
+    // the cost of doing the work in one go.
+    if (process.env.SUDS_PERF_VERBOSE) console.log(`[perf] backup ${Math.round(total)} ms, ${turns} turns, max stall ${Math.round(maxGap)} ms, blocking ${Math.round(blockingMs)} ms`);
+    assert.ok(turns >= 5, `the event loop turned ${turns} times during a ${Math.round(total)} ms backup`);
+    assert.ok(maxGap < blockingMs / 2, `longest event-loop stall ${Math.round(maxGap)} ms of a ${Math.round(total)} ms backup; the synchronous backup of the same database blocks for ${Math.round(blockingMs)} ms`);
   } finally {
     clearInterval(timer);
     db.get().exec('DROP TABLE zz_filler');

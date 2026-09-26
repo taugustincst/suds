@@ -29,6 +29,7 @@ const backup = require('../server/backup');
 const scheduled = require('../server/scheduled-backup');
 const anchor = require('../server/audit-anchor');
 const { encrypt, uuid } = require('../server/crypto');
+const { waitFor } = require('./wait');
 
 let server, base, cookie = '';
 let small;
@@ -66,26 +67,51 @@ async function login() {
 }
 after(async () => { await new Promise((res) => server.close(res)); db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
 
+// The scheduled backup's copy, observed and (optionally) held at its start, so a test knows the copy is under
+// way when the restore arrives instead of sleeping and hoping it still is (a fixed 30 ms sleep did both jobs
+// before; on a fast machine the backup could finish first, on a slow one it might not have started).
+function watchCopy({ hold = false } = {}) {
+  const real = backup.createToFileAsync;
+  let started, open;
+  const began = new Promise((res) => { started = res; });
+  const gate = hold ? new Promise((res) => { open = res; }) : Promise.resolve();
+  backup.createToFileAsync = async (...a) => { backup.createToFileAsync = real; started(); await gate; return real(...a); };
+  return { began, open: () => open && open(), restore: () => { backup.createToFileAsync = real; } };
+}
+
 test('a restore called directly (the CLI) while a scheduled backup is running is refused before anything is swapped', async () => {
   const gen = db.getSetting('db_generation', null);
   const n = db.one(`SELECT COUNT(*) n FROM clients`).n;
-  const running = scheduled.run({ retain: 5 });
-  await new Promise((res) => setTimeout(res, 30));
-  assert.throws(() => backup.restore(backup.decrypt(small)), (e) => e.code === 'EBUSY' && /backup is running/i.test(e.message));
-  const made = await running;
+  const copy = watchCopy();
+  let made;
+  try {
+    const running = scheduled.run({ retain: 5 });
+    await copy.began; // the online backup has started copying
+    assert.equal(require('../server/backup-lock').current()?.name, 'backup');
+    assert.throws(() => backup.restore(backup.decrypt(small)), (e) => e.code === 'EBUSY' && /backup is running/i.test(e.message));
+    made = await running;
+  } finally { copy.restore(); }
   assert.equal(db.one(`SELECT COUNT(*) n FROM clients`).n, n, 'the live database is untouched');
   assert.equal(db.getSetting('db_generation', null), gen);
   assert.equal(made.verified, true, `the backup was written whole and read back: ${made.verifyError}`);
 });
 
 test('a restore that arrives while a scheduled backup is running waits for it, then completes whole', async () => {
+  const lock = require('../server/backup-lock');
   const genBefore = db.getSetting('db_generation', null);
   const restoreAnchorsBefore = anchor.list().filter((f) => f.anchor.reason === 'restore').length;
-  const running = scheduled.run({ retain: 5 });
-  await new Promise((res) => setTimeout(res, 30));
   await login();
-  const r = await req('POST', '/api/admin/restore', { file_b64: small.toString('base64'), password: 'AdminPassw0rd!x', confirm: 'REPLACE' });
-  const made = await running;
+  const copy = watchCopy({ hold: true });
+  let r, made;
+  try {
+    const running = scheduled.run({ retain: 5 });
+    await copy.began;
+    const restoring = req('POST', '/api/admin/restore', { file_b64: small.toString('base64'), password: 'AdminPassw0rd!x', confirm: 'REPLACE' });
+    // The restore has reached the lock and is queued behind the backup (timers now skip their turn).
+    await waitFor(() => lock.paused() && lock.current()?.name === 'backup', { message: 'the restore to queue behind the backup' });
+    copy.open();
+    [r, made] = await Promise.all([restoring, running]);
+  } finally { copy.open(); copy.restore(); }
 
   assert.equal(r.status, 200, `the administrator is told the restore worked: ${JSON.stringify(r.data)}`);
   assert.equal(db.one(`SELECT COUNT(*) n FROM clients`).n, 1, 'the restored database is live');

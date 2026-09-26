@@ -1,4 +1,6 @@
 'use strict';
+// Performance tripwire: runs in the thorough CI job (SUDS_THOROUGH=1; test/thorough/, not npm test), so a busy
+// machine running the whole suite in parallel cannot flake it. Run it alone: node --test test/thorough/perf.test.js
 // A regression guard against the class of problem the "Fix scale" work fixed reactively (missing indexes,
 // unchunked sync, blocking scrypt): seed a dataset large enough that a dropped index or an accidental
 // N+1 actually shows up, then assert the pages navigators hit constantly stay fast. This is not a load
@@ -7,9 +9,9 @@
 // a county's real caseload is big enough to feel it.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
-const H = require('./helpers');
-const db = require('./helpers').db;
-const { encryptFields, uuid } = require('../server/clients-model');
+const H = require('../helpers');
+const db = require('../helpers').db;
+const { encryptFields, uuid } = require('../../server/clients-model');
 
 const CLIENTS = 1500;
 const INTERVENTIONS_PER_CLIENT = 8;
@@ -44,7 +46,7 @@ before(async () => {
       const id = uuid();
       const last = `Surname${i % 400}`, first = `First${i}`;
       const enc = encryptFields({ first_name: first, last_name: last, dob: '1990-01-01', phone: `555010${String(i).padStart(4, '0')}` });
-      enc.full_name_idx = require('../server/crypto').blindIndex(last + first);
+      enc.full_name_idx = require('../../server/crypto').blindIndex(last + first);
       const cols = {
         id, client_code: `C99-${String(i).padStart(5, '0')}`, status: i % 5 === 0 ? 'waitlist' : 'active',
         risk_level: ['low', 'moderate', 'high', 'critical'][i % 4], intake_date: '2026-01-01', created_by: workerId,
