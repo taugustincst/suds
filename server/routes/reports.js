@@ -154,6 +154,8 @@ module.exports = (r) => {
     const months = Math.min(24, Math.max(1, Number(ctx.query.get('months') || 12)));
     const start = new Date(); start.setUTCDate(1); start.setUTCMonth(start.getUTCMonth() - months + 1);
     const s = start.toISOString().slice(0, 10);
+    // Exact programme-wide counts of people by month: an insider view (docs/HIPAA.md, small cells), so it is audited.
+    audit.log({ user: ctx.user, action: 'report.monthly', ip: ctx.ip, details: { months } });
     return {
       intakes: db.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
       discharges: db.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),

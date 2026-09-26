@@ -1,6 +1,6 @@
 {
   "name": "suds",
-  "version": "1.12.1",
+  "version": "1.12.2",
   "description": "SUD Navigator Services Tracker — operations for harm-reduction and prevention programmes: outreach, visits, naloxone and supplies, referrals and grant reporting, with HIPAA and 42 CFR Part 2 privacy",
   "private": true,
   "type": "commonjs",

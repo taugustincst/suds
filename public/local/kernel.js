@@ -6682,7 +6682,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.12.1" : "local",
+      version: true ? "1.12.2" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -23153,365 +23153,398 @@ var require_small_cells = __commonJS({
   }
 });
 
-// server/funder-report.js
-var require_funder_report = __commonJS({
-  "server/funder-report.js"(exports, module) {
+// server/sdc.js
+var require_sdc = __commonJS({
+  "server/sdc.js"(exports, module) {
     "use strict";
     init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth2();
-    var { badRequest, forbidden } = require_http();
-    var { uuid: uuid2 } = require_crypto();
-    var { defer } = require_spreadsheet();
-    var SC = require_small_cells();
-    var breathe = () => new Promise((resolve2) => defer(resolve2));
-    var SMALL_CELL_DEFAULT = 11;
-    var PURPOSES = ["publication", "submission", "internal"];
-    var QUARTER_STARTS = [1, 4, 7, 10];
-    var lastDayOf = (year, month) => new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
-    function standardPeriod(from, to) {
-      const m = /^(\d{4})-(\d{2})-01$/.exec(from || "");
-      if (!m) return null;
-      const y = Number(m[1]);
-      const mo = Number(m[2]);
-      const end = (months) => {
-        const last = mo - 1 + months - 1;
-        return lastDayOf(y + Math.floor(last / 12), last % 12 + 1);
+    var EPS = 1e-9;
+    var FEAS = 1e-7;
+    function simplex(n, rows, lb, ub, c) {
+      const R = [];
+      for (const r of rows) {
+        let b = r.b;
+        for (let j = 0; j < n; j++) b -= r.a[j] * lb[j];
+        R.push({ a: r.a.slice(), op: r.op, b });
+      }
+      for (let j = 0; j < n; j++) {
+        if (ub[j] === Infinity) continue;
+        if (ub[j] < lb[j] - FEAS) return { status: "infeasible" };
+        const a2 = new Array(n).fill(0);
+        a2[j] = 1;
+        R.push({ a: a2, op: "<=", b: ub[j] - lb[j] });
+      }
+      for (const r of R) if (r.b < 0) {
+        r.a = r.a.map((x2) => -x2);
+        r.b = -r.b;
+        r.op = r.op === "<=" ? ">=" : r.op === ">=" ? "<=" : "=";
+      }
+      const m = R.length;
+      let nS = 0;
+      let nA = 0;
+      for (const r of R) {
+        if (r.op !== "=") nS++;
+        if (r.op !== "<=") nA++;
+      }
+      const W = n + nS + nA;
+      const T = [];
+      const basis = [];
+      const isArt = new Uint8Array(W);
+      let s = n;
+      let a = n + nS;
+      for (let i = 0; i < m; i++) {
+        const row = new Float64Array(W + 1);
+        const r = R[i];
+        for (let j = 0; j < n; j++) row[j] = r.a[j];
+        row[W] = r.b;
+        if (r.op === "<=") {
+          row[s] = 1;
+          basis.push(s);
+          s++;
+        } else if (r.op === ">=") {
+          row[s] = -1;
+          s++;
+          row[a] = 1;
+          isArt[a] = 1;
+          basis.push(a);
+          a++;
+        } else {
+          row[a] = 1;
+          isArt[a] = 1;
+          basis.push(a);
+          a++;
+        }
+        T.push(row);
+      }
+      const pivot = (z2, pi, pj) => {
+        const p = T[pi];
+        const v = p[pj];
+        for (let k = 0; k <= W; k++) p[k] /= v;
+        for (let i = 0; i < m; i++) {
+          if (i === pi) continue;
+          const f2 = T[i][pj];
+          if (Math.abs(f2) < EPS) continue;
+          const row = T[i];
+          for (let k = 0; k <= W; k++) row[k] -= f2 * p[k];
+        }
+        const f = z2[pj];
+        if (Math.abs(f) > EPS) for (let k = 0; k <= W; k++) z2[k] -= f * p[k];
+        basis[pi] = pj;
       };
-      if (to === end(1)) return "month";
-      if (QUARTER_STARTS.includes(mo) && to === end(3)) return "quarter";
-      if (QUARTER_STARTS.includes(mo) && to === end(12)) return "year";
-      return null;
-    }
-    var PERIOD_LABEL = { month: "one calendar month", quarter: "one quarter", year: "one year" };
-    function release(ctx, { from, to }, { fund = null } = {}) {
-      const why = [];
-      const period = standardPeriod(from, to);
-      if (fund) why.push("it is filtered to one funding source");
-      if (auth3.caseloadRestricted(ctx.user)) why.push("it counts only your caseload");
-      if (!period) why.push("its period is not a calendar month, a quarter or a year starting on 1 January, April, July or October");
-      else if (to >= require_budget().localDate()) why.push("its period has not ended yet");
-      return { publishable: !why.length, period, not_publishable: why };
-    }
-    function countingMode(ctx, period = { from: "", to: "" }, opts = {}) {
-      const rel = release(ctx, period, opts);
-      const purpose = ctx.query.get("purpose") || (rel.publishable ? "publication" : "internal");
-      if (!PURPOSES.includes(purpose)) throw badRequest("purpose must be publication (a release to publish or share), submission (the programme's own report to its funder) or internal");
-      const mode = ctx.query.get("counts") || "suppressed";
-      if (!["suppressed", "exact"].includes(mode)) throw badRequest("counts must be suppressed or exact");
-      if (mode === "exact") {
-        if (purpose === "publication") throw badRequest("Exact counts are only for the programme's own submission to its funder (purpose=submission) or internal use. A report to publish or share keeps small cells suppressed.");
-        if (!auth3.hasPerm(ctx.user, "reports:exact")) throw forbidden("Only a supervisor, an administrator or finance can run the funder report with exact counts");
-      }
-      if (purpose === "publication" && !rel.publishable) {
-        throw badRequest(`Only a report on the whole programme for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be labelled for publication; this one cannot, because ${rel.not_publishable.join(" and ")}. Run it without purpose=publication: it is then marked internal, not for publication.`);
-      }
-      const threshold = Number(db3.getSetting("small_cell_threshold", "")) || SMALL_CELL_DEFAULT;
-      return { mode, threshold, purpose, release: rel };
-    }
-    var suppressionOf = (c) => ({ mode: c.mode, threshold: c.threshold, purpose: c.purpose });
-    function countingStatement(s) {
-      const T = s.threshold;
-      const how = `every count of people under ${T} (people served, each breakdown row, people per fund, episodes, discharges, overdose events and reversals, who gave the naloxone) is shown as "<${T}" so nobody can be picked out of a small group, and wherever a hidden figure could still be worked out from the figures published with it (a total, a breakdown that adds up to it, or the people left when one fund's are taken from the total) more is hidden, shown as "suppressed", the total itself only when nothing else will do, so that it cannot be worked out by subtraction. Counts of naloxone kits, doses, test strips, services, staff hours and money are not counts of people and are exact.`;
-      const rel = s.release || { publishable: false, not_publishable: [] };
-      const why = rel.not_publishable.length ? ` (${rel.not_publishable.join("; ")})` : "";
-      if (s.mode === "exact") {
-        return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the programme's own ${s.purpose === "submission" ? "submission to its funder" : "internal use"}; not for publication or sharing.`;
-      }
-      if (s.purpose === "publication") {
-        return `Publication release: the whole programme, ${PERIOD_LABEL[rel.period] || "one standard period"}. Small cells suppressed: ${how} Suitable for publication or sharing. Publish one release per period, once: two releases for nested or overlapping periods (a quarter and the year that contains it) or the same period run again after late entries can be subtracted from each other to reveal a small group, which suppression within one release cannot prevent.`;
-      }
-      return `${s.purpose === "submission" ? "The programme's own submission to its funder" : "Internal"}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole programme minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the programme and its funder.`;
-    }
-    var DIMENSIONS = [["by_gender", "gender", "gender"], ["by_language", "preferred_language", "language"], ["by_housing", "housing_status", "housing"], ["by_insurance", "insurance", "insurance"], ["by_ethnicity", "race_ethnicity", "ethnicity"]];
-    var byCount = (a, b) => b.n - a.n || String(a.k).localeCompare(String(b.k));
-    var NALOXONE = `(o.naloxone_used=1 OR o.kind='reversal')`;
-    function overdoseFigures(ts, tsP) {
-      const od = db3.one(`SELECT COUNT(*) events, COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END),0) reversals,
-      COALESCE(SUM(CASE WHEN o.kind='fatal' OR o.survived=0 THEN 1 ELSE 0 END),0) fatal, COALESCE(SUM(CASE WHEN o.client_id IS NULL THEN 1 ELSE 0 END),0) community_reported,
-      COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP);
-      return {
-        ...od,
-        by_month: db3.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END) reversals,
-        COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN o.naloxone_doses ELSE 0 END),0) reversal_doses FROM overdose_events o WHERE ${ts("o.occurred_at")} GROUP BY month ORDER BY month`, ...tsP),
-        // Who gave the naloxone in each reversal (as the NDP log counts it), so the rows add up to the reversals.
-        by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND ${NALOXONE} AND o.survived=1 GROUP BY k ORDER BY n DESC`, ...tsP)
+      const phase2 = (d2, allowed) => {
+        const z2 = new Float64Array(W + 1);
+        for (let j = 0; j < W; j++) z2[j] = d2[j] || 0;
+        for (let i = 0; i < m; i++) {
+          const db3 = d2[basis[i]] || 0;
+          if (db3) for (let k = 0; k <= W; k++) z2[k] -= db3 * T[i][k];
+        }
+        for (let iter = 0; iter < 5e4; iter++) {
+          let pj = -1;
+          for (let j = 0; j < W; j++) if (allowed(j) && z2[j] > FEAS) {
+            pj = j;
+            break;
+          }
+          if (pj < 0) return { z: z2, bounded: true };
+          let pi = -1;
+          let best = Infinity;
+          for (let i = 0; i < m; i++) {
+            const t = T[i][pj];
+            if (t <= FEAS) continue;
+            const ratio = T[i][W] / t;
+            if (ratio < best - EPS || Math.abs(ratio - best) <= EPS && basis[i] < basis[pi]) {
+              best = ratio;
+              pi = i;
+            }
+          }
+          if (pi < 0) return { z: z2, bounded: false };
+          pivot(z2, pi, pj);
+        }
+        throw new Error("simplex did not converge");
       };
-    }
-    function overdoseProtect(od, sc) {
-      const months = od.by_month.map((x) => ({ month: x.month, n: x.n, reversals: x.reversals }));
-      if (sc.exact) return { events: od.events, reversals: od.reversals, fatal: od.fatal, community_reported: od.community_reported, by_month: months, by_administered_by: od.by_administered_by };
-      const forceMonth = /* @__PURE__ */ new Set();
-      let hideR = false;
-      for (; ; ) {
-        const r = SC.star(
-          { total: od.reversals, partitions: [months.map((x) => x.reversals), od.by_administered_by.map((x) => x.n)] },
-          { ...sc, hidden: { partitions: [...forceMonth].map((i) => [0, i]), total: hideR } }
-        );
-        const rHidden = !isNum(r.total);
-        const e = SC.star(
-          { total: od.events, partitions: [months.map((x) => x.n)], subsets: [od.reversals, od.fatal, od.community_reported] },
-          { ...sc, hidden: { subsets: rHidden ? [0] : [] } }
-        );
-        let more = false;
-        if (!isNum(e.subsets[0]) && !rHidden) {
-          hideR = true;
-          more = true;
-        }
-        months.forEach((x, i) => {
-          if (!forceMonth.has(i) && isNum(e.partitions[0][i]) && isNum(r.partitions[0][i]) && SC.isSmall(x.n - x.reversals, sc.threshold)) {
-            forceMonth.add(i);
-            more = true;
+      if (nA) {
+        const d2 = new Array(W).fill(0);
+        for (let j = 0; j < W; j++) if (isArt[j]) d2[j] = -1;
+        const { z: z2 } = phase2(d2, () => true);
+        if (-z2[W] < -FEAS) return { status: "infeasible" };
+        for (let i = 0; i < m; i++) {
+          if (!isArt[basis[i]]) continue;
+          for (let j = 0; j < W; j++) if (!isArt[j] && Math.abs(T[i][j]) > FEAS) {
+            pivot(new Float64Array(W + 1), i, j);
+            break;
           }
-        });
-        if (more) continue;
-        const rows = (p) => p || [];
-        return {
-          events: e.total,
-          reversals: r.total,
-          fatal: e.subsets[1],
-          community_reported: e.subsets[2],
-          by_month: months.map((x, i) => {
-            const n = rows(e.partitions[0])[i] ?? SC.WITHHELD;
-            const rv = rows(r.partitions[0])[i] ?? SC.WITHHELD;
-            return { ...x, n, reversals: rv, ...isNum(n) && isNum(rv) ? {} : { suppressed: true } };
-          }),
-          by_administered_by: od.by_administered_by.map((x, i) => withCell(x, "n", rows(r.partitions[1])[i] ?? SC.WITHHELD))
-        };
+        }
       }
+      const d = new Array(W).fill(0);
+      for (let j = 0; j < n; j++) d[j] = c[j] || 0;
+      const { z, bounded } = phase2(d, (j) => !isArt[j]);
+      if (!bounded) return { status: "unbounded" };
+      const x = lb.slice();
+      for (let i = 0; i < m; i++) if (basis[i] < n) x[basis[i]] += T[i][W];
+      let value = 0;
+      for (let j = 0; j < n; j++) value += (c[j] || 0) * x[j];
+      return { status: "optimal", x, value };
     }
-    var isNum = (v) => typeof v === "number";
-    function servedCount(ts, tsP) {
-      return db3.one(`SELECT COUNT(*) n FROM clients c WHERE c.deleted_at IS NULL AND (c.id IN (SELECT i.client_id FROM interventions i WHERE ${ts("i.occurred_at")})
-    OR c.id IN (SELECT ca.client_id FROM calls ca WHERE ${ts("ca.started_at")}))`, ...tsP, ...tsP).n;
-    }
-    async function build(ctx, { from, to, ts, tsP }) {
-      const fund = ctx.query.get("funding_source_id") || null;
-      const counting = countingMode(ctx, { from, to }, { fund });
-      const cf = auth3.caseloadFilter(ctx.user, "c.id");
-      const fundJoin = fund ? "AND i.funding_source_id=?" : "";
-      const fundP = fund ? [fund] : [];
-      const table = `report_served_${uuid2().replace(/-/g, "").slice(0, 16)}`;
-      const served = `temp.${table}`;
-      db3.run(`CREATE TEMP TABLE ${table} (id TEXT PRIMARY KEY) WITHOUT ROWID`);
-      try {
-        db3.run(`INSERT OR IGNORE INTO ${served}(id) SELECT i.client_id FROM interventions i WHERE ${ts("i.occurred_at")} AND i.client_id IS NOT NULL ${fundJoin}`, ...tsP, ...fundP);
-        if (!fund) db3.run(`INSERT OR IGNORE INTO ${served}(id) SELECT ca.client_id FROM calls ca WHERE ${ts("ca.started_at")} AND ca.client_id IS NOT NULL`, ...tsP);
-        db3.run(`DELETE FROM ${served} WHERE id NOT IN (SELECT c.id FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql})`, ...cf.params);
-        await breathe();
-        const people = db3.all(`SELECT c.gender, c.preferred_language, c.housing_status, c.insurance, c.race_ethnicity, c.race_codes, c.mat_status FROM clients c WHERE c.id IN (SELECT id FROM ${served})`);
-        const demographics = {};
-        for (const [key, col, label] of DIMENSIONS) {
-          const n = /* @__PURE__ */ new Map();
-          for (const p of people) {
-            const k = p[col] === null || p[col] === "" ? "unknown" : p[col];
-            n.set(k, (n.get(k) || 0) + 1);
-          }
-          demographics[key] = [...n].map(([k, v]) => ({ k, n: v, dimension: label })).sort(byCount);
+    function intMax(prob, c, known, { enough = Infinity, budget = 4e3 } = {}) {
+      const dot = (x) => c.reduce((s, cj, j) => s + cj * x[j], 0);
+      let best = known ? Math.round(dot(known)) : -Infinity;
+      if (best >= enough) return { value: best, exact: true };
+      const stack = [[prob.lb.slice(), prob.ub.slice()]];
+      let nodes = 0;
+      while (stack.length) {
+        if (++nodes > budget) return { value: best, exact: false };
+        const [lb, ub] = stack.pop();
+        const r = simplex(prob.n, prob.rows, lb, ub, c);
+        if (r.status === "infeasible") continue;
+        if (r.status === "unbounded") return { value: Infinity, exact: true };
+        const bound = Math.floor(r.value + 1e-6);
+        if (bound <= best) continue;
+        let fj = -1;
+        for (let j = 0; j < prob.n; j++) if (Math.abs(r.x[j] - Math.round(r.x[j])) > 1e-6) {
+          fj = j;
+          break;
         }
-        const byRace = /* @__PURE__ */ new Map();
-        for (const p of people) {
-          const codes = String(p.race_codes || "").split(",").map((x) => x.trim()).filter(Boolean);
-          for (const code of codes.length ? codes : ["unknown"]) byRace.set(code, (byRace.get(code) || 0) + 1);
+        if (fj < 0) {
+          best = Math.max(best, Math.round(r.value));
+          if (best >= enough) return { value: best, exact: true };
+          continue;
         }
-        demographics.by_race_code = [...byRace].map(([k, n]) => ({ k, n })).sort(byCount);
-        await breathe();
-        const unduplicated = {
-          served: people.length,
-          new_admissions: db3.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-          // Of the people served: how many were referred on, admitted somewhere, and are on MAT.
-          with_a_referral: db3.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN ${served} s ON s.id=r.client_id WHERE ${ts("r.referred_at")}`, ...tsP).n,
-          admitted_after_referral: db3.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN ${served} s ON s.id=r.client_id WHERE ${ts("r.admitted_at")}`, ...tsP).n,
-          on_mat: people.filter((p) => p.mat_status === "active").length
-        };
-        const episodes = {
-          admissions: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-          discharges: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-          open_at_end: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at <= ? AND (e.closed_at IS NULL OR e.closed_at > ?) AND ${cf.sql}`, to, to, ...cf.params).n,
-          by_discharge_reason: db3.all(`SELECT COALESCE(e.discharge_reason,'unknown') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY n DESC`, from, to, ...cf.params),
-          median_length_of_stay_days: (() => {
-            const d = db3.all(`SELECT (julianday(e.closed_at)-julianday(e.opened_at)) d FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY d`, from, to, ...cf.params).map((x) => x.d);
-            return d.length ? Math.round(d[Math.floor(d.length / 2)]) : null;
-          })()
-        };
-        const overdose = overdoseFigures(ts, tsP);
-        const svc = new Map(db3.all(`SELECT i.funding_source_id f, COUNT(*) services, COUNT(DISTINCT i.client_id) clients_served,
-        COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips, COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
-      FROM interventions i WHERE ${ts("i.occurred_at")} GROUP BY i.funding_source_id`, ...tsP).map((x) => [x.f, x]));
-        for (const x of db3.all(`SELECT i.funding_source_id f, COUNT(DISTINCT i.client_id) n FROM interventions i WHERE i.client_id IN (SELECT id FROM clients WHERE deleted_at IS NOT NULL) AND ${ts("i.occurred_at")} GROUP BY i.funding_source_id`, ...tsP)) {
-          if (svc.has(x.f)) svc.get(x.f).clients_served -= x.n;
-        }
-        await breathe();
-        const distribution = { kits: 0, strips: 0, community_kits: 0 };
-        for (const x of svc.values()) if (!fund || x.f === fund) for (const k of Object.keys(distribution)) distribution[k] += x[k];
-        const hrs = new Map(db3.all(`SELECT t.funding_source_id f, COALESCE(SUM(CASE WHEN t.status='approved' THEN t.minutes END),0) approved_minutes,
-      COALESCE(SUM(CASE WHEN t.status IN ('draft','submitted') THEN t.minutes END),0) unapproved_minutes FROM time_entries t WHERE t.work_date BETWEEN ? AND ? GROUP BY t.funding_source_id`, from, to).map((x) => [x.f, x]));
-        const figures = (id) => ({ clients_served: svc.get(id)?.clients_served || 0, services: svc.get(id)?.services || 0, approved_minutes: hrs.get(id)?.approved_minutes || 0, unapproved_minutes: hrs.get(id)?.unapproved_minutes || 0 });
-        const byFund = fund ? db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.id=?`, fund).map((f) => ({ ...f, ...figures(f.id) })) : db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`).map((f) => ({ ...f, ...figures(f.id) }));
-        const none = { id: null, name: "No funding source", grant_number: null, fiscal_year_start: null, fiscal_year_end: null, ...figures(null) };
-        if (!fund) byFund.push(none);
-        let approved = 0, unapproved = 0;
-        for (const [f, x] of hrs) if (!fund || f === fund) {
-          approved += x.approved_minutes;
-          unapproved += x.unapproved_minutes;
-        }
-        const attribution = {
-          unattributed_services: fund ? 0 : none.services,
-          unattributed_clients: fund ? 0 : none.clients_served,
-          approved_minutes: approved,
-          unapproved_minutes: unapproved,
-          // Where to fix it: the visits in this period with no fund (public/views/interventions.js), and the time
-          // sheets waiting for approval.
-          fix_link: `#/interventions?from=${from}&to=${to}&funding=none`,
-          approve_link: `#/time?from=${from}&to=${to}`,
-          // With no programme default fund, a visit nobody charges goes to no fund; Settings → Programme →
-          // Reporting is where one is set.
-          default_fund_set: !!require_budget().defaultFundFor(null),
-          settings_link: "#/admin?tab=settings&section=reporting"
-        };
-        const raw = {
-          unduplicated,
-          demographics,
-          episodes,
-          overdose,
-          naloxone_distribution: distribution,
-          by_funding_source: byFund,
-          attribution: { ...attribution, unattributed_clients: fund ? 0 : none.clients_served }
-        };
-        const sc = { threshold: counting.threshold, exact: counting.mode === "exact" };
-        return {
-          from,
-          to,
-          funding_source_id: fund,
-          suppression: suppressionOf(counting),
-          // Whether this run could be a publication release, and if not why not.
-          release: counting.release,
-          // Kept for the screens and files that read it: the threshold applied, or null when counts are exact.
-          small_cell_threshold: counting.mode === "exact" ? null : counting.threshold,
-          counting_statement: countingStatement(counting),
-          ...suppress(raw, sc)
-        };
-      } finally {
-        db3.run(`DROP TABLE IF EXISTS ${served}`);
+        const f = Math.floor(r.x[fj]);
+        const up = [lb.slice(), ub.slice()];
+        up[0][fj] = f + 1;
+        const down = [lb.slice(), ub.slice()];
+        down[1][fj] = f;
+        stack.push(up, down);
       }
+      return { value: best, exact: true };
     }
-    var PARTITIONS = ["by_gender", "by_language", "by_housing", "by_insurance", "by_ethnicity"];
-    var withCell = (x, key, v) => ({ ...x, [key]: v, ...isNum(v) ? {} : { suppressed: true } });
-    function suppress(raw, sc) {
-      const dem = raw.demographics;
-      const order = ["by_gender", "by_language", "by_housing", "by_insurance", "by_race_code", "by_ethnicity"];
-      if (sc.exact) return { ...raw, withheld: [], demographics: Object.fromEntries(order.map((k) => [k, dem[k]])), overdose: { ...raw.overdose, ...overdoseProtect(raw.overdose, sc) } };
-      const one = (v) => SC.cell(v, sc);
-      const u = raw.unduplicated;
-      const funds = raw.by_funding_source;
-      const s = SC.star({
-        total: u.served,
-        partitions: PARTITIONS.map((k) => dem[k].map((x) => x.n)),
-        subsets: [u.on_mat, u.with_a_referral, u.admitted_after_referral, ...funds.map((f) => f.clients_served)],
-        cover: dem.by_race_code.map((x) => x.n)
-      }, sc);
-      const demographics = {};
-      const withheld = [];
-      PARTITIONS.forEach((k, g) => {
-        if (!s.partitions[g]) {
-          withheld.push(k);
-          demographics[k] = [];
-        } else demographics[k] = dem[k].map((x, i) => withCell(x, "n", s.partitions[g][i]));
+    function intFeasible(prob, c, v, { budget = 4e3 } = {}) {
+      const rows = [...prob.rows, { a: c, op: "=", b: v }];
+      const zero = new Array(prob.n).fill(0);
+      const stack = [[prob.lb.slice(), prob.ub.slice()]];
+      let nodes = 0;
+      while (stack.length) {
+        if (++nodes > budget) return { feasible: false, exact: false };
+        const [lb, ub] = stack.pop();
+        const r = simplex(prob.n, rows, lb, ub, zero);
+        if (r.status !== "optimal") {
+          if (r.status === "unbounded") return { feasible: true, exact: true };
+          continue;
+        }
+        let fj = -1;
+        for (let j = 0; j < prob.n; j++) if (Math.abs(r.x[j] - Math.round(r.x[j])) > 1e-6) {
+          fj = j;
+          break;
+        }
+        if (fj < 0) return { feasible: true, exact: true };
+        const f = Math.floor(r.x[fj]);
+        const up = [lb.slice(), ub.slice()];
+        up[0][fj] = f + 1;
+        const down = [lb.slice(), ub.slice()];
+        down[1][fj] = f;
+        stack.push(up, down);
+      }
+      return { feasible: false, exact: true };
+    }
+    function protect(model, T, { budget = 4e3 } = {}) {
+      const { vars, derived = [], mirror = [] } = model;
+      const cons = model.cons.filter((k) => {
+        const lhs = k.terms.reduce((s2, [i, c]) => s2 + c * vars[i].value, 0);
+        const ok = k.op === "=" ? lhs === k.rhs : k.op === "<=" ? lhs <= k.rhs : lhs >= k.rhs;
+        if (!ok && model.strict && !k.soft) throw new Error(`the truth violates ${JSON.stringify(k.terms.map(([i, c]) => [vars[i].id, c]))} ${k.op} ${k.rhs}`);
+        return ok;
       });
-      if (!s.cover) {
-        withheld.push("by_race_code");
-        demographics.by_race_code = [];
-      } else demographics.by_race_code = dem.by_race_code.map((x, i) => withCell(x, "n", s.cover[i]));
-      const fundPeople = SC.noLonely(s.subsets.slice(3));
-      const byFund = funds.map((f, i) => withCell(f, "clients_served", fundPeople[i]));
-      const noneRow = byFund.find((f) => f.id === null);
-      const ep = raw.episodes;
-      const discharges = SC.table(ep.by_discharge_reason, ["n"], { ...sc, totals: { n: ep.discharges } });
-      const od = raw.overdose;
-      const o = overdoseProtect(od, sc);
-      const smallGroup = isNum(ep.discharges) && ep.discharges > 0 && ep.discharges < sc.threshold;
-      return {
-        unduplicated: { served: s.total, new_admissions: one(u.new_admissions), with_a_referral: s.subsets[1], admitted_after_referral: s.subsets[2], on_mat: s.subsets[0] },
-        demographics: Object.fromEntries(order.map((k) => [k, demographics[k]])),
-        withheld,
-        episodes: {
-          ...ep,
-          admissions: one(ep.admissions),
-          discharges: discharges.totals.n,
-          open_at_end: one(ep.open_at_end),
-          by_discharge_reason: discharges.rows,
-          median_length_of_stay_days: smallGroup ? SC.SECONDARY : ep.median_length_of_stay_days
-        },
-        overdose: { ...od, ...o },
-        naloxone_distribution: raw.naloxone_distribution,
-        by_funding_source: byFund,
-        attribution: { ...raw.attribution, unattributed_clients: noneRow ? noneRow.clients_served : 0 }
+      const P2 = Math.ceil(T / 2);
+      const nv = vars.length;
+      const st = vars.map((v) => !v.published ? "unpub" : v.people && v.value > 0 && v.value < T ? "pri" : "vis");
+      const small = (x) => x > 0 && x < T;
+      const byVar = vars.map(() => []);
+      cons.forEach((k, ci) => {
+        for (const [i] of k.terms) byVar[i].push(ci);
+      });
+      const tableOf = /* @__PURE__ */ new Map();
+      vars.forEach((v, i) => {
+        if (!tableOf.has(v.table)) tableOf.set(v.table, []);
+        tableOf.get(v.table).push(i);
+      });
+      const withheldTables = /* @__PURE__ */ new Set();
+      const applyMirror = (s2) => {
+        for (const [p, f] of mirror) if ((s2[p] === "pri" || s2[p] === "sec") && s2[f] === "vis") s2[f] = "sec";
+        else if (s2[p] === "withheld" && s2[f] === "vis") s2[f] = "withheld";
       };
-    }
-    function sheets(d, ctx, fundName) {
-      const hours = (m) => Math.round(m / 6) / 10;
-      const about = [
-        { k: "Report", v: "Funder report (unduplicated people served)" },
-        { k: "Period", v: `${d.from} to ${d.to}` },
-        { k: "Funding source", v: fundName || "All funding sources" },
-        { k: "Purpose", v: d.suppression.purpose === "publication" ? "Publication release (whole programme, one standard period)" : d.suppression.purpose === "submission" ? "The programme's own submission to its funder, not for publication" : "Internal, not for publication" },
-        { k: "Counts", v: d.counting_statement },
-        { k: "Classification", v: "Aggregate counts: no names, client codes or dates of service." },
-        { k: "Generated", v: db3.now() },
-        { k: "Generated by", v: ctx.user.display_name || ctx.user.username }
-      ];
-      const u = d.unduplicated;
-      const summary = [
-        ["People served", "Unduplicated clients served", u.served],
-        ["People served", "New admissions", u.new_admissions],
-        ["People served", "Received a referral", u.with_a_referral],
-        ["People served", "Admitted after a referral", u.admitted_after_referral],
-        ["People served", "On medication for opioid use disorder", u.on_mat],
-        ["Episodes", "Opened", d.episodes.admissions],
-        ["Episodes", "Closed", d.episodes.discharges],
-        ["Episodes", "Open at end of period", d.episodes.open_at_end],
-        ["Episodes", "Median length of stay (days)", d.episodes.median_length_of_stay_days ?? ""],
-        ["Overdose & naloxone", "Overdose events recorded", d.overdose.events],
-        ["Overdose & naloxone", "Reversed with naloxone", d.overdose.reversals],
-        ["Overdose & naloxone", "Fatal", d.overdose.fatal],
-        ["Overdose & naloxone", "Reported from the community", d.overdose.community_reported],
-        ["Overdose & naloxone", "Naloxone doses used", d.overdose.naloxone_doses],
-        ["Overdose & naloxone", "Naloxone kits distributed", d.naloxone_distribution.kits],
-        ["Overdose & naloxone", "Of those, community distribution", d.naloxone_distribution.community_kits],
-        ["Overdose & naloxone", "Fentanyl test strips", d.naloxone_distribution.strips],
-        ["Funding attribution", "Services with no funding source", d.attribution.unattributed_services],
-        ["Funding attribution", "Approved staff hours", hours(d.attribution.approved_minutes)],
-        ["Funding attribution", "Staff hours logged, not yet approved", hours(d.attribution.unapproved_minutes)]
-      ].map(([section, measure, value]) => ({ section, measure, value }));
-      const who = [];
-      for (const [key, label] of [["by_race_code", "Race"], ["by_ethnicity", "Ethnicity"], ["by_gender", "Gender"], ["by_language", "Language"], ["by_housing", "Housing"], ["by_insurance", "Insurance"]]) for (const x of d.demographics[key]) who.push({ section: label, measure: x.k, value: x.n });
-      for (const x of d.episodes.by_discharge_reason) who.push({ section: "Discharge reason", measure: x.k, value: x.n });
-      for (const x of d.overdose.by_administered_by) who.push({ section: "Naloxone given by", measure: x.k, value: x.n });
-      const funds = d.by_funding_source.map((f) => ({ fund: f.name, grant_number: f.grant_number || "", fiscal_year: [f.fiscal_year_start, f.fiscal_year_end].filter(Boolean).join(" to "), people: f.clients_served, services: f.services, approved_hours: hours(f.approved_minutes), unapproved_hours: hours(f.unapproved_minutes) }));
-      const long = [{ key: "section", label: "Section" }, { key: "measure", label: "Measure" }, { key: "value", label: "Value" }];
-      return {
-        about,
-        summary,
-        who,
-        funds,
-        workbook: [
-          { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: about },
-          { name: "Summary", columns: long, rows: summary },
-          { name: "Who was served", columns: long, rows: who },
-          { name: "By funding source", columns: [{ key: "fund", label: "Fund" }, { key: "grant_number", label: "Grant number" }, { key: "fiscal_year", label: "Fiscal year" }, { key: "people", label: "People served" }, { key: "services", label: "Services" }, { key: "approved_hours", label: "Approved staff hours" }, { key: "unapproved_hours", label: "Staff hours logged, not yet approved" }], rows: funds }
-        ],
-        // CSV has no cover sheet: one long table whose first rows are the About fields, so the counting mode
-        // travels with the numbers.
-        csv: [...about.map((x) => ({ section: "About", measure: x.k, value: x.v })), ...summary, ...who, ...funds.flatMap((f) => [
-          { section: "By funding source", measure: `${f.fund}: people served`, value: f.people },
-          { section: "By funding source", measure: `${f.fund}: services`, value: f.services },
-          { section: "By funding source", measure: `${f.fund}: approved staff hours`, value: f.approved_hours },
-          { section: "By funding source", measure: `${f.fund}: staff hours logged, not yet approved`, value: f.unapproved_hours }
-        ])],
-        csvColumns: long
+      const bounds = (s2, i) => {
+        const v = vars[i];
+        switch (s2[i]) {
+          case "vis":
+            return [v.value, v.value];
+          case "pri":
+            return [1, T - 1];
+          case "sec":
+            return v.people ? [T, Infinity] : [0, Infinity];
+          default:
+            return [0, Infinity];
+        }
       };
+      function problem(s2, terms) {
+        const idx = /* @__PURE__ */ new Map();
+        const queue = [];
+        for (const [i] of terms) if (s2[i] !== "vis" && !idx.has(i)) {
+          idx.set(i, idx.size);
+          queue.push(i);
+        }
+        for (let q = 0; q < queue.length; q++) {
+          for (const ci of byVar[queue[q]]) for (const [j] of cons[ci].terms) if (s2[j] !== "vis" && !idx.has(j)) {
+            idx.set(j, idx.size);
+            queue.push(j);
+          }
+        }
+        const members = queue;
+        const n = members.length;
+        const touched = /* @__PURE__ */ new Set();
+        for (const i of members) for (const ci of byVar[i]) touched.add(ci);
+        const rows = [...touched].sort((a, b) => a - b).map((ci) => {
+          const k = cons[ci];
+          const a = new Array(n).fill(0);
+          let rhs = k.rhs;
+          for (const [j, c2] of k.terms) {
+            if (idx.has(j)) a[idx.get(j)] += c2;
+            else rhs -= c2 * vars[j].value;
+          }
+          return { a, op: k.op, b: rhs };
+        });
+        const lb = members.map((i) => bounds(s2, i)[0]);
+        const ub = members.map((i) => bounds(s2, i)[1]);
+        const c = new Array(n).fill(0);
+        let constant = 0;
+        for (const [i, co] of terms) {
+          if (idx.has(i)) c[idx.get(i)] += co;
+          else constant += co * vars[i].value;
+        }
+        const truth = members.map((i) => vars[i].value);
+        const key = members.map((i) => `${i}:${s2[i]}`).join(",");
+        return { prob: { n, rows, lb, ub }, c, constant, truth, key, n };
+      }
+      const cache = /* @__PURE__ */ new Map();
+      function deficit(s2, q) {
+        const p = problem(s2, q.terms);
+        const key = `${q.id}|${q.kind}|${p.key}`;
+        if (cache.has(key)) return cache.get(key);
+        let d = 0;
+        if (p.n === 0) {
+          d = q.kind === "small" ? (p.constant === 1 ? 0 : 1) + (p.constant === T - 1 ? 0 : 1) : P2;
+        } else if (q.kind === "small") {
+          for (const v of [1, T - 1]) {
+            if (q.truth === v) continue;
+            const r = intFeasible(p.prob, p.c, v - p.constant, { budget });
+            if (!r.feasible) d += 1;
+          }
+        } else {
+          const lo = -intMax(p.prob, p.c.map((x) => -x), p.truth, { budget }).value + p.constant;
+          const hiR = intMax(p.prob, p.c, p.truth, { budget, enough: lo - p.constant + P2 });
+          const hi = hiR.value + p.constant;
+          d = Math.max(0, P2 - (hi - lo));
+        }
+        cache.set(key, d);
+        return d;
+      }
+      function quantities(s2) {
+        const out2 = [];
+        vars.forEach((v, i) => {
+          if (!v.people) return;
+          if (s2[i] === "pri") out2.push({ id: v.id, terms: [[i, 1]], kind: "small", truth: v.value, home: [i] });
+          else if (s2[i] === "sec") out2.push({ id: v.id, terms: [[i, 1]], kind: "sec", truth: v.value, home: [i] });
+          else if ((s2[i] === "withheld" || s2[i] === "unpub") && small(v.value) && byVar[i].length) out2.push({ id: v.id, terms: [[i, 1]], kind: "small", truth: v.value, home: [i] });
+        });
+        for (const q of derived) {
+          const truth = q.terms.reduce((a, [i, c]) => a + c * vars[i].value, 0);
+          if (small(truth)) out2.push({ id: q.id, terms: q.terms, kind: "small", truth, home: q.terms.map(([i]) => i) });
+        }
+        return out2;
+      }
+      function levels(q) {
+        const level = /* @__PURE__ */ new Map();
+        let frontier = [...new Set(q.home)];
+        frontier.forEach((i) => level.set(i, 0));
+        for (let d = 1; frontier.length; d++) {
+          const next = [];
+          for (const i of frontier) for (const ci of byVar[i]) for (const [j] of cons[ci].terms) if (!level.has(j)) {
+            level.set(j, d);
+            next.push(j);
+          }
+          frontier = next;
+        }
+        return level;
+      }
+      const hideable = (s2, i) => s2[i] === "vis" && vars[i].published && vars[i].value > 0 && !withheldTables.has(vars[i].table);
+      const withStatus = (s2, i, x) => {
+        const t = s2.slice();
+        t[i] = x;
+        applyMirror(t);
+        return t;
+      };
+      const withTable = (s2, table) => {
+        const t = s2.slice();
+        for (const i of tableOf.get(table)) if (vars[i].published) t[i] = "withheld";
+        applyMirror(t);
+        return t;
+      };
+      const TRIES = 12;
+      applyMirror(st);
+      let s = st;
+      for (let guard = 0; guard < 5e3; guard++) {
+        let bad = null;
+        let bd = 0;
+        for (const q of quantities(s)) {
+          const d = deficit(s, q);
+          if (d > 0) {
+            bad = q;
+            bd = d;
+            break;
+          }
+        }
+        if (!bad) break;
+        const level = levels(bad);
+        const cands = [...level.keys()].filter((i) => hideable(s, i)).sort((a, b) => level.get(a) - level.get(b) || vars[a].total - vars[b].total || vars[b].people - vars[a].people || vars[a].value - vars[b].value || a - b);
+        let choice = null;
+        if (cands.length) {
+          let helped2 = null;
+          for (const i of cands.slice(0, TRIES)) {
+            const t2 = withStatus(s, i, "sec");
+            const d = deficit(t2, bad);
+            if (d === 0) {
+              choice = t2;
+              break;
+            }
+            if (d < bd && !helped2) helped2 = t2;
+          }
+          s = choice || helped2 || withStatus(s, cands[0], "sec");
+          continue;
+        }
+        const tables = [];
+        const seen2 = /* @__PURE__ */ new Set();
+        for (const i of [...level.keys()].sort((a, b) => level.get(a) - level.get(b) || a - b)) {
+          const t2 = vars[i].table;
+          if (seen2.has(t2) || withheldTables.has(t2) || !vars[i].published) continue;
+          seen2.add(t2);
+          tables.push(t2);
+        }
+        if (!tables.length) break;
+        let pick = null;
+        let helped = null;
+        for (const t2 of tables.slice(0, TRIES)) {
+          const d = deficit(withTable(s, t2), bad);
+          if (d === 0) {
+            pick = t2;
+            break;
+          }
+          if (d < bd && !helped) helped = t2;
+        }
+        const t = pick || helped || tables[0];
+        withheldTables.add(t);
+        s = withTable(s, t);
+      }
+      return { status: s, withheldTables: [...withheldTables] };
     }
-    module.exports = { build, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT };
+    module.exports = { simplex, intMax, intFeasible, protect };
   }
 });
 
@@ -23530,63 +23563,83 @@ var require_harm_reduction_reports = __commonJS({
     var NDP_TEMPLATE_NOTE = "The column layout follows the fields the DHCS Naloxone Distribution Project (NDP) asks distributors to report, as SUDS understands them (date, site type, recipient type, kits and doses distributed, overdose reversals reported). It is not the official NDP template: it must be checked against the current NDP reporting template before it is submitted.";
     var SETTLEMENT_SOURCE_NOTE = `Categories follow Exhibit E ("List of Opioid Remediation Uses") of the national opioid settlement agreements and California's High Impact Abatement Activities list, as summarised by DHCS. Both need verification against the agreement governing each fund before the report is submitted; SUDS does not decide whether a cost is allowable.`;
     var dosesPerKit = () => Number(db3.getSetting("naloxone_doses_per_kit", "")) || 2;
-    function dayOf(at) {
-      if (!at) return null;
-      if (String(at).length === 10) return at;
-      return require_budget().localDate(at);
+    function dayReader() {
+      const B2 = require_budget();
+      const tz = B2.orgTimezone();
+      let fmt = null;
+      try {
+        fmt = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+      } catch {
+        fmt = null;
+      }
+      return (at) => {
+        if (!at) return null;
+        if (String(at).length === 10) return at;
+        if (!fmt) return B2.localDate(at, tz);
+        const d = new Date(at);
+        return Number.isFinite(d.getTime()) ? fmt.format(d) : null;
+      };
     }
     function counts(ctx, period) {
       const counting = FR.countingMode(ctx, period);
       return { counting, sc: { threshold: counting.threshold, exact: counting.mode === "exact" } };
     }
     var header = (counting) => ({ suppression: FR.suppressionOf(counting), release: counting.release, counting_statement: FR.countingStatement(counting) });
-    function ndp(ctx, { from, to, ts, tsP }) {
-      const { counting, sc } = counts(ctx, { from, to });
-      const monthly = counting.purpose === "publication";
+    function distributionRows(ctx, { ts, tsP }, monthly) {
       const cf = auth3.caseloadFilter(ctx.user, "c.id");
       const perKit = dosesPerKit();
+      const dayOf = dayReader();
       const rows = /* @__PURE__ */ new Map();
-      const add = (key, init2, fn) => {
-        if (!rows.has(key)) rows.set(key, init2);
-        fn(rows.get(key));
-      };
       for (const x of db3.all(`SELECT i.occurred_at, i.location, i.client_id IS NULL AS anon, i.naloxone_kits kits FROM interventions i LEFT JOIN clients c ON c.id=i.client_id
       WHERE ${ts("i.occurred_at")} AND i.naloxone_kits > 0 AND (i.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
         const day = dayOf(x.occurred_at);
         const date = monthly ? day.slice(0, 7) : day;
         const site = x.location || "unknown";
         const recipient = x.anon ? "Community member (anonymous)" : "Programme participant";
-        add(`d|${date}|${site}|${recipient}`, { date, entry: "distribution", site_type: site, recipient_type: recipient, kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null }, (r) => {
-          r.kits += x.kits;
-          r.doses += x.kits * perKit;
-        });
+        const key = `d|${date}|${site}|${recipient}`;
+        if (!rows.has(key)) rows.set(key, { date, entry: "distribution", site_type: site, recipient_type: recipient, kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null });
+        const r = rows.get(key);
+        r.kits += x.kits;
+        r.doses += x.kits * perKit;
       }
-      if (monthly) {
-        const od = FR.overdoseFigures(ts, tsP);
-        const m = FR.overdoseProtect(od, sc);
-        const rev3 = od.by_month.map((x, i) => ({ x, shown: m.by_month[i] })).filter(({ x }) => x.reversals > 0).map(({ x, shown }) => ({ date: x.month, entry: "reversal", site_type: "all", recipient_type: null, kits: null, doses: null, reversals: shown.reversals, reversal_doses: x.reversal_doses, administered_by: null }));
-        const totalDoses = rev3.reduce((n, r) => n + r.reversal_doses, 0);
-        const t2 = SC.table(rev3, [], { ...sc, totals: { reversal_doses: totalDoses }, mirror: { reversal_doses: "reversals" } });
-        const dist = [...rows.values()];
-        const list2 = [...dist, ...t2.rows].sort((a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type)));
-        return {
-          from,
-          to,
-          county: db3.getSetting("county_name", "") || null,
-          doses_per_kit: perKit,
-          template_note: NDP_TEMPLATE_NOTE,
-          rows: list2,
-          by: "month",
-          ...header(counting),
-          totals: {
-            kits: dist.reduce((n, r) => n + r.kits, 0),
-            doses: dist.reduce((n, r) => n + r.doses, 0),
-            reversals: m.reversals,
-            reversal_doses: t2.totals.reversal_doses,
-            community_kits: dist.filter((r) => r.recipient_type === "Community member (anonymous)").reduce((n, r) => n + r.kits, 0)
-          }
-        };
-      }
+      return rows;
+    }
+    var byDate = (a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type));
+    function ndpPublished({ from, to }, counting, dist, od, shown) {
+      const sc = { threshold: counting.threshold, exact: false };
+      const rev2 = od.by_month.map((x, i) => ({ x, r: shown.by_month[i] })).filter(({ x }) => x.reversals > 0).map(({ x, r }) => ({ date: x.month, entry: "reversal", site_type: "all", recipient_type: null, kits: null, doses: null, reversals: r, reversal_doses: x.reversal_doses, administered_by: null, ...typeof r === "number" ? {} : { suppressed: true } }));
+      const totalDoses = rev2.reduce((n, r) => n + r.reversal_doses, 0);
+      const t = SC.table(rev2, [], { ...sc, totals: { reversal_doses: totalDoses }, mirror: { reversal_doses: "reversals" } });
+      const d = [...dist.values()];
+      return {
+        from,
+        to,
+        county: db3.getSetting("county_name", "") || null,
+        doses_per_kit: dosesPerKit(),
+        template_note: NDP_TEMPLATE_NOTE,
+        rows: [...d, ...t.rows].sort(byDate),
+        by: "month",
+        ...header(counting),
+        totals: {
+          kits: d.reduce((n, r) => n + r.kits, 0),
+          doses: d.reduce((n, r) => n + r.doses, 0),
+          reversals: shown.reversals,
+          reversal_doses: t.totals.reversal_doses,
+          community_kits: d.filter((r) => r.recipient_type === "Community member (anonymous)").reduce((n, r) => n + r.kits, 0)
+        }
+      };
+    }
+    function ndp(ctx, range) {
+      const { from, to, ts, tsP } = range;
+      const { counting, sc } = counts(ctx, { from, to });
+      if (counting.purpose === "publication") return require_publication_release().release(ctx, range, counting).ndp;
+      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+      const rows = distributionRows(ctx, range, false);
+      const dayOf = dayReader();
+      const add = (key, init2, fn) => {
+        if (!rows.has(key)) rows.set(key, init2);
+        fn(rows.get(key));
+      };
       for (const x of db3.all(`SELECT o.occurred_at, o.location_type, o.naloxone_doses, o.administered_by FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id
       WHERE ${ts("o.occurred_at")} AND (o.naloxone_used=1 OR o.kind='reversal') AND o.survived=1 AND (o.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
         const date = dayOf(x.occurred_at);
@@ -23597,7 +23650,7 @@ var require_harm_reduction_reports = __commonJS({
           r.reversal_doses += x.naloxone_doses || 0;
         });
       }
-      const list = [...rows.values()].sort((a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type)));
+      const list = [...rows.values()].sort(byDate);
       const sum = (k) => list.reduce((n, r) => n + (r[k] || 0), 0);
       const totals = { kits: sum("kits"), doses: sum("doses"), reversals: sum("reversals"), reversal_doses: sum("reversal_doses"), community_kits: list.filter((r) => r.recipient_type === "Community member (anonymous)").reduce((n, r) => n + r.kits, 0) };
       const rev2 = list.filter((r) => r.entry === "reversal");
@@ -23607,7 +23660,7 @@ var require_harm_reduction_reports = __commonJS({
         from,
         to,
         county: db3.getSetting("county_name", "") || null,
-        doses_per_kit: perKit,
+        doses_per_kit: dosesPerKit(),
         template_note: NDP_TEMPLATE_NOTE,
         rows: out2,
         by: "day",
@@ -23618,10 +23671,9 @@ var require_harm_reduction_reports = __commonJS({
     var money = (n) => Math.round((n || 0) * 100) / 100;
     var USE_LABEL = Object.fromEntries(C.SETTLEMENT_USES.map((x) => [x.code, x]));
     var HIAA_LABEL = Object.fromEntries([...C.SETTLEMENT_HIAA.map((x) => [x.code, x.label]), ["none", "Not a High Impact Abatement Activity"]]);
-    function settlement(ctx, { from, to, ts, tsP }) {
-      const { counting, sc } = counts(ctx, { from, to });
+    function settlementFigures({ from, to, ts, tsP }) {
       const isFund = `(f.source_type='opioid_settlement' OR f.settlement_use IS NOT NULL OR f.settlement_hiaa IS NOT NULL)`;
-      const funds = db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end, f.total_amount, f.settlement_use, f.settlement_hiaa FROM funding_sources f WHERE ${isFund} ORDER BY f.name`);
+      const funds = db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end, f.total_amount, f.settlement_use, f.settlement_hiaa, f.is_active FROM funding_sources f WHERE ${isFund} ORDER BY f.name`);
       const exps = db3.all(`SELECT e.amount, e.status, COALESCE(e.settlement_use, f.settlement_use) AS use_code, COALESCE(e.settlement_hiaa, f.settlement_hiaa) AS hiaa_code, f.id AS fund_id
     FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE ${isFund} AND e.spent_at BETWEEN ? AND ? AND e.status IN ('pending','approved','reimbursed')`, from, to);
       const bucket = () => ({ approved_amount: 0, pending_amount: 0, expenditures: 0 });
@@ -23641,11 +23693,6 @@ var require_harm_reduction_reports = __commonJS({
       }
       const services = db3.all(`SELECT COALESCE(f.settlement_use,'uncategorised') AS use_code, COUNT(*) services, COUNT(DISTINCT CASE WHEN c.deleted_at IS NULL THEN i.client_id END) people, COALESCE(SUM(i.naloxone_kits),0) naloxone_kits
     FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts("i.occurred_at")} GROUP BY use_code`, ...tsP);
-      let people = services.map((x) => x.people);
-      if (!sc.exact) {
-        const served = FR.servedCount(ts, tsP);
-        people = SC.noLonely(SC.star({ total: served, subsets: people.map((n) => Math.min(n, served)) }, { ...sc, fixedTotal: true }).subsets);
-      }
       const fix = (m) => [...m].map(([code, b]) => ({ code, ...b, approved_amount: money(b.approved_amount), pending_amount: money(b.pending_amount) }));
       const useRows = fix(byUse).map((x) => ({ ...x, schedule: USE_LABEL[x.code]?.schedule || "Uncategorised", label: USE_LABEL[x.code]?.label || "No settlement category recorded" }));
       const hiaaRows = fix(byHiaa).map((x) => ({ ...x, label: HIAA_LABEL[x.code] || "No High Impact Abatement Activity recorded" }));
@@ -23659,9 +23706,9 @@ var require_harm_reduction_reports = __commonJS({
         by_use: useRows,
         by_hiaa: hiaaRows,
         detail: [...detail.values()].map((x) => ({ ...x, approved_amount: money(x.approved_amount), pending_amount: money(x.pending_amount), schedule: USE_LABEL[x.use]?.schedule || "Uncategorised", use_label: USE_LABEL[x.use]?.label || "No settlement category recorded", hiaa_label: HIAA_LABEL[x.hiaa] || "No High Impact Abatement Activity recorded" })).sort((a, b) => a.schedule.localeCompare(b.schedule) || a.use.localeCompare(b.use) || a.hiaa.localeCompare(b.hiaa)),
-        // People per allowable use are counts of people (protected above); services and kits are not.
-        services_by_use: services.map((x, i) => ({ ...x, people: people[i], ...typeof people[i] === "number" ? {} : { suppressed: true }, label: USE_LABEL[x.use_code]?.label || "No settlement category recorded" })),
-        ...header(counting),
+        // People per allowable use are counts of people (protected in settlement() below); services and kits are not.
+        services_by_use: services.map((x) => ({ ...x, label: USE_LABEL[x.use_code]?.label || "No settlement category recorded" })),
+        fundKeys: funds.map((f) => ({ id: f.id, key: f.settlement_use || "uncategorised", active: !!f.is_active })),
         totals: {
           approved_amount: approved,
           pending_amount: money(exps.filter((e) => e.status === "pending").reduce((n, e) => n + e.amount, 0)),
@@ -23670,6 +23717,18 @@ var require_harm_reduction_reports = __commonJS({
           uncategorised_amount: byUse.get("uncategorised").approved_amount + byUse.get("uncategorised").pending_amount
         }
       };
+    }
+    function settlement(ctx, range) {
+      const { from, to, ts, tsP } = range;
+      const { counting, sc } = counts(ctx, { from, to });
+      if (counting.purpose === "publication") return require_publication_release().release(ctx, range, counting).settlement;
+      const { fundKeys, ...d } = settlementFigures(range);
+      let people = d.services_by_use.map((x) => x.people);
+      if (!sc.exact) {
+        const served = FR.servedCount(ts, tsP);
+        people = SC.noLonely(SC.star({ total: served, subsets: people.map((n) => Math.min(n, served)) }, { ...sc, fixedTotal: true }).subsets);
+      }
+      return { ...d, funds: d.funds.map(({ is_active, ...f }) => f), services_by_use: d.services_by_use.map((x, i) => FR.withCell(x, "people", people[i])), ...header(counting) };
     }
     var countsSuffix = (d) => d.suppression.mode === "exact" ? "exact-counts" : d.suppression.purpose === "publication" ? "publication-suppressed" : "internal-suppressed";
     var purposeLine = (d) => ({ k: "Purpose", v: d.suppression.purpose === "publication" ? "Publication release (whole programme, one standard period)" : d.suppression.purpose === "submission" ? "The programme's own submission, not for publication" : "Internal, not for publication" });
@@ -23745,7 +23804,610 @@ var require_harm_reduction_reports = __commonJS({
         send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-opioid-settlement-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? "xlsx" : "csv"}`, classification: "Opioid settlement expenditures by category (categories need verification against the governing agreement). No client information." });
       });
     }
-    module.exports = { ndp, settlement, routes, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
+    module.exports = { ndp, settlement, settlementFigures, distributionRows, ndpPublished, header, routes, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
+  }
+});
+
+// server/publication-release.js
+var require_publication_release = __commonJS({
+  "server/publication-release.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var FR = require_funder_report();
+    var SC = require_small_cells();
+    var SDC = require_sdc();
+    var PARTITIONS = ["by_gender", "by_language", "by_housing", "by_insurance", "by_ethnicity"];
+    function buildModel({ funder: raw, perFund, settlement }) {
+      const vars = [];
+      const cons = [];
+      const derived = [];
+      const mirror = [];
+      const v = (id, value, o = {}) => {
+        vars.push({ id, value, people: o.people !== false, total: !!o.total, table: o.table || id, published: o.published !== false });
+        return vars.length - 1;
+      };
+      const rel = (terms, op, rhs = 0) => cons.push({ terms, op, rhs });
+      const h = {};
+      const u = raw.unduplicated;
+      const N = h.N = v("served", u.served, { total: true, table: "unduplicated.served" });
+      h.newAdm = v("new_admissions", u.new_admissions, { table: "unduplicated.new_admissions" });
+      const subset = (id, value, table, o = {}) => {
+        const i = v(id, value, { table, ...o });
+        rel([[i, 1], [N, -1]], "<=");
+        derived.push({ id: `${id}:rest`, terms: [[N, 1], [i, -1]] });
+        return i;
+      };
+      h.mat = subset("on_mat", u.on_mat, "unduplicated.on_mat");
+      h.ref = subset("with_a_referral", u.with_a_referral, "unduplicated.with_a_referral");
+      h.adm = subset("admitted_after_referral", u.admitted_after_referral, "unduplicated.admitted_after_referral");
+      h.dem = {};
+      for (const k of PARTITIONS) {
+        h.dem[k] = raw.demographics[k].map((x) => v(`${k}.${x.k}`, x.n, { table: `demographics.${k}` }));
+        rel([...h.dem[k].map((i) => [i, 1]), [N, -1]], "=");
+      }
+      const race = raw.demographics.by_race_code;
+      h.race = race.map((x) => subset(`by_race_code.${x.k}`, x.n, "demographics.by_race_code"));
+      if (h.race.length) rel([...h.race.map((i) => [i, 1]), [N, -1]], ">=");
+      const unknown = race.findIndex((x) => x.k === "unknown");
+      if (unknown >= 0) h.race.forEach((i, j) => {
+        if (j !== unknown) rel([[i, 1], [h.race[unknown], 1], [N, -1]], "<=");
+      });
+      const fundVars = /* @__PURE__ */ new Map();
+      h.funds = raw.by_funding_source.map((f) => {
+        const p = subset(`fund.${f.id}.people`, f.clients_served, "by_funding_source");
+        const s = v(`fund.${f.id}.services`, f.services, { people: false, table: "by_funding_source" });
+        rel([[p, 1], [s, -1]], "<=");
+        mirror.push([p, s]);
+        fundVars.set(f.id, { p, s });
+        return { p, s };
+      });
+      const byKey = /* @__PURE__ */ new Map();
+      for (const f of settlement.fundKeys) {
+        const act = perFund.get(f.id);
+        if (!act || !act.services) continue;
+        if (!fundVars.has(f.id)) {
+          const p = subset(`fund.${f.id}.people`, act.clients_served, `unpublished.fund.${f.id}`, { published: false });
+          const s = v(`fund.${f.id}.services`, act.services, { people: false, table: `unpublished.fund.${f.id}`, published: false });
+          rel([[p, 1], [s, -1]], "<=");
+          fundVars.set(f.id, { p, s });
+        }
+        if (!byKey.has(f.key)) byKey.set(f.key, []);
+        byKey.get(f.key).push(fundVars.get(f.id));
+      }
+      h.uses = settlement.services_by_use.map((x) => {
+        const p = subset(`use.${x.use_code}.people`, x.people, "settlement.services_by_use");
+        const s = v(`use.${x.use_code}.services`, x.services, { people: false, table: "settlement.services_by_use" });
+        rel([[p, 1], [s, -1]], "<=");
+        mirror.push([p, s]);
+        const fs = byKey.get(x.use_code) || [];
+        if (fs.length) {
+          rel([[s, 1], ...fs.map((f) => [f.s, -1])], "=");
+          rel([[p, 1], ...fs.map((f) => [f.p, -1])], "<=");
+          for (const f of fs) {
+            rel([[p, 1], [f.p, -1]], ">=");
+            derived.push({ id: `use.${x.use_code}-${vars[f.p].id}`, terms: [[p, 1], [f.p, -1]] });
+          }
+        }
+        return { p, s };
+      });
+      const ep = raw.episodes;
+      h.epAdm = v("episodes.admissions", ep.admissions, { table: "episodes.admissions" });
+      h.epOpen = v("episodes.open_at_end", ep.open_at_end, { table: "episodes.open_at_end" });
+      h.D = v("episodes.discharges", ep.discharges, { total: true, table: "episodes.discharges" });
+      h.dis = ep.by_discharge_reason.map((x) => v(`discharge.${x.k}`, x.n, { table: "episodes.by_discharge_reason" }));
+      rel([...h.dis.map((i) => [i, 1]), [h.D, -1]], "=");
+      const od = raw.overdose;
+      const E = h.E = v("overdose.events", od.events, { total: true, table: "overdose.events" });
+      const R = h.R = v("overdose.reversals", od.reversals, { total: true, table: "overdose.reversals" });
+      const F = h.F = v("overdose.fatal", od.fatal, { table: "overdose.fatal" });
+      const Cm = h.C = v("overdose.community_reported", od.community_reported, { table: "overdose.community_reported" });
+      h.n = od.by_month.map((x) => v(`overdose.${x.month}.events`, x.n, { table: "overdose.by_month.n" }));
+      h.r = od.by_month.map((x) => v(`overdose.${x.month}.reversals`, x.reversals, { table: "overdose.by_month.reversals" }));
+      h.by = od.by_administered_by.map((x) => v(`overdose.by.${x.k}`, x.n, { table: "overdose.by_administered_by" }));
+      rel([...h.n.map((i) => [i, 1]), [E, -1]], "=");
+      rel([...h.r.map((i) => [i, 1]), [R, -1]], "=");
+      rel([...h.by.map((i) => [i, 1]), [R, -1]], "=");
+      h.n.forEach((n, m) => {
+        rel([[h.r[m], 1], [n, -1]], "<=");
+        derived.push({ id: `overdose.${od.by_month[m].month}.not_reversed`, terms: [[n, 1], [h.r[m], -1]] });
+      });
+      rel([[F, 1], [E, -1]], "<=");
+      rel([[Cm, 1], [E, -1]], "<=");
+      cons.push({ terms: [[F, 1], [R, 1], [E, -1]], op: "<=", rhs: 0, soft: true });
+      derived.push(
+        { id: "overdose.not_reversed", terms: [[E, 1], [R, -1]] },
+        { id: "overdose.not_fatal", terms: [[E, 1], [F, -1]] },
+        { id: "overdose.not_community", terms: [[E, 1], [Cm, -1]] },
+        { id: "overdose.neither", terms: [[E, 1], [R, -1], [F, -1]] }
+      );
+      return { model: { vars, cons, derived, mirror }, h };
+    }
+    function digest(text) {
+      let h1 = 2166136261;
+      let h2 = 16777619;
+      for (let i = 0; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 16777619) >>> 0;
+        h2 = Math.imul(h2 ^ c, 1540483477) >>> 0;
+      }
+      return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
+    }
+    function protectFigures(inputs, T, { strict = false } = {}) {
+      const { model, h } = buildModel(inputs);
+      model.strict = strict;
+      const { status, withheldTables } = SDC.protect(model, T);
+      const show = (i) => status[i] === "vis" ? model.vars[i].value : status[i] === "pri" ? SC.primary(T) : status[i] === "sec" ? SC.SECONDARY : SC.WITHHELD;
+      const raw = inputs.funder;
+      const gone = new Set(withheldTables);
+      const withheld = [];
+      const demographics = {};
+      for (const k of [...PARTITIONS.slice(0, 4), "by_race_code", "by_ethnicity"]) {
+        const idx = k === "by_race_code" ? h.race : h.dem[k];
+        if (gone.has(`demographics.${k}`)) {
+          withheld.push(k);
+          demographics[k] = [];
+          continue;
+        }
+        demographics[k] = raw.demographics[k].map((x, i) => FR.withCell(x, "n", show(idx[i])));
+      }
+      const ep = raw.episodes;
+      const od = raw.overdose;
+      const smallGroup = ep.discharges > 0 && ep.discharges < T;
+      const byFund = raw.by_funding_source.map((f, i) => ({ ...FR.withCell(f, "clients_served", show(h.funds[i].p)), services: show(h.funds[i].s) }));
+      const none = byFund.find((f) => f.id === null);
+      const funder = {
+        unduplicated: { served: show(h.N), new_admissions: show(h.newAdm), with_a_referral: show(h.ref), admitted_after_referral: show(h.adm), on_mat: show(h.mat) },
+        demographics,
+        withheld,
+        episodes: {
+          ...ep,
+          admissions: show(h.epAdm),
+          discharges: show(h.D),
+          open_at_end: show(h.epOpen),
+          by_discharge_reason: ep.by_discharge_reason.map((x, i) => FR.withCell(x, "n", show(h.dis[i]))),
+          // A median over fewer people than the threshold is one of them.
+          median_length_of_stay_days: smallGroup || show(h.D) === SC.WITHHELD ? SC.SECONDARY : ep.median_length_of_stay_days
+        },
+        overdose: {
+          ...od,
+          events: show(h.E),
+          reversals: show(h.R),
+          fatal: show(h.F),
+          community_reported: show(h.C),
+          by_month: od.by_month.map((x, m) => {
+            const n = show(h.n[m]);
+            const r = show(h.r[m]);
+            return { month: x.month, n, reversals: r, ...typeof n === "number" && typeof r === "number" ? {} : { suppressed: true } };
+          }),
+          by_administered_by: od.by_administered_by.map((x, i) => FR.withCell(x, "n", show(h.by[i])))
+        },
+        naloxone_distribution: raw.naloxone_distribution,
+        by_funding_source: byFund,
+        attribution: { ...raw.attribution, unattributed_clients: none ? none.clients_served : 0, unattributed_services: none ? none.services : raw.attribution.unattributed_services }
+      };
+      const uses = h.uses.map((x) => ({ people: show(x.p), services: show(x.s) }));
+      const ndp = { by_month: h.r.map(show), reversals: show(h.R) };
+      const id = digest(JSON.stringify(model.vars.map((x, i) => x.published ? [x.id, show(i)] : null).filter(Boolean)));
+      return { funder, uses, ndp, withheld_tables: withheldTables, id, status, model };
+    }
+    function release(ctx, range, counting) {
+      const HR = require_harm_reduction_reports();
+      const T = counting.threshold;
+      const { raw, perFund } = FR.runSync(FR.figures(ctx, range, null));
+      const settle = HR.settlementFigures(range);
+      const dist = HR.distributionRows(ctx, range, true);
+      const p = protectFigures({ funder: raw, perFund, settlement: settle }, T);
+      const rel = { ...counting.release, id: p.id, reports: ["funder", "naloxone-ndp", "opioid-settlement"], withheld: p.withheld_tables };
+      const withRelease = (d) => ({ ...d, release: rel });
+      const { fundKeys, ...s } = settle;
+      return {
+        id: p.id,
+        funder: withRelease({ ...FR.header(counting, range.from, range.to, null), ...p.funder }),
+        settlement: withRelease({
+          ...s,
+          funds: s.funds.map(({ is_active, ...f }) => f),
+          ...HR.header(counting),
+          services_by_use: s.services_by_use.map((x, i) => ({ ...FR.withCell(x, "people", p.uses[i].people), services: p.uses[i].services }))
+        }),
+        ndp: withRelease(HR.ndpPublished(range, counting, dist, raw.overdose, p.ndp))
+      };
+    }
+    module.exports = { release, protectFigures, buildModel, digest };
+  }
+});
+
+// server/funder-report.js
+var require_funder_report = __commonJS({
+  "server/funder-report.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var { badRequest, forbidden } = require_http();
+    var { uuid: uuid2 } = require_crypto();
+    var { defer } = require_spreadsheet();
+    var SC = require_small_cells();
+    var breathe = () => new Promise((resolve2) => defer(resolve2));
+    var SMALL_CELL_DEFAULT = 11;
+    var PURPOSES = ["publication", "submission", "internal"];
+    var QUARTER_STARTS = [1, 4, 7, 10];
+    var lastDayOf = (year, month) => new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+    function standardPeriod(from, to) {
+      const m = /^(\d{4})-(\d{2})-01$/.exec(from || "");
+      if (!m) return null;
+      const y = Number(m[1]);
+      const mo = Number(m[2]);
+      const end = (months) => {
+        const last = mo - 1 + months - 1;
+        return lastDayOf(y + Math.floor(last / 12), last % 12 + 1);
+      };
+      if (to === end(1)) return "month";
+      if (QUARTER_STARTS.includes(mo) && to === end(3)) return "quarter";
+      if (QUARTER_STARTS.includes(mo) && to === end(12)) return "year";
+      return null;
+    }
+    var PERIOD_LABEL = { month: "one calendar month", quarter: "one quarter", year: "one year" };
+    function release(ctx, { from, to }, { fund = null } = {}) {
+      const why = [];
+      const period = standardPeriod(from, to);
+      if (fund) why.push("it is filtered to one funding source");
+      if (auth3.caseloadRestricted(ctx.user)) why.push("it counts only your caseload");
+      if (!period) why.push("its period is not a calendar month, a quarter or a year starting on 1 January, April, July or October");
+      else if (to >= require_budget().localDate()) why.push("its period has not ended yet");
+      return { publishable: !why.length, period, not_publishable: why };
+    }
+    function countingMode(ctx, period = { from: "", to: "" }, opts = {}) {
+      const rel = release(ctx, period, opts);
+      const purpose = ctx.query.get("purpose") || (rel.publishable ? "publication" : "internal");
+      if (!PURPOSES.includes(purpose)) throw badRequest("purpose must be publication (a release to publish or share), submission (the programme's own report to its funder) or internal");
+      const mode = ctx.query.get("counts") || "suppressed";
+      if (!["suppressed", "exact"].includes(mode)) throw badRequest("counts must be suppressed or exact");
+      if (mode === "exact") {
+        if (purpose === "publication") throw badRequest("Exact counts are only for the programme's own submission to its funder (purpose=submission) or internal use. A report to publish or share keeps small cells suppressed.");
+        if (!auth3.hasPerm(ctx.user, "reports:exact")) throw forbidden("Only a supervisor, an administrator or finance can run the funder report with exact counts");
+      }
+      if (purpose === "publication" && !rel.publishable) {
+        throw badRequest(`Only a report on the whole programme for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be labelled for publication; this one cannot, because ${rel.not_publishable.join(" and ")}. Run it without purpose=publication: it is then marked internal, not for publication.`);
+      }
+      const threshold = Number(db3.getSetting("small_cell_threshold", "")) || SMALL_CELL_DEFAULT;
+      return { mode, threshold, purpose, release: rel };
+    }
+    var suppressionOf = (c) => ({ mode: c.mode, threshold: c.threshold, purpose: c.purpose });
+    function countingStatement(s) {
+      const T = s.threshold;
+      const how = `every count of people under ${T} (people served, each breakdown row, people per fund, episodes, discharges, overdose events and reversals, who gave the naloxone) is shown as "<${T}" so nobody can be picked out of a small group, and wherever a hidden figure could still be worked out from the figures published with it (a total, a breakdown that adds up to it, or the people left when one fund's are taken from the total) more is hidden, shown as "suppressed", the total itself only when nothing else will do, so that it cannot be worked out by subtraction. Counts of naloxone kits, doses, test strips, services, staff hours and money are not counts of people and are exact.`;
+      const rel = s.release || { publishable: false, not_publishable: [] };
+      const why = rel.not_publishable.length ? ` (${rel.not_publishable.join("; ")})` : "";
+      if (s.mode === "exact") {
+        return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the programme's own ${s.purpose === "submission" ? "submission to its funder" : "internal use"}; not for publication or sharing.`;
+      }
+      if (s.purpose === "publication") {
+        return `Publication release: the whole programme, ${PERIOD_LABEL[rel.period] || "one standard period"}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: nothing any of them prints says more about a small hidden count of people than "fewer than ${T}" (a count of services that would is hidden with it, and a table that cannot be protected is withheld). Suitable for publication or sharing. Publish one release per period, once: two releases for nested or overlapping periods (a quarter and the year that contains it) or the same period run again after late entries can be subtracted from each other to reveal a small group, which suppression within one release cannot prevent.`;
+      }
+      return `${s.purpose === "submission" ? "The programme's own submission to its funder" : "Internal"}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole programme minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the programme and its funder.`;
+    }
+    var DIMENSIONS = [["by_gender", "gender", "gender"], ["by_language", "preferred_language", "language"], ["by_housing", "housing_status", "housing"], ["by_insurance", "insurance", "insurance"], ["by_ethnicity", "race_ethnicity", "ethnicity"]];
+    var byCount = (a, b) => b.n - a.n || String(a.k).localeCompare(String(b.k));
+    var NALOXONE = `(o.naloxone_used=1 OR o.kind='reversal')`;
+    function overdoseFigures(ts, tsP, cf = null) {
+      const scope = cf ? ` AND o.client_id IN (SELECT c.id FROM clients c WHERE ${cf.sql})` : "";
+      const sp = cf ? cf.params : [];
+      const od = db3.one(`SELECT COUNT(*) events, COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END),0) reversals,
+      COALESCE(SUM(CASE WHEN o.kind='fatal' OR o.survived=0 THEN 1 ELSE 0 END),0) fatal, COALESCE(SUM(CASE WHEN o.client_id IS NULL THEN 1 ELSE 0 END),0) community_reported,
+      COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts("o.occurred_at")}${scope}`, ...tsP, ...sp);
+      return {
+        ...od,
+        by_month: db3.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END) reversals,
+        COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN o.naloxone_doses ELSE 0 END),0) reversal_doses FROM overdose_events o WHERE ${ts("o.occurred_at")}${scope} GROUP BY month ORDER BY month`, ...tsP, ...sp),
+        // Who gave the naloxone in each reversal (as the NDP log counts it), so the rows add up to the reversals.
+        by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND ${NALOXONE} AND o.survived=1${scope} GROUP BY k ORDER BY n DESC`, ...tsP, ...sp)
+      };
+    }
+    var CASELOAD_NOTE = "Counts only your caseload: people served, and people per funding source, are clients on your caseload; overdose events are those of clients on your caseload, and events reported from the community (with no client) are not counted. Services, naloxone kits and test strips are the whole programme's.";
+    function overdoseProtect(od, sc) {
+      const months = od.by_month.map((x) => ({ month: x.month, n: x.n, reversals: x.reversals }));
+      if (sc.exact) return { events: od.events, reversals: od.reversals, fatal: od.fatal, community_reported: od.community_reported, by_month: months, by_administered_by: od.by_administered_by };
+      const forceMonth = /* @__PURE__ */ new Set();
+      let hideR = false;
+      for (; ; ) {
+        const r = SC.star(
+          { total: od.reversals, partitions: [months.map((x) => x.reversals), od.by_administered_by.map((x) => x.n)] },
+          { ...sc, hidden: { partitions: [...forceMonth].map((i) => [0, i]), total: hideR } }
+        );
+        const rHidden = !isNum(r.total);
+        const e = SC.star(
+          { total: od.events, partitions: [months.map((x) => x.n)], subsets: [od.reversals, od.fatal, od.community_reported] },
+          { ...sc, hidden: { subsets: rHidden ? [0] : [] } }
+        );
+        let more = false;
+        if (!isNum(e.subsets[0]) && !rHidden) {
+          hideR = true;
+          more = true;
+        }
+        months.forEach((x, i) => {
+          if (!forceMonth.has(i) && isNum(e.partitions[0][i]) && isNum(r.partitions[0][i]) && SC.isSmall(x.n - x.reversals, sc.threshold)) {
+            forceMonth.add(i);
+            more = true;
+          }
+        });
+        if (more) continue;
+        const rows = (p) => p || [];
+        return {
+          events: e.total,
+          reversals: r.total,
+          fatal: e.subsets[1],
+          community_reported: e.subsets[2],
+          by_month: months.map((x, i) => {
+            const n = rows(e.partitions[0])[i] ?? SC.WITHHELD;
+            const rv = rows(r.partitions[0])[i] ?? SC.WITHHELD;
+            return { ...x, n, reversals: rv, ...isNum(n) && isNum(rv) ? {} : { suppressed: true } };
+          }),
+          by_administered_by: od.by_administered_by.map((x, i) => withCell(x, "n", rows(r.partitions[1])[i] ?? SC.WITHHELD))
+        };
+      }
+    }
+    var isNum = (v) => typeof v === "number";
+    function servedCount(ts, tsP) {
+      return db3.one(`SELECT COUNT(*) n FROM clients c WHERE c.deleted_at IS NULL AND (c.id IN (SELECT i.client_id FROM interventions i WHERE ${ts("i.occurred_at")})
+    OR c.id IN (SELECT ca.client_id FROM calls ca WHERE ${ts("ca.started_at")}))`, ...tsP, ...tsP).n;
+    }
+    function* figures(ctx, { from, to, ts, tsP }, fund) {
+      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+      const fundJoin = fund ? "AND i.funding_source_id=?" : "";
+      const fundP = fund ? [fund] : [];
+      const table = `report_served_${uuid2().replace(/-/g, "").slice(0, 16)}`;
+      const served = `temp.${table}`;
+      db3.run(`CREATE TEMP TABLE ${table} (id TEXT PRIMARY KEY) WITHOUT ROWID`);
+      try {
+        db3.run(`INSERT OR IGNORE INTO ${served}(id) SELECT i.client_id FROM interventions i WHERE ${ts("i.occurred_at")} AND i.client_id IS NOT NULL ${fundJoin}`, ...tsP, ...fundP);
+        if (!fund) db3.run(`INSERT OR IGNORE INTO ${served}(id) SELECT ca.client_id FROM calls ca WHERE ${ts("ca.started_at")} AND ca.client_id IS NOT NULL`, ...tsP);
+        db3.run(`DELETE FROM ${served} WHERE id NOT IN (SELECT c.id FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql})`, ...cf.params);
+        yield;
+        const people = db3.all(`SELECT c.gender, c.preferred_language, c.housing_status, c.insurance, c.race_ethnicity, c.race_codes, c.mat_status FROM clients c WHERE c.id IN (SELECT id FROM ${served})`);
+        const demographics = {};
+        for (const [key, col, label] of DIMENSIONS) {
+          const n = /* @__PURE__ */ new Map();
+          for (const p of people) {
+            const k = p[col] === null || p[col] === "" ? "unknown" : p[col];
+            n.set(k, (n.get(k) || 0) + 1);
+          }
+          demographics[key] = [...n].map(([k, v]) => ({ k, n: v, dimension: label })).sort(byCount);
+        }
+        const byRace = /* @__PURE__ */ new Map();
+        for (const p of people) {
+          const codes = String(p.race_codes || "").split(",").map((x) => x.trim()).filter(Boolean);
+          for (const code of codes.length ? codes : ["unknown"]) byRace.set(code, (byRace.get(code) || 0) + 1);
+        }
+        demographics.by_race_code = [...byRace].map(([k, n]) => ({ k, n })).sort(byCount);
+        yield;
+        const unduplicated = {
+          served: people.length,
+          new_admissions: db3.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+          // Of the people served: how many were referred on, admitted somewhere, and are on MAT.
+          with_a_referral: db3.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN ${served} s ON s.id=r.client_id WHERE ${ts("r.referred_at")}`, ...tsP).n,
+          admitted_after_referral: db3.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN ${served} s ON s.id=r.client_id WHERE ${ts("r.admitted_at")}`, ...tsP).n,
+          on_mat: people.filter((p) => p.mat_status === "active").length
+        };
+        const episodes = {
+          admissions: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+          discharges: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+          open_at_end: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at <= ? AND (e.closed_at IS NULL OR e.closed_at > ?) AND ${cf.sql}`, to, to, ...cf.params).n,
+          by_discharge_reason: db3.all(`SELECT COALESCE(e.discharge_reason,'unknown') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY n DESC`, from, to, ...cf.params),
+          median_length_of_stay_days: (() => {
+            const d = db3.all(`SELECT (julianday(e.closed_at)-julianday(e.opened_at)) d FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY d`, from, to, ...cf.params).map((x) => x.d);
+            return d.length ? Math.round(d[Math.floor(d.length / 2)]) : null;
+          })()
+        };
+        const scoped = auth3.caseloadRestricted(ctx.user);
+        const overdose = overdoseFigures(ts, tsP, scoped ? cf : null);
+        const svc = new Map(db3.all(`SELECT i.funding_source_id f, COUNT(*) services, COUNT(DISTINCT i.client_id) clients_served,
+        COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips, COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
+      FROM interventions i WHERE ${ts("i.occurred_at")} GROUP BY i.funding_source_id`, ...tsP).map((x) => [x.f, x]));
+        for (const x of db3.all(`SELECT i.funding_source_id f, COUNT(DISTINCT i.client_id) n FROM interventions i WHERE i.client_id IN (SELECT id FROM clients WHERE deleted_at IS NOT NULL) AND ${ts("i.occurred_at")} GROUP BY i.funding_source_id`, ...tsP)) {
+          if (svc.has(x.f)) svc.get(x.f).clients_served -= x.n;
+        }
+        if (scoped) {
+          for (const x of svc.values()) x.clients_served = 0;
+          for (const x of db3.all(`SELECT i.funding_source_id f, COUNT(DISTINCT i.client_id) n FROM interventions i WHERE ${ts("i.occurred_at")} AND i.client_id IN (SELECT id FROM ${served}) GROUP BY i.funding_source_id`, ...tsP)) {
+            if (svc.has(x.f)) svc.get(x.f).clients_served = x.n;
+          }
+        }
+        yield;
+        const distribution = { kits: 0, strips: 0, community_kits: 0 };
+        for (const x of svc.values()) if (!fund || x.f === fund) for (const k of Object.keys(distribution)) distribution[k] += x[k];
+        const hrs = new Map(db3.all(`SELECT t.funding_source_id f, COALESCE(SUM(CASE WHEN t.status='approved' THEN t.minutes END),0) approved_minutes,
+      COALESCE(SUM(CASE WHEN t.status IN ('draft','submitted') THEN t.minutes END),0) unapproved_minutes FROM time_entries t WHERE t.work_date BETWEEN ? AND ? GROUP BY t.funding_source_id`, from, to).map((x) => [x.f, x]));
+        const fundFigures = (id) => ({ clients_served: svc.get(id)?.clients_served || 0, services: svc.get(id)?.services || 0, approved_minutes: hrs.get(id)?.approved_minutes || 0, unapproved_minutes: hrs.get(id)?.unapproved_minutes || 0 });
+        const byFund = fund ? db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.id=?`, fund).map((f) => ({ ...f, ...fundFigures(f.id) })) : db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`).map((f) => ({ ...f, ...fundFigures(f.id) }));
+        const none = { id: null, name: "No funding source", grant_number: null, fiscal_year_start: null, fiscal_year_end: null, ...fundFigures(null) };
+        if (!fund) byFund.push(none);
+        let approved = 0, unapproved = 0;
+        for (const [f, x] of hrs) if (!fund || f === fund) {
+          approved += x.approved_minutes;
+          unapproved += x.unapproved_minutes;
+        }
+        const attribution = {
+          unattributed_services: fund ? 0 : none.services,
+          unattributed_clients: fund ? 0 : none.clients_served,
+          approved_minutes: approved,
+          unapproved_minutes: unapproved,
+          // Where to fix it: the visits in this period with no fund (public/views/interventions.js), and the time
+          // sheets waiting for approval.
+          fix_link: `#/interventions?from=${from}&to=${to}&funding=none`,
+          approve_link: `#/time?from=${from}&to=${to}`,
+          // With no programme default fund, a visit nobody charges goes to no fund; Settings → Programme →
+          // Reporting is where one is set.
+          default_fund_set: !!require_budget().defaultFundFor(null),
+          settings_link: "#/admin?tab=settings&section=reporting"
+        };
+        const raw = {
+          caseload_scope_note: scoped ? CASELOAD_NOTE : null,
+          unduplicated,
+          demographics,
+          episodes,
+          overdose,
+          naloxone_distribution: distribution,
+          by_funding_source: byFund,
+          attribution: { ...attribution, unattributed_clients: fund ? 0 : none.clients_served }
+        };
+        return { raw, perFund: svc };
+      } finally {
+        db3.run(`DROP TABLE IF EXISTS ${served}`);
+      }
+    }
+    function runSync(gen) {
+      let r = gen.next();
+      while (!r.done) r = gen.next();
+      return r.value;
+    }
+    async function runAsync(gen) {
+      let r = gen.next();
+      while (!r.done) {
+        await breathe();
+        r = gen.next();
+      }
+      return r.value;
+    }
+    async function build(ctx, range) {
+      const { from, to } = range;
+      const fund = ctx.query.get("funding_source_id") || null;
+      const counting = countingMode(ctx, { from, to }, { fund });
+      if (counting.purpose === "publication") return require_publication_release().release(ctx, range, counting).funder;
+      const { raw } = await runAsync(figures(ctx, range, fund));
+      const sc = { threshold: counting.threshold, exact: counting.mode === "exact" };
+      return { ...header(counting, from, to, fund), caseload_scope_note: raw.caseload_scope_note, ...suppress(raw, sc) };
+    }
+    function header(counting, from, to, fund = null) {
+      return {
+        from,
+        to,
+        funding_source_id: fund,
+        suppression: suppressionOf(counting),
+        // Whether this run could be a publication release, and if not why not.
+        release: counting.release,
+        // Kept for the screens and files that read it: the threshold applied, or null when counts are exact.
+        small_cell_threshold: counting.mode === "exact" ? null : counting.threshold,
+        counting_statement: countingStatement(counting)
+      };
+    }
+    var PARTITIONS = ["by_gender", "by_language", "by_housing", "by_insurance", "by_ethnicity"];
+    var withCell = (x, key, v) => ({ ...x, [key]: v, ...isNum(v) ? {} : { suppressed: true } });
+    function suppress(raw, sc) {
+      const dem = raw.demographics;
+      const order = ["by_gender", "by_language", "by_housing", "by_insurance", "by_race_code", "by_ethnicity"];
+      if (sc.exact) return { ...raw, withheld: [], demographics: Object.fromEntries(order.map((k) => [k, dem[k]])), overdose: { ...raw.overdose, ...overdoseProtect(raw.overdose, sc) } };
+      const one = (v) => SC.cell(v, sc);
+      const u = raw.unduplicated;
+      const funds = raw.by_funding_source;
+      const s = SC.star({
+        total: u.served,
+        partitions: PARTITIONS.map((k) => dem[k].map((x) => x.n)),
+        subsets: [u.on_mat, u.with_a_referral, u.admitted_after_referral, ...funds.map((f) => f.clients_served)],
+        cover: dem.by_race_code.map((x) => x.n)
+      }, sc);
+      const demographics = {};
+      const withheld = [];
+      PARTITIONS.forEach((k, g) => {
+        if (!s.partitions[g]) {
+          withheld.push(k);
+          demographics[k] = [];
+        } else demographics[k] = dem[k].map((x, i) => withCell(x, "n", s.partitions[g][i]));
+      });
+      if (!s.cover) {
+        withheld.push("by_race_code");
+        demographics.by_race_code = [];
+      } else demographics.by_race_code = dem.by_race_code.map((x, i) => withCell(x, "n", s.cover[i]));
+      const fundPeople = SC.noLonely(s.subsets.slice(3));
+      const byFund = funds.map((f, i) => withCell(f, "clients_served", fundPeople[i]));
+      const noneRow = byFund.find((f) => f.id === null);
+      const ep = raw.episodes;
+      const discharges = SC.table(ep.by_discharge_reason, ["n"], { ...sc, totals: { n: ep.discharges } });
+      const od = raw.overdose;
+      const o = overdoseProtect(od, sc);
+      const smallGroup = isNum(ep.discharges) && ep.discharges > 0 && ep.discharges < sc.threshold;
+      return {
+        unduplicated: { served: s.total, new_admissions: one(u.new_admissions), with_a_referral: s.subsets[1], admitted_after_referral: s.subsets[2], on_mat: s.subsets[0] },
+        demographics: Object.fromEntries(order.map((k) => [k, demographics[k]])),
+        withheld,
+        episodes: {
+          ...ep,
+          admissions: one(ep.admissions),
+          discharges: discharges.totals.n,
+          open_at_end: one(ep.open_at_end),
+          by_discharge_reason: discharges.rows,
+          median_length_of_stay_days: smallGroup ? SC.SECONDARY : ep.median_length_of_stay_days
+        },
+        overdose: { ...od, ...o },
+        naloxone_distribution: raw.naloxone_distribution,
+        by_funding_source: byFund,
+        attribution: { ...raw.attribution, unattributed_clients: noneRow ? noneRow.clients_served : 0 }
+      };
+    }
+    function sheets(d, ctx, fundName) {
+      const hours = (m) => Math.round(m / 6) / 10;
+      const about = [
+        { k: "Report", v: "Funder report (unduplicated people served)" },
+        { k: "Period", v: `${d.from} to ${d.to}` },
+        { k: "Funding source", v: fundName || "All funding sources" },
+        { k: "Purpose", v: d.suppression.purpose === "publication" ? "Publication release (whole programme, one standard period)" : d.suppression.purpose === "submission" ? "The programme's own submission to its funder, not for publication" : "Internal, not for publication" },
+        { k: "Counts", v: d.counting_statement },
+        ...d.caseload_scope_note ? [{ k: "Scope", v: d.caseload_scope_note }] : [],
+        { k: "Classification", v: "Aggregate counts: no names, client codes or dates of service." },
+        { k: "Generated", v: db3.now() },
+        { k: "Generated by", v: ctx.user.display_name || ctx.user.username }
+      ];
+      const u = d.unduplicated;
+      const summary = [
+        ["People served", "Unduplicated clients served", u.served],
+        ["People served", "New admissions", u.new_admissions],
+        ["People served", "Received a referral", u.with_a_referral],
+        ["People served", "Admitted after a referral", u.admitted_after_referral],
+        ["People served", "On medication for opioid use disorder", u.on_mat],
+        ["Episodes", "Opened", d.episodes.admissions],
+        ["Episodes", "Closed", d.episodes.discharges],
+        ["Episodes", "Open at end of period", d.episodes.open_at_end],
+        ["Episodes", "Median length of stay (days)", d.episodes.median_length_of_stay_days ?? ""],
+        ["Overdose & naloxone", "Overdose events recorded", d.overdose.events],
+        ["Overdose & naloxone", "Reversed with naloxone", d.overdose.reversals],
+        ["Overdose & naloxone", "Fatal", d.overdose.fatal],
+        ["Overdose & naloxone", "Reported from the community", d.overdose.community_reported],
+        ["Overdose & naloxone", "Naloxone doses used", d.overdose.naloxone_doses],
+        ["Overdose & naloxone", "Naloxone kits distributed", d.naloxone_distribution.kits],
+        ["Overdose & naloxone", "Of those, community distribution", d.naloxone_distribution.community_kits],
+        ["Overdose & naloxone", "Fentanyl test strips", d.naloxone_distribution.strips],
+        ["Funding attribution", "Services with no funding source", d.attribution.unattributed_services],
+        ["Funding attribution", "Approved staff hours", hours(d.attribution.approved_minutes)],
+        ["Funding attribution", "Staff hours logged, not yet approved", hours(d.attribution.unapproved_minutes)]
+      ].map(([section, measure, value]) => ({ section, measure, value }));
+      const who = [];
+      for (const [key, label] of [["by_race_code", "Race"], ["by_ethnicity", "Ethnicity"], ["by_gender", "Gender"], ["by_language", "Language"], ["by_housing", "Housing"], ["by_insurance", "Insurance"]]) for (const x of d.demographics[key]) who.push({ section: label, measure: x.k, value: x.n });
+      for (const x of d.episodes.by_discharge_reason) who.push({ section: "Discharge reason", measure: x.k, value: x.n });
+      for (const x of d.overdose.by_administered_by) who.push({ section: "Naloxone given by", measure: x.k, value: x.n });
+      const funds = d.by_funding_source.map((f) => ({ fund: f.name, grant_number: f.grant_number || "", fiscal_year: [f.fiscal_year_start, f.fiscal_year_end].filter(Boolean).join(" to "), people: f.clients_served, services: f.services, approved_hours: hours(f.approved_minutes), unapproved_hours: hours(f.unapproved_minutes) }));
+      const long = [{ key: "section", label: "Section" }, { key: "measure", label: "Measure" }, { key: "value", label: "Value" }];
+      return {
+        about,
+        summary,
+        who,
+        funds,
+        workbook: [
+          { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: about },
+          { name: "Summary", columns: long, rows: summary },
+          { name: "Who was served", columns: long, rows: who },
+          { name: "By funding source", columns: [{ key: "fund", label: "Fund" }, { key: "grant_number", label: "Grant number" }, { key: "fiscal_year", label: "Fiscal year" }, { key: "people", label: "People served" }, { key: "services", label: "Services" }, { key: "approved_hours", label: "Approved staff hours" }, { key: "unapproved_hours", label: "Staff hours logged, not yet approved" }], rows: funds }
+        ],
+        // CSV has no cover sheet: one long table whose first rows are the About fields, so the counting mode
+        // travels with the numbers.
+        csv: [...about.map((x) => ({ section: "About", measure: x.k, value: x.v })), ...summary, ...who, ...funds.flatMap((f) => [
+          { section: "By funding source", measure: `${f.fund}: people served`, value: f.people },
+          { section: "By funding source", measure: `${f.fund}: services`, value: f.services },
+          { section: "By funding source", measure: `${f.fund}: approved staff hours`, value: f.approved_hours },
+          { section: "By funding source", measure: `${f.fund}: staff hours logged, not yet approved`, value: f.unapproved_hours }
+        ])],
+        csvColumns: long
+      };
+    }
+    module.exports = { build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT };
   }
 });
 
@@ -23926,6 +24588,7 @@ var require_reports = __commonJS({
         start2.setUTCDate(1);
         start2.setUTCMonth(start2.getUTCMonth() - months + 1);
         const s = start2.toISOString().slice(0, 10);
+        audit3.log({ user: ctx.user, action: "report.monthly", ip: ctx.ip, details: { months } });
         return {
           intakes: db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
           discharges: db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),

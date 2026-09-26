@@ -2,6 +2,29 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.12.2 — 2026-09-26
+
+- **A publication release is audited as a whole.** An independent check of 1.12.1 still recovered hidden
+  counts: the settlement report printed a total the funder report had hidden, and a month's reversals (never
+  more than its overdose events) pinned a hidden cell. Protecting table by table kept missing links. Now a
+  period's funder report, naloxone log and settlement report form one release, computed from one reading of
+  the data. Every number the three print goes into one set of constraints (breakdowns add up, subsets and
+  reversals are bounded, a settlement use lies between its funds). An exact integer solver (`server/sdc.js`,
+  no dependencies) then checks how far each hidden cell could still range. Cells are hidden until none can be
+  narrowed below the protection rule, or the table is withheld. A separately written attacker, searching all
+  three reports of 250 random programmes, cannot pin a hidden cell. A year for 5,000 clients audits in about
+  0.15 s. The price: a small programme sees more cells hidden and some sparse tables withheld.
+- **Who the suppression protects is stated plainly** (docs/HIPAA.md): the recipients of a published release.
+  Staff with reporting or export access can already see de-identified rows and exact figures; permissions and
+  the audit log govern them. As defence in depth, internal and submission runs now need `reports:internal`
+  (supervisors and administrators; navigators and clinicians for their own caseload). Read-only and finance
+  accounts get publication releases, with money and hours exact. The monthly trends report is now audited.
+- A navigator's caseload report counted overdoses and people per fund for the whole programme; it now counts
+  the caseload only, and says so.
+- "Back up now" reports why a backup failed instead of answering with a server error.
+- On a device restored from a backup, an account dropped at the key change is told what happened and who can
+  let it back in; the device audit names the accounts dropped.
+
 ## 1.12.1 — 2026-09-26
 
 - **Small cells: publication releases that hold up.** Two leaks in 1.12.0's "suitable for publication" counts

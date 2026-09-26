@@ -107,3 +107,12 @@ test('the permission matrix: reports:internal for supervisors and administrators
   for (const role of ['admin', 'supervisor']) { assert.ok(auth.hasPerm(u(role), 'reports:internal'), role); assert.ok(auth.hasPerm(u(role), 'reports:exact'), role); }
   for (const role of ['clinician', 'navigator', 'finance', 'readonly']) { assert.ok(!auth.hasPerm(u(role), 'reports:internal'), role); assert.ok(!auth.hasPerm(u(role), 'reports:exact'), role); }
 });
+
+test('the monthly trends report (exact programme-wide counts of people, an insider view) is audited', async () => {
+  const before = H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='report.monthly'`).n;
+  assert.equal((await c.readonly.get('/api/reports/monthly?months=3')).status, 200);
+  const row = H.db.one(`SELECT user_id, details FROM audit_log WHERE action='report.monthly' ORDER BY rowid DESC LIMIT 1`);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='report.monthly'`).n, before + 1);
+  assert.ok(row.user_id, 'the entry names who read it');
+  assert.match(row.details, /"months":3/);
+});
