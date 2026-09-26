@@ -273,15 +273,23 @@ test('GET /api/imports and discarding a staged item: own imports only, unless a 
 });
 
 test('the OneNote (Microsoft Graph) routes report "not configured" instead of failing when Graph is not set up', async () => {
-  const s = await nav.get('/api/imports/onenote/status');
-  assert.equal(s.status, 200); assert.deepEqual(s.data, { configured: false, user: null });
-  const nb = await nav.get('/api/imports/onenote/notebooks');
+  const s = await sup.get('/api/imports/onenote/status');
+  assert.equal(s.status, 200); assert.deepEqual(s.data, { configured: false, user: null, shared_allowed: true });
+  const nb = await sup.get('/api/imports/onenote/notebooks');
   assert.equal(nb.status, 502); assert.match(nb.data.error, /not configured/);
-  const pg = await nav.get('/api/imports/onenote/sections/abc/pages');
+  const pg = await sup.get('/api/imports/onenote/sections/abc/pages');
   assert.equal(pg.status, 502); assert.match(pg.data.error, /not configured/);
-  const f = await nav.post('/api/imports/onenote/fetch', { page_ids: ['p1'] });
+  const f = await sup.post('/api/imports/onenote/fetch', { page_ids: ['p1'] });
   assert.equal(f.status, 502); assert.match(f.data.error, /not configured/);
-  assert.equal((await nav.post('/api/imports/onenote/fetch', { page_ids: [] })).status, 400, 'at least one page');
+  assert.equal((await sup.post('/api/imports/onenote/fetch', { page_ids: [] })).status, 400, 'at least one page');
+  // Security review of 1.12.4, 8(b): the shared notebook the server's Graph credentials open holds every
+  // worker's pages. Listing and fetching it is for supervisors and administrators (graph:import); a navigator
+  // or clinician imports what they upload themselves, and is told so.
+  assert.deepEqual((await nav.get('/api/imports/onenote/status')).data, { configured: false, user: null, shared_allowed: false });
+  for (const [m, u] of [['GET', '/api/imports/onenote/notebooks'], ['GET', '/api/imports/onenote/sections/abc/pages'], ['POST', '/api/imports/onenote/fetch']]) {
+    assert.equal((await nav.req(m, u, m === 'POST' ? { page_ids: ['p1'] } : undefined)).status, 403, `${m} ${u}: the shared notebook is not a navigator's`);
+  }
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='authz.denied' AND details LIKE '%graph:import%'`), 'the refusal is audited');
   for (const [m, u] of [['GET', '/api/imports/onenote/status'], ['GET', '/api/imports/onenote/notebooks'], ['GET', '/api/imports/onenote/sections/abc/pages'], ['POST', '/api/imports/onenote/fetch']]) {
     assert.equal((await fin.req(m, u, m === 'POST' ? { page_ids: ['p1'] } : undefined)).status, 403, `${m} ${u} needs imports:write`);
   }

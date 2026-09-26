@@ -57,18 +57,20 @@ function ssoPolicy() {
 // may also run one that counts only its own caseload, whose records it can open anyway (reportRunAllowed).
 // Finance and readonly get publication releases only; finance's money and hours are exact in those and on
 // Budget / Time, and it needs no people counts beyond them.
+// graph:import: browse and fetch the shared OneNote notebook the server's Microsoft Graph credentials open
+// (every worker's pages); front-line roles import only what they upload (server/routes/imports.js).
 // reports:exact lets such a run use exact counts instead of small-cell suppression, for the programme's own
 // submission to its funder (server/routes/reports.js); publication always suppresses. It is only ever held
 // with reports:internal, since exact counts are never a publication release.
 const PERMS = {
   admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
                'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve','budget:manage',
-               'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','reports:read','assignments:manage','export:read','export:identified','forms:*',
+               'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','graph:import','reports:read','assignments:manage','export:read','export:identified','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','clients:legal-hold','patient-requests:*','careplan:read',
                'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact'],
   supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
-               'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
+               'consents:*','imports:*','graph:import','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*',
                'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact'],
   // Front-line staff hold export:read so the Export buttons on their own screens work; without

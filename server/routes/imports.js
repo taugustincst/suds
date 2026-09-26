@@ -151,16 +151,25 @@ module.exports = (r) => {
   });
 
   // ---- OneNote via Microsoft Graph ----
-  r.get('/api/imports/onenote/status', auth.requireAuth, auth.requirePerm('imports:write'), () => ({ configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), user: config.msGraph.user ? config.msGraph.user.replace(/(.{2}).+(@.+)/, '$1***$2') : null }));
-  r.get('/api/imports/onenote/notebooks', auth.requireAuth, auth.requirePerm('imports:write'), async (ctx) => {
+  // The server's Graph credentials open one shared notebook, which holds every worker's pages about every
+  // client. Browsing and fetching it is for supervisors and administrators (graph:import); anyone else with
+  // imports:write stages only what they upload themselves, or pages their own Microsoft token can read
+  // (X-MS-Access-Token: their own delegated access, not the programme's). Imports stay their importer's.
+  const sharedNotebook = (ctx) => {
+    if (ctx.headers['x-ms-access-token'] || auth.hasPerm(ctx.user, 'graph:import')) return;
+    audit.log({ user: ctx.user, action: 'authz.denied', ip: ctx.ip, success: false, details: { perms: ['graph:import'], path: ctx.path } });
+    throw forbidden('Importing from the shared OneNote notebook is for supervisors and administrators. Export your own pages from OneNote and upload them instead.');
+  };
+  r.get('/api/imports/onenote/status', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => ({ configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), user: config.msGraph.user ? config.msGraph.user.replace(/(.{2}).+(@.+)/, '$1***$2') : null, shared_allowed: auth.hasPerm(ctx.user, 'graph:import') }));
+  r.get('/api/imports/onenote/notebooks', auth.requireAuth, auth.requirePerm('imports:write'), sharedNotebook, async (ctx) => {
     try { return { notebooks: await onenote.listNotebooks({ token: ctx.headers['x-ms-access-token'] }) }; }
     catch (e) { throw new HttpError(502, e.message); }
   });
-  r.get('/api/imports/onenote/sections/:id/pages', auth.requireAuth, auth.requirePerm('imports:write'), async (ctx) => {
+  r.get('/api/imports/onenote/sections/:id/pages', auth.requireAuth, auth.requirePerm('imports:write'), sharedNotebook, async (ctx) => {
     try { return { pages: await onenote.listPages(ctx.params.id, { token: ctx.headers['x-ms-access-token'], since: ctx.query.get('since') || undefined }) }; }
     catch (e) { throw new HttpError(502, e.message); }
   });
-  r.post('/api/imports/onenote/fetch', auth.requireAuth, auth.requirePerm('imports:write'), async (ctx) => {
+  r.post('/api/imports/onenote/fetch', auth.requireAuth, auth.requirePerm('imports:write'), sharedNotebook, async (ctx) => {
     const { page_ids } = validate(ctx.body, { page_ids: { type: 'array', required: true } });
     if (!page_ids.length || page_ids.length > 200) throw badRequest('Select 1–200 pages');
     let items;

@@ -57,6 +57,8 @@ An administrator registers an app in Microsoft Entra ID (Azure AD):
 
 Pages are fetched as HTML, converted to text, and staged like file imports. Only pages you select are transferred; SUDS never writes to OneNote. If you prefer delegated (per-user) access, the endpoints also accept a user-supplied Graph access token in the `X-MS-Access-Token` header.
 
+**Who may browse the shared notebook.** The application credentials above open the one notebook everyone writes in, so listing its notebooks, sections and pages and fetching pages from it needs the `graph:import` permission, which supervisors and administrators hold (1.12.5; before, every role with `imports:write` could read every worker's pages). Navigators and clinicians see a note saying so and import what they export and upload themselves; an import stays visible only to whoever staged it (and to `clients:all`). A request carrying the person's own delegated token (`X-MS-Access-Token`) reads only what their own Microsoft account can, and is allowed for `imports:write`. A refusal is audited as `authz.denied`.
+
 > Ensure your Microsoft 365 tenant is covered by Microsoft's HIPAA BAA (included in the Online Services Terms for Government / Enterprise plans) before storing PHI in OneNote.
 
 ## Review screen
