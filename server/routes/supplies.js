@@ -35,6 +35,15 @@ function drawDown(ctx, row, prev = null) {
   for (const col of Object.keys(DRAWDOWN)) deltas[col] = -(Number(row[col] || 0) - Number(prev ? prev[col] || 0 : 0));
   applyDelta(ctx, deltas, { intervention: row.id });
 }
+/**
+ * What a visit handed out that the cupboard has no item for, so nothing was drawn down:
+ * [{ item: 'Naloxone kit', quantity: 10 }]. The visit form says so, instead of the count staying silently
+ * wrong (kits given before anyone added the item were simply never taken off).
+ */
+function untracked(row) {
+  return Object.entries(DRAWDOWN).filter(([col]) => Number(row[col] || 0) > 0 && !db.one(`SELECT 1 FROM supply_stock WHERE item=? COLLATE NOCASE`, DRAWDOWN[col]))
+    .map(([col, item]) => ({ item, quantity: Number(row[col]) }));
+}
 /** Put back what a visit had drawn down — called when the visit is deleted. */
 function restore(ctx, row) {
   const deltas = {};
@@ -77,5 +86,6 @@ module.exports = (r) => {
 };
 module.exports.drawDown = drawDown;
 module.exports.restore = restore;
+module.exports.untracked = untracked;
 module.exports.applyDelta = applyDelta;
 module.exports.DRAWDOWN = DRAWDOWN;

@@ -15,6 +15,9 @@ const M = require('../clients-model');
 // the person §2.14/§2.15 allows) and its date, the redisclosure statement, and the consequences of refusing
 // to sign. A consent of any part2_* type is refused unless every one is recorded.
 const PART2_TYPES = C.PART2_CONSENT_TYPES;
+// A consent's recipient (stored encrypted, of any length): a TPO consent may list the programme's usual
+// referral partners after its class wording, which 300 characters did not hold.
+const RECIPIENT_MAX = 2000;
 function requirePart2Elements(v) {
   const missing = disclosure.missingPart2Elements(v);
   if (missing.length) throw badRequest(`A 42 CFR Part 2 consent must record ${missing.join('; ')}`, { missing });
@@ -76,7 +79,7 @@ module.exports = (r) => {
   r.post('/api/clients/:id/consents/duplicates', auth.requireAuth, auth.requirePerm('consents:write'), (ctx) => {
     if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
     auth.assertClientAccess(ctx, ctx.params.id);
-    const v = validate(ctx.body, { type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: 300 }, signed_at: { type: 'date' }, expires_at: { type: 'date' } });
+    const v = validate(ctx.body, { type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: RECIPIENT_MAX }, signed_at: { type: 'date' }, expires_at: { type: 'date' } });
     const from = v.signed_at || new Date().toISOString().slice(0, 10); const to = v.expires_at || '9999-12-31';
     const want = disclosure.normalise(v.recipient);
     const duplicates = db.all(`SELECT c.*, u.display_name AS created_by_name FROM consents c JOIN users u ON u.id=c.created_by WHERE c.client_id=? AND c.type=? AND c.revoked_at IS NULL ORDER BY c.signed_at DESC`, ctx.params.id, v.type)
@@ -88,7 +91,7 @@ module.exports = (r) => {
   r.post('/api/clients/:id/consents', auth.requireAuth, auth.requirePerm('consents:write'), (ctx) => {
     if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
     auth.assertClientAccess(ctx, ctx.params.id);
-    const v = validate(ctx.body, { type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: 300 }, purpose: { type: 'string', maxLen: 500 }, scope: { type: 'string', maxLen: 1000 },
+    const v = validate(ctx.body, { type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: RECIPIENT_MAX }, purpose: { type: 'string', maxLen: 500 }, scope: { type: 'string', maxLen: 1000 },
       signed_at: { type: 'date', required: true }, expires_at: { type: 'date' }, expires_event: { type: 'string', maxLen: 200 }, document_ref: { type: 'string', maxLen: 300 }, witness: { type: 'string', maxLen: 120 },
       signed_on_paper: { type: 'boolean' }, redisclosure_notice_given: { type: 'boolean' },
       discloser: { type: 'string', maxLen: 200 }, signer_relationship: { type: 'string', enum: C.CONSENT_SIGNERS }, signer_name: { type: 'string', maxLen: 200 },
@@ -125,7 +128,9 @@ module.exports = (r) => {
   // most of its consents share, saved once from a filled-in form by a supervisor or administrator and offered
   // to fill the form with. Programme wording, not about any client; every consent is still signed and
   // recorded one by one with its own dates and elements.
-  const TEMPLATE_SHAPE = { type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: 300 }, purpose: { type: 'string', maxLen: 500 },
+  // The recipient names the programme's usual referral partners, so it is as long as a consent's recipient
+  // may be (RECIPIENT_MAX); `partners` keeps which directory entries were ticked, for the form to show again.
+  const TEMPLATE_SHAPE = { type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: RECIPIENT_MAX }, purpose: { type: 'string', maxLen: 500 },
     scope: { type: 'string', maxLen: 1000 }, expires_event: { type: 'string', maxLen: 200 }, expires_days: { type: 'number', integer: true, min: 1, max: 3660 } };
   const readTemplate = () => { try { return JSON.parse(db.getSetting('consent_template', 'null')); } catch { return null; } };
   r.get('/api/consent-template', auth.requireAuth, auth.requirePerm('consents:read', 'consents:write'), () => ({ template: readTemplate() }));
@@ -135,7 +140,12 @@ module.exports = (r) => {
     const rawCats = ctx.body.info_categories;
     const cats = [...new Set((Array.isArray(rawCats) ? rawCats : []).map(String))];
     if (cats.some(x => !C.CONSENT_INFO_CATEGORIES.includes(x))) throw badRequest('Validation failed', { fields: { info_categories: `choose from ${C.CONSENT_INFO_CATEGORIES.join(', ')}` } });
-    const template = { type: v.type, recipient: v.recipient || null, purpose: v.purpose || null, scope: v.scope || null, expires_event: v.expires_event || null, expires_days: v.expires_days || null, info_categories: cats, saved_by: ctx.user.display_name, saved_at: db.now() };
+    const rawPartners = ctx.body.partners;
+    if (rawPartners !== undefined && rawPartners !== null && (!Array.isArray(rawPartners) || rawPartners.length > 200 || rawPartners.some(x => typeof x !== 'string' || x.trim().length > 200))) {
+      throw badRequest('Validation failed', { fields: { partners: 'Choose at most 200 referral partners, each a directory name under 200 characters' } });
+    }
+    const partners = [...new Set((rawPartners || []).map(x => x.trim()).filter(Boolean))];
+    const template = { type: v.type, recipient: v.recipient || null, partners, purpose: v.purpose || null, scope: v.scope || null, expires_event: v.expires_event || null, expires_days: v.expires_days || null, info_categories: cats, saved_by: ctx.user.display_name, saved_at: db.now() };
     db.setSetting('consent_template', JSON.stringify(template));
     audit.log({ user: ctx.user, action: 'consent.template.save', ip: ctx.ip, details: { type: v.type } });
     return { ok: true, template };

@@ -162,7 +162,7 @@ route('clients', async (r) => {
     const rq = await get('/api/patient-requests?status=open&limit=1000');
     requests = new Map(); for (const x of rq.rows) requests.set(x.client_id, [...(requests.get(x.client_id) || []), x]);
   }
-  const activeFilters = [requests ? 'open patient request' : null, stale ? 'no contact in 30 days' : null, risk ? `risk: ${risk === 'high' ? 'high or critical' : risk}` : null, substance ? `substance: ${fmt.label(substance, 'SUBSTANCES')}` : null, mat ? `MAT: ${fmt.label(mat)}` : null, expiring ? 'consent expiring soon' : null].filter(Boolean);
+  const activeFilters = [requests ? 'open client rights request' : null, stale ? 'no contact in 30 days' : null, risk ? `risk: ${risk === 'high' ? 'high or critical' : risk}` : null, substance ? `substance: ${fmt.label(substance, 'SUBSTANCES')}` : null, mat ? `MAT: ${fmt.label(mat)}` : null, expiring ? 'consent expiring soon' : null].filter(Boolean);
   const deid = !can('clients:read');
   const search = h('input', { type: 'search', value: q, placeholder: 'Name or preferred name (partial or misspelled OK), "Last, First", client code, DOB (YYYY-MM-DD) or exact phone', onKeydown: (e) => { if (e.key === 'Enter') nav(link({ q: search.value.trim() })); } });
   const statusSel = h('select', { onChange: () => nav(link({ status: statusSel.value })) }, ['active', 'waitlist', 'inactive', 'closed', 'deceased', 'all'].map(s => h('option', { value: s, selected: s === status }, fmt.label(s))));

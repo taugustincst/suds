@@ -100,10 +100,18 @@ route('supervision', async (r) => {
   const cosignRows = q.awaiting_cosignature || [];
   const picked = new Set();
   const pickedCount = h('span', { class: 'small muted', 'data-cosign-picked': '0' }, '');
-  const showPicked = () => { pickedCount.textContent = picked.size ? `${picked.size} selected` : ''; pickedCount.dataset.cosignPicked = String(picked.size); };
+  // "Select all": ticks (or clears) every note's box. It shows as partly ticked while only some are.
+  const selectAll = h('input', { type: 'checkbox', 'data-cosign-select-all': '1', onChange: (e) => {
+    for (const box of document.querySelectorAll('[data-cosign-pick]')) { box.checked = e.target.checked; if (e.target.checked) picked.add(box.dataset.cosignPick); else picked.delete(box.dataset.cosignPick); }
+    showPicked(); announce(`${picked.size} selected`);
+  } });
+  const showPicked = () => {
+    pickedCount.textContent = picked.size ? `${picked.size} selected` : ''; pickedCount.dataset.cosignPicked = String(picked.size);
+    selectAll.checked = cosignRows.length > 0 && picked.size === cosignRows.length; selectAll.indeterminate = picked.size > 0 && picked.size < cosignRows.length;
+  };
   if (can('notes:cosign')) page.append(h('section', { class: 'card', 'data-section': 'cosign' },
     h('div', { class: 'card-head' }, h('h2', {}, 'Notes waiting for your countersignature'), badge(String(cosignRows.length), cosignRows.length ? 'warn' : 'ok')),
-    cosignRows.length ? h('div', {}, table([
+    cosignRows.length ? h('div', {}, cosignRows.length > 1 ? h('label', { class: 'check', style: { marginTop: 0 } }, selectAll, `Select all ${cosignRows.length} notes`) : null, table([
       { label: '', srLabel: 'Select', render: r => h('input', { type: 'checkbox', 'data-cosign-pick': r.id, 'aria-label': `Select the note by ${r.author} for ${r.client_code}`, onClick: (e) => e.stopPropagation(), onChange: (e) => { if (e.target.checked) picked.add(r.id); else picked.delete(r.id); showPicked(); announce(`${picked.size} selected`); } }) },
       { label: 'Client', render: clientCell },
       { label: 'Author', key: 'author' },
@@ -180,7 +188,7 @@ route('supervision', async (r) => {
     if (prq) {
       const late = prq.filter(x => x.overdue);
       page.append(h('section', { class: 'card', 'data-patient-requests': '1' },
-        h('div', { class: 'card-head' }, h('h2', {}, 'Open patient requests'), badge(late.length ? `${prq.length} open · ${late.length} overdue` : String(prq.length), late.length ? 'danger' : prq.length ? 'warn' : 'ok')),
+        h('div', { class: 'card-head' }, h('h2', {}, 'Open client rights requests'), badge(late.length ? `${prq.length} open · ${late.length} overdue` : String(prq.length), late.length ? 'danger' : prq.length ? 'warn' : 'ok')),
         h('p', { class: 'small muted' }, 'Requests for access, amendment, restriction or an accounting of disclosures. Each must be answered within 30 days of receipt.'),
         prq.length ? table([
           { label: 'Client', render: x => h('a', { href: `#/client/${x.client_id}/requests` }, x.client_code) },
@@ -189,7 +197,7 @@ route('supervision', async (r) => {
           { label: 'Due', render: x => h('span', { style: x.overdue ? { color: 'var(--danger)', fontWeight: 600 } : {} }, fmt.date(x.due_at), x.overdue ? ' — overdue' : '') },
           { label: 'Handled by', key: 'handler' },
         ], prq.slice(0, 50), { rowLabel: (x) => `${fmt.label(x.kind)} request for ${x.client_code}` })
-          : emptyState('No open requests', 'Patient-rights requests recorded on a client\'s Requests tab appear here until they are fulfilled or denied.')));
+          : emptyState('No open requests', 'Client rights requests recorded on a client\'s Requests tab appear here until they are fulfilled or denied.')));
     }
   }
 

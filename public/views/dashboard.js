@@ -35,7 +35,7 @@ route('dashboard', async () => {
   if (d.breakglass_pending) alerts.push(['danger', `${d.breakglass_pending} emergency access${d.breakglass_pending > 1 ? 'es' : ''} / re-admission${d.breakglass_pending > 1 ? 's' : ''} to review`, '#/supervision?tab=breakglass']);
   // Patient-rights requests run a 30-day clock: an overdue one is a compliance failure, not a to-do.
   const pr = d.patient_requests;
-  if (pr && pr.n) alerts.push([pr.overdue ? 'danger' : 'warn', `${pr.n} open patient request${many(pr.n) ? 's' : ''}${pr.overdue ? ` (${pr.overdue} overdue)` : ''}`, '#/clients?status=all&patient_requests=1']);
+  if (pr && pr.n) alerts.push([pr.overdue ? 'danger' : 'warn', `${pr.n} open client rights request${many(pr.n) ? 's' : ''}${pr.overdue ? ` (${pr.overdue} overdue)` : ''}`, '#/clients?status=all&patient_requests=1']);
   // 42 CFR Part 2: active clients never given the §2.22 notice; the breach clock (60 days from discovery) on
   // open incidents; and complaints still open (docs/compliance/PART2.md).
   if (d.part2_notice_missing) alerts.push(['warn', `${d.part2_notice_missing} active client${many(d.part2_notice_missing) ? 's have' : ' has'} no Part 2 notice on record`, '#/compliance?tab=notices']);
@@ -53,9 +53,15 @@ route('dashboard', async () => {
   }
   // Production configuration that leaves the county exposed — backups off, audit anchors on the database's
   // own disk (server/startup-checks.js). Only an administrator can fix these, so only they see them.
+  // Each is a sentence saying what is wrong and who fixes it, with a link to what to do: a red pill reading
+  // "Audit anchors are on the database disk" told a non-technical administrator nothing they could act on.
+  // Amber for a finding, red when something has actually failed. Not dismissible: they are security findings.
+  let securityNotes = null;
   if (can('settings:manage') && !state.local) {
     const sec = await get('/api/admin/security/alerts', { quiet: true }).catch(() => null);
-    for (const a of (sec && sec.alerts) || []) alerts.push(['danger', a.label, '#/admin?tab=security']);
+    const list = (sec && sec.alerts) || [];
+    if (list.length) securityNotes = h('div', { class: 'mb', 'data-security-alerts': '1' }, list.map(a => h('div', { class: `banner ${a.severity === 'warn' ? 'warn' : 'danger'} small mb`, 'data-security-alert': a.key, 'data-severity': a.severity || 'danger' },
+      h('b', {}, a.label, '. '), a.explain || a.detail, ' ', h('a', { href: a.link || '#/admin?tab=security' }, a.key === 'backups_off' ? 'Turn on backups' : 'See Security status'))));
   }
   // Clients still assigned to someone whose account was deactivated: nobody is working them until a
   // supervisor moves them (GET /api/users/caseloads, counts only).
@@ -72,7 +78,8 @@ route('dashboard', async () => {
   // Empty program: offer sample data (office admins, or anyone on a phone-only copy)
   let sample = null;
   if (!c.active && !c.waitlist && !caseload.caseload.length && (state.local || can('settings:manage'))) {
-    try { const st = await get(state.local ? '/api/local/demo' : '/api/admin/demo', { quiet: true }); if (st.can_load ?? (!st.loaded && st.clients_total === 0)) {
+    // A production office server does not put it on Home (home_offer false): it stays under Settings › Program.
+    try { const st = await get(state.local ? '/api/local/demo' : '/api/admin/demo', { quiet: true }); if (st.home_offer !== false && (st.can_load ?? (!st.loaded && st.clients_total === 0))) {
       // Loaded right here, after a confirmation — the button used to send people to the Sync page (or
       // Settings) and leave them to find a second "Load sample data" at the bottom of it.
       const path = state.local ? '/api/local/demo' : '/api/admin/demo';
@@ -92,7 +99,7 @@ route('dashboard', async () => {
   let setupCard = null;
   if (can('settings:manage') && !state.local) {
     try {
-      const [forms, users, funds, resources, sys, settings, consentTemplate] = await Promise.all([
+      const [forms, users, funds, resources, sys, settings, consentTemplate, supplies] = await Promise.all([
         get('/api/forms/starters', { quiet: true }).catch(() => null),
         get('/api/users', { quiet: true }).catch(() => ({ users: [] })),
         get('/api/budget/funds', { quiet: true }).catch(() => ({ funds: [] })),
@@ -100,6 +107,7 @@ route('dashboard', async () => {
         get('/api/admin/stats', { quiet: true }).catch(() => ({})),
         get('/api/admin/settings', { quiet: true }).catch(() => null),
         get('/api/consent-template', { quiet: true }).catch(() => null),
+        can('interventions:write') ? get('/api/supplies', { quiet: true }).catch(() => null) : null,
       ]);
       const steps = [];
       // Nothing about the deployment was ever going to point an administrator at these. Backups off and no
@@ -126,9 +134,19 @@ route('dashboard', async () => {
       // A referral can rely on a consent only when it names the provider. The usual consent, naming the
       // program's regular referral partners, is what a worker fills a new consent in from in one step.
       if (consentTemplate && !consentTemplate.template) {
-        const partners = (resources.rows || []).map(x => x.name).filter(Boolean).slice(0, 6);
         steps.push(['Save a usual consent naming your referral partners', 'A referral can share a client\'s details only under a consent that names the provider. Name the partners you refer to most, and workers can record such a consent in one step.', 'Set up the usual consent',
-          async () => { (await import('./part2.js')).openConsentTemplateForm({ partners, onDone: () => nav('dashboard?_=' + Date.now()) }); }]);
+          async () => { (await import('./part2.js')).openConsentTemplateForm({ onDone: () => nav('dashboard?_=' + Date.now()) }); }]);
+      }
+      // The supply cupboard: visits take naloxone kits and test strips off it only once it has those items, so
+      // a new program's first distributions were counted nowhere. One click adds the two standard items.
+      if (supplies && !(supplies.rows || []).length) {
+        const standard = Object.values(supplies.drawdown || {});
+        steps.push(['Add your supplies', `Naloxone kits and fentanyl test strips handed out on a visit are taken off the supply count only once the cupboard has them. Add them now, then record what is on the shelf under Supplies.`, 'Add naloxone kits and test strips',
+          async (e) => {
+            const btn = e.currentTarget; btn.disabled = true;
+            try { for (const item of standard) await post('/api/supplies', { item, quantity: 0 }); toast(`Added ${standard.join(' and ')} to Supplies. Record what is on the shelf there.`, 'ok'); nav('supplies'); }
+            catch (err) { btn.disabled = false; toast(err.message || 'The supplies could not be added.', 'error'); }
+          }, h('a', { class: 'btn sm', href: '#/supplies', 'data-setup-supplies-link': '1' }, 'Open Supplies')]);
       }
       const activeFunds = (funds.funds || []).filter(f => f.is_active !== 0 && f.is_active !== false);
       if (!(funds.funds || []).length) {
@@ -148,17 +166,21 @@ route('dashboard', async () => {
       if (steps.length) {
         setupCard = h('section', { class: 'card mb' },
           h('div', { class: 'card-head' }, h('h2', {}, 'Finish setting up'), badge(`${steps.length} left`, 'warn')),
-          h('div', {}, steps.map(([title, why, label, action]) => h('div', { class: 'list-item row', style: { justifyContent: 'space-between', alignItems: 'center', gap: '1rem' } },
+          h('div', {}, steps.map(([title, why, label, action, more]) => h('div', { class: 'list-item row', style: { justifyContent: 'space-between', alignItems: 'center', gap: '1rem' } },
             h('div', {}, h('b', {}, title), h('div', { class: 'small muted' }, why)),
-            typeof action === 'string'
+            h('div', { class: 'row' }, typeof action === 'string'
               // A download, not a page: an anchor, so the browser saves the file. Re-render afterwards so the
               // step disappears once the server has recorded it.
               ? h('a', { class: 'btn sm primary', href: action, download: '', onClick: () => setTimeout(() => nav('dashboard?_=' + Date.now()), 1500) }, label)
-              : h('button', { class: 'btn sm primary', onClick: action }, label)))));
+              : h('button', { class: 'btn sm primary', onClick: action }, label), more || null)))));
       }
     } catch { /* a missing permission or an offline copy simply means no card */ }
   }
 
+  // Whose visits the card counts (server/routes/reports.js visitScope): a caseload-scoped worker's own
+  // caseload and outreach; everyone's for a supervisor or administrator; the program's for finance and
+  // read-only, who log no visits (their Home was headed "What you have been doing").
+  const activityHeading = can('clients:all') ? 'What the team has been doing (90 days)' : can('clients:list-deidentified') && !can('clients:read') ? 'The program\'s visits (90 days)' : 'What you have been doing (90 days)';
   const done = async (t, box) => {
     if (box) box.disabled = true;
     try { await put(`/api/tasks/${t.id}`, { status: 'done' }); toast('Done ✓', 'ok'); nav('dashboard?_=' + Date.now()); }
@@ -167,6 +189,7 @@ route('dashboard', async () => {
   return h('div', {},
     pageHead(`${greet}, ${who}`, autoToggle),
     backupReminder,
+    securityNotes,
     sample,
     setupCard,
     // A device copy keeps its own sign-ins, all on this device, and syncs with nothing on its own: "another
@@ -186,13 +209,13 @@ route('dashboard', async () => {
     h('div', { class: 'grid cols-4 mb' },
       stat('Active clients', fmt.num(c.active), '', 'clients?status=active', 'All active clients, any time — not limited to the last 90 days'), stat('High-risk clients', fmt.num(c.high_risk), c.high_risk ? 'danger' : '', 'clients?status=active&risk=high'), stat('Visits (90 days)', fmt.num(i.total), '', 'interventions', `${fmt.date(d.from)} – ${fmt.date(d.to)}; other numbers on this page are all-time`), stat('Naloxone kits given', fmt.num(i.naloxone_kits), '', 'interventions?type=naloxone_distribution'),
       stat('Calls', fmt.num(d.calls.total), '', 'calls'), stat('Open referrals', fmt.num(d.referrals.open), d.referrals.open ? 'warn' : '', 'referrals?status=open'),
-      pr ? h('div', { 'data-patient-requests': '1', style: { display: 'contents' } }, stat('Open patient requests', pr.overdue ? `${fmt.num(pr.n)} (${pr.overdue} overdue)` : fmt.num(pr.n), pr.overdue ? 'danger' : pr.n ? 'warn' : '', 'clients?status=all&patient_requests=1', 'Requests for access, amendment, restriction or an accounting of disclosures — each must be answered within 30 days')) : null, d.time ? stat(can('time:all') ? 'Team hours logged' : 'My hours logged', (d.time.minutes / 60).toFixed(1), '', 'time') : null, d.budget && can('budget:approve') ? stat('Spent of budget', h('span', {}, h('span', { class: 'money' }, fmt.money(d.budget.spent)), ' / ', h('span', { class: 'money' }, fmt.money(d.budget.total))), '', 'budget') : null),
+      pr ? h('div', { 'data-patient-requests': '1', style: { display: 'contents' } }, stat('Open client rights requests', pr.overdue ? `${fmt.num(pr.n)} (${pr.overdue} overdue)` : fmt.num(pr.n), pr.overdue ? 'danger' : pr.n ? 'warn' : '', 'clients?status=all&patient_requests=1', 'Requests for access, amendment, restriction or an accounting of disclosures — each must be answered within 30 days')) : null, d.time ? stat(can('time:all') ? 'Team hours logged' : 'My hours logged', (d.time.minutes / 60).toFixed(1), '', 'time') : null, d.budget && can('budget:approve') ? stat('Spent of budget', h('span', {}, h('span', { class: 'money' }, fmt.money(d.budget.spent)), ' / ', h('span', { class: 'money' }, fmt.money(d.budget.total))), '', 'budget') : null),
     h('div', { class: 'grid cols-2' },
       can('clients:read') ? h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Clients who need a check-in'), h('a', { href: '#/clients' }, 'All clients')),
         caseload.caseload.length ? caseload.caseload.slice(0, 8).map(x => h('div', { class: 'today-item' }, h('div', {}, h('a', { href: `#/client/${x.id}` }, x.display_name), ' ', badge(fmt.label(x.risk_level), statusKind(x.risk_level))), h('div', { class: 'small muted' }, 'last contact ', fmt.ago(x.last_contact), x.overdue_tasks ? [' ', badge(`${x.overdue_tasks} overdue`, 'danger')] : null)))
           : can('clients:all') ? emptyState('Nothing on your own caseload', c.active ? `You see every client already (${c.active} active). This list only shows people assigned to you directly.` : 'Add the first client with the + Log button, or load sample data to look around.')
           : emptyState('No clients assigned to you yet', can('clients:write') ? 'Add your first client with the + Log button, or ask your supervisor to assign clients to you.' : 'Ask your supervisor to assign clients to you.')) : null,
-      h('div', { class: 'card' }, h('h2', {}, 'What you have been doing (90 days)'), bars(i.by_type.slice(0, 8), { list: 'INTERVENTION_TYPES', link: x => `interventions?type=${x.k}` }), h('div', { class: 'mt' }, sparkline(i.by_week.map(w => w.n), { label: 'Visits per week, last 90 days' }), h('div', { class: 'muted small' }, 'visits per week'))),
+      h('div', { class: 'card' }, h('h2', { 'data-activity-heading': '1' }, activityHeading), bars(i.by_type.slice(0, 8), { list: 'INTERVENTION_TYPES', link: x => `interventions?type=${x.k}` }), h('div', { class: 'mt' }, sparkline(i.by_week.map(w => w.n), { label: 'Visits per week, last 90 days' }), h('div', { class: 'muted small' }, 'visits per week'))),
       state.user.role === 'admin' && !state.local ? h('div', { class: 'card' }, h('h2', {}, 'Use SUDS on phones and tablets'), h('p', { class: 'small muted' }, 'There is no app to install: staff open SUDS in the browser on the office Wi-Fi and add it to their home screen. Show them the QR code under Settings → Network & devices, or send them to ', h('a', { href: 'get-app.html' }, 'Use SUDS on your phone or tablet'), '.'), h('a', { class: 'btn sm', href: '#/admin?tab=network' }, 'Connect a device')) : null,
       d.consents_expiring.length ? h('div', { class: 'card' }, h('h2', {}, 'Consents expiring soon'), table([{ label: 'Client', render: r => h('a', { href: `#/client/${r.client_id}` }, r.client_code) }, { label: 'Type', render: r => fmt.label(r.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Expires', render: r => fmt.date(r.expires_at) }], d.consents_expiring, { wrap: false })) : null));
 });

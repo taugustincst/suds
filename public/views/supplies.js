@@ -27,6 +27,18 @@ route('supplies', async () => {
     } });
     const m = modal('Add a supply item', f);
   };
+  // The two items visits draw down, when the cupboard has not got them yet: added in one click (with 0 on
+  // hand; + / Stock-take records what is on the shelf). Until then, kits and strips given out on a visit are
+  // not taken off any count, which the visit form says each time.
+  const missing = tracked.filter(t => !rows.some(x => x.item.toLowerCase() === t.toLowerCase()));
+  const addStandard = async (e) => {
+    const btn = e.currentTarget; btn.disabled = true;
+    try { for (const item of missing) await post('/api/supplies', { item, quantity: 0 }); toast(`Added ${missing.join(' and ')}. Record what is on the shelf with Stock-take.`, 'ok'); refresh(); }
+    catch (err) { btn.disabled = false; toast(err.message || 'The items could not be added.', 'error'); }
+  };
+  const standardBanner = missing.length ? h('div', { class: 'banner info mb', 'data-supplies-missing': missing.join('|') },
+    h('p', { style: { margin: 0 } }, `Visits that hand out ${missing.map(t => t.toLowerCase()).join(' or ')} take them off the count only when there is an item named "${missing.join('" and "')}" here. Until it is added, what visits hand out is not taken off anything.`),
+    writable ? h('div', { class: 'btn-row', style: { justifyContent: 'flex-start', marginTop: '.5rem' } }, h('button', { class: 'btn primary sm', type: 'button', 'data-add-standard-supplies': '1', onClick: addStandard }, missing.length === 2 ? 'Add naloxone kits and test strips' : `Add ${missing[0]}`)) : null) : null;
   const adjust = async (x, delta) => {
     try { const r = await put(`/api/supplies/${x.id}`, { adjust: delta }); toast(`${x.item}: ${r.quantity} on hand`, 'ok'); refresh(); }
     catch (e) { toast(e.message, 'error'); }
@@ -38,6 +50,7 @@ route('supplies', async () => {
   return h('div', {},
     pageHead('Supplies', writable || officeCopy && can('interventions:write') ? h('button', off({ class: 'btn primary', onClick: addItem }), '+ Add item') : null),
     officeCopy ? h('div', { class: 'banner info small', id: 'supplies-office-note', 'data-supplies-office': '1' }, whyNot) : null,
+    officeCopy ? null : standardBanner,
     h('p', { class: 'muted small' }, `Recording a visit with naloxone kits or fentanyl test strips takes them off "${tracked.join('" and "')}" here, so this is what is actually left. ${writable ? 'Use + / − for a delivery or a hand-out that was not logged as a visit, and Stock-take after counting the shelf.' : ''}`),
     rows.length ? table([
       { label: 'Item', render: x => [h('b', {}, x.item), tracked.some(t => t.toLowerCase() === x.item.toLowerCase()) ? [' ', badge('auto', 'info')] : null] },
