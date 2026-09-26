@@ -119,22 +119,42 @@ module.exports = (r) => {
   });
 
   // MFA enrollment: step 1 returns secret + otpauth URL; step 2 confirms with a valid code.
+  // Only for a fully signed-in session (requireAuth: not one still owing its second factor — on /api/auth/
+  // paths it does not apply the enrolment deadline, so forced enrolment after the grace period still works)
+  // of an account that does not have two-step verification yet. Enrolment used to check only that a user was
+  // attached: a password-only attacker could guess the account's existing code here, unlimited and unaudited,
+  // and a right guess cleared mfa_pending.
+  const enrolling = (ctx) => {
+    auth.requireAuth(ctx);
+    const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+    if (u.mfa_enabled) throw badRequest('Two-step verification is already set up for your account. Turn it off first to enrol a new authenticator.');
+    return u;
+  };
   r.post('/api/auth/mfa/setup', (ctx) => {
-    if (!ctx.user) throw unauthorized();
+    enrolling(ctx);
     const secret = generateTotpSecret();
     db.run(`UPDATE users SET mfa_secret_enc=?, updated_at=? WHERE id=? AND mfa_enabled=0`, encrypt(secret), db.now(), ctx.user.id);
     return { secret, otpauth: otpauthUrl(secret, ctx.user.username, db.getSetting('org_name', 'SUDS')) };
   });
   r.post('/api/auth/mfa/enable', (ctx) => {
-    if (!ctx.user) throw unauthorized();
+    const u = enrolling(ctx);
     const { code } = validate(ctx.body, { code: { type: 'string', required: true, maxLen: 10 } });
-    const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
     if (!u.mfa_secret_enc) throw badRequest('Run MFA setup first');
+    if (auth.isLocked(u)) {
+      audit.log({ user: u, action: 'auth.mfa.enable.failed', ip: ctx.ip, success: false, details: { reason: 'locked' } });
+      throw new HttpError(423, 'Account locked after too many failed attempts. Try again later or contact an administrator.');
+    }
+    // The same per-account limit as the sign-in second step and the signature code (key 'mfa:<id>').
+    if (!rateLimit(`mfa:${u.id}`, 10, 10 * 60_000)) throw new HttpError(429, 'Too many attempts');
     // The enrolment code is used up like any other (auth.useTotp), so it cannot complete a sign-in afterwards.
     const r = auth.useTotp(u.id, u.mfa_secret_enc, code);
-    if (r !== 'ok') throw badRequest(r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'Invalid code');
+    if (r !== 'ok') {
+      const locked = auth.recordPasswordFailure(u);
+      audit.log({ user: u, action: 'auth.mfa.enable.failed', ip: ctx.ip, success: false, details: { reason: r === 'replay' ? 'replay' : 'wrong code', ...(locked ? { locked: true } : {}) } });
+      throw badRequest(r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'Invalid code');
+    }
+    auth.clearFailures(u.id);
     db.run(`UPDATE users SET mfa_enabled=1, updated_at=? WHERE id=?`, db.now(), u.id);
-    db.run(`UPDATE sessions SET mfa_pending=0 WHERE id=?`, ctx.session.id);
     audit.log({ user: u, action: 'auth.mfa.enabled', ip: ctx.ip });
     return { ok: true };
   });

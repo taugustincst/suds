@@ -87,8 +87,23 @@ test('authenticator attempts at signing share the per-user limit with the sign-i
   makeStale(u.id);
   const id = await draft(c);
   let last;
-  for (let i = 0; i < 11; i++) last = await c.post(`/api/notes/${id}/sign`, { code: '000000' });
+  // Wrong codes also count toward the account lockout (five lock it); cleared here each time so the loop
+  // reaches the per-user rate limit this test is about.
+  for (let i = 0; i < 11; i++) { last = await c.post(`/api/notes/${id}/sign`, { code: '000000' }); H.db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL WHERE id=?`, u.id); }
   assert.equal(last.status, 429);
   const other = H.client(); await other.login('sigtotplimit', PW);
   assert.equal((await other.post('/api/auth/mfa/verify', { code: totp(setup.data.secret) })).status, 429, 'the same bucket as the sign-in');
+});
+
+test('wrong authenticator codes at signing count toward the account lockout', async () => {
+  const { u, c } = await staff('sigtotplock');
+  const setup = await c.post('/api/auth/mfa/setup', {});
+  await c.post('/api/auth/mfa/enable', { code: totp(setup.data.secret, step(-1)) });
+  makeStale(u.id);
+  const id = await draft(c);
+  let last;
+  for (let i = 0; i < 5; i++) last = await c.post(`/api/notes/${id}/sign`, { code: '000000' });
+  assert.equal(last.status, 403);
+  assert.ok(H.db.one(`SELECT locked_until FROM users WHERE id=?`, u.id).locked_until, 'the fifth wrong code locks the account');
+  assert.equal((await c.post(`/api/notes/${id}/sign`, { code: totp(setup.data.secret, step(1)) })).status, 423);
 });

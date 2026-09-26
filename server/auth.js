@@ -222,8 +222,12 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed' } = {}) {
     if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest('Two-step verification is not set up for your account; give your password instead');
     if (!require('./app').rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 60_000)) throw new HttpError(429, 'Too many attempts');
     const r = useTotp(u.id, u.mfa_secret_enc, code);
-    if (r === 'replay') failed({ method: 'totp', reason: 'replay' }, 'That code has already been used. Wait for the next code from your authenticator app.');
-    if (r !== 'ok') failed({ method: 'totp' }, 'That code is not right. Enter the current code from your authenticator app.');
+    if (r !== 'ok') {
+      const locked = recordPasswordFailure(u);
+      if (r === 'replay') failed({ method: 'totp', reason: 'replay', ...(locked ? { locked: true } : {}) }, 'That code has already been used. Wait for the next code from your authenticator app.');
+      failed({ method: 'totp', ...(locked ? { reason: 'locked after failures' } : {}) }, locked ? 'That code is not right. The account is now locked after too many failed attempts.' : 'That code is not right. Enter the current code from your authenticator app.');
+    }
+    clearFailures(u.id);
     markReauth(ctx); return 'totp';
   }
   const st = reauthStatus(ctx);
@@ -237,7 +241,7 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed' } = {}) {
 }
 function clearReauth(ctx) { if (ctx.session) { db.run(`UPDATE sessions SET reauth_at=NULL WHERE id=?`, ctx.session.id); ctx.session.reauth_at = null; } }
 function isLocked(user) { return !!(user.locked_until && Date.parse(user.locked_until) > Date.now()); }
-/** Count a wrong password (sign-in or signature) toward the account lockout. True if it now locks the account. */
+/** Count a wrong password or authenticator code (sign-in, second step, enrolment, signature) toward the account lockout. True if it now locks the account. */
 function recordPasswordFailure(user) {
   const row = db.one(`SELECT failed_attempts FROM users WHERE id=?`, user.id);
   const attempts = ((row && row.failed_attempts) || 0) + 1;
@@ -421,7 +425,10 @@ async function login({ username, password, ctx }) {
     audit.log({ user, action: 'auth.login.sso_required', ip: ctx.ip, success: false });
     throw new HttpError(403, 'This organisation requires single sign-on. Use the county sign-in button instead of a password.', { ssoRequired: true });
   }
-  db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db.now(), user.id);
+  // With two-step verification on, the password is only half the sign-in: the count of failed attempts is
+  // cleared by the second factor (verifyMfa), so a password-holding attacker cannot reset the lockout by
+  // signing in again between guesses at the code.
+  db.run(`UPDATE users SET failed_attempts=CASE WHEN mfa_enabled=1 THEN failed_attempts ELSE 0 END, locked_until=NULL, last_login_at=? WHERE id=?`, db.now(), user.id);
   // Only a device that has just proven who holds it is recorded (or reattributed) as that person's. The
   // flags are read again from the row touch() returns: an administrator acting between the check above
   // and this point still gets the device stopped on this very login.
@@ -446,11 +453,20 @@ async function login({ username, password, ctx }) {
 function verifyMfa(ctx, code) {
   if (!ctx.session) throw unauthorized();
   const user = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+  // A wrong code is a failed factor like a wrong password: it counts toward the same account lockout, and a
+  // locked account cannot finish signing in with the right code either (the lockout is the account's, not
+  // the password step's).
+  if (isLocked(user)) {
+    audit.log({ user, action: 'auth.mfa.failed', ip: ctx.ip, success: false, details: { reason: 'locked' } });
+    throw new HttpError(423, 'Account locked after too many failed attempts. Try again later or contact an administrator.');
+  }
   const r = user.mfa_secret_enc ? useTotp(user.id, user.mfa_secret_enc, code) : 'wrong';
   if (r !== 'ok') {
-    audit.log({ user, action: 'auth.mfa.failed', ip: ctx.ip, success: false, details: r === 'replay' ? { reason: 'replay' } : undefined });
+    const locked = recordPasswordFailure(user);
+    audit.log({ user, action: 'auth.mfa.failed', ip: ctx.ip, success: false, details: r === 'replay' ? { reason: 'replay', ...(locked ? { locked: true } : {}) } : locked ? { reason: 'locked after failures' } : undefined });
     throw unauthorized(r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'Invalid verification code');
   }
+  clearFailures(user.id);
   db.run(`UPDATE sessions SET mfa_pending=0, reauth_at=? WHERE id=?`, db.now(), ctx.session.id);
   audit.log({ user, action: 'auth.login', ip: ctx.ip, details: { mfa: true } });
   return publicUser(user);
@@ -473,4 +489,4 @@ function passwordPolicy(pw) {
 }
 
 module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed,
-  createSession, markReauth, reauthStatus, verifySigner, useTotp, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
+  createSession, markReauth, reauthStatus, verifySigner, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
