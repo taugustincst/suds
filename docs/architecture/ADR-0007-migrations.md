@@ -20,10 +20,13 @@ migrations on devices.
   recipe), followed by `PRAGMA foreign_key_check`: a migration that introduces a new orphan fails and rolls back;
   orphans that were already there are tolerated and reported, never silently dropped.
 - Before migrating, a **consistent snapshot** is taken with `VACUUM INTO` into `pre-migration/` (last 5 kept);
-  if the snapshot fails the upgrade does not start.
+  if the snapshot fails the upgrade does not start. Once the upgrade has succeeded the snapshot is **sealed** with the backup key (`<name>.enc`,
+  restored like any backup) and the plaintext removed; a sealed snapshot is kept 14 days (1.13.1).
 - A database from a **newer** build is refused rather than opened.
 - Moving plaintext into an `_enc` column is done by migration (encrypt existing rows, drop the old column), and
-  the old name is kept in `legacy` in `server/sync-tables.js` so older devices' pushes are upgraded.
+  the old name is kept in `legacy` in `server/sync-tables.js` so older devices' pushes are upgraded. An upgrade that did
+  so ends with a `VACUUM` and a truncating WAL checkpoint, and every connection runs with `PRAGMA secure_delete`, so
+  the old plaintext is not left in free pages (1.13.1; before, it was: security review of 1.13.0, finding 3).
 
 ## Consequences
 

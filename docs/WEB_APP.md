@@ -125,6 +125,18 @@ no backend, and publishes it to the repository's `gh-pages` branch. GitHub Pages
 https://<github-username>.github.io/<repository-name>/
 ```
 
+**A dedicated origin is recommended.** Browsers keep IndexedDB (where the records live), Cache Storage (the
+app's offline copy) and permission to frame a page with `allow-same-origin` per *origin* — scheme, host and
+port — not per path. At `<github-username>.github.io/<repository-name>/` every other GitHub Pages site of the
+same owner (`<github-username>.github.io/<anything>/`) is the same origin: a script on any of them could read
+this app's IndexedDB database and caches or frame it as same-origin. The records are encrypted at rest on the
+device, sealed with the device password (above), and the service worker reads and deletes only its own caches, within
+its own path (1.13.1, `test/sw-phi.test.js`), but that does not make a shared origin a boundary. For real
+records, publish SUDS on this device at an origin nothing else uses: a custom domain for the Pages site
+(Settings → Pages → *Custom domain*, e.g. `suds.county.example`), a repository named
+`<github-username>.github.io` with no other sites under that owner, or a county web server host name of its
+own.
+
 ### When it is published
 
 **Only on a release.** The site is a public URL that people keep records in, so it serves released code and

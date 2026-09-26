@@ -56,11 +56,11 @@ export function openClientForm(values, onDone) {
   let confirmedDuplicate = false;
 
   // A returning client whose earlier record was discharged and is on nobody's caseload (so this worker cannot
-  // open it): the server offers it for re-admission instead of a dead end. Only the client code and the
-  // discharge are shown — nothing from the stored record that the person at the desk has not just said.
+  // open it): the server offers it for re-admission instead of a dead end, when the surname and date of birth
+  // match. Nothing from the stored record is shown — not its code, nor when or why the person was discharged.
   const readmit = async (x, btn) => {
     const read = (n) => f.querySelector(`[name="${n}"]`)?.value || undefined;
-    const reason = await confirmDialog('Re-admit this person', `The earlier record ${x.client_code} comes onto your caseload, a new episode of care opens, and a supervisor reviews the re-admission. Say why (for example "walked in asking to restart services").`, { okText: 'Re-admit', requireReason: true, minLength: 15 });
+    const reason = await confirmDialog('Re-admit this person', 'The earlier record comes onto your caseload, a new episode of care opens, and a supervisor reviews the re-admission. Say why (for example "walked in asking to restart services").', { okText: 'Re-admit', requireReason: true, minLength: 15 });
     if (!reason) return;
     btn.disabled = true;
     try {
@@ -70,9 +70,9 @@ export function openClientForm(values, onDone) {
   };
   const readmitBanner = (offers) => offers.length ? h('div', { class: 'banner warn', role: 'alert', 'data-readmit-offer': '1' },
     h('div', {},
-      h('b', {}, offers.length === 1 ? 'An earlier record exists for this person, and they were discharged.' : 'Earlier records exist for this person, and they were discharged.'),
+      h('b', {}, offers.length === 1 ? 'An earlier record exists for this person.' : 'Earlier records exist for this person.'),
       h('ul', { class: 'tight' }, offers.map(x => h('li', {},
-        h('span', { class: 'mono' }, x.client_code), ' ', h('span', { class: 'muted small' }, x.discharge_date ? `discharged ${fmt.date(x.discharge_date)}${x.discharge_reason ? ` (${fmt.label(x.discharge_reason, 'DISCHARGE_REASONS')})` : ''}` : fmt.label(x.status)),
+        h('span', {}, x.message || 'A supervisor will be asked to review it.'),
         h('div', { class: 'small muted' }, `Matched on ${x.reasons.join(' and ')}.`),
         h('button', { class: 'btn sm primary', type: 'button', 'data-readmit': x.id, onClick: (e) => readmit(x, e.currentTarget) }, 'Re-admit this person')))),
       h('p', { class: 'small' }, 'It is not on your caseload, so you cannot open it — but re-admitting carries on their record instead of starting a second one. It is logged and a supervisor reviews it.'))) : null;

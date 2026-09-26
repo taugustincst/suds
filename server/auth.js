@@ -180,6 +180,19 @@ function createSession(user, ctx, { mfaPending = false, mfaSource = null } = {})
 // (sign-in, second factor, or the password or code given for the last signature) needs only the
 // confirmation; after that, the password again — or the authenticator code for an account with two-step
 // verification on.
+// A completed single sign-on re-authentication (routes/oidc.js finishReauth), by session, for key custody
+// (verifySigner's `fresh`): good for SSO_PROOF_MS and for one use. Kept in memory: SUDS is one process per
+// database (server/instance-lock.js), and a restart only means confirming with the provider again. The
+// session's reauth_at cannot tell this apart from a sign-in, which sets it too.
+const SSO_PROOF_MS = 5 * 60_000;
+const ssoProofs = new Map();
+function noteSsoProof(sessionId) {
+  const now = Date.now();
+  for (const [k, at] of ssoProofs) if (now - at > SSO_PROOF_MS) ssoProofs.delete(k);
+  ssoProofs.set(sessionId, now);
+}
+function ssoProofFresh(ctx) { const at = ctx.session && ssoProofs.get(ctx.session.id); return !!at && Date.now() - at <= SSO_PROOF_MS; }
+function takeSsoProof(ctx) { const ok = ssoProofFresh(ctx); if (ctx.session) ssoProofs.delete(ctx.session.id); return ok; }
 function markReauth(ctx) { if (ctx.session) { const at = db.now(); db.run(`UPDATE sessions SET reauth_at=? WHERE id=?`, at, ctx.session.id); ctx.session.reauth_at = at; } }
 function reauthStatus(ctx) {
   const minutes = policy().signReauthMinutes;
@@ -192,7 +205,7 @@ function reauthStatus(ctx) {
   const u = ctx.user ? db.one(`SELECT mfa_enabled, password_hash, oidc_subject FROM users WHERE id=?`, ctx.user.id) : null;
   const sso = !!(u && u.oidc_subject && config.oidc && config.oidc.enabled);
   const method = u && u.mfa_enabled ? 'totp' : sso && !hasLocalPassword(u.password_hash) ? 'sso' : 'password';
-  return { recent: until > Date.now(), until: until ? new Date(until).toISOString() : null, window_minutes: minutes, method, sso };
+  return { recent: until > Date.now(), until: until ? new Date(until).toISOString() : null, window_minutes: minutes, method, sso, sso_fresh: sso && ssoProofFresh(ctx) };
 }
 /** Whether a password hash is a real one (an SSO-provisioned account's is a marker nobody can match). */
 function hasLocalPassword(hash) { return /^scrypt\$/.test(String(hash || '')); }
@@ -200,9 +213,10 @@ function hasLocalPassword(hash) { return /^scrypt\$/.test(String(hash || '')); }
  * Establish who is signing: the password (or, with two-step verification on, the authenticator code) given
  * with this request, or a recent re-authentication plus an explicit confirmation. Returns how, for the audit
  * entry: 'password', 'totp' or 'recent_auth'. `action` names the failed-attempt audit entry; `purpose` finishes
- * the messages ("Enter your password to ..."): signing a note, or downloading the key backup.
+ * the messages ("Enter your password to ..."): signing a note, or downloading the key backup. `fresh`: no
+ * recent-authentication window at all (the key backup); 'sso' is then returned for a single sign-on round-trip.
  */
-async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 'sign' } = {}) {
+async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 'sign', fresh = false } = {}) {
   const password = typeof body.password === 'string' && body.password ? body.password : null;
   const code = typeof body.code === 'string' && body.code.trim() ? body.code.trim() : null;
   const u = db.one(`SELECT id, password_hash, mfa_enabled, mfa_secret_enc, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
@@ -244,6 +258,16 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 
     markReauth(ctx); return 'totp';
   }
   const st = reauthStatus(ctx);
+  // Key custody (fresh: the key backup) has no window: the password or code with this very request, or, for an
+  // account linked to single sign-on, an identity-provider round-trip completed in the last few minutes and not
+  // yet used (takeSsoProof, one download each). A sign-in, a signature a few minutes ago or the previous
+  // download does not count (security review of 1.13.0, design weakness 6).
+  if (fresh) {
+    if ((body.confirm === true || body.confirm === 1) && st.sso && takeSsoProof(ctx)) return 'sso';
+    const how = st.method === 'totp' ? `Enter the code from your authenticator app to ${purpose}` : st.method === 'sso' ? `Confirm with single sign-on to ${purpose}` : `Enter your password to ${purpose}`;
+    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'fresh proof required' } });
+    throw new HttpError(403, `${how}. It is asked for every time, however recently you confirmed it is you.`, { reauthRequired: true, fresh: true, method: st.method, sso: st.sso });
+  }
   // validate() stores booleans as 1/0 (SQLite); either spelling is the confirmation.
   if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? `Confirm the attestation to ${purpose}` : st.method === 'totp' ? `Enter the code from your authenticator app to ${purpose}` : st.method === 'sso' ? `Confirm with single sign-on, then ${purpose}` : `Your password is required to ${purpose}`);
   if (!st.recent) {
@@ -251,6 +275,52 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 
     throw new HttpError(403, `It has been a while since you last confirmed it is you. ${how}`, { reauthRequired: true, method: st.method, sso: st.sso });
   }
   return 'recent_auth';
+}
+const LOCKED_MESSAGE = 'Account locked after too many failed attempts. Try again later or contact an administrator.';
+/**
+ * The password of the person already signed in, given again to change it or to turn two-step verification
+ * off. It gets the sign-in's protections, as a signature's password does (verifySigner): the per-address
+ * limit, the account's failure count and lockout, and an audit entry (`action`) for every failure. Before
+ * 1.13.1 these routes took unlimited guesses from inside a session (security review of 1.13.0, finding 5).
+ * Throws on failure; the caller clears the failure count once everything it asks for has been given.
+ */
+async function confirmPassword(ctx, password, { action, message = 'Password is incorrect' }) {
+  const u = db.one(`SELECT id, password_hash, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
+  if (isLocked(u)) {
+    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'locked' } });
+    throw new HttpError(423, LOCKED_MESSAGE);
+  }
+  const app = require('./app'); const limit = config.loginRateLimit;
+  if (app.rateLimited(`login:${ctx.ip}`, limit)) {
+    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'rate limited' } });
+    throw new HttpError(429, 'Too many attempts. Try again later.');
+  }
+  if (await verifyPasswordAsync(password, u.password_hash)) return;
+  app.rateLimit(`login:${ctx.ip}`, limit, 15 * 60_000);
+  const locked = recordPasswordFailure(u);
+  clearReauth(ctx);
+  audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'wrong password', ...(locked ? { locked: true } : {}) } });
+  throw locked ? new HttpError(423, `${message}. ${LOCKED_MESSAGE.replace('Account locked', 'The account is now locked')}`) : unauthorized(message);
+}
+/** The same for a current authenticator code (the per-account code limit, the failure count, the lockout, the audit). */
+function confirmCode(ctx, code, { action }) {
+  const u = db.one(`SELECT id, mfa_enabled, mfa_secret_enc, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
+  if (isLocked(u)) {
+    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'locked' } });
+    throw new HttpError(423, LOCKED_MESSAGE);
+  }
+  if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest('Two-step verification is not set up for your account');
+  if (!require('./app').rateLimit(`mfa:${u.id}`, 10, 10 * 60_000)) {
+    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'rate limited', method: 'totp' } });
+    throw new HttpError(429, 'Too many attempts');
+  }
+  const r = useTotp(u.id, u.mfa_secret_enc, String(code || '').trim());
+  if (r === 'ok') return;
+  const locked = recordPasswordFailure(u);
+  clearReauth(ctx);
+  audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: r === 'replay' ? 'replayed code' : 'wrong code', method: 'totp', ...(locked ? { locked: true } : {}) } });
+  if (locked) throw new HttpError(423, 'That code is not right. The account is now locked after too many failed attempts.');
+  throw forbidden(r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'That code is not right. Enter the current code from your authenticator app.');
 }
 function clearReauth(ctx) { if (ctx.session) { db.run(`UPDATE sessions SET reauth_at=NULL WHERE id=?`, ctx.session.id); ctx.session.reauth_at = null; } }
 function isLocked(user) { return !!(user.locked_until && Date.parse(user.locked_until) > Date.now()); }
@@ -502,4 +572,4 @@ function passwordPolicy(pw) {
 }
 
 module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed,
-  createSession, markReauth, reauthStatus, verifySigner, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
+  createSession, markReauth, noteSsoProof, reauthStatus, verifySigner, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

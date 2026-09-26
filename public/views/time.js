@@ -7,7 +7,7 @@ export function openTimeForm(values, { clientId, clientDisplay, onDone } = {}) {
     { name: 'category', label: 'Category', type: 'select', list: 'TIME_CATEGORIES', value: 'direct_service', noBlank: true, required: true },
     { name: 'client_id', label: 'Client (optional)', type: 'client', value: clientId || values?.client_id, display: clientDisplay },
     can('budget:read') ? { name: 'funding_source_id', label: 'Charge to fund', type: 'fund' } : null, { name: 'billable', label: 'Billable', type: 'checkbox' },
-    { name: 'description', label: 'Description', span: true },
+    { name: 'description', label: 'Description', span: true, help: 'What the time was for. Managers who approve time without access to client records see only the category, fund and minutes.' },
     can('time:all') ? { name: 'user_id', label: 'Worker', type: 'user', value: values?.user_id || state.user.id } : null,
   ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Log time' : 'Save', draftKey: isNew ? 'time:new' : `time:${values.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
     if (isNew) await post('/api/time', d); else await put(`/api/time/${values.id}`, { ...d, if_updated_at: values.updated_at });
@@ -28,7 +28,9 @@ export function timeTable(rows, { showClient = true, onChange } = {}) {
   return table([
     { label: 'Date', render: r => fmt.date(r.work_date) }, { label: 'Worker', key: 'worker' }, showClient ? { label: 'Client', render: r => r.client_id ? h(can('clients:read') ? 'a' : 'span', can('clients:read') ? { href: `#/client/${r.client_id}` } : { class: 'client-plain' }, r.client_name || r.client_code, r.client_name ? h('div', { class: 'muted small mono' }, r.client_code) : null) : '—' } : null,
     { label: 'Category', render: r => fmt.label(r.category, 'TIME_CATEGORIES') }, { label: 'Minutes', key: 'minutes', num: true }, { label: 'Billable', render: r => r.billable ? badge('Yes', 'ok') : '' }, { label: 'Fund', render: r => r.funding_source || '—' },
-    { label: 'Description', render: r => h('span', { class: 'small' }, r.description || '', r.intervention_id ? h('span', { class: 'muted' }, ' (from visit)') : r.call_id ? h('span', { class: 'muted' }, ' (from call)') : null) },
+    // Another worker's description is not sent to a role without access to client records (it can name the
+    // client); the cell says so rather than looking empty.
+    { label: 'Description', render: r => h('span', { class: 'small' }, r.description || (r.description_withheld ? h('span', { class: 'muted' }, 'Not shown to your role') : ''), r.intervention_id ? h('span', { class: 'muted' }, ' (from visit)') : r.call_id ? h('span', { class: 'muted' }, ' (from call)') : null) },
     { label: 'Status', render: r => statusBadge(r) },
     { label: '', render: r => {
       const mine = r.user_id === state.user.id;

@@ -167,9 +167,12 @@ export async function openNote(id, { onChange } = {}) {
  * the county sign-in and comes back to `returnTo` (the note) ready to sign with the confirmation alone.
  * `send(body)` makes the request; `fields` come before the identity field.
  */
-export async function signatureDialog({ title, intro, submitText, send, done, fields = [], returnTo, verb = 'sign' }) {
+// fresh: no "you confirmed a few minutes ago" (the key backup, POST /api/admin/keys-backup): the password or
+// code is asked for every time; only a single sign-on confirmation just completed (sso_fresh) stands in for it.
+export async function signatureDialog({ title, intro, submitText, send, done, fields = [], returnTo, verb = 'sign', fresh = false }) {
   let st = { recent: false, method: 'password' };
   try { st = await get('/api/auth/reauth', { quiet: true }); } catch { /* ask for the password */ }
+  if (fresh) st = { ...st, recent: !!st.sso_fresh };
   const ssoButton = (label, primary) => {
     const status = h('div', { class: 'small', role: 'status', 'aria-live': 'polite' });
     const btn = h('button', { type: 'button', class: `btn ${primary ? 'primary' : ''}`, 'data-sso-reauth': '1', onClick: async () => {
@@ -181,9 +184,10 @@ export async function signatureDialog({ title, intro, submitText, send, done, fi
   };
   const open = (st, why) => {
     const viaSso = !st.recent && st.method === 'sso';
+    const why2 = fresh ? 'Asked for every time, however recently you signed in.' : 'It has been a while since you confirmed it is you.';
     const identity = st.recent ? []
-      : st.method === 'totp' ? [{ name: 'code', label: 'Code from your authenticator app', required: true, autocomplete: 'one-time-code', pattern: '[0-9]{6}', help: 'It has been a while since you confirmed it is you.' }]
-      : [{ name: 'password', label: `Re-enter your password to ${verb}`, type: 'password', required: true, autocomplete: 'current-password', help: 'It has been a while since you confirmed it is you.' }];
+      : st.method === 'totp' ? [{ name: 'code', label: 'Code from your authenticator app', required: true, autocomplete: 'one-time-code', pattern: '[0-9]{6}', help: why2 }]
+      : [{ name: 'password', label: `Re-enter your password to ${verb}`, type: 'password', required: true, autocomplete: 'current-password', help: why2 }];
     const f = viaSso ? null : form([...fields, ...identity], { submitText, onCancel: () => m.close(), onSubmit: async (d) => {
       try { await send(st.recent ? { ...d, confirm: true } : d); }
       catch (e) {
@@ -196,10 +200,10 @@ export async function signatureDialog({ title, intro, submitText, send, done, fi
     const m = modal(title, h('div', { 'data-signature-dialog': st.recent ? 'confirm' : st.method },
       why ? h('div', { class: 'banner warn', role: 'status' }, why) : null,
       intro,
-      st.recent ? h('p', { class: 'small muted' }, st.method === 'sso' ? 'You confirmed it is you a few minutes ago, so you do not need to sign in again.' : 'You confirmed it is you a few minutes ago, so your password is not needed again.') : null,
+      st.recent ? h('p', { class: 'small muted' }, fresh ? 'You have just confirmed it is you with single sign-on.' : st.method === 'sso' ? 'You confirmed it is you a few minutes ago, so you do not need to sign in again.' : 'You confirmed it is you a few minutes ago, so your password is not needed again.') : null,
       viaSso ? (() => {
         const [btn, status] = ssoButton('Confirm with single sign-on', true);
-        return [h('p', {}, 'It has been a while since you confirmed it is you. Your account signs in through single sign-on, so confirm with the county sign-in. You will come back here and ' + (verb === 'sign' ? 'sign' : 'continue') + ' with one click.'),
+        return [h('p', {}, `${fresh ? 'This needs you to confirm it is you each time.' : 'It has been a while since you confirmed it is you.'} Your account signs in through single sign-on, so confirm with the county sign-in. You will come back here and ` + (verb === 'sign' ? 'sign' : 'continue') + ' with one click.'),
           status, h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', onClick: () => m.close() }, 'Cancel'), btn)];
       })() : f,
       !viaSso && !st.recent && st.sso && st.method === 'password' ? h('div', { class: 'mt' }, ...ssoButton('Confirm with single sign-on instead', false)) : null));

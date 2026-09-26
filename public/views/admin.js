@@ -6,12 +6,13 @@ import { instrumentsCard } from './clinical.js';
 
 /**
  * The key backup opens every backup of this database, so the server asks the administrator to prove it is
- * them first (POST /api/admin/keys-backup, auth.verifySigner): the password or authenticator code again, or a
- * confirmation within a few minutes of the last one. The same dialog as signing a note.
+ * them first (POST /api/admin/keys-backup, auth.verifySigner `fresh`): the password or authenticator code
+ * with every download, however recently they signed in — or, for a single sign-on account, a county sign-in
+ * just completed (it comes back to #/admin?sso_reauth=ok, which reopens this dialog). The signature dialog.
  */
 export async function downloadKeyBackup(done) {
   const { signatureDialog } = await import('./notes.js');
-  return signatureDialog({ title: 'Download the key backup', submitText: 'Download the key backup', verb: 'download the key backup', returnTo: '#/admin?tab=system',
+  return signatureDialog({ title: 'Download the key backup', submitText: 'Download the key backup', verb: 'download the key backup', returnTo: '#/admin', fresh: true,
     intro: h('p', {}, 'This file opens every backup of this database. Keep it somewhere separate from this computer, such as the county password manager, and never email it.'),
     send: async (body) => {
       const keys = await post('/api/admin/keys-backup', body);
@@ -207,7 +208,14 @@ function deviceSettingsCard() {
 }
 
 route('admin', async (r) => {
-  const tab = r.query.get('tab') || 'users';
+  // Back from confirming with single sign-on for the key backup (the only re-authentication this page starts):
+  // on the System tab, with the download dialog open again, or with the provider's answer if it failed.
+  const ssoBack = r.query.get('sso_reauth');
+  if (ssoBack) {
+    history.replaceState(history.state, '', `${location.pathname}${location.search}#/admin?tab=system`);
+    if (ssoBack === 'ok') setTimeout(() => downloadKeyBackup(), 0); else (await import('./notes.js')).ssoReauthNotice(r.query);
+  }
+  const tab = ssoBack ? 'system' : r.query.get('tab') || 'users';
   const refresh = () => nav(`admin?tab=${tab}&_=${Date.now()}`);
   const body = h('div', {});
   const T = {
