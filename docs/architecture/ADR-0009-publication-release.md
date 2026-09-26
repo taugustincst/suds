@@ -67,6 +67,9 @@ wall-clock backstop remains only to protect the server; a release it stops is re
 **Where it runs.** In a worker thread (`server/release-audit-worker.js`, one long-lived worker, unreferenced when
 idle); the main thread reads the figures, then awaits the audit. The browser kernel has no worker threads
 (`node:worker_threads` is shimmed empty) and runs it inline, as do the tests (`SUDS_AUDIT_INLINE=1` forces it).
+An audit that does not answer within the backstop is refused on its own and its worker stopped; the audits
+queued behind it on that worker start again on a new one (1.13.1; in 1.13.0 they were failed with it,
+`test/release-worker-timeout.test.js`).
 
 ## Consequences
 
