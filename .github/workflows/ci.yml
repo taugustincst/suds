@@ -147,7 +147,10 @@ jobs:
   # The browser suite drives Chromium; iPhones run WebKit. This smoke subset runs the two phone-shaped
   # scripts (the static build and the tester's retest, both on an iPhone 13 profile) in Playwright's WebKit.
   # Advisory while it beds in (continue-on-error). Playwright's WebKit on Linux is not iOS Safari, so the
-  # real-device release checklist (docs/ADOPTION.md) still applies.
+  # real-device release checklist (docs/ADOPTION.md) still applies. Two service-worker cache checks that
+  # Playwright's WebKit on Linux cannot reproduce (an upgraded persistent profile's shell cache; a page fetch
+  # while offline) are reported as SKIP here, with their diagnostics, and checked on an iPhone instead
+  # (scripts/ui/assert.mjs PLAYWRIGHT_WEBKIT_LINUX); every other check in the two scripts still counts.
   webkit:
     runs-on: ubuntu-latest
     timeout-minutes: 25
