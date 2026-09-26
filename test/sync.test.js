@@ -601,22 +601,23 @@ test('the intake duplicate check never names a client outside the caller\'s case
   // Regression (PHI leak): POST /api/clients threw with the full display name and date of birth of every
   // match, including clients the caller could not otherwise see, and before any audit row was written.
   const theirs = (await nav2.post('/api/clients', { first_name: 'Hidden', last_name: 'Match', dob: '1980-02-02' })).data.id;
+  // Since 1.12.5 a match outside the caseload is not even counted to the caller (that said the person is a
+  // client here): the intake goes ahead and a supervisor is asked to compare (test/duplicate-review.test.js).
   const r = await nav.post('/api/clients', { first_name: 'Hidden', last_name: 'Match', dob: '1980-02-02' });
-  assert.equal(r.status, 400);
-  assert.match(r.data.error, /outside your caseload/);
+  assert.equal(r.status, 201);
   assert.equal(r.data.duplicates, undefined, 'no record is listed');
   assert.ok(!JSON.stringify(r.data).includes('Hidden'), 'no identifier leaves the server');
-  assert.equal(r.data.hidden_duplicates, 1);
+  assert.equal(r.data.hidden_duplicates, undefined);
   const a = H.db.one(`SELECT * FROM audit_log WHERE action='client.duplicate_check' AND user_id=? ORDER BY id DESC LIMIT 1`, navId);
   assert.ok(a, 'the check is audited');
   assert.ok(!String(a.details).includes('Hidden'));
-  assert.ok(!H.db.one(`SELECT 1 FROM clients WHERE id<>? AND full_name_idx=?`, theirs, require('../server/crypto').blindIndex('MatchHidden')), 'nothing was created');
+  assert.ok(H.db.one(`SELECT 1 FROM tasks WHERE client_id=? AND priority='high'`, theirs), 'a supervisor is asked to compare the two');
   // A match on the caller's own caseload is still shown, as before.
   const mine = (await nav.post('/api/clients', { first_name: 'Shown', last_name: 'Match' })).data.id;
   const r2 = await nav.post('/api/clients', { first_name: 'Shown', last_name: 'Match' });
   assert.equal(r2.status, 400);
   assert.ok(r2.data.duplicates.some(d => d.id === mine), 'a visible match is listed');
-  assert.equal(r2.data.hidden_duplicates, 0);
+  assert.equal(r2.data.hidden_duplicates, undefined);
 });
 
 test('a client created on a device that looks like an existing one lands, flagged for a supervisor', async () => {

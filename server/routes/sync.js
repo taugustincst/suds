@@ -670,7 +670,9 @@ function push(user, payload) {
 /**
  * A client created on a device that matches an existing record by the same rules as the intake form's
  * duplicate check. There is no way to ask the worker in the field, so the row is accepted, audited (codes
- * and reasons only, never names) and a task is raised for a supervisor to compare the two.
+ * and reasons only, never names) and a task is raised for a supervisor to compare the two (clients.js
+ * flagForReview). The device is told only about matches its user may open: naming one they may not would
+ * say that person is a client here.
  */
 function flagPossibleDuplicate(user, raw, clientCode, warnings) {
   let matches = [];
@@ -682,10 +684,10 @@ function flagPossibleDuplicate(user, raw, clientCode, warnings) {
     return;
   }
   if (!matches.length) return;
-  const codes = matches.map(m => m.client_code);
-  audit.log({ user, action: 'client.possible_duplicate', entity: 'client', entityId: raw.id, clientId: raw.id, ip: 'device', details: { client_code: clientCode, matches: matches.map(m => ({ id: m.id, client_code: m.client_code, reasons: m.reasons })), source: 'sync' } });
-  db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,priority) VALUES(?,?,?,?,?,?)`, require('../crypto').uuid(), raw.id, null, user.id, encrypt(`Possible duplicate record: compare ${clientCode} with ${codes.join(', ')}`), 'high');
-  warnings.push({ table: 'clients', id: raw.id, reason: `possible duplicate of ${codes.length} existing record${codes.length === 1 ? '' : 's'} (${codes.join(', ')}); a supervisor has been asked to check` });
+  const C = require('./clients');
+  C.flagForReview(user, { id: raw.id, client_code: clientCode, matches, source: 'sync', ip: 'device' });
+  const codes = matches.filter(m => C.mayOpen(user, m.id)).map(m => m.client_code);
+  if (codes.length) warnings.push({ table: 'clients', id: raw.id, reason: `possible duplicate of ${codes.length} existing record${codes.length === 1 ? '' : 's'} (${codes.join(', ')}); a supervisor has been asked to check` });
 }
 
 /** Find a client code no other client is using. Devices generate codes offline, so collisions are normal. */

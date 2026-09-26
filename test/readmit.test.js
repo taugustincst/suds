@@ -57,7 +57,10 @@ test('the duplicate check at intake says a discharged record exists and offers t
   // An active client on someone else's caseload is not offered: that is still a supervisor's call.
   const busy = await navB.post('/api/clients/check-duplicates', { first_name: 'Otto', last_name: 'Current', dob: '1990-01-01' });
   assert.equal(busy.data.readmit.length, 0);
-  assert.equal(busy.data.hidden_duplicates, 1);
+  // Nor counted: "1 hidden" said the person is a client here (security review of 1.12.4, 8(c)). An intake
+  // goes ahead and a supervisor is asked to compare the records (test/duplicate-review.test.js).
+  assert.equal(busy.data.hidden_duplicates, undefined);
+  assert.deepEqual(busy.data.matches, []);
 });
 
 test('re-admission needs the person’s details and a reason, and is refused for records that are not discharged', async () => {
