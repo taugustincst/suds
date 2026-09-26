@@ -337,8 +337,29 @@ function inspect(plainBytes) {
 /**
  * Replace the live database with a backup. The current database is copied aside first, so a restore of the
  * wrong file is recoverable. Migrations run on reopen, so an older backup is brought forward automatically.
+ *
+ * Synchronous, for the command line (scripts/backup.js --restore): refused at once, with code EBUSY and
+ * nothing touched, while a backup, snapshot or recovery drill holds the lock (server/backup-lock.js). The
+ * Administration page uses restoreWhenIdle(), which waits for that work first.
  */
 function restore(plainBytes) {
+  const release = require('./backup-lock').tryAcquire('restore');
+  if (!release) throw require('./backup-lock').busyError(require('./backup-lock').current()?.name || 'backup', 'restore');
+  try { return restoreHeld(plainBytes); } finally { release(); }
+}
+
+/**
+ * restore(), after waiting (at most backupLock.restoreWaitMs, unless `waitMs` is given) for a backup,
+ * snapshot or recovery drill in flight to finish. While it waits and while it runs, the backup timers skip
+ * their turn. Rejects with code EBUSY, having touched nothing, if the wait runs out.
+ */
+async function restoreWhenIdle(plainBytes, { waitMs } = {}) {
+  const lock = require('./backup-lock');
+  const release = await lock.acquire('restore', { waitMs: waitMs ?? lock.restoreWaitMs, forWhat: 'restore' });
+  try { return restoreHeld(plainBytes); } finally { release(); }
+}
+
+function restoreHeld(plainBytes) {
   const info = inspect(plainBytes);
   const dbPath = config.dbPath;
   if (dbPath === ':memory:') throw new Error('This server is running on an in-memory database; there is nothing to restore into.');
@@ -346,10 +367,10 @@ function restore(plainBytes) {
   const aside = `${dbPath}.before-restore-${stamp}`;
   const dropJournal = () => { for (const suffix of ['-wal', '-shm']) { try { fs.unlinkSync(dbPath + suffix); } catch {} } };
   // Put the original back, so a failed restore is not also a lost database — whatever failed, and whether
-  // or not the swap had happened yet.
+  // or not the swap had happened yet. Closed first: the file is never copied over while it is open.
   const rollBack = (cause) => {
-    try { if (fs.existsSync(aside)) { fs.copyFileSync(aside, dbPath); dropJournal(); } } catch (e) { cause.message += ` (and the previous database could not be put back from ${aside}: ${e.message})`; }
     try { db.close(); } catch {}
+    try { if (fs.existsSync(aside)) { fs.copyFileSync(aside, dbPath); dropJournal(); } } catch (e) { cause.message += ` (and the previous database could not be put back from ${aside}: ${e.message})`; }
     try { db.open(); } catch (e) { cause.message += ` (the previous database could not be reopened either: ${e.message})`; }
   };
   // Checkpoint and close so the copy set aside is the whole database, not a file plus a write-ahead log.
@@ -366,13 +387,21 @@ function restore(plainBytes) {
   // not catch, a migration that fails on its data), the server must come back on the database it had.
   try { db.open(); }
   catch (e) { rollBack(e); throw new Error(`The backup could not be opened after it was restored, so the previous database was put back: ${e.message}`); }
-  const restoredGen = db.getSetting('db_generation', null) || 'initial';
-  db.setSetting('db_generation', require('./crypto').uuid()); // a new lineage: devices see it on their next pull and re-offer what the backup lacks (server/routes/sync.js)
-  // Anchor the restored chain at once: anchors written since the backup was taken no longer match it, and
-  // this one (reason 'restore', the new generation) is what tells verification that the change was a
-  // restore rather than a rewrite (server/audit-anchor.js).
-  if (!config.local) require('./audit-anchor').safeWrite('restore', { prevGen: restoredGen });
+  // The steps that make the restore a restore rather than a silent rewrite complete, or the restore is undone:
+  // a new sync generation (devices see it on their next pull and re-offer what the backup lacks —
+  // server/routes/sync.js), and an audit anchor for the restored chain (anchors written since the backup
+  // no longer match it; this one, reason 'restore', tells verification the change was a restore —
+  // server/audit-anchor.js). Up to 1.12.0 either could fail after the swap and leave a restore that had
+  // taken effect, reported as an error, with no new generation and no anchor.
+  try {
+    const restoredGen = db.getSetting('db_generation', null) || 'initial';
+    db.setSetting('db_generation', require('./crypto').uuid());
+    if (!config.local) require('./audit-anchor').write('restore', { prevGen: restoredGen });
+  } catch (e) {
+    rollBack(e);
+    throw new Error(`The restore could not be completed (${e.message}), so the previous database was put back. Nothing was changed.`);
+  }
   return { ...info, previous_database_kept_at: aside };
 }
 
-module.exports = { create, createAsync, encryptPlain, decrypt, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect, restore, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
+module.exports = { create, createAsync, encryptPlain, decrypt, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect, restore, restoreWhenIdle, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };

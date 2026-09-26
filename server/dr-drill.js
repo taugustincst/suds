@@ -174,9 +174,19 @@ function runChild(tmp, dbFile, onStep, keys = { enc: config.encryptionKey, idx: 
  * `copy`: 'auto' (the offsite copy when an offsite directory is configured, else the local one), 'offsite'
  * or 'local'.
  */
-async function run({ backupFile = null, fresh = false, by = 'system', trigger = 'manual', record = true, keysFile = null, keysText = null, keysLabel = null, copy = 'auto' } = {}) {
+async function run(opts = {}) {
   if (current) { const e = new Error('A recovery drill is already running'); e.code = 'EBUSY'; throw e; }
-  const job = current = { started_at: new Date().toISOString(), by, steps: [] };
+  const job = current = { started_at: new Date().toISOString(), by: opts.by || 'system', steps: [] };
+  // Under the shared lock (server/backup-lock.js): a drill waits for a backup or snapshot in flight, and a
+  // restore waits for the drill (or is refused with a 409), so the live database a drill compares against,
+  // and the backup it takes when none is on disk, are never read while the file is being swapped.
+  let release = null;
+  try {
+    release = await require('./backup-lock').acquire('dr-drill');
+    return await runJob(job, opts);
+  } finally { if (release) release(); if (current === job) current = null; }
+}
+async function runJob(job, { backupFile = null, fresh = false, by = 'system', trigger = 'manual', record = true, keysFile = null, keysText = null, keysLabel = null, copy = 'auto' } = {}) {
   const step = (s) => { job.steps.push({ at: new Date().toISOString(), step: s }); };
   const started = Date.now();
   const tmpRoot = path.join(config.dataDir, '.dr-drill');
@@ -216,7 +226,7 @@ async function run({ backupFile = null, fresh = false, by = 'system', trigger = 
     }
     if (!file) {
       step('No backup on disk; taking one first');
-      const made = await require('./scheduled-backup').run({ retain: sched.retain, offsiteDir: sched.offsiteDir });
+      const made = await require('./scheduled-backup').runHeld({ retain: sched.retain, offsiteDir: sched.offsiteDir }); // this drill holds the lock
       if (!made.file) throw new Error(`a backup could not be taken: ${made.error}`);
       madeBackup = true;
       if (made.offsiteFile && copy !== 'local') { file = made.offsiteFile; source = { ...source, copy: 'offsite', dir: sched.offsiteDir }; }
@@ -289,7 +299,6 @@ async function run({ backupFile = null, fresh = false, by = 'system', trigger = 
     db.setSetting('dr_last_drill', JSON.stringify(summary));
     audit.log({ user: typeof by === 'object' ? by : { username: String(by) }, action: 'dr.drill', success: report.ok, details: { trigger, backup: report.backup.file, copy: source.copy, keys: keyInfo.source, rto_seconds: rtoSeconds, rpo_seconds: rpoSeconds, checks_passed: summary.checks_passed, checks_total: summary.checks_total, report: files.json || null, sha256: doc.integrity.sha256 } });
   }
-  if (current === job) current = null;
   return { ...doc, files };
 }
 
@@ -331,7 +340,7 @@ function start(opts) {
 
 /** Housekeeping: once a month when an administrator has turned the monthly drill on. Off by default. */
 function runIfDue(now = Date.now()) {
-  if (db.getSetting('dr_drill_monthly', '0') !== '1' || current) return null;
+  if (db.getSetting('dr_drill_monthly', '0') !== '1' || current || require('./backup-lock').paused()) return null;
   const last = lastDrill();
   if (last && last.at && now - Date.parse(last.at) < MONTH_MS) return null;
   return start({ by: 'system', trigger: 'monthly' });

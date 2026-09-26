@@ -80,7 +80,7 @@ A recorded run on a 20,000-client database (128 MB backup): [docs/evidence/dr-dr
 
 ## Restore procedures
 
-* **In the browser:** Settings → System & backups → *Restore from a backup*: preview first, administrator password and "REPLACE" to confirm; the replaced database is kept beside it (`suds.db.before-restore-<time>`); a restore writes a new database generation (devices re-offer what the backup lacks) and a `restore` audit anchor.
+* **In the browser:** Settings → System & backups → *Restore from a backup*: preview first, administrator password and "REPLACE" to confirm; the replaced database is kept beside it (`suds.db.before-restore-<time>`); a restore writes a new database generation (devices re-offer what the backup lacks) and a `restore` audit anchor. Backup, snapshot, offsite copy, recovery drill and restore share one lock (`server/backup-lock.js`): a restore waits up to two minutes for one in flight, and is otherwise refused with a 409 that says what is running, with nothing touched; while it waits and runs, the backup, snapshot and drill timers skip their turn. The swap, the new generation and the anchor complete together, or the previous database is put back and the page says so (`test/backup-restore-race.test.js`).
 * **On the host:** `node scripts/backup.js --restore <file> <out.db>` then swap it in with the service stopped (`../DEPLOYMENT.md`, "Backups").
 * **Older key:** a backup made before a key rotation needs the retired key (keep retired keys with the backups they open).
 
