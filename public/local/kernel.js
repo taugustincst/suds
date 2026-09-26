@@ -6698,7 +6698,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.12.4" : "local",
+      version: true ? "1.13.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -7364,7 +7364,7 @@ CREATE TABLE IF NOT EXISTS court_orders (
   findings_recorded INTEGER NOT NULL DEFAULT 0,       -- the order states the good-cause findings (\xA72.64(d))
   notice_requirement_met INTEGER NOT NULL DEFAULT 0,  -- the patient/program had the notice and chance to respond the section requires
   covers_counseling_notes INTEGER NOT NULL DEFAULT 0,
-  document_ref TEXT,
+  document_ref_enc TEXT,               -- where the order is filed ("court order, J. Smith case file"): encrypted (migration 43)
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','vacated')),
   vacated_at TEXT,
   vacated_reason_enc TEXT,             -- free text that can describe the case: encrypted
@@ -7989,7 +7989,7 @@ CREATE INDEX IF NOT EXISTS idx_fhir_jwt_assertions_expires ON fhir_jwt_assertion
 -- service organisation agreements (\xA72.11, \xA72.12(c)(4)), and the approvals behind research (\xA72.52: an IRB or
 -- privacy board) and audit or evaluation (\xA72.53: the oversight body). A disclosure on one of those bases
 -- names a row here whose organisation (or one of its aliases) is the recipient. Organisations and
--- agreements, not clients: nothing here is PHI. Kept by supervisors and administrators; pulled to devices.
+-- agreements, not clients (its free-text document reference is encrypted all the same: it can name someone). Kept by supervisors and administrators; pulled to devices.
 CREATE TABLE IF NOT EXISTS disclosure_agreements (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL CHECK (kind IN ('qsoa','research','audit_evaluation')),
@@ -8000,7 +8000,7 @@ CREATE TABLE IF NOT EXISTS disclosure_agreements (
   reference TEXT,                      -- protocol or approval number
   agreement_date TEXT NOT NULL,        -- signed / approved
   expires_at TEXT,
-  document_ref TEXT,                   -- where the signed agreement or approval letter is kept
+  document_ref_enc TEXT,               -- where the signed agreement or approval letter is kept: free text that can name someone, encrypted (migration 43)
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','ended')),
   ended_at TEXT,
   ended_reason TEXT,
@@ -9896,7 +9896,7 @@ var require_sync_tables = __commonJS({
         // A referral may cite the consent it was made under, so consents come first.
         { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc", "signer_name_enc", "revoked_reason_enc", "witness_enc", "document_ref_enc"], legacy: { revoked_reason: "revoked_reason_enc", witness: "witness_enc", document_ref: "document_ref_enc" }, scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
-        { name: "court_orders", enc: ["court_enc", "case_ref_enc", "recipient_enc", "purpose_enc", "scope_enc", "vacated_reason_enc"], legacy: { vacated_reason: "vacated_reason_enc" }, scope: "client", clientCol: "client_id", writePerm: "court-orders:write", parent: ["clients", "client_id"] },
+        { name: "court_orders", enc: ["court_enc", "case_ref_enc", "recipient_enc", "purpose_enc", "scope_enc", "vacated_reason_enc", "document_ref_enc"], legacy: { vacated_reason: "vacated_reason_enc", document_ref: "document_ref_enc" }, scope: "client", clientCol: "client_id", writePerm: "court-orders:write", parent: ["clients", "client_id"] },
         { name: "part2_notices", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         { name: "referrals", enc: ["outcome_enc", "barrier_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
         // Migration 42 moved client_form_files.filename, imports.filename and consents.document_ref likewise.
@@ -9937,7 +9937,8 @@ var require_sync_tables = __commonJS({
         { name: "option_overrides", enc: [], scope: "all", writePerm: "settings:manage", serverOwned: true },
         // The QSOA / research / audit register the non-consent disclosure bases rest on (server/disclosure.js):
         // the office's, pull-only, so a device can offer the same agreements on its disclosure form offline.
-        { name: "disclosure_agreements", enc: [], scope: "all", writePerm: "agreements:write", serverOwned: true }
+        // Migration 43 moved its document_ref (and court_orders') into document_ref_enc.
+        { name: "disclosure_agreements", enc: ["document_ref_enc"], legacy: { document_ref: "document_ref_enc" }, scope: "all", writePerm: "agreements:write", serverOwned: true }
       ],
       // Push rejection reasons that will never succeed on a retry: the office has ruled, and the device must
       // mark the row as exchanged (office wins) rather than resend it every sync forever. Anything else
@@ -18639,12 +18640,14 @@ var require_consents = __commonJS({
         purpose: o.purpose_enc ? decrypt3(o.purpose_enc) : null,
         scope: o.scope_enc ? decrypt3(o.scope_enc) : null,
         vacated_reason: o.vacated_reason_enc ? decrypt3(o.vacated_reason_enc) : null,
+        document_ref: o.document_ref_enc ? decrypt3(o.document_ref_enc) : null,
         court_enc: void 0,
         case_ref_enc: void 0,
         recipient_enc: void 0,
         purpose_enc: void 0,
         scope_enc: void 0,
         vacated_reason_enc: void 0,
+        document_ref_enc: void 0,
         problems: disclosure.courtOrderProblems(o)
       };
     }
@@ -18970,7 +18973,7 @@ Effective date: {effective}`;
     };
     function presentAgreement(a) {
       const problems = disclosure.agreementProblems(a);
-      return { ...a, label: disclosure.AGREEMENT_KINDS[a.kind], problems, active: !problems.length };
+      return { ...a, document_ref: a.document_ref_enc ? decrypt3(a.document_ref_enc) : null, document_ref_enc: void 0, label: disclosure.AGREEMENT_KINDS[a.kind], problems, active: !problems.length };
     }
     function assertAgreementsEditable() {
       const staticHost = typeof window !== "undefined" && window.SUDS_STATIC_HOST === true;
@@ -19096,7 +19099,7 @@ Confirm the determination with counsel. If it was a mistake, switch the program 
         if (v.expires_at && v.expires_at < v.issued_at) throw badRequest("An order cannot expire before it was issued");
         const id = uuid2();
         db3.run(
-          `INSERT INTO court_orders(id,client_id,order_type,court_enc,case_ref_enc,issued_at,expires_at,recipient_enc,purpose_enc,scope_enc,findings_recorded,notice_requirement_met,covers_counseling_notes,document_ref,recorded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO court_orders(id,client_id,order_type,court_enc,case_ref_enc,issued_at,expires_at,recipient_enc,purpose_enc,scope_enc,findings_recorded,notice_requirement_met,covers_counseling_notes,document_ref_enc,recorded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           id,
           ctx.params.id,
           v.order_type,
@@ -19110,7 +19113,7 @@ Confirm the determination with counsel. If it was a mistake, switch the program 
           v.findings_recorded ? 1 : 0,
           v.notice_requirement_met ? 1 : 0,
           v.covers_counseling_notes ? 1 : 0,
-          v.document_ref || null,
+          v.document_ref ? encrypt3(v.document_ref) : null,
           ctx.user.id
         );
         audit3.log({ user: ctx.user, action: "court_order.create", entity: "court_order", entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { order_type: v.order_type, qualifying: !!(v.findings_recorded && v.notice_requirement_met) } });
@@ -19147,7 +19150,7 @@ Confirm the determination with counsel. If it was a mistake, switch the program 
         if (v.expires_at && v.expires_at < v.agreement_date) throw badRequest("An agreement cannot expire before it was made");
         const id = uuid2();
         db3.run(
-          `INSERT INTO disclosure_agreements(id,kind,organisation,aliases,services,approving_body,reference,agreement_date,expires_at,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO disclosure_agreements(id,kind,organisation,aliases,services,approving_body,reference,agreement_date,expires_at,document_ref_enc,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
           id,
           v.kind,
           v.organisation.trim(),
@@ -19157,7 +19160,7 @@ Confirm the determination with counsel. If it was a mistake, switch the program 
           v.reference || null,
           v.agreement_date,
           v.expires_at || null,
-          v.document_ref || null,
+          v.document_ref ? encrypt3(v.document_ref) : null,
           ctx.user.id
         );
         audit3.log({ user: ctx.user, action: "disclosure_agreement.create", entity: "disclosure_agreement", entityId: id, ip: ctx.ip, details: { kind: v.kind } });
@@ -36402,6 +36405,13 @@ var require_db = __commonJS({
         encryptColumn(d, "client_form_files", "filename", "filename_enc");
         encryptColumn(d, "imports", "filename", "filename_enc");
         encryptColumn(d, "consents", "document_ref", "document_ref_enc");
+      },
+      // 43: the same document reference on a court order and on a registered agreement ("court order, J. Smith
+      //     case file") was still plaintext. Moved as migration 42 moved a consent's; the API keeps the name
+      //     document_ref, and a device on an older kernel still sends it (sync-tables legacy).
+      (d) => {
+        encryptColumn(d, "court_orders", "document_ref", "document_ref_enc");
+        encryptColumn(d, "disclosure_agreements", "document_ref", "document_ref_enc");
       }
     ];
     function initialise(d, schemaText, dbPath) {
