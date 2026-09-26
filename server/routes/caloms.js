@@ -11,7 +11,6 @@ const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
 const C = require('../caloms');
-const S = require('../caloms-spec');
 const { badRequest, notFound, HttpError } = require('../http');
 const { validate } = require('../validate');
 
@@ -51,13 +50,13 @@ function expectedFor(e, records) {
   return out;
 }
 
-const RECORD_SHAPE = {
-  record_type: { type: 'string', required: true, enum: S.RECORD_TYPES }, provider_id: { type: 'string', maxLen: 20 },
-  record_date: { type: 'date' }, answers: { type: 'object', required: true },
-};
+// A record's fields, and that a discharge record needs a discharged episode: the table's rules
+// (server/rules/caloms_records.js), which sync push applies to a device's records as well.
+const rules = require('../rules');
+const RECORD_SHAPE = rules.forTable('caloms_records').fields;
 
 function saveRecord(ctx, e, v, id = null) {
-  if (v.record_type === 'discharge' && e.status !== 'closed') throw badRequest('A CalOMS discharge record is completed when the episode is discharged (Discharge on the Episodes tab)');
+  rules.assertWrite('caloms_records', { episode_id: e.id, record_type: v.record_type }, ctx);
   // A discharge record is dated by the discharge itself, so the two can never disagree.
   const date = v.record_type === 'discharge' ? e.closed_at : (v.record_date || (v.record_type === 'admission' ? e.opened_at.slice(0, 10) : null));
   const r = db.transaction(() => C.save({ episode: e, record_type: v.record_type, provider_id: v.provider_id, record_date: date, answers: v.answers, user: ctx.user, id }));

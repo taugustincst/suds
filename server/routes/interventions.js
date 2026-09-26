@@ -4,7 +4,7 @@ const auth = require('../auth');
 const crud = require('../crud');
 const C = require('../constants');
 const O = require('../options');
-const { badRequest, forbidden } = require('../http');
+const { forbidden } = require('../http');
 const { uuid, encrypt, decrypt } = require('../crypto');
 const supplies = require('./supplies');
 const { localDate, cents } = require('./budget');
@@ -15,25 +15,12 @@ const { localDate, cents } = require('./budget');
 // last day of a fiscal year was refused as "outside the period" and its cost landed in the next year.
 function serviceDate(v) { return v._service_date || localDate(v.occurred_at); }
 
-// A direct cost against a fund always names the specific line it draws down — mirrors expenditures, where
-// budget_line_id is optional on the column but the form never lets a real dollar amount through without a
-// category, and here the category comes from the line rather than being typed a second time.
-// This touches funding_source_id/budget_line_id/cost, which is real financial data — interventions:write
-// alone is not enough to attach a cost to a fund, the same way it is not enough to POST an expenditure
-// directly. Without this check, any role that can log a service (a clinician, who holds no budget
-// permission at all) could post a pending expenditure against a fund or line they cannot even read.
-function checkCost(ctx, v) {
+// Attaching a cost, fund or budget line is financial data: interventions:write alone is not enough to attach a
+// cost to a fund, the same way it is not enough to POST an expenditure directly. A request that names any of
+// them needs budget:write; what a cost must be (a line of its fund, inside the fund's period) is the table's rule
+// (server/rules/interventions.js), which sync push applies to a device's visits as well.
+function checkCostPermission(ctx, v) {
   if (('cost' in v || 'funding_source_id' in v || 'budget_line_id' in v) && !auth.hasPerm(ctx.user, 'budget:write')) throw forbidden('You do not have permission to attach a cost to a funding source');
-  if (v.cost && v.cost > 0) {
-    if (!v.funding_source_id) throw badRequest('A funding source is required when a cost is entered');
-    if (!v.budget_line_id) throw badRequest('A budget line is required when a cost is entered, so it is deducted from the right allocation');
-    const line = db.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, v.funding_source_id);
-    if (!line) throw badRequest('Budget line does not belong to the selected funding source');
-    if (v.occurred_at) require('./budget').assertInPeriod(db.one(`SELECT * FROM funding_sources WHERE id=?`, v.funding_source_id), serviceDate(v), 'Date of service');
-    return line;
-  }
-  if (v.budget_line_id && !v.funding_source_id) throw badRequest('A funding source is required when a budget line is selected');
-  return null;
 }
 // Recording a service that draws on a fund is a real financial transaction, so it posts a pending
 // expenditure the same way the budget page's own "Record expenditure" does — pending, not approved, so the
@@ -68,12 +55,6 @@ function syncTimeEntry(row, prev) {
   db.run(`UPDATE time_entries SET minutes=?, work_date=?, updated_at=? WHERE id=?`, row.duration_minutes, serviceDate(row), db.now(), te.id);
 }
 
-// A client is optional only for the services that genuinely have none (C.CLIENTLESS_INTERVENTION_TYPES):
-// anything else logged with no client is a visit nobody can find again on anyone's record.
-function checkClient(type, clientId) {
-  if (!clientId && !C.CLIENTLESS_INTERVENTION_TYPES.includes(type)) throw badRequest('Choose the client this service was for. Only outreach and community naloxone distribution can be recorded without one.', { fields: { client_id: 'Client is required for this type of service' } });
-}
-
 // The visit summary is clinical narrative about a named person, so it is stored encrypted like any other
 // PHI field and decrypted on the way out.
 function encodeSummary(v) { if (v.summary !== undefined) { v.summary_enc = v.summary ? require('../crypto').encrypt(v.summary) : null; delete v.summary; } }
@@ -87,37 +68,24 @@ function decodeSummary(row) {
 
 module.exports = (r) => {
   crud.build(r, {
-    table: 'interventions', entity: 'intervention', perm: 'interventions', clientRequired: false, dateCol: 'occurred_at', restrictOwner: true,
+    table: 'interventions', entity: 'intervention', perm: 'interventions', clientRequired: false, dateCol: 'occurred_at',
     joins: 'JOIN users u ON u.id=interventions.user_id LEFT JOIN clients c ON c.id=interventions.client_id LEFT JOIN funding_sources f ON f.id=interventions.funding_source_id',
     select: 'interventions.*, u.display_name AS worker, c.client_code, f.name AS funding_source',
-    shape: {
-      // Optional: community naloxone distribution and street outreach are services with no identified client.
-      client_id: { type: 'string' }, user_id: { type: 'string' },
-      type: { type: 'string', required: true, list: 'INTERVENTION_TYPES' }, occurred_at: { type: 'datetime', required: true },
-      duration_minutes: { type: 'number', integer: true, min: 0, max: 1440 }, location: { type: 'string', list: 'LOCATIONS' }, modality: { type: 'string', list: 'MODALITIES' },
-      outcome: { type: 'string', list: 'OUTCOMES' }, stage_of_change: { type: 'string', enum: C.STAGES }, naloxone_kits: { type: 'number', integer: true, min: 0 },
-      fentanyl_strips: { type: 'number', integer: true, min: 0 }, funding_source_id: { type: 'string' }, budget_line_id: { type: 'string' }, cost: { type: 'number', min: 0 },
-      summary: { type: 'string', maxLen: 2000 }, follow_up_due: { type: 'date' }, log_time: { type: 'boolean' }, time_category: { type: 'string', list: 'TIME_CATEGORIES' },
-      // Optional: the calendar date the service belongs to, when it is not the org-timezone date of occurred_at.
-      service_date: { type: 'date' },
-    },
+    // shape, owner and canEdit: server/rules/interventions.js (crud.js reads them from there).
     filters: (ctx, where, params) => {
       const t = ctx.query.get('type'); if (t) { where.push('interventions.type=?'); params.push(t); }
       // The funder report's "No funding source" warning links here, to the visits that need one.
       if (ctx.query.get('funding') === 'none') where.push('interventions.funding_source_id IS NULL');
     },
     afterLoad: (ctx, row) => decodeSummary(row),
-    beforeInsert: (ctx, v) => { checkClient(v.type, v.client_id); v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); checkCost(ctx, v);
+    beforeInsert: (ctx, v) => { v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); checkCostPermission(ctx, v);
       // Nobody chose a fund (the field was not on the form: a role not shown it, or an API client): the
       // worker's default fund, else the programme's. An explicit "none" (null) is left as chosen.
       if (!('funding_source_id' in v)) { const f = require('./budget').defaultFundFor(v.user_id || ctx.user.id); if (f) v.funding_source_id = f; }
     },
     beforeUpdate: (ctx, v, row) => {
-      if ('type' in v || 'client_id' in v) checkClient(v.type ?? row.type, 'client_id' in v ? v.client_id : row.client_id);
       delete v.log_time; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v);
-      // Only validated when this edit actually touches cost/fund/line/date — an unrelated edit to a record from
-      // before budget_line_id existed must not suddenly demand one just because cost happens to be nonzero.
-      if ('cost' in v || 'funding_source_id' in v || 'budget_line_id' in v || 'occurred_at' in v) checkCost(ctx, { funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, occurred_at: row.occurred_at, ...v });
+      checkCostPermission(ctx, v);
     },
     afterInsert: (ctx, row) => {
       // Optional automatic time entry + naloxone tracking on client
@@ -148,7 +116,6 @@ module.exports = (r) => {
       // handed nothing out.
       supplies.restore(ctx, row);
     },
-    canEdit: crud.ownerOrManager(),
   });
   // Only ever called post-login (public/app.js's loadRefData(), itself only reached after /api/auth/me
   // succeeds) — no reason for this to be the one route in the app reachable without a session.

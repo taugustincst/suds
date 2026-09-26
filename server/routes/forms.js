@@ -146,7 +146,8 @@ module.exports = (r) => {
   });
   // Upload a county form: file (optional) + field definitions. If a PDF with form fields is uploaded and no fields are given, they are detected.
   r.post('/api/forms/templates', auth.requireAuth, auth.requirePerm('forms:manage'), (ctx) => {
-    const v = validate(ctx.body, { name: { type: 'string', required: true, maxLen: 200 }, description: { type: 'string', maxLen: 1000 }, category: { type: 'string', enum: C.FORM_CATEGORIES }, version: { type: 'string', maxLen: 40 }, filename: { type: 'string', maxLen: 200 }, instructions: { type: 'string', maxLen: 3000 } });
+    const { is_active, ...createShape } = require('../rules').forTable('form_templates').shape(); void is_active;
+    const v = validate(ctx.body, createShape);
     const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_TEMPLATE_BYTES, 'Form file');
     let fields = Array.isArray(ctx.body.fields) && ctx.body.fields.length ? cleanFields(ctx.body.fields) : [];
     let detected = 0;
@@ -159,7 +160,7 @@ module.exports = (r) => {
   r.put('/api/forms/templates/:id', auth.requireAuth, auth.requirePerm('forms:manage'), (ctx) => {
     const t = db.one(`SELECT id, updated_at FROM form_templates WHERE id=?`, ctx.params.id); if (!t) throw notFound();
     require('../crud').assertFresh(ctx, t, 'form_template');
-    const v = validate(ctx.body, { name: { type: 'string', maxLen: 200 }, description: { type: 'string', maxLen: 1000 }, category: { type: 'string', enum: C.FORM_CATEGORIES }, version: { type: 'string', maxLen: 40 }, filename: { type: 'string', maxLen: 200 }, instructions: { type: 'string', maxLen: 3000 }, is_active: { type: 'boolean' } }, { partial: true });
+    const v = validate(ctx.body, require('../rules').forTable('form_templates').partialShape(), { partial: true });
     const sets = Object.keys(v).map(k => `${k}=?`); const params = Object.keys(v).map(k => v[k]);
     if (ctx.body.fields !== undefined) { sets.push('fields_json=?'); params.push(JSON.stringify(cleanFields(ctx.body.fields))); }
     if (ctx.body.file_url || ctx.body.file) { const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_TEMPLATE_BYTES, 'Form file'); sets.push('file_b64=?', 'content_type=?', 'bytes=?', 'filename=?'); params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `form.${FILE_TYPES[file.type]}`); }
@@ -217,10 +218,10 @@ module.exports = (r) => {
   });
   r.put('/api/forms/:id', auth.requireAuth, clientRecords, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id);
-    if (f.status === 'completed' && !auth.hasPerm(ctx.user, 'forms:manage')) throw badRequest('This form is completed. Ask a supervisor to reopen it.');
+    require('../rules').assertEditable('client_forms', ctx, f); // a completed form is a supervisor's to reopen
     require('../crud').assertFresh(ctx, f, 'client_form');
     const fields = parseJson(f.fields_json, []);
-    const v = validate(ctx.body, { status: { type: 'string', enum: ['draft', 'completed', 'void'] }, notes: { type: 'string', maxLen: 2000 } }, { partial: true });
+    const v = validate(ctx.body, require('../rules').forTable('client_forms').shape(), { partial: true });
     let values = parseJson(decrypt(f.values_enc), {});
     if (ctx.body.values !== undefined) values = { ...values, ...cleanValues(fields, ctx.body.values) };
     const stamp = db.now();
@@ -236,7 +237,7 @@ module.exports = (r) => {
   });
   r.delete('/api/forms/:id', auth.requireAuth, clientRecords, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id);
-    if (f.status === 'completed' && !auth.hasPerm(ctx.user, 'forms:manage')) throw badRequest('Completed forms can only be removed by a supervisor');
+    require('../rules').assertEditable('client_forms', ctx, f, { deleting: true });
     db.run(`UPDATE client_forms SET deleted_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), f.id);
     audit.log({ user: ctx.user, action: 'client_form.delete', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip });
     return { ok: true };
@@ -252,8 +253,8 @@ module.exports = (r) => {
   // Signed / scanned copies attached to the filled form (stored encrypted)
   r.post('/api/forms/:id/files', auth.requireAuth, clientRecords, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id);
-    if (db.one(`SELECT COUNT(*) n FROM client_form_files WHERE client_form_id=?`, f.id).n >= 10) throw badRequest('At most 10 attachments per form');
-    const v = validate(ctx.body, { filename: { type: 'string', maxLen: 200 } });
+    require('../rules').assertWrite('client_form_files', { client_form_id: f.id }, ctx); // at most ten to a form
+    const v = validate(ctx.body, require('../rules').forTable('client_form_files').shape());
     const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_ATTACH_BYTES, 'Attachment'); if (!file) throw badRequest('Attachment is required');
     const id = uuid(); const name = (v.filename || `signed.${FILE_TYPES[file.type]}`).replace(/[\r\n"]/g, '');
     db.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename_enc,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, id, f.id, f.client_id, encrypt(name), file.type, file.buf.length, encrypt(file.b64), ctx.user.id);
@@ -276,3 +277,4 @@ module.exports = (r) => {
     return { ok: true, form_updated_at: stamp };
   });
 };
+module.exports.missingRequired = missingRequired;

@@ -37,10 +37,23 @@ scope and read rules). A client taken off the caseload is
 listed in `dropped_clients` for the device to purge; assigned again later, it arrives whole again.
 
 **Push.** Each row is applied in its own savepoint; a failure rejects that row (with a reason the device
-shows) and the rest land. Every row passes the same checks as its REST route: write permission, caseload,
-Part 2 consent elements, budget-line cycles, cost attachment, attribution, approval fields (a device cannot
-approve), signed notes immutable, countersignatures office-only, outcome scores recomputed. A referral that
-shares information passes the disclosure gate (ADR-0004) and is accounted.
+shows) and the rest land. Since 1.14.0 every row passes **its table's rules** (`server/rules/<table>.js`), the
+same declaration its REST routes enforce (`server/crud.js` and the hand-written routes read their shape, their
+edit rule and their check from it): write permission, caseload, whose record it is (the REST edit and delete
+rules), the REST shape's fields, the table's own check (Part 2 consent elements, court-order fields,
+budget-line cycles and room, cost attachment, one open episode, ...), attribution, the columns the office keeps
+for itself (approvals, signatures, legal holds), outcome scores recomputed. `server/rules/push.js` runs them in
+fixed stages: prepare, authorise, validate, resolve (last write wins), normalise, apply. A referral that shares
+information passes the disclosure gate (ADR-0004) and is accounted.
+
+A refusal is **fatal** or **flagged**. A fatal one (a value outside a fixed set, a missing required value,
+another worker's record, a rule of the legal record) rejects the row for good. A flagged one is a rule that
+depends on the office's configuration or clock rather than on the code — a value off a programme-managed list
+(Settings → Lists), a text over a length limit, a module switched off, a fund whose period or status changed,
+a second open episode, a disclosure whose basis the office cannot confirm: work done offline under what the
+device had is not thrown away, so the row lands, the device is told (`warnings`, `flagged: true`) and the audit
+trail records a `sync.conflict` with `kept: 'device'` (the rule and column names, never values). Over REST every
+refusal is an error, because the person is there to fix it.
 
 **Conflicts.** Newest `updated_at` wins, compared in server time (the device's clock offset is measured
 each sync). The office copy wins ties. A device edit that loses is **not silent**: the columns that differed
@@ -64,19 +77,22 @@ lost. Nothing is marked sent until the server acknowledges it — rows, tombston
   visibly (conflict list + audit). Field-level merge was rejected as too complex to verify.
 - Every new synced table or `_enc` column must be declared in `server/sync-tables.js`, or
   `test/sync.test.js` fails.
-- Every new REST-side rule for a synced table needs its push-side twin in `server/routes/sync.js`; this is
-  the most likely place for a future permission bypass. Review both together.
+- A rule for a synced table is written once, in `server/rules/<table>.js`, and both doors enforce it; a
+  new synced table needs its rules file (`test/sync-rules-fixes.test.js` fails otherwise), and
+  `test/sync-rules.test.js` sends the same rows through push and REST and compares the outcomes.
 - Clock skew is tolerated by measuring offset, not by trusting device clocks.
 
 ## Read
 
-`server/routes/sync.js` (header comment first), `server/sync-tables.js`, `local/sync.js` (header comment),
+`server/routes/sync.js` (header comment first), `server/rules/push.js` and `server/rules/core.js` (header comments),
+`server/sync-tables.js`, `local/sync.js` (header comment),
 `server/audit.js` (`purgeTombstones`), `server/backup.js` (`db_generation`), [docs/PLATFORM.md](../PLATFORM.md).
 
 ## Tests that pin it
 
 `test/sync.test.js` (permission and caseload on push, conflicts, tombstones, paging, generation, every
-`_enc` column declared), `test/sync-scope.test.js` and `test/sync-backfill.test.js` (newly assigned clients
+`_enc` column declared), `test/sync-rules.test.js` (every table's push and REST outcomes, case by case) and
+`test/sync-rules-fixes.test.js` (what each 1.14.0 decision stores), `test/sync-scope.test.js` and `test/sync-backfill.test.js` (newly assigned clients
 arrive whole, in pages within the limit; a caseload transfer; a sync cut short resumes), `test/concurrency.test.js`, `test/device-audit.test.js`, `test/devices.test.js`
 (revoke / remote wipe), `test/disclosure-gates.test.js` (a device's consent push re-checked); browser scripts
 `scripts/ui/sync-two-way.mjs`, `scripts/ui/multitab.mjs`.

@@ -91,18 +91,7 @@ module.exports = (r) => {
     dateCol: 'occurred_at', ownerCol: 'reported_by', clientRequired: false, creatorCol: 'reported_by',
     joins: 'LEFT JOIN clients c ON c.id=overdose_events.client_id LEFT JOIN users u ON u.id=overdose_events.reported_by LEFT JOIN funding_sources f ON f.id=overdose_events.funding_source_id',
     select: 'overdose_events.*, c.client_code, u.display_name AS reporter, f.name AS funding_source',
-    shape: {
-      // client_id stays optional: a bystander reversal reported by an outreach worker has no client.
-      client_id: { type: 'string' }, occurred_at: { type: 'datetime', required: true },
-      // Required: an empty form saved by accident used to become a countable reversal.
-      kind: { type: 'string', enum: KINDS, list: 'OVERDOSE_KINDS', required: true }, substances: { type: 'string', maxLen: 200 },
-      naloxone_used: { type: 'boolean' }, naloxone_doses: { type: 'number', integer: true, min: 0, max: C.NALOXONE_DOSES_MAX },
-      administered_by: { type: 'string', list: 'ADMINISTERED_BY' }, ems_called: { type: 'boolean' },
-      hospitalized: { type: 'boolean' }, survived: { type: 'boolean' },
-      // A code from the LOCATIONS list; typed-in text is matched to one (normalise, below).
-      location_type: { type: 'string', maxLen: 60 }, city: { type: 'string', maxLen: 100 },
-      funding_source_id: { type: 'string' }, notes: { type: 'string', maxLen: 4000 },
-    },
+    // shape, owner and canEdit: server/rules/overdose_events.js (crud.js reads them from there).
     filters: (ctx, where, params) => {
       const kind = ctx.query.get('kind'); if (kind && kind !== 'all') { where.push('overdose_events.kind=?'); params.push(kind); }
       if (ctx.query.get('community') === '1') where.push('overdose_events.client_id IS NULL');
@@ -142,7 +131,6 @@ module.exports = (r) => {
       }
     },
     beforeDelete: (ctx, row) => { if (row.kind === 'fatal') revertFatal(ctx, row); },
-    canEdit: crud.ownerOrManager('reported_by'),
   });
 
   // kinds / administered_by: the choices a new event may use, in the programme's order (Settings → Lists);

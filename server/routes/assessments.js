@@ -11,9 +11,8 @@ const { requireModule } = require('../programme');
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
-const C = require('../constants');
 const CL = require('../clinical');
-const { badRequest, notFound, forbidden } = require('../http');
+const { badRequest, notFound } = require('../http');
 const { validate } = require('../validate');
 const { encrypt, decrypt, uuid } = require('../crypto');
 const { assertFresh } = require('../crud');
@@ -27,20 +26,13 @@ function clientFor(ctx, clientId) {
   auth.assertClientAccess(ctx, clientId);
 }
 const fieldError = (field, message) => badRequest('Validation failed', { fields: { [field]: message } });
-const mayChange = (ctx, row, col) => row[col] === ctx.user.id || auth.hasPerm(ctx.user, 'clients:all');
 
 // ---------- ASAM ----------
-const ratingRule = { type: 'number', integer: true, min: 0, max: 4 };
-const asamShape = {
-  assessed_at: { type: 'date', required: true },
-  d1_rating: { ...ratingRule, required: true }, d2_rating: { ...ratingRule, required: true }, d3_rating: { ...ratingRule, required: true },
-  d4_rating: { ...ratingRule, required: true }, d5_rating: { ...ratingRule, required: true }, d6_rating: { ...ratingRule, required: true },
-  dimension_notes: { type: 'object' },
-  recommended_loc: { type: 'string', enum: C.ASAM }, actual_loc: { type: 'string', enum: C.ASAM },
-  discrepancy_reason: { type: 'string', enum: CL.ASAM_DISCREPANCY_REASONS }, discrepancy_notes: { type: 'string', maxLen: 2000 },
-  summary: { type: 'string', maxLen: 5000 },
-  update_client_level: { type: 'boolean' },
-};
+// ASAM's and the outcome measures' fields, and what they must satisfy (a reason for a level-of-care discrepancy;
+// an enabled instrument; who may change one): the tables' rules (server/rules/asam_assessments.js,
+// outcome_measures.js), which sync push applies to a device's rows as well.
+const rules = require('../rules');
+const asamShape = rules.forTable('asam_assessments').fields;
 function cleanDimensionNotes(notes) {
   if (notes === undefined || notes === null) return notes;
   if (Array.isArray(notes)) throw fieldError('dimension_notes', 'must be an object keyed d1 to d6');
@@ -52,10 +44,6 @@ function cleanDimensionNotes(notes) {
     out[d.key] = v.trim();
   }
   return out;
-}
-// The level referred to differs from the level recommended: DHCS expects the reason to be documented.
-function checkDiscrepancy(rec, act, reason) {
-  if (rec && act && rec !== act && rec !== 'unknown' && act !== 'unknown' && !reason) throw fieldError('discrepancy_reason', 'is required when the level referred to differs from the level recommended');
 }
 function presentAsam(a) {
   let notes = {}; try { notes = a.dimension_notes_enc ? JSON.parse(dec(a.dimension_notes_enc)) : {}; } catch { notes = {}; }
@@ -87,13 +75,7 @@ function syncClientLevel(ctx, clientId) {
 }
 
 // ---------- outcome measures ----------
-const outcomeShape = {
-  instrument: { type: 'string', required: true, enum: CL.INSTRUMENT_CODES },
-  administered_at: { type: 'date', required: true },
-  responses: { type: 'array', required: true, maxLen: 20 },
-  variant: { type: 'string', enum: ['men', 'women', 'unspecified'] },
-  notes: { type: 'string', maxLen: 2000 },
-};
+const outcomeShape = rules.forTable('outcome_measures').fields;
 // Optional instruments (server/clinical.js OPTIONAL_INSTRUMENTS, e.g. the DAST-10): off until an administrator
 // enables one and confirms the programme holds the rights to use it. Results already recorded stay readable.
 function instrumentEnabled(code) {
@@ -205,7 +187,7 @@ module.exports = (r) => {
     clientFor(ctx, ctx.params.id);
     const v = validate(ctx.body, asamShape);
     const notes = cleanDimensionNotes(v.dimension_notes);
-    checkDiscrepancy(v.recommended_loc, v.actual_loc, v.discrepancy_reason);
+    rules.assertWrite('asam_assessments', { client_id: ctx.params.id, ...rules.toColumns('asam_assessments', v) }, ctx);
     const id = uuid(); let level = null;
     db.transaction(() => {
       db.run(`INSERT INTO asam_assessments(id,client_id,assessed_at,assessed_by,d1_rating,d2_rating,d3_rating,d4_rating,d5_rating,d6_rating,dimension_notes_enc,recommended_loc,actual_loc,discrepancy_reason,discrepancy_notes_enc,summary_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -227,13 +209,12 @@ module.exports = (r) => {
 
   r.put('/api/asam/:id', auth.requireAuth, auth.requirePerm('assessments:write'), requireModule('assessments'), (ctx) => {
     const a = loadAsam(ctx, ctx.params.id);
-    if (!mayChange(ctx, a, 'assessed_by')) throw forbidden('Only the person who completed this assessment, or a supervisor, can change it');
+    rules.assertEditable('asam_assessments', ctx, a);
     assertFresh(ctx, a, 'asam_assessment');
     const v = validate(ctx.body, Object.fromEntries(Object.entries(asamShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
     for (const k of ['assessed_at', ...CL.ASAM_DIMENSIONS.map(d => `${d.key}_rating`)]) if (v[k] === null) throw fieldError(k, 'is required');
     const notes = cleanDimensionNotes(v.dimension_notes);
-    const rec = v.recommended_loc !== undefined ? v.recommended_loc : a.recommended_loc, act = v.actual_loc !== undefined ? v.actual_loc : a.actual_loc;
-    checkDiscrepancy(rec, act, v.discrepancy_reason !== undefined ? v.discrepancy_reason : a.discrepancy_reason);
+    rules.assertWrite('asam_assessments', { id: a.id, ...rules.toColumns('asam_assessments', v) }, ctx, { existing: a });
     const sets = []; const params = [];
     for (const k of ['assessed_at', 'd1_rating', 'd2_rating', 'd3_rating', 'd4_rating', 'd5_rating', 'd6_rating', 'recommended_loc', 'actual_loc', 'discrepancy_reason']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
     if (notes !== undefined) { sets.push('dimension_notes_enc=?'); params.push(notes && Object.keys(notes).length ? encrypt(JSON.stringify(notes)) : null); }
@@ -250,7 +231,7 @@ module.exports = (r) => {
 
   r.delete('/api/asam/:id', auth.requireAuth, auth.requirePerm('assessments:write'), requireModule('assessments'), (ctx) => {
     const a = loadAsam(ctx, ctx.params.id);
-    if (!mayChange(ctx, a, 'assessed_by')) throw forbidden('Only the person who completed this assessment, or a supervisor, can delete it');
+    rules.assertEditable('asam_assessments', ctx, a, { deleting: true });
     db.run(`DELETE FROM asam_assessments WHERE id=?`, a.id); db.tombstone('asam_assessments', a.id);
     audit.log({ user: ctx.user, action: 'asam.delete', entity: 'asam_assessment', entityId: a.id, clientId: a.client_id, ip: ctx.ip });
     return { ok: true };
@@ -291,7 +272,7 @@ module.exports = (r) => {
   r.post('/api/clients/:id/outcomes', auth.requireAuth, auth.requirePerm('assessments:write'), requireModule('assessments'), (ctx) => {
     clientFor(ctx, ctx.params.id);
     const v = validate(ctx.body, outcomeShape);
-    assertInstrumentEnabled(v.instrument);
+    rules.assertWrite('outcome_measures', { client_id: ctx.params.id, ...rules.toColumns('outcome_measures', v) }, ctx);
     const s = scoreOrReject(v.instrument, v.responses, v.variant);
     const id = uuid(); let taskId = null;
     db.transaction(() => {
@@ -317,7 +298,7 @@ module.exports = (r) => {
   // Correct the answers (a question keyed wrongly): rescored as a new save would be.
   r.put('/api/outcomes/:id', auth.requireAuth, auth.requirePerm('assessments:write'), requireModule('assessments'), (ctx) => {
     const m = loadOutcome(ctx, ctx.params.id);
-    if (!mayChange(ctx, m, 'administered_by')) throw forbidden('Only the person who gave this questionnaire, or a supervisor, can change it');
+    rules.assertEditable('outcome_measures', ctx, m);
     assertFresh(ctx, m, 'outcome_measure');
     const v = validate(ctx.body, { administered_at: { type: 'date' }, responses: { type: 'array', maxLen: 20 }, variant: outcomeShape.variant, notes: outcomeShape.notes }, { partial: true });
     if (v.administered_at === null) throw fieldError('administered_at', 'is required');
@@ -337,7 +318,7 @@ module.exports = (r) => {
 
   r.delete('/api/outcomes/:id', auth.requireAuth, auth.requirePerm('assessments:write'), requireModule('assessments'), (ctx) => {
     const m = loadOutcome(ctx, ctx.params.id);
-    if (!mayChange(ctx, m, 'administered_by')) throw forbidden('Only the person who gave this questionnaire, or a supervisor, can delete it');
+    rules.assertEditable('outcome_measures', ctx, m, { deleting: true });
     db.run(`DELETE FROM outcome_measures WHERE id=?`, m.id); db.tombstone('outcome_measures', m.id);
     audit.log({ user: ctx.user, action: 'outcome.delete', entity: 'outcome_measure', entityId: m.id, clientId: m.client_id, ip: ctx.ip, details: { instrument: m.instrument } });
     return { ok: true };

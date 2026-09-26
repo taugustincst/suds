@@ -9,23 +9,10 @@ const M = require('../clients-model');
 const F = require('../client-filters');
 const O = require('../options');
 
-// discharge_reason is a code from the DISCHARGE_REASONS list, like an episode's. A reason typed in before
-// it became a list stays on the record and does not block editing it (validate's `existing`); only a new
-// value is checked. A de-identified export writes anything outside the list as "other" (server/exports.js).
-const shape = {
-  first_name: { type: 'string', required: true, maxLen: 100 }, last_name: { type: 'string', required: true, maxLen: 100 },
-  preferred_name: { type: 'string', maxLen: 100 }, dob: { type: 'date' }, phone: { type: 'string', maxLen: 40 }, alt_phone: { type: 'string', maxLen: 40 },
-  email: { type: 'string', maxLen: 200 }, address: { type: 'string', maxLen: 300 }, city: { type: 'string', maxLen: 100 }, zip: { type: 'string', maxLen: 12 },
-  gender: { type: 'string', maxLen: 40 }, pronouns: { type: 'string', maxLen: 40 }, race_ethnicity: { type: 'string', maxLen: 100 }, preferred_language: { type: 'string', maxLen: 60 },
-  veteran: { type: 'boolean' }, housing_status: { type: 'string', maxLen: 60 }, insurance: { type: 'string', maxLen: 100 }, medicaid_id: { type: 'string', maxLen: 40 },
-  emergency_contact: { type: 'string', maxLen: 300 },
-  status: { type: 'string', enum: ['waitlist', 'active', 'inactive', 'closed', 'deceased'] }, intake_date: { type: 'date' }, discharge_date: { type: 'date' }, discharge_reason: { type: 'string', maxLen: 200, list: 'DISCHARGE_REASONS' },
-  referral_source: { type: 'string', maxLen: 120 }, referral_date: { type: 'date' }, engagement_date: { type: 'date' }, primary_substance: { type: 'string', maxLen: 60, list: 'SUBSTANCES' }, secondary_substances: { type: 'string', maxLen: 200 }, route_of_use: { type: 'string', maxLen: 60 },
-  asam_level: { type: 'string', maxLen: 20 }, mat_status: { type: 'string', enum: ['none', 'interested', 'referred', 'active', 'discontinued', 'unknown'] }, mat_medication: { type: 'string', maxLen: 60 },
-  overdose_history: { type: 'boolean' }, last_overdose_date: { type: 'date' }, naloxone_provided: { type: 'boolean' }, naloxone_last_date: { type: 'date' },
-  risk_level: { type: 'string', enum: ['low', 'moderate', 'high', 'critical'] }, justice_involved: { type: 'boolean' }, pregnant_or_parenting: { type: 'boolean' }, co_occurring_mh: { type: 'boolean' },
-  goals: { type: 'string', maxLen: 2000 }, flags: { type: 'string', maxLen: 300 }, race_codes: { type: 'string', maxLen: 200 }, contact_preferences: { type: 'string', maxLen: 300 }, ok_to_text: { type: 'boolean' }, ok_to_voicemail: { type: 'boolean' },
-};
+// A client's fields, and what they must satisfy (contact details that can be right; a record closed only by a
+// discharge), are the table's rules: server/rules/clients.js, which sync push applies to a device's rows too.
+const rules = require('../rules');
+const shape = rules.forTable('clients').fields;
 
 function loadClient(ctx, id) {
   const row = db.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, id);
@@ -38,21 +25,6 @@ function loadClient(ctx, id) {
   }
   auth.assertClientAccess(ctx, id);
   return row;
-}
-
-// Contact details that cannot be right are worse than none: a birth date in the future, "notanemail", a
-// phone number with no digits. The form checks the same things, so a worker sees it before saving.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-function checkContactFields(v) {
-  const fields = {};
-  if (v.dob) {
-    const today = require('./budget').localDate();
-    if (v.dob > today) fields.dob = 'cannot be in the future';
-    else if (v.dob < '1900-01-01') fields.dob = 'must be after 1900';
-  }
-  if (v.email && !EMAIL_RE.test(v.email)) fields.email = 'is not a valid email address';
-  for (const f of ['phone', 'alt_phone']) if (v[f] && String(v[f]).replace(/\D/g, '').length < 7) fields[f] = 'must contain at least 7 digits';
-  if (Object.keys(fields).length) throw badRequest('Validation failed', { fields });
 }
 
 /**
@@ -203,7 +175,7 @@ module.exports = (r) => {
 
   r.post('/api/clients', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
     const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: 'boolean' }, no_episode: { type: 'boolean' } });
-    checkContactFields(v);
+    rules.assertWrite('clients', rules.toColumns('clients', v), ctx);
     // Refuse a likely duplicate unless the worker has looked at the match and said it is a different person.
     if (!v.confirm_duplicate) {
       // Exactly the filter /check-duplicates applies: a match the caller can open is shown; one they cannot is
@@ -409,13 +381,8 @@ module.exports = (r) => {
     const row = loadClient(ctx, ctx.params.id);
     require('../crud').assertFresh(ctx, row, 'client');
     const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true, existing: row });
-    checkContactFields(v);
-    // Closing a client is a discharge, and a discharge is what closes the episode, ends the care team and
-    // clears the open to-dos. Setting the status by hand while an episode is open would leave all of that
-    // running against a "closed" person, so it has to go through the Episodes tab.
-    if ((v.status === 'closed' || v.status === 'deceased') && v.status !== row.status && db.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id)) {
-      throw badRequest(`This client has an open episode of care. To ${v.status === 'deceased' ? 'record a death' : 'close the record'}, discharge them on the Episodes tab — that closes the episode and sets the status.`, { fields: { status: 'discharge on the Episodes tab instead' }, open_episode: true });
-    }
+    // Contact details, and closing a client only by a discharge (the Episodes tab): the table's rules.
+    rules.assertWrite('clients', { id: row.id, ...rules.toColumns('clients', v) }, ctx, { existing: row });
     const enc = M.encryptFields(v);
     if (v.first_name !== undefined || v.last_name !== undefined) {
       const cur = M.decryptRow(row);

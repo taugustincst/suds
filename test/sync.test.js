@@ -390,7 +390,10 @@ test('a sync push cannot attach a cost/fund/line to an intervention without budg
 
   // An unrelated edit to a row that already, legitimately, carries budget data (set earlier by someone
   // with budget:write) must not suddenly need that permission just because the full row still carries it.
-  const existing = await admin.post('/api/interventions', { client_id: clinClientId, type: 'case_management', occurred_at: iso(Date.now()), funding_source_id: fund.data.id, budget_line_id: line.data.id, cost: 30 });
+  // The clinician's own visit, costed by an administrator: since 1.14.0 a visit is its worker's (or a manager's)
+  // to change by sync as over REST (server/rules/interventions.js editableBy), so it is recorded as clin's.
+  const clinUserId = H.db.one(`SELECT id FROM users WHERE username='sclin'`).id;
+  const existing = await admin.post('/api/interventions', { client_id: clinClientId, user_id: clinUserId, type: 'case_management', occurred_at: iso(Date.now()), funding_source_id: fund.data.id, budget_line_id: line.data.id, cost: 30 });
   const r2 = await push(clin, { tables: { interventions: [{
     id: existing.data.id, client_id: clinClientId, type: 'case_management', occurred_at: iso(Date.now()),
     funding_source_id: fund.data.id, budget_line_id: line.data.id, cost: 30, summary: 'Follow-up note',

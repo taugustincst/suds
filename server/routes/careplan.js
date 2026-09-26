@@ -28,16 +28,11 @@ function clientFor(ctx, clientId) {
 function fieldError(field, message) { return badRequest('Validation failed', { fields: { [field]: message } }); }
 
 // ---- problems ----
-const problemShape = {
-  problem: { type: 'string', required: true, maxLen: 500 },
-  icd10_code: { type: 'string', maxLen: 12 },
-  icd10_description: { type: 'string', maxLen: 300 },
-  z_codes: { type: 'array', maxLen: 12 },
-  status: { type: 'string', enum: CL.PROBLEM_STATUSES },
-  onset_date: { type: 'date' },
-  resolved_date: { type: 'date' },
-  source: { type: 'string', enum: CL.PROBLEM_SOURCES },
-};
+// The problem list's, goals' and steps' fields, and what they must satisfy (codes that are ICD-10 codes, a goal on
+// this client's problem, a step's owner a staff account, who may delete one): the tables' rules
+// (server/rules/problems.js, care_plan_goals.js, care_plan_steps.js), which sync push applies to a device's rows.
+const rules = require('../rules');
+const problemShape = rules.forTable('problems').fields;
 const TRACKED = ['problem', 'icd10_code', 'icd10_description', 'z_codes', 'status', 'onset_date', 'resolved_date', 'source'];
 
 /** Check and normalise the codes; returns the plaintext values to store. */
@@ -90,27 +85,8 @@ function noteCounts(ctx, clientId) {
 }
 
 // ---- care plan ----
-const goalShape = {
-  goal: { type: 'string', required: true, maxLen: 1000 },
-  problem_id: { type: 'string', maxLen: 60 },
-  status: { type: 'string', enum: CL.GOAL_STATUSES },
-  start_date: { type: 'date' }, target_date: { type: 'date' }, review_date: { type: 'date' },
-};
-const stepShape = {
-  step: { type: 'string', required: true, maxLen: 1000 },
-  owner_role: { type: 'string', enum: CL.STEP_OWNERS },
-  owner_user_id: { type: 'string', maxLen: 60 },
-  target_date: { type: 'date' },
-  status: { type: 'string', enum: CL.STEP_STATUSES },
-};
-function checkProblemOnClient(problemId, clientId) {
-  if (!problemId) return;
-  const p = db.one(`SELECT client_id FROM problems WHERE id=?`, problemId);
-  if (!p || p.client_id !== clientId) throw fieldError('problem_id', 'is not on this client\'s problem list');
-}
-function checkOwner(userId) {
-  if (userId && !db.one(`SELECT 1 FROM users WHERE id=?`, userId)) throw fieldError('owner_user_id', 'is not a staff account');
-}
+const goalShape = rules.forTable('care_plan_goals').fields;
+const stepShape = rules.forTable('care_plan_steps').fields;
 function loadGoal(ctx, id) {
   const g = db.one(`SELECT * FROM care_plan_goals WHERE id=?`, id);
   if (!g) throw notFound('Goal not found');
@@ -123,7 +99,6 @@ function loadStep(ctx, id) {
   auth.assertClientAccess(ctx, s.client_id);
   return s;
 }
-const canChange = (ctx, row, col) => row[col] === ctx.user.id || auth.hasPerm(ctx.user, 'clients:all');
 
 /** The whole plan for a client, decrypted: goals with their steps and the problem each addresses. */
 function carePlan(clientId) {
@@ -159,6 +134,7 @@ module.exports = (r) => {
   r.post('/api/clients/:id/problems', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     clientFor(ctx, ctx.params.id);
     const v = cleanCodes(validate(ctx.body, problemShape));
+    rules.assertWrite('problems', { client_id: ctx.params.id, ...rules.toColumns('problems', v) }, ctx);
     const status = v.status || 'active';
     const resolved = status === 'resolved' ? (v.resolved_date || today()) : (v.resolved_date || null);
     const id = uuid();
@@ -185,6 +161,7 @@ module.exports = (r) => {
     assertFresh(ctx, row, 'problem');
     const v = cleanCodes(validate(ctx.body, Object.fromEntries(Object.entries(problemShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true }));
     if (v.problem === null) throw fieldError('problem', 'is required');
+    rules.assertWrite('problems', { id: row.id, ...rules.toColumns('problems', v) }, ctx, { existing: row });
     const before = presentProblem(row); before.z_codes = before.z_codes.length ? before.z_codes.join(',') : null;
     const next = { ...before };
     for (const k of TRACKED) if (v[k] !== undefined) next[k] = v[k];
@@ -227,7 +204,7 @@ module.exports = (r) => {
   r.post('/api/clients/:id/goals', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     clientFor(ctx, ctx.params.id);
     const v = validate(ctx.body, goalShape);
-    checkProblemOnClient(v.problem_id, ctx.params.id);
+    rules.assertWrite('care_plan_goals', { client_id: ctx.params.id, ...rules.toColumns('care_plan_goals', v) }, ctx);
     const id = uuid();
     db.run(`INSERT INTO care_plan_goals(id,client_id,problem_id,goal_enc,status,start_date,target_date,review_date,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?)`,
       id, ctx.params.id, v.problem_id || null, encrypt(v.goal), v.status || 'active', v.start_date || today(), v.target_date || null, v.review_date || null, ctx.user.id, ctx.user.id);
@@ -241,7 +218,7 @@ module.exports = (r) => {
     assertFresh(ctx, g, 'care_plan_goal');
     const v = validate(ctx.body, { ...Object.fromEntries(Object.entries(goalShape).map(([k, s]) => [k, { ...s, required: false }])), reviewed: { type: 'boolean' } }, { partial: true });
     if (v.goal === null) throw fieldError('goal', 'is required');
-    if (v.problem_id) checkProblemOnClient(v.problem_id, g.client_id);
+    rules.assertWrite('care_plan_goals', { id: g.id, ...rules.toColumns('care_plan_goals', v) }, ctx, { existing: g });
     const sets = []; const params = [];
     if (v.goal !== undefined) { sets.push('goal_enc=?'); params.push(encrypt(v.goal)); }
     for (const k of ['problem_id', 'status', 'start_date', 'target_date', 'review_date']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
@@ -255,7 +232,7 @@ module.exports = (r) => {
 
   r.delete('/api/goals/:id', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     const g = loadGoal(ctx, ctx.params.id);
-    if (!canChange(ctx, g, 'created_by')) throw forbidden('Only the person who added this goal, or a supervisor, can delete it. Mark it discontinued instead.');
+    rules.assertEditable('care_plan_goals', ctx, g, { deleting: true });
     const stepIds = db.all(`SELECT id FROM care_plan_steps WHERE goal_id=?`, g.id).map(s => s.id);
     db.transaction(() => {
       db.run(`DELETE FROM care_plan_steps WHERE goal_id=?`, g.id);
@@ -269,7 +246,7 @@ module.exports = (r) => {
   r.post('/api/goals/:id/steps', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     const g = loadGoal(ctx, ctx.params.id);
     const v = validate(ctx.body, { ...stepShape, create_task: { type: 'boolean' } });
-    checkOwner(v.owner_user_id);
+    rules.assertWrite('care_plan_steps', { goal_id: g.id, client_id: g.client_id, ...rules.toColumns('care_plan_steps', v) }, ctx);
     if (v.create_task && !auth.hasPerm(ctx.user, 'tasks:write')) throw forbidden('Your role cannot create to-dos');
     const id = uuid(); let taskId = null;
     db.transaction(() => {
@@ -293,7 +270,7 @@ module.exports = (r) => {
     assertFresh(ctx, s, 'care_plan_step');
     const v = validate(ctx.body, Object.fromEntries(Object.entries(stepShape).map(([k, x]) => [k, { ...x, required: false }])), { partial: true });
     if (v.step === null) throw fieldError('step', 'is required');
-    checkOwner(v.owner_user_id);
+    rules.assertWrite('care_plan_steps', { id: s.id, ...rules.toColumns('care_plan_steps', v) }, ctx, { existing: s });
     const sets = []; const params = [];
     if (v.step !== undefined) { sets.push('step_enc=?'); params.push(encrypt(v.step)); }
     for (const k of ['owner_role', 'owner_user_id', 'target_date', 'status']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
@@ -311,7 +288,7 @@ module.exports = (r) => {
 
   r.delete('/api/steps/:id', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     const s = loadStep(ctx, ctx.params.id);
-    if (!canChange(ctx, s, 'created_by')) throw forbidden('Only the person who added this step, or a supervisor, can delete it. Mark it cancelled instead.');
+    rules.assertEditable('care_plan_steps', ctx, s, { deleting: true });
     db.run(`DELETE FROM care_plan_steps WHERE id=?`, s.id); db.tombstone('care_plan_steps', s.id);
     audit.log({ user: ctx.user, action: 'careplan.step.delete', entity: 'care_plan_step', entityId: s.id, clientId: s.client_id, ip: ctx.ip });
     return { ok: true };

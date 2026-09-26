@@ -39,7 +39,8 @@ const SERVABLE_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'i
   'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']);
 function safeContentType(t) { return SERVABLE_TYPES.has(String(t || '').toLowerCase().split(';')[0].trim()) ? String(t).split(';')[0].trim() : 'application/octet-stream'; }
 
-const shape = { title: { type: 'string', required: true, maxLen: 200 }, category: { type: 'string', required: true, enum: C.DOCUMENT_CATEGORIES }, description: { type: 'string', maxLen: 2000 }, effective_date: { type: 'date' }, expires_at: { type: 'date' }, filename: { type: 'string', maxLen: 200 } };
+// A document's fields: the table's rules (server/rules/policy_documents.js), which sync push applies too.
+const shape = require('../rules').forTable('policy_documents').fields;
 const out = (row) => row && ({ ...row, has_file: !!row.file_b64, searchable: !!row.search_text, file_b64: undefined, search_text: undefined });
 
 module.exports = (r) => {

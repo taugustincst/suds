@@ -134,11 +134,11 @@ const T = {
     edit: { referral_source: 'Court' },
   },
   interventions: {
-    as: 'nav', unlinked: true, noPerm: 'fin',
+    as: 'nav', unlinked: true, noPerm: 'fin', unlinkedPatch: { type: 'outreach' },
     row: (x) => ({ id: randomUUID(), client_id: x.client, user_id: U.nav, type: 'case_management', occurred_at: iso(), duration_minutes: 15, ...ts() }),
     create: (c, r) => c.post('/api/interventions', api(r)), update: (c, r, p) => c.put(`/api/interventions/${r.id}`, p), del: (c, r) => c.del(`/api/interventions/${r.id}`),
     invalid: [['type not on the list', { type: 'teleportation' }], ['a client is required for this service', { client_id: null }], ['duration over a day', { duration_minutes: 5000 }],
-      ['stage of change unknown', { stage_of_change: 'bargaining' }], ['a cost without the budget permission', { cost: 10, funding_source_id: X.fund, budget_line_id: X.line }], ['attributed to another worker', { user_id: '$nav2' }]],
+      ['stage of change unknown', { stage_of_change: 'bargaining' }], ['a cost with no budget line', { cost: 10, funding_source_id: '$fund' }], ['a cost on a line of another fund', { cost: 10, funding_source_id: '$oldFund', budget_line_id: '$line' }], ['attributed to another worker', { user_id: '$nav2' }]],
     edit: { duration_minutes: 30 },
   },
   overdose_events: {
@@ -325,7 +325,7 @@ async function runTable(name, spec) {
   // another worker's record: on a client both hold (or no client, for `unlinked` tables), created by nav2
   if (as === 'nav' && clientCol) {
     for (const [label, cid] of [['another worker\'s record on a shared client', x.shared], ...(spec.unlinked ? [['another worker\'s record with no client', null]] : [])]) {
-      const theirs = () => { const b = spec.row({ ...x, client: cid }); for (const col of ['user_id', 'author_id', 'reported_by', 'assigned_to', 'created_by', 'handled_by', 'added_by', 'administered_by', 'assessed_by']) if (col in b) b[col] = U.nav2; return b; };
+      const theirs = () => { const b = { ...spec.row({ ...x, client: cid }), ...(cid ? {} : spec.unlinkedPatch || {}) }; for (const col of ['user_id', 'author_id', 'reported_by', 'assigned_to', 'created_by', 'handled_by', 'added_by', 'administered_by', 'assessed_by']) if (col in b) b[col] = U.nav2; return b; };
       const base = theirs(); const other = theirs();
       const made = await push('nav2', { tables: { [name]: [base, other] } }, 0);
       if (outcome(made, name, base.id) !== 'applied' && !String(outcome(made, name, base.id)).startsWith('flagged')) { out[label] = { push: `setup: ${outcome(made, name, base.id)}`, rest: null }; continue; }

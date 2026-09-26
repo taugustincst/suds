@@ -68,7 +68,8 @@ module.exports = {
     { name: 'form_templates', enc: [], scope: 'all', writePerm: 'forms:manage', blob: ['file_b64'] },
     { name: 'client_forms', enc: ['values_enc', 'notes_enc'], legacy: { notes: 'notes_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['clients', 'client_id'] },
     { name: 'client_form_files', enc: ['data_enc', 'filename_enc'], legacy: { filename: 'filename_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
-    { name: 'patient_requests', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
+    // Patient-rights requests are patient-requests:write over REST (1.13.0 said consents:write here; every role held both).
+    { name: 'patient_requests', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'patient-requests:write', parent: ['clients', 'client_id'] },
     // Clinical documentation (CalAIM): the problem list and its history, the care plan, ASAM assessments and
     // outcome measures. readPerm: a device whose role cannot read them (an ASAM rating on a navigator's
     // phone) is never sent them, the same minimum-necessary rule clinical notes follow.
