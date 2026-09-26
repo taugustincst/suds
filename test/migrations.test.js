@@ -1,6 +1,7 @@
 'use strict';
 // Upgrading a real county database is the one operation that cannot be retried, so it gets its own test.
-// test/fixtures/schema-v4.sql is the schema exactly as SUDS 1.6.1 left it.
+// test/fixtures/schema-v4.sql is the schema exactly as SUDS 1.6.1 left it; release-v1.9.4.sql and release-v1.11.0.sql are
+// databases those releases wrote themselves (test/fixtures/make-release-fixture.js), upgraded at the end of this file.
 process.env.SUDS_ENV = 'test';
 process.env.SUDS_ENCRYPTION_KEY = '0'.repeat(64);
 process.env.SUDS_INDEX_KEY = '1'.repeat(64);
@@ -128,44 +129,50 @@ test('a database from a newer build is refused rather than silently downgraded',
   require('../server/db').open(dbPath);
 });
 
-test('a fresh install and an upgraded install end at the same schema', () => {
-  // The two paths through initialise() must not drift: everything schema.sql adds for a new county has to
-  // reach an existing one through a migration, or phones and servers end up with different tables.
-  // Compared structurally (column names, types, nullability, defaults, indexes) — physical column order
-  // and comments differ between ADD COLUMN and a fresh CREATE, and neither affects behaviour.
-  const describe = (d) => {
-    const out = {};
-    for (const t of d.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all()) {
-      if (t.name.startsWith('__new_')) continue;
-      out[t.name] = {
-        columns: d.prepare(`PRAGMA table_info(${t.name})`).all()
-          .map(c => `${c.name} ${c.type} notnull=${c.notnull} default=${c.dflt_value ?? ''} pk=${c.pk}`).sort(),
-        indexes: d.prepare(`SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`).all(t.name)
-          .map(i => i.sql.replace(/\s+/g, ' ').replace(/IF NOT EXISTS /gi, '').trim()).sort(),
-        // Triggers too: the audit log's append-only guard (schema.sql) must reach an upgraded county.
-        triggers: d.prepare(`SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?`).all(t.name)
-          .map(i => i.sql.replace(/\s+/g, ' ').replace(/IF NOT EXISTS /gi, '').trim()).sort(),
-      };
-    }
-    return out;
-  };
-
-  const upgraded = describe(db().get());
+// The shape of a database, compared structurally (column names, types, nullability, defaults, indexes,
+// triggers) — physical column order and comments differ between ADD COLUMN and a fresh CREATE, and neither
+// affects behaviour.
+function schemaShape(d) {
+  const out = {};
+  for (const t of d.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all()) {
+    if (t.name.startsWith('__new_')) continue;
+    out[t.name] = {
+      columns: d.prepare(`PRAGMA table_info(${t.name})`).all()
+        .map(c => `${c.name} ${c.type} notnull=${c.notnull} default=${c.dflt_value ?? ''} pk=${c.pk}`).sort(),
+      indexes: d.prepare(`SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`).all(t.name)
+        .map(i => i.sql.replace(/\s+/g, ' ').replace(/IF NOT EXISTS /gi, '').trim()).sort(),
+      // Triggers too: the audit log's append-only guard (schema.sql) must reach an upgraded county.
+      triggers: d.prepare(`SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?`).all(t.name)
+        .map(i => i.sql.replace(/\s+/g, ' ').replace(/IF NOT EXISTS /gi, '').trim()).sort(),
+    };
+  }
+  return out;
+}
+function freshShape() {
   const freshPath = path.join(dir, 'fresh.db');
   fs.rmSync(freshPath, { force: true });
   const f = new DatabaseSync(freshPath);
   f.exec(fs.readFileSync(path.join(__dirname, '..', 'server', 'schema.sql'), 'utf8'));
-  const fresh = describe(f);
+  const fresh = schemaShape(f);
   f.close();
-
-  // tombstones and sync_seen are created outside schema.sql, so an upgraded database legitimately has them.
+  return fresh;
+}
+function assertSameShape(upgraded, fresh, from) {
+  // sync_seen is created outside schema.sql, so an upgraded database legitimately has it.
   for (const extra of ['sync_seen']) delete upgraded[extra];
-  assert.deepEqual(Object.keys(upgraded).sort(), Object.keys(fresh).sort(), 'same set of tables');
+  assert.deepEqual(Object.keys(upgraded).sort(), Object.keys(fresh).sort(), `same set of tables (from ${from})`);
   for (const t of Object.keys(fresh)) {
-    assert.deepEqual(upgraded[t].columns, fresh[t].columns, `columns of ${t} differ between a fresh and an upgraded database`);
-    assert.deepEqual(upgraded[t].indexes, fresh[t].indexes, `indexes of ${t} differ between a fresh and an upgraded database`);
-    assert.deepEqual(upgraded[t].triggers, fresh[t].triggers, `triggers of ${t} differ between a fresh and an upgraded database`);
+    assert.deepEqual(upgraded[t].columns, fresh[t].columns, `columns of ${t} differ between a fresh and an upgraded (from ${from}) database`);
+    assert.deepEqual(upgraded[t].indexes, fresh[t].indexes, `indexes of ${t} differ between a fresh and an upgraded (from ${from}) database`);
+    assert.deepEqual(upgraded[t].triggers, fresh[t].triggers, `triggers of ${t} differ between a fresh and an upgraded (from ${from}) database`);
   }
+}
+
+test('a fresh install and an upgraded install end at the same schema', () => {
+  // The two paths through initialise() must not drift: everything schema.sql adds for a new county has to
+  // reach an existing one through a migration, or phones and servers end up with different tables.
+  const fresh = freshShape();
+  assertSameShape(schemaShape(db().get()), fresh, '1.6.1');
   assert.equal(fresh.audit_log.triggers.length, 2, 'the audit log carries its UPDATE and DELETE guards');
 });
 
@@ -240,3 +247,69 @@ test('migration 35: a free-text scope covers nothing automated unless it plainly
   assert.equal(db().one(`SELECT info_categories FROM consents WHERE id=?`, ids.generalConsent).info_categories, 'all');
   assert.ok(db().one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='caloms_submissions'`));
 });
+
+// ---- Databases written by later releases ----
+// 1.6.1 is not the only starting point a county has: each fixture below is a database a released SUDS created
+// and wrote through its own API (test/fixtures/make-release-fixture.js: schema, the rows, indexes, triggers;
+// fictional data, the test keys above). Each is upgraded to the current schema and must end structurally
+// identical to a fresh install, with its records present and its ciphertext still readable.
+for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql']) {
+  const sql = fs.readFileSync(path.join(__dirname, 'fixtures', fixture), 'utf8');
+  const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
+  test(`a SUDS ${expect.version} database (schema ${expect.schema_version}) upgrades to the current schema with its records intact`, () => {
+    const { decrypt } = require('../server/crypto');
+    const fdir = fs.mkdtempSync(path.join(os.tmpdir(), `suds-migrate-${expect.version}-`));
+    const fpath = path.join(fdir, 'suds.db');
+    const d = new DatabaseSync(fpath);
+    d.exec(sql);
+    assert.equal(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get().value, String(expect.schema_version));
+    const rowsBefore = Object.fromEntries(d.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`).all()
+      .map(({ name }) => [name, d.prepare(`SELECT COUNT(*) n FROM "${name}"`).get().n]));
+    d.close();
+
+    require('../server/db').close();
+    try {
+      require('../server/db').open(fpath);
+      assert.equal(db().getSetting('schema_version'), String(require('../server/db').LATEST_SCHEMA_VERSION));
+      assert.deepEqual(db().all('PRAGMA foreign_key_check'), []);
+      assertSameShape(schemaShape(db().get()), freshShape(), expect.version);
+
+      // Nothing was lost: every table the release had still holds at least as many rows (migrations may add
+      // rows — an episode per client — never drop them).
+      for (const [t, n] of Object.entries(rowsBefore)) {
+        if (!db().one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, t)) continue; // a table a migration folded into another
+        assert.ok(db().one(`SELECT COUNT(*) n FROM "${t}"`).n >= n, `${t} kept its ${n} row(s)`);
+      }
+      const c = db().one(`SELECT * FROM clients WHERE id=?`, expect.client.id);
+      assert.ok(c, 'the client is there');
+      assert.equal(decrypt(c.first_name_enc), expect.client.first_name);
+      assert.equal(decrypt(c.last_name_enc), expect.client.last_name);
+      assert.equal(decrypt(c.dob_enc), expect.client.dob);
+      const v = db().one(`SELECT * FROM interventions WHERE id=?`, expect.visit.id);
+      assert.equal(decrypt(v.summary_enc), expect.visit.summary);
+      assert.equal(v.naloxone_kits, expect.visit.naloxone_kits);
+      assert.equal(decrypt(db().one(`SELECT content_enc FROM notes WHERE id=?`, expect.note.id).content_enc), expect.note.content);
+      assert.equal(decrypt(db().one(`SELECT recipient_enc FROM consents WHERE id=?`, expect.consent.id).recipient_enc), expect.consent.recipient);
+      const ref = db().one(`SELECT * FROM referrals WHERE id=?`, expect.referral.id);
+      assert.equal(ref.resource_id, expect.referral.resource_id);
+      assert.ok(db().one(`SELECT 1 FROM disclosures WHERE source_ref=?`, expect.referral.id), 'the referral\'s disclosure accounting survived');
+
+      // Every encrypted value anywhere in the upgraded database still decrypts under the same key, including
+      // the ones migrations moved out of plaintext columns.
+      let checked = 0;
+      for (const { name } of db().all(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)) {
+        const enc = db().all(`PRAGMA table_info("${name}")`).map((x) => x.name).filter((x) => x.endsWith('_enc'));
+        for (const col of enc) for (const r of db().all(`SELECT "${col}" v FROM "${name}" WHERE "${col}" IS NOT NULL AND "${col}" != ''`)) {
+          assert.doesNotThrow(() => decrypt(r.v), `${name}.${col} decrypts`); checked++;
+        }
+      }
+      assert.ok(checked >= 6, `${checked} encrypted values checked`);
+      // The audit chain that release wrote still verifies after the upgrade.
+      assert.equal(require('../server/audit').verifyChain().ok, true, 'the audit chain verifies');
+    } finally {
+      require('../server/db').close();
+      require('../server/db').open(dbPath);
+      fs.rmSync(fdir, { recursive: true, force: true });
+    }
+  });
+}
