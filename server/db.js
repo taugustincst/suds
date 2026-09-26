@@ -721,10 +721,11 @@ function snapshotBeforeMigration(d, dbPath, fromVersion) {
 const SNAPSHOT_KEEP_DAYS = 14;
 function sealSnapshots(dbPath) {
   if (!dbPath || dbPath === ':memory:') return;
+  const backup = require('./backup');
+  sealRestoreAsides(dbPath, backup);
   const dir = path.join(path.dirname(dbPath), 'pre-migration');
   let files; try { files = fs.readdirSync(dir); } catch { return; }
   const base = path.basename(dbPath) + '.v';
-  const backup = require('./backup');
   for (const f of files.filter(n => n.startsWith(base) && n.endsWith('.db'))) {
     const plain = path.join(dir, f); const sealed = `${plain}.enc`;
     try {
@@ -740,6 +741,33 @@ function sealSnapshots(dbPath) {
   for (const f of files.filter(n => n.startsWith(base) && n.endsWith('.db.enc'))) {
     const p = path.join(dir, f);
     try { if (fs.statSync(p).mtimeMs < cutoff) { fs.unlinkSync(p); console.log(`[suds] ${JSON.stringify({ event: 'db.snapshot_expired', file: f, days: SNAPSHOT_KEEP_DAYS })}`); } } catch {}
+  }
+}
+
+// The databases a browser restore set aside (`suds.db.before-restore-<time>`, server/backup.js restoreHeld):
+// sealed there as soon as the restore has taken; any still plain (set aside by 1.13.0 or earlier, or a seal
+// that failed) are sealed here, and sealed ones are deleted after SNAPSHOT_KEEP_DAYS like the snapshots.
+function sealRestoreAsides(dbPath, backup) {
+  // Not while a restore is running: it reopens the database it just wrote, and its rollback needs the copy it
+  // set aside in plaintext until it has finished; it seals that copy itself.
+  if (require('./backup-lock').current()?.name === 'restore') return;
+  const dir = path.dirname(dbPath); const base = path.basename(dbPath) + '.before-restore-';
+  let files; try { files = fs.readdirSync(dir).filter(n => n.startsWith(base)); } catch { return; }
+  const cutoff = Date.now() - SNAPSHOT_KEEP_DAYS * 86400000;
+  for (const f of files) {
+    const p = path.join(dir, f);
+    try {
+      if (f.endsWith('.enc')) {
+        if (fs.statSync(p).mtimeMs < cutoff) { fs.unlinkSync(p); console.log(`[suds] ${JSON.stringify({ event: 'db.restore_aside_expired', file: f, days: SNAPSHOT_KEEP_DAYS })}`); }
+        continue;
+      }
+      const sealed = `${p}.enc`;
+      try { fs.unlinkSync(sealed); } catch {}
+      backup.encryptFileSync(p, sealed); backup.secureUnlink(p);
+      console.log(`[suds] ${JSON.stringify({ event: 'db.restore_aside_sealed', file: path.basename(sealed) })}`);
+    } catch (e) {
+      console.warn(`[suds] ${JSON.stringify({ event: 'db.restore_aside_seal_failed', file: f, error: String(e && e.message || e).slice(0, 200) })}`);
+    }
   }
 }
 

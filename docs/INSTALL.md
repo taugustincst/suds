@@ -85,7 +85,7 @@ If the computer is replaced, the database is damaged, or something was deleted t
 3. Choose the backup file and press **Check this backup**. SUDS tells you what is inside it — how many clients, when it was taken, which version — and changes nothing yet.
 4. If it is the right file, press **Replace everything with this backup**, type `REPLACE`, and enter your password.
 
-Everything recorded after that backup was taken will be gone, so check the summary first. The database being replaced is kept on the server as `suds.db.before-restore-…`, so a restore of the wrong file can be undone by whoever looks after the machine. Everyone is signed out afterwards, and any local-mode devices should sync once.
+Everything recorded after that backup was taken will be gone, so check the summary first. The database being replaced is kept on the server for 14 days, encrypted like a backup, as `suds.db.before-restore-….enc`, so a restore of the wrong file can be undone by whoever looks after the machine (`node scripts/backup.js --restore <that file>`). Everyone is signed out afterwards, and any local-mode devices should sync once.
 
 A backup from an older version of SUDS is brought up to date automatically when it is restored.
 

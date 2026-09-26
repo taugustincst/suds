@@ -431,7 +431,15 @@ function restoreHeld(plainBytes) {
     rollBack(e);
     throw new Error(`The restore could not be completed (${e.message}), so the previous database was put back. Nothing was changed.`);
   }
-  return { ...info, previous_database_kept_at: aside };
+  // The database set aside is the undo for a mistaken restore, but it is the whole database in plaintext:
+  // seal it like a backup now that the restore has taken (the rollbacks above needed it plain), so it opens
+  // with `node scripts/backup.js --restore <file>.enc` and is deleted with the pre-migration snapshots after
+  // their retention (server/db.js sealSnapshots, which also seals any left plain by an earlier version or by
+  // a failure here). Up to 1.13.0 it stayed in plaintext beside the live database indefinitely.
+  let kept = aside;
+  try { const sealed = `${aside}.enc`; encryptFileSync(aside, sealed); secureUnlink(aside); kept = sealed; }
+  catch (e) { console.warn(`[suds] ${JSON.stringify({ event: 'restore.aside_seal_failed', error: String(e && e.message || e).slice(0, 200) })}`); }
+  return { ...info, previous_database_kept_at: kept };
 }
 
 module.exports = { create, createAsync, encryptPlain, encryptFileSync, decrypt, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect, restore, restoreWhenIdle, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
