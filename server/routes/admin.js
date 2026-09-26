@@ -3,7 +3,7 @@ const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
 const config = require('../config');
-const { badRequest, notFound, forbidden, HttpError } = require('../http');
+const { badRequest, notFound, forbidden, conflict, HttpError } = require('../http');
 const { validate, paging } = require('../validate');
 const { uuid, randomToken, sha256 } = require('../crypto');
 
@@ -248,7 +248,16 @@ module.exports = (r) => {
     asBadRequest(() => backup.inspect(plain));
     // Logged before the swap, because afterwards this audit log is the restored file's, not ours.
     audit.log({ user: ctx.user, action: 'backup.restore.start', ip: ctx.ip, details: { bytes: plain.length } });
-    const out = backup.restore(plain);
+    // Waits (bounded) for a backup, snapshot or recovery drill in flight, then swaps the file and records the
+    // new sync generation and the restore anchor — all of it, or the previous database is put back
+    // (server/backup.js restoreWhenIdle). Refused with a 409, nothing touched, if the wait runs out.
+    let out;
+    try { out = await backup.restoreWhenIdle(plain); }
+    catch (e) {
+      try { audit.log({ user: ctx.user, action: 'backup.restore.failed', ip: ctx.ip, success: false, details: { error: String(e && e.message || e).slice(0, 300) } }); } catch {}
+      if (e && e.code === 'EBUSY') throw conflict(e.message);
+      throw badRequest(e.message);
+    }
     audit.log({ user: ctx.user, action: 'backup.restore', ip: ctx.ip, details: { clients: out.counts.clients, schema_version: out.schema_version, kept: path.basename(out.previous_database_kept_at) } });
     return { ok: true, ...out, note: 'Everyone will need to sign in again. Devices should sync after this.' };
   });

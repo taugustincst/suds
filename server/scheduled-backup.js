@@ -9,6 +9,7 @@ const config = require('./config');
 const db = require('./db');
 const audit = require('./audit');
 const backup = require('./backup');
+const lock = require('./backup-lock');
 
 // Scheduled backups are suds-<time>.db.enc; the frequent snapshots below are suds-snap-<time>.db.enc and
 // are pruned on their own count, so one never pushes the other out.
@@ -43,7 +44,7 @@ function rpo(s = settings()) {
  *  health check. */
 async function runIfDue(now = Date.now()) {
   const { hours, retain, offsiteDir } = settings();
-  if (!hours) return null;
+  if (!hours || lock.paused()) return null; // a restore holds the lock or waits for it: next turn
   const last = db.getSetting('last_scheduled_backup_at', null);
   if (last && now - Date.parse(last) < hours * 3600_000) return null;
   return run({ retain, offsiteDir });
@@ -63,9 +64,13 @@ let inFlight = null;
  */
 function run(opts = {}) {
   if (inFlight) return inFlight;
-  inFlight = runOnce(opts).finally(() => { inFlight = null; });
+  // Under the shared lock (server/backup-lock.js): waits for a snapshot, drill or restore in flight, and a
+  // restore waits for this one.
+  inFlight = lock.run('backup', () => runOnce(opts)).finally(() => { inFlight = null; });
   return inFlight;
 }
+/** run() for a caller that already holds the lock (the recovery drill, when no backup is on disk). */
+function runHeld(opts = {}) { return runOnce(opts); }
 
 async function runOnce({ retain = 14, offsiteDir = '' } = {}) {
   const dir = path.join(config.dataDir, 'backups');
@@ -133,18 +138,18 @@ async function runOnce({ retain = 14, offsiteDir = '' } = {}) {
 // incremental backup, and a full copy of a county-sized database takes seconds (measurements in
 // docs/security/BACKUP-AND-DR.md). They sit beside the scheduled backups, which keep their own longer
 // retention and their verification read-back.
-let snapshotting = false;
 /** Run a snapshot if one is due. Resolves to the result, or null when none was due. Never rejects. */
 async function snapshotIfDue(now = Date.now()) {
   const s = settings();
-  if (!s.minutes || snapshotting) return null;
+  if (!s.minutes || lock.current() || lock.paused()) return null;
   const last = db.getSetting('last_snapshot_at', null);
   if (last && now - Date.parse(last) < s.minutes * 60_000) return null;
   return snapshot(s);
 }
 async function snapshot(s = settings()) {
-  if (snapshotting) return null;
-  snapshotting = true;
+  // Skipped, not queued, while anything else holds the shared lock: the next minute's timer tries again.
+  const release = lock.tryAcquire('snapshot');
+  if (!release) return null;
   const localDir = path.join(config.dataDir, 'backups');
   let target = localDir; let where = 'local';
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -174,7 +179,7 @@ async function snapshot(s = settings()) {
     // Audited on the change from working to failing, not on every attempt.
     if (!/^failed/.test(prev)) audit.log({ user: { username: 'system' }, action: 'backup.snapshot.failed', success: false, details: { error: reason.slice(0, 300) } });
     return { file: null, failed: true, error: reason };
-  } finally { snapshotting = false; }
+  } finally { release(); }
 }
 
 /** Delete the oldest files matching `re` beyond `retain`. ISO timestamps in the names sort chronologically. */
@@ -193,4 +198,4 @@ function prune(dir, retain) {
   return Math.min(files.length, retain);
 }
 
-module.exports = { runIfDue, run, settings, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };
+module.exports = { runIfDue, run, runHeld, settings, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };

@@ -121,6 +121,40 @@ async function enrol(userId, username, password) {
   phase = 'open';
   if (wasLegacy) await eraseLegacyCopies();
 }
+/**
+ * After a restore from a backup that carried its accounts' wraps, the device runs under the key written in
+ * that backup (vault.fromBackupRecord). The first time a backed-up account proves its password here (its own
+ * sign-in, or vouching for someone), move the device to a fresh key (vault.rekeyAfterRestore): the image is
+ * re-sealed under it and stored with the new vault in one write, so a key the backup's holder knows never
+ * opens anything recorded from then on. Serialised with the other vault writes. If the write does not land,
+ * nothing changes (the device stays on the old key and the next backed-up sign-in tries again).
+ */
+async function rekeyIfRestored(userId, username, password) {
+  if (phase !== 'open' || !theVault || theVault.rekey !== 'restore' || !dek || typeof password !== 'string') return false;
+  const run = vaultQueue.then(async () => {
+    if (phase !== 'open' || !theVault || theVault.rekey !== 'restore') return false;
+    const out = await vault.rekeyAfterRestore(theVault, dek, username, password, { userId, keys: keysHex(), hints: hints() });
+    if (!out) return false;
+    const before = { dek, dekKey, theVault };
+    dek = out.dek; dekKey = out.key; theVault = out.vault;
+    sqlite.setSealer(sealer(), { extra: { [VAULT_KEY]: out.vault } });
+    // Landed means the new vault went with a sealed save: the shim drops its pending extras only when that
+    // transaction commits. A failed save leaves them pending (and the next save would carry them).
+    try { await sqlite.flush({ force: true }); } catch { /* judged below */ }
+    if (sqlite.hasPendingExtra()) {
+      // Nothing under the new key was stored (the vault goes with the first sealed save, or not at all): go back.
+      out.dek.fill(0);
+      dek = before.dek; dekKey = before.dekKey; theVault = before.theVault;
+      sqlite.setSealer(sealer());
+      return false;
+    }
+    before.dek.fill(0);
+    audit.log({ user: { username: 'device' }, action: 'device.key_rotated', details: { reason: 'restore', carried_accounts_waiting: out.vault.wraps.filter(w => w.chained).length, wraps_dropped: out.dropped.length } });
+    return true;
+  });
+  vaultQueue = run.catch(() => {});
+  return run;
+}
 /** After sealing a device set up by 1.11 or earlier: remove the plaintext keys, and prove no plaintext database is left. */
 async function eraseLegacyCopies() {
   for (const k of LEGACY_KEYS) { try { localStorage.removeItem(k); } catch {} }
@@ -222,6 +256,8 @@ async function afterPasswordEvent(method, path, body, ctx, result) {
   if (path === '/api/auth/login') {
     const u = ctx.user || (result && result.user) || byName(b.username);
     const id = u && u.id; if (!id) return;
+    // The first backed-up account to sign in after a restore moves the device to a key the backup never held.
+    await rekeyIfRestored(id, u.username || b.username, b.password);
     // No wrap of its own yet (a device set up by 1.11 or earlier, a restore, someone vouched for it), or only one carried
     // over by a restore: this password becomes the account's own wrap of the device key.
     if (phase !== 'open' || !theVault || !theVault.wraps.some(w => w.user_id === id && !w.chained)) await enrol(id, (u.username || b.username), b.password);
@@ -253,6 +289,8 @@ async function lockedAnswer(method, path, body) {
     }
     if (!r) return refused(401, 'Username or password is incorrect.', { sponsorRequired: !(await vault.wrapsFor(theVault, b.username)).length });
     await unlockWith(r.dek);
+    // Vouched for by a backed-up account after a restore: its password rotates the key too.
+    if (b.sponsor_username && r.wrap.chained) { try { await rekeyIfRestored(r.wrap.user_id, b.sponsor_username, b.sponsor_password); } catch (e) { reportError(e); } }
     return { done: false, relockOnFail: true };
   }
   if (method === 'POST' && path === '/api/local/signup') {
@@ -269,6 +307,7 @@ async function lockedAnswer(method, path, body) {
       await lockDevice();
       return refused(401, 'The account unlocking this device could not sign in: check its username and password.', { sponsorRequired: true });
     }
+    if (r.wrap.chained) { try { await rekeyIfRestored(r.wrap.user_id, b.sponsor_username, b.sponsor_password); } catch (e) { reportError(e); } }
     return { done: false, relockOnFail: true };
   }
   return refused(401, 'This device is locked. Sign in to continue.');
@@ -518,8 +557,9 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
   router.delete('/api/local/demo', (ctx) => { if (!ctx.user) throw new HttpError(401, 'Sign in first'); return demo.remove({ actor: ctx.user.id }); });
   setInterval(idleCheck, IDLE_CHECK_MS);
   window.SUDS_LOCAL = { handle, flush: (opts) => sqlite.flush(opts), isDirty: () => sqlite.isDirty(), epoch: () => sqlite.epoch(), wipe: wipeDevice, sync: (opts) => sync.run(opts), isWiped: () => sqlite.isWiped(), isFrozen: () => sqlite.isFrozen(),
-    // Diagnostics only: whether the database is open, and the sizes and timings of the last save (no contents).
-    phase: () => phase, saveStats: () => sqlite.saveStats(), lock: () => lockDevice() };
+    // Diagnostics only: whether the database is open, and the sizes and timings of the last save (no contents);
+    // whether a restored device still runs under the key its backup carried (no key material).
+    phase: () => phase, saveStats: () => sqlite.saveStats(), lock: () => lockDevice(), rekeyPending: () => !!(theVault && theVault.rekey) };
   return window.SUDS_LOCAL;
 }
 

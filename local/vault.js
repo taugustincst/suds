@@ -13,7 +13,8 @@
 //                                                       right wrap is found without trying every one
 //            keys:  { iv, ct },                          AES-GCM(DEK, {"enc":hex,"idx":hex})
 //            hints: { users, signup_enabled, program_contact },   what the locked sign-in page may show
-//            chain: { iv, ct } }                         after a restore only: see backupRecord
+//            chain: { iv, ct },                          after a restore only: see backupRecord
+//            rekey: 'restore' }                          after a restore only, until rekeyAfterRestore
 //   image  { format, version, iv, ct }                   AES-GCM(DEK, SQLite bytes)
 //
 // Every function here is WebCrypto (crypto.subtle), so it runs the same in a browser and under Node's
@@ -133,7 +134,56 @@ export async function fromBackupRecord(rec, keys, hints = {}) {
   v.salt = unb64(rec.salt);
   v.chain = { iv: unb64(rec.chain.iv), ct: unb64(rec.chain.ct) };
   v.wraps = rec.wraps.map(w => ({ user_id: w.user_id, name: w.name, kdf: w.kdf, iterations: w.iterations, salt: unb64(w.salt), iv: unb64(w.iv), ct: unb64(w.ct), chained: true }));
+  // This key is written in the backup (next_dek): anyone with the file and its passphrase has it. The first
+  // sign-in by one of the backed-up accounts moves the device to a key the backup never held (rekeyAfterRestore).
+  v.rekey = 'restore';
   return { dek, key, vault: v };
+}
+
+/**
+ * The key rotation after a restore (docs/architecture/ADR-0008-device-encryption.md, "Backups and restore").
+ * A restored device starts under the key its backup carried (`next_dek`), so whoever holds the backup and its
+ * passphrase, and later gets the device's browser storage, could read everything recorded after the restore.
+ * At the first sign-in by an account whose carried wrap opens with its password, this makes a fresh key and
+ * returns the vault for it:
+ *   - the column keys sealed under the new key;
+ *   - that account's own wrap of the new key;
+ *   - the other carried wraps kept as they are (each opens the backed-up device's key, D0, with its account's
+ *     password), and the chain re-sealed from D0 to the NEW key: D0 was never in the backup (only wraps of it,
+ *     each needing a password), so the backup's holder cannot follow it, while every backed-up account still
+ *     can, with the password it had, until its own first sign-in replaces its carried wrap;
+ *   - any other wrap (an account enrolled on the restored device before this, which wraps the backup's key)
+ *     dropped: it would open only the old key. Its account is vouched for at its next sign-in (`dropped`).
+ * `currentDek` is the key the device is under now; the chain must lead to it, or nothing is rotated.
+ * Resolves to { dek, key, vault, dropped } — the caller seals the image under `key` and stores it with the
+ * vault in one write — or null when this account cannot rotate (no carried wrap, wrong password, not pending).
+ */
+export async function rekeyAfterRestore(v, currentDek, username, password, { userId, keys, hints } = {}) {
+  if (!v || v.rekey !== 'restore' || !v.chain || !userId || !keys) return null;
+  const name = await nameHash(v.salt, username);
+  let prev = null;
+  for (const w of v.wraps.filter(x => x.chained && x.name === name)) {
+    const d0 = await unwrapDek(w, password);
+    if (!d0) continue;
+    try {
+      const d1 = await open(await importDek(d0), { format: IMAGE_FORMAT, version: VERSION, iv: v.chain.iv, ct: v.chain.ct }, AAD_CHAIN);
+      const same = d1.length === u8(currentDek).length && d1.every((b, i) => b === u8(currentDek)[i]);
+      d1.fill(0);
+      if (same) { prev = d0; break; }
+    } catch { /* not this chain */ }
+    d0.fill(0);
+  }
+  if (!prev) return null;
+  const dek = newDek(); const key = await importDek(dek);
+  const others = v.wraps.filter(w => w.chained && w.user_id !== userId && w.name !== name);
+  const dropped = v.wraps.filter(w => !w.chained && w.user_id !== userId).map(w => w.user_id);
+  const own = await wrapDek(dek, password, { userId, name });
+  const next = { ...v, keys: await sealKeys(key, keys), wraps: [...others, own], rekeyed_at: new Date().toISOString() };
+  if (hints) next.hints = hints;
+  delete next.rekey;
+  if (others.length) { const c = await seal(await importDek(prev), dek, AAD_CHAIN); next.chain = { iv: c.iv, ct: c.ct }; } else delete next.chain;
+  prev.fill(0);
+  return { dek, key, vault: next, dropped };
 }
 
 /** The wraps whose lookup name matches `username` (normally one). */

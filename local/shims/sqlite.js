@@ -232,6 +232,8 @@ let pendingExtra = null;
 /** `s` = { seal: async (bytes) => value, sealSync: (bytes) => value }, or null to withhold every save. */
 export function setSealer(s, { extra = null } = {}) { sealer = s; pendingExtra = extra; }
 export function hasSealer() { return !!sealer; }
+/** True while the extras handed to setSealer have not yet landed with a sealed save. */
+export function hasPendingExtra() { return !!pendingExtra; }
 // A locked device has no database open, and nothing may create one by accident: server/db.js opens a fresh
 // empty database on first use, which would then be sealed and saved over the real one.
 let openAllowed = true;
@@ -509,4 +511,4 @@ export class DatabaseSync {
   close() { if (current === this.db) { current = null; dirty = false; clearTimeout(saveTimer); saveTimer = null; } try { this.db.close(); } catch {} }
   export() { return this.db.export(); }
 }
-export default { DatabaseSync, init, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
+export default { DatabaseSync, init, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, hasPendingExtra, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };

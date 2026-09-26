@@ -28,6 +28,10 @@ function deviceId() {
 }
 
 const NEVER = '1970-01-01T00:00:00.000Z';
+// Marks a pull cursor that carries the office's backfill position (server/routes/sync.js BF_MARK).
+const BACKFILL_MARK = '~bf.';
+// A safety stop, not a limit anyone should reach: 2,000 pages of at most 2,000 rows.
+const MAX_BACKFILL_PAGES = 2000;
 // Well under the server's body limit, leaving room for JSON overhead.
 const PUSH_BYTES = 4 * 1024 * 1024;
 // Attachments fetched per sync, so a first sync is not held up by every photo in the directory.
@@ -441,8 +445,13 @@ export async function run({ server, username, password, code, onProgress = () =>
     const officeUserId = (login.user && login.user.id) || username;
     let since = readCursor(officeUserId, username);
     const applied = {}; let pages = 0; let serverNow = null; let generationReset = false;
+    // Backfill pages (the records of clients newly assigned to this person, which the office sends in pages
+    // of its own after the page that carried the assignment -- server/routes/sync.js backfillPage) are
+    // counted apart from the ordinary ones: a caseload transfer can take many of them, and each is bounded.
+    let backfillPages = 0;
     for (;;) {
-      onProgress(pages ? `Downloading changes from the office (page ${pages + 1})…` : 'Downloading changes from the office…');
+      const backfilling = String(since).includes(BACKFILL_MARK);
+      onProgress(backfilling ? `Downloading the records of newly assigned clients (page ${backfillPages + 1})…` : pages ? `Downloading changes from the office (page ${pages + 1})…` : 'Downloading changes from the office…');
       const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}`, {}, token);
       // A restored office database (see resetExchangeState). Checked before this page is applied, so the
       // whole pull restarts from the beginning under the new generation.
@@ -471,10 +480,13 @@ export async function run({ server, username, password, code, onProgress = () =>
       const counts = applyPull(pulled, pullConflicts, skipped, officeUserId);
       for (const [k, v] of Object.entries(counts)) applied[k] = (applied[k] || 0) + v;
       serverNow = pulled.server_now;
+      // The cursor is opaque here: a plain timestamp, or one carrying the office's backfill position. It is
+      // stored after every page, so a sync cut short resumes where it stopped.
       since = pulled.cursor;
       db.setSetting(cursorKey(officeUserId), since);
-      pages++;
-      if (pulled.complete || pages > 200) break;
+      if (pulled.complete) break;
+      if (backfilling || pulled.backfill) { if (++backfillPages > MAX_BACKFILL_PAGES) break; continue; }
+      if (++pages > 200) break;
     }
 
     // ---- push, in chunks ----

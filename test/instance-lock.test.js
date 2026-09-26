@@ -212,3 +212,59 @@ test('old lock formats (1.12.0 and earlier, no hostname) are judged as written o
   fs.writeFileSync(path.join(d, '.suds.lock'), '999999');
   const r3 = acquire(d, fast); r3(); // dead pid
 });
+
+// ---- Same hostname, different container: the identity of the process's container decides (1.12.1) ----
+// Two containers can share a hostname -- network_mode: host, a fixed `hostname:`, a StatefulSet pod rescheduled
+// onto another node -- and both run node as pid 1. Up to 1.12.0 the second read the first's live lock as its own
+// dead predecessor ("own pid") and took it over at once; the first stopped within 10 s, and with restart policies
+// the two alternated. The lock now records the container's identity (a digest of the root mount from
+// /proc/self/mountinfo, the pid namespace, /etc/machine-id); the local rules apply only when the hostname AND
+// that identity match, and otherwise only the heartbeat counts.
+const ME = { hostname: HOST, rootId: 'root-a', pidNs: 'pid:[4026532001]', machineId: 'machine-1' };
+const writeLock = (d, rec) => fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ bootId: _internals.bootId(), startTime: _internals.startTime(process.pid), ...rec }));
+
+test('the lock records the container identity (root mount digest, pid namespace, machine id)', { skip: process.platform !== 'linux' }, () => {
+  const d = fs.mkdtempSync(path.join(dir, 'ident-'));
+  const release = acquire(d, fast);
+  const rec = lockOf(d);
+  assert.match(rec.rootId, /^[0-9a-f]{16}$/);
+  assert.match(rec.pidNs, /^pid:\[\d+\]$/);
+  release();
+});
+
+test('same hostname and pid, another container (different root mount), live heartbeat: refused, not taken over', () => {
+  const d = fs.mkdtempSync(path.join(dir, 'twin-'));
+  writeLock(d, { pid: process.pid, hostname: HOST, rootId: 'root-b', pidNs: 'pid:[4026532999]', machineId: 'machine-1' });
+  assert.throws(() => acquire(d, { ...fast, identity: ME }), (e) => /already running/.test(e.message) && /heartbeat/.test(e.message));
+  assert.equal(lockOf(d).rootId, 'root-b', 'the other holder\'s lock is untouched');
+});
+
+test('same hostname and pid, no root digest on either side, different pid namespace: refused', () => {
+  const d = fs.mkdtempSync(path.join(dir, 'twin-ns-'));
+  writeLock(d, { pid: process.pid, hostname: HOST, pidNs: 'pid:[4026532999]' });
+  assert.throws(() => acquire(d, { ...fast, identity: { ...ME, rootId: null } }), /already running/);
+});
+
+test('same hostname and root mount, another machine (machine id differs, shared storage): refused', () => {
+  const d = fs.mkdtempSync(path.join(dir, 'twin-host-'));
+  writeLock(d, { pid: process.pid, hostname: HOST, rootId: 'root-a', pidNs: 'pid:[4026531836]', machineId: 'machine-2' });
+  assert.throws(() => acquire(d, { ...fast, identity: ME }), /already running/);
+});
+
+test('the same container restarted after a crash (same root mount, new pid namespace) is still taken over at once', () => {
+  const d = fs.mkdtempSync(path.join(dir, 'restart-'));
+  writeLock(d, { pid: process.pid, hostname: HOST, rootId: 'root-a', pidNs: 'pid:[4026530000]', machineId: 'machine-1' });
+  const release = acquire(d, { ...fast, identity: ME });
+  assert.equal(lockOf(d).rootId, 'root-a');
+  assert.equal(lockOf(d).pidNs, ME.pidNs);
+  release();
+});
+
+test('another container with the same hostname whose heartbeat has gone stale is taken over', () => {
+  const d = fs.mkdtempSync(path.join(dir, 'twin-stale-'));
+  writeLock(d, { pid: process.pid, hostname: HOST, rootId: 'root-b', pidNs: 'pid:[4026532999]' });
+  ageLock(d, 1000);
+  const release = acquire(d, { ...fast, identity: ME });
+  assert.equal(lockOf(d).rootId, 'root-a');
+  release();
+});
