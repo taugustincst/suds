@@ -35,9 +35,21 @@ services:
       # Offsite backup copy (Settings → Scheduled backups → offsite directory = /offsite):
       #   - /mnt/county-backup-share/suds:/offsite
     expose: ["8080"]
+    # Liveness: the process is up and its database answers. Deliberately not /api/health, whose 503 also
+    # covers operational warnings (certificate expiry, failed backups) that a restart cannot fix — point
+    # alerting at that one instead (docs/DEPLOYMENT.md, "Monitoring and logs").
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
   proxy:
     image: caddy:2.10-alpine
     restart: unless-stopped
+    depends_on:
+      suds:
+        condition: service_healthy
     ports: ["443:443", "80:80"]
     environment:
       SUDS_DOMAIN: ${SUDS_DOMAIN:-suds.example.gov}

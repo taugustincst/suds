@@ -1,7 +1,7 @@
 # Releasing SUDS
 
 ## Production readiness checklist (per release)
-- [ ] CI is green for the exact commit being released: `npm test`, the browser suite (`scripts/ui/run-all.sh`, thirty scripts including the first-run wizard, local mode, sync, device encryption, the static build, accessibility and the QA-regression script `a11y-round4`), Node 24 and the recovery drill. The release workflow enforces this (see *Release gate* below); the box is here so nobody tags a commit they have not seen pass
+- [ ] CI is green for the exact commit being released: `npm test`, the browser suite (`scripts/ui/run-all.sh`, 30 scripts including the first-run wizard, local mode, sync, device encryption, the static build, accessibility and the QA-regression script `a11y-round4`), Node 24 and the recovery drill. The release workflow enforces this (see *Release gate* below); the box is here so nobody tags a commit they have not seen pass
 - [ ] `CHANGELOG.md` has a section for the version, `package.json` version matches
 - [ ] Docs updated (`README.md`, `docs/INSTALL.md`, `docs/DEPLOYMENT.md`, `docs/HIPAA.md`)
 - [ ] No secrets, databases or `data/` contents in the tree (`git status`, `.gitignore`)
@@ -35,6 +35,32 @@ Rules for every release:
    release each.
 5. The staged rollout ([ADOPTION.md](ADOPTION.md#3-staged-release-cadence)) still applies: pilot group first.
 
+### The policy is checked, not only written down
+
+The release workflow's `gate` job runs `scripts/release-policy.js` after the CI check. It compares the
+version being released with the previous release tag and, **for a patch bump**, fails if the tree adds
+anything the table above keeps for feature releases:
+
+* a schema migration (`server/db.js`, the length of the `migrations` array),
+* a permission (`server/auth.js` `PERMS`: a permission name not in the previous release, or an existing one
+  granted to another role),
+* a route (every `METHOD path` the route modules register, including generated CRUD routes).
+
+A minor or major bump is not checked. When a patch release genuinely needs one of these (a security fix that
+needs a route, say), run the release from the Actions tab (*Run workflow*) with **`allow_patch_changes`** set
+to the reason. The gate then passes with a warning, and the release job puts the reason and the list of
+exceptions at the top of the GitHub Release notes, where a county reviewing the release reads it. A tag push
+cannot carry the override; an empty input is no override. Dry run before tagging:
+`node scripts/release-policy.js` (compares the working tree with the latest tag). The detection logic is
+tested in `test/release-policy.test.js`.
+
+**Record: 1.12.0–1.12.4 broke this policy.** 1.12.0 came fourteen hours after the 1.11.0 feature release
+(not a month), and 1.12.1–1.12.4 followed within twelve hours; 1.12.1 carried migration 41 and the route
+`POST /api/auth/oidc/reauth`, 1.12.2 the permission `reports:internal` (found afterwards with
+`node scripts/release-policy.js --previous-ref <commit> --next-ref <commit>`). They were security and privacy
+fixes from an independent review, shipped as soon as each was ready rather than batched. The check above
+exists so the next exception is an explicit, recorded decision rather than an oversight.
+
 ## Cutting a release
 ```bash
 git checkout main && git pull
@@ -45,12 +71,12 @@ git tag v1.0.1 && git push origin v1.0.1
 Pushing the tag runs `.github/workflows/release.yml` (or start it from the Actions tab with *Run workflow* → type `release`; it then creates the tag itself), which first passes the release gate (below), then re-runs the tests, packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release with the zip attached. As its last step it starts the web-app (GitHub Pages) workflow for the new tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses marketplace actions, so they run under restrictive Actions policies.
 
 ### Release gate
-QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` runs `scripts/release-gate.js` for the commit being released (`GITHUB_SHA`) before anything is built. It asks the GitHub API (with the workflow's own token — no marketplace action) for the runs of `ci.yml` on that exact commit, counts only `push` runs (a `pull_request` run tests a merge commit, not this one), and passes only when one of them **concluded success with the `test`, `thorough`, `browser`, `node24` and `dr-drill` jobs all successful** (`thorough` runs the publication-release disclosure sweeps at full size, `SUDS_THOROUGH=1`; `npm test` runs a sample of them):
+QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` runs `scripts/release-gate.js` for the commit being released (`GITHUB_SHA`) before anything is built. It asks the GitHub API (with the workflow's own token — no marketplace action) for the runs of `ci.yml` on that exact commit, counts only `push` runs (a `pull_request` run tests a merge commit, not this one), and passes only when one of them **concluded success with the `test`, `thorough`, `browser`, `node24` and `dr-drill` jobs all successful** (`thorough` runs, with `SUDS_THOROUGH=1`, the publication-release disclosure sweeps at full size — `npm test` runs a sample — and the performance checks in `test/thorough/`, which `npm test` leaves out so a busy runner cannot flake it: `npm run test:thorough`):
 
 | CI job | What it proves |
 | --- | --- |
 | `test` | `npm test`, the committed kernel and generated schema match their sources, the package builds, browser modules parse |
-| `browser` | the whole browser suite, `scripts/ui/run-all.sh` — 29 scripts, including `accessibility` (fails on any WCAG 2.1 AA finding) and the QA-regression script `a11y-round4` |
+| `browser` | the whole browser suite, `scripts/ui/run-all.sh` — 30 scripts, including `accessibility` (fails on any WCAG 2.1 AA finding) and the QA-regression script `a11y-round4` |
 | `node24` | `npm test` on the next Node LTS line |
 | `dr-drill` | backup and restore actually work: `scripts/dr-exercise.js` (seed, encrypted backup through the scheduled path, `npm run dr-drill` with an escrowed key file, host restore into a fresh data directory, row counts, audit chain, signed report verified with the public key); the signed report is printed in the job log |
 
@@ -85,6 +111,22 @@ git add package.json package-lock.json public/local && git commit -m "Update esb
 ```
 
 The remaining kernel libraries (`@noble/*`, `fflate`, `buffer`) come as one grouped monthly Dependabot PR; check it out, run `npm run build:local`, and push the rebuilt kernel to that PR's branch so CI's drift check passes.
+
+## Bumping the pinned Node 24
+The `node24` CI job installs an exact Node 24 release checked against a SHA-256 written in `ci.yml`
+(`NODE24_VERSION`, `NODE24_SHA256`), not whatever `latest-v24.x` is that day against a checksum file from the
+same server. Dependabot cannot see a version in a workflow's `env`, so bump it by hand — monthly with the
+grouped Dependabot PR, and at once for a Node security release (nodejs.org/en/blog/vulnerability):
+
+```bash
+v=v24.x.y                                                     # the newest v24 on https://nodejs.org/dist/
+curl -fsSLO https://nodejs.org/dist/$v/SHASUMS256.txt{,.asc}
+gpg --verify SHASUMS256.txt.asc SHASUMS256.txt                # release keys: github.com/nodejs/release-keys
+grep ' node-'$v'-linux-x64.tar.xz$' SHASUMS256.txt            # the hash for NODE24_SHA256
+```
+
+Change both lines in `.github/workflows/ci.yml` in one commit ("CI: Node 24 → $v"); `test/release-gate.test.js`
+checks their shape. The Node 22 used by the other jobs is the runner's own, checked against `.nvmrc`'s major.
 
 ## Upgrading an existing install
 1. Download an encrypted backup (Settings → System & backups).

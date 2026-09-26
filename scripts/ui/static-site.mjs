@@ -4,7 +4,7 @@
 // phone, so it gets the same end-to-end proof the office app and the phone apps get.
 import * as pw from 'playwright';
 const { devices } = pw;
-import { makeChecks, until, settle, signInAgain } from './assert.mjs';
+import { makeChecks, until, settle, signInAgain, PLAYWRIGHT_WEBKIT_LINUX, WEBKIT_LINUX_SW_CACHE } from './assert.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -13,7 +13,7 @@ import { createRequire } from 'node:module';
 const browserType = pw[process.env.SUDS_BROWSER || 'chromium'];
 if (!browserType || !browserType.launch) throw new Error(`SUDS_BROWSER=${process.env.SUDS_BROWSER} is not a Playwright browser (chromium, webkit, firefox)`);
 const base = process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8877';
-const { ok, eq, finish } = makeChecks('static-site');
+const { ok, eq, okUnless, finish } = makeChecks('static-site');
 const browser = await browserType.launch();
 const ctx = await browser.newContext({ ...devices['iPhone 13'], isMobile: true, hasTouch: true });
 const page = await ctx.newPage();
@@ -265,7 +265,7 @@ const offlineGetApp = await page.evaluate(async () => {
   try { const r = await fetch('get-app.html'); return { ok: r.ok && (r.headers.get('content-type') || '').includes('html'), status: r.status, type: r.headers.get('content-type'), controlled, keys }; }
   catch (e) { return { ok: false, error: String(e), controlled, keys }; }
 });
-ok(offlineGetApp.ok, 'offline, the phone/tablet page still opens from the shell cache', offlineGetApp);
+okUnless(PLAYWRIGHT_WEBKIT_LINUX, WEBKIT_LINUX_SW_CACHE, offlineGetApp.ok, 'offline, the phone/tablet page still opens from the shell cache', offlineGetApp);
 await ctx.setOffline(false);
 
 finish(errors);
