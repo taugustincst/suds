@@ -52,6 +52,19 @@ test('release.yml runs the gate before building anything, and the node24 job is 
   assert.ok(!/\n\s+uses:/.test(ci) && !/\n\s+uses:/.test(rel), 'no marketplace (or any) actions');
 });
 
+test('RELEASE.md gives the browser suite\'s real size, wherever it gives one', () => {
+  // It said "thirty scripts" in one place and "29 scripts" in another. A script added to run-all.sh's list
+  // updates the number here too.
+  const runAll = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ui', 'run-all.sh'), 'utf8');
+  const list = /\$\{SCRIPTS:-([^}]+)\}; do/.exec(runAll);
+  assert.ok(list, 'run-all.sh has its default script list');
+  const n = list[1].trim().split(/\s+/).length;
+  const release = fs.readFileSync(path.join(__dirname, '..', 'docs', 'RELEASE.md'), 'utf8');
+  const said = [...release.matchAll(/(\w+) scripts\b/g)].map((m) => m[1]).filter((w) => /^\d+$|^(twenty|thirty|forty)/i.test(w));
+  assert.ok(said.length >= 2, 'RELEASE.md states the count');
+  assert.deepEqual([...new Set(said)], [String(n)], `RELEASE.md says ${said.join(', ')} scripts; run-all.sh runs ${n}`);
+});
+
 test('the Node 24 job installs an exact, pinned version and checks it against a pinned SHA-256', () => {
   // It used to download whatever latest-v24.x was that day and check it against a checksum file fetched from
   // the same place: an unannounced Node change between two pushes, verified only against itself.
