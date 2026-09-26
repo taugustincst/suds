@@ -25,6 +25,9 @@ async function start() {
   db.setSetting('programme_profile', 'treatment');
   const handler = createHandler();
   server = http.createServer(handler);
+  // As in production (server/listener.js): a request the test sends after a long synchronous step must not
+  // meet a keep-alive connection the server is closing at that moment ("fetch failed").
+  server.keepAliveTimeout = require('../server/listener').KEEP_ALIVE_MS;
   await new Promise(res => server.listen(0, '127.0.0.1', res));
   base = `http://127.0.0.1:${server.address().port}`;
   return base;
