@@ -153,6 +153,17 @@ test('the first sign-in after a restore moves the device to a key the backup nev
   // The wrap made before the rotation opened the backup's key: it is dropped, and that account is vouched for next time.
   assert.equal(await V.unlock(out.vault, 'third', 'Third-Password-3'), null);
   assert.deepStrictEqual(out.dropped, ['u3']);
+  // The vault remembers which account was dropped (by its salted username hash, as a wrap is looked up), so
+  // its next sign-in can be told what happened rather than "Username or password is incorrect".
+  assert.equal(await V.droppedAfterRestore(out.vault, 'third'), true, 'the dropped account is recognised by its username');
+  assert.equal(await V.droppedAfterRestore(out.vault, 'THIRD'), true, 'whatever its case');
+  assert.equal(await V.droppedAfterRestore(out.vault, 'owner'), false);
+  assert.equal(await V.droppedAfterRestore(out.vault, 'nobody'), false, 'an unknown username is not');
+  assert.ok(!JSON.stringify(out.vault.dropped_after_restore).includes('third'), 'no username is stored in the clear');
+  // Once someone vouches for it again it has a wrap under the new key, and is no longer marked dropped.
+  const back = V.withWrap(out.vault, await V.wrapDek(out.dek, 'Third-Password-3', { userId: 'u3', name: await V.nameHash(out.vault.salt, 'third') }));
+  assert.equal(await V.droppedAfterRestore(back, 'third'), false);
+  assert.ok(!back.dropped_after_restore || !back.dropped_after_restore.length);
   // The second account's first sign-in gives it its own wrap; the chain goes with the last carried wrap.
   const done = V.withWrap(out.vault, await V.wrapDek(out.dek, 'Second-Password-2', { userId: 'u2', name: await V.nameHash(out.vault.salt, 'second') }));
   assert.ok(!done.chain && done.wraps.every(w => !w.chained));

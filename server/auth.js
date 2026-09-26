@@ -49,19 +49,28 @@ function ssoPolicy() {
 // every role that works with clients, as clients:write is; an administrator may read it. assessments (ASAM
 // ratings and scored screening instruments such as the PHQ-9) are clinical content, held like clinical
 // notes by clinicians and supervisors only.
-// reports:exact lets the funder report be run with exact counts instead of small-cell suppression, for the
-// programme's own submission to its funder (server/routes/reports.js); publication always suppresses.
+// reports:internal lets the funder report, the NDP log and the settlement report be run as anything but a
+// publication release (purpose internal or submission: a custom range, one fund, a period not yet ended).
+// Suppression inside one report cannot stop two being subtracted from each other (August's release minus
+// 1-30 August is whoever was served on the 31st), so such runs are for people who can already see client-level
+// data or run the programme: supervisors and administrators. A caseload-scoped role (navigator, clinician)
+// may also run one that counts only its own caseload, whose records it can open anyway (reportRunAllowed).
+// Finance and readonly get publication releases only; finance's money and hours are exact in those and on
+// Budget / Time, and it needs no people counts beyond them.
+// reports:exact lets such a run use exact counts instead of small-cell suppression, for the programme's own
+// submission to its funder (server/routes/reports.js); publication always suppresses. It is only ever held
+// with reports:internal, since exact counts are never a publication release.
 const PERMS = {
   admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
                'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve','budget:manage',
                'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','reports:read','assignments:manage','export:read','export:identified','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','clients:legal-hold','patient-requests:*','careplan:read',
-               'complaints:*','incidents:*','court-orders:*','agreements:*','reports:exact'],
+               'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact'],
   supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
                'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*',
-               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:exact'],
+               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact'],
   // Front-line staff hold export:read so the Export buttons on their own screens work; without
   // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
   clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
@@ -72,10 +81,12 @@ const PERMS = {
                'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','court-orders:read','agreements:read'],
   // finance sees money, not people: export:read without export:identified means every export it can run
   // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
-  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','budget:manage','time:read','time:all','time:approve','reports:read','export:read','users:read','documents:read','documents:write','reports:exact'],
+  // Its people counts are publication releases only (no reports:internal, so no reports:exact): money and hours
+  // are exact in those, and on Budget and Time for any range or fund.
+  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','budget:manage','time:read','time:all','time:approve','reports:read','export:read','users:read','documents:read','documents:write'],
   // readonly is for oversight (a county analyst, an auditor's dashboard): aggregate reports and the resource
   // directory, keyed by client code. It holds neither clients:read nor export:read, so it can identify nobody
-  // and take nothing off the system.
+  // and take nothing off the system. Its funder, NDP and settlement reports are publication releases only.
   readonly:   ['clients:list-deidentified','resources:read','reports:read','users:read','forms:read','documents:read'],
 };
 
@@ -98,6 +109,15 @@ function requirePerm(...perms) {
       throw forbidden('You do not have permission for this action');
     }
   };
+}
+
+// May this user run a report that is not a publication release? `caseloadScoped` says whether the report
+// counts only the user's caseload (the funder report and the NDP log do; the settlement report does not).
+// Without reports:internal, only a role with clients:read whose run counts nobody it cannot open: its own
+// caseload, or everyone when caseloads are not restricted.
+function reportRunAllowed(user, { caseloadScoped = false } = {}) {
+  if (hasPerm(user, 'reports:internal')) return true;
+  return hasPerm(user, 'clients:read') && (caseloadScoped || !caseloadRestricted(user));
 }
 
 // Caseload scoping: roles without clients:all only see clients assigned to them (setting can disable).
@@ -452,5 +472,5 @@ function passwordPolicy(pw) {
   return errors;
 }
 
-module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
+module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed,
   createSession, markReauth, reauthStatus, verifySigner, useTotp, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

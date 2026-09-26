@@ -85,6 +85,25 @@ await sup.keyboard.press('Escape'); await settle(sup);
 const ro = await signIn('rreader', 'Navigator2026!!');
 await ro.goto(base + '/#/reports'); await settle(ro);
 ok(!(await ro.$('[data-harm-reduction-reports]')), 'a read-only account is not offered the exports');
+// Read-only and finance run publication releases only (server/auth.js reportRunAllowed): the funder report
+// opens on the last quarter that has ended, with no custom range, fund or counts choice to make.
+for (const [page, who] of [[ro, 'read-only'], [await signIn('afinance', 'Navigator2026!!'), 'finance']]) {
+  await page.goto(`${base}/#/funder`); await settle(page);
+  eq(await page.$eval('[data-purpose]', e => e.dataset.purpose).catch(() => null), 'publication', `${who}: the funder report opens on a publication release`);
+  ok(!(await page.$('[data-custom-range]')), `${who}: no custom range or fund filter`);
+  ok(!(await page.$('[data-counts]')), `${who}: no exact-counts choice`);
+  ok(await page.$('[data-publication-only]'), `${who}: the page says the role runs publication releases`);
+  // A link to an internal run is refused with the reason, and the periods it can run are offered.
+  await page.goto(`${base}/#/funder?from=${yearStart}&to=${today}`); await settle(page);
+  ok(/publication release/i.test(await page.textContent('[data-funder-refused]').catch(() => '')), `${who}: an internal run is refused with a clear message`);
+  ok(await page.$('[data-publishable-periods] [data-period=quarter]'), `${who}: and offered the periods it can run`);
+  if (who === 'finance') {
+    await page.goto(`${base}/#/reports?from=${yearStart}&to=${today}`); await settle(page);
+    ok(await page.$('[data-hr-publication-only]'), 'finance: for a range that is not a publication period, the harm-reduction exports say why they are not offered');
+    ok(!(await page.$('[data-ndp-export]')), 'finance: and the NDP buttons are not offered');
+  }
+  await page.context().close();
+}
 await api(admin, 'PUT', '/api/admin/settings', { default_fund_id: null });
 
 // ---- no programme default fund: the warning says where to set one ----

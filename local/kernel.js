@@ -149,7 +149,9 @@ async function rekeyIfRestored(userId, username, password) {
       return false;
     }
     before.dek.fill(0);
-    audit.log({ user: { username: 'device' }, action: 'device.key_rotated', details: { reason: 'restore', carried_accounts_waiting: out.vault.wraps.filter(w => w.chained).length, wraps_dropped: out.dropped.length } });
+    // Which accounts lost their key (account ids: staff accounts, not clients), so whoever reads the device's
+    // audit knows who will need to be let in again, not merely how many.
+    audit.log({ user: { username: 'device' }, action: 'device.key_rotated', details: { reason: 'restore', carried_accounts_waiting: out.vault.wraps.filter(w => w.chained).length, wraps_dropped: out.dropped.length, dropped_accounts: out.dropped } });
     return true;
   });
   vaultQueue = run.catch(() => {});
@@ -273,6 +275,7 @@ async function afterPasswordEvent(method, path, body, ctx, result) {
 }
 const PASSWORD_PATHS = /^\/api\/(auth\/login|auth\/password|local\/signup|local\/setup|local\/sync|users(\/[^/]+)?)$/;
 
+const DROPPED_AT_RESTORE = 'This device was restored from a backup and moved to a new key; your sign-in on this device must be re-approved by someone who can already sign in here. Ask them to type their username and password below.';
 /** The locked device's answers: status, a sign-in that unlocks, and a sign-up someone vouches for. */
 async function lockedAnswer(method, path, body) {
   const b = body || {};
@@ -286,6 +289,11 @@ async function lockedAnswer(method, path, body) {
     if (!r && b.sponsor_username) {
       r = await tryUnwrap(b.sponsor_username, b.sponsor_password);
       if (!r) return refused(401, 'The account unlocking this device could not sign in: check its username and password.', { sponsorRequired: true });
+    }
+    if (!r && await vault.droppedAfterRestore(theVault, b.username)) {
+      // Enrolled after a restore, before the key rotation that followed it (rekeyIfRestored), which dropped
+      // this account's key: its password is not wrong, and it should not be told so.
+      return refused(401, DROPPED_AT_RESTORE, { sponsorRequired: true, droppedAfterRestore: true });
     }
     if (!r) return refused(401, 'Username or password is incorrect.', { sponsorRequired: !(await vault.wrapsFor(theVault, b.username)).length });
     await unlockWith(r.dek);

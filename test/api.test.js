@@ -793,6 +793,25 @@ test('scheduled backup settings are validated, and an admin can trigger one on d
   } finally { require('node:fs').rmSync(backupsDir, { recursive: true, force: true }); }
 });
 
+test('"Back up now" that fails says why (not a 500 Internal server error), and the failure is audited', async () => {
+  const fs = require('node:fs');
+  const backupsDir = require('node:path').join(require('../server/config').dataDir, 'backups');
+  fs.rmSync(backupsDir, { recursive: true, force: true });
+  // A file where the backups folder should be: the backup cannot be written.
+  fs.writeFileSync(backupsDir, 'not a folder');
+  try {
+    const r = await admin.post('/api/admin/backup/run-now', {});
+    assert.notEqual(r.status, 200);
+    assert.notEqual(r.data.error, 'Internal server error', 'the page is told what went wrong');
+    assert.match(r.data.error, /backup failed/i);
+    assert.match(r.data.error, /EEXIST|ENOTDIR|exists|not a directory/i, 'with the reason from the backup');
+    const a = H.db.one(`SELECT success, details FROM audit_log WHERE action='backup.run_now' ORDER BY id DESC LIMIT 1`);
+    assert.ok(a, 'the failed run is audited');
+    assert.equal(a.success, 0);
+    assert.match(a.details, /"error"/);
+  } finally { fs.rmSync(backupsDir, { recursive: true, force: true }); }
+});
+
 test('the update check is off by default, and reports what a configured feed says', async () => {
   const config = require('../server/config');
   assert.equal((await nav.get('/api/admin/update/check')).status, 403);
