@@ -64,6 +64,15 @@ const [sd] = await Promise.all([sup.waitForEvent('download'), sup.click('[data-s
 const swb = readWorkbook(fs.readFileSync(await sd.path()));
 ok(swb.some(s => s.name === 'By allowable use' && s.rows.length > 10), 'the opioid settlement report lists every allowable use', swb.map(s => s.name).join(','));
 
+// The overdose form: choosing "Reversal" ticks "Naloxone was given", and "Where" is the visit Location list.
+await sup.goto(`${base}/#/overdose`); await settle(sup);
+await sup.click('text=+ Record an event'); await sup.waitForSelector('.modal select[name=kind]');
+ok(await sup.$('.modal select[name=location_type] option[value=field]'), '"Where" offers the same coded locations as a visit');
+eq(await sup.$eval('.modal input[name=naloxone_used]', e => e.checked), false, 'naloxone starts unticked');
+await sup.selectOption('.modal select[name=kind]', 'reversal');
+eq(await sup.$eval('.modal input[name=naloxone_used]', e => e.checked), true, 'choosing Reversal ticks "Naloxone was given"');
+await sup.keyboard.press('Escape'); await settle(sup);
+
 // A read-only account sees neither export.
 const ro = await signIn('rreader', 'Navigator2026!!');
 await ro.goto(base + '/#/reports'); await settle(ro);
