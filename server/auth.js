@@ -252,6 +252,52 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 
   }
   return 'recent_auth';
 }
+const LOCKED_MESSAGE = 'Account locked after too many failed attempts. Try again later or contact an administrator.';
+/**
+ * The password of the person already signed in, given again to change it or to turn two-step verification
+ * off. It gets the sign-in's protections, as a signature's password does (verifySigner): the per-address
+ * limit, the account's failure count and lockout, and an audit entry (`action`) for every failure. Before
+ * 1.13.1 these routes took unlimited guesses from inside a session (security review of 1.13.0, finding 5).
+ * Throws on failure; the caller clears the failure count once everything it asks for has been given.
+ */
+async function confirmPassword(ctx, password, { action, message = 'Password is incorrect' }) {
+  const u = db.one(`SELECT id, password_hash, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
+  if (isLocked(u)) {
+    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'locked' } });
+    throw new HttpError(423, LOCKED_MESSAGE);
+  }
+  const app = require('./app'); const limit = config.loginRateLimit;
+  if (app.rateLimited(`login:${ctx.ip}`, limit)) {
+    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'rate limited' } });
+    throw new HttpError(429, 'Too many attempts. Try again later.');
+  }
+  if (await verifyPasswordAsync(password, u.password_hash)) return;
+  app.rateLimit(`login:${ctx.ip}`, limit, 15 * 60_000);
+  const locked = recordPasswordFailure(u);
+  clearReauth(ctx);
+  audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'wrong password', ...(locked ? { locked: true } : {}) } });
+  throw locked ? new HttpError(423, `${message}. ${LOCKED_MESSAGE.replace('Account locked', 'The account is now locked')}`) : unauthorized(message);
+}
+/** The same for a current authenticator code (the per-account code limit, the failure count, the lockout, the audit). */
+function confirmCode(ctx, code, { action }) {
+  const u = db.one(`SELECT id, mfa_enabled, mfa_secret_enc, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
+  if (isLocked(u)) {
+    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'locked' } });
+    throw new HttpError(423, LOCKED_MESSAGE);
+  }
+  if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest('Two-step verification is not set up for your account');
+  if (!require('./app').rateLimit(`mfa:${u.id}`, 10, 10 * 60_000)) {
+    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'rate limited', method: 'totp' } });
+    throw new HttpError(429, 'Too many attempts');
+  }
+  const r = useTotp(u.id, u.mfa_secret_enc, String(code || '').trim());
+  if (r === 'ok') return;
+  const locked = recordPasswordFailure(u);
+  clearReauth(ctx);
+  audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: r === 'replay' ? 'replayed code' : 'wrong code', method: 'totp', ...(locked ? { locked: true } : {}) } });
+  if (locked) throw new HttpError(423, 'That code is not right. The account is now locked after too many failed attempts.');
+  throw forbidden(r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'That code is not right. Enter the current code from your authenticator app.');
+}
 function clearReauth(ctx) { if (ctx.session) { db.run(`UPDATE sessions SET reauth_at=NULL WHERE id=?`, ctx.session.id); ctx.session.reauth_at = null; } }
 function isLocked(user) { return !!(user.locked_until && Date.parse(user.locked_until) > Date.now()); }
 /** Count a wrong password or authenticator code (sign-in, second step, enrolment, signature) toward the account lockout. True if it now locks the account. */
@@ -502,4 +548,4 @@ function passwordPolicy(pw) {
 }
 
 module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed,
-  createSession, markReauth, reauthStatus, verifySigner, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
+  createSession, markReauth, reauthStatus, verifySigner, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
