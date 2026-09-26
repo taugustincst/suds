@@ -80,13 +80,22 @@ function search(ctx, client) {
   const d = R.DEFS[type];
   const n = count(ctx), offset = offsetOf(ctx);
   const filter = R.where(type, ctx.query);
-  const rows = R.page(type, filter, { count: n + 1, offset });
-  const hasNext = rows.length > n; if (hasNext) rows.length = n;
   const coverage = d.phi ? coverageFor(client, type) : null;
+  // Pages are drawn from the rows the caller may see: working out "is there a next page" before the consent
+  // filter made Patient?family=X&birthdate=Y&_count=0 answer, by its next link, whether X is a client here.
+  const covered = d.phi ? { sql: `(${filter.sql}) AND _cid IN (SELECT value FROM json_each(?))`, params: [...filter.params, JSON.stringify([...coverage.keys()])] } : filter;
+  const rows = R.page(type, covered, { count: n + 1, offset });
+  // _count=0 on a patient type asks only "is there anything?": never answered with a next link.
+  const hasNext = rows.length > n && !(d.phi && n === 0); if (rows.length > n) rows.length = n;
   const base = baseUrl(ctx);
-  const entries = []; const perClient = new Map(); const omitted = new Set(); let omittedRows = 0;
+  const entries = []; const perClient = new Map();
+  // How many patients the search matched but the caller may not see: counted over the whole search, and only
+  // for a search that does not name one person (for which any count would say whether they are a client).
+  let omitted = { patients: 0, rows: 0 };
+  if (d.phi && !R.identifying(type, ctx.query)) {
+    omitted = R.count(type, { sql: `(${filter.sql}) AND _cid NOT IN (SELECT value FROM json_each(?))`, params: [...filter.params, JSON.stringify([...coverage.keys()])] });
+  }
   for (const row of rows) {
-    if (d.phi && !coverage.has(row._cid)) { omittedRows++; omitted.add(row._cid); continue; }
     const r = R.toResource(type, row);
     if (!r || (d.keep && !d.keep(r.full, client))) continue;
     entries.push({ fullUrl: `${base}/${type}/${r.resource.id}`, resource: r.resource, search: { mode: 'match' } });
@@ -103,10 +112,10 @@ function search(ctx, client) {
     // A search that names one person gets the same words whether or not anyone was withheld: "1 withheld"
     // in answer to identifier=X would itself tell the recipient that X is a client of this programme.
     if (R.identifying(type, ctx.query)) issues.push({ severity: 'information', code: 'suppressed', diagnostics: `Results include only patients whose active consent covers ${client.recipient} for this purpose of use.` });
-    else if (omitted.size) issues.push({ severity: 'warning', code: 'suppressed', diagnostics: `${omitted.size} patient(s) (${omittedRows} ${type} resource(s)) on this page were withheld: no active consent covers ${client.recipient} for this purpose of use, or the patient has an agreed restriction.` });
+    else if (omitted.patients) issues.push({ severity: 'warning', code: 'suppressed', diagnostics: `${omitted.patients} patient(s) (${omitted.rows} ${type} resource(s)) matching this search were withheld: no active consent covers ${client.recipient} for this purpose of use, or the patient has an agreed restriction.` });
     bundle.entry.push({ resource: { ...outcome(issues), id: uuid() }, search: { mode: 'outcome' } });
     const reqId = requestId();
-    account({ ctx, client, type, interaction: 'search', perClient, returned: entries.length, omittedPatients: R.identifying(type, ctx.query) ? undefined : omitted.size, reqId });
+    account({ ctx, client, type, interaction: 'search', perClient, returned: entries.length, omittedPatients: R.identifying(type, ctx.query) ? undefined : omitted.patients, reqId });
   } else {
     audit.log({ user: client.actor, action: 'fhir.search', entity: type, ip: ctx.ip, details: { client: client.prefix, params: [...new Set(ctx.query.keys())], returned: entries.length } });
   }

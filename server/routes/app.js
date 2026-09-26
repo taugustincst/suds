@@ -25,10 +25,45 @@ function metricsTokenPresented(ctx) {
   return crypto.timingSafeEqual(Buffer.from(config.metricsToken), Buffer.from(given));
 }
 
+// Why this process should not take traffic yet, or null when it can serve. Migrations run inside db.open()
+// before the listener starts, so "not migrated" means a database that was swapped underneath (a restore's
+// reopen that has not finished) rather than a normal start.
+function notReadyReason() {
+  if (!db.isOpen()) return 'database not open';
+  const holder = require('../backup-lock').current();
+  if (holder && holder.name === 'restore') return 'restore in progress';
+  const schema = Number(db.getSetting('schema_version', '0'));
+  if (schema !== db.LATEST_SCHEMA_VERSION) return `schema ${schema}, this build needs ${db.LATEST_SCHEMA_VERSION}`;
+  return null;
+}
+
 module.exports = (r) => {
-  // Liveness and readiness. Unauthenticated and carrying no PHI or configuration detail, so a monitor, a
-  // Docker HEALTHCHECK or a county's IT can call it. /api/meta/constants only proved the listener was up;
-  // this proves the database answers and reports the numbers an operator needs before disk runs out.
+  // Liveness: is the process up and does its database answer a trivial query? Nothing else. A container
+  // platform restarts a process whose liveness probe fails, so this must never fail for something a restart
+  // does not fix — an expiring certificate, a failed backup, anchors in the wrong place (those are
+  // /api/health warnings). Unauthenticated, no detail. Docker HEALTHCHECK, systemd watchdogs and a
+  // Kubernetes livenessProbe use this one (docs/DEPLOYMENT.md, "Monitoring and logs").
+  r.get('/api/health/live', (ctx) => {
+    try {
+      if (db.one('SELECT 1 AS ok').ok !== 1) throw new Error('unexpected answer');
+      return { ok: true };
+    } catch { ctx.status = 503; return { ok: false }; }
+  });
+
+  // Readiness: can this process serve requests now? The database is open, migrated to this build's schema,
+  // and not being replaced by a restore. A load balancer or a Kubernetes readinessProbe stops sending traffic
+  // while it fails, but nothing is restarted. Operational warnings do not affect it either.
+  r.get('/api/health/ready', (ctx) => {
+    let reason;
+    try { reason = notReadyReason(); } catch { reason = 'database error'; }
+    if (reason) { ctx.status = 503; return { ok: false, reason }; }
+    return { ok: true };
+  });
+
+  // The detailed operational status, for monitoring and alerting (not for a restart decision). Unauthenticated
+  // and carrying no PHI or configuration detail, so a monitor or a county's IT can call it. It answers 503
+  // for anything an operator must act on — including warnings a restart cannot fix — which is why probes use
+  // /api/health/live and /api/health/ready above.
   r.get('/api/health', (ctx) => {
     // Status and warnings are for any monitor. The version, schema number and disk figures describe the
     // installation (what to attack, how much it holds) and go only to an administrator's session or to a

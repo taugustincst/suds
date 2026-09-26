@@ -28,40 +28,46 @@ module.exports = {
     { name: 'resource_photos', enc: [], scope: 'all', writePerm: 'resources:write', parent: ['resources', 'resource_id'], blob: ['data_b64'] },
     { name: 'policy_documents', enc: [], scope: 'all', writePerm: 'documents:write', blob: ['file_b64'] },
     // Grant structure is budget:manage over REST; a device holding only budget:write must not restructure it by sync.
-    { name: 'funding_sources', enc: [], scope: 'all', writePerm: 'budget:manage' },
-    { name: 'budget_lines', enc: [], scope: 'all', writePerm: 'budget:manage', parent: ['funding_sources', 'funding_source_id'], selfParent: 'parent_id' },
+    // Funds and lines travel to every device (visits and time entries point at them, and a device enforces
+    // foreign keys), but their money and grant details only to one whose role holds budget:read (redact).
+    { name: 'funding_sources', enc: [], scope: 'all', writePerm: 'budget:manage', redact: { perm: 'budget:read', cols: { total_amount: 0, grant_number: null, restrictions: null, notes: null } } },
+    { name: 'budget_lines', enc: [], scope: 'all', writePerm: 'budget:manage', parent: ['funding_sources', 'funding_source_id'], selfParent: 'parent_id', redact: { perm: 'budget:read', cols: { allocated_amount: 0, notes: null } } },
     // merged_into points at another client: the record that was kept must land before its duplicate.
     { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc', 'legal_hold_reason_enc', 'legal_hold_cleared_reason_enc', 'removed_reason_enc', 'contact_preferences_enc'], legacy: { legal_hold_reason: 'legal_hold_reason_enc', contact_preferences: 'contact_preferences_enc' }, scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write', selfParent: 'merged_into' },
     { name: 'assignments', enc: ['notes_enc'], legacy: { notes: 'notes_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'assignments:manage', parent: ['clients', 'client_id'] },
     { name: 'episodes', enc: ['presenting_problem_enc', 'discharge_summary_enc', 'reopen_reason_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['clients', 'client_id'] },
     // CalOMS Tx records hang off an episode: the episode must land first.
     { name: 'caloms_records', enc: ['answers_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['episodes', 'episode_id'] },
-    { name: 'interventions', enc: ['summary_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'interventions:write', parent: ['clients', 'client_id'] },
-    { name: 'overdose_events', enc: ['notes_enc', 'substances_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'overdose:write', parent: ['clients', 'client_id'] },
-    { name: 'calls', enc: ['contact_name_enc', 'phone_enc', 'summary_enc', 'purpose_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'calls:write', parent: ['clients', 'client_id'] },
-    { name: 'time_entries', enc: ['description_enc', 'approval_note_enc'], legacy: { description: 'description_enc', approval_note: 'approval_note_enc' }, scope: 'client-or-null', clientCol: 'client_id', writePerm: 'time:write', parent: ['clients', 'client_id'] },
+    // unlinked: a row with no client is outside caseload scoping, so it is its owners' (these columns) or a
+    // holder of `all`'s -- over REST (crud.js) and by sync alike. Their free text (a caller's name and number,
+    // an outreach summary, a bystander's overdose) can name someone.
+    { name: 'interventions', enc: ['summary_enc'], scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['user_id'], all: 'clients:all' }, writePerm: 'interventions:write', parent: ['clients', 'client_id'] },
+    { name: 'overdose_events', enc: ['notes_enc', 'substances_enc'], scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['reported_by'], all: 'clients:all' }, writePerm: 'overdose:write', parent: ['clients', 'client_id'] },
+    { name: 'calls', enc: ['contact_name_enc', 'phone_enc', 'summary_enc', 'purpose_enc'], scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['user_id'], all: 'clients:all' }, writePerm: 'calls:write', parent: ['clients', 'client_id'] },
+    { name: 'time_entries', enc: ['description_enc', 'approval_note_enc'], legacy: { description: 'description_enc', approval_note: 'approval_note_enc' }, scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['user_id'], all: 'time:all' }, writePerm: 'time:write', parent: ['clients', 'client_id'] },
     // A referral may cite the consent it was made under, so consents come first.
-    { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc', 'signer_name_enc', 'revoked_reason_enc', 'witness_enc'], legacy: { revoked_reason: 'revoked_reason_enc', witness: 'witness_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
+    { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc', 'signer_name_enc', 'revoked_reason_enc', 'witness_enc', 'document_ref_enc'], legacy: { revoked_reason: 'revoked_reason_enc', witness: 'witness_enc', document_ref: 'document_ref_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
     { name: 'court_orders', enc: ['court_enc', 'case_ref_enc', 'recipient_enc', 'purpose_enc', 'scope_enc', 'vacated_reason_enc'], legacy: { vacated_reason: 'vacated_reason_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'court-orders:write', parent: ['clients', 'client_id'] },
     { name: 'part2_notices', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     { name: 'referrals', enc: ['outcome_enc', 'barrier_enc', 'notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'referrals:write', parent: ['clients', 'client_id'] },
+    // Migration 42 moved client_form_files.filename, imports.filename and consents.document_ref likewise.
     // Migration 39 moved consents.witness and import_items.metadata into witness_enc and metadata_enc.
   // Migration 37 moved the free text on assignments, time entries, consents (revocation), expenditures, notes
     // (countersignature), addenda, client forms and clients (contact preferences) into _enc columns likewise.
     // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
-    { name: 'tasks', enc: ['title_enc', 'description_enc'], legacy: { description: 'description_enc' }, scope: 'client-or-null', clientCol: 'client_id', writePerm: 'tasks:write', parent: ['clients', 'client_id'] },
-    { name: 'expenditures', enc: ['description_enc', 'approval_note_enc'], legacy: { description: 'description_enc', approval_note: 'approval_note_enc' }, scope: 'client-or-null', clientCol: 'client_id', writePerm: 'budget:write', parent: ['clients', 'client_id'] },
+    { name: 'tasks', enc: ['title_enc', 'description_enc'], legacy: { description: 'description_enc' }, scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['assigned_to', 'created_by'], all: 'clients:all' }, writePerm: 'tasks:write', parent: ['clients', 'client_id'] },
+    { name: 'expenditures', enc: ['description_enc', 'approval_note_enc'], legacy: { description: 'description_enc', approval_note: 'approval_note_enc' }, scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['user_id'], all: 'budget:approve' }, writePerm: 'budget:write', readPerm: 'budget:read', parent: ['clients', 'client_id'] },
     { name: 'notes', enc: ['content_enc', 'structured_enc', 'title_enc', 'cosign_note_enc'], legacy: { cosign_note: 'cosign_note_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'notes:admin:write', parent: ['clients', 'client_id'] },
     { name: 'note_addenda', enc: ['content_enc', 'reason_enc'], legacy: { reason: 'reason_enc' }, scope: 'via-note', writePerm: 'notes:admin:write', parent: ['notes', 'note_id'] },
     { name: 'disclosures', enc: ['recipient_enc', 'purpose_enc', 'what_enc', 'justification_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     // An import (a OneNote page, a Pocket AI transcript) is its importer's until it is filed against a client:
     // the REST routes show it only to them (or to clients:all), and a device gets the same -- scope 'importer'.
-    { name: 'imports', enc: [], scope: 'importer', writePerm: 'imports:write' },
+    { name: 'imports', enc: ['filename_enc'], legacy: { filename: 'filename_enc' }, scope: 'importer', writePerm: 'imports:write' },
     { name: 'import_items', enc: ['content_enc', 'title_enc', 'metadata_enc'], legacy: { metadata: 'metadata_enc' }, scope: 'via-import', writePerm: 'imports:write', parent: ['imports', 'import_id'] },
     { name: 'form_templates', enc: [], scope: 'all', writePerm: 'forms:manage', blob: ['file_b64'] },
     { name: 'client_forms', enc: ['values_enc', 'notes_enc'], legacy: { notes: 'notes_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['clients', 'client_id'] },
-    { name: 'client_form_files', enc: ['data_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
+    { name: 'client_form_files', enc: ['data_enc', 'filename_enc'], legacy: { filename: 'filename_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
     { name: 'patient_requests', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     // Clinical documentation (CalAIM): the problem list and its history, the care plan, ASAM assessments and
     // outcome measures. readPerm: a device whose role cannot read them (an ASAM rating on a navigator's

@@ -174,10 +174,12 @@ function accountRoles() {
 route('sync', async () => {
   if (!state.local) { nav('dashboard'); return h('div'); }
   const st = await get('/api/local/sync/status');
-  const serverGuess = st.server || 'https://suds.local';
+  // The office that served this page: the Content-Security-Policy (connect-src 'self', server/csp.js) lets a
+  // browser sync only with the site it opened SUDS from.
+  const serverGuess = st.server || location.origin;
   const log = h('div', { class: 'small muted mt', 'data-sync-log': '1' });
   const f = form([
-    { name: 'server', label: 'Office SUDS address', required: true, value: serverGuess, help: 'Usually https://suds.local on the office Wi-Fi. Shown under Settings → Network & devices on the office computer.', span: true },
+    { name: 'server', label: 'Office SUDS address', required: true, value: serverGuess, help: 'The address you opened SUDS from (this browser can sync only with that office SUDS). Shown under Settings → Network & devices on the office computer.', span: true },
     { name: 'username', label: 'Your office username', required: true, value: st.username || state.user.username },
     // A field literally named "password" next to a filled-in username is exactly the pattern browsers scan
     // for when deciding what to autofill — autocomplete="off" is routinely ignored for that pattern, so it

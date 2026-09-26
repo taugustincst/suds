@@ -19,14 +19,14 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { makeChecks, until, settle, signInAgain } from './assert.mjs';
+import { makeChecks, until, settle, signInAgain, PLAYWRIGHT_WEBKIT_LINUX, WEBKIT_LINUX_SW_CACHE } from './assert.mjs';
 // A page of the older build has no activity hook (window.__sudsActivity) to wait on; pace it the old way.
 const pace = async (p) => ((await p.evaluate(() => !!window.__sudsActivity).catch(() => false)) ? settle(p) : p.waitForTimeout(150));
 // SUDS_BROWSER=webkit (or firefox) runs this script in that engine instead of Chromium; CI's WebKit smoke
 // job uses it as the nearest thing to iPhone Safari a Linux runner has.
 const browserType = pw[process.env.SUDS_BROWSER || 'chromium'];
 if (!browserType || !browserType.launch) throw new Error(`SUDS_BROWSER=${process.env.SUDS_BROWSER} is not a Playwright browser (chromium, webkit, firefox)`);
-const { ok, eq, fail, finish } = makeChecks('qa-retest');
+const { ok, eq, fail, okUnless, finish } = makeChecks('qa-retest');
 const require = createRequire(import.meta.url);
 const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
 const { plainStatic } = require(path.join(repo, 'scripts/serve-static.js'));
@@ -541,7 +541,7 @@ else if (buildOldSite()) {
     // say what the cache held if it never arrives (WebKit has failed this).
     const inShell = await until(() => page.evaluate((v) => caches.open('suds-shell-' + v).then(c => c.match('get-app.html')).then(r => !!r), VERSION), { timeout: 15000 });
     const shellKeys = inShell ? null : await page.evaluate(async () => { const out = {}; for (const k of await caches.keys()) out[k] = (await (await caches.open(k)).keys()).map(r => new URL(r.url).pathname).filter(p => /get-app|index|app\.js/.test(p)); return out; });
-    ok(inShell, `${label}: get-app.html is in the shell cache`, shellKeys);
+    okUnless(PLAYWRIGHT_WEBKIT_LINUX, WEBKIT_LINUX_SW_CACHE, inShell, `${label}: get-app.html is in the shell cache`, shellKeys);
     // item 6: no stray dialog title in the accessibility tree
     await page.goto(base + '/#/admin?tab=settings'); await until(async () => !/Loading…/.test((await page.textContent('#main')) || ''), { timeout: 10000 });
     ok(await until(async () => !(await a11yHas(page, /add a to-do|add resource/i)), { timeout: 8000 }), `${label}: no stray dialog title remains in the accessibility tree`);

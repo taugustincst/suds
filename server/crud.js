@@ -7,6 +7,11 @@ const { notFound, forbidden, HttpError } = require('./http');
 const { validate, paging } = require('./validate');
 const { uuid } = require('./crypto');
 
+// Rows built here are presented through withClientName (client code only for a role without clients:read),
+// so a de-identified role holding the table's permission (finance: expenditures, time) may still reach a row
+// that names a client; auth.canAccessClient refuses it everywhere else.
+const DEID = { deidentified: true };
+
 function clientExists(id) { return !!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id); }
 
 // ---- optimistic concurrency ----
@@ -26,7 +31,7 @@ function assertFresh(ctx, row, entity) {
 }
 
 /**
- * opts: { table, entity, perm, shape, clientRequired, dateCol, ownerCol, joins, select, filters(ctx,where,params),
+ * opts: { table, entity, perm, shape, clientRequired, dateCol, ownerCol, unlinked, joins, select, filters(ctx,where,params),
  *   beforeInsert(ctx,v), afterInsert(ctx,row), beforeUpdate(ctx,v,row), afterUpdate(ctx,mergedRow,prevRow),
  *   beforeDelete(ctx,row), afterLoad(ctx,row), canEdit(ctx,row), canDelete(ctx,row) }
  */
@@ -34,9 +39,21 @@ function build(r, opts) {
   const { table, entity, perm, shape, dateCol = 'created_at', ownerCol = 'user_id', joins = '', select = `${table}.*`, clientRequired = true } = opts;
   const base = opts.base || `/api/${entity}s`;
   const readPerm = `${perm}:read`, writePerm = `${perm}:write`;
+  // A row with no client is outside caseload scoping: it is its owners' (or a holder of `all`'s). The rule
+  // lives with the table's sync description (sync-tables.js `unlinked`) so a device gets exactly what REST
+  // shows; an explicit opts.unlinked overrides it.
+  const unlinked = opts.unlinked || (require('./sync-tables').tables.find(t => t.name === table) || {}).unlinked || null;
+  const privateTo = (ctx) => (unlinked && !auth.hasPerm(ctx.user, unlinked.all) ? unlinked.owners : null);
+  function assertUnlinkedOwner(ctx, row) {
+    const owners = row.client_id ? null : privateTo(ctx);
+    if (owners && !owners.some(c => row[c] === ctx.user.id)) {
+      audit.log({ user: ctx.user, action: 'authz.denied', entity, entityId: row.id, ip: ctx.ip, success: false, details: { reason: 'not the owner' } });
+      throw forbidden('That record belongs to another worker');
+    }
+  }
 
   function decorate(ctx, rows) { return opts.afterLoad ? rows.map(x => opts.afterLoad(ctx, x)) : rows; }
-  function checkClient(ctx, clientId) { if (clientId) { if (!clientExists(clientId)) throw notFound('Client not found'); auth.assertClientAccess(ctx, clientId); } }
+  function checkClient(ctx, clientId) { if (clientId) { if (!clientExists(clientId)) throw notFound('Client not found'); auth.assertClientAccess(ctx, clientId, DEID); } }
 
   r.get(base, auth.requireAuth, auth.requirePerm(readPerm, writePerm), (ctx) => {
     const { limit, offset } = paging(ctx.query, { limit: 100, max: 1000 });
@@ -45,6 +62,8 @@ function build(r, opts) {
       const cf = auth.caseloadFilter(ctx.user, `${table}.client_id`);
       if (cf.sql !== '1=1') { where.push(`(${table}.client_id IS NULL OR ${cf.sql})`); params.push(...cf.params); }
       const cid = ctx.query.get('client_id'); if (cid) { where.push(`${table}.client_id=?`); params.push(cid); }
+      const owners = privateTo(ctx);
+      if (owners) { where.push(`(${table}.client_id IS NOT NULL OR ${owners.map(c => `${table}.${c}=?`).join(' OR ')})`); params.push(...owners.map(() => ctx.user.id)); }
     }
     if (ownerCol && ctx.query.get('user_id')) { where.push(`${table}.${ownerCol}=?`); params.push(ctx.query.get('user_id')); }
     if (ownerCol && ctx.query.get('mine') === '1') { where.push(`${table}.${ownerCol}=?`); params.push(ctx.user.id); }
@@ -62,13 +81,11 @@ function build(r, opts) {
   r.get(`${base}/:id`, auth.requireAuth, auth.requirePerm(readPerm, writePerm), (ctx) => {
     const row = db.one(`SELECT ${select} FROM ${table} ${joins} WHERE ${table}.id=?`, ctx.params.id);
     if (!row) throw notFound();
-    if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
-    // A record with no client (a staff time entry, a program to-do) is not covered by caseload scoping, so
-    // the list view's owner filter has to be applied here too — otherwise it can be read by id alone.
-    else if (opts.ownerOnly && row[ownerCol] !== ctx.user.id && !auth.hasPerm(ctx.user, opts.ownerOnly)) {
-      audit.log({ user: ctx.user, action: 'authz.denied', entity, entityId: row.id, ip: ctx.ip, success: false, details: { reason: 'not the owner' } });
-      throw forbidden('That record belongs to another worker');
-    }
+    if (row.client_id) auth.assertClientAccess(ctx, row.client_id, DEID);
+    // A record with no client (a staff time entry, a crisis call from someone not yet a client) is not
+    // covered by caseload scoping, so the list view's owner filter has to be applied here too — otherwise it
+    // can be read by id alone.
+    else assertUnlinkedOwner(ctx, row);
     audit.log({ user: ctx.user, action: `${entity}.view`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
     return { row: decorate(ctx, [row])[0] };
   });
@@ -99,7 +116,7 @@ function build(r, opts) {
   r.put(`${base}/:id`, auth.requireAuth, auth.requirePerm(writePerm), (ctx) => {
     const row = db.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
     if (!row) throw notFound();
-    if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
+    if (row.client_id) auth.assertClientAccess(ctx, row.client_id, DEID); else assertUnlinkedOwner(ctx, row);
     if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden('You cannot edit this record');
     if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
     const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true, existing: row });
@@ -119,7 +136,7 @@ function build(r, opts) {
   r.delete(`${base}/:id`, auth.requireAuth, auth.requirePerm(writePerm), (ctx) => {
     const row = db.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
     if (!row) throw notFound();
-    if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
+    if (row.client_id) auth.assertClientAccess(ctx, row.client_id, DEID); else assertUnlinkedOwner(ctx, row);
     if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden('You cannot delete this record');
     if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden('You cannot delete this record');
     if (opts.beforeDelete) opts.beforeDelete(ctx, row);

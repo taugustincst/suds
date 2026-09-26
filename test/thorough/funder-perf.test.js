@@ -1,4 +1,6 @@
 'use strict';
+// Performance check: runs in the thorough CI job (SUDS_THOROUGH=1; test/thorough/, not npm test), so a busy
+// machine running the whole suite in parallel cannot flake it. Run it alone: node --test test/thorough/funder-perf.test.js
 // The funder report is the page a programme is judged on, and at 20,000 clients / 100,000 visits it took
 // 4.4 s — during which the server answered nothing else, /api/health included — because the set of people
 // served was a CTE recomputed by each of about nine queries, and the report-period predicate was read as two
@@ -11,8 +13,8 @@
 // `node test/fixtures/funder-scale.js` measures at the full size.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
-const H = require('./helpers');
-const scale = require('./fixtures/funder-scale');
+const H = require('../helpers');
+const scale = require('../fixtures/funder-scale');
 
 const UNITS = 3;
 const CEILING_MS = 8000;
@@ -35,7 +37,7 @@ function oldServedUnit(from, to, fromTs, toEnd) {
 }
 
 test('a fiscal-year funder report over 10,000 clients and 50,000 visits costs about one pass, not nine', async () => {
-  const { range } = require('../server/routes/reports');
+  const { range } = require('../../server/routes/reports');
   // A full fiscal year, where the served set is the cost (a short period is dominated by fixed costs).
   for (const q of ['from=2025-07-01&to=2026-06-30', 'from=2025-07-01&to=2026-06-30&purpose=submission&counts=exact']) {
     const p = range({ query: new URLSearchParams(q) });

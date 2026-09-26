@@ -273,15 +273,23 @@ test('GET /api/imports and discarding a staged item: own imports only, unless a 
 });
 
 test('the OneNote (Microsoft Graph) routes report "not configured" instead of failing when Graph is not set up', async () => {
-  const s = await nav.get('/api/imports/onenote/status');
-  assert.equal(s.status, 200); assert.deepEqual(s.data, { configured: false, user: null });
-  const nb = await nav.get('/api/imports/onenote/notebooks');
+  const s = await sup.get('/api/imports/onenote/status');
+  assert.equal(s.status, 200); assert.deepEqual(s.data, { configured: false, user: null, shared_allowed: true });
+  const nb = await sup.get('/api/imports/onenote/notebooks');
   assert.equal(nb.status, 502); assert.match(nb.data.error, /not configured/);
-  const pg = await nav.get('/api/imports/onenote/sections/abc/pages');
+  const pg = await sup.get('/api/imports/onenote/sections/abc/pages');
   assert.equal(pg.status, 502); assert.match(pg.data.error, /not configured/);
-  const f = await nav.post('/api/imports/onenote/fetch', { page_ids: ['p1'] });
+  const f = await sup.post('/api/imports/onenote/fetch', { page_ids: ['p1'] });
   assert.equal(f.status, 502); assert.match(f.data.error, /not configured/);
-  assert.equal((await nav.post('/api/imports/onenote/fetch', { page_ids: [] })).status, 400, 'at least one page');
+  assert.equal((await sup.post('/api/imports/onenote/fetch', { page_ids: [] })).status, 400, 'at least one page');
+  // Security review of 1.12.4, 8(b): the shared notebook the server's Graph credentials open holds every
+  // worker's pages. Listing and fetching it is for supervisors and administrators (graph:import); a navigator
+  // or clinician imports what they upload themselves, and is told so.
+  assert.deepEqual((await nav.get('/api/imports/onenote/status')).data, { configured: false, user: null, shared_allowed: false });
+  for (const [m, u] of [['GET', '/api/imports/onenote/notebooks'], ['GET', '/api/imports/onenote/sections/abc/pages'], ['POST', '/api/imports/onenote/fetch']]) {
+    assert.equal((await nav.req(m, u, m === 'POST' ? { page_ids: ['p1'] } : undefined)).status, 403, `${m} ${u}: the shared notebook is not a navigator's`);
+  }
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='authz.denied' AND details LIKE '%graph:import%'`), 'the refusal is audited');
   for (const [m, u] of [['GET', '/api/imports/onenote/status'], ['GET', '/api/imports/onenote/notebooks'], ['GET', '/api/imports/onenote/sections/abc/pages'], ['POST', '/api/imports/onenote/fetch']]) {
     assert.equal((await fin.req(m, u, m === 'POST' ? { page_ids: ['p1'] } : undefined)).status, 403, `${m} ${u} needs imports:write`);
   }
@@ -302,22 +310,37 @@ test('GET /api/admin/certificate serves the CA for phones to trust, to settings:
   assert.equal((await admin.get('/api/admin/certificate')).data, 'leaf', 'an older certs folder still serves its leaf');
 });
 
-test('GET /api/admin/keys-backup downloads keys.json only when the keys come from that file, and records when', async () => {
-  assert.equal((await sup.get('/api/admin/keys-backup')).status, 403);
-  assert.equal((await nav.get('/api/admin/keys-backup')).status, 403);
+test('POST /api/admin/keys-backup downloads keys.json only after the administrator proves it is them, and records when', async () => {
+  // Security review of 1.12.4, 8(a): the keys open every backup, so a session alone (a cookie left on an
+  // unlocked workstation) is not enough: the password or authenticator code again, or a confirmation within
+  // the few minutes after the last one (auth.verifySigner, as for signing a note). Every attempt is audited.
+  assert.equal((await sup.post('/api/admin/keys-backup', { confirm: true })).status, 403);
+  assert.equal((await nav.post('/api/admin/keys-backup', { confirm: true })).status, 403);
+  assert.ok([404, 405].includes((await admin.get('/api/admin/keys-backup')).status), 'no longer a plain link a session can follow');
   const was = config.keySource;
+  const adminId = H.db.one(`SELECT id FROM users WHERE username='admin'`).id;
   try {
     config.keySource = 'env';
-    const env = await admin.get('/api/admin/keys-backup');
+    const env = await admin.post('/api/admin/keys-backup', { password: 'AdminPassw0rd!x' });
     assert.equal(env.status, 400); assert.match(env.data.error, /environment/);
     config.keySource = 'file';
     const body = JSON.stringify({ SUDS_ENCRYPTION_KEY: 'a'.repeat(64), SUDS_INDEX_KEY: 'b'.repeat(64) });
     fs.writeFileSync(config.keysJsonPath, body);
-    const r = await admin.get('/api/admin/keys-backup');
+    // Long after signing in: a confirmation alone is refused, and so is a wrong password.
+    H.db.run(`UPDATE sessions SET reauth_at='2020-01-01T00:00:00.000Z' WHERE user_id=?`, adminId);
+    const stale = await admin.post('/api/admin/keys-backup', { confirm: true });
+    assert.equal(stale.status, 403); assert.equal(stale.data.reauthRequired, true);
+    assert.equal((await admin.post('/api/admin/keys-backup', { password: 'wrong-password' })).status, 403);
+    assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='keys.download.failed' AND user_id=?`, adminId), 'the failed attempt is audited');
+    H.db.run(`UPDATE users SET failed_attempts=0 WHERE id=?`, adminId);
+    const r = await admin.post('/api/admin/keys-backup', { password: 'AdminPassw0rd!x' });
     assert.equal(r.status, 200);
     assert.match(r.headers.get('content-disposition'), /suds-keys-KEEP-SECRET\.json/);
     assert.deepEqual(r.data, JSON.parse(body));
     assert.ok(H.db.getSetting('keys_backup_at', null), 'the dashboard can stop asking');
-    assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='keys.download'`));
+    const a = H.db.one(`SELECT * FROM audit_log WHERE action='keys.download' ORDER BY id DESC LIMIT 1`);
+    assert.equal(JSON.parse(a.details).method, 'password', 'the audit entry says how the administrator proved it');
+    // Within the few minutes after the password, a confirmation is enough (the same rule as signing).
+    assert.equal((await admin.post('/api/admin/keys-backup', { confirm: true })).status, 200);
   } finally { config.keySource = was; fs.rmSync(config.keysJsonPath, { force: true }); }
 });

@@ -30,8 +30,8 @@ function checkPeriod(v) {
 module.exports = (r) => {
   crud.build(r, {
     table: 'time_entries', entity: 'time_entry', base: '/api/time', perm: 'time', dateCol: 'work_date', clientRequired: false,
-    // Time is personal: an entry with no client can only be read by the worker who logged it, or a manager.
-    ownerOnly: 'time:all',
+    // Time is personal: an entry with no client can only be read by the worker who logged it, or a manager
+    // (time:all) -- sync-tables.js `unlinked`, which crud.js applies to these routes.
     joins: 'JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id',
     select: `time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${NAME_COLS}`,
     afterLoad: (ctx, x) => presentTime(withClientName(ctx, x)),

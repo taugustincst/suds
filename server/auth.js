@@ -57,18 +57,20 @@ function ssoPolicy() {
 // may also run one that counts only its own caseload, whose records it can open anyway (reportRunAllowed).
 // Finance and readonly get publication releases only; finance's money and hours are exact in those and on
 // Budget / Time, and it needs no people counts beyond them.
+// graph:import: browse and fetch the shared OneNote notebook the server's Microsoft Graph credentials open
+// (every worker's pages); front-line roles import only what they upload (server/routes/imports.js).
 // reports:exact lets such a run use exact counts instead of small-cell suppression, for the programme's own
 // submission to its funder (server/routes/reports.js); publication always suppresses. It is only ever held
 // with reports:internal, since exact counts are never a publication release.
 const PERMS = {
   admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
                'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve','budget:manage',
-               'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','reports:read','assignments:manage','export:read','export:identified','forms:*',
+               'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','graph:import','reports:read','assignments:manage','export:read','export:identified','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','clients:legal-hold','patient-requests:*','careplan:read',
                'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact'],
   supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
-               'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
+               'consents:*','imports:*','graph:import','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*',
                'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact'],
   // Front-line staff hold export:read so the Export buttons on their own screens work; without
@@ -87,6 +89,8 @@ const PERMS = {
   // readonly is for oversight (a county analyst, an auditor's dashboard): aggregate reports and the resource
   // directory, keyed by client code. It holds neither clients:read nor export:read, so it can identify nobody
   // and take nothing off the system. Its funder, NDP and settlement reports are publication releases only.
+  // forms:read is the form library (templates, blank forms); a client's filled forms are client records and
+  // need clients:read as well (server/routes/forms.js), which readonly does not hold.
   readonly:   ['clients:list-deidentified','resources:read','reports:read','users:read','forms:read','documents:read'],
 };
 
@@ -134,13 +138,21 @@ function caseloadRestricted(user) {
 const ACTIVE_ASSIGNMENT = `((end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
 const activeAssignment = (prefix = '') => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
 
-function canAccessClient(user, clientId) {
+// A role without clients:read (finance, readonly: clients:list-deidentified) is not caseload-scoped because
+// it never sees who a client is — so it may open no client's record. caseloadRestricted() is false for it,
+// which used to make this answer "yes" for every client (readonly read any client's identified forms). The
+// one exception is opt-in: `deidentified: true` from a route whose answer is keyed by client code only
+// (crud.js: an expenditure or time entry that names a client, which finance approves; withClientName gives a
+// role without clients:read the code, never the name). test/deidentified-roles.test.js sweeps every GET
+// route as each such role and fails on any identifier in the answer.
+function canAccessClient(user, clientId, { deidentified = false } = {}) {
+  if (!hasPerm(user, 'clients:read')) return deidentified && hasPerm(user, 'clients:list-deidentified');
   if (!caseloadRestricted(user)) return true;
   const r = db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${activeAssignment()}`, clientId, user.id);
   return !!r;
 }
-function assertClientAccess(ctx, clientId) {
-  if (!canAccessClient(ctx.user, clientId)) {
+function assertClientAccess(ctx, clientId, opts) {
+  if (!canAccessClient(ctx.user, clientId, opts)) {
     audit.log({ user: ctx.user, action: 'authz.denied', entity: 'client', entityId: clientId, clientId, ip: ctx.ip, success: false, details: { reason: 'not on caseload' } });
     throw forbidden('This client is not on your caseload');
   }
@@ -187,9 +199,10 @@ function hasLocalPassword(hash) { return /^scrypt\$/.test(String(hash || '')); }
 /**
  * Establish who is signing: the password (or, with two-step verification on, the authenticator code) given
  * with this request, or a recent re-authentication plus an explicit confirmation. Returns how, for the audit
- * entry: 'password', 'totp' or 'recent_auth'. `action` names the failed-attempt audit entry.
+ * entry: 'password', 'totp' or 'recent_auth'. `action` names the failed-attempt audit entry; `purpose` finishes
+ * the messages ("Enter your password to ..."): signing a note, or downloading the key backup.
  */
-async function verifySigner(ctx, body, { action = 'note.sign.failed' } = {}) {
+async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 'sign' } = {}) {
   const password = typeof body.password === 'string' && body.password ? body.password : null;
   const code = typeof body.code === 'string' && body.code.trim() ? body.code.trim() : null;
   const u = db.one(`SELECT id, password_hash, mfa_enabled, mfa_secret_enc, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
@@ -222,22 +235,26 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed' } = {}) {
     if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest('Two-step verification is not set up for your account; give your password instead');
     if (!require('./app').rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 60_000)) throw new HttpError(429, 'Too many attempts');
     const r = useTotp(u.id, u.mfa_secret_enc, code);
-    if (r === 'replay') failed({ method: 'totp', reason: 'replay' }, 'That code has already been used. Wait for the next code from your authenticator app.');
-    if (r !== 'ok') failed({ method: 'totp' }, 'That code is not right. Enter the current code from your authenticator app.');
+    if (r !== 'ok') {
+      const locked = recordPasswordFailure(u);
+      if (r === 'replay') failed({ method: 'totp', reason: 'replay', ...(locked ? { locked: true } : {}) }, 'That code has already been used. Wait for the next code from your authenticator app.');
+      failed({ method: 'totp', ...(locked ? { reason: 'locked after failures' } : {}) }, locked ? 'That code is not right. The account is now locked after too many failed attempts.' : 'That code is not right. Enter the current code from your authenticator app.');
+    }
+    clearFailures(u.id);
     markReauth(ctx); return 'totp';
   }
   const st = reauthStatus(ctx);
   // validate() stores booleans as 1/0 (SQLite); either spelling is the confirmation.
-  if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? 'Confirm the attestation to sign' : st.method === 'totp' ? 'Enter the code from your authenticator app to sign' : st.method === 'sso' ? 'Confirm with single sign-on, then sign' : 'Your password is required to sign');
+  if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? `Confirm the attestation to ${purpose}` : st.method === 'totp' ? `Enter the code from your authenticator app to ${purpose}` : st.method === 'sso' ? `Confirm with single sign-on, then ${purpose}` : `Your password is required to ${purpose}`);
   if (!st.recent) {
-    const how = { totp: 'Enter the code from your authenticator app to sign.', sso: 'Confirm with single sign-on to sign.', password: 'Enter your password to sign.' }[st.method];
+    const how = { totp: `Enter the code from your authenticator app to ${purpose}.`, sso: `Confirm with single sign-on to ${purpose}.`, password: `Enter your password to ${purpose}.` }[st.method];
     throw new HttpError(403, `It has been a while since you last confirmed it is you. ${how}`, { reauthRequired: true, method: st.method, sso: st.sso });
   }
   return 'recent_auth';
 }
 function clearReauth(ctx) { if (ctx.session) { db.run(`UPDATE sessions SET reauth_at=NULL WHERE id=?`, ctx.session.id); ctx.session.reauth_at = null; } }
 function isLocked(user) { return !!(user.locked_until && Date.parse(user.locked_until) > Date.now()); }
-/** Count a wrong password (sign-in or signature) toward the account lockout. True if it now locks the account. */
+/** Count a wrong password or authenticator code (sign-in, second step, enrolment, signature) toward the account lockout. True if it now locks the account. */
 function recordPasswordFailure(user) {
   const row = db.one(`SELECT failed_attempts FROM users WHERE id=?`, user.id);
   const attempts = ((row && row.failed_attempts) || 0) + 1;
@@ -421,7 +438,10 @@ async function login({ username, password, ctx }) {
     audit.log({ user, action: 'auth.login.sso_required', ip: ctx.ip, success: false });
     throw new HttpError(403, 'This organisation requires single sign-on. Use the county sign-in button instead of a password.', { ssoRequired: true });
   }
-  db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db.now(), user.id);
+  // With two-step verification on, the password is only half the sign-in: the count of failed attempts is
+  // cleared by the second factor (verifyMfa), so a password-holding attacker cannot reset the lockout by
+  // signing in again between guesses at the code.
+  db.run(`UPDATE users SET failed_attempts=CASE WHEN mfa_enabled=1 THEN failed_attempts ELSE 0 END, locked_until=NULL, last_login_at=? WHERE id=?`, db.now(), user.id);
   // Only a device that has just proven who holds it is recorded (or reattributed) as that person's. The
   // flags are read again from the row touch() returns: an administrator acting between the check above
   // and this point still gets the device stopped on this very login.
@@ -446,11 +466,20 @@ async function login({ username, password, ctx }) {
 function verifyMfa(ctx, code) {
   if (!ctx.session) throw unauthorized();
   const user = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+  // A wrong code is a failed factor like a wrong password: it counts toward the same account lockout, and a
+  // locked account cannot finish signing in with the right code either (the lockout is the account's, not
+  // the password step's).
+  if (isLocked(user)) {
+    audit.log({ user, action: 'auth.mfa.failed', ip: ctx.ip, success: false, details: { reason: 'locked' } });
+    throw new HttpError(423, 'Account locked after too many failed attempts. Try again later or contact an administrator.');
+  }
   const r = user.mfa_secret_enc ? useTotp(user.id, user.mfa_secret_enc, code) : 'wrong';
   if (r !== 'ok') {
-    audit.log({ user, action: 'auth.mfa.failed', ip: ctx.ip, success: false, details: r === 'replay' ? { reason: 'replay' } : undefined });
+    const locked = recordPasswordFailure(user);
+    audit.log({ user, action: 'auth.mfa.failed', ip: ctx.ip, success: false, details: r === 'replay' ? { reason: 'replay', ...(locked ? { locked: true } : {}) } : locked ? { reason: 'locked after failures' } : undefined });
     throw unauthorized(r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'Invalid verification code');
   }
+  clearFailures(user.id);
   db.run(`UPDATE sessions SET mfa_pending=0, reauth_at=? WHERE id=?`, db.now(), ctx.session.id);
   audit.log({ user, action: 'auth.login', ip: ctx.ip, details: { mfa: true } });
   return publicUser(user);
@@ -473,4 +502,4 @@ function passwordPolicy(pw) {
 }
 
 module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed,
-  createSession, markReauth, reauthStatus, verifySigner, useTotp, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
+  createSession, markReauth, reauthStatus, verifySigner, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

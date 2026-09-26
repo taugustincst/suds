@@ -11,6 +11,13 @@ on:
         description: "Type 'release' to publish the version in package.json"
         required: true
         default: ''
+      # The release policy (docs/RELEASE.md, "Release cadence"): a patch release carries no migration, no new
+      # permission and no new route. scripts/release-policy.js refuses one that does, unless this is set to
+      # the reason, which is then printed at the top of the release notes. Leave empty for no override.
+      allow_patch_changes:
+        description: "Only to let a PATCH release add a migration, permission or route: the reason (printed in the release notes)"
+        required: false
+        default: ''
 permissions:
   contents: write
   # `gh workflow run web-app.yml` below: a release this workflow creates with GITHUB_TOKEN does not fire the
@@ -35,6 +42,15 @@ jobs:
       - name: CI passed for this exact commit
         working-directory: src
         run: node scripts/release-gate.js "${GITHUB_SHA}"
+      # A patch bump may not add a migration, permission or route (scripts/release-policy.js compares with the
+      # previous release tag). The override arrives through the environment, never pasted into the script.
+      - name: Release policy (patch releases add no migration, permission or route)
+        working-directory: src
+        env:
+          ALLOW_PATCH_CHANGES: ${{ github.event.inputs.allow_patch_changes }}
+        run: |
+          git fetch --quiet --depth 1 origin '+refs/tags/v*:refs/tags/v*'
+          node scripts/release-policy.js
   release:
     needs: gate
     runs-on: ubuntu-latest
@@ -75,6 +91,8 @@ jobs:
           }
       - name: Package and publish
         working-directory: src
+        env:
+          ALLOW_PATCH_CHANGES: ${{ github.event.inputs.allow_patch_changes }}
         run: |
           ver="v$(node -p "require('./package.json').version")"
           if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_NAME}" != "$ver" ]; then echo "Tag ${GITHUB_REF_NAME} does not match package.json $ver"; exit 1; fi
@@ -82,6 +100,9 @@ jobs:
           # A checksum beside the zip: docs/DEPLOYMENT.md tells an installer to compare it before unpacking.
           sha256sum "suds-$ver.zip" > "suds-$ver.zip.sha256"
           notes=$(awk -v v="${ver#v}" '/^## /{p = index($0, v) > 0} p' CHANGELOG.md)
+          # An allow_patch_changes override (already checked in the gate) is stated at the top of the notes, with its reason.
+          node scripts/release-policy.js --notes-out "$RUNNER_TEMP/policy-notes.md"
+          if [ -s "$RUNNER_TEMP/policy-notes.md" ]; then notes="$(cat "$RUNNER_TEMP/policy-notes.md")"$'\n\n'"${notes}"; fi
           if gh release view "$ver" >/dev/null 2>&1; then gh release upload "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --clobber; else
             gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --target "$(git rev-parse HEAD)" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}"; fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$ver"

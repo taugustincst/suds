@@ -55,6 +55,13 @@ versions if possible), against the release on the pilot server:
 - [ ] **Offline**: turn on airplane mode; SUDS says it is offline and does not pretend to save; turn it
       back off and carry on. (If the county has turned local mode on, also: record a visit offline, sync,
       and confirm it on the office server.)
+- [ ] **iPhone: offline after an update (service-worker cache)** — only a real device checks this; CI's
+      WebKit job reports these two checks as SKIP because Playwright's WebKit on Linux cannot reproduce
+      them (`scripts/ui/assert.mjs`, `PLAYWRIGHT_WEBKIT_LINUX`). On an iPhone that had the *previous*
+      release on its home screen (and for SUDS on this device, a signed-in account): open it online once so
+      the new release takes over (the on-screen version changes), close it, turn on airplane mode, reopen
+      the icon. SUDS opens and (on this device) unlocks with the password; then open the *Use SUDS on your
+      phone or tablet* page (`get-app.html`, linked from the sign-in tips) — it opens offline too.
 - [ ] **Two tabs**: open SUDS in two tabs (or the home-screen icon and a browser tab); edit in one, reload
       the other; no stale overwrite, no error.
 - [ ] Idle sign-out after the configured minutes; sign-in again resumes where the person was.

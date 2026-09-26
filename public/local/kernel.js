@@ -6464,6 +6464,14 @@ function flush({ urgent = false, force = false } = {}) {
   if (!sealer) return Promise.resolve();
   if (saving && !urgent) return saving.then(() => flush({ force }));
   if (inTransaction) return Promise.resolve();
+  if (!urgent && tempObjectsOpen()) {
+    if (!saveTimer) saveTimer = setTimeout(() => {
+      saveTimer = null;
+      flush({ force }).catch(() => {
+      });
+    }, COALESCE_MS);
+    return saving || Promise.resolve();
+  }
   clearTimeout(saveTimer);
   saveTimer = null;
   const seq = writeSeq;
@@ -6506,6 +6514,14 @@ function flush({ urgent = false, force = false } = {}) {
   });
   saving = p;
   return p;
+}
+function tempObjectsOpen() {
+  try {
+    const r = current.exec("SELECT 1 FROM temp.sqlite_master LIMIT 1");
+    return !!(r.length && r[0].values.length);
+  } catch {
+    return false;
+  }
 }
 function isDirty() {
   return dirty;
@@ -7300,7 +7316,7 @@ CREATE TABLE IF NOT EXISTS consents (
   expires_event TEXT,
   revoked_at TEXT,
   revoked_reason_enc TEXT,             -- why the client revoked it (free text): encrypted
-  document_ref TEXT,
+  document_ref_enc TEXT,               -- where the signed copy is kept ("ROI binder, J. Smith"): encrypted (migration 42)
   witness_enc TEXT,                    -- who witnessed the signature: often a family member's name (migration 39)
   signed_on_paper INTEGER NOT NULL DEFAULT 0,
   -- The client was told that what is disclosed under this consent may not be redisclosed (\xA72.32).
@@ -7427,7 +7443,7 @@ CREATE TABLE IF NOT EXISTS client_form_files (
   id TEXT PRIMARY KEY,
   client_form_id TEXT NOT NULL REFERENCES client_forms(id) ON DELETE CASCADE,
   client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-  filename TEXT NOT NULL,
+  filename_enc TEXT,                   -- the uploaded file's name, often the client's (migration 42): encrypted
   content_type TEXT NOT NULL,
   bytes INTEGER NOT NULL DEFAULT 0,
   data_enc TEXT,                       -- encrypted base64 of the signed / scanned copy (PHI); nullable, see resource_photos.data_b64
@@ -7440,7 +7456,7 @@ CREATE INDEX IF NOT EXISTS idx_client_form_files ON client_form_files(client_for
 CREATE TABLE IF NOT EXISTS imports (
   id TEXT PRIMARY KEY,
   source TEXT NOT NULL,                -- pocket_ai, onenote_file, onenote_graph, generic, api
-  filename TEXT,
+  filename_enc TEXT,                   -- the uploaded file's name (a OneNote export is named after the person): encrypted (migration 42)
   imported_by TEXT REFERENCES users(id),
   item_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'staged',
@@ -8032,6 +8048,10 @@ var require_crypto = __commonJS({
       if (value === null || value === void 0) return "";
       return String(value).normalize("NFKD").replace(DIACRITICS_RE, "").toLowerCase().replace(TRANSLIT_RE, (c) => TRANSLIT[c]).normalize("NFC").replace(/[^\p{L}\p{M}\p{N}]/gu, "");
     }
+    function subkey(purpose, key = config2.indexKey) {
+      if (!purpose || typeof purpose !== "string") throw new Error("subkey: a purpose is required");
+      return import_buffer.Buffer.from(crypto3.hkdfSync("sha256", key, import_buffer.Buffer.from("suds-subkey-v1"), import_buffer.Buffer.from(`suds/${purpose}`), 32));
+    }
     function blindIndex2(value, key = config2.indexKey) {
       if (value === null || value === void 0) return null;
       const norm = foldText(value);
@@ -8168,6 +8188,7 @@ var require_crypto = __commonJS({
       encrypt: encrypt3,
       decrypt: decrypt3,
       blindIndex: blindIndex2,
+      subkey,
       foldText,
       keyFingerprint,
       hashPassword,
@@ -9089,6 +9110,16 @@ var init_url = __esm({
   }
 });
 
+// server/csp.js
+var require_csp = __commonJS({
+  "server/csp.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+    module.exports = { CSP };
+  }
+});
+
 // server/http.js
 var require_http = __commonJS({
   "server/http.js"(exports, module) {
@@ -9226,7 +9257,7 @@ var require_http = __commonJS({
       res.setHeader("Referrer-Policy", "no-referrer");
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-      res.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+      res.setHeader("Content-Security-Policy", require_csp().CSP);
       if (config2.tls.cert || behindTls(req)) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     }
     function contentDisposition(type, filename, fallback = "download") {
@@ -9769,6 +9800,280 @@ var init_listener = __esm({
   }
 });
 
+// server/sync-tables.js
+var require_sync_tables = __commonJS({
+  "server/sync-tables.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    module.exports = {
+      // caloms_*: whether this programme reports CalOMS Tx (which turns on the CalOMS questions in the admission
+      // and discharge forms) and its provider IDs — a device needs both to offer the same forms offline.
+      // default_fund_id: the fund a visit recorded on the device is charged to when the worker has none of their own.
+      settings_keys: [
+        "org_name",
+        "county_name",
+        "program_contact",
+        "note_lock_days",
+        "caloms_enabled",
+        "caloms_providers",
+        "caloms_start_date",
+        "default_fund_id",
+        // The programme profile and module switches (server/programme.js): a device shows what its office shows.
+        ...require_programme().SETTING_KEYS
+      ],
+      tables: [
+        // supervisor_id points at another user: a supervisor must land before the people who report to them.
+        { name: "users", enc: ["mfa_secret_enc"], scope: "users", cols: null, selfParent: "supervisor_id" },
+        { name: "resources", enc: [], scope: "all", writePerm: "resources:write" },
+        { name: "resource_photos", enc: [], scope: "all", writePerm: "resources:write", parent: ["resources", "resource_id"], blob: ["data_b64"] },
+        { name: "policy_documents", enc: [], scope: "all", writePerm: "documents:write", blob: ["file_b64"] },
+        // Grant structure is budget:manage over REST; a device holding only budget:write must not restructure it by sync.
+        // Funds and lines travel to every device (visits and time entries point at them, and a device enforces
+        // foreign keys), but their money and grant details only to one whose role holds budget:read (redact).
+        { name: "funding_sources", enc: [], scope: "all", writePerm: "budget:manage", redact: { perm: "budget:read", cols: { total_amount: 0, grant_number: null, restrictions: null, notes: null } } },
+        { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:manage", parent: ["funding_sources", "funding_source_id"], selfParent: "parent_id", redact: { perm: "budget:read", cols: { allocated_amount: 0, notes: null } } },
+        // merged_into points at another client: the record that was kept must land before its duplicate.
+        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc", "legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc", "contact_preferences_enc"], legacy: { legal_hold_reason: "legal_hold_reason_enc", contact_preferences: "contact_preferences_enc" }, scope: "client", clientCol: "id", idx: true, writePerm: "clients:write", selfParent: "merged_into" },
+        { name: "assignments", enc: ["notes_enc"], legacy: { notes: "notes_enc" }, scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
+        { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc", "reopen_reason_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
+        // CalOMS Tx records hang off an episode: the episode must land first.
+        { name: "caloms_records", enc: ["answers_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["episodes", "episode_id"] },
+        // unlinked: a row with no client is outside caseload scoping, so it is its owners' (these columns) or a
+        // holder of `all`'s -- over REST (crud.js) and by sync alike. Their free text (a caller's name and number,
+        // an outreach summary, a bystander's overdose) can name someone.
+        { name: "interventions", enc: ["summary_enc"], scope: "client-or-null", clientCol: "client_id", unlinked: { owners: ["user_id"], all: "clients:all" }, writePerm: "interventions:write", parent: ["clients", "client_id"] },
+        { name: "overdose_events", enc: ["notes_enc", "substances_enc"], scope: "client-or-null", clientCol: "client_id", unlinked: { owners: ["reported_by"], all: "clients:all" }, writePerm: "overdose:write", parent: ["clients", "client_id"] },
+        { name: "calls", enc: ["contact_name_enc", "phone_enc", "summary_enc", "purpose_enc"], scope: "client-or-null", clientCol: "client_id", unlinked: { owners: ["user_id"], all: "clients:all" }, writePerm: "calls:write", parent: ["clients", "client_id"] },
+        { name: "time_entries", enc: ["description_enc", "approval_note_enc"], legacy: { description: "description_enc", approval_note: "approval_note_enc" }, scope: "client-or-null", clientCol: "client_id", unlinked: { owners: ["user_id"], all: "time:all" }, writePerm: "time:write", parent: ["clients", "client_id"] },
+        // A referral may cite the consent it was made under, so consents come first.
+        { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc", "signer_name_enc", "revoked_reason_enc", "witness_enc", "document_ref_enc"], legacy: { revoked_reason: "revoked_reason_enc", witness: "witness_enc", document_ref: "document_ref_enc" }, scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
+        { name: "court_orders", enc: ["court_enc", "case_ref_enc", "recipient_enc", "purpose_enc", "scope_enc", "vacated_reason_enc"], legacy: { vacated_reason: "vacated_reason_enc" }, scope: "client", clientCol: "client_id", writePerm: "court-orders:write", parent: ["clients", "client_id"] },
+        { name: "part2_notices", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        { name: "referrals", enc: ["outcome_enc", "barrier_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
+        // Migration 42 moved client_form_files.filename, imports.filename and consents.document_ref likewise.
+        // Migration 39 moved consents.witness and import_items.metadata into witness_enc and metadata_enc.
+        // Migration 37 moved the free text on assignments, time entries, consents (revocation), expenditures, notes
+        // (countersignature), addenda, client forms and clients (contact preferences) into _enc columns likewise.
+        // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
+        { name: "tasks", enc: ["title_enc", "description_enc"], legacy: { description: "description_enc" }, scope: "client-or-null", clientCol: "client_id", unlinked: { owners: ["assigned_to", "created_by"], all: "clients:all" }, writePerm: "tasks:write", parent: ["clients", "client_id"] },
+        { name: "expenditures", enc: ["description_enc", "approval_note_enc"], legacy: { description: "description_enc", approval_note: "approval_note_enc" }, scope: "client-or-null", clientCol: "client_id", unlinked: { owners: ["user_id"], all: "budget:approve" }, writePerm: "budget:write", readPerm: "budget:read", parent: ["clients", "client_id"] },
+        { name: "notes", enc: ["content_enc", "structured_enc", "title_enc", "cosign_note_enc"], legacy: { cosign_note: "cosign_note_enc" }, scope: "client", clientCol: "client_id", writePerm: "notes:admin:write", parent: ["clients", "client_id"] },
+        { name: "note_addenda", enc: ["content_enc", "reason_enc"], legacy: { reason: "reason_enc" }, scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
+        { name: "disclosures", enc: ["recipient_enc", "purpose_enc", "what_enc", "justification_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        // An import (a OneNote page, a Pocket AI transcript) is its importer's until it is filed against a client:
+        // the REST routes show it only to them (or to clients:all), and a device gets the same -- scope 'importer'.
+        { name: "imports", enc: ["filename_enc"], legacy: { filename: "filename_enc" }, scope: "importer", writePerm: "imports:write" },
+        { name: "import_items", enc: ["content_enc", "title_enc", "metadata_enc"], legacy: { metadata: "metadata_enc" }, scope: "via-import", writePerm: "imports:write", parent: ["imports", "import_id"] },
+        { name: "form_templates", enc: [], scope: "all", writePerm: "forms:manage", blob: ["file_b64"] },
+        { name: "client_forms", enc: ["values_enc", "notes_enc"], legacy: { notes: "notes_enc" }, scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["clients", "client_id"] },
+        { name: "client_form_files", enc: ["data_enc", "filename_enc"], legacy: { filename: "filename_enc" }, scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["client_forms", "client_form_id"], blob: ["data_enc"] },
+        { name: "patient_requests", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        // Clinical documentation (CalAIM): the problem list and its history, the care plan, ASAM assessments and
+        // outcome measures. readPerm: a device whose role cannot read them (an ASAM rating on a navigator's
+        // phone) is never sent them, the same minimum-necessary rule clinical notes follow.
+        { name: "problems", enc: ["problem_enc", "icd10_code_enc", "icd10_description_enc", "z_codes_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["clients", "client_id"] },
+        { name: "problem_history", enc: ["changes_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["problems", "problem_id"] },
+        { name: "care_plan_goals", enc: ["goal_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["clients", "client_id"] },
+        { name: "care_plan_steps", enc: ["step_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["care_plan_goals", "goal_id"] },
+        { name: "asam_assessments", enc: ["dimension_notes_enc", "discrepancy_notes_enc", "summary_enc"], scope: "client", clientCol: "client_id", writePerm: "assessments:write", readPerm: "assessments:read", parent: ["clients", "client_id"] },
+        { name: "outcome_measures", enc: ["responses_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "assessments:write", readPerm: "assessments:read", parent: ["clients", "client_id"] },
+        // Harm-reduction supply counts: shared program state. Pull-only (serverOwned): the office copy is the
+        // one shelf count, drawn down there when a pushed visit lands (server/routes/sync.js calls the same
+        // draw-down the REST route does). A device's absolute count is never accepted — two phones each
+        // subtracting from their own stale copy would otherwise leave whichever synced last as the truth.
+        { name: "supply_stock", enc: [], scope: "all", writePerm: "interventions:write", serverOwned: true },
+        // Settings → Lists (the wording and order of documentation choices): the office's configuration,
+        // pull-only like supply counts. A device needs it to offer the same choices and show the same labels
+        // offline; it can never change it (server/routes/options.js refuses writes in the local kernel).
+        { name: "option_overrides", enc: [], scope: "all", writePerm: "settings:manage", serverOwned: true },
+        // The QSOA / research / audit register the non-consent disclosure bases rest on (server/disclosure.js):
+        // the office's, pull-only, so a device can offer the same agreements on its disclosure form offline.
+        { name: "disclosure_agreements", enc: [], scope: "all", writePerm: "agreements:write", serverOwned: true }
+      ],
+      // Push rejection reasons that will never succeed on a retry: the office has ruled, and the device must
+      // mark the row as exchanged (office wins) rather than resend it every sync forever. Anything else
+      // (network, a 5xx, an unknown SQL error) is transient and is retried. Reasons are matched as prefixes.
+      permanent_reasons: [
+        "immutable",
+        "purged",
+        "merged into another record",
+        "conflicts with an existing record",
+        "not on caseload",
+        "not permitted",
+        "server-owned",
+        "your role cannot",
+        "clinical notes not permitted",
+        "you do not have permission",
+        "is missing a required field",
+        "refers to a record the office server does not have",
+        "attributed to",
+        "would create a cycle",
+        "parent allocation does not belong",
+        "its ",
+        "has a value the office does not accept",
+        "needs a lawful basis for disclosure"
+      ],
+      // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
+      // emergency access, and a device has no supervisor to review it.
+      // complaints and the privacy incident register are the privacy officer's, kept at the office likewise.
+      // fhir_jwt_assertions is the FHIR token endpoint's replay guard for client assertions (office server only).
+      // caloms_submissions holds each CalOMS Tx file as produced for DHCS, which only the office sends.
+      server_only: ["breakglass_events", "complaints", "privacy_incidents", "privacy_incident_clients", "fhir_jwt_assertions", "caloms_submissions"],
+      // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
+      // the answers to retried POSTs made against that database (server/idempotency.js). A device's retry is
+      // answered by the device; the office never sees the key, only the rows the request created.
+      per_database: ["idempotency_keys"],
+      // Rows a device may create but never change once they exist (a consent may only be revoked). The legal
+      // record of what was agreed to and what was shared cannot be rewritten by whichever phone syncs last.
+      immutable: ["consents", "disclosures", "note_addenda", "problem_history"],
+      // Columns that reference users(id) somewhere in the schema. A device's local account id is meaningless on the
+      // office server (and vice versa), so every one of these has to be remapped on both sides of a sync.
+      user_refs: [
+        ["clients", "created_by"],
+        ["assignments", "user_id"],
+        ["assignments", "created_by"],
+        ["interventions", "user_id"],
+        ["calls", "user_id"],
+        ["time_entries", "user_id"],
+        ["time_entries", "approved_by"],
+        ["referrals", "user_id"],
+        ["tasks", "assigned_to"],
+        ["tasks", "created_by"],
+        ["expenditures", "user_id"],
+        ["expenditures", "approved_by"],
+        ["episodes", "opened_by"],
+        ["episodes", "closed_by"],
+        ["overdose_events", "reported_by"],
+        ["consents", "revoked_by"],
+        ["notes", "author_id"],
+        ["notes", "signed_by"],
+        ["notes", "cosigned_by"],
+        ["note_addenda", "author_id"],
+        ["consents", "created_by"],
+        ["disclosures", "disclosed_by"],
+        ["imports", "imported_by"],
+        ["client_forms", "created_by"],
+        ["client_forms", "completed_by"],
+        ["client_form_files", "uploaded_by"],
+        ["resource_photos", "uploaded_by"],
+        ["form_templates", "uploaded_by"],
+        ["policy_documents", "uploaded_by"],
+        ["breakglass_events", "user_id"],
+        ["breakglass_events", "acknowledged_by"],
+        ["patient_requests", "handled_by"],
+        ["patient_requests", "created_by"],
+        ["audit_log", "user_id"],
+        ["sessions", "user_id"],
+        ["user_prefs", "user_id"],
+        ["api_keys", "created_by"],
+        ["users", "supervisor_id"],
+        ["devices", "user_id"],
+        ["supply_stock", "updated_by"],
+        ["option_overrides", "updated_by"],
+        ["problems", "added_by"],
+        ["problems", "updated_by"],
+        ["problem_history", "changed_by"],
+        ["care_plan_goals", "created_by"],
+        ["care_plan_goals", "updated_by"],
+        ["care_plan_steps", "owner_user_id"],
+        ["care_plan_steps", "created_by"],
+        ["asam_assessments", "assessed_by"],
+        ["outcome_measures", "administered_by"],
+        ["caloms_records", "created_by"],
+        ["caloms_records", "updated_by"],
+        ["court_orders", "recorded_by"],
+        ["part2_notices", "given_by"],
+        ["complaints", "handled_by"],
+        ["complaints", "created_by"],
+        ["privacy_incidents", "determined_by"],
+        ["privacy_incidents", "reported_by"],
+        ["disclosure_agreements", "created_by"],
+        ["caloms_submissions", "created_by"]
+      ]
+    };
+    module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
+    var crypto3 = require_crypto();
+    function exportRow2(t, r) {
+      const o = { ...r };
+      for (const c of t.enc) {
+        if (!o[c]) continue;
+        try {
+          o[c] = crypto3.decrypt(o[c]);
+        } catch {
+          return null;
+        }
+      }
+      for (const k of Object.keys(o)) if (k.endsWith("_idx")) delete o[k];
+      for (const c of t.blob || []) delete o[c];
+      if (t.name === "users") {
+        delete o.failed_attempts;
+        delete o.locked_until;
+        delete o.access_note;
+        delete o.totp_last_step;
+      }
+      return o;
+    }
+    function importRow2(t, r, existingCols) {
+      const o = {};
+      for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith("_idx") && v !== void 0) o[k] = v;
+      for (const c of t.enc) if (o[c] !== void 0 && o[c] !== null) o[c] = crypto3.encrypt(o[c]);
+      if (t.name === "clients") {
+        const M = require_clients_model();
+        if (r.last_name_enc !== void 0) {
+          o.last_name_idx = crypto3.blindIndex(r.last_name_enc || "");
+          o.name_prefix_idx = M.namePrefixIndex(r.last_name_enc || "");
+          o.name_phonetic_idx = M.namePhoneticIndex(r.last_name_enc || "");
+        }
+        if (r.last_name_enc !== void 0 || r.first_name_enc !== void 0) o.full_name_idx = crypto3.blindIndex((r.last_name_enc || "") + (r.first_name_enc || ""));
+        if (r.first_name_enc !== void 0) {
+          o.first_name_idx = crypto3.blindIndex(String(r.first_name_enc || "").trim().toLowerCase());
+          o.first_name_prefix_idx = M.namePrefixIndex(r.first_name_enc || "");
+        }
+        if (r.preferred_name_enc !== void 0) o.preferred_name_idx = M.preferredNameIndex(r.preferred_name_enc || "");
+        if (r.dob_enc !== void 0) o.dob_idx = crypto3.blindIndex(r.dob_enc || "");
+        if (r.phone_enc !== void 0) o.phone_idx = crypto3.blindIndex(String(r.phone_enc || "").replace(/\D/g, ""));
+      }
+      return o;
+    }
+    function upgradeLegacyRow(t, r) {
+      for (const [from, to] of Object.entries(t.legacy || {})) {
+        if (!(from in r)) continue;
+        if (r[to] === void 0 && r[from] !== null && r[from] !== "") r[to] = r[from];
+        delete r[from];
+      }
+      return r;
+    }
+    function purgeClient(d, clientId, depth = 0) {
+      let n = 0;
+      const has = (t) => !!d.one(`SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?`, t);
+      const seenTable = has("sync_seen");
+      const drop = (table, id) => {
+        const r = d.run(`DELETE FROM ${table} WHERE id=?`, id);
+        n += Number(r && r.changes || 0);
+        if (seenTable) d.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, table, id);
+      };
+      if (depth < 25) for (const m of d.all(`SELECT id FROM clients WHERE merged_into=?`, clientId)) n += purgeClient(d, m.id, depth + 1);
+      for (const t of [...module.exports.tables].reverse()) {
+        if (!has(t.name)) continue;
+        if (t.scope === "via-note") {
+          for (const r of d.all(`SELECT id FROM ${t.name} WHERE note_id IN (SELECT id FROM notes WHERE client_id=?)`, clientId)) drop(t.name, r.id);
+          continue;
+        }
+        if (!t.clientCol || t.name === "clients") continue;
+        for (const r of d.all(`SELECT id FROM ${t.name} WHERE ${t.clientCol}=?`, clientId)) drop(t.name, r.id);
+      }
+      drop("clients", clientId);
+      return n;
+    }
+    module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some((p) => String(reason || "").startsWith(p));
+    module.exports.exportRow = exportRow2;
+    module.exports.importRow = importRow2;
+    module.exports.upgradeLegacyRow = upgradeLegacyRow;
+    module.exports.purgeClient = purgeClient;
+  }
+});
+
 // server/crud.js
 var require_crud = __commonJS({
   "server/crud.js"(exports, module) {
@@ -9780,6 +10085,7 @@ var require_crud = __commonJS({
     var { notFound, forbidden, HttpError: HttpError3 } = require_http();
     var { validate, paging } = require_validate();
     var { uuid: uuid2 } = require_crypto();
+    var DEID = { deidentified: true };
     function clientExists(id) {
       return !!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id);
     }
@@ -9795,13 +10101,22 @@ var require_crud = __commonJS({
       const { table, entity, perm, shape, dateCol = "created_at", ownerCol = "user_id", joins = "", select = `${table}.*`, clientRequired = true } = opts;
       const base = opts.base || `/api/${entity}s`;
       const readPerm = `${perm}:read`, writePerm = `${perm}:write`;
+      const unlinked = opts.unlinked || (require_sync_tables().tables.find((t) => t.name === table) || {}).unlinked || null;
+      const privateTo = (ctx) => unlinked && !auth3.hasPerm(ctx.user, unlinked.all) ? unlinked.owners : null;
+      function assertUnlinkedOwner(ctx, row) {
+        const owners = row.client_id ? null : privateTo(ctx);
+        if (owners && !owners.some((c) => row[c] === ctx.user.id)) {
+          audit3.log({ user: ctx.user, action: "authz.denied", entity, entityId: row.id, ip: ctx.ip, success: false, details: { reason: "not the owner" } });
+          throw forbidden("That record belongs to another worker");
+        }
+      }
       function decorate(ctx, rows) {
         return opts.afterLoad ? rows.map((x) => opts.afterLoad(ctx, x)) : rows;
       }
       function checkClient(ctx, clientId) {
         if (clientId) {
           if (!clientExists(clientId)) throw notFound("Client not found");
-          auth3.assertClientAccess(ctx, clientId);
+          auth3.assertClientAccess(ctx, clientId, DEID);
         }
       }
       r.get(base, auth3.requireAuth, auth3.requirePerm(readPerm, writePerm), (ctx) => {
@@ -9818,6 +10133,11 @@ var require_crud = __commonJS({
           if (cid) {
             where.push(`${table}.client_id=?`);
             params.push(cid);
+          }
+          const owners = privateTo(ctx);
+          if (owners) {
+            where.push(`(${table}.client_id IS NOT NULL OR ${owners.map((c) => `${table}.${c}=?`).join(" OR ")})`);
+            params.push(...owners.map(() => ctx.user.id));
           }
         }
         if (ownerCol && ctx.query.get("user_id")) {
@@ -9847,11 +10167,8 @@ var require_crud = __commonJS({
       r.get(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(readPerm, writePerm), (ctx) => {
         const row = db3.one(`SELECT ${select} FROM ${table} ${joins} WHERE ${table}.id=?`, ctx.params.id);
         if (!row) throw notFound();
-        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
-        else if (opts.ownerOnly && row[ownerCol] !== ctx.user.id && !auth3.hasPerm(ctx.user, opts.ownerOnly)) {
-          audit3.log({ user: ctx.user, action: "authz.denied", entity, entityId: row.id, ip: ctx.ip, success: false, details: { reason: "not the owner" } });
-          throw forbidden("That record belongs to another worker");
-        }
+        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id, DEID);
+        else assertUnlinkedOwner(ctx, row);
         audit3.log({ user: ctx.user, action: `${entity}.view`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
         return { row: decorate(ctx, [row])[0] };
       });
@@ -9876,7 +10193,8 @@ var require_crud = __commonJS({
       r.put(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
         const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
         if (!row) throw notFound();
-        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id, DEID);
+        else assertUnlinkedOwner(ctx, row);
         if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot edit this record");
         if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
         const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true, existing: row });
@@ -9893,7 +10211,8 @@ var require_crud = __commonJS({
       r.delete(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
         const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
         if (!row) throw notFound();
-        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id, DEID);
+        else assertUnlinkedOwner(ctx, row);
         if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot delete this record");
         if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden("You cannot delete this record");
         if (opts.beforeDelete) opts.beforeDelete(ctx, row);
@@ -10936,7 +11255,7 @@ var require_audit_anchor = __commonJS({
       const hours = config2.auditAnchorHours;
       if (!(hours > 0)) return null;
       const last = db3.getSetting("audit_anchor_last_at", null);
-      if (last && now2 - Date.parse(last) < hours * 36e5) return null;
+      if (last && now2 - Date.parse(last) < hours * 36e5 - 5 * 6e4) return null;
       return safeWrite("schedule");
     }
     function safeWrite(reason, opts = {}) {
@@ -14276,7 +14595,7 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
           }
           const consentId = track("consents", uuid2());
           const consentRecipient = `${referredTo.join(", ")} and my other treating providers`;
-          db3.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, "part2_tpo", encrypt3(consentRecipient), encrypt3("Treatment, payment and health care operations"), encrypt3("Referral summary, diagnosis, MAT status"), day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), "Consent binder, tab " + (i + 1), c.worker);
+          db3.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref_enc,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, "part2_tpo", encrypt3(consentRecipient), encrypt3("Treatment, payment and health care operations"), encrypt3("Referral summary, diagnosis, MAT status"), day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), encrypt3("Consent binder, tab " + (i + 1)), c.worker);
           if (i % 4 !== 1) db3.run(`INSERT INTO part2_notices(id,client_id,given_at,method,notice_version,acknowledged,given_by) VALUES(?,?,?,?,?,?,?)`, track("part2_notices", uuid2()), c.id, day(60 + i), "in_person_paper", "1", 1, c.worker);
           if (i % 3 === 0) db3.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)`, track("consents", uuid2()), c.id, "roi", encrypt3("Family member (mother)"), encrypt3("Care coordination with family"), encrypt3("Appointment dates and general progress"), day(50 + i), day(-315), c.worker);
           if (i % 2 === 0) db3.run(`INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,source) VALUES(?,?,?,?,?,?,?,?,?,?,'manual')`, track("disclosures", uuid2()), c.id, consentId, encrypt3(referredTo[0]), encrypt3("Referral for treatment intake"), encrypt3("Referral summary and MAT status"), "fax", d(40 + i), c.worker, "consent");
@@ -14373,7 +14692,7 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
           db3.run(`INSERT INTO client_forms(id,client_id,template_id,template_name,fields_json,values_enc,status,completed_at,completed_by,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, fid, c.id, tids[ti], name + " (v2026-01)", JSON.stringify(flds), encrypt3(JSON.stringify({ ...base, ...extra })), done ? "completed" : "draft", done ? d(9 + i, 15) : null, done ? c.worker : null, c.worker, d(10 + i, 14), d(9 + i, 15));
           if (i === 0) {
             const scan = png.placeholder(600, 780, 99, 4);
-            db3.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, track("client_form_files", uuid2()), fid, c.id, "signed-consent-scan.png", "image/png", scan.length, encrypt3(scan.toString("base64")), c.worker);
+            db3.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename_enc,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, track("client_form_files", uuid2()), fid, c.id, encrypt3("signed-consent-scan.png"), "image/png", scan.length, encrypt3(scan.toString("base64")), c.worker);
           }
         });
         for (const w of workers) for (let k = 0; k < 10; k++) {
@@ -14740,9 +15059,10 @@ var require_admin = __commonJS({
         audit3.log({ user: ctx.user, action: "backup.restore", ip: ctx.ip, details: { clients: out2.counts.clients, schema_version: out2.schema_version, kept: path.basename(out2.previous_database_kept_at) } });
         return { ok: true, ...out2, note: "Everyone will need to sign in again. Devices should sync after this." };
       });
-      r.get("/api/admin/keys-backup", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+      r.post("/api/admin/keys-backup", auth3.requireAuth, auth3.requirePerm("settings:manage"), async (ctx) => {
         if (config2.keySource !== "file") throw badRequest("Keys are provided by the environment on this server");
-        audit3.log({ user: ctx.user, action: "keys.download", ip: ctx.ip });
+        const method = await auth3.verifySigner(ctx, ctx.body || {}, { action: "keys.download.failed", purpose: "download the key backup" });
+        audit3.log({ user: ctx.user, action: "keys.download", ip: ctx.ip, details: { method } });
         db3.setSetting("keys_backup_at", db3.now());
         ctx.res.writeHead(200, { "Content-Type": "application/json", "Content-Disposition": 'attachment; filename="suds-keys-KEEP-SECRET.json"' });
         ctx.res.end(fs.readFileSync(config2.keysJsonPath));
@@ -14886,7 +15206,37 @@ var require_app = __commonJS({
       if (!given || given.length !== config2.metricsToken.length) return false;
       return crypto3.timingSafeEqual(import_buffer.Buffer.from(config2.metricsToken), import_buffer.Buffer.from(given));
     }
+    function notReadyReason() {
+      if (!db3.isOpen()) return "database not open";
+      const holder = require_backup_lock().current();
+      if (holder && holder.name === "restore") return "restore in progress";
+      const schema = Number(db3.getSetting("schema_version", "0"));
+      if (schema !== db3.LATEST_SCHEMA_VERSION) return `schema ${schema}, this build needs ${db3.LATEST_SCHEMA_VERSION}`;
+      return null;
+    }
     module.exports = (r) => {
+      r.get("/api/health/live", (ctx) => {
+        try {
+          if (db3.one("SELECT 1 AS ok").ok !== 1) throw new Error("unexpected answer");
+          return { ok: true };
+        } catch {
+          ctx.status = 503;
+          return { ok: false };
+        }
+      });
+      r.get("/api/health/ready", (ctx) => {
+        let reason;
+        try {
+          reason = notReadyReason();
+        } catch {
+          reason = "database error";
+        }
+        if (reason) {
+          ctx.status = 503;
+          return { ok: false, reason };
+        }
+        return { ok: true };
+      });
       r.get("/api/health", (ctx) => {
         const detailed = ctx.user && auth3.hasPerm(ctx.user, "settings:manage") && !ctx.session?.mfa_pending || metricsTokenPresented(ctx);
         const out2 = { ok: true, uptime_seconds: Math.round(proc.uptime()) };
@@ -15185,7 +15535,7 @@ var require_exports = __commonJS({
         consents: {
           label: "Consents",
           columns: ["client_code", "type", "recipient", "purpose", "scope", "signed_at", "expires_at", "expires_event", "revoked_at", "document_ref", "redisclosure_notice_given"],
-          rows: () => db3.all(`SELECT co.*, c.client_code, co.client_id AS _client_id FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.signed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY co.signed_at LIMIT ?`, from, to, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), scope: phi(r.scope_enc) }))
+          rows: () => db3.all(`SELECT co.*, c.client_code, co.client_id AS _client_id FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.signed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY co.signed_at LIMIT ?`, from, to, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), scope: phi(r.scope_enc), document_ref: phi(r.document_ref_enc) }))
         },
         disclosures: {
           label: "Accounting of disclosures",
@@ -16303,21 +16653,35 @@ var require_auth = __commonJS({
         if (u.role === "admin") (init_bootstrap(), __toCommonJS(bootstrap_exports)).discardPasswordFile();
         return { ok: true };
       });
+      const enrolling = (ctx) => {
+        auth3.requireAuth(ctx);
+        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+        if (u.mfa_enabled) throw badRequest("Two-step verification is already set up for your account. Turn it off first to enrol a new authenticator.");
+        return u;
+      };
       r.post("/api/auth/mfa/setup", (ctx) => {
-        if (!ctx.user) throw unauthorized();
+        enrolling(ctx);
         const secret = generateTotpSecret();
         db3.run(`UPDATE users SET mfa_secret_enc=?, updated_at=? WHERE id=? AND mfa_enabled=0`, encrypt3(secret), db3.now(), ctx.user.id);
         return { secret, otpauth: otpauthUrl(secret, ctx.user.username, db3.getSetting("org_name", "SUDS")) };
       });
       r.post("/api/auth/mfa/enable", (ctx) => {
-        if (!ctx.user) throw unauthorized();
+        const u = enrolling(ctx);
         const { code } = validate(ctx.body, { code: { type: "string", required: true, maxLen: 10 } });
-        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
         if (!u.mfa_secret_enc) throw badRequest("Run MFA setup first");
+        if (auth3.isLocked(u)) {
+          audit3.log({ user: u, action: "auth.mfa.enable.failed", ip: ctx.ip, success: false, details: { reason: "locked" } });
+          throw new HttpError3(423, "Account locked after too many failed attempts. Try again later or contact an administrator.");
+        }
+        if (!rateLimit(`mfa:${u.id}`, 10, 10 * 6e4)) throw new HttpError3(429, "Too many attempts");
         const r2 = auth3.useTotp(u.id, u.mfa_secret_enc, code);
-        if (r2 !== "ok") throw badRequest(r2 === "replay" ? "That code has already been used. Wait for the next code from your authenticator app." : "Invalid code");
+        if (r2 !== "ok") {
+          const locked = auth3.recordPasswordFailure(u);
+          audit3.log({ user: u, action: "auth.mfa.enable.failed", ip: ctx.ip, success: false, details: { reason: r2 === "replay" ? "replay" : "wrong code", ...locked ? { locked: true } : {} } });
+          throw badRequest(r2 === "replay" ? "That code has already been used. Wait for the next code from your authenticator app." : "Invalid code");
+        }
+        auth3.clearFailures(u.id);
         db3.run(`UPDATE users SET mfa_enabled=1, updated_at=? WHERE id=?`, db3.now(), u.id);
-        db3.run(`UPDATE sessions SET mfa_pending=0 WHERE id=?`, ctx.session.id);
         audit3.log({ user: u, action: "auth.mfa.enabled", ip: ctx.ip });
         return { ok: true };
       });
@@ -18095,6 +18459,7 @@ var require_consents = __commonJS({
         signer_name: c.signer_name_enc ? decrypt3(c.signer_name_enc) : null,
         revoked_reason: c.revoked_reason_enc ? decrypt3(c.revoked_reason_enc) : null,
         witness: c.witness_enc ? decrypt3(c.witness_enc) : null,
+        document_ref: c.document_ref_enc ? decrypt3(c.document_ref_enc) : null,
         // The coded categories it covers, as a list ([] when none were recorded: it covers nothing automated).
         info_categories: [...disclosure.parseCategories(c.info_categories)],
         recipient_enc: void 0,
@@ -18103,6 +18468,7 @@ var require_consents = __commonJS({
         signer_name_enc: void 0,
         revoked_reason_enc: void 0,
         witness_enc: void 0,
+        document_ref_enc: void 0,
         // A consent that lacks the §2.31 elements (one that arrived by sync or by hand, or a legacy one) is shown,
         // but cannot be chosen to authorise a disclosure: incomplete says why.
         active,
@@ -18197,7 +18563,7 @@ var require_consents = __commonJS({
         }
         const id = uuid2();
         db3.run(
-          `INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,expires_event,document_ref,witness_enc,signed_on_paper,redisclosure_notice_given,
+          `INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,expires_event,document_ref_enc,witness_enc,signed_on_paper,redisclosure_notice_given,
         discloser,signer_relationship,signer_name_enc,revocation_right_given,refusal_consequences_given,rule_version,created_by,info_categories) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           id,
           ctx.params.id,
@@ -18208,7 +18574,7 @@ var require_consents = __commonJS({
           v.signed_at,
           v.expires_at || null,
           v.expires_event || null,
-          v.document_ref || null,
+          v.document_ref ? encrypt3(v.document_ref) : null,
           v.witness ? encrypt3(v.witness) : null,
           v.signed_on_paper ? 1 : 0,
           v.redisclosure_notice_given ? 1 : 0,
@@ -18798,6 +19164,21 @@ var require_clients = __commonJS({
         return { id: m.id, client_code: c.client_code, status: c.status, discharge_date: c.discharge_date, discharge_reason: c.discharge_reason, reasons: m.reasons };
       });
     }
+    var mayOpen = (user, id) => auth3.canAccessClient(user, id) || auth3.hasPerm(user, "clients:all");
+    function flagForReview(user, { id, client_code, matches, source, ip }) {
+      if (!matches.length) return;
+      audit3.log({ user, action: "client.possible_duplicate", entity: "client", entityId: id, clientId: id, ip, details: { client_code, matches: matches.map((m) => ({ id: m.id, client_code: m.client_code, reasons: m.reasons })), source } });
+      const hidden = matches.find((m) => !mayOpen(user, m.id));
+      db3.run(
+        `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,priority) VALUES(?,?,?,?,?,?)`,
+        uuid2(),
+        hidden ? hidden.id : id,
+        null,
+        user.id,
+        encrypt3(`Possible duplicate record: compare ${client_code} with ${matches.map((m) => m.client_code).join(", ")}`),
+        "high"
+      );
+    }
     module.exports = (r) => {
       r.get("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:read", "clients:list-deidentified"), (ctx) => {
         const deidentify = !auth3.hasPerm(ctx.user, "clients:read");
@@ -18887,25 +19268,22 @@ var require_clients = __commonJS({
       r.post("/api/clients/check-duplicates", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
         const v = validate(ctx.body, { first_name: { type: "string", maxLen: 100 }, last_name: { type: "string", maxLen: 100 }, dob: { type: "date" }, phone: { type: "string", maxLen: 40 }, exclude_id: { type: "string" } });
         const all = possibleDuplicates(v, v.exclude_id || null);
-        const visible = (m) => auth3.canAccessClient(ctx.user, m.id) || auth3.hasPerm(ctx.user, "clients:all");
-        const matches = all.filter(visible);
-        const hidden = all.filter((m) => !visible(m));
+        const matches = all.filter((m) => mayOpen(ctx.user, m.id));
+        const hidden = all.filter((m) => !mayOpen(ctx.user, m.id));
         const readmit = readmitOffers(ctx, hidden);
         if (all.length) audit3.log({ user: ctx.user, action: "client.duplicate_check", ip: ctx.ip, details: { matches: all.length, hidden: hidden.length, shown: matches.map((m) => m.client_code), readmit_offered: readmit.map((m) => m.client_code) } });
-        return { matches, hidden_duplicates: hidden.length, readmit };
+        return { matches, readmit };
       });
       r.post("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
         const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: "boolean" }, no_episode: { type: "boolean" } });
         checkContactFields(v);
         if (!v.confirm_duplicate) {
           const all = possibleDuplicates(v);
-          const visible = all.filter((m) => auth3.canAccessClient(ctx.user, m.id) || auth3.hasPerm(ctx.user, "clients:all"));
-          const hidden = all.length - visible.length;
+          const visible = all.filter((m) => mayOpen(ctx.user, m.id));
           const readmit = readmitOffers(ctx, all.filter((m) => !visible.includes(m)));
-          if (all.length) audit3.log({ user: ctx.user, action: "client.duplicate_check", ip: ctx.ip, details: { matches: all.length, hidden, shown: visible.map((m) => m.client_code), readmit_offered: readmit.length ? readmit.map((m) => m.client_code) : void 0 } });
-          if (visible.length) throw badRequest("A client with these details may already exist", { duplicates: visible, hidden_duplicates: hidden, readmit, confirm_field: "confirm_duplicate" });
-          if (readmit.length) throw badRequest("An earlier record exists for this person and they were discharged. Re-admit it to carry on their record rather than starting a new one.", { hidden_duplicates: hidden, readmit, confirm_field: "confirm_duplicate" });
-          if (hidden) throw badRequest("A possible duplicate exists that is outside your caseload \u2014 ask a supervisor", { hidden_duplicates: hidden, confirm_field: "confirm_duplicate" });
+          if (all.length) audit3.log({ user: ctx.user, action: "client.duplicate_check", ip: ctx.ip, details: { matches: all.length, hidden: all.length - visible.length, shown: visible.map((m) => m.client_code), readmit_offered: readmit.length ? readmit.map((m) => m.client_code) : void 0 } });
+          if (visible.length) throw badRequest("A client with these details may already exist", { duplicates: visible, readmit, confirm_field: "confirm_duplicate" });
+          if (readmit.length) throw badRequest("An earlier record exists for this person and they were discharged. Re-admit it to carry on their record rather than starting a new one.", { readmit, confirm_field: "confirm_duplicate" });
         }
         delete v.confirm_duplicate;
         const noEpisode = !!v.no_episode;
@@ -18930,6 +19308,7 @@ var require_clients = __commonJS({
         });
         audit3.log({ user: ctx.user, action: "client.create", entity: "client", entityId: id, clientId: id, ip: ctx.ip, details: episodeId ? { episode: episodeId } : void 0 });
         if (episodeId) audit3.log({ user: ctx.user, action: "episode.open", entity: "episode", entityId: episodeId, clientId: id, ip: ctx.ip, details: { at_intake: true } });
+        flagForReview(ctx.user, { id, client_code: cols2.client_code, matches: possibleDuplicates(v, id).filter((m) => !mayOpen(ctx.user, m.id)), source: "intake", ip: ctx.ip });
         ctx.status = 201;
         return { id, client_code: cols2.client_code, episode_id: episodeId };
       });
@@ -19138,6 +19517,8 @@ var require_clients = __commonJS({
       });
     };
     module.exports.possibleDuplicates = possibleDuplicates;
+    module.exports.flagForReview = flagForReview;
+    module.exports.mayOpen = mayOpen;
   }
 });
 
@@ -20502,15 +20883,26 @@ var require_outbound = __commonJS({
   "server/outbound.js"(exports, module) {
     "use strict";
     init_globals_inject();
-    var fetchImpl = (...args) => globalThis.fetch(...args);
+    var fetchImpl = null;
     var lookupImpl = null;
     var fetchOverridden = false;
     function _setFetchForTests(fn) {
-      fetchImpl = fn || ((...args) => globalThis.fetch(...args));
+      fetchImpl = fn || null;
       fetchOverridden = !!fn;
     }
     function _setLookupForTests(fn) {
       lookupImpl = fn;
+    }
+    var proxyInUse = () => !!(proc.env.HTTPS_PROXY || proc.env.https_proxy) && proc.env.NODE_USE_ENV_PROXY === "1";
+    function resolver() {
+      if (lookupImpl) return lookupImpl;
+      let dns;
+      try {
+        dns = __require("node:dns").promises;
+      } catch {
+        return null;
+      }
+      return (h) => dns.lookup(h, { all: true, verbatim: true });
     }
     var soft = (message, extra = {}) => Object.assign(new Error(message), { soft: true }, extra);
     function privateV4(a) {
@@ -20560,27 +20952,75 @@ var require_outbound = __commonJS({
       if (host.includes(":")) throw soft("that address is not on the public internet");
       return url.href;
     }
-    async function assertResolvesPublic(url) {
-      const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
-      let lookup = lookupImpl;
-      if (!lookup) {
-        if (fetchOverridden) return;
-        let dns;
-        try {
-          dns = __require("node:dns").promises;
-        } catch {
-          return;
-        }
-        lookup = (h) => dns.lookup(h, { all: true, verbatim: true });
-      }
+    async function resolvePublic(host, { viaProxy = false } = {}) {
+      const lookup = resolver();
+      if (!lookup) return null;
       let addrs;
       try {
         addrs = await lookup(host);
       } catch (e) {
-        if (proc.env.HTTPS_PROXY || proc.env.https_proxy) return;
+        if (viaProxy && /^(ENOTFOUND|EAI_AGAIN)$/.test(String(e && e.code))) return null;
         throw describeNetworkError({ cause: e }) || soft("could not find that address");
       }
-      if (!addrs.length || addrs.some((x) => isPrivateAddress(x.address || x))) throw soft("that address is not on the public internet");
+      addrs = (addrs || []).map((x) => typeof x === "string" ? { address: x } : x).map((x) => ({ address: x.address, family: x.family || (String(x.address).includes(":") ? 6 : 4) }));
+      if (!addrs.length || addrs.some((x) => isPrivateAddress(x.address))) throw soft("that address is not on the public internet");
+      return addrs;
+    }
+    async function assertResolvesPublic(url) {
+      const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+      if (!lookupImpl && fetchOverridden) return;
+      await resolvePublic(host, { viaProxy: proxyInUse() });
+    }
+    function connectLookup(hostname2, options, callback) {
+      if (typeof options === "function") {
+        callback = options;
+        options = {};
+      }
+      resolvePublic(String(hostname2).replace(/^\[|\]$/g, "")).then((addrs) => {
+        if (!addrs) throw soft("could not find that address");
+        const want = options && options.family ? addrs.filter((a) => a.family === options.family) : addrs;
+        if (!want.length) throw soft("could not find that address");
+        if (options && options.all) callback(null, want);
+        else callback(null, want[0].address, want[0].family);
+      }).catch((e) => callback(e));
+    }
+    function pinnedFetch(url, { method = "GET", body, headers = {}, signal, maxBytes = 2 * 1024 * 1024 } = {}) {
+      const https = (init_empty(), __toCommonJS(empty_exports));
+      return new Promise((resolve2, reject) => {
+        const req = https.request(url, { method, headers, signal, lookup: connectLookup, autoSelectFamily: false }, (res) => {
+          const chunks = [];
+          let size = 0;
+          res.on("data", (c) => {
+            size += c.length;
+            if (size > maxBytes + 1) {
+              reject(soft("file is too large"));
+              res.destroy();
+              req.destroy();
+              return;
+            }
+            chunks.push(c);
+          });
+          res.on("end", () => {
+            const h = new Headers();
+            for (const [k, v] of Object.entries(res.headers)) for (const x of [].concat(v)) h.append(k, String(x));
+            const nullBody = [101, 204, 205, 304].includes(res.statusCode);
+            try {
+              resolve2(new Response(nullBody ? null : import_buffer.Buffer.concat(chunks), { status: res.statusCode, statusText: res.statusMessage, headers: h }));
+            } catch (e) {
+              reject(e);
+            }
+          });
+          res.on("error", reject);
+        });
+        req.on("error", reject);
+        if (body !== void 0 && body !== null) req.write(body);
+        req.end();
+      });
+    }
+    function transport(url, opts) {
+      if (fetchImpl) return fetchImpl(url, opts);
+      if (proxyInUse()) return globalThis.fetch(url, opts);
+      return pinnedFetch(url, opts);
     }
     var NETWORK_CODES = /^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)$/;
     var CERT_CODES = /CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)/;
@@ -20601,7 +21041,7 @@ var require_outbound = __commonJS({
       let res;
       for (let i = 0; i <= hops; i++) {
         try {
-          res = await fetchImpl(target, { method, body, signal: AbortSignal.timeout(timeoutMs), redirect: "manual", headers: { "User-Agent": "SUDS", Accept: "*/*", ...headers } });
+          res = await transport(target, { method, body, signal: AbortSignal.timeout(timeoutMs), redirect: "manual", maxBytes, headers: { "User-Agent": "SUDS", Accept: "*/*", ...headers } });
         } catch (e) {
           if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw soft("timed out");
           throw describeNetworkError(e) || e;
@@ -20619,7 +21059,7 @@ var require_outbound = __commonJS({
       if (buf.length > maxBytes) throw soft("file is too large");
       return { buf, url: target, res };
     }
-    module.exports = { isPrivateAddress, assertPublicHttps, assertResolvesPublic, fetchChecked, describeNetworkError, soft, _setFetchForTests, _setLookupForTests };
+    module.exports = { isPrivateAddress, assertPublicHttps, assertResolvesPublic, connectLookup, pinnedFetch, proxyInUse, transport, fetchChecked, describeNetworkError, soft, _setFetchForTests, _setLookupForTests };
   }
 });
 
@@ -21689,9 +22129,14 @@ var require_resources = __commonJS({
       const parts = values.map((v) => dateClause(col, v));
       return { sql: parts.map((p) => p.sql).join(" AND "), params: parts.flatMap((p) => p.params) };
     }
-    function page(type, filter, { count, offset }) {
+    function page(type, filter, { count: count2, offset }) {
       const d = DEFS[type];
-      return db3.all(`SELECT * FROM (${d.src}) s WHERE ${filter.sql} ORDER BY _upd, _fid LIMIT ? OFFSET ?`, ...filter.params, count, offset);
+      return db3.all(`SELECT * FROM (${d.src}) s WHERE ${filter.sql} ORDER BY _upd, _fid LIMIT ? OFFSET ?`, ...filter.params, count2, offset);
+    }
+    function count(type, filter) {
+      const d = DEFS[type];
+      const r = db3.one(`SELECT COUNT(*) n, COUNT(DISTINCT _cid) p FROM (${d.src}) s WHERE ${filter.sql}`, ...filter.params);
+      return { rows: r.n, patients: r.p };
     }
     function toResource(type, row) {
       const d = DEFS[type];
@@ -21704,7 +22149,7 @@ var require_resources = __commonJS({
       const keys = [...query.keys()].map((k) => k.split(":")[0]);
       return keys.includes("patient") || keys.includes("_id") || (d.identifying || []).some((k) => keys.includes(k));
     }
-    module.exports = { DEFS, PROGRAM_ORG, MAX_COUNT, DEFAULT_COUNT, searchParams, where, page, toResource, identifying, US_CORE };
+    module.exports = { DEFS, PROGRAM_ORG, MAX_COUNT, DEFAULT_COUNT, searchParams, where, page, count, toResource, identifying, US_CORE };
   }
 });
 
@@ -22098,21 +22543,19 @@ var require_fhir = __commonJS({
       const d = R.DEFS[type];
       const n = count(ctx), offset = offsetOf(ctx);
       const filter = R.where(type, ctx.query);
-      const rows = R.page(type, filter, { count: n + 1, offset });
-      const hasNext = rows.length > n;
-      if (hasNext) rows.length = n;
       const coverage = d.phi ? coverageFor(client, type) : null;
+      const covered = d.phi ? { sql: `(${filter.sql}) AND _cid IN (SELECT value FROM json_each(?))`, params: [...filter.params, JSON.stringify([...coverage.keys()])] } : filter;
+      const rows = R.page(type, covered, { count: n + 1, offset });
+      const hasNext = rows.length > n && !(d.phi && n === 0);
+      if (rows.length > n) rows.length = n;
       const base = baseUrl(ctx);
       const entries2 = [];
       const perClient = /* @__PURE__ */ new Map();
-      const omitted = /* @__PURE__ */ new Set();
-      let omittedRows = 0;
+      let omitted = { patients: 0, rows: 0 };
+      if (d.phi && !R.identifying(type, ctx.query)) {
+        omitted = R.count(type, { sql: `(${filter.sql}) AND _cid NOT IN (SELECT value FROM json_each(?))`, params: [...filter.params, JSON.stringify([...coverage.keys()])] });
+      }
       for (const row of rows) {
-        if (d.phi && !coverage.has(row._cid)) {
-          omittedRows++;
-          omitted.add(row._cid);
-          continue;
-        }
         const r = R.toResource(type, row);
         if (!r || d.keep && !d.keep(r.full, client)) continue;
         entries2.push({ fullUrl: `${base}/${type}/${r.resource.id}`, resource: r.resource, search: { mode: "match" } });
@@ -22137,10 +22580,10 @@ var require_fhir = __commonJS({
         bundle.meta.security = PART2_SECURITY;
         const issues = [{ severity: "information", code: "informational", diagnostics: `42 CFR \xA72.32 notice: ${disclosure.notice().text}` }];
         if (R.identifying(type, ctx.query)) issues.push({ severity: "information", code: "suppressed", diagnostics: `Results include only patients whose active consent covers ${client.recipient} for this purpose of use.` });
-        else if (omitted.size) issues.push({ severity: "warning", code: "suppressed", diagnostics: `${omitted.size} patient(s) (${omittedRows} ${type} resource(s)) on this page were withheld: no active consent covers ${client.recipient} for this purpose of use, or the patient has an agreed restriction.` });
+        else if (omitted.patients) issues.push({ severity: "warning", code: "suppressed", diagnostics: `${omitted.patients} patient(s) (${omitted.rows} ${type} resource(s)) matching this search were withheld: no active consent covers ${client.recipient} for this purpose of use, or the patient has an agreed restriction.` });
         bundle.entry.push({ resource: { ...outcome(issues), id: uuid2() }, search: { mode: "outcome" } });
         const reqId = requestId();
-        account({ ctx, client, type, interaction: "search", perClient, returned: entries2.length, omittedPatients: R.identifying(type, ctx.query) ? void 0 : omitted.size, reqId });
+        account({ ctx, client, type, interaction: "search", perClient, returned: entries2.length, omittedPatients: R.identifying(type, ctx.query) ? void 0 : omitted.patients, reqId });
       } else {
         audit3.log({ user: client.actor, action: "fhir.search", entity: type, ip: ctx.ip, details: { client: client.prefix, params: [...new Set(ctx.query.keys())], returned: entries2.length } });
       }
@@ -22709,6 +23152,13 @@ var require_forms = __commonJS({
       auth3.assertClientAccess(ctx, f.client_id);
       return f;
     }
+    var fileName = (x) => {
+      try {
+        return x.filename_enc ? decrypt3(x.filename_enc) : null;
+      } catch {
+        return null;
+      }
+    };
     var formNotes = (f) => f.notes_enc ? decrypt3(f.notes_enc) : null;
     var formOut = (f, { values = true } = {}) => ({ ...f, fields: parseJson(f.fields_json, []), fields_json: void 0, values: values ? parseJson(decrypt3(f.values_enc), {}) : void 0, values_enc: void 0, notes: formNotes(f), notes_enc: void 0 });
     var SERVABLE_TYPES = /* @__PURE__ */ new Set([
@@ -22732,6 +23182,7 @@ var require_forms = __commonJS({
       const printed = `Printed from SUDS ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.`;
       return disclosure.part2Program() ? `${printed} PROTECTED BY 42 CFR PART 2. ${n.short} If this record is disclosed, this notice must accompany it (42 CFR \xA72.32): ${n.text}` : `${printed} Contains protected health information; handle per HIPAA.`;
     }
+    var clientRecords = auth3.requirePerm("clients:read");
     module.exports = (r) => {
       r.get("/api/forms/starters", auth3.requireAuth, auth3.requirePerm("forms:manage"), () => ({ starters: require_form_starters().list() }));
       r.post("/api/forms/starters", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
@@ -22812,13 +23263,13 @@ var require_forms = __commonJS({
         ctx.res.end(body);
         return null;
       });
-      r.get("/api/clients/:id/forms", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
+      r.get("/api/clients/:id/forms", auth3.requireAuth, clientRecords, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
         auth3.assertClientAccess(ctx, ctx.params.id);
         const rows = db3.all(`SELECT f.id, f.template_id, f.template_name, f.status, f.completed_at, f.created_at, f.updated_at, f.notes_enc, cu.display_name completed_by_name, cr.display_name created_by_name, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.client_id=? AND f.deleted_at IS NULL ORDER BY f.updated_at DESC`, ctx.params.id).map((f) => ({ ...f, notes: formNotes(f), notes_enc: void 0 }));
         audit3.log({ user: ctx.user, action: "client_form.list", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { count: rows.length } });
         return { forms: rows };
       });
-      r.post("/api/clients/:id/forms", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+      r.post("/api/clients/:id/forms", auth3.requireAuth, clientRecords, auth3.requirePerm("forms:write"), (ctx) => {
         const client = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id);
         if (!client) throw notFound();
         auth3.assertClientAccess(ctx, client.id);
@@ -22833,14 +23284,14 @@ var require_forms = __commonJS({
         ctx.status = 201;
         return { id, fields, values };
       });
-      r.get("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
+      r.get("/api/forms/:id", auth3.requireAuth, clientRecords, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
         const f = loadForm(ctx, ctx.params.id);
         audit3.log({ user: ctx.user, action: "client_form.view", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
-        const files = db3.all(`SELECT id, filename, content_type, bytes, created_at, uploaded_by FROM client_form_files WHERE client_form_id=? ORDER BY created_at`, f.id);
+        const files = db3.all(`SELECT id, filename_enc, content_type, bytes, created_at, uploaded_by FROM client_form_files WHERE client_form_id=? ORDER BY created_at`, f.id).map((x) => ({ ...x, filename: fileName(x), filename_enc: void 0 }));
         const t = f.template_id ? db3.one(`SELECT id, name, instructions, (file_b64 IS NOT NULL) has_file, content_type FROM form_templates WHERE id=?`, f.template_id) : null;
         return { form: { ...formOut(f), files, template: t } };
       });
-      r.put("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+      r.put("/api/forms/:id", auth3.requireAuth, clientRecords, auth3.requirePerm("forms:write"), (ctx) => {
         const f = loadForm(ctx, ctx.params.id);
         if (f.status === "completed" && !auth3.hasPerm(ctx.user, "forms:manage")) throw badRequest("This form is completed. Ask a supervisor to reopen it.");
         require_crud().assertFresh(ctx, f, "client_form");
@@ -22873,14 +23324,14 @@ var require_forms = __commonJS({
         audit3.log({ user: ctx.user, action: v.status === "completed" ? "client_form.complete" : "client_form.update", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { status: v.status, fields_changed: ctx.body.values ? Object.keys(ctx.body.values).length : 0 } });
         return { ok: true, missing: missingRequired(fields, values), updated_at: stamp2 };
       });
-      r.delete("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+      r.delete("/api/forms/:id", auth3.requireAuth, clientRecords, auth3.requirePerm("forms:write"), (ctx) => {
         const f = loadForm(ctx, ctx.params.id);
         if (f.status === "completed" && !auth3.hasPerm(ctx.user, "forms:manage")) throw badRequest("Completed forms can only be removed by a supervisor");
         db3.run(`UPDATE client_forms SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), f.id);
         audit3.log({ user: ctx.user, action: "client_form.delete", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
         return { ok: true };
       });
-      r.get("/api/forms/:id/pdf", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
+      r.get("/api/forms/:id/pdf", auth3.requireAuth, clientRecords, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
         const f = loadForm(ctx, ctx.params.id);
         const client = M.decryptRow(db3.one(`SELECT * FROM clients WHERE id=?`, f.client_id));
         const values = parseJson(decrypt3(f.values_enc), {});
@@ -22891,7 +23342,7 @@ var require_forms = __commonJS({
         ctx.res.end(body);
         return null;
       });
-      r.post("/api/forms/:id/files", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+      r.post("/api/forms/:id/files", auth3.requireAuth, clientRecords, auth3.requirePerm("forms:write"), (ctx) => {
         const f = loadForm(ctx, ctx.params.id);
         if (db3.one(`SELECT COUNT(*) n FROM client_form_files WHERE client_form_id=?`, f.id).n >= 10) throw badRequest("At most 10 attachments per form");
         const v = validate(ctx.body, { filename: { type: "string", maxLen: 200 } });
@@ -22899,23 +23350,23 @@ var require_forms = __commonJS({
         if (!file) throw badRequest("Attachment is required");
         const id = uuid2();
         const name = (v.filename || `signed.${FILE_TYPES[file.type]}`).replace(/[\r\n"]/g, "");
-        db3.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, id, f.id, f.client_id, name, file.type, file.buf.length, encrypt3(file.b64), ctx.user.id);
+        db3.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename_enc,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, id, f.id, f.client_id, encrypt3(name), file.type, file.buf.length, encrypt3(file.b64), ctx.user.id);
         const stamp2 = db3.now();
         db3.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, stamp2, f.id);
         audit3.log({ user: ctx.user, action: "client_form.attach", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: id, bytes: file.buf.length, type: file.type } });
         ctx.status = 201;
         return { id, filename: name, content_type: file.type, bytes: file.buf.length, form_updated_at: stamp2 };
       });
-      r.get("/api/forms/:id/files/:fid", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
+      r.get("/api/forms/:id/files/:fid", auth3.requireAuth, clientRecords, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
         const f = loadForm(ctx, ctx.params.id);
         const x = db3.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id);
         if (!x) throw notFound();
         audit3.log({ user: ctx.user, action: "client_form.file.view", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
-        ctx.res.writeHead(200, { "Content-Type": safeContentType(x.content_type), "Content-Disposition": contentDisposition(ctx.query.get("download") === "1" ? "attachment" : "inline", x.filename, "attachment"), "X-Content-Type-Options": "nosniff" });
+        ctx.res.writeHead(200, { "Content-Type": safeContentType(x.content_type), "Content-Disposition": contentDisposition(ctx.query.get("download") === "1" ? "attachment" : "inline", fileName(x), "attachment"), "X-Content-Type-Options": "nosniff" });
         ctx.res.end(import_buffer.Buffer.from(decrypt3(x.data_enc), "base64"));
         return null;
       });
-      r.delete("/api/forms/:id/files/:fid", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+      r.delete("/api/forms/:id/files/:fid", auth3.requireAuth, clientRecords, auth3.requirePerm("forms:write"), (ctx) => {
         const f = loadForm(ctx, ctx.params.id);
         const x = db3.one(`SELECT id FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id);
         if (!x) throw notFound();
@@ -25633,6 +26084,15 @@ var require_imports = __commonJS({
     var pocket = require_pocketai();
     var onenote = require_onenote();
     var M = require_clients_model();
+    var importView = (i) => {
+      let filename = null;
+      try {
+        filename = i.filename_enc ? decrypt3(i.filename_enc) : null;
+      } catch {
+        filename = null;
+      }
+      return { ...i, filename, filename_enc: void 0 };
+    };
     function suggestClient(ctx, hints2) {
       if (!hints2) return null;
       for (const code of hints2.codes || []) {
@@ -25653,7 +26113,7 @@ var require_imports = __commonJS({
       if (items.length > 500) throw badRequest("Too many items in one import (max 500)");
       const id = uuid2();
       db3.transaction(() => {
-        db3.run(`INSERT INTO imports(id,source,filename,imported_by,item_count,metadata) VALUES(?,?,?,?,?,?)`, id, source, filename || null, importedBy || null, items.length, metadata ? JSON.stringify(metadata) : null);
+        db3.run(`INSERT INTO imports(id,source,filename_enc,imported_by,item_count,metadata) VALUES(?,?,?,?,?,?)`, id, source, filename ? encrypt3(filename) : null, importedBy || null, items.length, metadata ? JSON.stringify(metadata) : null);
         for (const it of items) {
           const suggested = ctx ? suggestClient(ctx, it.metadata?.hints) : null;
           db3.run(
@@ -25728,7 +26188,7 @@ var require_imports = __commonJS({
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='committed') AS committed,
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='discarded') AS discarded
       FROM imports i LEFT JOIN users u ON u.id=i.imported_by ${auth3.hasPerm(ctx.user, "clients:all") ? "" : "WHERE i.imported_by=? OR i.imported_by IS NULL"} ORDER BY i.created_at DESC LIMIT 200`, ...auth3.hasPerm(ctx.user, "clients:all") ? [] : [ctx.user.id]);
-        return { imports: rows };
+        return { imports: rows.map(importView) };
       });
       r.get("/api/imports/:id", auth3.requireAuth, auth3.requirePerm("imports:read", "imports:write"), (ctx) => {
         const imp = db3.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id);
@@ -25740,7 +26200,7 @@ var require_imports = __commonJS({
           it.suggested_client_name = c ? M.summary(c).display_name : null;
         }
         audit3.log({ user: ctx.user, action: "import.view", entity: "import", entityId: imp.id, ip: ctx.ip });
-        return { import: imp, items };
+        return { import: importView(imp), items };
       });
       r.post("/api/imports/items/:id/commit", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
         const it = db3.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id);
@@ -25813,22 +26273,27 @@ var require_imports = __commonJS({
         audit3.log({ user: ctx.user, action: "import.purge", entity: "import", entityId: imp.id, ip: ctx.ip });
         return { ok: true };
       });
-      r.get("/api/imports/onenote/status", auth3.requireAuth, auth3.requirePerm("imports:write"), () => ({ configured: !!(config2.msGraph.tenantId && config2.msGraph.clientId && config2.msGraph.clientSecret && config2.msGraph.user), user: config2.msGraph.user ? config2.msGraph.user.replace(/(.{2}).+(@.+)/, "$1***$2") : null }));
-      r.get("/api/imports/onenote/notebooks", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
+      const sharedNotebook = (ctx) => {
+        if (ctx.headers["x-ms-access-token"] || auth3.hasPerm(ctx.user, "graph:import")) return;
+        audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms: ["graph:import"], path: ctx.path } });
+        throw forbidden("Importing from the shared OneNote notebook is for supervisors and administrators. Export your own pages from OneNote and upload them instead.");
+      };
+      r.get("/api/imports/onenote/status", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => ({ configured: !!(config2.msGraph.tenantId && config2.msGraph.clientId && config2.msGraph.clientSecret && config2.msGraph.user), user: config2.msGraph.user ? config2.msGraph.user.replace(/(.{2}).+(@.+)/, "$1***$2") : null, shared_allowed: auth3.hasPerm(ctx.user, "graph:import") }));
+      r.get("/api/imports/onenote/notebooks", auth3.requireAuth, auth3.requirePerm("imports:write"), sharedNotebook, async (ctx) => {
         try {
           return { notebooks: await onenote.listNotebooks({ token: ctx.headers["x-ms-access-token"] }) };
         } catch (e) {
           throw new HttpError3(502, e.message);
         }
       });
-      r.get("/api/imports/onenote/sections/:id/pages", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
+      r.get("/api/imports/onenote/sections/:id/pages", auth3.requireAuth, auth3.requirePerm("imports:write"), sharedNotebook, async (ctx) => {
         try {
           return { pages: await onenote.listPages(ctx.params.id, { token: ctx.headers["x-ms-access-token"], since: ctx.query.get("since") || void 0 }) };
         } catch (e) {
           throw new HttpError3(502, e.message);
         }
       });
-      r.post("/api/imports/onenote/fetch", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
+      r.post("/api/imports/onenote/fetch", auth3.requireAuth, auth3.requirePerm("imports:write"), sharedNotebook, async (ctx) => {
         const { page_ids } = validate(ctx.body, { page_ids: { type: "array", required: true } });
         if (!page_ids.length || page_ids.length > 200) throw badRequest("Select 1\u2013200 pages");
         let items;
@@ -26815,7 +27280,9 @@ var require_oidc = __commonJS({
       }
     }
     async function idpFetch(u, opts = {}) {
-      return fetch(await checkEndpoint(u), { ...opts, redirect: "error" });
+      const href = await checkEndpoint(u);
+      if (new URL(href).origin === checkIssuer().origin) return fetch(href, { ...opts, redirect: "error" });
+      return outbound.transport(href, { ...opts, redirect: "error" });
     }
     async function discover() {
       if (discoveryCache && Date.now() - discoveryCache.at < CACHE_MS) return discoveryCache.doc;
@@ -26843,15 +27310,16 @@ var require_oidc = __commonJS({
       return { verifier, challenge };
     }
     var COOKIE = "suds_oidc";
+    var stateKey = () => require_crypto().subkey("oidc-state");
     function signState(payload) {
       const body = b64url(JSON.stringify(payload));
-      const sig = b64url(crypto3.createHmac("sha256", config2.indexKey).update(body).digest());
+      const sig = b64url(crypto3.createHmac("sha256", stateKey()).update(body).digest());
       return `${body}.${sig}`;
     }
     function verifyState(token2) {
       if (!token2 || typeof token2 !== "string" || !token2.includes(".")) return null;
       const [body, sig] = token2.split(".");
-      const expected = b64url(crypto3.createHmac("sha256", config2.indexKey).update(body).digest());
+      const expected = b64url(crypto3.createHmac("sha256", stateKey()).update(body).digest());
       if (sig.length !== expected.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(sig), import_buffer.Buffer.from(expected))) return null;
       let payload;
       try {
@@ -26966,7 +27434,7 @@ var require_oidc = __commonJS({
     function readState(cookieToken) {
       return verifyState(cookieToken);
     }
-    module.exports = { checkEndpoint, discover, startAuth, completeAuth, readState, stateCookie, COOKIE, idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => {
+    module.exports = { checkEndpoint, discover, startAuth, completeAuth, readState, stateCookie, COOKIE, _signStateForTests: (p) => signState(p), idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => {
       discoveryCache = null;
       jwksCache = null;
     } };
@@ -32073,8 +32541,9 @@ var require_setup = __commonJS({
     function setupNeeded() {
       return !config2.setupComplete && !config2.isTest && config2.keySource !== "env" && !proc.env.SUDS_SKIP_SETUP;
     }
+    var bootstrapName = () => (init_bootstrap(), __toCommonJS(bootstrap_exports)).adminUsername();
     function onlyBootstrapAdmin() {
-      return db3.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0;
+      return db3.one(`SELECT COUNT(*) n FROM users WHERE NOT (username=? AND must_change_password=1 AND last_login_at IS NULL)`, bootstrapName()).n === 0;
     }
     var PRODUCTION_DEFAULTS = { backup_schedule_hours: "4" };
     function applyProductionDefaults({ isProd = config2.isProd } = {}) {
@@ -32130,7 +32599,7 @@ var require_setup = __commonJS({
         (init_bootstrap(), __toCommonJS(bootstrap_exports)).discardPasswordFile();
         let mainFund = null;
         db3.transaction(() => {
-          db3.run(`DELETE FROM users WHERE username='admin' AND must_change_password=1 AND last_login_at IS NULL`);
+          db3.run(`DELETE FROM users WHERE username=? AND must_change_password=1 AND last_login_at IS NULL`, bootstrapName());
           db3.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid2(), v.admin_username, adminHash, v.admin_display_name, "admin", db3.now());
           db3.setSetting("org_name", v.org_name);
           if (v.county_name) db3.setSetting("county_name", v.county_name);
@@ -32329,274 +32798,6 @@ var require_supervision = __commonJS({
   }
 });
 
-// server/sync-tables.js
-var require_sync_tables = __commonJS({
-  "server/sync-tables.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    module.exports = {
-      // caloms_*: whether this programme reports CalOMS Tx (which turns on the CalOMS questions in the admission
-      // and discharge forms) and its provider IDs — a device needs both to offer the same forms offline.
-      // default_fund_id: the fund a visit recorded on the device is charged to when the worker has none of their own.
-      settings_keys: [
-        "org_name",
-        "county_name",
-        "program_contact",
-        "note_lock_days",
-        "caloms_enabled",
-        "caloms_providers",
-        "caloms_start_date",
-        "default_fund_id",
-        // The programme profile and module switches (server/programme.js): a device shows what its office shows.
-        ...require_programme().SETTING_KEYS
-      ],
-      tables: [
-        // supervisor_id points at another user: a supervisor must land before the people who report to them.
-        { name: "users", enc: ["mfa_secret_enc"], scope: "users", cols: null, selfParent: "supervisor_id" },
-        { name: "resources", enc: [], scope: "all", writePerm: "resources:write" },
-        { name: "resource_photos", enc: [], scope: "all", writePerm: "resources:write", parent: ["resources", "resource_id"], blob: ["data_b64"] },
-        { name: "policy_documents", enc: [], scope: "all", writePerm: "documents:write", blob: ["file_b64"] },
-        // Grant structure is budget:manage over REST; a device holding only budget:write must not restructure it by sync.
-        { name: "funding_sources", enc: [], scope: "all", writePerm: "budget:manage" },
-        { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:manage", parent: ["funding_sources", "funding_source_id"], selfParent: "parent_id" },
-        // merged_into points at another client: the record that was kept must land before its duplicate.
-        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc", "legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc", "contact_preferences_enc"], legacy: { legal_hold_reason: "legal_hold_reason_enc", contact_preferences: "contact_preferences_enc" }, scope: "client", clientCol: "id", idx: true, writePerm: "clients:write", selfParent: "merged_into" },
-        { name: "assignments", enc: ["notes_enc"], legacy: { notes: "notes_enc" }, scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
-        { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc", "reopen_reason_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
-        // CalOMS Tx records hang off an episode: the episode must land first.
-        { name: "caloms_records", enc: ["answers_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["episodes", "episode_id"] },
-        { name: "interventions", enc: ["summary_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "interventions:write", parent: ["clients", "client_id"] },
-        { name: "overdose_events", enc: ["notes_enc", "substances_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "overdose:write", parent: ["clients", "client_id"] },
-        { name: "calls", enc: ["contact_name_enc", "phone_enc", "summary_enc", "purpose_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "calls:write", parent: ["clients", "client_id"] },
-        { name: "time_entries", enc: ["description_enc", "approval_note_enc"], legacy: { description: "description_enc", approval_note: "approval_note_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "time:write", parent: ["clients", "client_id"] },
-        // A referral may cite the consent it was made under, so consents come first.
-        { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc", "signer_name_enc", "revoked_reason_enc", "witness_enc"], legacy: { revoked_reason: "revoked_reason_enc", witness: "witness_enc" }, scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
-        // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
-        { name: "court_orders", enc: ["court_enc", "case_ref_enc", "recipient_enc", "purpose_enc", "scope_enc", "vacated_reason_enc"], legacy: { vacated_reason: "vacated_reason_enc" }, scope: "client", clientCol: "client_id", writePerm: "court-orders:write", parent: ["clients", "client_id"] },
-        { name: "part2_notices", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
-        { name: "referrals", enc: ["outcome_enc", "barrier_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
-        // Migration 39 moved consents.witness and import_items.metadata into witness_enc and metadata_enc.
-        // Migration 37 moved the free text on assignments, time entries, consents (revocation), expenditures, notes
-        // (countersignature), addenda, client forms and clients (contact preferences) into _enc columns likewise.
-        // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
-        { name: "tasks", enc: ["title_enc", "description_enc"], legacy: { description: "description_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "tasks:write", parent: ["clients", "client_id"] },
-        { name: "expenditures", enc: ["description_enc", "approval_note_enc"], legacy: { description: "description_enc", approval_note: "approval_note_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "budget:write", parent: ["clients", "client_id"] },
-        { name: "notes", enc: ["content_enc", "structured_enc", "title_enc", "cosign_note_enc"], legacy: { cosign_note: "cosign_note_enc" }, scope: "client", clientCol: "client_id", writePerm: "notes:admin:write", parent: ["clients", "client_id"] },
-        { name: "note_addenda", enc: ["content_enc", "reason_enc"], legacy: { reason: "reason_enc" }, scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
-        { name: "disclosures", enc: ["recipient_enc", "purpose_enc", "what_enc", "justification_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
-        // An import (a OneNote page, a Pocket AI transcript) is its importer's until it is filed against a client:
-        // the REST routes show it only to them (or to clients:all), and a device gets the same -- scope 'importer'.
-        { name: "imports", enc: [], scope: "importer", writePerm: "imports:write" },
-        { name: "import_items", enc: ["content_enc", "title_enc", "metadata_enc"], legacy: { metadata: "metadata_enc" }, scope: "via-import", writePerm: "imports:write", parent: ["imports", "import_id"] },
-        { name: "form_templates", enc: [], scope: "all", writePerm: "forms:manage", blob: ["file_b64"] },
-        { name: "client_forms", enc: ["values_enc", "notes_enc"], legacy: { notes: "notes_enc" }, scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["clients", "client_id"] },
-        { name: "client_form_files", enc: ["data_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["client_forms", "client_form_id"], blob: ["data_enc"] },
-        { name: "patient_requests", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
-        // Clinical documentation (CalAIM): the problem list and its history, the care plan, ASAM assessments and
-        // outcome measures. readPerm: a device whose role cannot read them (an ASAM rating on a navigator's
-        // phone) is never sent them, the same minimum-necessary rule clinical notes follow.
-        { name: "problems", enc: ["problem_enc", "icd10_code_enc", "icd10_description_enc", "z_codes_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["clients", "client_id"] },
-        { name: "problem_history", enc: ["changes_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["problems", "problem_id"] },
-        { name: "care_plan_goals", enc: ["goal_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["clients", "client_id"] },
-        { name: "care_plan_steps", enc: ["step_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["care_plan_goals", "goal_id"] },
-        { name: "asam_assessments", enc: ["dimension_notes_enc", "discrepancy_notes_enc", "summary_enc"], scope: "client", clientCol: "client_id", writePerm: "assessments:write", readPerm: "assessments:read", parent: ["clients", "client_id"] },
-        { name: "outcome_measures", enc: ["responses_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "assessments:write", readPerm: "assessments:read", parent: ["clients", "client_id"] },
-        // Harm-reduction supply counts: shared program state. Pull-only (serverOwned): the office copy is the
-        // one shelf count, drawn down there when a pushed visit lands (server/routes/sync.js calls the same
-        // draw-down the REST route does). A device's absolute count is never accepted — two phones each
-        // subtracting from their own stale copy would otherwise leave whichever synced last as the truth.
-        { name: "supply_stock", enc: [], scope: "all", writePerm: "interventions:write", serverOwned: true },
-        // Settings → Lists (the wording and order of documentation choices): the office's configuration,
-        // pull-only like supply counts. A device needs it to offer the same choices and show the same labels
-        // offline; it can never change it (server/routes/options.js refuses writes in the local kernel).
-        { name: "option_overrides", enc: [], scope: "all", writePerm: "settings:manage", serverOwned: true },
-        // The QSOA / research / audit register the non-consent disclosure bases rest on (server/disclosure.js):
-        // the office's, pull-only, so a device can offer the same agreements on its disclosure form offline.
-        { name: "disclosure_agreements", enc: [], scope: "all", writePerm: "agreements:write", serverOwned: true }
-      ],
-      // Push rejection reasons that will never succeed on a retry: the office has ruled, and the device must
-      // mark the row as exchanged (office wins) rather than resend it every sync forever. Anything else
-      // (network, a 5xx, an unknown SQL error) is transient and is retried. Reasons are matched as prefixes.
-      permanent_reasons: [
-        "immutable",
-        "purged",
-        "merged into another record",
-        "conflicts with an existing record",
-        "not on caseload",
-        "not permitted",
-        "server-owned",
-        "your role cannot",
-        "clinical notes not permitted",
-        "you do not have permission",
-        "is missing a required field",
-        "refers to a record the office server does not have",
-        "attributed to",
-        "would create a cycle",
-        "parent allocation does not belong",
-        "its ",
-        "has a value the office does not accept",
-        "needs a lawful basis for disclosure"
-      ],
-      // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
-      // emergency access, and a device has no supervisor to review it.
-      // complaints and the privacy incident register are the privacy officer's, kept at the office likewise.
-      // fhir_jwt_assertions is the FHIR token endpoint's replay guard for client assertions (office server only).
-      // caloms_submissions holds each CalOMS Tx file as produced for DHCS, which only the office sends.
-      server_only: ["breakglass_events", "complaints", "privacy_incidents", "privacy_incident_clients", "fhir_jwt_assertions", "caloms_submissions"],
-      // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
-      // the answers to retried POSTs made against that database (server/idempotency.js). A device's retry is
-      // answered by the device; the office never sees the key, only the rows the request created.
-      per_database: ["idempotency_keys"],
-      // Rows a device may create but never change once they exist (a consent may only be revoked). The legal
-      // record of what was agreed to and what was shared cannot be rewritten by whichever phone syncs last.
-      immutable: ["consents", "disclosures", "note_addenda", "problem_history"],
-      // Columns that reference users(id) somewhere in the schema. A device's local account id is meaningless on the
-      // office server (and vice versa), so every one of these has to be remapped on both sides of a sync.
-      user_refs: [
-        ["clients", "created_by"],
-        ["assignments", "user_id"],
-        ["assignments", "created_by"],
-        ["interventions", "user_id"],
-        ["calls", "user_id"],
-        ["time_entries", "user_id"],
-        ["time_entries", "approved_by"],
-        ["referrals", "user_id"],
-        ["tasks", "assigned_to"],
-        ["tasks", "created_by"],
-        ["expenditures", "user_id"],
-        ["expenditures", "approved_by"],
-        ["episodes", "opened_by"],
-        ["episodes", "closed_by"],
-        ["overdose_events", "reported_by"],
-        ["consents", "revoked_by"],
-        ["notes", "author_id"],
-        ["notes", "signed_by"],
-        ["notes", "cosigned_by"],
-        ["note_addenda", "author_id"],
-        ["consents", "created_by"],
-        ["disclosures", "disclosed_by"],
-        ["imports", "imported_by"],
-        ["client_forms", "created_by"],
-        ["client_forms", "completed_by"],
-        ["client_form_files", "uploaded_by"],
-        ["resource_photos", "uploaded_by"],
-        ["form_templates", "uploaded_by"],
-        ["policy_documents", "uploaded_by"],
-        ["breakglass_events", "user_id"],
-        ["breakglass_events", "acknowledged_by"],
-        ["patient_requests", "handled_by"],
-        ["patient_requests", "created_by"],
-        ["audit_log", "user_id"],
-        ["sessions", "user_id"],
-        ["user_prefs", "user_id"],
-        ["api_keys", "created_by"],
-        ["users", "supervisor_id"],
-        ["devices", "user_id"],
-        ["supply_stock", "updated_by"],
-        ["option_overrides", "updated_by"],
-        ["problems", "added_by"],
-        ["problems", "updated_by"],
-        ["problem_history", "changed_by"],
-        ["care_plan_goals", "created_by"],
-        ["care_plan_goals", "updated_by"],
-        ["care_plan_steps", "owner_user_id"],
-        ["care_plan_steps", "created_by"],
-        ["asam_assessments", "assessed_by"],
-        ["outcome_measures", "administered_by"],
-        ["caloms_records", "created_by"],
-        ["caloms_records", "updated_by"],
-        ["court_orders", "recorded_by"],
-        ["part2_notices", "given_by"],
-        ["complaints", "handled_by"],
-        ["complaints", "created_by"],
-        ["privacy_incidents", "determined_by"],
-        ["privacy_incidents", "reported_by"],
-        ["disclosure_agreements", "created_by"],
-        ["caloms_submissions", "created_by"]
-      ]
-    };
-    module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
-    var crypto3 = require_crypto();
-    function exportRow2(t, r) {
-      const o = { ...r };
-      for (const c of t.enc) {
-        if (!o[c]) continue;
-        try {
-          o[c] = crypto3.decrypt(o[c]);
-        } catch {
-          return null;
-        }
-      }
-      for (const k of Object.keys(o)) if (k.endsWith("_idx")) delete o[k];
-      for (const c of t.blob || []) delete o[c];
-      if (t.name === "users") {
-        delete o.failed_attempts;
-        delete o.locked_until;
-        delete o.access_note;
-        delete o.totp_last_step;
-      }
-      return o;
-    }
-    function importRow2(t, r, existingCols) {
-      const o = {};
-      for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith("_idx") && v !== void 0) o[k] = v;
-      for (const c of t.enc) if (o[c] !== void 0 && o[c] !== null) o[c] = crypto3.encrypt(o[c]);
-      if (t.name === "clients") {
-        const M = require_clients_model();
-        if (r.last_name_enc !== void 0) {
-          o.last_name_idx = crypto3.blindIndex(r.last_name_enc || "");
-          o.name_prefix_idx = M.namePrefixIndex(r.last_name_enc || "");
-          o.name_phonetic_idx = M.namePhoneticIndex(r.last_name_enc || "");
-        }
-        if (r.last_name_enc !== void 0 || r.first_name_enc !== void 0) o.full_name_idx = crypto3.blindIndex((r.last_name_enc || "") + (r.first_name_enc || ""));
-        if (r.first_name_enc !== void 0) {
-          o.first_name_idx = crypto3.blindIndex(String(r.first_name_enc || "").trim().toLowerCase());
-          o.first_name_prefix_idx = M.namePrefixIndex(r.first_name_enc || "");
-        }
-        if (r.preferred_name_enc !== void 0) o.preferred_name_idx = M.preferredNameIndex(r.preferred_name_enc || "");
-        if (r.dob_enc !== void 0) o.dob_idx = crypto3.blindIndex(r.dob_enc || "");
-        if (r.phone_enc !== void 0) o.phone_idx = crypto3.blindIndex(String(r.phone_enc || "").replace(/\D/g, ""));
-      }
-      return o;
-    }
-    function upgradeLegacyRow(t, r) {
-      for (const [from, to] of Object.entries(t.legacy || {})) {
-        if (!(from in r)) continue;
-        if (r[to] === void 0 && r[from] !== null && r[from] !== "") r[to] = r[from];
-        delete r[from];
-      }
-      return r;
-    }
-    function purgeClient(d, clientId, depth = 0) {
-      let n = 0;
-      const has = (t) => !!d.one(`SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?`, t);
-      const seenTable = has("sync_seen");
-      const drop = (table, id) => {
-        const r = d.run(`DELETE FROM ${table} WHERE id=?`, id);
-        n += Number(r && r.changes || 0);
-        if (seenTable) d.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, table, id);
-      };
-      if (depth < 25) for (const m of d.all(`SELECT id FROM clients WHERE merged_into=?`, clientId)) n += purgeClient(d, m.id, depth + 1);
-      for (const t of [...module.exports.tables].reverse()) {
-        if (!has(t.name)) continue;
-        if (t.scope === "via-note") {
-          for (const r of d.all(`SELECT id FROM ${t.name} WHERE note_id IN (SELECT id FROM notes WHERE client_id=?)`, clientId)) drop(t.name, r.id);
-          continue;
-        }
-        if (!t.clientCol || t.name === "clients") continue;
-        for (const r of d.all(`SELECT id FROM ${t.name} WHERE ${t.clientCol}=?`, clientId)) drop(t.name, r.id);
-      }
-      drop("clients", clientId);
-      return n;
-    }
-    module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some((p) => String(reason || "").startsWith(p));
-    module.exports.exportRow = exportRow2;
-    module.exports.importRow = importRow2;
-    module.exports.upgradeLegacyRow = upgradeLegacyRow;
-    module.exports.purgeClient = purgeClient;
-  }
-});
-
 // server/routes/sync.js
 var require_sync = __commonJS({
   "server/routes/sync.js"(exports, module) {
@@ -32631,7 +32832,12 @@ var require_sync = __commonJS({
         const nf = auth3.caseloadFilter(user, "n.client_id");
         return { sql: `${alias}.note_id IN (SELECT n.id FROM notes n WHERE ${nf.sql})`, params: nf.params };
       }
-      if (t.scope === "client-or-null") return { sql: `(${alias}.${t.clientCol} IS NULL OR ${cf.sql})`, params: cf.params };
+      if (t.scope === "client-or-null") {
+        const u = t.unlinked && !auth3.hasPerm(user, t.unlinked.all) ? t.unlinked : null;
+        if (!u) return { sql: `(${alias}.${t.clientCol} IS NULL OR ${cf.sql})`, params: cf.params };
+        const own = u.owners.map((c) => `${alias}.${c}=?`).join(" OR ");
+        return { sql: `((${alias}.${t.clientCol} IS NULL AND (${own})) OR (${alias}.${t.clientCol} IS NOT NULL AND ${cf.sql}))`, params: [...u.owners.map(() => user.id), ...cf.params] };
+      }
       return cf;
     }
     function droppedClients(user, since) {
@@ -32779,6 +32985,7 @@ var require_sync = __commonJS({
         if (t.name === "users") rows = rows.map((r) => ({ ...r.id === user.id ? r : { ...r, password_hash: "scrypt$0$0$0$AA==$AA==" }, mfa_secret_enc: null, mfa_enabled: 0 }));
         if (t.name === "notes" && !auth3.hasPerm(user, "notes:clinical:read")) rows = rows.filter((r) => r.kind !== "clinical");
         if (t.readPerm && !auth3.hasPerm(user, t.readPerm)) rows = [];
+        if (t.redact && !auth3.hasPerm(user, t.redact.perm)) rows = rows.map((r) => ({ ...r, ...t.redact.cols }));
         if (t.name === "note_addenda" && !auth3.hasPerm(user, "notes:clinical:read")) rows = rows.filter((r) => db3.one(`SELECT kind FROM notes WHERE id=?`, r.note_id)?.kind !== "clinical");
         const exported = [];
         for (const r of rows) {
@@ -32841,7 +33048,7 @@ var require_sync = __commonJS({
         scope: raw.scope_enc,
         expires_at: raw.expires_at,
         expires_event: raw.expires_event,
-        document_ref: raw.document_ref,
+        document_ref: raw.document_ref_enc ?? raw.document_ref,
         signed_on_paper: raw.signed_on_paper,
         witness: raw.witness_enc ?? raw.witness,
         signer_relationship: raw.signer_relationship,
@@ -32992,12 +33199,16 @@ var require_sync = __commonJS({
                 if (existing) raw[t.clientCol] = existing[t.clientCol];
                 else if (raw[t.clientCol]) raw[t.clientCol] = keeperOf(raw[t.clientCol]);
               }
-              if ((t.scope === "client" || t.scope === "client-or-null") && raw[t.clientCol] && t.name !== "clients" && !selfAssignmentIds.has(raw.id) && !auth3.canAccessClient(user, raw[t.clientCol])) {
+              if ((t.scope === "client" || t.scope === "client-or-null") && raw[t.clientCol] && t.name !== "clients" && !selfAssignmentIds.has(raw.id) && !auth3.canAccessClient(user, raw[t.clientCol], { deidentified: true })) {
                 reject(t.name, raw.id, "not on caseload");
                 return false;
               }
               if (t.name === "clients" && existing && !auth3.canAccessClient(user, raw.id)) {
                 reject(t.name, raw.id, "not on caseload");
+                return false;
+              }
+              if (existing && t.unlinked && !existing[t.clientCol] && !auth3.hasPerm(user, t.unlinked.all) && !t.unlinked.owners.some((c) => existing[c] === user.id)) {
+                reject(t.name, raw.id, "not permitted");
                 return false;
               }
               if (t.name === "assignments" && !existing && selfAssignmentIds.has(raw.id)) {
@@ -33253,10 +33464,10 @@ var require_sync = __commonJS({
         return;
       }
       if (!matches.length) return;
-      const codes = matches.map((m) => m.client_code);
-      audit3.log({ user, action: "client.possible_duplicate", entity: "client", entityId: raw.id, clientId: raw.id, ip: "device", details: { client_code: clientCode, matches: matches.map((m) => ({ id: m.id, client_code: m.client_code, reasons: m.reasons })), source: "sync" } });
-      db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,priority) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), raw.id, null, user.id, encrypt3(`Possible duplicate record: compare ${clientCode} with ${codes.join(", ")}`), "high");
-      warnings.push({ table: "clients", id: raw.id, reason: `possible duplicate of ${codes.length} existing record${codes.length === 1 ? "" : "s"} (${codes.join(", ")}); a supervisor has been asked to check` });
+      const C = require_clients();
+      C.flagForReview(user, { id: raw.id, client_code: clientCode, matches, source: "sync", ip: "device" });
+      const codes = matches.filter((m) => C.mayOpen(user, m.id)).map((m) => m.client_code);
+      if (codes.length) warnings.push({ table: "clients", id: raw.id, reason: `possible duplicate of ${codes.length} existing record${codes.length === 1 ? "" : "s"} (${codes.join(", ")}); a supervisor has been asked to check` });
     }
     function freeClientCode(code, id) {
       let candidate = code || "M00-0000";
@@ -33386,8 +33597,8 @@ var require_time = __commonJS({
         perm: "time",
         dateCol: "work_date",
         clientRequired: false,
-        // Time is personal: an entry with no client can only be read by the worker who logged it, or a manager.
-        ownerOnly: "time:all",
+        // Time is personal: an entry with no client can only be read by the worker who logged it, or a manager
+        // (time:all) -- sync-tables.js `unlinked`, which crud.js applies to these routes.
         joins: "JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id",
         select: `time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${NAME_COLS}`,
         afterLoad: (ctx, x) => presentTime(withClientName(ctx, x)),
@@ -34128,6 +34339,7 @@ var require_auth2 = __commonJS({
         "notes:clinical:breakglass",
         "consents:*",
         "imports:*",
+        "graph:import",
         "reports:read",
         "assignments:manage",
         "export:read",
@@ -34174,6 +34386,7 @@ var require_auth2 = __commonJS({
         "notes:clinical:write",
         "consents:*",
         "imports:*",
+        "graph:import",
         "reports:read",
         "assignments:manage",
         "audit:read",
@@ -34268,6 +34481,8 @@ var require_auth2 = __commonJS({
       // readonly is for oversight (a county analyst, an auditor's dashboard): aggregate reports and the resource
       // directory, keyed by client code. It holds neither clients:read nor export:read, so it can identify nobody
       // and take nothing off the system. Its funder, NDP and settlement reports are publication releases only.
+      // forms:read is the form library (templates, blank forms); a client's filled forms are client records and
+      // need clients:read as well (server/routes/forms.js), which readonly does not hold.
       readonly: ["clients:list-deidentified", "resources:read", "reports:read", "users:read", "forms:read", "documents:read"]
     };
     function hasPerm(user, perm) {
@@ -34298,13 +34513,14 @@ var require_auth2 = __commonJS({
     }
     var ACTIVE_ASSIGNMENT = `((end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
     var activeAssignment = (prefix = "") => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
-    function canAccessClient(user, clientId) {
+    function canAccessClient(user, clientId, { deidentified = false } = {}) {
+      if (!hasPerm(user, "clients:read")) return deidentified && hasPerm(user, "clients:list-deidentified");
       if (!caseloadRestricted(user)) return true;
       const r = db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${activeAssignment()}`, clientId, user.id);
       return !!r;
     }
-    function assertClientAccess(ctx, clientId) {
-      if (!canAccessClient(ctx.user, clientId)) {
+    function assertClientAccess(ctx, clientId, opts) {
+      if (!canAccessClient(ctx.user, clientId, opts)) {
         audit3.log({ user: ctx.user, action: "authz.denied", entity: "client", entityId: clientId, clientId, ip: ctx.ip, success: false, details: { reason: "not on caseload" } });
         throw forbidden("This client is not on your caseload");
       }
@@ -34352,7 +34568,7 @@ var require_auth2 = __commonJS({
     function hasLocalPassword(hash2) {
       return /^scrypt\$/.test(String(hash2 || ""));
     }
-    async function verifySigner(ctx, body, { action = "note.sign.failed" } = {}) {
+    async function verifySigner(ctx, body, { action = "note.sign.failed", purpose = "sign" } = {}) {
       const password = typeof body.password === "string" && body.password ? body.password : null;
       const code = typeof body.code === "string" && body.code.trim() ? body.code.trim() : null;
       const u = db3.one(`SELECT id, password_hash, mfa_enabled, mfa_secret_enc, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
@@ -34382,15 +34598,19 @@ var require_auth2 = __commonJS({
         if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest("Two-step verification is not set up for your account; give your password instead");
         if (!require_app2().rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 6e4)) throw new HttpError3(429, "Too many attempts");
         const r = useTotp(u.id, u.mfa_secret_enc, code);
-        if (r === "replay") failed({ method: "totp", reason: "replay" }, "That code has already been used. Wait for the next code from your authenticator app.");
-        if (r !== "ok") failed({ method: "totp" }, "That code is not right. Enter the current code from your authenticator app.");
+        if (r !== "ok") {
+          const locked = recordPasswordFailure(u);
+          if (r === "replay") failed({ method: "totp", reason: "replay", ...locked ? { locked: true } : {} }, "That code has already been used. Wait for the next code from your authenticator app.");
+          failed({ method: "totp", ...locked ? { reason: "locked after failures" } : {} }, locked ? "That code is not right. The account is now locked after too many failed attempts." : "That code is not right. Enter the current code from your authenticator app.");
+        }
+        clearFailures(u.id);
         markReauth(ctx);
         return "totp";
       }
       const st = reauthStatus(ctx);
-      if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? "Confirm the attestation to sign" : st.method === "totp" ? "Enter the code from your authenticator app to sign" : st.method === "sso" ? "Confirm with single sign-on, then sign" : "Your password is required to sign");
+      if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? `Confirm the attestation to ${purpose}` : st.method === "totp" ? `Enter the code from your authenticator app to ${purpose}` : st.method === "sso" ? `Confirm with single sign-on, then ${purpose}` : `Your password is required to ${purpose}`);
       if (!st.recent) {
-        const how = { totp: "Enter the code from your authenticator app to sign.", sso: "Confirm with single sign-on to sign.", password: "Enter your password to sign." }[st.method];
+        const how = { totp: `Enter the code from your authenticator app to ${purpose}.`, sso: `Confirm with single sign-on to ${purpose}.`, password: `Enter your password to ${purpose}.` }[st.method];
         throw new HttpError3(403, `It has been a while since you last confirmed it is you. ${how}`, { reauthRequired: true, method: st.method, sso: st.sso });
       }
       return "recent_auth";
@@ -34535,7 +34755,7 @@ var require_auth2 = __commonJS({
         audit3.log({ user, action: "auth.login.sso_required", ip: ctx.ip, success: false });
         throw new HttpError3(403, "This organisation requires single sign-on. Use the county sign-in button instead of a password.", { ssoRequired: true });
       }
-      db3.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db3.now(), user.id);
+      db3.run(`UPDATE users SET failed_attempts=CASE WHEN mfa_enabled=1 THEN failed_attempts ELSE 0 END, locked_until=NULL, last_login_at=? WHERE id=?`, db3.now(), user.id);
       if (deviceId2) {
         const device = devices.touch(user, deviceId2, ctx);
         if (device.revoked_at) {
@@ -34558,11 +34778,17 @@ var require_auth2 = __commonJS({
     function verifyMfa(ctx, code) {
       if (!ctx.session) throw unauthorized();
       const user = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+      if (isLocked(user)) {
+        audit3.log({ user, action: "auth.mfa.failed", ip: ctx.ip, success: false, details: { reason: "locked" } });
+        throw new HttpError3(423, "Account locked after too many failed attempts. Try again later or contact an administrator.");
+      }
       const r = user.mfa_secret_enc ? useTotp(user.id, user.mfa_secret_enc, code) : "wrong";
       if (r !== "ok") {
-        audit3.log({ user, action: "auth.mfa.failed", ip: ctx.ip, success: false, details: r === "replay" ? { reason: "replay" } : void 0 });
+        const locked = recordPasswordFailure(user);
+        audit3.log({ user, action: "auth.mfa.failed", ip: ctx.ip, success: false, details: r === "replay" ? { reason: "replay", ...locked ? { locked: true } : {} } : locked ? { reason: "locked after failures" } : void 0 });
         throw unauthorized(r === "replay" ? "That code has already been used. Wait for the next code from your authenticator app." : "Invalid verification code");
       }
+      clearFailures(user.id);
       db3.run(`UPDATE sessions SET mfa_pending=0, reauth_at=? WHERE id=?`, db3.now(), ctx.session.id);
       audit3.log({ user, action: "auth.login", ip: ctx.ip, details: { mfa: true } });
       return publicUser(user);
@@ -34611,6 +34837,9 @@ var require_auth2 = __commonJS({
       reauthStatus,
       verifySigner,
       useTotp,
+      isLocked,
+      recordPasswordFailure,
+      clearFailures,
       cookieHeader,
       revokeSession,
       revokeAllForUser,
@@ -34706,7 +34935,7 @@ var require_disclosure = __commonJS({
         scope: dec2(row.scope_enc),
         expires_at: row.expires_at,
         expires_event: row.expires_event,
-        document_ref: row.document_ref,
+        document_ref: dec2(row.document_ref_enc),
         signed_on_paper: row.signed_on_paper,
         witness: dec2(row.witness_enc),
         signer_relationship: row.signer_relationship,
@@ -35722,6 +35951,14 @@ var require_db = __commonJS({
       //     a code seen over a shoulder or on the screen cannot sign a note or complete a sign-in again.
       (d) => {
         addColumn(d, "users", "totp_last_step", "INTEGER");
+      },
+      // 42: names people type or upload leave plaintext: a form attachment's file name and an import's (a scan
+      //     or OneNote export is routinely named after the person), and a consent's document reference
+      //     ("ROI binder, J. Smith"). A device on an older kernel still sends the old names (sync-tables legacy).
+      (d) => {
+        encryptColumn(d, "client_form_files", "filename", "filename_enc");
+        encryptColumn(d, "imports", "filename", "filename_enc");
+        encryptColumn(d, "consents", "document_ref", "document_ref_enc");
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -35838,6 +36075,9 @@ var require_db = __commonJS({
         db3 = void 0;
       }
     }
+    function isOpen() {
+      return !!db3;
+    }
     function now2() {
       return (/* @__PURE__ */ new Date()).toISOString();
     }
@@ -35910,7 +36150,7 @@ var require_db = __commonJS({
     function tombstone(table, id) {
       run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now2());
     }
-    module.exports = { open: open3, openWith, get, close, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
+    module.exports = { open: open3, openWith, get, close, isOpen, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
   }
 });
 

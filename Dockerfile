@@ -25,5 +25,8 @@ EXPOSE 8080
 # tini; nothing is added to this image). Without one node is PID 1: SIGTERM needs explicit handling and zombie
 # children are not reaped. The instance lock (server/instance-lock.js) is safe either way — a stale lock that
 # names this process's own pid, after a kill or power loss, is taken over rather than crash-looping.
-HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:8080/api/health > /dev/null || exit 1
+# Liveness only (process up, database answers). Not /api/health: that answers 503 for warnings a restart cannot
+# fix (a certificate near expiry, a failed backup), and an orchestrator acting on it would restart-loop SUDS.
+# Readiness for a load balancer is /api/health/ready; alert on /api/health (docs/DEPLOYMENT.md, 4b).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 CMD wget -qO- http://127.0.0.1:8080/api/health/live > /dev/null || exit 1
 CMD ["node", "--no-warnings=ExperimentalWarning", "server/index.js"]

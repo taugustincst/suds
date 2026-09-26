@@ -136,10 +136,10 @@ FHIR is never used for a legal proceeding against the patient (§2.12(d)); that 
 **Omission, not refusal.** A search never fails with a 403 because some clients are not covered. Their resources are left out. An `OperationOutcome` entry (`search.mode = outcome`) always carries the §2.32 notice, and for a broad search it adds a warning with the count:
 
 ```
-"5 patient(s) (7 Encounter resource(s)) on this page were withheld: no active consent covers County Behavioral Health for this purpose of use, or the patient has an agreed restriction."
+"5 patient(s) (7 Encounter resource(s)) matching this search were withheld: no active consent covers County Behavioral Health for this purpose of use, or the patient has an agreed restriction."
 ```
 
-A search that names one person (`identifier`, `family`, `given`, `birthdate`, `_id`, `patient`) never gives a count. For those searches the OperationOutcome has the same wording whether or not anyone was withheld. Otherwise "1 withheld" in reply to `identifier=X` would itself disclose that X is a client of the programme. For the same reason, reading a client who is not covered returns `404`, identical to the answer for a record that does not exist. The refusal is still audited internally (`fhir.read.withheld`).
+A search that names one person (`identifier`, `family`, `given`, `birthdate`, `_id`, `patient`) never gives a count. For those searches the OperationOutcome has the same wording whether or not anyone was withheld. Otherwise "1 withheld" in reply to `identifier=X` would itself disclose that X is a client of the programme. Paging is over covered resources only: `_count`, `_offset` and the `next` link count what the caller may see, so a `next` link never says that an uncovered match exists, and a patient-type search with `_count=0` never has a `next` link (before 1.12.5 `Patient?family=X&birthdate=Y&_count=0` carried one exactly when X was a client). The withheld count of a broad search is for the whole search, not one page. For the same reason, reading a client who is not covered returns `404`, identical to the answer for a record that does not exist. The refusal is still audited internally (`fhir.read.withheld`).
 
 **Labels and notice.**
 
@@ -274,7 +274,7 @@ A search Bundle, shortened:
     { "fullUrl": ".../Patient/1f5a…", "resource": { "resourceType": "Patient", "id": "1f5a…", "...": "..." }, "search": { "mode": "match" } },
     { "resource": { "resourceType": "OperationOutcome", "issue": [
         { "severity": "information", "code": "informational", "diagnostics": "42 CFR §2.32 notice: This record which has been disclosed to you is protected by Federal confidentiality rules (42 CFR part 2). …" },
-        { "severity": "warning", "code": "suppressed", "diagnostics": "5 patient(s) (5 Patient resource(s)) on this page were withheld: no active consent covers County Behavioral Health for this purpose of use, or the patient has an agreed restriction." } ] },
+        { "severity": "warning", "code": "suppressed", "diagnostics": "5 patient(s) (5 Patient resource(s)) matching this search were withheld: no active consent covers County Behavioral Health for this purpose of use, or the patient has an agreed restriction." } ] },
       "search": { "mode": "outcome" } } ] }
 ```
 

@@ -27,8 +27,11 @@ migrations on devices.
 
 ## Consequences
 
-- Fresh install and upgraded install must end up structurally identical; this is tested from a real 1.6.1
-  database, so a migration that forgets a column, an index or a trigger fails CI.
+- Fresh install and upgraded install must end up structurally identical; this is tested from real 1.6.1,
+  1.9.4 and 1.11.0 databases (the last two written by those releases themselves, with records whose ciphertext
+  must still decrypt afterwards), so a migration that forgets a column, an index or a trigger, or loses a row,
+  fails CI. A feature release that adds migrations should add a fixture of the release before it:
+  `git archive v<x> server package.json | tar -x -C <dir>`, then `node test/fixtures/make-release-fixture.js <dir> test/fixtures/release-v<x>.sql`.
 - 37 migrations in ten days of development is a high rate. The release-cadence policy in
   [docs/RELEASE.md](../RELEASE.md) limits schema changes to feature releases, so a county does not take a
   migration in a fix release.
@@ -37,10 +40,11 @@ migrations on devices.
 ## Read
 
 `server/db.js` (`migrations`, `migrate`, `snapshotBeforeMigration`, `rebuildTable`), `server/schema.sql`,
-`scripts/gen-schema-text.js`, `test/fixtures/schema-v4.sql`.
+`scripts/gen-schema-text.js`, `test/fixtures/schema-v4.sql`, `test/fixtures/release-v*.sql`,
+`test/fixtures/make-release-fixture.js`.
 
 ## Tests that pin it
 
-`test/migrations.test.js` (upgrade a real 1.6.1 database and compare with a fresh install),
+`test/migrations.test.js` (upgrade real 1.6.1, 1.9.4 and 1.11.0 databases and compare with a fresh install),
 `test/name-index-migration.test.js` (a data migration re-deriving indexes), CI step *Local kernel and generated schema
 match their sources*.
