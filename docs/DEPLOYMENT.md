@@ -318,7 +318,25 @@ What this does not give you: automatic failover or zero data loss. Anything ente
 
 ## 4b. Monitoring and logs
 
-`GET /api/health` needs no authentication and returns `{ ok, database, uptime_seconds, warnings }`. It answers 503 when the database cannot be read, free disk drops below 100 MB, the audit chain failed verification, scheduled backups have stopped, an index `server/schema.sql` declares is missing and could not be created at startup (logged as `db.index_missing`; also on Security status), or the HTTPS certificate is within 60 days of expiry, so it works directly as a liveness and readiness probe (the Docker image uses it). The inventory figures — `version`, `schema_version`, `database_bytes`, `disk_free_bytes` — are included only for an administrator's session or a request carrying `Authorization: Bearer <METRICS_TOKEN>`, since they describe the installation to anyone who can reach the port.
+Three unauthenticated endpoints, for three different questions. Use the right one: a probe that restarts SUDS on an operational warning puts it in a restart loop that fixes nothing.
+
+| Endpoint | Question | 503 when | Use it for |
+| --- | --- | --- | --- |
+| `GET /api/health/live` | Is the process alive? | the database does not answer `SELECT 1` | **Liveness**: Docker `HEALTHCHECK` (the image and `docker-compose.yml` use it), a Kubernetes `livenessProbe`, a systemd watchdog script. A failure means restart. |
+| `GET /api/health/ready` | Can it serve requests now? | the database is not open, is not at this build's schema version, or a restore is replacing it (`{ ok:false, reason }`) | **Readiness**: a load balancer's health check, a Kubernetes `readinessProbe`. A failure means stop sending traffic, not restart. |
+| `GET /api/health` | Does an operator need to act? | any of the above, or a warning (below) | **Alerting and dashboards** only — never as a liveness probe. |
+
+`GET /api/health` returns `{ ok, database, uptime_seconds, warnings }`. It answers 503 when the database cannot be read, free disk drops below 100 MB, the audit chain failed verification, the audit log no longer matches its anchors or the anchors are stored in the data directory in production, scheduled backups have stopped or failed, an index `server/schema.sql` declares is missing and could not be created at startup (logged as `db.index_missing`; also on Security status), or the HTTPS certificate is within 60 days of expiry. None of those is fixed by restarting the process, which is why liveness and readiness ignore them: page someone on this endpoint instead. The inventory figures — `version`, `schema_version`, `database_bytes`, `disk_free_bytes` — are included only for an administrator's session or a request carrying `Authorization: Bearer <METRICS_TOKEN>`, since they describe the installation to anyone who can reach the port.
+
+**Kubernetes** (exactly one replica, `strategy: Recreate` — ADR-0001; the instance lock refuses a second process):
+
+```yaml
+livenessProbe:  { httpGet: { path: /api/health/live,  port: 8080 }, periodSeconds: 30, timeoutSeconds: 5, failureThreshold: 3 }
+readinessProbe: { httpGet: { path: /api/health/ready, port: 8080 }, periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 3 }
+startupProbe:   { httpGet: { path: /api/health/live,  port: 8080 }, periodSeconds: 5, failureThreshold: 120 }   # a migration on a large database can take minutes
+```
+
+**systemd** has no HTTP probe of its own; `Restart=always` in the unit above covers a process that exits. To also restart a process that is up but whose database has stopped answering, run a timer every minute with `curl -fsS --max-time 5 http://127.0.0.1:8080/api/health/live || systemctl restart suds` (three consecutive failures before restarting is kinder). Point the county's monitoring (Nagios, Zabbix, Uptime Kuma, Azure Monitor, CloudWatch Synthetics) at `/api/health` for alerts.
 
 For a fuller picture in an existing monitoring stack, set `METRICS_TOKEN` and point Prometheus (or anything that scrapes Prometheus-format text) at `GET /api/metrics` with that value as its `bearer_token`. Off (404) until that variable is set; once set, every request needs `Authorization: Bearer <token>` or it is refused — a scraper has no way to sign in interactively, so this is its own credential, not the usual session. Reports uptime, active users/sessions, client and audit-log row counts, synced-device count, database file size and free disk — aggregate operational numbers, never PHI (`server/metrics.js`).
 

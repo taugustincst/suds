@@ -59,6 +59,6 @@ Audit entries are kept `AUDIT_RETENTION_DAYS` (default 2,555 days, seven years; 
 ## Operational logs and monitoring
 
 * `<data>/logs/suds-<date>.log`, mode 0600, rolled at 8 MB, 30 days; `LOG_FORMAT=json` for collectors (`server/log.js`).
-* `GET /api/health` — liveness/readiness; 503 on database error, low disk, audit-chain or anchor failure, stale/failed backups, expiring certificate.
+* `GET /api/health` — operational status for alerting; 503 on database error, low disk, audit-chain or anchor failure, stale/failed backups, expiring certificate. Probes use `GET /api/health/live` (liveness) and `GET /api/health/ready` (readiness), which ignore those warnings so a platform does not restart-loop SUDS over them (DEPLOYMENT.md, 4b).
 * `GET /api/metrics` — Prometheus text, bearer-token gated, aggregate only (`server/metrics.js`).
 * Client-side errors are reported to the server without PHI (`server/routes/client-errors.js`).
