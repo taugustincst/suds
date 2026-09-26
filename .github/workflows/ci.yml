@@ -4,6 +4,7 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
@@ -38,6 +39,7 @@ jobs:
         run: for f in public/*.js public/views/*.js; do node --input-type=module --check < "$f" || exit 1; done
   browser:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
@@ -65,6 +67,7 @@ jobs:
   # action (marketplace actions are off), so the official tarball is downloaded and checked against SHASUMS.
   node24:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
@@ -94,6 +97,7 @@ jobs:
   # uses no actions at all (not even actions/upload-artifact), so the signed report is printed into this log.
   dr-drill:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
@@ -117,6 +121,7 @@ jobs:
   # real-device release checklist (docs/ADOPTION.md) still applies.
   webkit:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     continue-on-error: true
     steps:
       - name: Check out

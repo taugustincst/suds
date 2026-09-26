@@ -90,7 +90,11 @@ for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-featu
     office_dirty=1
   fi
   t0=$SECONDS
-  if node scripts/ui/$s.mjs > $T/suds-ui-$s.log 2>&1; then result=pass; grep -v '^\[2m' $T/suds-ui-$s.log | tail -6; else result=FAIL; echo "FAILED"; grep -v '^\[2m' $T/suds-ui-$s.log | tail -25; grep -E "^ *FAIL " $T/suds-ui-$s.log | head -10; fail=1; failed+=("$s"); fi
+  # A hung script (a wait that never resolves) fails after SUDS_SCRIPT_TIMEOUT seconds instead of holding the
+  # whole run open; its last lines are then in the failure digest at the end like any other failure.
+  timeout --kill-after=10 "${SUDS_SCRIPT_TIMEOUT:-900}" node scripts/ui/$s.mjs > $T/suds-ui-$s.log 2>&1; rc=$?
+  [ $rc = 124 ] && echo "TIMED OUT after ${SUDS_SCRIPT_TIMEOUT:-900} s (a wait that never resolved)" >> $T/suds-ui-$s.log
+  if [ $rc = 0 ]; then result=pass; grep -v '^\[2m' $T/suds-ui-$s.log | tail -6; else result=FAIL; echo "FAILED"; grep -v '^\[2m' $T/suds-ui-$s.log | tail -25; grep -E "^ *FAIL " $T/suds-ui-$s.log | head -10; fail=1; failed+=("$s"); fi
   # "name: 12/12 checks passed" is what makeChecks().finish() prints (scripts/ui/assert.mjs).
   checks=$(grep -oE '[0-9]+/[0-9]+ checks passed' $T/suds-ui-$s.log | tail -1 | cut -d' ' -f1)
   rows+=("$s|${checks:--}|$result|$((SECONDS - t0))")
