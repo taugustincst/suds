@@ -153,7 +153,9 @@ test('funder report: the fund filter, deleted clients and demographics all use o
   for (const c of [a, b, callOnly, gone]) H.db.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status) VALUES(?,?,?,?,?,?)`, randomUUID(), c, resourceId, navId, '2024-03-03T18:00:00.000Z', 'pending');
   assert.equal((await admin.del(`/api/clients/${gone}`, { reason: 'entered in error' })).status, 200);
 
-  const rep = async (q) => (await admin.get(`/api/reports/funder?from=2024-02-01&to=2024-03-31${q}`)).data;
+  // Exact counts (the programme's own submission): these are what the report counts, which suppression
+  // for publication would hide (test/small-cell-suppression.test.js).
+  const rep = async (q) => (await admin.get(`/api/reports/funder?from=2024-02-01&to=2024-03-31${q}&purpose=submission&counts=exact`)).data;
   const all = await rep('');
   assert.equal(all.unduplicated.served, 3, 'A visit, B visit and the call-only client; not the deleted one');
   assert.equal(all.unduplicated.with_a_referral, 3, 'the deleted client\'s referral is not counted');
@@ -183,7 +185,7 @@ test('report periods are local calendar days in ORG_TIMEZONE, not UTC days', asy
     // A visit stored as a bare calendar day is compared as a day.
     const bare = (await admin.post('/api/clients', { first_name: 'Fiscal', last_name: 'Bareday', confirm_duplicate: true })).data.id;
     assert.equal((await admin.post('/api/interventions', { client_id: bare, type: 'case_management', occurred_at: '2026-06-30' })).status, 201);
-    const fy = (await admin.get('/api/reports/funder?from=2025-07-01&to=2026-06-30')).data;
+    const fy = (await admin.get('/api/reports/funder?from=2025-07-01&to=2026-06-30&purpose=submission&counts=exact')).data;
     const served = fy.unduplicated.served;
     const d = await admin.get('/api/reports/dashboard?from=2026-06-30&to=2026-06-30');
     assert.equal(d.status, 200);
@@ -198,12 +200,12 @@ test('report periods are local calendar days in ORG_TIMEZONE, not UTC days', asy
     assert.ok(inFy.includes(code(c)) && inFy.includes(code(bare)), 'the export uses the same local days');
     assert.ok(!inFy.includes(code(prior)), 'and leaves out the previous fiscal year\'s last evening');
     // The FY count includes both late-June visits and not the prior-year evening.
-    const prev = (await admin.get('/api/reports/funder?from=2024-07-01&to=2025-06-30')).data.unduplicated.served;
+    const prev = (await admin.get('/api/reports/funder?from=2024-07-01&to=2025-06-30&purpose=submission&counts=exact')).data.unduplicated.served;
     assert.ok(prev >= 1, 'the prior-year evening is in the prior fiscal year');
     assert.ok(served >= 2);
-    const onlyThese = (await admin.get('/api/reports/funder?from=2026-06-30&to=2026-06-30')).data.unduplicated.served;
+    const onlyThese = (await admin.get('/api/reports/funder?from=2026-06-30&to=2026-06-30&purpose=submission&counts=exact')).data.unduplicated.served;
     assert.equal(onlyThese, 2, 'June 30th: the 5:30pm visit and the bare-day visit');
-    assert.equal((await admin.get('/api/reports/funder?from=2025-06-30&to=2025-06-30')).data.unduplicated.served, 1, 'June 30th 2025 has the 8pm visit');
+    assert.equal((await admin.get('/api/reports/funder?from=2025-06-30&to=2025-06-30&purpose=submission&counts=exact')).data.unduplicated.served, 1, 'June 30th 2025 has the 8pm visit');
     assert.equal((await admin.get('/api/reports/funder?from=junk')).status, 400);
   } finally { config.orgTimezone = was; }
 });
