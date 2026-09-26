@@ -85,11 +85,12 @@ test('provider pictures are discovered from the provider website and downloaded'
   };
   // The made-up hosts resolve to a public address (the download refuses names that point inside the network).
   require('../server/region-pictures')._setLookupForTests(async () => [{ address: '93.184.216.34' }]);
-  globalThis.fetch = async (url) => {
+  // The outbound seam (server/outbound.js): without it the pinned transport would really connect.
+  require('../server/region-pictures')._setFetchForTests(async (url) => {
     const hit = pages[String(url)];
     if (!hit) return { ok: false, status: 404, headers: new Map(), arrayBuffer: async () => new ArrayBuffer(0) };
     return { ok: true, status: 200, headers: { get: (k) => (k === 'content-length' ? String(hit.body.length) : hit.type) }, arrayBuffer: async () => hit.body.buffer.slice(hit.body.byteOffset, hit.body.byteOffset + hit.body.length) };
-  };
+  });
   try {
     const region = require('../server/region');
     const targets = region.pictureTargets('sacramento-metro');
@@ -106,7 +107,7 @@ test('provider pictures are discovered from the provider website and downloaded'
     assert.match((await region.fetchPicture({ ...t, url: null, website: 'https://missing.example.org/' })).error, /404/);
     assert.match((await region.fetchPicture({ ...t, url: null, website: null })).error, /no website/);
     assert.match((await region.fetchPicture({ ...t, url: 'http://insecure.example.org/a.png' })).error, /https/);
-  } finally { globalThis.fetch = realFetch; require('../server/region-pictures')._setLookupForTests(null); }
+  } finally { globalThis.fetch = realFetch; require('../server/region-pictures')._setFetchForTests(null); require('../server/region-pictures')._setLookupForTests(null); }
 });
 
 test('a picture batch stops at its deadline instead of outliving the request', async () => {

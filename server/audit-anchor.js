@@ -144,7 +144,8 @@ function runIfDue(now = Date.now()) {
   const hours = config.auditAnchorHours;
   if (!(hours > 0)) return null;
   const last = db.getSetting('audit_anchor_last_at', null);
-  if (last && now - Date.parse(last) < hours * 3600_000) return null;
+  // Housekeeping ticks hourly; five minutes' slack so a tick that fires a little early does not skip an hour.
+  if (last && now - Date.parse(last) < hours * 3600_000 - 5 * 60_000) return null;
   return safeWrite('schedule');
 }
 function safeWrite(reason, opts = {}) {

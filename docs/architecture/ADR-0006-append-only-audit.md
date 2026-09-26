@@ -20,7 +20,7 @@ Four layers, each catching what the previous one cannot:
    transaction — only by the retention purge and index-key re-signing.
 3. **Sealed head.** After each verification and purge the newest id, hash and row count are sealed with the
    index key into settings and written to the log file, so truncating the newest rows is detected.
-4. **Anchors outside the database.** Every `AUDIT_ANCHOR_HOURS` (default 6), at each scheduled backup and on
+4. **Anchors outside the database.** Every `AUDIT_ANCHOR_HOURS` (default 1; 6 before 1.12.5), at each scheduled backup and on
    demand, the head is written as a new read-only file (`O_EXCL`) to `AUDIT_ANCHOR_DIR`, each naming the one
    before, optionally also to syslog (`server/audit-anchor.js`). Write-once only if the county points the
    directory at WORM / object-lock storage. Anchors carry no PHI.
