@@ -132,6 +132,8 @@ module.exports = (r) => {
       syncExpenditure(row);
       supplies.drawDown(ctx, row);
     },
+    // Kits or strips handed out with no supply item to take them off (the form tells the worker).
+    insertResult: (ctx, row) => { const u = supplies.untracked(row); return u.length ? { supplies_untracked: u } : {}; },
     afterUpdate: (ctx, row, prev) => { syncExpenditure(row); syncTimeEntry(row, prev); supplies.drawDown(ctx, row, prev); },
     // The FKs from expenditures.intervention_id and time_entries.intervention_id are ON DELETE SET NULL, so
     // this has to run before the delete — after it, there is no longer any way to find the records this

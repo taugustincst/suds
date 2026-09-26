@@ -78,6 +78,10 @@ test('the funder report gives the same answers as the implementation it replaced
   if (process.env.SUDS_WRITE_GOLDEN === '1') { fs.writeFileSync(GOLDEN, JSON.stringify(now, null, 1) + '\n'); return; }
   const golden = JSON.parse(fs.readFileSync(GOLDEN, 'utf8'));
   for (const k of Object.keys(golden)) assert.deepStrictEqual(now[k], golden[k], `${k} differs from the golden report`);
+  // 1.13.1 changed the golden dashboard deliberately: it joined visits to clients, so the fixture's anonymous
+  // community distribution (one visit in twenty-five) was missing from Home and Reports. Its kits are now
+  // the funder report's for the same fiscal year.
+  assert.equal(now.dashboard.interventions.naloxone_kits, now['fiscal year'].naloxone_distribution.kits, 'Home/Reports kits = the funder report\'s');
 });
 
 test('the report period predicate is sargable: it reads the date index, not the whole table', () => {

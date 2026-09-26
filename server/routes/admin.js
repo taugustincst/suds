@@ -282,7 +282,9 @@ module.exports = (r) => {
 
   // Fictional sample data (safe in production: only when the database has no real clients yet, removable in one click)
   const demo = require('../demo');
-  r.get('/api/admin/demo', auth.requireAuth, auth.requirePerm('settings:manage'), () => demo.offer());
+  // home_offer: whether Home puts a "Load sample data" banner in front of the administrator. Not on a production
+  // server: its Home is where the programme's real work starts, and the offer stays under Settings.
+  r.get('/api/admin/demo', auth.requireAuth, auth.requirePerm('settings:manage'), () => ({ ...demo.offer(), home_offer: !config.isProd }));
   r.post('/api/admin/demo', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
     const refused = demo.loadRefusal(demo.status());
     if (refused) throw badRequest(refused);

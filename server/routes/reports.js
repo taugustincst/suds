@@ -63,6 +63,20 @@ function requireReportRun({ caseloadScoped, fund = false }) {
   };
 }
 
+/**
+ * Which of the period's visits Home and the Reports dashboard count for this user. A visit for a client counts
+ * when the client is on the user's caseload (everyone, for a role that is not caseload-scoped). A visit with no
+ * client (community naloxone distribution, street outreach) is nobody's caseload: it counts for the worker who
+ * logged it, and for everyone who is not caseload-scoped — the owner rule sync-tables.js `unlinked` applies to
+ * the records themselves. Joining visits to clients dropped every anonymous visit, so a supervisor's Home said
+ * "2 kits" in a period the funder report (which counts all visits) said 12.
+ */
+function visitScope(user, alias = 'i') {
+  const cf = auth.caseloadFilter(user, `${alias}.client_id`);
+  const all = !auth.caseloadRestricted(user) || auth.hasPerm(user, 'clients:all');
+  return { sql: `(CASE WHEN ${alias}.client_id IS NULL THEN (${alias}.user_id=? OR ?) ELSE ${cf.sql} END)`, params: [user.id, all ? 1 : 0, ...cf.params] };
+}
+
 module.exports = (r) => {
   r.get('/api/reports/dashboard', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
     const { from, to, ts, tsP } = range(ctx);
@@ -76,6 +90,7 @@ module.exports = (r) => {
     // each one (as the funder report does between its phases), so a colleague's request waits for one query,
     // tens of milliseconds, not for all of them. q(fn): run one query, then yield.
     const q = async (fn) => { const v = fn(); await new Promise((resolve) => defer(resolve)); return v; };
+    const vs = visitScope(ctx.user);
     const out = {
       from, to,
       clients: { active: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n), waitlist: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n),
@@ -89,11 +104,13 @@ module.exports = (r) => {
         mat: await q(() => scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`)),
       },
       // The period's totals in one pass over its visits, not one pass per figure.
-      interventions: { ...await q(() => scoped1(`SELECT COUNT(*) total, COALESCE(SUM(duration_minutes),0) minutes, COALESCE(SUM(naloxone_kits),0) naloxone_kits, COALESCE(SUM(fentanyl_strips),0) fentanyl_strips
-          FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND {CF}`, ...tsP)),
-        by_type: await q(() => db.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params)),
-        by_week: await q(() => db.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params)),
-        by_worker: await q(() => db.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params)),
+      // Every visit in the period, with or without a client (visitScope): an anonymous distribution of ten kits
+      // is ten kits on Home and Reports as it is in the funder report and the NDP log.
+      interventions: { ...await q(() => db.one(`SELECT COUNT(*) total, COALESCE(SUM(duration_minutes),0) minutes, COALESCE(SUM(naloxone_kits),0) naloxone_kits, COALESCE(SUM(fentanyl_strips),0) fentanyl_strips
+          FROM interventions i WHERE ${ts('i.occurred_at')} AND ${vs.sql}`, ...tsP, ...vs.params)),
+        by_type: await q(() => db.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i WHERE ${ts('i.occurred_at')} AND ${vs.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...vs.params)),
+        by_week: await q(() => db.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i WHERE ${ts('i.occurred_at')} AND ${vs.sql} GROUP BY k ORDER BY k`, ...tsP, ...vs.params)),
+        by_worker: await q(() => db.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id WHERE ${ts('i.occurred_at')} AND ${vs.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...vs.params)),
       },
       calls: await q(() => ({ total: db.one(`SELECT COUNT(*) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n, minutes: db.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n,
         crisis: db.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts('started_at')}`, ...tsP).n, by_outcome: db.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE ${ts('started_at')} GROUP BY outcome ORDER BY n DESC`, ...tsP),

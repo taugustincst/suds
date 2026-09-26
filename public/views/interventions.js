@@ -37,8 +37,13 @@ export function openInterventionForm(values, { clientId, clientDisplay, onDone, 
     isNew ? { name: 'time_category', label: 'Time category', type: 'select', list: 'TIME_CATEGORIES', value: 'direct_service' } : null,
     isNew && can('clients:all') ? { name: 'user_id', label: 'Worker (defaults to you)', type: 'user' } : null,
   ].filter(Boolean), { values: seed, submitText: isNew ? 'Save' : 'Save changes', draftKey: values ? `intervention:${values.id}` : 'intervention:new', onCancel: () => m.close(), onSubmit: async (d) => {
-    if (isNew) await post('/api/interventions', d); else await put(`/api/interventions/${values.id}`, { ...d, if_updated_at: values.updated_at });
-    toast(isNew ? 'Visit logged' : 'Saved', 'ok'); m.close(); onDone && onDone();
+    const saved = isNew ? await post('/api/interventions', d) : await put(`/api/interventions/${values.id}`, { ...d, if_updated_at: values.updated_at });
+    // Kits or strips handed out that the cupboard has no item for were not taken off any count: say so,
+    // rather than leave Supplies silently wrong (Supplies offers to add the standard items).
+    const missed = (saved && saved.supplies_untracked) || [];
+    if (missed.length) toast(`Visit logged. ${missed.map(x => `${x.quantity} × ${x.item}`).join(' and ')} ${missed.length === 1 && missed[0].quantity === 1 ? 'was' : 'were'} not taken off Supplies: there is no "${missed.map(x => x.item).join('" or "')}" item there yet. Add it under Supplies.`, 'warn', { ms: 12000 });
+    else toast(isNew ? 'Visit logged' : 'Saved', 'ok');
+    m.close(); onDone && onDone();
   } });
   // Whether Client is required follows the type chosen: the field's own flag is what form().read() checks,
   // and the label's asterisk and the control's required/aria-required say the same thing on screen.

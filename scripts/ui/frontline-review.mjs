@@ -89,13 +89,40 @@ eq(prov.status, 201, 'a provider');
   ok(/Save a usual consent naming your referral partners/.test(await text(page)), 'Home asks an administrator to save a usual consent naming the referral partners');
   await page.click('.main button:has-text("Set up the usual consent")');
   await until(() => page.$('.modal [data-consent-template-form]'));
+  // 1.13.1: the partners are ticked from the directory, none for you (it used to pre-fill the first six
+  // entries, 211 and a crisis line among them, into a recipient too long to save).
   const recipient = await page.inputValue('.modal textarea[name=recipient]');
-  ok(/including /.test(recipient), 'the recipient is filled in with providers from the directory', recipient.slice(0, 120));
+  ok(!/including /.test(recipient), 'the recipient wording names no partner until one is ticked', recipient.slice(0, 120));
+  const partners = await page.$$eval('.modal input[type=checkbox][name^=partner_]', bs => bs.map(b => ({ name: b.name, label: b.closest('label').textContent.trim(), checked: b.checked })));
+  ok(partners.length >= 2, 'the directory\'s entries are offered to tick', partners.length);
+  ok(partners.every(p => !p.checked), 'nothing is ticked to begin with');
+  ok(!partners.some(p => /Crisis Line/.test(p.label)), 'crisis lines are not offered', partners.map(p => p.label));
   eq(await page.inputValue('.modal select[name=type]'), 'part2_tpo', 'on the treatment, payment and operations consent');
+  const pick = partners.filter(p => /Hope Street Detox|County Opioid Treatment Program/.test(p.label)).slice(0, 2);
+  eq(pick.length, 2, 'two partners to tick');
+  for (const p of pick) await page.check(`.modal input[name=${p.name}]`);
   await page.click('.modal button[type=submit]');
   await until(async () => !(await page.$('.modal-bg')));
+  ok(!(await page.$('.modal .banner.danger:not(.hidden)')), 'it saves as offered (no "Validation failed")');
   const t = (await api('GET', '/api/consent-template')).data.template;
   ok(t && t.type === 'part2_tpo' && t.expires_days === 365, 'the usual consent is saved', t);
+  eq(t && [...t.partners].sort().join('|'), pick.map(p => p.label).sort().join('|'), 'naming the two partners ticked');
+  ok(t && pick.every(p => t.recipient.includes(p.label)) && /, including /.test(t.recipient), 'after the consent\'s wording', t && t.recipient);
+  // Reopened, the same two are ticked again.
+  await page.evaluate(async () => (await import('./views/part2.js')).openConsentTemplateForm({}));
+  await until(() => page.$('.modal [data-consent-template-form]'));
+  const again = await page.$$eval('.modal input[type=checkbox][name^=partner_]', bs => bs.filter(b => b.checked).map(b => b.closest('label').textContent.trim()));
+  eq(again.sort().join('|'), pick.map(p => p.label).sort().join('|'), 'reopened, the partners saved are ticked');
+  eq(await page.inputValue('.modal textarea[name=recipient]'), recipient, 'and the wording is the wording, without them');
+  // A validation message says what to do in words (the generic path every form uses).
+  await page.fill('.modal textarea[name=recipient]', 'x'.repeat(2100));
+  await page.click('.modal button[type=submit]');
+  const err = await until(() => page.$('.modal .banner.danger:not(.hidden)'));
+  const errText = err ? (await err.textContent()) : '';
+  ok(/too long: keep it under 2,000 characters/.test(errText), 'a too-long answer says so in words', errText);
+  ok(!/max length|Validation failed/.test(errText), 'not "Validation failed … max length"', errText);
+  await closeModals(page);
+  await go(page, 'dashboard');
   await go(page, 'dashboard');
   ok(!/Save a usual consent naming your referral partners/.test(await text(page)), 'and the step is done');
 }
