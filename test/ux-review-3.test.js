@@ -144,14 +144,18 @@ test('an overdose event is charged to the default fund, as a visit is; an explic
 });
 
 test('a visit that hands out kits with no supply item to take them off says so; with the item, it is drawn down and says nothing', async () => {
-  H.db.run('DELETE FROM supply_stock');
+  // No item of either counted category (1.14.0: items, sites and a stock ledger, server/supplies.js).
+  H.db.transaction(() => { for (const t of ['intervention_supplies', 'supply_ledger', 'supply_items']) H.db.run(`DELETE FROM ${t}`); });
   const r = await nav.post('/api/interventions', { type: 'naloxone_distribution', occurred_at: at(), naloxone_kits: 4, fentanyl_strips: 2 });
   assert.equal(r.status, 201);
   assert.deepEqual(r.data.supplies_untracked, [{ item: 'Naloxone kit', quantity: 4 }, { item: 'Fentanyl test strips', quantity: 2 }], 'the form is told what was not taken off');
-  assert.equal((await nav.post('/api/supplies', { item: 'Naloxone kit', quantity: 10 })).status, 201);
+  // Adding items is supplies:manage since 1.14.0: a navigator may not, an administrator may.
+  assert.equal((await nav.post('/api/supplies', { item: 'Naloxone kit', quantity: 10 })).status, 403);
+  assert.equal((await admin.post('/api/supplies', { item: 'Naloxone kit', quantity: 10 })).status, 201);
   const r2 = await nav.post('/api/interventions', { type: 'naloxone_distribution', occurred_at: at(), naloxone_kits: 3 });
   assert.equal(r2.data.supplies_untracked, undefined, 'nothing to say');
-  assert.equal(H.db.one(`SELECT quantity FROM supply_stock WHERE item='Naloxone kit'`).quantity, 7, 'drawn down');
+  const onHand = (await admin.get('/api/supplies')).data.rows.find(x => x.item === 'Naloxone kit').quantity;
+  assert.equal(onHand, 7, 'drawn down');
   const r3 = await nav.post('/api/interventions', { type: 'naloxone_distribution', occurred_at: at(), naloxone_kits: 1, fentanyl_strips: 5 });
   assert.deepEqual(r3.data.supplies_untracked, [{ item: 'Fentanyl test strips', quantity: 5 }], 'only the item that is missing');
 });
