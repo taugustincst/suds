@@ -23,11 +23,19 @@ const SETTLEMENT_SOURCE_NOTE = 'Categories follow Exhibit E ("List of Opioid Rem
 
 const dosesPerKit = () => Number(db.getSetting('naloxone_doses_per_kit', '')) || 2;
 
-// The calendar day an event belongs to, in the programme's time zone; a bare day stays the day it is.
-function dayOf(at) {
-  if (!at) return null;
-  if (String(at).length === 10) return at;
-  return require('./routes/budget').localDate(at);
+// The calendar day an event belongs to, in the programme's time zone; a bare day stays the day it is. One
+// reader per report: the time zone is looked up and its formatter built once, not once per row (at 10,000
+// kit rows that was most of a year's publication release).
+function dayReader() {
+  const B = require('./routes/budget'); const tz = B.orgTimezone();
+  let fmt = null;
+  try { fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }); } catch { fmt = null; }
+  return (at) => {
+    if (!at) return null;
+    if (String(at).length === 10) return at;
+    if (!fmt) return B.localDate(at, tz);
+    const d = new Date(at); return Number.isFinite(d.getTime()) ? fmt.format(d) : null;
+  };
 }
 
 /**
@@ -38,41 +46,55 @@ function dayOf(at) {
 function counts(ctx, period) { const counting = FR.countingMode(ctx, period); return { counting, sc: { threshold: counting.threshold, exact: counting.mode === 'exact' } }; }
 const header = (counting) => ({ suppression: FR.suppressionOf(counting), release: counting.release, counting_statement: FR.countingStatement(counting) });
 
-function ndp(ctx, { from, to, ts, tsP }) {
-  const { counting, sc } = counts(ctx, { from, to });
-  // Published, the log is by month, not by day: a day at one site is too fine a cell to publish, and the
-  // reversals are then exactly the funder report's reversals by month for the same release, suppressed by
-  // the same call, so the two cannot be subtracted from each other. The day-by-day log, by site and by who
-  // gave the naloxone, is for the programme's own submission to the NDP (not for publication).
-  const monthly = counting.purpose === 'publication';
+/** Naloxone distributed (kits and doses: not people), by day or by month, site type and recipient type. */
+function distributionRows(ctx, { ts, tsP }, monthly) {
   const cf = auth.caseloadFilter(ctx.user, 'c.id');
-  const perKit = dosesPerKit();
+  const perKit = dosesPerKit(); const dayOf = dayReader();
   const rows = new Map();
-  const add = (key, init, fn) => { if (!rows.has(key)) rows.set(key, init); fn(rows.get(key)); };
   // Community distribution has no client; a kit handed to someone on a caseload is counted for whoever may
   // see that caseload, the same scoping as every other export.
   for (const x of db.all(`SELECT i.occurred_at, i.location, i.client_id IS NULL AS anon, i.naloxone_kits kits FROM interventions i LEFT JOIN clients c ON c.id=i.client_id
       WHERE ${ts('i.occurred_at')} AND i.naloxone_kits > 0 AND (i.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
     const day = dayOf(x.occurred_at); const date = monthly ? day.slice(0, 7) : day; const site = x.location || 'unknown';
     const recipient = x.anon ? 'Community member (anonymous)' : 'Programme participant';
-    add(`d|${date}|${site}|${recipient}`, { date, entry: 'distribution', site_type: site, recipient_type: recipient, kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null }, (r) => { r.kits += x.kits; r.doses += x.kits * perKit; });
+    const key = `d|${date}|${site}|${recipient}`;
+    if (!rows.has(key)) rows.set(key, { date, entry: 'distribution', site_type: site, recipient_type: recipient, kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null });
+    const r = rows.get(key); r.kits += x.kits; r.doses += x.kits * perKit;
   }
-  if (monthly) {
-    // Whole programme (a publication release has no caseload scope), so every event counts, as in the
-    // funder report.
-    const od = FR.overdoseFigures(ts, tsP);
-    const m = FR.overdoseProtect(od, sc);
-    const rev = od.by_month.map((x, i) => ({ x, shown: m.by_month[i] })).filter(({ x }) => x.reversals > 0)
-      .map(({ x, shown }) => ({ date: x.month, entry: 'reversal', site_type: 'all', recipient_type: null, kits: null, doses: null, reversals: shown.reversals, reversal_doses: x.reversal_doses, administered_by: null }));
-    // The doses used in a hidden month go with it, protected against the total doses.
-    const totalDoses = rev.reduce((n, r) => n + r.reversal_doses, 0);
-    const t = SC.table(rev, [], { ...sc, totals: { reversal_doses: totalDoses }, mirror: { reversal_doses: 'reversals' } });
-    const dist = [...rows.values()];
-    const list = [...dist, ...t.rows].sort((a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type)));
-    return { from, to, county: db.getSetting('county_name', '') || null, doses_per_kit: perKit, template_note: NDP_TEMPLATE_NOTE, rows: list, by: 'month', ...header(counting),
-      totals: { kits: dist.reduce((n, r) => n + r.kits, 0), doses: dist.reduce((n, r) => n + r.doses, 0), reversals: m.reversals, reversal_doses: t.totals.reversal_doses,
-        community_kits: dist.filter(r => r.recipient_type === 'Community member (anonymous)').reduce((n, r) => n + r.kits, 0) } };
-  }
+  return rows;
+}
+const byDate = (a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type));
+
+/**
+ * The published log (a publication release, server/publication-release.js): by month, not by day - a day at
+ * one site is too fine a cell to publish - with the reversals by month for all sites together, which are the
+ * funder report's reversals by month in the same release, shown the same way. dist: distributionRows by
+ * month; od: the true overdose figures; shown: { by_month: the reversals shown for each of od.by_month,
+ * reversals: the total shown }.
+ */
+function ndpPublished({ from, to }, counting, dist, od, shown) {
+  const sc = { threshold: counting.threshold, exact: false };
+  const rev = od.by_month.map((x, i) => ({ x, r: shown.by_month[i] })).filter(({ x }) => x.reversals > 0)
+    .map(({ x, r }) => ({ date: x.month, entry: 'reversal', site_type: 'all', recipient_type: null, kits: null, doses: null, reversals: r, reversal_doses: x.reversal_doses, administered_by: null, ...(typeof r === 'number' ? {} : { suppressed: true }) }));
+  // The doses used in a hidden month go with it (they are not people), protected against the total doses.
+  const totalDoses = rev.reduce((n, r) => n + r.reversal_doses, 0);
+  const t = SC.table(rev, [], { ...sc, totals: { reversal_doses: totalDoses }, mirror: { reversal_doses: 'reversals' } });
+  const d = [...dist.values()];
+  return { from, to, county: db.getSetting('county_name', '') || null, doses_per_kit: dosesPerKit(), template_note: NDP_TEMPLATE_NOTE, rows: [...d, ...t.rows].sort(byDate), by: 'month', ...header(counting),
+    totals: { kits: d.reduce((n, r) => n + r.kits, 0), doses: d.reduce((n, r) => n + r.doses, 0), reversals: shown.reversals, reversal_doses: t.totals.reversal_doses,
+      community_kits: d.filter(r => r.recipient_type === 'Community member (anonymous)').reduce((n, r) => n + r.kits, 0) } };
+}
+
+function ndp(ctx, range) {
+  const { from, to, ts, tsP } = range;
+  const { counting, sc } = counts(ctx, { from, to });
+  // Published, the log is part of the period's publication release, computed and audited with the funder
+  // report and the settlement report. The day-by-day log, by site and by who gave the naloxone, is for the
+  // programme's own submission to the NDP (not for publication).
+  if (counting.purpose === 'publication') return require('./publication-release').release(ctx, range, counting).ndp;
+  const cf = auth.caseloadFilter(ctx.user, 'c.id');
+  const rows = distributionRows(ctx, range, false); const dayOf = dayReader();
+  const add = (key, init, fn) => { if (!rows.has(key)) rows.set(key, init); fn(rows.get(key)); };
   for (const x of db.all(`SELECT o.occurred_at, o.location_type, o.naloxone_doses, o.administered_by FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id
       WHERE ${ts('o.occurred_at')} AND (o.naloxone_used=1 OR o.kind='reversal') AND o.survived=1 AND (o.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
     // The same coded site list as distribution; a place typed in before "Where" was a list is matched to
@@ -80,7 +102,7 @@ function ndp(ctx, { from, to, ts, tsP }) {
     const date = dayOf(x.occurred_at); const site = O.codeFor('LOCATIONS', x.location_type) || 'unknown'; const by = x.administered_by || 'unknown';
     add(`r|${date}|${site}|${by}`, { date, entry: 'reversal', site_type: site, recipient_type: null, kits: null, doses: null, reversals: 0, reversal_doses: 0, administered_by: by }, (r) => { r.reversals += 1; r.reversal_doses += x.naloxone_doses || 0; });
   }
-  const list = [...rows.values()].sort((a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type)));
+  const list = [...rows.values()].sort(byDate);
   const sum = (k) => list.reduce((n, r) => n + (r[k] || 0), 0);
   const totals = { kits: sum('kits'), doses: sum('doses'), reversals: sum('reversals'), reversal_doses: sum('reversal_doses'), community_kits: list.filter(r => r.recipient_type === 'Community member (anonymous)').reduce((n, r) => n + r.kits, 0) };
   // Small cells (server/small-cells.js): a reversal is an event that happened to a person, so reversals per
@@ -89,7 +111,7 @@ function ndp(ctx, { from, to, ts, tsP }) {
   const rev = list.filter(r => r.entry === 'reversal');
   const t = SC.table(rev, ['reversals'], { ...sc, totals: { reversals: totals.reversals, reversal_doses: totals.reversal_doses }, mirror: { reversal_doses: 'reversals' } });
   const out = list.map(r => (r.entry === 'reversal' ? t.rows[rev.indexOf(r)] : r));
-  return { from, to, county: db.getSetting('county_name', '') || null, doses_per_kit: perKit, template_note: NDP_TEMPLATE_NOTE, rows: out, by: 'day', ...header(counting),
+  return { from, to, county: db.getSetting('county_name', '') || null, doses_per_kit: dosesPerKit(), template_note: NDP_TEMPLATE_NOTE, rows: out, by: 'day', ...header(counting),
     totals: { ...totals, reversals: t.totals.reversals, reversal_doses: t.totals.reversal_doses } };
 }
 
@@ -97,11 +119,15 @@ const money = (n) => Math.round((n || 0) * 100) / 100;
 const USE_LABEL = Object.fromEntries(C.SETTLEMENT_USES.map(x => [x.code, x]));
 const HIAA_LABEL = Object.fromEntries([...C.SETTLEMENT_HIAA.map(x => [x.code, x.label]), ['none', 'Not a High Impact Abatement Activity']]);
 
-function settlement(ctx, { from, to, ts, tsP }) {
-  const { counting, sc } = counts(ctx, { from, to });
+/**
+ * The settlement report's true figures. People per allowable use are true counts here; fundKeys: every
+ * settlement fund's id, its allowable use as the people are grouped (or 'uncategorised') and whether it is
+ * active (the funder report lists active funds only).
+ */
+function settlementFigures({ from, to, ts, tsP }) {
   // A settlement fund: one marked as opioid settlement money, or one given a settlement category.
   const isFund = `(f.source_type='opioid_settlement' OR f.settlement_use IS NOT NULL OR f.settlement_hiaa IS NOT NULL)`;
-  const funds = db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end, f.total_amount, f.settlement_use, f.settlement_hiaa FROM funding_sources f WHERE ${isFund} ORDER BY f.name`);
+  const funds = db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end, f.total_amount, f.settlement_use, f.settlement_hiaa, f.is_active FROM funding_sources f WHERE ${isFund} ORDER BY f.name`);
   const exps = db.all(`SELECT e.amount, e.status, COALESCE(e.settlement_use, f.settlement_use) AS use_code, COALESCE(e.settlement_hiaa, f.settlement_hiaa) AS hiaa_code, f.id AS fund_id
     FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE ${isFund} AND e.spent_at BETWEEN ? AND ? AND e.status IN ('pending','approved','reimbursed')`, from, to);
   const bucket = () => ({ approved_amount: 0, pending_amount: 0, expenditures: 0 });
@@ -120,14 +146,6 @@ function settlement(ctx, { from, to, ts, tsP }) {
   // People as in the funder report: a deleted client's visits are services, but not a person served.
   const services = db.all(`SELECT COALESCE(f.settlement_use,'uncategorised') AS use_code, COUNT(*) services, COUNT(DISTINCT CASE WHEN c.deleted_at IS NULL THEN i.client_id END) people, COALESCE(SUM(i.naloxone_kits),0) naloxone_kits
     FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts('i.occurred_at')} GROUP BY use_code`, ...tsP);
-  // People per allowable use are some of the people the programme served in the period, a total the funder
-  // report publishes: protected against it (the people left when one use's are taken from it are a count of
-  // people too), and never one hidden use beside visible ones.
-  let people = services.map(x => x.people);
-  if (!sc.exact) {
-    const served = FR.servedCount(ts, tsP);
-    people = SC.noLonely(SC.star({ total: served, subsets: people.map(n => Math.min(n, served)) }, { ...sc, fixedTotal: true }).subsets);
-  }
   const fix = (m) => [...m].map(([code, b]) => ({ code, ...b, approved_amount: money(b.approved_amount), pending_amount: money(b.pending_amount) }));
   const useRows = fix(byUse).map(x => ({ ...x, schedule: USE_LABEL[x.code]?.schedule || 'Uncategorised', label: USE_LABEL[x.code]?.label || 'No settlement category recorded' }));
   const hiaaRows = fix(byHiaa).map(x => ({ ...x, label: HIAA_LABEL[x.code] || 'No High Impact Abatement Activity recorded' }));
@@ -138,12 +156,29 @@ function settlement(ctx, { from, to, ts, tsP }) {
     by_use: useRows, by_hiaa: hiaaRows,
     detail: [...detail.values()].map(x => ({ ...x, approved_amount: money(x.approved_amount), pending_amount: money(x.pending_amount), schedule: USE_LABEL[x.use]?.schedule || 'Uncategorised', use_label: USE_LABEL[x.use]?.label || 'No settlement category recorded', hiaa_label: HIAA_LABEL[x.hiaa] || 'No High Impact Abatement Activity recorded' }))
       .sort((a, b) => a.schedule.localeCompare(b.schedule) || a.use.localeCompare(b.use) || a.hiaa.localeCompare(b.hiaa)),
-    // People per allowable use are counts of people (protected above); services and kits are not.
-    services_by_use: services.map((x, i) => ({ ...x, people: people[i], ...(typeof people[i] === 'number' ? {} : { suppressed: true }), label: USE_LABEL[x.use_code]?.label || 'No settlement category recorded' })),
-    ...header(counting),
+    // People per allowable use are counts of people (protected in settlement() below); services and kits are not.
+    services_by_use: services.map(x => ({ ...x, label: USE_LABEL[x.use_code]?.label || 'No settlement category recorded' })),
+    fundKeys: funds.map(f => ({ id: f.id, key: f.settlement_use || 'uncategorised', active: !!f.is_active })),
     totals: { approved_amount: approved, pending_amount: money(exps.filter(e => e.status === 'pending').reduce((n, e) => n + e.amount, 0)), hiaa_amount: hiaaAmount,
       hiaa_share: approved ? Math.round(1000 * hiaaAmount / approved) / 10 : null, uncategorised_amount: byUse.get('uncategorised').approved_amount + byUse.get('uncategorised').pending_amount },
   };
+}
+
+function settlement(ctx, range) {
+  const { from, to, ts, tsP } = range;
+  const { counting, sc } = counts(ctx, { from, to });
+  // Published, the report is part of the period's publication release (server/publication-release.js).
+  if (counting.purpose === 'publication') return require('./publication-release').release(ctx, range, counting).settlement;
+  const { fundKeys, ...d } = settlementFigures(range);
+  // People per allowable use are some of the people the programme served in the period: protected against
+  // that total (the people left when one use's are taken from it are a count of people too), and never one
+  // hidden use beside visible ones.
+  let people = d.services_by_use.map(x => x.people);
+  if (!sc.exact) {
+    const served = FR.servedCount(ts, tsP);
+    people = SC.noLonely(SC.star({ total: served, subsets: people.map(n => Math.min(n, served)) }, { ...sc, fixedTotal: true }).subsets);
+  }
+  return { ...d, funds: d.funds.map(({ is_active, ...f }) => f), services_by_use: d.services_by_use.map((x, i) => FR.withCell(x, 'people', people[i])), ...header(counting) };
 }
 
 // The counting mode travels with the file, as with the funder report: in the filename, a response header
@@ -200,4 +235,4 @@ function routes(r, range) {
   });
 }
 
-module.exports = { ndp, settlement, routes, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
+module.exports = { ndp, settlement, settlementFigures, distributionRows, ndpPublished, header, routes, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
