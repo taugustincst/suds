@@ -2,7 +2,7 @@
 // referrals with no outcome recorded. Before this, the dashboard only counted the signed-in user's own
 // unsigned notes, so none of this was visible to the person responsible for it.
 import { h, route, get, post, state, toast, table, badge, fmt, can, pageHead, nav, emptyState, modal, form, announce, confirmDialog, pageTabs } from '../app.js';
-import { openNote, signatureDialog } from './notes.js';
+import { openNote, signatureDialog, ssoReauthNotice } from './notes.js';
 import { openOutcomeForm } from './referrals.js';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -17,6 +17,7 @@ const noteBody = (n) => (n.structured
   : h('pre', { class: 'note' }, n.content || ''));
 
 route('supervision', async (r) => {
+  ssoReauthNotice(r.query); // back from a single sign-on confirmation started in the countersign dialog
   const tab = r.query.get('tab') === 'breakglass' && can('audit:read') ? 'breakglass' : 'queue';
   const q = await get('/api/supervision/queue');
   const page = h('div');

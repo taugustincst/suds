@@ -53,8 +53,23 @@ modules stay, as options. Point-by-point response: `docs/market/EVALUATION-RESPO
   hosting model saying who is called at 2am (`docs/market/HOSTING.md`); unmeasured time savings turned into
   a pilot measurement plan; development described as AI-assisted with automated gates. Architecture decision
   records for a new maintainer in `docs/architecture/`; feature releases at most monthly.
+- **Found by an independent re-evaluation before release, and fixed:**
+  - The instance lock records the host and the holder refreshes it every 10 s: a second replica or a second
+    host on shared storage is refused while the holder lives (a crashed one is taken over after 45 s), and the
+    same container restarting after a crash is let straight in.
+  - A funder report filtered to one fund showed the whole programme's staff hours and unfunded counts.
+  - Counts "suitable for publication" now hide every small count of people in every table — per fund,
+    overdoses by month, the naloxone log, the settlement report — with complementary suppression so no hidden
+    cell can be worked out from a total; kits, doses, services, hours and money stay exact.
+  - A reversal is always counted as naloxone used, and its location uses the same list as distribution.
+  - Wrong signature passwords count toward account lockout; an authenticator code is accepted once; staff who
+    sign in through the county's single sign-on can confirm a signature with it.
+  - Batch countersign takes a comment per note and refuses one comment across different clients.
+  - Completing the setup wizard on the same computer no longer loops and rate-limits the first sign-in.
+  - Harm-reduction wording on sign-in and the tour; flag labels instead of codes; a one-line two-step banner
+    on phones; the wizard recommends offline copies for outreach programmes and can create the main fund.
 - Schema migrations 38 (default funds, settlement categories), 39 (witness and import hints encrypted),
-  40 (recent re-authentication).
+  40 (recent re-authentication), 41 (single-use authenticator codes).
 
 ## 1.11.0 — 2026-09-25
 

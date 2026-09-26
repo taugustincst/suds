@@ -6795,7 +6795,10 @@ CREATE TABLE IF NOT EXISTS users (
   scim_external_id TEXT,
   -- The fund this worker's visits are charged to unless they choose another (migration 38). Blank: the
   -- programme's default (settings.default_fund_id). No REFERENCES: users sync to a device before funds do.
-  default_fund_id TEXT
+  default_fund_id TEXT,
+  -- The RFC 6238 time-step of the last authenticator code accepted for this account (migration 41): a code
+  -- is good once, at sign-in, at signing or at enrolment, never replayed within its 90-second window.
+  totp_last_step INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL;
@@ -8137,15 +8140,19 @@ var require_crypto = __commonJS({
     function totp(secretB32, time = Date.now(), step = 30) {
       return hotp(secretB32, Math.floor(time / 1e3 / step));
     }
-    function verifyTotp(secretB32, code, window2 = 1, time = Date.now()) {
+    function totpStep(secretB32, code, window2 = 1, time = Date.now()) {
       const c = String(code || "").replace(/\s+/g, "");
-      if (!/^\d{6}$/.test(c)) return false;
+      if (!/^\d{6}$/.test(c)) return null;
       const counter = Math.floor(time / 1e3 / 30);
+      let found = null;
       for (let i = -window2; i <= window2; i++) {
         const expected = hotp(secretB32, counter + i);
-        if (crypto3.timingSafeEqual(import_buffer.Buffer.from(expected), import_buffer.Buffer.from(c))) return true;
+        if (crypto3.timingSafeEqual(import_buffer.Buffer.from(expected), import_buffer.Buffer.from(c)) && found === null) found = counter + i;
       }
-      return false;
+      return found;
+    }
+    function verifyTotp(secretB32, code, window2 = 1, time = Date.now()) {
+      return totpStep(secretB32, code, window2, time) !== null;
     }
     function otpauthUrl(secret, account, issuer = "SUDS") {
       return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
@@ -8168,6 +8175,7 @@ var require_crypto = __commonJS({
       uuid: uuid2,
       generateTotpSecret,
       totp,
+      totpStep,
       verifyTotp,
       otpauthUrl,
       base32Encode,
@@ -16047,7 +16055,7 @@ var require_auth = __commonJS({
     var { rateLimit, rateLimited } = require_app2();
     var { HttpError: HttpError3, badRequest, unauthorized } = require_http();
     var { validate } = require_validate();
-    var { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, verifyTotp, otpauthUrl, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, otpauthUrl, encrypt: encrypt3 } = require_crypto();
     module.exports = (r) => {
       r.post("/api/auth/login", async (ctx) => {
         const limit2 = require_config().loginRateLimit;
@@ -16163,7 +16171,8 @@ var require_auth = __commonJS({
         const { code } = validate(ctx.body, { code: { type: "string", required: true, maxLen: 10 } });
         const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
         if (!u.mfa_secret_enc) throw badRequest("Run MFA setup first");
-        if (!verifyTotp(decrypt3(u.mfa_secret_enc), code)) throw badRequest("Invalid code");
+        const r2 = auth3.useTotp(u.id, u.mfa_secret_enc, code);
+        if (r2 !== "ok") throw badRequest(r2 === "replay" ? "That code has already been used. Wait for the next code from your authenticator app." : "Invalid code");
         db3.run(`UPDATE users SET mfa_enabled=1, updated_at=? WHERE id=?`, db3.now(), u.id);
         db3.run(`UPDATE sessions SET mfa_pending=0 WHERE id=?`, ctx.session.id);
         audit3.log({ user: u, action: "auth.mfa.enabled", ip: ctx.ip });
@@ -25244,7 +25253,7 @@ var require_oidc = __commonJS({
       if (clear) return `${COOKIE}=; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
       return `${COOKIE}=${token2}; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=600${secure}`;
     }
-    async function startAuth({ acrValues = [] } = {}) {
+    async function startAuth({ acrValues = [], reauth = null } = {}) {
       const doc = await discover();
       const { verifier, challenge } = pkcePair();
       const state = crypto3.randomUUID();
@@ -25259,7 +25268,13 @@ var require_oidc = __commonJS({
       url.searchParams.set("code_challenge", challenge);
       url.searchParams.set("code_challenge_method", "S256");
       if (acrValues.length) url.searchParams.set("acr_values", acrValues.join(" "));
-      const cookie = stateCookie(signState({ state, nonce, verifier, exp: Date.now() + 6e5 }));
+      const payload = { state, nonce, verifier, exp: Date.now() + 6e5 };
+      if (reauth) {
+        url.searchParams.set("prompt", "login");
+        url.searchParams.set("max_age", "0");
+        Object.assign(payload, { purpose: "reauth", sid: reauth.sid, uid: reauth.uid, ret: reauth.ret, at: Date.now() });
+      }
+      const cookie = stateCookie(signState(payload));
       return { url: url.toString(), cookie };
     }
     async function completeAuth({ code, state, cookieToken }) {
@@ -25334,7 +25349,10 @@ var require_oidc = __commonJS({
       if (acr && acrValues.includes(acr)) return { ok: true, via: `acr:${acr}`, amr, acr };
       return { ok: false, via: null, amr, acr };
     }
-    module.exports = { checkEndpoint, discover, startAuth, completeAuth, stateCookie, COOKIE, idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => {
+    function readState(cookieToken) {
+      return verifyState(cookieToken);
+    }
+    module.exports = { checkEndpoint, discover, startAuth, completeAuth, readState, stateCookie, COOKIE, idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => {
       discoveryCache = null;
       jwksCache = null;
     } };
@@ -25352,7 +25370,8 @@ var require_oidc2 = __commonJS({
     var config2 = require_config();
     var oidc = require_oidc();
     var { rateLimit } = require_app2();
-    var { HttpError: HttpError3, notFound } = require_http();
+    var { HttpError: HttpError3, notFound, badRequest } = require_http();
+    var { sha256: sha2562 } = require_crypto();
     function redirect(res, location) {
       res.writeHead(302, { Location: location });
       res.end();
@@ -25371,6 +25390,51 @@ var require_oidc2 = __commonJS({
       audit3.log({ user: { username: "system" }, action: "user.oidc_linked", entity: "user", entityId: user.id, details: { username: user.username, via: claims.oid && user.scim_external_id === String(claims.oid) ? "scim externalId" : "scim userName" } });
       return db3.one(`SELECT * FROM users WHERE id=?`, user.id);
     }
+    function safeReturn(ret) {
+      const path = String(ret || "").split("?")[0];
+      return /^#\/[A-Za-z0-9_\-/]{0,200}$/.test(path) ? path : "#/dashboard";
+    }
+    var AUTH_TIME_SKEW_MS = 6e4;
+    async function finishReauth(ctx, saved) {
+      const clear = oidc.stateCookie("", { clear: true });
+      const back = (result) => {
+        ctx.res.setHeader("Set-Cookie", clear);
+        redirect(ctx.res, `/${saved.ret}?sso_reauth=${result}`);
+      };
+      const user = db3.one(`SELECT * FROM users WHERE id=?`, saved.uid);
+      const failed = (reason) => audit3.log({ user: user || { username: "" }, action: "auth.oidc.reauth", ip: ctx.ip, success: false, details: { reason } });
+      if (ctx.query.get("error")) {
+        failed("provider_denied");
+        return back("denied");
+      }
+      let claims;
+      try {
+        claims = await oidc.completeAuth({ code: ctx.query.get("code") || "", state: ctx.query.get("state") || "", cookieToken: ctx.cookies[oidc.COOKIE] });
+      } catch (e) {
+        console.error("[suds] oidc re-authentication failed:", e.message);
+        failed("exchange_failed");
+        return back("failed");
+      }
+      const session = user && db3.all(`SELECT * FROM sessions WHERE user_id=? AND revoked_at IS NULL`, user.id).find((s) => sha2562(s.id) === saved.sid);
+      if (!user || !user.is_active || !session || Date.parse(session.expires_at) < Date.now()) {
+        failed("session_ended");
+        ctx.res.setHeader("Set-Cookie", clear);
+        return redirect(ctx.res, "/#/login?oidc_error=session_ended");
+      }
+      if (!user.oidc_subject || claims.sub !== user.oidc_subject) {
+        failed("different_identity");
+        return back("mismatch");
+      }
+      const at = Number(claims.auth_time) * 1e3;
+      if (!Number.isFinite(at) || at < saved.at - AUTH_TIME_SKEW_MS || at > Date.now() + AUTH_TIME_SKEW_MS) {
+        failed("auth_time_not_fresh");
+        return back("stale");
+      }
+      db3.run(`UPDATE sessions SET reauth_at=? WHERE id=?`, db3.now(), session.id);
+      db3.run(`UPDATE users SET idp_seen_at=? WHERE id=?`, db3.now(), user.id);
+      audit3.log({ user, action: "auth.oidc.reauth", ip: ctx.ip });
+      return back("ok");
+    }
     module.exports = (r) => {
       r.get("/api/auth/oidc/status", () => ({ enabled: config2.oidc.enabled, label: config2.oidc.label }));
       r.get("/api/auth/oidc/start", async (ctx) => {
@@ -25387,8 +25451,30 @@ var require_oidc2 = __commonJS({
         ctx.res.setHeader("Set-Cookie", started.cookie);
         redirect(ctx.res, started.url);
       });
+      r.post("/api/auth/oidc/reauth", async (ctx) => {
+        if (!config2.oidc.enabled) throw notFound();
+        auth3.requireAuth(ctx);
+        const u = db3.one(`SELECT oidc_subject FROM users WHERE id=?`, ctx.user.id);
+        if (!u || !u.oidc_subject) throw badRequest("Your account is not linked to single sign-on. Sign with your password instead.");
+        if (!rateLimit(`login:${ctx.ip}`, config2.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
+        const t = mfaTrust();
+        let started;
+        try {
+          started = await oidc.startAuth({ acrValues: t.trusted ? t.acrValues : [], reauth: { sid: sha2562(ctx.session.id), uid: ctx.user.id, ret: safeReturn(ctx.body && ctx.body.return) } });
+        } catch (e) {
+          console.error("[suds] oidc re-authentication start failed:", e.message);
+          throw new HttpError3(502, "Could not reach the identity provider, so single sign-on cannot confirm it is you right now. Try again in a few minutes; the note stays a draft until you sign it. If it keeps failing, tell your administrator.");
+        }
+        ctx.res.setHeader("Set-Cookie", started.cookie);
+        return { url: started.url };
+      });
       r.get("/api/auth/oidc/callback", async (ctx) => {
         if (!config2.oidc.enabled) throw notFound();
+        const saved = oidc.readState(ctx.cookies[oidc.COOKIE]);
+        if (saved && saved.purpose === "reauth") {
+          if (!rateLimit(`login:${ctx.ip}`, config2.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
+          return finishReauth(ctx, saved);
+        }
         const fail = (reason, detail) => {
           audit3.log({ user: { username: reason === "not_linked" ? detail && detail.sub || "" : "" }, action: "auth.oidc.failed", ip: ctx.ip, success: false, details: { reason } });
           ctx.res.setHeader("Set-Cookie", oidc.stateCookie("", { clear: true }));
@@ -30833,6 +30919,7 @@ var require_sync_tables = __commonJS({
         delete o.failed_attempts;
         delete o.locked_until;
         delete o.access_note;
+        delete o.totp_last_step;
       }
       return o;
     }
@@ -32303,7 +32390,7 @@ var require_auth2 = __commonJS({
     var db3 = require_db();
     var config2 = require_config();
     var audit3 = require_audit();
-    var { sha256: sha2562, randomToken, verifyPassword, verifyPasswordAsync, verifyTotp, decrypt: decrypt3 } = require_crypto();
+    var { sha256: sha2562, randomToken, verifyPassword, verifyPasswordAsync, totpStep, decrypt: decrypt3 } = require_crypto();
     var { unauthorized, forbidden, badRequest, HttpError: HttpError3 } = require_http();
     function policy() {
       const num = (k, d, { zero = false } = {}) => {
@@ -32569,35 +32656,81 @@ var require_auth2 = __commonJS({
       const minutes = policy().signReauthMinutes;
       const at = ctx.session && ctx.session.reauth_at ? Date.parse(ctx.session.reauth_at) : NaN;
       const until = Number.isFinite(at) && minutes > 0 ? at + minutes * 6e4 : 0;
-      return { recent: until > Date.now(), until: until ? new Date(until).toISOString() : null, window_minutes: minutes, method: ctx.user && ctx.user.mfa_enabled ? "totp" : "password" };
+      const u = ctx.user ? db3.one(`SELECT mfa_enabled, password_hash, oidc_subject FROM users WHERE id=?`, ctx.user.id) : null;
+      const sso = !!(u && u.oidc_subject && config2.oidc && config2.oidc.enabled);
+      const method = u && u.mfa_enabled ? "totp" : sso && !hasLocalPassword(u.password_hash) ? "sso" : "password";
+      return { recent: until > Date.now(), until: until ? new Date(until).toISOString() : null, window_minutes: minutes, method, sso };
+    }
+    function hasLocalPassword(hash2) {
+      return /^scrypt\$/.test(String(hash2 || ""));
     }
     async function verifySigner(ctx, body, { action = "note.sign.failed" } = {}) {
       const password = typeof body.password === "string" && body.password ? body.password : null;
       const code = typeof body.code === "string" && body.code.trim() ? body.code.trim() : null;
+      const u = db3.one(`SELECT id, password_hash, mfa_enabled, mfa_secret_enc, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
+      if (isLocked(u)) {
+        audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: "locked" } });
+        throw new HttpError3(423, "Account locked after too many failed attempts. Try again later or contact an administrator.");
+      }
+      const failed = (details, message) => {
+        clearReauth(ctx);
+        audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details });
+        throw forbidden(message);
+      };
       if (password) {
-        const u = db3.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
+        const limit2 = config2.loginRateLimit;
+        const app = require_app2();
+        if (app.rateLimited(`login:${ctx.ip}`, limit2)) throw new HttpError3(429, "Too many attempts. Try again later.");
         if (!await verifyPasswordAsync(password, u.password_hash)) {
-          audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false });
-          throw forbidden("Password verification failed");
+          app.rateLimit(`login:${ctx.ip}`, limit2, 15 * 6e4);
+          const locked = recordPasswordFailure(u);
+          failed(locked ? { reason: "locked after failures" } : void 0, locked ? "Password verification failed. The account is now locked after too many failed attempts." : "Password verification failed");
         }
+        clearFailures(u.id);
         markReauth(ctx);
         return "password";
       }
       if (code) {
-        const u = db3.one(`SELECT mfa_enabled, mfa_secret_enc FROM users WHERE id=?`, ctx.user.id);
         if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest("Two-step verification is not set up for your account; give your password instead");
         if (!require_app2().rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 6e4)) throw new HttpError3(429, "Too many attempts");
-        if (!verifyTotp(decrypt3(u.mfa_secret_enc), code)) {
-          audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { method: "totp" } });
-          throw forbidden("That code is not right. Enter the current code from your authenticator app.");
-        }
+        const r = useTotp(u.id, u.mfa_secret_enc, code);
+        if (r === "replay") failed({ method: "totp", reason: "replay" }, "That code has already been used. Wait for the next code from your authenticator app.");
+        if (r !== "ok") failed({ method: "totp" }, "That code is not right. Enter the current code from your authenticator app.");
         markReauth(ctx);
         return "totp";
       }
       const st = reauthStatus(ctx);
-      if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? "Confirm the attestation to sign" : st.method === "totp" ? "Enter the code from your authenticator app to sign" : "Your password is required to sign");
-      if (!st.recent) throw new HttpError3(403, st.method === "totp" ? "It has been a while since you last confirmed it is you. Enter the code from your authenticator app to sign." : "It has been a while since you last confirmed it is you. Enter your password to sign.", { reauthRequired: true, method: st.method });
+      if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? "Confirm the attestation to sign" : st.method === "totp" ? "Enter the code from your authenticator app to sign" : st.method === "sso" ? "Confirm with single sign-on, then sign" : "Your password is required to sign");
+      if (!st.recent) {
+        const how = { totp: "Enter the code from your authenticator app to sign.", sso: "Confirm with single sign-on to sign.", password: "Enter your password to sign." }[st.method];
+        throw new HttpError3(403, `It has been a while since you last confirmed it is you. ${how}`, { reauthRequired: true, method: st.method, sso: st.sso });
+      }
       return "recent_auth";
+    }
+    function clearReauth(ctx) {
+      if (ctx.session) {
+        db3.run(`UPDATE sessions SET reauth_at=NULL WHERE id=?`, ctx.session.id);
+        ctx.session.reauth_at = null;
+      }
+    }
+    function isLocked(user) {
+      return !!(user.locked_until && Date.parse(user.locked_until) > Date.now());
+    }
+    function recordPasswordFailure(user) {
+      const row = db3.one(`SELECT failed_attempts FROM users WHERE id=?`, user.id);
+      const attempts = (row && row.failed_attempts || 0) + 1;
+      const lock = attempts >= config2.lockout.maxAttempts ? new Date(Date.now() + config2.lockout.minutes * 6e4).toISOString() : null;
+      db3.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
+      return !!lock;
+    }
+    function clearFailures(userId) {
+      db3.run(`UPDATE users SET failed_attempts=0, locked_until=NULL WHERE id=?`, userId);
+    }
+    function useTotp(userId, secretEnc, code) {
+      const step = totpStep(decrypt3(secretEnc), code);
+      if (step === null) return "wrong";
+      const r = db3.run(`UPDATE users SET totp_last_step=? WHERE id=? AND (totp_last_step IS NULL OR totp_last_step < ?)`, step, userId, step);
+      return r && r.changes ? "ok" : "replay";
     }
     function cookieHeader(token2, { clear = false } = {}) {
       const secure = config2.tls.cert || config2.isProd ? "; Secure" : "";
@@ -32699,16 +32832,13 @@ var require_auth2 = __commonJS({
         if (pendingWipe && await verifyPasswordAsync(password || "", user.password_hash)) wipeRequired(true);
         fail("inactive");
       }
-      if (user.locked_until && Date.parse(user.locked_until) > Date.now()) {
+      if (isLocked(user)) {
         audit3.log({ user, action: "auth.login.locked", ip: ctx.ip, success: false });
         if (pendingWipe) wipeRequired(false);
         throw new HttpError3(423, "Account locked. Try again later or contact an administrator.");
       }
       if (!await verifyPasswordAsync(password || "", user.password_hash)) {
-        const attempts = user.failed_attempts + 1;
-        const lock = attempts >= config2.lockout.maxAttempts ? new Date(Date.now() + config2.lockout.minutes * 6e4).toISOString() : null;
-        db3.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
-        fail(lock ? "locked after failures" : "bad password");
+        fail(recordPasswordFailure(user) ? "locked after failures" : "bad password");
       }
       if (pendingWipe) wipeRequired(true);
       const pol = policy();
@@ -32740,10 +32870,10 @@ var require_auth2 = __commonJS({
     function verifyMfa(ctx, code) {
       if (!ctx.session) throw unauthorized();
       const user = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-      const secret = decrypt3(user.mfa_secret_enc);
-      if (!verifyTotp(secret, code)) {
-        audit3.log({ user, action: "auth.mfa.failed", ip: ctx.ip, success: false });
-        throw unauthorized("Invalid verification code");
+      const r = user.mfa_secret_enc ? useTotp(user.id, user.mfa_secret_enc, code) : "wrong";
+      if (r !== "ok") {
+        audit3.log({ user, action: "auth.mfa.failed", ip: ctx.ip, success: false, details: r === "replay" ? { reason: "replay" } : void 0 });
+        throw unauthorized(r === "replay" ? "That code has already been used. Wait for the next code from your authenticator app." : "Invalid verification code");
       }
       db3.run(`UPDATE sessions SET mfa_pending=0, reauth_at=? WHERE id=?`, db3.now(), ctx.session.id);
       audit3.log({ user, action: "auth.login", ip: ctx.ip, details: { mfa: true } });
@@ -32791,6 +32921,7 @@ var require_auth2 = __commonJS({
       markReauth,
       reauthStatus,
       verifySigner,
+      useTotp,
       cookieHeader,
       revokeSession,
       revokeAllForUser,
@@ -33897,6 +34028,11 @@ var require_db = __commonJS({
       //     password typed again. Existing sessions have none and ask for the password the first time.
       (d) => {
         addColumn(d, "sessions", "reauth_at", "TEXT");
+      },
+      // 41: an authenticator code is accepted once (users.totp_last_step, the last RFC 6238 time-step used), so
+      //     a code seen over a shoulder or on the screen cannot sign a note or complete a sign-in again.
+      (d) => {
+        addColumn(d, "users", "totp_last_step", "INTEGER");
       }
     ];
     function initialise(d, schemaText, dbPath) {
