@@ -171,9 +171,11 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   await page.fill('.modal input[name=dob]', who.dob);
   await page.locator('.modal input[name=dob]').dispatchEvent('change');
   const offer = await until(() => page.$('.modal [data-readmit-offer]'));
-  ok(offer, 'the intake form says an earlier, discharged record exists');
+  ok(offer, 'the intake form says an earlier record exists');
   const offerText = offer ? await offer.textContent() : '';
-  ok(/discharged/i.test(offerText) && !offerText.includes(who.phone), 'it shows the discharge, nothing from the stored record', offerText);
+  // 1.13.1: nothing from the stored record -- not its code, nor when or why the person was discharged.
+  ok(/earlier record exists/i.test(offerText) && /supervisor/i.test(offerText), 'it says a supervisor will review it', offerText);
+  ok(!/discharged|lost contact|2021/i.test(offerText) && !/[A-Z]\d{2}-\d{4}/.test(offerText) && !offerText.includes(who.phone), 'and shows nothing from the stored record', offerText);
   await page.click('.modal button[data-readmit]');
   const reasonInput = await until(() => page.$('.modal-bg:last-child .modal input'));
   ok(reasonInput, 'a reason is asked for');
