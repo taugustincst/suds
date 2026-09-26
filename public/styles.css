@@ -470,5 +470,6 @@ details.section > summary .summary-heading { display: inline; font-size: 1rem; m
 /* A standing message across the top keeps its dismiss button beside the text, not on a line of its own. */
 #banners > .banner { flex-wrap: nowrap; align-items: flex-start; }
 #banners > .banner > span { flex: 1 1 auto; min-width: 0; }
-#banners > .banner > button { flex: 0 0 auto; }
+#banners > .banner > button, #banners > .banner > a.btn { flex: 0 0 auto; }
+#banners > .banner.compact { align-items: center; margin-bottom: 0; padding: .25rem .6rem; }
 @media (max-width: 600px) { #banners > .banner { padding: .45rem .75rem; font-size: .88rem; } .client-record .badge { font-size: .72rem; } }

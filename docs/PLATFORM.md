@@ -42,7 +42,8 @@ on-device app and later installs an office server re-enters (or imports, `IMPORT
 4. **Browser "local mode" remains** as the web app's offline capability, under the rules in the next
    section. It is the same code the web app runs, held in a browser profile, and it syncs with the office
    server on command. **From 1.9.3 it is off by default** on the office server: the setup wizard asks
-   *Allow staff to keep an offline copy on their devices? (Recommended: No)* and stores the answer in
+   *Allow staff to keep an offline copy on their devices?* (recommended *Yes* for a harm-reduction &
+   outreach programme, *No* for a treatment-adjacent one) and stores the answer in
    `data/server.json`; `LOCAL_MODE_ENABLED` overrides it either way.
 5. **The GitHub Pages build is SUDS on this device** (`docs/WEB_APP.md`), the production web app for people
    without an office server. Its records live only in the browser that holds them, encrypted, and are
@@ -93,9 +94,12 @@ by these rules, all of which the server enforces:
 | **Minimum necessary applies on the device.** | Only the syncing account's caseload (all clients for a supervisor) is downloaded; clinical notes only for clinical roles; nobody else's credentials. What is on a device is listed below. |
 | **Devices are tracked.** | Every local-mode browser that syncs registers a device id. Settings → Synced devices shows them; an administrator can revoke or wipe any of them, and deactivating an account wipes its devices. |
 
-**Recommendation for counties.** Leave local mode off — the default from 1.9.3, and the wizard's
-recommended answer — unless there is a documented field-work need (navigators who record visits where
-there is no signal). The offline copy is sealed at rest under a key that only the device password of its
+**Recommendation for counties.** For a harm-reduction & outreach programme, whose staff record visits where
+there is no signal, allow the offline copy (the wizard's recommended answer for that profile);
+the trade-off is that a forgotten password makes whatever that device has not synced yet unrecoverable, so
+staff should sync often. For a treatment-adjacent programme leave local mode off (the wizard's recommendation
+for that profile) unless there is a documented field-work need. Without an answer the server keeps it off,
+the default from 1.9.3. The offline copy is sealed at rest under a key that only the device password of its
 user opens, and it locks on every page load, on sign-out and after 15 minutes idle
 ([ADR-0008](architecture/ADR-0008-device-encryption.md)); while someone is signed in it is open on the device,
 and a weak device password can be guessed offline from a copied profile. Where the need exists, restrict local

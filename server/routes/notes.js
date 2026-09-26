@@ -251,18 +251,36 @@ module.exports = (r) => {
   // Several countersignatures at once, from the supervision queue after reading each note: one proof of
   // identity and one confirmation, then every note checked and signed on its own, each with its own hash
   // and its own audit entry. A note that cannot be countersigned is skipped with the reason, not fatal.
+  // Comments are per note (`comments`: { noteId: text }): a countersigner's comment is about one client's
+  // care, and one text copied onto every note in a batch could put one client's details on another's record.
+  // A shared `note` is therefore refused when the batch covers more than one client.
   r.post('/api/notes/cosign-batch', auth.requireAuth, auth.requirePerm('notes:cosign'), async (ctx) => {
-    const v = validate(ctx.body, { ids: { type: 'array', required: true, maxLen: 100, of: 'string' }, password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' }, note: { type: 'string', maxLen: 1000 } });
+    const v = validate(ctx.body, { ids: { type: 'array', required: true, maxLen: 100, of: 'string' }, password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' }, note: { type: 'string', maxLen: 1000 }, comments: { type: 'object' } });
     if (!v.ids.length) throw badRequest('Choose at least one note to countersign');
+    const ids = [...new Set(v.ids)];
+    const comments = {};
+    if (v.comments !== undefined && v.comments !== null) {
+      if (Array.isArray(v.comments)) throw badRequest('Validation failed', { fields: { comments: 'must be an object of note id to comment' } });
+      for (const [id, text] of Object.entries(v.comments)) {
+        if (!ids.includes(id)) throw badRequest('Validation failed', { fields: { comments: 'a comment is for a note that is not in this batch' } });
+        if (typeof text !== 'string' || text.length > 1000) throw badRequest('Validation failed', { fields: { comments: 'each comment must be text of at most 1000 characters' } });
+        if (text.trim()) comments[id] = text.trim();
+      }
+    }
+    if (v.note && v.note.trim()) {
+      if (Object.keys(comments).length) throw badRequest('Give each note its own comment, not a shared one as well');
+      const clients = new Set(ids.map(id => (db.one(`SELECT client_id FROM notes WHERE id=? AND deleted_at IS NULL`, id) || {}).client_id).filter(Boolean));
+      if (clients.size > 1) throw badRequest('One comment cannot be applied to notes about different clients. Give each note its own comment, or countersign it on its own.', { fields: { note: 'one comment for several clients' } });
+    }
     const identity = await verifyIdentity(ctx);
     const cosigned = []; const skipped = [];
-    for (const id of [...new Set(v.ids)]) {
+    for (const id of ids) {
       const n = db.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id);
       if (!n) { skipped.push({ id, reason: 'Note not found' }); continue; }
       if (!auth.canAccessClient(ctx.user, n.client_id)) { skipped.push({ id, reason: 'This client is not on your caseload' }); continue; }
       const why = cosignRefusal(ctx, n);
       if (why) { skipped.push({ id, reason: why }); continue; }
-      applyCosign(ctx, n, v.note, identity, true); cosigned.push(id);
+      applyCosign(ctx, n, comments[id] || (v.note && v.note.trim()) || undefined, identity, true); cosigned.push(id);
     }
     return { ok: true, cosigned, skipped };
   });

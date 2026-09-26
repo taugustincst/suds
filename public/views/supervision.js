@@ -63,16 +63,31 @@ route('supervision', async (r) => {
     const notes = [];
     for (const row of rows) { try { notes.push({ row, n: (await get(`/api/notes/${row.id}`)).note }); } catch (e) { toast(e.message, 'error'); return; } }
     const one = notes.length === 1;
-    const list = h('div', { 'data-cosign-list': String(notes.length) }, notes.map(({ row, n }, i) => h('section', { class: 'card tight mb', 'data-cosign-content': row.id },
-      h('h3', { class: 'eyebrow' }, `${one ? '' : `${i + 1} of ${notes.length}: `}${n.title || fmt.label(n.kind)}`),
-      h('p', { class: 'small' }, `Written by ${row.author} on ${fmt.date(row.occurred_at)} for ${who(row)}.`),
-      h('div', { 'data-scroll-region': '1', style: { maxHeight: one ? '40vh' : '30vh', overflow: 'auto' } }, noteBody(n)))));
+    // Several notes: each one gets its own optional comment, under that note. One comment copied onto every
+    // note could put one client's details on another client's record (the server refuses that too).
+    const commentFor = {};
+    const list = h('div', { 'data-cosign-list': String(notes.length) }, notes.map(({ row, n }, i) => {
+      let comment = null;
+      if (!one) {
+        const fid = `cosign-comment-${i}`;
+        commentFor[row.id] = h('textarea', { id: fid, rows: 2, maxlength: 1000, 'data-cosign-comment': row.id, 'aria-describedby': `${fid}-help` });
+        comment = h('div', { class: 'field' }, h('label', { for: fid }, `Comment on note ${i + 1} (optional)`), commentFor[row.id],
+          h('div', { class: 'help small muted', id: `${fid}-help` }, 'Saved on this note only.'));
+      }
+      return h('section', { class: 'card tight mb', 'data-cosign-content': row.id },
+        h('h3', { class: 'eyebrow' }, `${one ? '' : `${i + 1} of ${notes.length}: `}${n.title || fmt.label(n.kind)}`),
+        h('p', { class: 'small' }, `Written by ${row.author} on ${fmt.date(row.occurred_at)} for ${who(row)}.`),
+        h('div', { 'data-scroll-region': '1', style: { maxHeight: one ? '40vh' : '30vh', overflow: 'auto' } }, noteBody(n)),
+        comment);
+    }));
     signatureDialog({ title: one ? 'Countersign this note' : `Countersign ${notes.length} notes`, submitText: one ? 'Countersign' : `Countersign ${notes.length} notes`,
       intro: h('div', {}, list, h('p', { class: 'small muted' }, `Countersigning records your approval alongside the author${one ? '' : ' of each note'}. It does not replace their signature — both names stay on the record.`)),
-      fields: [{ name: 'note', label: one ? 'Comment (optional)' : 'Comment for every note (optional)', type: 'textarea', rows: 2, span: true }],
+      fields: one ? [{ name: 'note', label: 'Comment (optional)', type: 'textarea', rows: 2, span: true }] : [],
       send: async (body) => {
         if (one) { await post(`/api/notes/${notes[0].row.id}/cosign`, { ...body, note: (body.note || '').trim() || undefined }); toast('Countersigned', 'ok'); return; }
-        const r = await post('/api/notes/cosign-batch', { ...body, ids: notes.map(x => x.row.id), note: (body.note || '').trim() || undefined });
+        const comments = {};
+        for (const [id, el] of Object.entries(commentFor)) { const t = el.value.trim(); if (t) comments[id] = t; }
+        const r = await post('/api/notes/cosign-batch', { ...body, ids: notes.map(x => x.row.id), comments });
         toast(`${plural(r.cosigned.length, 'note', 'notes')} countersigned`, 'ok');
         if (r.skipped.length) toast(`${r.skipped.length} not countersigned: ${r.skipped[0].reason}`, 'warn');
       },

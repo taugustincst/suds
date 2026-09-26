@@ -298,19 +298,21 @@ window.addEventListener('resize', scrollCheckSoon);
  * A message that stays until it is dismissed, for conditions the user has to act on rather than
  * acknowledge in passing — a device that has stopped saving, a consent that was revoked.
  */
-export function banner(message, kind = 'warn', { id = message, short = null } = {}) {
+export function banner(message, kind = 'warn', { id = message, short = null, compact: always = false, announceText = null } = {}) {
   // After the skip link, which stays the first thing a keyboard reaches on every page.
   const host = document.getElementById('banners') || (() => { const b = h('div', { id: 'banners' }); skipLink().after(b); return b; })();
   if (host.querySelector(`[data-banner="${CSS.escape(String(id))}"]`)) return;
   // `short`: a banner that must come back (two-step set-up still owed) but that this person has already
   // dismissed once in this browser session returns as one line, not the whole paragraph above every page.
   const key = `suds.banner.${id}`;
-  let compact = false; try { compact = !!short && sessionStorage.getItem(key) === '1'; } catch { /* storage blocked: full banner */ }
+  // `compact`: always one line (the message is already short); `announceText` is then said once instead.
+  let compact = always; try { compact = compact || (!!short && sessionStorage.getItem(key) === '1'); } catch { /* storage blocked: full banner */ }
   const el = h('div', { class: `banner ${kind}${compact ? ' compact' : ''}`, 'data-banner': String(id), 'data-compact': compact ? '1' : null, role: compact ? null : 'alert' },
-    h('span', {}, compact ? short : message),
+    h('span', {}, compact && short ? short : message),
     h('button', { class: 'btn ghost sm', 'aria-label': 'Dismiss', onClick: () => { el.remove(); if (short) { try { sessionStorage.setItem(key, '1'); } catch { /* not remembered */ } } } }, '✕'));
   host.append(el);
   if (!compact) announce(message);
+  else if (always && announceText) { let said = false; try { said = sessionStorage.getItem(`${key}.said`) === '1'; sessionStorage.setItem(`${key}.said`, '1'); } catch { /* say it */ } if (!said) announce(announceText); }
   return el;
 }
 // "Skip to content" (WCAG 2.4.1): one link, the first focusable thing in the document on every screen, that
@@ -516,6 +518,10 @@ export const fmt = {
   // things in different places, so a list's wording is never applied to a value from somewhere else.
   // `list` may be several (a call's outcome is in the phone or the text list): the first that has it.
   label: (s, list) => { if (!s) return '—'; const L = (state.constants || {}).option_lists; if (list && L) for (const k of [].concat(list)) { const e = (L[k] || []).find(x => x.code === s); if (e) return e.label; } return fmt.code(s); },
+  // A client's safety flags (free text, comma separated) in words: a flag stored as a code
+  // ('no_home_visits', from an import or the sample data) shows its label from the Safety flags list; a
+  // flag typed in words is shown as typed.
+  flags: (s) => String(s || '').split(',').map(x => x.trim()).filter(Boolean).map(x => { const L = ((state.constants || {}).option_lists || {}).CLIENT_FLAGS || []; const e = L.find(o => o.code === x); return e ? e.label : /^[a-z0-9]+(_[a-z0-9]+)+$/.test(x) ? fmt.code(x) : x; }).join(', '),
   code: (s) => s ? String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bRx\b/, 'Rx').replace(/\bIds\b/, 'IDs').replace(/\bRoi\b/, 'ROI').replace(/\bPart2 Disclosure\b/, 'Part 2 disclosure').replace(/\bPart2\b/g, 'Part 2') : '—',
   ago: (s) => { const p = fmt.parse(s); if (!p) return 'never'; const d = (Date.now() - p.getTime()) / 86400000; if (d < 1) return 'today'; if (d < 2) return 'yesterday'; return `${Math.floor(d)}d ago`; },
   isoLocal: (d = new Date()) => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; },
@@ -1200,7 +1206,7 @@ export function maybeTour() {
   if (paused || prefs.get('tour_done') || tourOpen || document.querySelector('.modal-bg')) return;
   tourOpen = true;
   const steps = [
-    ['Welcome to SUDS', `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS helps you track services, referrals and follow-ups for people in substance-use-disorder care, all in one place. ${window.SUDS_STATIC_HOST
+    ['Welcome to SUDS', `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS keeps your programme's outreach, visits, naloxone and supplies, referrals and follow-ups in one place, with the privacy substance-use records need. ${window.SUDS_STATIC_HOST
       // The on-device app never syncs with anything (local/sync.js): promising "shows up on the other right
       // away" there sent people looking for their entries on a second device.
       ? 'Everything you record stays in this browser on this device, encrypted. Download a backup regularly from This device so a cleared browser or a lost phone does not take your records with it.'
@@ -1291,7 +1297,7 @@ export const NAV = [
   { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
   { sec: 'Connect clients' },
   { name: 'referrals', label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
-  { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Treatment programs, MAT clinics, shelters, legal aid and other partners you refer to.' },
+  { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Syringe services, drop-ins, shelters, MAT and treatment programmes, legal aid and the other partners you refer people to.' },
   { sec: 'Programme' },
   { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', more: true, help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
   { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', programme: true, help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
@@ -1538,8 +1544,15 @@ export async function loadSession() {
     if (state.user.mfa_required && !state.user.mfa_enabled && !state.mfaPending && !state.local) {
       const due = state.user.mfa_setup_deadline ? fmt.parse(state.user.mfa_setup_deadline) : null;
       const when = due ? (due.getTime() < Date.now() ? 'now' : `by ${fmt.date(state.user.mfa_setup_deadline)}`) : 'now';
-      const el = banner(`Your role requires two-step verification. Set it up ${when} — after that, SUDS will not let you in until it is done.`, 'warn', { id: 'mfa-required', short: `Two-step verification: set it up ${when}.` });
-      if (el) el.firstChild.append(' ', h('a', { href: '#/profile?mfa=1', class: 'btn sm primary', style: { marginLeft: '.5rem' } }, 'Set up now'));
+      // One line on every screen (a paragraph took a third of a phone's screen above every page): the
+      // deadline stays visible, the consequence is said to a screen reader in the same line and announced
+      // once, and "Set up" goes straight to enrolment.
+      const full = `Your role requires two-step verification. Set it up ${when} — after that, SUDS will not let you in until it is done.`;
+      const el = banner(`Two-step verification required ${when}.`, 'warn', { id: 'mfa-required', compact: true, announceText: full });
+      if (el) {
+        el.firstChild.append(h('span', { class: 'sr-only' }, ' After that, SUDS will not let you in until it is done.'));
+        el.insertBefore(h('a', { href: '#/profile?mfa=1', class: 'btn sm primary', 'data-mfa-setup': '1' }, 'Set up'), el.lastChild);
+      }
     }
   } catch { state.user = null; }
 }

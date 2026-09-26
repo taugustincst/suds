@@ -55,7 +55,7 @@ const ctx = await browser.newContext(PIXEL7);
 const page = await ctx.newPage(); watch(page, 'device');
 await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 15000 });
 await shot(page, 'setup');
-eq(await page.$eval('[data-purpose]', p => p.textContent), 'Track services, referrals and follow-ups for people in substance-use-disorder care.', 'M3: the first screen says what SUDS is');
+eq(await page.$eval('[data-purpose]', p => p.textContent), 'Outreach, visits, naloxone and supplies, referrals and grant reporting for harm-reduction, prevention and recovery programmes — with the privacy substance-use records need.', 'M3: the first screen says what SUDS is');
 const setupText = await page.textContent('.login-wrap');
 ok(!/both directions|tap Sync/i.test(setupText), 'M2: first-run setup on the device does not promise a sync with the office');
 ok(/in this browser on this device, and nowhere else/.test(setupText) && /backup/.test(setupText), 'M2: it says the records stay in this browser, and to back them up');
