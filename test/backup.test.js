@@ -26,7 +26,7 @@ before(() => {
   db.run(`INSERT INTO users(id,username,password_hash,display_name,role) VALUES(?,?,?,?,?)`, ids.user, 'bk', 'x', 'Backup Tester', 'admin');
   db.run(`INSERT INTO clients(id,client_code,first_name_enc,last_name_enc) VALUES(?,?,?,?)`, ids.client, 'C26-9001', encrypt('Rosa'), encrypt('Delgado'));
   db.run(`INSERT INTO client_forms(id,client_id,template_name,values_enc,created_by) VALUES(?,?,?,?,?)`, ids.form, ids.client, 'Release of Information', encrypt('{"recipient":"County OTP"}'), ids.user);
-  db.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename,content_type,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?)`, ids.file, ids.form, ids.client, 'scan.pdf', 'application/pdf', encrypt('JVBERi0xLjQK'), ids.user);
+  db.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename_enc,content_type,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?)`, ids.file, ids.form, ids.client, encrypt('scan.pdf'), 'application/pdf', encrypt('JVBERi0xLjQK'), ids.user);
 });
 after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
 

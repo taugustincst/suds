@@ -9,15 +9,31 @@
 //    network. new URL() has already turned decimal, octal and hex IPv4 forms (https://2130706433/,
 //    https://0177.0.0.1/, https://0x7f.1/) into dotted quads, so they are caught as 127.0.0.1.
 //  * assertResolvesPublic: what the name resolves to. "pics.example.org" may point at 10.0.0.5 or
-//    169.254.169.254. (A name that changes its answer between this check and the connection is not caught;
-//    callers keep only bytes they can parse as what they asked for, and return nothing else.)
+//    169.254.169.254.
+// And the connection itself is made to an address that passed the same check (connectLookup: node:https's
+// lookup hook resolves, checks and hands over the address in one step; the Host header and the TLS name
+// stay the site's). A name that answers "public" to the check and "127.0.0.1" a moment later (DNS
+// rebinding) is refused when it connects. Before 1.12.5 fetch() resolved the name again, unchecked.
+//
+// Behind a proxy (HTTPS_PROXY *and* NODE_USE_ENV_PROXY=1, the only case in which Node sends requests through
+// it) the proxy resolves and connects, so SUDS cannot pin the address: the name is still checked here when
+// this machine can resolve it, and a failure to resolve is waved on to the proxy only when it is "this
+// machine cannot resolve outside names" (ENOTFOUND, EAI_AGAIN). The proxy's own egress rules must then keep
+// it off private networks (docs/DEPLOYMENT.md, "Outbound internet"). Every other lookup failure refuses.
 
 // The seams for tests: they replace the network and the resolver, never the address checks themselves.
-let fetchImpl = (...args) => globalThis.fetch(...args);
+let fetchImpl = null; // null: the real transport (transport() below)
 let lookupImpl = null; // null: node:dns, unless a test replaced fetch (its hosts are made up)
 let fetchOverridden = false;
-function _setFetchForTests(fn) { fetchImpl = fn || ((...args) => globalThis.fetch(...args)); fetchOverridden = !!fn; }
+function _setFetchForTests(fn) { fetchImpl = fn || null; fetchOverridden = !!fn; }
 function _setLookupForTests(fn) { lookupImpl = fn; }
+/** Whether Node really sends outside requests through a proxy (it ignores HTTPS_PROXY without NODE_USE_ENV_PROXY=1). */
+const proxyInUse = () => !!(process.env.HTTPS_PROXY || process.env.https_proxy) && process.env.NODE_USE_ENV_PROXY === '1';
+function resolver() {
+  if (lookupImpl) return lookupImpl;
+  let dns; try { dns = require('node:dns').promises; } catch { return null; } // the browser kernel never fetches
+  return (h) => dns.lookup(h, { all: true, verbatim: true });
+}
 
 const soft = (message, extra = {}) => Object.assign(new Error(message), { soft: true }, extra);
 
@@ -66,22 +82,70 @@ function assertPublicHttps(u) {
   return url.href;
 }
 
-async function assertResolvesPublic(url) {
-  const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
-  let lookup = lookupImpl;
-  if (!lookup) {
-    if (fetchOverridden) return;
-    let dns; try { dns = require('node:dns').promises; } catch { return; } // the browser kernel never fetches
-    lookup = (h) => dns.lookup(h, { all: true, verbatim: true });
-  }
+/** What `host` resolves to, every address public, or a soft error. `viaProxy`: a proxy connects (see top). */
+async function resolvePublic(host, { viaProxy = false } = {}) {
+  const lookup = resolver();
+  if (!lookup) return null;
   let addrs;
   try { addrs = await lookup(host); }
   catch (e) {
     // Behind a county proxy the office server may not resolve outside names itself; the proxy connects.
-    if (process.env.HTTPS_PROXY || process.env.https_proxy) return;
+    if (viaProxy && /^(ENOTFOUND|EAI_AGAIN)$/.test(String(e && e.code))) return null;
     throw describeNetworkError({ cause: e }) || soft('could not find that address');
   }
-  if (!addrs.length || addrs.some(x => isPrivateAddress(x.address || x))) throw soft('that address is not on the public internet');
+  addrs = (addrs || []).map(x => (typeof x === 'string' ? { address: x } : x)).map(x => ({ address: x.address, family: x.family || (String(x.address).includes(':') ? 6 : 4) }));
+  if (!addrs.length || addrs.some(x => isPrivateAddress(x.address))) throw soft('that address is not on the public internet');
+  return addrs;
+}
+async function assertResolvesPublic(url) {
+  const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+  if (!lookupImpl && fetchOverridden) return;
+  await resolvePublic(host, { viaProxy: proxyInUse() });
+}
+/**
+ * node:net's lookup hook for a connection SUDS makes itself: the name is resolved and checked in the same
+ * step that hands the address to the socket, so what is connected to is what was checked. Both callback
+ * shapes (options.all, which Node uses for happy-eyeballs, and a single address).
+ */
+function connectLookup(hostname, options, callback) {
+  if (typeof options === 'function') { callback = options; options = {}; }
+  resolvePublic(String(hostname).replace(/^\[|\]$/g, ''))
+    .then((addrs) => {
+      if (!addrs) throw soft('could not find that address');
+      const want = options && options.family ? addrs.filter(a => a.family === options.family) : addrs;
+      if (!want.length) throw soft('could not find that address');
+      if (options && options.all) callback(null, want); else callback(null, want[0].address, want[0].family);
+    })
+    .catch((e) => callback(e));
+}
+/**
+ * An https request whose connection is pinned to checked addresses (connectLookup), as a fetch Response.
+ * Reads at most `maxBytes` (+1, so "too large" is still detected) of the body.
+ */
+function pinnedFetch(url, { method = 'GET', body, headers = {}, signal, maxBytes = 2 * 1024 * 1024 } = {}) {
+  const https = require('node:https');
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, { method, headers, signal, lookup: connectLookup, autoSelectFamily: false }, (res) => {
+      const chunks = []; let size = 0;
+      res.on('data', (c) => { size += c.length; if (size > maxBytes + 1) { reject(soft('file is too large')); res.destroy(); req.destroy(); return; } chunks.push(c); });
+      res.on('end', () => {
+        const h = new Headers();
+        for (const [k, v] of Object.entries(res.headers)) for (const x of [].concat(v)) h.append(k, String(x));
+        const nullBody = [101, 204, 205, 304].includes(res.statusCode);
+        try { resolve(new Response(nullBody ? null : Buffer.concat(chunks), { status: res.statusCode, statusText: res.statusMessage, headers: h })); } catch (e) { reject(e); }
+      });
+      res.on('error', reject);
+    });
+    req.on('error', reject); // a promise settles once: an error after an early reject (too large) is dropped
+    if (body !== undefined && body !== null) req.write(body);
+    req.end();
+  });
+}
+/** How a checked request goes out: a test's stand-in; through the proxy when Node uses one; else pinned. */
+function transport(url, opts) {
+  if (fetchImpl) return fetchImpl(url, opts);
+  if (proxyInUse()) return globalThis.fetch(url, opts);
+  return pinnedFetch(url, opts);
 }
 
 // Node's fetch reports every network failure as "fetch failed", with the real reason in `cause`. Say what
@@ -108,7 +172,7 @@ async function fetchChecked(url, { timeoutMs = 10000, maxBytes = 2 * 1024 * 1024
   let res;
   for (let i = 0; i <= hops; i++) {
     try {
-      res = await fetchImpl(target, { method, body, signal: AbortSignal.timeout(timeoutMs), redirect: 'manual', headers: { 'User-Agent': 'SUDS', Accept: '*/*', ...headers } });
+      res = await transport(target, { method, body, signal: AbortSignal.timeout(timeoutMs), redirect: 'manual', maxBytes, headers: { 'User-Agent': 'SUDS', Accept: '*/*', ...headers } });
     } catch (e) {
       if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) throw soft('timed out');
       throw describeNetworkError(e) || e;
@@ -128,4 +192,4 @@ async function fetchChecked(url, { timeoutMs = 10000, maxBytes = 2 * 1024 * 1024
   return { buf, url: target, res };
 }
 
-module.exports = { isPrivateAddress, assertPublicHttps, assertResolvesPublic, fetchChecked, describeNetworkError, soft, _setFetchForTests, _setLookupForTests };
+module.exports = { isPrivateAddress, assertPublicHttps, assertResolvesPublic, connectLookup, pinnedFetch, proxyInUse, transport, fetchChecked, describeNetworkError, soft, _setFetchForTests, _setLookupForTests };

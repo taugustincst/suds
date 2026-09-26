@@ -553,7 +553,7 @@ CREATE TABLE IF NOT EXISTS consents (
   expires_event TEXT,
   revoked_at TEXT,
   revoked_reason_enc TEXT,             -- why the client revoked it (free text): encrypted
-  document_ref TEXT,
+  document_ref_enc TEXT,               -- where the signed copy is kept ("ROI binder, J. Smith"): encrypted (migration 42)
   witness_enc TEXT,                    -- who witnessed the signature: often a family member's name (migration 39)
   signed_on_paper INTEGER NOT NULL DEFAULT 0,
   -- The client was told that what is disclosed under this consent may not be redisclosed (§2.32).
@@ -680,7 +680,7 @@ CREATE TABLE IF NOT EXISTS client_form_files (
   id TEXT PRIMARY KEY,
   client_form_id TEXT NOT NULL REFERENCES client_forms(id) ON DELETE CASCADE,
   client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-  filename TEXT NOT NULL,
+  filename_enc TEXT,                   -- the uploaded file's name, often the client's (migration 42): encrypted
   content_type TEXT NOT NULL,
   bytes INTEGER NOT NULL DEFAULT 0,
   data_enc TEXT,                       -- encrypted base64 of the signed / scanned copy (PHI); nullable, see resource_photos.data_b64
@@ -693,7 +693,7 @@ CREATE INDEX IF NOT EXISTS idx_client_form_files ON client_form_files(client_for
 CREATE TABLE IF NOT EXISTS imports (
   id TEXT PRIMARY KEY,
   source TEXT NOT NULL,                -- pocket_ai, onenote_file, onenote_graph, generic, api
-  filename TEXT,
+  filename_enc TEXT,                   -- the uploaded file's name (a OneNote export is named after the person): encrypted (migration 42)
   imported_by TEXT REFERENCES users(id),
   item_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'staged',

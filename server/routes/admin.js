@@ -267,9 +267,14 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'backup.restore', ip: ctx.ip, details: { clients: out.counts.clients, schema_version: out.schema_version, kept: path.basename(out.previous_database_kept_at) } });
     return { ok: true, ...out, note: 'Everyone will need to sign in again. Devices should sync after this.' };
   });
-  r.get('/api/admin/keys-backup', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+  // The keys open every backup, so a session alone (a cookie on a workstation left unlocked) is not enough:
+  // the administrator gives the password or authenticator code again, or confirms within the few minutes after
+  // the last time they did (auth.verifySigner, the rule for signing a note; SSO-only accounts confirm with the
+  // identity provider). A POST, so no link, prefetch or image tag can fetch it. Every attempt is audited.
+  r.post('/api/admin/keys-backup', auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
     if (config.keySource !== 'file') throw badRequest('Keys are provided by the environment on this server');
-    audit.log({ user: ctx.user, action: 'keys.download', ip: ctx.ip });
+    const method = await auth.verifySigner(ctx, ctx.body || {}, { action: 'keys.download.failed', purpose: 'download the key backup' });
+    audit.log({ user: ctx.user, action: 'keys.download', ip: ctx.ip, details: { method } });
     // Remembered so the dashboard can stop asking — and so an admin can see when it was last done.
     db.setSetting('keys_backup_at', db.now());
     ctx.res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': 'attachment; filename="suds-keys-KEEP-SECRET.json"' }); ctx.res.end(fs.readFileSync(config.keysJsonPath));

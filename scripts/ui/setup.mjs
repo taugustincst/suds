@@ -96,7 +96,12 @@ ok(/Save a copy of your encryption keys/.test(await page.textContent('#app')), '
 await page.goto(after + '/#/admin?tab=system'); await settle(page);
 const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.click('text=Download encrypted backup')]);
 ok(/\.enc$|\.db/.test(dl.suggestedFilename()), 'the first encrypted backup downloads', dl.suggestedFilename());
-const [kdl] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.click('text=Download key backup')]);
+// The key backup asks the administrator to prove it is them (a confirmation this soon after signing in; the
+// password or authenticator code later): the server refuses a session alone (POST /api/admin/keys-backup).
+await page.click('text=Download key backup');
+const keyDialog = page.getByRole('dialog', { name: 'Download the key backup' });
+ok(await keyDialog.waitFor({ timeout: 5000 }).then(() => true, () => false), 'the key backup opens a dialog that asks the administrator to confirm it is them');
+const [kdl] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), keyDialog.getByRole('button', { name: 'Download the key backup' }).click()]);
 ok(/KEEP-SECRET/.test(kdl.suggestedFilename()), 'and so does the key backup, named so nobody files it casually', kdl.suggestedFilename());
 const again = await page.evaluate(() => fetch('/api/setup/status').then(r => r.json()));
 eq(again.needed, false, 'setup cannot be run a second time');

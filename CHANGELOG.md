@@ -29,6 +29,60 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 - **Docs.** The architecture overview describes the code after 1.12.4; RELEASE.md gives the browser suite's
   real size (30 scripts).
 
+### Security
+
+Fixes from the security review of 1.12.4.
+
+- **Two-step enrolment can no longer be used to guess an existing code (high).** `POST /api/auth/mfa/enable`
+  checked only that a user was attached to the session: someone with the password alone could skip
+  `/mfa/verify` and its rate limit, guess the account's code there without limit or audit, and a right guess
+  finished the sign-in. Enrolment is now only for a fully signed-in session of an account without two-step
+  verification (forced enrolment after the grace period still works), shares the 10-per-10-minutes limit,
+  is audited (`auth.mfa.enable.failed`), and every wrong code — at sign-in, enrolment or signing — counts
+  toward the account lockout; for an account with two-step verification only the second factor clears it.
+- **readonly (the default role for an unmapped SCIM user) can no longer open clients' filled forms (high).**
+  `forms:read` is now the form library only; a client's forms, their PDFs and attachments need `clients:read`
+  and the client on the caseload, and no single-client check passes for a role without `clients:read`
+  except where the answer is keyed by client code only (finance's expenditures and time). A new test hits
+  every GET route as finance and readonly with real ids and fails on any identifier. `scim_default_role`
+  stays readonly, which can now be shown to identify nobody.
+- **FHIR search no longer says whether an unconsented person is a client (medium).** Pages are drawn from
+  consent-covered resources only, and a patient-type search with `_count=0` never has a `next` link.
+- **A record with no client is its owner's (medium).** Unlinked calls (a crisis caller's name, number and
+  words), outreach visits, community overdose reports, to-dos, time entries and expenditures were readable by
+  every caseload-restricted worker, over the API and by sync. They are now visible to, and changeable by, the
+  worker who recorded (or is assigned) them and roles with `clients:all` (`time:all`, `budget:approve`), the
+  same over REST, sync pull and sync push.
+- **SUDS on this device carries a Content-Security-Policy and a frame guard; `connect-src` is `'self'`
+  (medium).** The static build had no CSP and could be framed; every page now has the office server's policy
+  as a `<meta>` and `frame-guard.js` first. The office server's `connect-src` drops `https:` (every outside
+  fetch is the server's). Local-mode sync defaults to the page's own origin; on a device a picture can be
+  added from an address on this site only.
+- **Sync sends only what the role could read (low).** Expenditures need `budget:read`; fund and budget-line
+  amounts and grant details are left out for devices without it.
+- **File names and document references are encrypted (low, migration 42).** A form attachment's and an
+  import's file name and a consent's document reference move to `filename_enc` / `document_ref_enc`.
+- **The key backup needs recent re-authentication.** `POST /api/admin/keys-backup` (was `GET`) asks for the
+  password or authenticator code again, or a confirmation within the signing window, and is audited with the
+  method; failures as `keys.download.failed`.
+- **The shared OneNote notebook is for supervisors and administrators.** Browsing and fetching it needs the new
+  `graph:import` permission; others import what they upload themselves.
+- **The intake duplicate check no longer reveals clients on other caseloads.** It used to count them
+  (`hidden_duplicates`) and refuse the intake. Now the worker's answer is the same as for no match, the intake
+  goes ahead, and a supervisor gets a review task on the existing record. Visible matches and re-admission of
+  a discharged record are unchanged; a device's warning names only records its user may open.
+- **Outbound requests connect to the address that was checked.** The SSRF guard resolved and checked a name,
+  then let `fetch()` resolve it again (DNS rebinding). Without a proxy the connection is now pinned to the
+  checked address (Host and TLS name unchanged); a name that cannot be resolved is refused unless a proxy is
+  really in use (`HTTPS_PROXY` *and* `NODE_USE_ENV_PROXY=1`), and then only for `ENOTFOUND`/`EAI_AGAIN`.
+- **Purpose-separated subkeys.** New uses of `SUDS_INDEX_KEY` get an HKDF-SHA256 subkey (`crypto.subkey`); the
+  single sign-on state cookie is the first. The audit chain and blind indexes keep the index key
+  (docs/security/ENCRYPTION-AND-KEYS.md).
+- **Audit anchors hourly by default (`AUDIT_ANCHOR_HOURS`, was 6).** Entries written after the newest anchor
+  are what someone holding the database and the index key could delete undetected; the window is now
+  documented (docs/security/LOGGING-AND-AUDIT.md). A year of hourly anchors is about 4 MB; writing one takes
+  ~0.1 s and a full verification ~0.2 s.
+
 ## 1.12.4 — 2026-09-26
 
 - **The first user is "guest".** A new office server creates its first administrator as `guest`

@@ -108,7 +108,7 @@ route('dashboard', async () => {
       }
       // Without the keys, every backup is unreadable — so this is the step that matters most, and it goes first.
       if (sys.key_source === 'file' && !sys.keys_backup_at) {
-        steps.push(['Save a copy of your encryption keys', 'Backups of the database can only be opened with these keys. Download the file and put it somewhere separate from this computer, such as the county password manager.', 'Download key backup', '/api/admin/keys-backup']);
+        steps.push(['Save a copy of your encryption keys', 'Backups of the database can only be opened with these keys. Download the file and put it somewhere separate from this computer, such as the county password manager.', 'Download key backup', async () => { (await import('./admin.js')).downloadKeyBackup(() => nav('dashboard?_=' + Date.now())); }]);
       }
       if ((users.users || []).filter(u => u.is_active !== 0).length < 2) {
         steps.push(['Add your staff', 'Everyone needs their own sign-in — shared accounts are not supported, and the audit trail depends on knowing who did what.', 'Add staff', () => nav('admin?tab=users')]);

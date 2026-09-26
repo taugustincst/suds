@@ -455,6 +455,12 @@ function page(type, filter, { count, offset }) {
   const d = DEFS[type];
   return db.all(`SELECT * FROM (${d.src}) s WHERE ${filter.sql} ORDER BY _upd, _fid LIMIT ? OFFSET ?`, ...filter.params, count, offset);
 }
+/** Matching rows and distinct patients (the search's withheld count; server/routes/fhir.js). */
+function count(type, filter) {
+  const d = DEFS[type];
+  const r = db.one(`SELECT COUNT(*) n, COUNT(DISTINCT _cid) p FROM (${d.src}) s WHERE ${filter.sql}`, ...filter.params);
+  return { rows: r.n, patients: r.p };
+}
 function toResource(type, row) {
   const d = DEFS[type];
   const full = d.load(row._kind, row._rid);
@@ -468,4 +474,4 @@ function identifying(type, query) {
   return keys.includes('patient') || keys.includes('_id') || (d.identifying || []).some(k => keys.includes(k));
 }
 
-module.exports = { DEFS, PROGRAM_ORG, MAX_COUNT, DEFAULT_COUNT, searchParams, where, page, toResource, identifying, US_CORE };
+module.exports = { DEFS, PROGRAM_ORG, MAX_COUNT, DEFAULT_COUNT, searchParams, where, page, count, toResource, identifying, US_CORE };

@@ -238,7 +238,9 @@ const config = {
   // database alone but not of the whole data directory; the Security status page says which it is.
   auditAnchorDir: process.env.AUDIT_ANCHOR_DIR ? path.resolve(process.env.AUDIT_ANCHOR_DIR) : path.join(dataDir, 'audit-anchors'),
   auditAnchorDirConfigured: !!process.env.AUDIT_ANCHOR_DIR,
-  auditAnchorHours: process.env.AUDIT_ANCHOR_HOURS ? Number(process.env.AUDIT_ANCHOR_HOURS) : 6,
+  // Hourly by default (it was 6): the newest entries after the last anchor are what someone holding the database
+  // and the index key could delete undetected. An anchor costs ~0.1 s and ~500 bytes even with a year of them.
+  auditAnchorHours: process.env.AUDIT_ANCHOR_HOURS ? Number(process.env.AUDIT_ANCHOR_HOURS) : 1,
   // Optional: also send each anchor to a syslog collector (UDP, RFC 5424), e.g. udp://siem.county.gov:514.
   auditSyslog: process.env.AUDIT_SYSLOG || '',
   // Years a discharged client's record is kept before the retention job hard-deletes it (server/retention.js).

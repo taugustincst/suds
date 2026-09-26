@@ -62,6 +62,15 @@ const getAppMarker = '<script src="get-app.js"></script>';
 if (!getApp.includes(getAppMarker)) throw new Error(`build-static-site: expected to find ${JSON.stringify(getAppMarker)} in get-app.html`);
 fs.writeFileSync(getAppPath, getApp.replace(getAppMarker, `<script src="local-boot.js"></script>${getAppMarker}`));
 
+// Every page gets the office server's Content-Security-Policy as a <meta>, and the frame guard as its first
+// script: a static host sends neither the CSP nor the anti-framing headers the office server does.
+const { hardenPage, FRAME_GUARD_FILE, FRAME_GUARD_JS } = require('./static-site-security');
+fs.writeFileSync(path.join(outDir, FRAME_GUARD_FILE), FRAME_GUARD_JS);
+for (const f of fs.readdirSync(outDir).filter(x => x.endsWith('.html'))) {
+  const p = path.join(outDir, f);
+  fs.writeFileSync(p, hardenPage(fs.readFileSync(p, 'utf8'), f));
+}
+
 // The service worker is copied verbatim with public/ (above); this build's shell has one file more, the
 // boot script, and it cannot be left out: a home-screen install that could not load it would open as the
 // office login instead of local mode. Registered by app.js in local mode like everywhere else, so an
@@ -71,9 +80,9 @@ const sw = fs.readFileSync(swPath, 'utf8');
 const shellMarker = "const SHELL = ['./', 'index.html',";
 if (!sw.includes(shellMarker)) throw new Error('build-static-site: expected to find the SHELL list in sw.js');
 if (!/'get-app\.html'/.test(sw)) throw new Error('build-static-site: sw.js must list get-app.html in its shell');
-fs.writeFileSync(swPath, sw.replace(shellMarker, "const SHELL = ['./', 'index.html', 'local-boot.js',"));
+fs.writeFileSync(swPath, sw.replace(shellMarker, `const SHELL = ['./', 'index.html', 'local-boot.js', '${FRAME_GUARD_FILE}',`));
 
-console.log(`[suds] static site written to ${path.relative(root, outDir)}/ (${count + 1} files, always-local)`);
+console.log(`[suds] static site written to ${path.relative(root, outDir)}/ (${count + 2} files, always-local)`);
 
 // Provider pictures for the starter directories. A browser cannot fetch them from the providers' own
 // websites (those sites send no CORS headers), so "Download provider pictures" on this build reads copies
