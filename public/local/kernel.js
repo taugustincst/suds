@@ -6682,7 +6682,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.12.0" : "local",
+      version: true ? "1.12.1" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -14024,12 +14024,13 @@ var require_demo = __commonJS({
         (ids[t] = ids[t] || []).push(id);
         return id;
       };
-      const d = (off, hour = 10) => {
+      const at = (off, hour = 10) => {
         const x = new Date(Date.now() - off * 864e5);
         x.setUTCHours(hour, Math.floor(rand2() * 4) * 15, 0, 0);
-        return x.toISOString();
+        return x;
       };
-      const day = (off) => d(off).slice(0, 10);
+      const d = (off, hour = 10) => new Date(Math.min(at(off, hour).getTime(), Date.now() - 6e4)).toISOString();
+      const day = (off) => at(off).toISOString().slice(0, 10);
       const nowIso = db3.now();
       db3.transaction(() => {
         const png = require_png();

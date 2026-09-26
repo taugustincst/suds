@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.12.1 — 2026-09-26
 
 - **Small cells: publication releases that hold up.** Two leaks in 1.12.0's "suitable for publication" counts
   are closed. (1) Differencing across reports: a run filtered to one fund, or for a custom range, could be
@@ -15,6 +15,22 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   the threshold. Published, the NDP log is by month and matches the funder report's reversals; "Who gave the
   naloxone" counts reversals. Cross-period differencing (a quarter and its year) remains a documented
   residual risk (docs/HIPAA.md, *Small cells in aggregate reports*).
+- **Restore and backups share one lock.** A restore while a scheduled backup, snapshot or recovery drill was
+  running swapped the database, then failed to record the new sync generation and the restore's audit anchor
+  (and the concurrent backup was written damaged). Backup, snapshot, drill, offsite copy and restore now take
+  turns; a restore waits up to two minutes, then says what is running; after the swap the generation and the
+  anchor are written or the previous database is put back.
+- **Sync pages the history of newly assigned clients.** Up to 1.12.0 it all rode on one page (one client with
+  40,000 visits: 40,531 rows, 25 MB); it now follows in pages within the limit, and older device builds keep
+  working.
+- **Instance lock tells containers apart.** Two containers with the same hostname (host networking, a fixed
+  `hostname:`, a rescheduled pod) and the same process id are no longer taken for the same process: the lock
+  also records the container's root filesystem and machine identity.
+- **A restored device moves to a fresh key** the first time a backed-up account signs in, so the key inside
+  the backup file no longer opens what the device records afterwards.
+- **Sample data never has a time in the future.** "Today at 5 pm" was written before 5 pm, and such a record
+  reached no device until its time came; the sync test that caught it failed now and then, depending on the
+  time of day.
 
 ## 1.12.0 — 2026-09-26
 

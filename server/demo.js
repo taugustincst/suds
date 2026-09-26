@@ -95,8 +95,12 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
   const rand = rng(seedValue);
   const pick = (arr) => arr[Math.floor(rand() * arr.length)];
   const ids = {}; const track = (t, id) => { (ids[t] = ids[t] || []).push(id); return id; };
-  const d = (off, hour = 10) => { const x = new Date(Date.now() - off * 86400000); x.setUTCHours(hour, Math.floor(rand() * 4) * 15, 0, 0); return x.toISOString(); };
-  const day = (off) => d(off).slice(0, 10);
+  // Never later than now: "today at 17:00" is in the future until 17:00, and a record stamped in the future is
+  // invisible to every sync pull until its time comes (the pull sends rows up to the server's own clock).
+  // Calendar dates (day) may lie ahead: a consent's expiry, a to-do's due date.
+  const at = (off, hour = 10) => { const x = new Date(Date.now() - off * 86400000); x.setUTCHours(hour, Math.floor(rand() * 4) * 15, 0, 0); return x; };
+  const d = (off, hour = 10) => new Date(Math.min(at(off, hour).getTime(), Date.now() - 60000)).toISOString();
+  const day = (off) => at(off).toISOString().slice(0, 10);
   const nowIso = db.now();
 
   db.transaction(() => {
