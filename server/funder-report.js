@@ -20,41 +20,155 @@ const SC = require('./small-cells');
 const breathe = () => new Promise((resolve) => defer(resolve));
 
 const SMALL_CELL_DEFAULT = 11;
-const PURPOSES = ['publication', 'submission'];
+// publication: a release to publish or share (whole programme, a standard period that has ended, always
+// suppressed). submission: the programme's own report to its funder. internal: anything else. Neither of
+// the last two is for publication.
+const PURPOSES = ['publication', 'submission', 'internal'];
+
+// ---- what may be published ----
+// Suppression inside one report cannot stop two reports being subtracted from each other: the whole programme
+// minus one fund's run leaves the people served under the other funds, January–June minus January–May leaves
+// those first served in June. So only one shape of run carries the publication label: the whole programme
+// (no fund filter, no caseload scope) for one standard period that has ended. Standard periods are those a
+// grant report covers and that tile the calendar without overlapping at their own level: a calendar month,
+// a quarter (January, April, July, October) and a year starting on one of those quarters (a July–June or
+// October–September fiscal year, or a calendar year). A fund-filtered, custom-range, caseload-scoped or
+// unfinished run is "internal, not for publication" (docs/HIPAA.md "Small cells in aggregate reports").
+const QUARTER_STARTS = [1, 4, 7, 10];
+const lastDayOf = (year, month) => new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10); // month 1-12
+/** 'month' | 'quarter' | 'year' | null. */
+function standardPeriod(from, to) {
+  const m = /^(\d{4})-(\d{2})-01$/.exec(from || ''); if (!m) return null;
+  const y = Number(m[1]); const mo = Number(m[2]);
+  const end = (months) => { const last = mo - 1 + months - 1; return lastDayOf(y + Math.floor(last / 12), (last % 12) + 1); };
+  if (to === end(1)) return 'month';
+  if (QUARTER_STARTS.includes(mo) && to === end(3)) return 'quarter';
+  if (QUARTER_STARTS.includes(mo) && to === end(12)) return 'year';
+  return null;
+}
+const PERIOD_LABEL = { month: 'one calendar month', quarter: 'one quarter', year: 'one year' };
+/** Whether a run could be a publication release, and if not, why not. */
+function release(ctx, { from, to }, { fund = null } = {}) {
+  const why = [];
+  const period = standardPeriod(from, to);
+  if (fund) why.push('it is filtered to one funding source');
+  if (auth.caseloadRestricted(ctx.user)) why.push('it counts only your caseload');
+  if (!period) why.push('its period is not a calendar month, a quarter or a year starting on 1 January, April, July or October');
+  else if (to >= require('./routes/budget').localDate()) why.push('its period has not ended yet');
+  return { publishable: !why.length, period, not_publishable: why };
+}
 
 /**
- * How this run counts. Small-cell suppression is on unless the run is the programme's own submission to its
- * funder (purpose=submission) and asks for exact counts (counts=exact), which needs reports:exact
- * (supervisor, administrator, finance). Anything labelled for publication or sharing is always suppressed.
+ * How this run counts, and what it is for. A run that could be published (release above) is a publication
+ * release unless asked otherwise; any other run is internal. Small-cell suppression is on unless a run that
+ * is not for publication asks for exact counts (counts=exact), which needs reports:exact (supervisor,
+ * administrator, finance). A publication release is always suppressed, and asking for one that could not be
+ * is refused.
  */
-function countingMode(ctx) {
-  const purpose = ctx.query.get('purpose') || 'publication';
-  if (!PURPOSES.includes(purpose)) throw badRequest('purpose must be publication (to publish or share) or submission (the programme\'s own report to its funder)');
+function countingMode(ctx, period = { from: '', to: '' }, opts = {}) {
+  const rel = release(ctx, period, opts);
+  const purpose = ctx.query.get('purpose') || (rel.publishable ? 'publication' : 'internal');
+  if (!PURPOSES.includes(purpose)) throw badRequest('purpose must be publication (a release to publish or share), submission (the programme\'s own report to its funder) or internal');
   const mode = ctx.query.get('counts') || 'suppressed';
   if (!['suppressed', 'exact'].includes(mode)) throw badRequest('counts must be suppressed or exact');
   if (mode === 'exact') {
-    if (purpose !== 'submission') throw badRequest('Exact counts are only for the programme\'s own submission to its funder (purpose=submission). A report to publish or share keeps small cells suppressed.');
+    if (purpose === 'publication') throw badRequest('Exact counts are only for the programme\'s own submission to its funder (purpose=submission) or internal use. A report to publish or share keeps small cells suppressed.');
     if (!auth.hasPerm(ctx.user, 'reports:exact')) throw forbidden('Only a supervisor, an administrator or finance can run the funder report with exact counts');
   }
+  if (purpose === 'publication' && !rel.publishable) {
+    throw badRequest(`Only a report on the whole programme for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be labelled for publication; this one cannot, because ${rel.not_publishable.join(' and ')}. Run it without purpose=publication: it is then marked internal, not for publication.`);
+  }
   const threshold = Number(db.getSetting('small_cell_threshold', '')) || SMALL_CELL_DEFAULT;
-  return { mode, threshold, purpose };
+  return { mode, threshold, purpose, release: rel };
 }
+/** The part of the counting mode a response carries as `suppression`. */
+const suppressionOf = (c) => ({ mode: c.mode, threshold: c.threshold, purpose: c.purpose });
 
 /** What the About sheet, the page and the CSV say about how the counts were made. */
 function countingStatement(s) {
-  return s.mode === 'exact'
-    ? `Exact counts: every figure is the true number, including groups of fewer than ${s.threshold} people. For the programme's own submission to its funder; not for publication or sharing.`
-    : `Small cells suppressed: every count of people under ${s.threshold} (people served, each breakdown row, people per fund, episodes, discharges, overdose events and reversals, who gave the naloxone) is shown as "<${s.threshold}" so nobody can be picked out of a small group, and wherever a hidden figure could still be worked out from a total, another figure (or the total) is hidden with it, shown as "suppressed", so that it cannot be worked out by subtraction. Counts of naloxone kits, doses, test strips, services, staff hours and money are not counts of people and are exact. Suitable for publication or sharing.`;
+  const T = s.threshold;
+  const how = `every count of people under ${T} (people served, each breakdown row, people per fund, episodes, discharges, overdose events and reversals, who gave the naloxone) is shown as "<${T}" so nobody can be picked out of a small group, and wherever a hidden figure could still be worked out from the figures published with it (a total, a breakdown that adds up to it, or the people left when one fund's are taken from the total) more is hidden, shown as "suppressed", the total itself only when nothing else will do, so that it cannot be worked out by subtraction. Counts of naloxone kits, doses, test strips, services, staff hours and money are not counts of people and are exact.`;
+  const rel = s.release || { publishable: false, not_publishable: [] };
+  const why = rel.not_publishable.length ? ` (${rel.not_publishable.join('; ')})` : '';
+  if (s.mode === 'exact') {
+    return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the programme's own ${s.purpose === 'submission' ? 'submission to its funder' : 'internal use'}; not for publication or sharing.`;
+  }
+  if (s.purpose === 'publication') {
+    return `Publication release: the whole programme, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} Suitable for publication or sharing. Publish one release per period, once: two releases for nested or overlapping periods (a quarter and the year that contains it) or the same period run again after late entries can be subtracted from each other to reveal a small group, which suppression within one release cannot prevent.`;
+  }
+  return `${s.purpose === 'submission' ? 'The programme\'s own submission to its funder' : 'Internal'}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole programme minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the programme and its funder.`;
 }
 
 // Demographic columns read from each person served, in one pass.
 const DIMENSIONS = [['by_gender', 'gender', 'gender'], ['by_language', 'preferred_language', 'language'], ['by_housing', 'housing_status', 'housing'], ['by_insurance', 'insurance', 'insurance'], ['by_ethnicity', 'race_ethnicity', 'ethnicity']];
 const byCount = (a, b) => (b.n - a.n) || String(a.k).localeCompare(String(b.k));
 
+// A reversal: naloxone used and the person survived. An event recorded as kind "reversal" had naloxone
+// by definition, whether or not the box was ticked (older records, or rows pushed from a device).
+const NALOXONE = `(o.naloxone_used=1 OR o.kind='reversal')`;
+/** The period's overdose events, reversals and naloxone given, true values (the NDP log reads them too). */
+function overdoseFigures(ts, tsP) {
+  const od = db.one(`SELECT COUNT(*) events, COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END),0) reversals,
+      COALESCE(SUM(CASE WHEN o.kind='fatal' OR o.survived=0 THEN 1 ELSE 0 END),0) fatal, COALESCE(SUM(CASE WHEN o.client_id IS NULL THEN 1 ELSE 0 END),0) community_reported,
+      COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts('o.occurred_at')}`, ...tsP);
+  return {
+    ...od,
+    by_month: db.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END) reversals,
+        COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN o.naloxone_doses ELSE 0 END),0) reversal_doses FROM overdose_events o WHERE ${ts('o.occurred_at')} GROUP BY month ORDER BY month`, ...tsP),
+    // Who gave the naloxone in each reversal (as the NDP log counts it), so the rows add up to the reversals.
+    by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND ${NALOXONE} AND o.survived=1 GROUP BY k ORDER BY n DESC`, ...tsP),
+  };
+}
+
+/**
+ * The overdose figures, protected. Two stars (server/small-cells.js): the events (total, by month, and the
+ * fatal, community-reported and reversed events, each some of them) and the reversals (total, by month, and
+ * by who gave the naloxone). They are linked: the reversals are some of the events, in total and in each
+ * month, so the difference (events not reversed) is a count of people too. Where a star hides a figure the
+ * other shows, the other hides it too, and a month showing both events and reversals that differ by fewer
+ * than the threshold hides its reversals; the two are run again until neither changes. Each star is audited
+ * exactly; the links between them are enforced by hiding, not audited jointly (docs/HIPAA.md). The NDP log's
+ * publication release uses this same call, so the two show the same numbers the same way.
+ */
+function overdoseProtect(od, sc) {
+  const months = od.by_month.map(x => ({ month: x.month, n: x.n, reversals: x.reversals }));
+  if (sc.exact) return { events: od.events, reversals: od.reversals, fatal: od.fatal, community_reported: od.community_reported, by_month: months, by_administered_by: od.by_administered_by };
+  const forceMonth = new Set(); let hideR = false;
+  for (;;) {
+    const r = SC.star({ total: od.reversals, partitions: [months.map(x => x.reversals), od.by_administered_by.map(x => x.n)] },
+      { ...sc, hidden: { partitions: [...forceMonth].map(i => [0, i]), total: hideR } });
+    const rHidden = !isNum(r.total);
+    const e = SC.star({ total: od.events, partitions: [months.map(x => x.n)], subsets: [od.reversals, od.fatal, od.community_reported] },
+      { ...sc, hidden: { subsets: rHidden ? [0] : [] } });
+    let more = false;
+    if (!isNum(e.subsets[0]) && !rHidden) { hideR = true; more = true; }
+    months.forEach((x, i) => {
+      if (!forceMonth.has(i) && isNum(e.partitions[0][i]) && isNum(r.partitions[0][i]) && SC.isSmall(x.n - x.reversals, sc.threshold)) { forceMonth.add(i); more = true; }
+    });
+    if (more) continue;
+    const rows = (p) => p || [];
+    return {
+      events: e.total, reversals: r.total, fatal: e.subsets[1], community_reported: e.subsets[2],
+      by_month: months.map((x, i) => {
+        const n = rows(e.partitions[0])[i] ?? SC.WITHHELD; const rv = rows(r.partitions[0])[i] ?? SC.WITHHELD;
+        return { ...x, n, reversals: rv, ...(isNum(n) && isNum(rv) ? {} : { suppressed: true }) };
+      }),
+      by_administered_by: od.by_administered_by.map((x, i) => withCell(x, 'n', rows(r.partitions[1])[i] ?? SC.WITHHELD)),
+    };
+  }
+}
+const isNum = (v) => typeof v === 'number';
+
+/** People served in the period by the whole programme (the total a publication release prints). */
+function servedCount(ts, tsP) {
+  return db.one(`SELECT COUNT(*) n FROM clients c WHERE c.deleted_at IS NULL AND (c.id IN (SELECT i.client_id FROM interventions i WHERE ${ts('i.occurred_at')})
+    OR c.id IN (SELECT ca.client_id FROM calls ca WHERE ${ts('ca.started_at')}))`, ...tsP, ...tsP).n;
+}
+
 async function build(ctx, { from, to, ts, tsP }) {
-  const counting = countingMode(ctx);
-  const cf = auth.caseloadFilter(ctx.user, 'c.id');
   const fund = ctx.query.get('funding_source_id') || null;
+  const counting = countingMode(ctx, { from, to }, { fund });
+  const cf = auth.caseloadFilter(ctx.user, 'c.id');
   const fundJoin = fund ? 'AND i.funding_source_id=?' : '';
   const fundP = fund ? [fund] : [];
 
@@ -110,17 +224,7 @@ async function build(ctx, { from, to, ts, tsP }) {
       })(),
     };
 
-    // A reversal: naloxone used and the person survived. An event recorded as kind "reversal" had naloxone
-    // by definition, whether or not the box was ticked (older records, or rows pushed from a device).
-    const NALOXONE = `(o.naloxone_used=1 OR o.kind='reversal')`;
-    const od = db.one(`SELECT COUNT(*) events, COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END),0) reversals,
-        COALESCE(SUM(CASE WHEN o.kind='fatal' OR o.survived=0 THEN 1 ELSE 0 END),0) fatal, COALESCE(SUM(CASE WHEN o.client_id IS NULL THEN 1 ELSE 0 END),0) community_reported,
-        COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts('o.occurred_at')}`, ...tsP);
-    const overdose = {
-      ...od,
-      by_month: db.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts('o.occurred_at')} GROUP BY month ORDER BY month`, ...tsP),
-      by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND ${NALOXONE} GROUP BY k ORDER BY n DESC`, ...tsP),
-    };
+    const overdose = overdoseFigures(ts, tsP);
 
     // One grouped pass over the period's visits, read from the covering index (idx_interventions_period):
     // services and people per funding source — with an explicit "No funding source" row, since a visit
@@ -164,43 +268,67 @@ async function build(ctx, { from, to, ts, tsP }) {
       default_fund_set: !!require('./routes/budget').defaultFundFor(null), settings_link: '#/admin?tab=settings&section=reporting',
     };
 
-    // Small-cell suppression (server/small-cells.js): every count of people, in every table, with
-    // complementary suppression against the published totals. Exact mode returns the figures unchanged.
+    const raw = {
+      unduplicated, demographics, episodes, overdose, naloxone_distribution: distribution, by_funding_source: byFund,
+      attribution: { ...attribution, unattributed_clients: fund ? 0 : none.clients_served },
+    };
     const sc = { threshold: counting.threshold, exact: counting.mode === 'exact' };
-    const one = (v) => SC.cell(v, sc);
-    // Each single-valued breakdown of the people served adds up to the number served; if one of them can
-    // only be protected by hiding that total, it is hidden everywhere.
-    let servedOut = one(unduplicated.served);
-    const demo = {};
-    for (const k of ['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_ethnicity']) {
-      const t = SC.table(demographics[k], ['n'], { ...sc, totals: { n: servedOut } });
-      demo[k] = t.rows; if (typeof t.totals.n !== 'number') servedOut = t.totals.n;
-    }
-    // A person may report several race codes, so that breakdown has no total to subtract from.
-    demo.by_race_code = SC.table(demographics.by_race_code, ['n'], sc).rows;
-    const discharges = SC.table(episodes.by_discharge_reason, ['n'], { ...sc, totals: { n: one(episodes.discharges) } });
-    const months = SC.table(overdose.by_month, ['n', 'reversals'], { ...sc, totals: { n: one(overdose.events), reversals: one(overdose.reversals) } });
-    const funds = SC.table(byFund, ['clients_served'], sc).rows;
-    const noneRow = funds.find(f => f.id === null);
-    // A median over fewer people than the threshold is one of them.
-    const smallGroup = !sc.exact && typeof episodes.discharges === 'number' && episodes.discharges > 0 && episodes.discharges < counting.threshold;
     return {
       from, to, funding_source_id: fund,
-      suppression: counting,
+      suppression: suppressionOf(counting),
+      // Whether this run could be a publication release, and if not why not.
+      release: counting.release,
       // Kept for the screens and files that read it: the threshold applied, or null when counts are exact.
       small_cell_threshold: counting.mode === 'exact' ? null : counting.threshold,
       counting_statement: countingStatement(counting),
-      unduplicated: { served: servedOut, new_admissions: one(unduplicated.new_admissions), with_a_referral: one(unduplicated.with_a_referral), admitted_after_referral: one(unduplicated.admitted_after_referral), on_mat: one(unduplicated.on_mat) },
-      demographics: Object.fromEntries(['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_race_code', 'by_ethnicity'].map(k => [k, demo[k]])),
-      episodes: { ...episodes, admissions: one(episodes.admissions), discharges: discharges.totals.n, open_at_end: one(episodes.open_at_end), by_discharge_reason: discharges.rows,
-        median_length_of_stay_days: smallGroup ? SC.SECONDARY : episodes.median_length_of_stay_days },
-      overdose: { ...overdose, events: months.totals.n, reversals: months.totals.reversals, fatal: one(overdose.fatal), community_reported: one(overdose.community_reported),
-        by_month: months.rows, by_administered_by: SC.table(overdose.by_administered_by, ['n'], sc).rows },
-      naloxone_distribution: distribution,
-      by_funding_source: funds,
-      attribution: { ...attribution, unattributed_clients: noneRow ? noneRow.clients_served : 0 },
+      ...suppress(raw, sc),
     };
   } finally { db.run(`DROP TABLE IF EXISTS ${served}`); }
+}
+
+const PARTITIONS = ['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_ethnicity'];
+const withCell = (x, key, v) => ({ ...x, [key]: v, ...(isNum(v) ? {} : { suppressed: true }) });
+/**
+ * Small-cell suppression of the report's figures (server/small-cells.js), a pure function of them so it can be
+ * tested against brute force. The people served are one marginal shared by: the total; the single-valued
+ * breakdowns (gender, language, housing, insurance, ethnicity), each adding up to it; counts of some of them
+ * (on MAT, referred, admitted, each fund, "No funding source"), each leaving a complement anyone can work
+ * out; and the race codes (a person may report several). They are protected together, to a fixpoint.
+ * Exact mode returns the figures unchanged.
+ */
+function suppress(raw, sc) {
+  const dem = raw.demographics;
+  const order = ['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_race_code', 'by_ethnicity'];
+  if (sc.exact) return { ...raw, withheld: [], demographics: Object.fromEntries(order.map(k => [k, dem[k]])), overdose: { ...raw.overdose, ...overdoseProtect(raw.overdose, sc) } };
+  const one = (v) => SC.cell(v, sc);
+  const u = raw.unduplicated; const funds = raw.by_funding_source;
+  const s = SC.star({ total: u.served, partitions: PARTITIONS.map(k => dem[k].map(x => x.n)),
+    subsets: [u.on_mat, u.with_a_referral, u.admitted_after_referral, ...funds.map(f => f.clients_served)],
+    cover: dem.by_race_code.map(x => x.n) }, sc);
+  // A breakdown no pattern of hidden cells could protect is withheld whole (listed in `withheld`).
+  const demographics = {}; const withheld = [];
+  PARTITIONS.forEach((k, g) => { if (!s.partitions[g]) { withheld.push(k); demographics[k] = []; } else demographics[k] = dem[k].map((x, i) => withCell(x, 'n', s.partitions[g][i])); });
+  if (!s.cover) { withheld.push('by_race_code'); demographics.by_race_code = []; } else demographics.by_race_code = dem.by_race_code.map((x, i) => withCell(x, 'n', s.cover[i]));
+  // People per fund also never leave one hidden fund beside visible ones.
+  const fundPeople = SC.noLonely(s.subsets.slice(3));
+  const byFund = funds.map((f, i) => withCell(f, 'clients_served', fundPeople[i]));
+  const noneRow = byFund.find(f => f.id === null);
+  const ep = raw.episodes;
+  const discharges = SC.table(ep.by_discharge_reason, ['n'], { ...sc, totals: { n: ep.discharges } });
+  const od = raw.overdose;
+  const o = overdoseProtect(od, sc);
+  // A median over fewer people than the threshold is one of them.
+  const smallGroup = isNum(ep.discharges) && ep.discharges > 0 && ep.discharges < sc.threshold;
+  return {
+    unduplicated: { served: s.total, new_admissions: one(u.new_admissions), with_a_referral: s.subsets[1], admitted_after_referral: s.subsets[2], on_mat: s.subsets[0] },
+    demographics: Object.fromEntries(order.map(k => [k, demographics[k]])), withheld,
+    episodes: { ...ep, admissions: one(ep.admissions), discharges: discharges.totals.n, open_at_end: one(ep.open_at_end), by_discharge_reason: discharges.rows,
+      median_length_of_stay_days: smallGroup ? SC.SECONDARY : ep.median_length_of_stay_days },
+    overdose: { ...od, ...o },
+    naloxone_distribution: raw.naloxone_distribution,
+    by_funding_source: byFund,
+    attribution: { ...raw.attribution, unattributed_clients: noneRow ? noneRow.clients_served : 0 },
+  };
 }
 
 /** The report as sheets: About (which states the counting mode), Summary, Who was served, By funding source. */
@@ -210,7 +338,7 @@ function sheets(d, ctx, fundName) {
     { k: 'Report', v: 'Funder report (unduplicated people served)' },
     { k: 'Period', v: `${d.from} to ${d.to}` },
     { k: 'Funding source', v: fundName || 'All funding sources' },
-    { k: 'Purpose', v: d.suppression.purpose === 'submission' ? 'The programme\'s own submission to its funder' : 'Publication or sharing' },
+    { k: 'Purpose', v: d.suppression.purpose === 'publication' ? 'Publication release (whole programme, one standard period)' : d.suppression.purpose === 'submission' ? 'The programme\'s own submission to its funder, not for publication' : 'Internal, not for publication' },
     { k: 'Counts', v: d.counting_statement },
     { k: 'Classification', v: 'Aggregate counts: no names, client codes or dates of service.' },
     { k: 'Generated', v: db.now() }, { k: 'Generated by', v: ctx.user.display_name || ctx.user.username },
@@ -248,4 +376,4 @@ function sheets(d, ctx, fundName) {
   };
 }
 
-module.exports = { build, sheets, countingMode, countingStatement, SMALL_CELL_DEFAULT };
+module.exports = { build, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT };

@@ -39,8 +39,14 @@ CalOMS Tx, and the county EHR hand-off. Most harm-reduction programmes will not 
 
 - **Funder report**: unduplicated people served (people, not services) by fiscal period and funding source;
   demographics with race/ethnicity codes a funder can count; overdose and naloxone figures including community
-  distribution. Every count of people under 11 is suppressed (`<11`), with complementary suppression so that a hidden cell cannot be worked out from a total; kits, doses and money stay exact.
-  (Only the funder report suppresses small cells; the other reports show exact counts.)
+  distribution. Every count of people under 11 is suppressed (`<11`), with complementary suppression across
+  every table that shares a total, so that a hidden cell cannot be worked out from the rest of the report; kits,
+  doses and money stay exact. Only a run for the whole programme and one month, quarter or fiscal year that has
+  ended is labelled for publication; a run for one fund or a custom range is marked internal, not for
+  publication. Two releases for nested periods (a quarter and its year) can still be subtracted from each other,
+  so publish one period per funder cycle ([docs/HIPAA.md](../HIPAA.md#small-cells-in-aggregate-reports)).
+  (Only the funder report, the naloxone log and the settlement report suppress small cells; the other reports
+  show exact counts.)
 - **Naloxone distribution log** in the style of the DHCS Naloxone Distribution Project reporting, and an
   **opioid-settlement expenditure report** by allowable-use category. Both are built from the records above;
   **check each against the funder's current template** before you submit — templates change, and SUDS has not

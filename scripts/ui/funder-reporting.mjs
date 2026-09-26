@@ -39,6 +39,8 @@ eq((await api(sup, 'POST', '/api/interventions', { type: 'outreach', occurred_at
 const today = new Date().toISOString().slice(0, 10); const yearStart = `${today.slice(0, 4)}-01-01`;
 await sup.goto(`${base}/#/funder?from=${yearStart}&to=${today}`); await settle(sup);
 eq(await sup.$eval('[data-counting-mode]', e => e.dataset.countingMode), 'suppressed', 'the funder report says small cells are suppressed by default');
+eq(await sup.$eval('[data-counting-mode]', e => e.dataset.purpose), 'internal', 'year to date has not ended, so the run is internal, not for publication');
+ok(/not for publication/i.test(await sup.$eval('[data-counting-mode]', e => e.textContent)), 'and the banner says so');
 ok(await sup.$('[data-no-fund-row]'), 'By funding source has a "No funding source" row');
 ok(await sup.$('[data-unattributed]'), 'and a warning that services have no funding source');
 await sup.selectOption('select[data-counts]', 'exact'); await sup.click('.filters button.primary'); await settle(sup);
@@ -51,6 +53,12 @@ ok(about && about.rows.some(r => /Exact counts/.test(r.join(' '))), 'and its Abo
 await sup.click('[data-unattributed] a'); await settle(sup);
 ok(await until(() => sup.$('[data-no-fund-filter]')), 'the warning opens the visits with no funding source');
 ok(/funding=none/.test(sup.url()), 'filtered to them', sup.url());
+// A period that can be published: last month, for the whole programme.
+await sup.goto(`${base}/#/funder?from=${yearStart}&to=${today}`); await settle(sup);
+await sup.click('[data-publishable-periods] [data-period=month]'); await settle(sup);
+ok(await until(async () => (await sup.$eval('[data-counting-mode]', e => e.dataset.purpose)) === 'publication'), 'last month, whole programme, is a publication release');
+ok(/Publication release/.test(await sup.$eval('[data-counting-mode]', e => e.textContent)), 'and the banner says so');
+ok(/from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}/.test(sup.url()), 'for one calendar month', sup.url());
 
 // ---- harm-reduction reports on the Reports page ----
 await sup.goto(`${base}/#/reports?from=${yearStart}&to=${today}`); await settle(sup);

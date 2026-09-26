@@ -33,7 +33,9 @@ after(async () => { await H.stop(); });
 // is tested on its own below, so a change to suppression is not a change to what the report counts. A
 // report filtered to one fund shows that fund's row only. An event of kind "reversal" counts as
 // a naloxone reversal whether or not its box was ticked (the fixture has such rows), which moved the reversal
-// figures and nothing else.
+// figures and nothing else. "Who gave the naloxone" counts the reversals (naloxone used, the person survived),
+// as the NDP log does, so that its rows add up to the reversals and are protected with them; that moved
+// those rows and nothing else.
 const FUND_KEYS = ['name', 'grant_number', 'fiscal_year_start', 'fiscal_year_end', 'clients_served', 'services', 'approved_minutes'];
 const sortRows = (rows) => [...rows].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 function normalise(d) {
@@ -92,7 +94,11 @@ test('the report period predicate is sargable: it reads the date index, not the 
 test('small cells are suppressed by default and the report says which mode it used', async () => {
   const r = await sup.get('/api/reports/funder?from=2026-02-14&to=2026-02-14');
   assert.equal(r.status, 200);
-  assert.deepEqual(r.data.suppression, { mode: 'suppressed', threshold: 11, purpose: 'publication' });
+  // One day is not a standard period, so the run is internal (not for publication), and suppressed all the same.
+  assert.deepEqual(r.data.suppression, { mode: 'suppressed', threshold: 11, purpose: 'internal' });
+  assert.equal(r.data.release.publishable, false);
+  const month = await sup.get('/api/reports/funder?from=2026-02-01&to=2026-02-28');
+  assert.deepEqual(month.data.suppression, { mode: 'suppressed', threshold: 11, purpose: 'publication' }, 'a whole month that has ended is a publication release');
   assert.ok(Object.values(r.data.demographics).flat().some(x => x.n === '<11'), 'a one-day report has small cells');
 });
 

@@ -21,12 +21,24 @@ route('funder', async (r) => {
   const fromI = h('input', { type: 'date', value: from, 'aria-label': 'From' });
   const toI = h('input', { type: 'date', value: to, 'aria-label': 'To' });
   const countsI = can('reports:exact') ? h('select', { 'aria-label': 'Counts', 'data-counts': '1' },
-    h('option', { value: '', selected: !exact }, 'Small cells suppressed (to publish or share)'),
+    h('option', { value: '', selected: !exact }, 'Small cells suppressed'),
     h('option', { value: 'exact', selected: exact }, 'Exact counts (our own submission to the funder)')) : null;
   const go = (f, t) => nav(`funder?from=${f}&to=${t}${fundI.value ? `&funding_source_id=${fundI.value}` : ''}${countsI && countsI.value === 'exact' ? '&counts=exact' : ''}`);
   const fundI = h('select', { 'aria-label': 'Funding source' },
     h('option', { value: '' }, 'All funding sources'),
     state.funds.map(f => h('option', { value: f.id, selected: f.id === fund }, f.name)));
+
+  // Periods a publication release can cover (server/funder-report.js standardPeriod): a calendar month, a
+  // quarter, or a year starting on a quarter, once it has ended. Anything else, a fund filter or a caseload
+  // makes the run internal, not for publication.
+  const today = fmt.today(); const ty = Number(today.slice(0, 4)); const tm = Number(today.slice(5, 7));
+  const pad = (m) => String(m).padStart(2, '0');
+  const monthEnd = (y, m) => new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  const span = (y, m, months) => { const last = m - 1 + months - 1; return [`${y}-${pad(m)}-01`, monthEnd(y + Math.floor(last / 12), (last % 12) + 1)]; };
+  const lastMonth = () => (tm === 1 ? span(ty - 1, 12, 1) : span(ty, tm - 1, 1));
+  const lastQuarter = () => { const q = Math.floor((tm - 1) / 3) * 3 + 1; return q === 1 ? span(ty - 1, 10, 3) : span(ty, q - 3, 3); };
+  const lastYear = (startMonth) => span((tm >= startMonth ? ty : ty - 1) - 1, startMonth, 12);
+  const publishable = d.suppression.purpose === 'publication';
 
   // Fiscal-year shortcuts, because that is the period a grant report covers.
   const fy = (startMonth) => {
@@ -47,7 +59,10 @@ route('funder', async (r) => {
       can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Export everything to Excel') : null),
     h('p', { class: 'muted' }, 'Counts of people, each counted once however many times they were served. This is the shape most grant reporting asks for. It is not a CalOMS Tx submission: CalOMS records are collected, checked and extracted under Reports → State reporting.'),
     // Which counting this run used; the exported file says the same on its About sheet.
-    h('div', { class: `banner small ${d.suppression.mode === 'exact' ? 'warn' : 'info'}`, 'data-counting-mode': d.suppression.mode }, d.counting_statement),
+    // Whether this run is a publication release, and if not, why not.
+    h('div', { class: `banner small ${publishable ? 'info' : 'warn'}`, 'data-counting-mode': d.suppression.mode, 'data-purpose': d.suppression.purpose },
+      h('strong', {}, publishable ? 'Publication release. ' : 'Internal, not for publication. '), d.counting_statement,
+      publishable ? null : h('span', {}, ' To publish or share figures, run the report for all funding sources and one of the periods under "Periods you can publish".')),
 
     h('div', { class: 'filters' },
       h('div', { class: 'field' }, h('label', {}, 'From'), fromI),
@@ -58,6 +73,12 @@ route('funder', async (r) => {
       h('button', { class: 'btn ghost sm', onClick: () => { const [s, e] = fy(7); go(s, e); } }, 'Fiscal year (Jul–Jun)'),
       h('button', { class: 'btn ghost sm', onClick: () => { const [s, e] = fy(10); go(s, e); } }, 'Fiscal year (Oct–Sep)'),
       h('button', { class: 'btn ghost sm', onClick: () => go(`${to.slice(0, 4)}-01-01`, to) }, 'Calendar year')),
+    h('div', { class: 'filters', role: 'group', 'aria-label': 'Periods you can publish', 'data-publishable-periods': '1' },
+      h('span', { class: 'small muted' }, 'Periods you can publish (whole programme, ended):'),
+      h('button', { class: 'btn ghost sm', 'data-period': 'month', onClick: () => { const [s, e] = lastMonth(); fundI.value = ''; go(s, e); } }, 'Last month'),
+      h('button', { class: 'btn ghost sm', 'data-period': 'quarter', onClick: () => { const [s, e] = lastQuarter(); fundI.value = ''; go(s, e); } }, 'Last quarter'),
+      h('button', { class: 'btn ghost sm', 'data-period': 'year-jul', onClick: () => { const [s, e] = lastYear(7); fundI.value = ''; go(s, e); } }, 'Last fiscal year (Jul–Jun)'),
+      h('button', { class: 'btn ghost sm', 'data-period': 'year-oct', onClick: () => { const [s, e] = lastYear(10); fundI.value = ''; go(s, e); } }, 'Last fiscal year (Oct–Sep)')),
 
     // What would otherwise be missing without a word: services charged to no fund, and staff time nobody
     // has approved yet (approved hours are what a county would invoice, so unapproved time counts as none).
@@ -98,13 +119,14 @@ route('funder', async (r) => {
         stat('— of those, community distribution', num(d.naloxone_distribution.community_kits)),
         stat('Fentanyl test strips', num(d.naloxone_distribution.strips))),
       d.overdose.by_administered_by.length ? h('div', { class: 'grid cols-2 mt' },
-        h('div', {}, h('h2', {}, 'Who gave the naloxone'), bars(d.overdose.by_administered_by, { valueKey: 'n', labelKey: 'k', list: 'ADMINISTERED_BY' })),
+        h('div', {}, h('h2', {}, 'Who gave the naloxone (reversals)'), bars(d.overdose.by_administered_by, { valueKey: 'n', labelKey: 'k', list: 'ADMINISTERED_BY' })),
         h('div', {}, h('h2', {}, 'By month'), bars(d.overdose.by_month.map(x => ({ k: x.month, n: x.n })), { valueKey: 'n', labelKey: 'k' }))) : null,
-      d.suppression.mode === 'exact' ? null : h('p', { class: 'small muted', 'data-suppression-note': '1' }, `"<${d.suppression.threshold}" is a count of fewer than ${d.suppression.threshold} people; "suppressed" is hidden so that such a count cannot be worked out from a total. Kits, doses and test strips are not counts of people and are exact.`)),
+      d.suppression.mode === 'exact' ? null : h('p', { class: 'small muted', 'data-suppression-note': '1' }, `"<${d.suppression.threshold}" is a count of fewer than ${d.suppression.threshold} people; "suppressed" is hidden so that such a count cannot be worked out from the other figures. Kits, doses and test strips are not counts of people and are exact.`)),
 
     h('section', { class: 'card' },
       h('h2', {}, 'Who was served'),
       h('p', { class: 'small muted' }, 'Each person counted once. Race is recorded as codes a funder can count; because people may report more than one, those figures add up to more than the number served.'),
+      d.withheld && d.withheld.length ? h('p', { class: 'small muted', 'data-withheld': d.withheld.join(',') }, 'Some breakdowns are withheld: too few people were served to show them without giving someone away.') : null,
       h('div', { class: 'grid cols-3' },
         h('div', {}, h('h2', {}, 'Race'), bars(d.demographics.by_race_code, { valueKey: 'n', labelKey: 'k' })),
         h('div', {}, h('h2', {}, 'Ethnicity'), bars(d.demographics.by_ethnicity, { valueKey: 'n', labelKey: 'k' })),

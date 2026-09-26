@@ -142,8 +142,9 @@ module.exports = (r) => {
   });
 
   // The report a funder actually asks for (server/funder-report.js): unduplicated people served, broken down
-  // the way a grant report is. Small cells are suppressed unless this is the programme's own submission and
-  // someone holding reports:exact asks for exact counts; the response says which (suppression).
+  // the way a grant report is. Small cells are suppressed unless a run that is not for publication asks for
+  // exact counts (reports:exact); only the whole programme for one standard period that has ended is a
+  // publication release. The response says which (suppression, release).
   r.get('/api/reports/funder', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
     const out = await FR.build(ctx, range(ctx));
     audit.log({ user: ctx.user, action: 'report.funder', ip: ctx.ip, details: { from: out.from, to: out.to, funding_source_id: out.funding_source_id || undefined, served: out.unduplicated.served, counts: out.suppression.mode, purpose: out.suppression.purpose } });
@@ -158,12 +159,13 @@ module.exports = (r) => {
     const sh = FR.sheets(d, ctx, fundName);
     const S = require('../spreadsheet');
     const xlsx = ctx.query.get('format') === 'xlsx';
-    const mode = d.suppression.mode === 'exact' ? 'exact-counts' : 'suppressed';
+    // The counting and the purpose travel with the file: publication release or internal, not for publication.
+    const mode = d.suppression.mode === 'exact' ? 'exact-counts' : d.suppression.purpose === 'publication' ? 'publication-suppressed' : 'internal-suppressed';
     const filename = `suds-funder-report-${d.from}_${d.to}-${mode}.${xlsx ? 'xlsx' : 'csv'}`;
     const body = xlsx ? S.writeWorkbook(sh.workbook) : S.toCsv(sh.csv, sh.csvColumns);
     audit.log({ user: ctx.user, action: 'report.funder.export', ip: ctx.ip, details: { from: d.from, to: d.to, funding_source_id: d.funding_source_id || undefined, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv' } });
     ctx.res.writeHead(200, { 'Content-Type': xlsx ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`,
-      'X-SUDS-Report-Counts': d.suppression.mode === 'exact' ? 'exact' : `suppressed (threshold ${d.suppression.threshold})` });
+      'X-SUDS-Report-Counts': d.suppression.mode === 'exact' ? 'exact' : `suppressed (threshold ${d.suppression.threshold})`, 'X-SUDS-Report-Purpose': d.suppression.purpose });
     ctx.res.end(body);
   });
 
