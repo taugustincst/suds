@@ -9,6 +9,8 @@ const { encrypt, decrypt, uuid, blindIndex } = require('../crypto');
 const pocket = require('../importers/pocketai');
 const onenote = require('../importers/onenote');
 const M = require('../clients-model');
+// An import's file name is often the person's (a OneNote export named after them): encrypted (migration 42).
+const importView = (i) => { let filename = null; try { filename = i.filename_enc ? decrypt(i.filename_enc) : null; } catch { filename = null; } return { ...i, filename, filename_enc: undefined }; };
 
 // Suggest a client for an imported item from hints (client code or "Last, First"/"First Last")
 function suggestClient(ctx, hints) {
@@ -27,7 +29,7 @@ function stage(ctx, { source, filename, items, importedBy, metadata }) {
   if (items.length > 500) throw badRequest('Too many items in one import (max 500)');
   const id = uuid();
   db.transaction(() => {
-    db.run(`INSERT INTO imports(id,source,filename,imported_by,item_count,metadata) VALUES(?,?,?,?,?,?)`, id, source, filename || null, importedBy || null, items.length, metadata ? JSON.stringify(metadata) : null);
+    db.run(`INSERT INTO imports(id,source,filename_enc,imported_by,item_count,metadata) VALUES(?,?,?,?,?,?)`, id, source, filename ? encrypt(filename) : null, importedBy || null, items.length, metadata ? JSON.stringify(metadata) : null);
     for (const it of items) {
       const suggested = ctx ? suggestClient(ctx, it.metadata?.hints) : null;
       db.run(`INSERT INTO import_items(id,import_id,external_id,title_enc,content_enc,captured_at,metadata_enc,suggested_client_id) VALUES(?,?,?,?,?,?,?,?)`,
@@ -83,7 +85,7 @@ module.exports = (r) => {
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='committed') AS committed,
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='discarded') AS discarded
       FROM imports i LEFT JOIN users u ON u.id=i.imported_by ${auth.hasPerm(ctx.user, 'clients:all') ? '' : 'WHERE i.imported_by=? OR i.imported_by IS NULL'} ORDER BY i.created_at DESC LIMIT 200`, ...(auth.hasPerm(ctx.user, 'clients:all') ? [] : [ctx.user.id]));
-    return { imports: rows };
+    return { imports: rows.map(importView) };
   });
 
   r.get('/api/imports/:id', auth.requireAuth, auth.requirePerm('imports:read', 'imports:write'), (ctx) => {
@@ -93,7 +95,7 @@ module.exports = (r) => {
     // decorate suggested client display names
     for (const it of items) if (it.suggested_client_id) { const c = db.one(`SELECT * FROM clients WHERE id=?`, it.suggested_client_id); it.suggested_client_name = c ? M.summary(c).display_name : null; }
     audit.log({ user: ctx.user, action: 'import.view', entity: 'import', entityId: imp.id, ip: ctx.ip });
-    return { import: imp, items };
+    return { import: importView(imp), items };
   });
 
   // Commit one staged item as a note

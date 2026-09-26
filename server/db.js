@@ -553,6 +553,14 @@ const migrations = [
   // 41: an authenticator code is accepted once (users.totp_last_step, the last RFC 6238 time-step used), so
   //     a code seen over a shoulder or on the screen cannot sign a note or complete a sign-in again.
   (d) => { addColumn(d, 'users', 'totp_last_step', 'INTEGER'); },
+  // 42: names people type or upload leave plaintext: a form attachment's file name and an import's (a scan
+  //     or OneNote export is routinely named after the person), and a consent's document reference
+  //     ("ROI binder, J. Smith"). A device on an older kernel still sends the old names (sync-tables legacy).
+  (d) => {
+    encryptColumn(d, 'client_form_files', 'filename', 'filename_enc');
+    encryptColumn(d, 'imports', 'filename', 'filename_enc');
+    encryptColumn(d, 'consents', 'document_ref', 'document_ref_enc');
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

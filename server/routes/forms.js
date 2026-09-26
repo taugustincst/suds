@@ -96,6 +96,8 @@ function loadForm(ctx, id) {
   const f = db.one(`SELECT * FROM client_forms WHERE id=? AND deleted_at IS NULL`, id); if (!f) throw notFound();
   auth.assertClientAccess(ctx, f.client_id); return f;
 }
+// An attachment's file name is often the client's ("Smith-ROI-signed.pdf"): encrypted (migration 42).
+const fileName = (x) => { try { return x.filename_enc ? decrypt(x.filename_enc) : null; } catch { return null; } };
 // A form's notes are free text about the client ("signed at her sister's house"): encrypted like its values.
 const formNotes = (f) => (f.notes_enc ? decrypt(f.notes_enc) : null);
 const formOut = (f, { values = true } = {}) => ({ ...f, fields: parseJson(f.fields_json, []), fields_json: undefined, values: values ? parseJson(decrypt(f.values_enc), {}) : undefined, values_enc: undefined, notes: formNotes(f), notes_enc: undefined });
@@ -209,7 +211,7 @@ module.exports = (r) => {
   r.get('/api/forms/:id', auth.requireAuth, clientRecords, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id);
     audit.log({ user: ctx.user, action: 'client_form.view', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip });
-    const files = db.all(`SELECT id, filename, content_type, bytes, created_at, uploaded_by FROM client_form_files WHERE client_form_id=? ORDER BY created_at`, f.id);
+    const files = db.all(`SELECT id, filename_enc, content_type, bytes, created_at, uploaded_by FROM client_form_files WHERE client_form_id=? ORDER BY created_at`, f.id).map(x => ({ ...x, filename: fileName(x), filename_enc: undefined }));
     const t = f.template_id ? db.one(`SELECT id, name, instructions, (file_b64 IS NOT NULL) has_file, content_type FROM form_templates WHERE id=?`, f.template_id) : null;
     return { form: { ...formOut(f), files, template: t } };
   });
@@ -254,7 +256,7 @@ module.exports = (r) => {
     const v = validate(ctx.body, { filename: { type: 'string', maxLen: 200 } });
     const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_ATTACH_BYTES, 'Attachment'); if (!file) throw badRequest('Attachment is required');
     const id = uuid(); const name = (v.filename || `signed.${FILE_TYPES[file.type]}`).replace(/[\r\n"]/g, '');
-    db.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, id, f.id, f.client_id, name, file.type, file.buf.length, encrypt(file.b64), ctx.user.id);
+    db.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename_enc,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, id, f.id, f.client_id, encrypt(name), file.type, file.buf.length, encrypt(file.b64), ctx.user.id);
     const stamp = db.now();
     db.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, stamp, f.id);
     audit.log({ user: ctx.user, action: 'client_form.attach', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: id, bytes: file.buf.length, type: file.type } });
@@ -264,7 +266,7 @@ module.exports = (r) => {
   r.get('/api/forms/:id/files/:fid', auth.requireAuth, clientRecords, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();
     audit.log({ user: ctx.user, action: 'client_form.file.view', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
-    ctx.res.writeHead(200, { 'Content-Type': safeContentType(x.content_type), 'Content-Disposition': contentDisposition(ctx.query.get('download') === '1' ? 'attachment' : 'inline', x.filename, 'attachment'), 'X-Content-Type-Options': 'nosniff' }); ctx.res.end(Buffer.from(decrypt(x.data_enc), 'base64')); return null;
+    ctx.res.writeHead(200, { 'Content-Type': safeContentType(x.content_type), 'Content-Disposition': contentDisposition(ctx.query.get('download') === '1' ? 'attachment' : 'inline', fileName(x), 'attachment'), 'X-Content-Type-Options': 'nosniff' }); ctx.res.end(Buffer.from(decrypt(x.data_enc), 'base64')); return null;
   });
   r.delete('/api/forms/:id/files/:fid', auth.requireAuth, clientRecords, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT id FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();

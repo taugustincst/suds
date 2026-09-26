@@ -46,11 +46,12 @@ module.exports = {
     { name: 'calls', enc: ['contact_name_enc', 'phone_enc', 'summary_enc', 'purpose_enc'], scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['user_id'], all: 'clients:all' }, writePerm: 'calls:write', parent: ['clients', 'client_id'] },
     { name: 'time_entries', enc: ['description_enc', 'approval_note_enc'], legacy: { description: 'description_enc', approval_note: 'approval_note_enc' }, scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['user_id'], all: 'time:all' }, writePerm: 'time:write', parent: ['clients', 'client_id'] },
     // A referral may cite the consent it was made under, so consents come first.
-    { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc', 'signer_name_enc', 'revoked_reason_enc', 'witness_enc'], legacy: { revoked_reason: 'revoked_reason_enc', witness: 'witness_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
+    { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc', 'signer_name_enc', 'revoked_reason_enc', 'witness_enc', 'document_ref_enc'], legacy: { revoked_reason: 'revoked_reason_enc', witness: 'witness_enc', document_ref: 'document_ref_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
     { name: 'court_orders', enc: ['court_enc', 'case_ref_enc', 'recipient_enc', 'purpose_enc', 'scope_enc', 'vacated_reason_enc'], legacy: { vacated_reason: 'vacated_reason_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'court-orders:write', parent: ['clients', 'client_id'] },
     { name: 'part2_notices', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     { name: 'referrals', enc: ['outcome_enc', 'barrier_enc', 'notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'referrals:write', parent: ['clients', 'client_id'] },
+    // Migration 42 moved client_form_files.filename, imports.filename and consents.document_ref likewise.
     // Migration 39 moved consents.witness and import_items.metadata into witness_enc and metadata_enc.
   // Migration 37 moved the free text on assignments, time entries, consents (revocation), expenditures, notes
     // (countersignature), addenda, client forms and clients (contact preferences) into _enc columns likewise.
@@ -62,11 +63,11 @@ module.exports = {
     { name: 'disclosures', enc: ['recipient_enc', 'purpose_enc', 'what_enc', 'justification_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     // An import (a OneNote page, a Pocket AI transcript) is its importer's until it is filed against a client:
     // the REST routes show it only to them (or to clients:all), and a device gets the same -- scope 'importer'.
-    { name: 'imports', enc: [], scope: 'importer', writePerm: 'imports:write' },
+    { name: 'imports', enc: ['filename_enc'], legacy: { filename: 'filename_enc' }, scope: 'importer', writePerm: 'imports:write' },
     { name: 'import_items', enc: ['content_enc', 'title_enc', 'metadata_enc'], legacy: { metadata: 'metadata_enc' }, scope: 'via-import', writePerm: 'imports:write', parent: ['imports', 'import_id'] },
     { name: 'form_templates', enc: [], scope: 'all', writePerm: 'forms:manage', blob: ['file_b64'] },
     { name: 'client_forms', enc: ['values_enc', 'notes_enc'], legacy: { notes: 'notes_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['clients', 'client_id'] },
-    { name: 'client_form_files', enc: ['data_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
+    { name: 'client_form_files', enc: ['data_enc', 'filename_enc'], legacy: { filename: 'filename_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
     { name: 'patient_requests', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     // Clinical documentation (CalAIM): the problem list and its history, the care plan, ASAM assessments and
     // outcome measures. readPerm: a device whose role cannot read them (an ASAM rating on a navigator's
