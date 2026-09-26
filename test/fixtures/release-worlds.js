@@ -92,6 +92,19 @@ const pattern = {
     for (let a = 0; a <= outer; a++) for (let b = 0; a + b <= outer; b++) for (let ra = 0; ra <= a; ra++) for (let rb = 0; rb <= b; rb++) out.push([`E=${a}+${b} R=${ra}+${rb}`, { period: ['2025-01', '2025-02'], people: many(30, () => plain()), events: [...ev('2025-01', a, ra), ...ev('2025-02', b, rb)] }, a + b]);
     return worldsOf(out, inner);
   },
+  // Race codes, a cover (a person may report several, so the codes add up to at least the people served): people
+  // with code a alone, b alone, both, and none reported ("unknown"). Every set of codes a person can have is in
+  // the family, so it tells its attacker no more than a reader knows (a is at most the people served, a, b and
+  // unknown together at least, unknown and a at most, ...). A small code beside a large one is pinned from below
+  // unless another is hidden, and hiding it only when it pins would say so (1.12.4 refused such quarters).
+  race: (inner, outer) => {
+    const out = [];
+    for (let a = 0; a <= outer; a++) for (let b = 0; a + b <= outer; b++) for (let ab = 0; a + b + ab <= outer; ab++) for (let u = 0; a + b + ab + u <= outer; u++) {
+      if (!(a + b + ab + u)) continue;
+      out.push([`a=${a} b=${b} ab=${ab} none=${u}`, { people: [...many(a, () => plain({ race: ['a'] })), ...many(b, () => plain({ race: ['b'] })), ...many(ab, () => plain({ race: ['a', 'b'] })), ...many(u, () => plain())] }, a + b + ab + u]);
+    }
+    return worldsOf(out, inner);
+  },
   // Two funds: people under A only, B only, both, and neither.
   funds: (inner, outer) => {
     const out = [];

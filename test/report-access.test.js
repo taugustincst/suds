@@ -13,7 +13,8 @@ const H = require('./helpers');
 const PUB = 'from=2026-08-01&to=2026-08-31';          // one calendar month that has ended: a publication release
 const SHORT = 'from=2026-08-01&to=2026-08-30';        // anything else is internal
 const RUNS = {
-  publication: PUB,
+  'default (no purpose asked)': PUB,
+  publication: `${PUB}&purpose=publication`,
   'internal (default for a custom range)': SHORT,
   'purpose=internal': `${PUB}&purpose=internal`,
   'purpose=submission': `${PUB}&purpose=submission`,
@@ -22,14 +23,20 @@ const RUNS = {
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
 // What each role may run, per kind of run (the funder report and the NDP log, which count a caseload-scoped
 // role's own caseload only).
+// A caseload-scoped role's run counts only its caseload, so it is never a publication release: asking for one
+// is a bad request (400), not a permission it lacks.
 const ALLOWED = {
-  admin: ['publication', 'internal (default for a custom range)', 'purpose=internal', 'purpose=submission', 'exact counts'],
-  supervisor: ['publication', 'internal (default for a custom range)', 'purpose=internal', 'purpose=submission', 'exact counts'],
-  clinician: ['publication', 'internal (default for a custom range)', 'purpose=internal', 'purpose=submission'],
-  navigator: ['publication', 'internal (default for a custom range)', 'purpose=internal', 'purpose=submission'],
-  finance: ['publication'],
-  readonly: ['publication'],
+  admin: ['default (no purpose asked)', 'publication', 'internal (default for a custom range)', 'purpose=internal', 'purpose=submission', 'exact counts'],
+  supervisor: ['default (no purpose asked)', 'publication', 'internal (default for a custom range)', 'purpose=internal', 'purpose=submission', 'exact counts'],
+  clinician: ['default (no purpose asked)', 'internal (default for a custom range)', 'purpose=internal', 'purpose=submission'],
+  navigator: ['default (no purpose asked)', 'internal (default for a custom range)', 'purpose=internal', 'purpose=submission'],
+  finance: ['default (no purpose asked)', 'publication'],
+  readonly: ['default (no purpose asked)', 'publication'],
 };
+// What each role's first click is (no purpose asked), for a period that could be published (1.12.5): a
+// supervisor's or an administrator's is the programme's own submission to its funder, with exact counts; a
+// caseload-scoped role's is internal (its caseload); finance and read-only get the publication release.
+const DEFAULT = { admin: ['submission', 'exact'], supervisor: ['submission', 'exact'], clinician: ['internal', 'suppressed'], navigator: ['internal', 'suppressed'], finance: ['publication', 'suppressed'], readonly: ['publication', 'suppressed'] };
 const c = {};
 let fund;
 
@@ -49,10 +56,13 @@ for (const [path, label] of [['/api/reports/funder', 'funder report'], ['/api/re
     for (const role of ROLES) {
       for (const [kind, q] of Object.entries(RUNS)) {
         const r = await c[role].get(`${path}?${q}`);
-        const want = ALLOWED[role].includes(kind) ? 200 : 403;
+        const want = ALLOWED[role].includes(kind) ? 200 : kind === 'publication' ? 400 : 403;
         assert.equal(r.status, want, `${role}, ${kind}: ${JSON.stringify(r.data).slice(0, 200)}`);
-        // A caseload-scoped role's run counts only its caseload, so it is never a publication release.
-        if (want === 200 && kind === 'publication') assert.equal(r.data.suppression.purpose, ['clinician', 'navigator'].includes(role) ? 'internal' : 'publication', role);
+        if (want === 200 && kind === 'default (no purpose asked)') {
+          assert.deepEqual([r.data.suppression.purpose, r.data.suppression.mode], DEFAULT[role], role);
+          assert.match(r.data.suppression.label, { submission: /^Submission to your funder — not for publication$/, internal: /^Internal — not for publication$/, publication: /^Publication release — small cells screened; review before sharing$/ }[DEFAULT[role][0]], role);
+        }
+        if (want === 200 && kind === 'publication') assert.equal(r.data.suppression.purpose, 'publication', role);
         if (want === 403 && kind !== 'exact counts') assert.match(r.data.error, /publication release/i, 'the refusal says what the role can run instead');
       }
     }

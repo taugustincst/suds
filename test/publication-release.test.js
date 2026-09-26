@@ -30,6 +30,8 @@ function rng(seed) { let x = seed >>> 0; return () => { x = (x * 1664525 + 10139
 // ---- through the API: the three reports serve one audited release ----
 const AUG = 'from=2026-08-01&to=2026-08-31';
 const EXACT = '&purpose=submission&counts=exact';
+// A supervisor's default run is the programme's submission to its funder (1.12.5): a publication release is asked for.
+const PUB = '&purpose=publication';
 async function seedAugust() {
   const fund = (await admin.post('/api/budget/funds', { name: 'Settlement', source_type: 'opioid_settlement', fiscal_year_start: '2025-07-01', fiscal_year_end: '2026-06-30', total_amount: 1000 })).data.id;
   for (let i = 0; i < 20; i++) {
@@ -57,7 +59,7 @@ function domainsOf(q) {
   return { months: PR.monthsOf(p.get('from'), p.get('to')), administered_by: C.ADMINISTERED_BY, discharge_reasons: C.DISCHARGE_REASONS };
 }
 async function releaseOf(q, who = sup) {
-  const [funder, ndp, settlement] = await Promise.all(['/api/reports/funder', '/api/reports/naloxone-ndp', '/api/reports/opioid-settlement'].map(p => who.get(`${p}?${q}`).then(x => x.data)));
+  const [funder, ndp, settlement] = await Promise.all(['/api/reports/funder', '/api/reports/naloxone-ndp', '/api/reports/opioid-settlement'].map(p => who.get(`${p}?${q}${PUB}`).then(x => x.data)));
   const [tf, ts] = await Promise.all(['/api/reports/funder', '/api/reports/opioid-settlement'].map(p => sup.get(`${p}?${q}${EXACT}`).then(x => x.data)));
   return { pub: { funder, ndp, settlement, domains: domainsOf(q) }, truth: { funder: tf, settlement: ts } };
 }
@@ -86,30 +88,30 @@ test('API: determinism - asking again, or for the export, serves the identical r
   assert.deepEqual(strip(again.pub.funder), strip(first.pub.funder));
   assert.deepEqual(again.pub.settlement.services_by_use, first.pub.settlement.services_by_use);
   // The files print the same cells.
-  const csv = String((await sup.get(`/api/reports/funder/export?${AUG}&format=csv&reviewed=1`)).data);
+  const csv = String((await sup.get(`/api/reports/funder/export?${AUG}${PUB}&format=csv&reviewed=1`)).data);
   assert.match(csv, /publication/i);
   for (const x of first.pub.funder.demographics.by_gender) assert.ok(csv.includes(`Gender,${x.k},${x.n}`), `${x.k} ${x.n}`);
-  const sx = await sup.raw(`/api/reports/opioid-settlement/export?${AUG}&format=xlsx&reviewed=1`);
+  const sx = await sup.raw(`/api/reports/opioid-settlement/export?${AUG}${PUB}&format=xlsx&reviewed=1`);
   const wb = require('../server/spreadsheet').readWorkbook(Buffer.from(await sx.arrayBuffer()));
   const services = wb.find(s => s.name === 'Services');
   for (const x of first.pub.settlement.services_by_use) assert.ok(services.rows.some(row => row.map(String).includes(String(x.people))), `${x.people} in ${JSON.stringify(services.rows)}`);
 });
 
 test('API: a publication release\'s file is exported only once its review is confirmed, which the audit log records with the release id', async () => {
-  const rel = (await sup.get(`/api/reports/funder?${AUG}`)).data;
+  const rel = (await sup.get(`/api/reports/funder?${AUG}${PUB}`)).data;
   assert.equal(rel.suppression.purpose, 'publication');
   assert.match(rel.counting_statement, /Publication release — small cells screened; review before sharing/);
   assert.doesNotMatch(rel.counting_statement, /Suitable for publication/i);
   const before = H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='report.publication.reviewed'`).n;
   for (const p of ['/api/reports/funder/export', '/api/reports/naloxone-ndp/export', '/api/reports/opioid-settlement/export']) {
-    const r = await sup.get(`${p}?${AUG}&format=csv`);
+    const r = await sup.get(`${p}?${AUG}${PUB}&format=csv`);
     assert.equal(r.status, 428, `${p}: ${r.status}`);
     assert.equal(r.data.code, 'publication_review_required');
     assert.match(r.data.error, /I have reviewed the withheld and small figures before sharing/);
   }
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='report.publication.reviewed'`).n, before, 'a refused export records no review');
   for (const [p, report] of [['/api/reports/funder/export', 'funder'], ['/api/reports/naloxone-ndp/export', 'naloxone-ndp'], ['/api/reports/opioid-settlement/export', 'opioid-settlement']]) {
-    const r = await sup.raw(`${p}?${AUG}&format=xlsx&reviewed=1`);
+    const r = await sup.raw(`${p}?${AUG}${PUB}&format=xlsx&reviewed=1`);
     assert.equal(r.status, 200, p);
     assert.match(r.headers.get('content-disposition'), /publication-screened-review-before-sharing\.xlsx/);
     assert.equal(r.headers.get('x-suds-report-purpose'), 'publication');
@@ -117,11 +119,11 @@ test('API: a publication release\'s file is exported only once its review is con
     const d = JSON.parse(row.details);
     assert.equal(d.report, report); assert.equal(d.release_id, rel.release.id); assert.equal(d.from, '2026-08-01');
   }
-  const wb = require('../server/spreadsheet').readWorkbook(Buffer.from(await (await sup.raw(`/api/reports/funder/export?${AUG}&format=xlsx&reviewed=1`)).arrayBuffer()));
+  const wb = require('../server/spreadsheet').readWorkbook(Buffer.from(await (await sup.raw(`/api/reports/funder/export?${AUG}${PUB}&format=xlsx&reviewed=1`)).arrayBuffer()));
   const about = wb.find(s => s.name === 'About').rows.map(r => r.join(' ')).join('\n');
   assert.match(about, /Publication release — small cells screened; review before sharing \(whole programme, one standard period\)/);
   // Internal and submission runs are exported as before, with no confirmation.
-  for (const q of [`${AUG}&purpose=internal`, `${AUG}${EXACT}`]) assert.equal((await sup.get(`/api/reports/funder/export?${q}&format=csv`)).status, 200, q);
+  for (const q of [AUG, `${AUG}&purpose=internal`, `${AUG}${EXACT}`]) assert.equal((await sup.get(`/api/reports/funder/export?${q}&format=csv`)).status, 200, q);
 });
 
 test('API: a navigator\'s caseload run counts the caseload\'s overdoses and people per fund, not the programme\'s', async () => {
@@ -186,10 +188,10 @@ test('API: reviewer year2 - one reversal a month and nine discharge reasons; the
   const { pub, truth } = await releaseOf(q);
   assert.equal(pub.funder.suppression.purpose, 'publication');
   assert.deepEqual(attack(pub, truth, 11), [], JSON.stringify({ od: pub.funder.overdose, ep: pub.funder.episodes, withheld: pub.funder.release.withheld }));
-  const ndpCsv = (await sup.get(`/api/reports/naloxone-ndp/export?${q}&format=csv&reviewed=1`)).data;
+  const ndpCsv = (await sup.get(`/api/reports/naloxone-ndp/export?${q}${PUB}&format=csv&reviewed=1`)).data;
   const revRows = csvLines(ndpCsv, /Reversal reported/);
   assert.ok(revRows.length === 12 || revRows.length === 0, revRows.join('\n'));
-  const fCsv = (await sup.get(`/api/reports/funder/export?${q}&format=csv&reviewed=1`)).data;
+  const fCsv = (await sup.get(`/api/reports/funder/export?${q}${PUB}&format=csv&reviewed=1`)).data;
   const reasons = csvLines(fCsv, /^Discharge reason,/); const givenBy = csvLines(fCsv, /^Naloxone given by,/);
   assert.ok(reasons.length === 0 || reasons.length >= 9, reasons.join('\n'));
   assert.ok(givenBy.length === 0 || givenBy.length >= 6, givenBy.join('\n'));
@@ -232,21 +234,23 @@ test('API: an episode cannot be closed before it was opened', async () => {
   assert.equal(ok.status, 200, JSON.stringify(ok.data));
 });
 
-test('API: a release the audit cannot verify is refused by all three reports and their files; internal runs still work', async () => {
-  const SDC = require('../server/sdc'); const PR = require('../server/publication-release');
-  const orig = SDC.protect;
-  SDC.protect = (m, T, o = {}) => orig(m, T, { ...o, budget: 0 });
-  PR.clearCache();
+test('API: a release the audit cannot verify is refused by all three reports and their files; the submission still works', async () => {
+  const PR = require('../server/publication-release');
+  // No search budget: no check can be settled, not even the headline's, so the release is refused whole.
+  PR.setAuditOptions({ budget: 0 });
   try {
     for (const p of ['/api/reports/funder', '/api/reports/naloxone-ndp', '/api/reports/opioid-settlement', '/api/reports/funder/export', '/api/reports/naloxone-ndp/export?format=xlsx']) {
-      const r = await sup.get(`${p}${p.includes('?') ? '&' : '?'}${AUG}`);
+      const r = await sup.get(`${p}${p.includes('?') ? '&' : '?'}${AUG}${PUB}`);
       assert.equal(r.status, 422, `${p}: ${r.status}`);
       assert.match(r.data.error, /cannot be published/); assert.equal(r.data.code, 'publication_refused');
+      assert.match(r.data.error, /submission to its funder, which is not for publication, is unaffected/);
     }
     const internal = await sup.get(`/api/reports/funder?${AUG}&purpose=internal`);
     assert.equal(internal.status, 200); assert.equal(internal.data.suppression.purpose, 'internal');
-  } finally { SDC.protect = orig; PR.clearCache(); }
-  assert.equal((await sup.get(`/api/reports/funder?${AUG}`)).status, 200);
+    const submission = await sup.get(`/api/reports/funder?${AUG}`);
+    assert.equal(submission.status, 200); assert.equal(submission.data.suppression.purpose, 'submission');
+  } finally { PR.setAuditOptions({}); }
+  assert.equal((await sup.get(`/api/reports/funder?${AUG}${PUB}`)).status, 200);
 });
 
 // ---- the solver ----
@@ -530,18 +534,23 @@ test('a release the audit cannot verify is refused, never published: no node bud
     }
   }
   assert.ok(refused > (2 * runs) / 3, `refused ${refused}, published ${published}`); // most, with no budget to settle them (150 runs: > 100)
-  // Out of time: refused, and says so.
+  // Out of budget (solver work, so the same figures always stop at the same point): refused, and says so.
   const { T, prog } = randomProgramme(rng(3));
-  const { p } = publish(prog, T, { timeLimitMs: -1 });
-  assert.ok(p.refused && p.refused.out_of_time, JSON.stringify(p.refused));
-  assert.match(p.refused.message, /did not finish in time/);
+  const { p } = publish(prog, T, { stepLimit: 50 });
+  assert.ok(p.refused && p.refused.out_of_budget && !p.refused.backstop, JSON.stringify(p.refused));
+  assert.match(p.refused.message, /reached its limit/);
+  assert.deepEqual(publish(prog, T, { stepLimit: 50 }).p.audit, p.audit, 'deterministic: the same work, the same answer');
+  // The wall-clock backstop, which only protects the server: refused too, and says so.
+  const b = publish(prog, T, { timeLimitMs: -1 }).p;
+  assert.ok(b.refused && b.refused.backstop, JSON.stringify(b.refused));
+  assert.match(b.refused.message, /time limit/);
 });
 
 test('the audit stays fast with many free-text categories, and a runaway audit is refused in bounded time', () => {
   const PR = require('../server/publication-release');
   const FR = require('../server/funder-report');
-  // 20,000 people, 800 small languages. Unfolded, the audit is refused at its time limit rather than holding
-  // the server; folded as figures() folds a release (FR.foldOf), it is fast.
+  // 20,000 people, 800 small languages. Unfolded, the audit is refused at its budget rather than holding the
+  // server; folded as figures() folds a release (FR.foldOf), it takes a small part of it.
   const N = 20000; const K = 800;
   const small = Array.from({ length: K }, (_, i) => ({ k: `lang${String(i).padStart(3, '0')}`, n: 1 + (i % 10) }));
   const big = { k: 'en', n: N - small.reduce((a, x) => a + x.n, 0) };
@@ -554,11 +563,14 @@ test('the audit stays fast with many free-text categories, and a runaway audit i
       by_funding_source: [{ id: null, name: 'No funding source', clients_served: N, services: N }], attribution: {} },
     perFund: new Map([[null, { services: N, clients_served: N }]]), settlement: { services_by_use: [], fundKeys: [] }, domains: { months: QUARTER, administered_by: [], discharge_reasons: [] },
   });
+  const SDC = require('../server/sdc');
   let t = Date.now();
-  const slow = PR.protectFigures(inputsWith([big, ...small]), 11, { timeLimitMs: 300 });
+  const LIMIT = 20e6;
+  const slow = PR.protectFigures(inputsWith([big, ...small]), 11, { stepLimit: LIMIT });
   const slowMs = Date.now() - t;
-  assert.ok(slow.refused && slow.refused.out_of_time, 'unfolded, the audit ran past its limit and was refused');
-  assert.ok(slowMs < 1500, `refused after ${slowMs} ms`);
+  assert.ok(slow.refused && slow.refused.out_of_budget, 'unfolded, the audit reached its budget and was refused');
+  // Stopped within one solve of its budget, however long that takes on this machine.
+  assert.ok(slow.audit.steps < LIMIT * 1.5, `stopped at ${slow.audit.steps}`);
   const counts = new Map([[big.k, big.n], ...small.map(x => [x.k, x.n])]);
   const fold = FR.foldOf(counts, 11);
   const folded = new Map(); for (const [k, n] of counts) folded.set(fold(k), (folded.get(fold(k)) || 0) + n);
@@ -568,8 +580,9 @@ test('the audit stays fast with many free-text categories, and a runaway audit i
   const fast = PR.protectFigures(inputsWith(rows), 11);
   const ms = Date.now() - t;
   assert.ok(!fast.refused, JSON.stringify(fast.refused));
-  assert.ok(ms < 1000, `folded, K=${K}: ${ms} ms`);
-  if (process.env.SUDS_PERF_VERBOSE) console.log(`[perf] K=${K} small languages: unfolded refused after ${slowMs} ms, folded audited in ${ms} ms`);
+  assert.ok(fast.audit.steps < SDC.STEP_LIMIT / 100, `folded, K=${K}: ${fast.audit.steps} units of work`);
+  if (THOROUGH) assert.ok(ms < 1000, `folded, K=${K}: ${ms} ms`);
+  if (process.env.SUDS_PERF_VERBOSE) console.log(`[perf] K=${K} small languages: unfolded refused after ${slowMs} ms (${slow.audit.steps} units), folded audited in ${ms} ms (${fast.audit.steps} units)`);
 });
 
 // ---- the algorithm-aware attacker (1.12.4): every world behind a printout, through the real release ----

@@ -49,7 +49,8 @@ const FEAS = 1e-7;
 // ---------------------------------------------------------------------------------------------------------
 // A dense two-phase simplex with Bland's rule (no cycling). maximize c.x subject to rows
 // { a: number[n], op: '<=' | '>=' | '=', b } and lb <= x <= ub (ub may be Infinity).
-// Returns { status: 'optimal' | 'infeasible' | 'unbounded', x, value }.
+// Returns { status: 'optimal' | 'infeasible' | 'unbounded', x, value, work }: work, the tableau cells the
+// solve touched (the audit's budget is counted in it).
 function simplex(n, rows, lb, ub, c) {
   const R = [];
   for (const r of rows) {
@@ -58,7 +59,7 @@ function simplex(n, rows, lb, ub, c) {
   }
   for (let j = 0; j < n; j++) {
     if (ub[j] === Infinity) continue;
-    if (ub[j] < lb[j] - FEAS) return { status: 'infeasible' };
+    if (ub[j] < lb[j] - FEAS) return { status: 'infeasible', work: n };
     const a = new Array(n).fill(0); a[j] = 1; R.push({ a, op: '<=', b: ub[j] - lb[j] });
   }
   for (const r of R) if (r.b < 0) { r.a = r.a.map(x => -x); r.b = -r.b; r.op = r.op === '<=' ? '>=' : r.op === '>=' ? '<=' : '='; }
@@ -75,12 +76,16 @@ function simplex(n, rows, lb, ub, c) {
     if (r.op === '<=') { row[s] = 1; basis.push(s); s++; } else if (r.op === '>=') { row[s] = -1; s++; row[a] = 1; isArt[a] = 1; basis.push(a); a++; } else { row[a] = 1; isArt[a] = 1; basis.push(a); a++; }
     T.push(row);
   }
+  let work = m * (W + 1); // building the tableau
+  // work: the rows each pivot updates, and the columns it scans (what a solve costs, whatever the machine).
   const pivot = (z, pi, pj) => {
+    work += m + 2 * (W + 1);
     const p = T[pi]; const v = p[pj];
     for (let k = 0; k <= W; k++) p[k] /= v;
     for (let i = 0; i < m; i++) {
       if (i === pi) continue; const f = T[i][pj]; if (Math.abs(f) < EPS) continue;
       const row = T[i]; for (let k = 0; k <= W; k++) row[k] -= f * p[k];
+      work += W + 1;
     }
     const f = z[pj]; if (Math.abs(f) > EPS) for (let k = 0; k <= W; k++) z[k] -= f * p[k];
     basis[pi] = pj;
@@ -108,7 +113,7 @@ function simplex(n, rows, lb, ub, c) {
   if (nA) {
     const d = new Array(W).fill(0); for (let j = 0; j < W; j++) if (isArt[j]) d[j] = -1;
     const { z } = phase(d, () => true);
-    if (-z[W] < -FEAS) return { status: 'infeasible' };
+    if (-z[W] < -FEAS) return { status: 'infeasible', work };
     // Drive the artificials out of the basis (a row that cannot is redundant and stays at 0).
     for (let i = 0; i < m; i++) {
       if (!isArt[basis[i]]) continue;
@@ -117,11 +122,26 @@ function simplex(n, rows, lb, ub, c) {
   }
   const d = new Array(W).fill(0); for (let j = 0; j < n; j++) d[j] = c[j] || 0;
   const { z, bounded } = phase(d, (j) => !isArt[j]);
-  if (!bounded) return { status: 'unbounded' };
+  if (!bounded) return { status: 'unbounded', work };
   const x = lb.slice();
   for (let i = 0; i < m; i++) if (basis[i] < n) x[basis[i]] += T[i][W];
   let value = 0; for (let j = 0; j < n; j++) value += (c[j] || 0) * x[j];
-  return { status: 'optimal', x, value };
+  return { status: 'optimal', x, value, work };
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// The audit's budget, in solver work: the simplex tableau cells each linear program's pivots touch (a count
+// that follows the time a solve takes, and is the same on every machine), so that whether a release is
+// published, withheld in part or refused depends on its figures alone, never on how busy the server is. A wall-clock deadline stays behind it
+// only to protect the server (a backstop, far above what the budget allows on any machine SUDS runs on); a
+// release stopped by it is refused and the caller logs it. meter: { steps, limit, deadline, over, backstop }.
+function newMeter(limit = Infinity, timeLimitMs = Infinity) { return { steps: 0, calls: 0, limit, deadline: Date.now() + timeLimitMs, over: false, backstop: false }; }
+function tick(m, cost = 1) {
+  if (m.over) return true;
+  m.steps += cost + 1;
+  if (m.steps > m.limit) { m.over = true; return true; }
+  if ((++m.calls & 31) === 0 && Date.now() > m.deadline) { m.over = true; m.backstop = true; return true; }
+  return false;
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -130,7 +150,7 @@ function simplex(n, rows, lb, ub, c) {
 // `enough`: stop as soon as the incumbent reaches it. Returns { value, exact, x }: x the best integer point
 // found (null if none); exact false when the node budget ran out (value is then the best found, a lower bound
 // on the maximum, -Infinity if none was found).
-function intMax(prob, c, known, { enough = Infinity, budget = 4000, deadline = Infinity } = {}) {
+function intMax(prob, c, known, { enough = Infinity, budget = 4000, meter = null } = {}) {
   const dot = (x) => c.reduce((s, cj, j) => s + cj * x[j], 0);
   let best = known ? Math.round(dot(known)) : -Infinity;
   let bestX = known ? known.slice() : null;
@@ -138,9 +158,10 @@ function intMax(prob, c, known, { enough = Infinity, budget = 4000, deadline = I
   const stack = [[prob.lb.slice(), prob.ub.slice()]];
   let nodes = 0;
   while (stack.length) {
-    if (++nodes > budget || Date.now() > deadline) return { value: best, exact: false, x: bestX };
+    if (++nodes > budget || (meter && meter.over)) return { value: best, exact: false, x: bestX };
     const [lb, ub] = stack.pop();
     const r = simplex(prob.n, prob.rows, lb, ub, c);
+    if (meter && tick(meter, r.work)) return { value: best, exact: false, x: bestX };
     if (r.status === 'infeasible') continue;
     if (r.status === 'unbounded') return { value: Infinity, exact: true, x: null }; // only at the root: a bounded LP stays bounded when narrowed
     const bound = Math.floor(r.value + 1e-6);
@@ -161,15 +182,16 @@ function intMax(prob, c, known, { enough = Infinity, budget = 4000, deadline = I
   return { value: best, exact: true, x: bestX };
 }
 /** Is there an integer point with lo <= c.x <= hi? (Branch and bound on feasibility.) */
-function intFeasibleIn(prob, c, lo, hi, { budget = 4000, deadline = Infinity } = {}) {
+function intFeasibleIn(prob, c, lo, hi, { budget = 4000, meter = null } = {}) {
   const rows = lo === hi ? [...prob.rows, { a: c, op: '=', b: lo }] : [...prob.rows, { a: c, op: '>=', b: lo }, { a: c, op: '<=', b: hi }];
   const zero = new Array(prob.n).fill(0);
   const stack = [[prob.lb.slice(), prob.ub.slice()]];
   let nodes = 0;
   while (stack.length) {
-    if (++nodes > budget || Date.now() > deadline) return { feasible: false, exact: false };
+    if (++nodes > budget || (meter && meter.over)) return { feasible: false, exact: false };
     const [lb, ub] = stack.pop();
     const r = simplex(prob.n, rows, lb, ub, zero);
+    if (meter && tick(meter, r.work)) return { feasible: false, exact: false };
     if (r.status !== 'optimal') { if (r.status === 'unbounded') return { feasible: true, exact: true }; continue; }
     let fj = -1;
     for (let j = 0; j < prob.n; j++) if (Math.abs(r.x[j] - Math.round(r.x[j])) > 1e-6) { fj = j; break; }
@@ -201,11 +223,11 @@ const intFeasible = (prob, c, v, opts) => intFeasibleIn(prob, c, v, v, opts);
 // value (a search's answer is then a function of the printout alone). What no such rule can avoid is that a
 // decision taken while a cell was still shown read that cell, which is then hidden (served 12 beside "<11"
 // on MAT is hidden, 25 is not, so a hidden one is under 21): consistent() checks the release against that.
-function auditor(model, T, { budget, deadline }) {
+function auditor(model, T, { budget, meter = newMeter() }) {
   const { vars, derived = [], mirror = [] } = model;
   const P = Math.ceil(T / 2);
   const small = (x) => x > 0 && x < T;
-  const opt = { budget, deadline };
+  const opt = { budget, meter };
   const tableOf = new Map(); vars.forEach((v, i) => { if (!tableOf.has(v.table)) tableOf.set(v.table, []); tableOf.get(v.table).push(i); });
   const cache = new Map(); // by the content of the question, so worlds that ask the same question share the answer
 
@@ -302,6 +324,7 @@ function auditor(model, T, { budget, deadline }) {
       const lb = queue.map(i => cls(i)[0]); const ub = queue.map(i => cls(i)[1]);
       const c = new Array(n).fill(0); for (const [i, co] of q.terms) c[idx.get(i)] += co;
       const hi = simplex(n, rows, lb, ub, c); const lo = simplex(n, rows, lb, ub, c.map(x => -x));
+      tick(meter, hi.work + lo.work);
       const a = lo.status === 'optimal' ? Math.max(1, Math.ceil(-lo.value - 1e-6)) : 1;
       const b = hi.status === 'optimal' ? Math.min(T - 1, Math.floor(hi.value + 1e-6)) : T - 1;
       const out = a > b ? [] : a === b ? [a] : [a, b];
@@ -374,15 +397,18 @@ function auditor(model, T, { budget, deadline }) {
   const WORLD_RUNS = 400;
   // ... and at most this many for one value of one count.
   const WITNESS_RUNS = 24;
-  /** The suppression for one world. */
-  function run(values) {
+  /**
+   * The suppression for one world. forced: tables withheld from the start, whatever the figures (the tables
+   * protect() withholds because the check against the method could not show them protected).
+   */
+  function run(values, forced = []) {
     const w = world(values);
-    const withheldTables = new Set();
+    const withheldTables = new Set(forced);
     // A zero is printed as 0 and never hidden; the primary rule hides every count of people from 1 to T-1.
     const hideable = (s, i) => s[i] === 'vis' && vars[i].published && values[i] > 0 && !withheldTables.has(vars[i].table);
     const withStatus = (s, i, x) => { const t = s.slice(); t[i] = x; w.applyMirror(t); return t; };
     const withTable = (s, table) => { const t = s.slice(); for (const i of tableOf.get(table)) if (vars[i].published) t[i] = 'withheld'; w.applyMirror(t); return t; };
-    let s = vars.map((v, i) => (!v.published ? 'unpub' : v.people && small(values[i]) ? 'pri' : 'vis'));
+    let s = vars.map((v, i) => (!v.published ? 'unpub' : withheldTables.has(v.table) ? 'withheld' : v.people && small(values[i]) ? 'pri' : 'vis'));
     // A total whose every part that is not 0 is shown "<T" (women <11, men <11) is hidden too, whatever it is:
     // printed, it would say how the small parts add up, and hiding it only when that pins them (served 12,
     // not 11) would say by the hiding that it is not 11. Decided by the symbols alone.
@@ -394,6 +420,13 @@ function auditor(model, T, { budget, deadline }) {
       if (!vars[t].people || s[t] !== 'vis' || values[t] === 0) continue;
       if (parts.every(([i]) => s[i] === 'pri' || (s[i] === 'vis' && values[i] === 0)) && parts.some(([i]) => s[i] === 'pri')) s[t] = 'sec';
     }
+    const covers = [];
+    for (const k of w.cons) {
+      if (k.rhs !== 0 || k.op === '=' || k.terms.some(([, c]) => Math.abs(c) !== 1)) continue;
+      const sign = k.op === '>=' ? 1 : -1; // parts have this coefficient, the total the other
+      const parts = k.terms.filter(([, c]) => c === sign).map(([i]) => i); const tot = k.terms.filter(([, c]) => c === -sign);
+      if (tot.length === 1 && parts.length >= 2 && vars[tot[0][0]].people && parts.every(i => vars[i].people)) covers.push({ total: tot[0][0], parts });
+    }
     // ... and so is every count of at least T that is part of such a total (the people under a fund, on MAT):
     // printed, it would bound the total from below, and hiding it only when it is near the total would say so.
     const hiddenTotals = new Set(vars.map((_, i) => i).filter(i => s[i] === 'sec'));
@@ -403,7 +436,36 @@ function auditor(model, T, { budget, deadline }) {
       if (sub !== null && hiddenTotals.has(tot) && vars[sub].people && s[sub] === 'vis' && values[sub] >= T) s[sub] = 'sec';
     }
     w.applyMirror(s);
-    let outOfTime = false;
+    // A cover - parts that together are at least a total (race codes: everyone has at least one, and some have
+    // several) - with a part shown "<T": the other parts can pin it from below (codes 17, 12, 11, 15, 16 and
+    // "<11" beside 80 served say the small one is at least 9). Hiding the first other part only when that
+    // happens would say by the hiding that it is small enough to pin (hidden only when at most 24, so the small
+    // one is at least 2). So the first part that is shown (structural order) is hidden whenever the printout
+    // would pin a small part were that one at the least value the printout allows it - a question about the
+    // printed figures and symbols alone, so the answer is the same in every world that prints this release.
+    for (const cover of covers) {
+      const pri = cover.parts.filter(i => s[i] === 'pri');
+      if (!pri.length) continue;
+      const c = cover.parts.filter(i => hideable(s, i)).sort((a, b) => (vars[b].people - vars[a].people) || (a - b))[0];
+      if (c === undefined) continue;
+      const t = withStatus(s, c, 'sec');
+      const pc = w.problem(t, [[c, 1]]);
+      const low = intMax(pc.prob, pc.c.map(x => -x), null, opt);
+      let pin = !low.exact || !Number.isFinite(low.value);
+      const cmin = -low.value + pc.constant;
+      for (const q of pri) {
+        if (pin) break;
+        const pq = w.problem(t, [[q, 1]]);
+        if (!pq.idx.has(c)) continue;
+        const a = new Array(pq.n).fill(0); a[pq.idx.get(c)] = 1;
+        const prob = { ...pq.prob, rows: [...pq.prob.rows, { a, op: '=', b: cmin }] };
+        for (const v of w.targets(t, { id: vars[q].id, terms: [[q, 1]] })) {
+          const r = intFeasible(prob, pq.c, v - pq.constant, opt);
+          if (!r.feasible) { pin = true; break; }
+        }
+      }
+      if (pin) s = t;
+    }
     // A count that passed is not asked again until a cell it depends on changes: hiding a cell changes only
     // the questions whose relationships hold it (its class, "at least T", stays what it was).
     const passed = new Map();
@@ -413,8 +475,24 @@ function auditor(model, T, { budget, deadline }) {
       for (const [i] of q.terms) for (const ci of w.byVar[i]) for (const [j] of w.cons[ci].terms) t.add(j);
       return t;
     };
+    // The headline's companions (model.companions: new admissions, episodes opened - counts a reader takes as
+    // bounding the people served) are hidden whenever the headline is, so a release never hides the people
+    // served while printing figures that bound it (13 new admissions beside people served "suppressed"). Decided
+    // by the headline's symbol and the companions' classes alone.
+    const follow = (st) => {
+      const hl = model.headlineVar;
+      if (hl === undefined || st[hl] === 'vis') return st;
+      let t = null;
+      for (const i of model.companions || []) if (st[i] === 'vis' && vars[i].published && values[i] >= T) { t = t || st.slice(); t[i] = 'sec'; }
+      if (!t) return st;
+      w.applyMirror(t);
+      const changed = []; t.forEach((x, i) => { if (x !== st[i]) changed.push(i); });
+      for (const [id, touch] of passed) if (changed.some(i => touch.has(i))) passed.delete(id);
+      return t;
+    };
     for (let guard = 0; guard < 5000; guard++) {
-      if (Date.now() > deadline) { outOfTime = true; break; }
+      if (meter.over) break;
+      s = follow(s);
       let bad = null; let bd = 0;
       for (const q of w.quantities(s)) {
         if (passed.has(q.id)) continue;
@@ -463,8 +541,8 @@ function auditor(model, T, { budget, deadline }) {
     // withhold, the time limit). So every sensitive count is checked again here, all of them, each exactly.
     const unprotected = [];
     // (A count that passed and whose relationships have not changed since is not asked again: the answer is the same.)
-    if (!outOfTime) for (const q of w.quantities(s)) { if (!passed.has(q.id) && w.deficit(s, q) > 0) unprotected.push(q.id); if (Date.now() > deadline) { outOfTime = true; break; } }
-    return { status: s, withheldTables: [...withheldTables], verified: !outOfTime && !unprotected.length, unprotected, outOfTime, world: w };
+    if (!meter.over) for (const q of w.quantities(s)) { if (!passed.has(q.id) && w.deficit(s, q) > 0) unprotected.push(q.id); if (meter.over) break; }
+    return { status: s, withheldTables: [...withheldTables], verified: !meter.over && !unprotected.length, unprotected, outOfBudget: meter.over, world: w };
   }
 
   // -------------------------------------------------------------------------------------------------------
@@ -483,11 +561,16 @@ function auditor(model, T, { budget, deadline }) {
   // also pass this check itself is not proved (the search starts from this release's own figures, so
   // another world's search starts elsewhere); the tests run the whole release on every world of small
   // families (test/fixtures/pattern-attacker.js).
-  function consistent(base) {
+  // forced: the tables the release withholds from the start (protect()'s degrade step). validate(vals): what else
+  // a world must do to count as one that prints this release (for a degraded release: fail the full release
+  // the same way, so that it would have been degraded to the same tables). derived: hold counts printed
+  // nowhere to the rule against the method too (a degraded release: which tables are withheld depends on
+  // figures it does not print, so the counts worked out from what it does print are checked against it).
+  function consistent(base, forced = [], { validate = null, derived: checkDerived = false } = {}) {
     const S = base.status; const tables = [...base.withheldTables].sort().join('|');
     const w = base.world; const truth = w.values;
     const G = [truth]; const seen = new Map([[truth.join(','), true]]);
-    let outOfTime = false; let gaveUp = false;
+    let gaveUp = false;
     const valueOf = (vals, terms) => terms.reduce((a, [i, c]) => a + c * vals[i], 0);
     const same = (r) => r.verified && [...r.withheldTables].sort().join('|') === tables && r.status.every((x, i) => x === S[i]);
     const tryWorld = (vals) => {
@@ -496,9 +579,8 @@ function auditor(model, T, { budget, deadline }) {
       // A bounded search: past WORLD_RUNS worlds tried, the answer is "not shown" (the cautious one).
       if (seen.size >= WORLD_RUNS) { gaveUp = true; return false; }
       let ok = false;
-      try { ok = same(run(vals)); } catch { ok = false; }
+      try { ok = same(run(vals, forced)) && (!validate || validate(vals)); } catch { ok = false; }
       seen.set(key, ok); if (ok) G.push(vals);
-      if (Date.now() > deadline) outOfTime = true;
       return ok;
     };
     // Candidate worlds with the quantity at v: only the hidden counts linked to it move. The nearest to this
@@ -536,7 +618,7 @@ function auditor(model, T, { budget, deadline }) {
       };
       for (const pr of [keep, prob]) {
         for (const anchor of [truth, ...G.slice(1).slice(-3).reverse()]) {
-          if (outOfTime || gaveUp) return;
+          if (meter.over || gaveUp) return;
           const x = nearest(pr, anchor); if (x) yield worldOf(x);
         }
       }
@@ -545,7 +627,7 @@ function auditor(model, T, { budget, deadline }) {
       for (const i of p.members) {
         if (!vars[i].people || q.terms.some(([t]) => t === i) || k++ >= 6) continue;
         for (const dir of [1, -1]) {
-          if (outOfTime || gaveUp) return;
+          if (meter.over || gaveUp) return;
           const o = new Array(n).fill(0); o[p.idx.get(i)] = dir;
           const r = intMax(keep, o, null, opt);
           if (r.x && Number.isFinite(r.value)) yield worldOf(r.x);
@@ -561,7 +643,7 @@ function auditor(model, T, { budget, deadline }) {
       const corners = [[nonzero, down], [nonzero, tight], [prob, tight], [prob, down]];
       for (let k = 0; k < WITNESS_TRIES; k++) corners.push([nonzero, p.members.map(() => -(1 + Math.floor(rnd() * 8)))]);
       for (const [pr, o] of corners) {
-        if (outOfTime || gaveUp) return;
+        if (meter.over || gaveUp) return;
         const r = intMax(pr, o, null, opt);
         if (r.x) yield worldOf(r.x);
       }
@@ -572,7 +654,7 @@ function auditor(model, T, { budget, deadline }) {
         if (!vars[i].people || own.has(i) || m++ >= 4) continue;
         const j = p.idx.get(i);
         for (let x = prob.lb[j]; x <= prob.lb[j] + 2 * T && x <= prob.ub[j]; x++) {
-          if (outOfTime || gaveUp) return;
+          if (meter.over || gaveUp) return;
           const fixed = { ...prob, lb: prob.lb.slice(), ub: prob.ub.slice() }; fixed.lb[j] = x; fixed.ub[j] = x;
           const y = nearest(fixed, truth); if (y) yield worldOf(y);
         }
@@ -591,10 +673,10 @@ function auditor(model, T, { budget, deadline }) {
     };
     const unprotected = [];
     for (const q of w.quantities(S)) {
-      if (outOfTime || Date.now() > deadline) { outOfTime = true; break; }
+      if (meter.over) break;
       if (gaveUp) { unprotected.push(q.id); continue; }
       let ok = true;
-      if (q.kind === 'pri' || (q.kind === 'cond' && !q.derived)) {
+      if (q.kind === 'pri' || (q.kind === 'cond' && (!q.derived || checkDerived))) {
         // A "<T" cell, or a withheld one (or one printed nowhere) when the printout lets it be small: worlds
         // that print the same must show it can be the lowest value its symbols allow (1: the one person)
         // and a value at least P-1 above it (the highest when the range is shorter): a range of P values. run()
@@ -607,7 +689,7 @@ function auditor(model, T, { budget, deadline }) {
           const top = Math.min(U, L + P - 1);
           ok = witness(q, L);
           const high = () => G.some(vals => { const x = valueOf(vals, q.terms); return x >= top && x <= U; });
-          for (let v = U; ok && !high() && v >= top && !outOfTime; v--) witness(q, v);
+          for (let v = U; ok && !high() && v >= top && !meter.over; v--) witness(q, v);
           ok = ok && high();
         }
       } else if (q.kind === 'sec') {
@@ -619,31 +701,100 @@ function auditor(model, T, { budget, deadline }) {
         const hi = intMax(p.prob, p.c, null, opt).value + p.constant;
         const found = G.map(vals => valueOf(vals, q.terms));
         let a = Math.min(x, ...found); let b = Math.max(x, ...found);
-        for (let v = a - 1; b - a < P && v >= lo && v >= x - 2 * T && !outOfTime && witness(q, v, 8); v--) a = v;
-        for (let v = b + 1; b - a < P && v <= hi && v <= x + 2 * T && !outOfTime && witness(q, v, 8); v++) b = v;
+        for (let v = a - 1; b - a < P && v >= lo && v >= x - 2 * T && !meter.over && witness(q, v, 8); v--) a = v;
+        for (let v = b + 1; b - a < P && v <= hi && v <= x + 2 * T && !meter.over && witness(q, v, 8); v++) b = v;
         ok = b - a >= P;
       }
       if (!ok) unprotected.push(q.id);
     }
-    return { ok: !outOfTime && !gaveUp && !unprotected.length, unprotected, outOfTime, worlds: G.length, tried: seen.size, G };
+    return { ok: !meter.over && !gaveUp && !unprotected.length, unprotected, gaveUp, worlds: G.length, tried: seen.size, G };
   }
   return { run, consistent };
 }
 
+// The audit's budget for one release, in solver work (tableau cells; answers from the cache are free). Set
+// well above what a real programme needs (docs/architecture/ADR-0009-publication-release.md: a 5,000-person
+// year takes about 6% of it, 800 one-person languages folded about 21%): a few seconds of solving on a server,
+// in a worker thread.
+const STEP_LIMIT = 200e6;
+// The degraded release's own check: at most this many times the work the full release's took, plus this much.
+const DEGRADE_BUDGET_FACTOR = 1;
+const DEGRADE_BUDGET_MIN = 1e6;
+
 /**
  * Protect one release: suppress (run), then check that the printout protects every sensitive count over the
- * worlds that print it (consistent). Returns { status, withheldTables, verified, unprotected, outOfTime };
- * one that is not verified must not be published (server/publication-release.js refuses it).
+ * worlds that print it (consistent). When the check cannot show some counts protected, the tables they are in
+ * are withheld whole (degraded: once) and the release is suppressed and checked again with those tables
+ * withheld from the start. Which tables that is depends on figures the release does not print, so the second
+ * check is stricter: a world counts as printing the degraded release only if the full release fails for it
+ * in the same way (it would have been degraded to the same tables), and the counts worked out from what is
+ * printed (the people not on MAT, the events not reversed) are held to the rule against the method as well.
+ * Refused, never published unverified: when a table to withhold is one of model.keep (the headline, people
+ * served), when the degraded release does not pass either, or when the budget runs out.
+ * Returns { status, withheldTables, degraded, verified, unprotected, outOfBudget, backstop, headline, steps,
+ * rounds }. Deterministic: the budget is counted in solver work, so the answer depends on the figures alone,
+ * except when the wall-clock backstop (timeLimitMs) stops it (backstop true).
  */
-function protect(model, T, { budget = 4000, timeLimitMs = Infinity, consistency = true, debug = false } = {}) {
-  const deadline = Date.now() + timeLimitMs;
-  const a = auditor(model, T, { budget, deadline });
-  const base = a.run(model.vars.map(v => v.value));
+function protect(model, T, { budget = 4000, stepLimit = STEP_LIMIT, timeLimitMs = Infinity, consistency = true, degrade = true, debug = false } = {}) {
+  const meter = newMeter(stepLimit, timeLimitMs);
+  const a = auditor(model, T, { budget, meter });
+  const values = model.vars.map(v => v.value);
+  const keep = new Set(model.keep || []);
+  const byId = new Map(model.vars.map((v, i) => [v.id, i]));
+  const derivedById = new Map((model.derived || []).map(d => [d.id, d]));
+  const neighbours = (i) => { const out = []; for (const k of model.cons) if (k.terms.some(([j]) => j === i)) for (const [j] of k.terms) if (j !== i) out.push(j); return out; };
+  // The published tables a count that could not be shown protected is in: its own, or for a count printed
+  // nowhere, those of the counts it is worked out from (or tied to), the headline last.
+  const tablesFor = (id) => {
+    let idx = byId.has(id) ? [byId.get(id)] : (derivedById.get(id)?.terms || []).map(([j]) => j);
+    if (idx.some(i => !model.vars[i].published)) idx = [...idx.filter(i => model.vars[i].published), ...idx.filter(i => !model.vars[i].published).flatMap(neighbours)];
+    const t = [...new Set(idx.filter(i => model.vars[i].published).map(i => model.vars[i].table))];
+    const other = t.filter(x => !keep.has(x));
+    return other.length ? other : t;
+  };
+  // The full release for one world: its suppression and check, and what the degrade step would withhold
+  // ({ res, forced }: forced null when it would refuse instead, [] when it passes).
+  const full = (vals, first) => {
+    const base = a.run(vals, []);
+    const { world, ...out } = base;
+    let res = { ...out, runVerified: base.verified };
+    if (base.verified && consistency) {
+      const c = a.consistent(base, []);
+      res = { ...out, verified: c.ok, unprotected: c.unprotected, gaveUp: c.gaveUp, consistency: { worlds: c.worlds, tried: c.tried }, ...(first && debug ? { G: c.G } : {}) };
+    }
+    if (res.verified) return { res, forced: [] };
+    if (meter.over || res.gaveUp || !degrade) return { res, forced: null };
+    const done = new Set(res.withheldTables);
+    const more = [...new Set(res.unprotected.flatMap(tablesFor))].filter(t => !done.has(t)).sort();
+    if (!more.length || more.some(t => keep.has(t))) return { res: { ...res, headline: more.some(t => keep.has(t)) }, forced: null };
+    return { res, forced: more };
+  };
+  const stats = (res, forced, rounds) => ({ headline: false, ...res, degraded: forced, outOfBudget: meter.over, backstop: meter.backstop, steps: meter.steps, rounds });
+  const first = full(values, true);
+  if (!first.forced || !first.forced.length) return stats(first.res, [], 1);
+  // Degrade once: the tables withheld from the start, and checked again (see above). A world counts as one
+  // that would have been degraded the same way when the full release prints the same for it: the check that
+  // failed is a question about that printout. (Running the whole check again for every candidate world would
+  // prove more, at a cost no release can afford; test/fixtures/pattern-attacker.js runs it on small families.)
+  const forced = first.forced;
+  const firstSig = (verified, r) => `${verified}|${[...r.withheldTables].sort().join('|')}|${r.status.join(',')}`;
+  const want = firstSig(first.res.runVerified, first.res);
+  const sameFailure = (vals) => { const r = a.run(vals, []); return firstSig(r.verified, r) === want; };
+  // The degraded release's check has a budget of its own, about what the full release's took: one it
+  // cannot settle within that is refused (a question of the figures alone, like the rest of the budget).
+  const whole = meter.limit;
+  meter.limit = Math.min(whole, meter.steps + DEGRADE_BUDGET_FACTOR * meter.steps + DEGRADE_BUDGET_MIN);
+  const base = a.run(values, forced);
   const { world, ...out } = base;
-  if (!base.verified || !consistency) return out;
-  const c = a.consistent(base);
-  return { ...out, verified: c.ok, unprotected: c.unprotected, outOfTime: c.outOfTime, consistency: { worlds: c.worlds, tried: c.tried }, ...(debug ? { G: c.G } : {}) };
+  let res = out;
+  if (base.verified) {
+    const c = a.consistent(base, forced, { validate: sameFailure, derived: true });
+    res = { ...out, verified: c.ok, unprotected: c.unprotected, gaveUp: c.gaveUp, consistency: { worlds: c.worlds, tried: c.tried }, ...(debug ? { G: c.G } : {}) };
+  }
+  if (meter.over && !meter.backstop && meter.limit < whole) { meter.over = false; res = { ...res, verified: false }; }
+  meter.limit = whole;
+  return stats(res, forced, 2);
 }
 
 
-module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect };
+module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect, auditor, STEP_LIMIT };

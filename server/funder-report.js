@@ -59,30 +59,40 @@ function release(ctx, { from, to }, { fund = null } = {}) {
 }
 
 /**
- * How this run counts, and what it is for. A run that could be published (release above) is a publication
- * release unless asked otherwise; any other run is internal. Small-cell suppression is on unless a run that
- * is not for publication asks for exact counts (counts=exact), which needs reports:exact (supervisor,
- * administrator, finance). A publication release is always suppressed, and asking for one that could not be
- * is refused.
+ * How this run counts, and what it is for. Unless the request says (purpose=), a role that may run reports
+ * that are not for publication (reports:internal: supervisor, administrator) gets the programme's own
+ * submission to its funder - what a funder asks for - and any other role a publication release when the run
+ * could be one (release above), else an internal run. Publication is something a supervisor asks for
+ * (purpose=publication: "Prepare a publication release"), with its review before sharing. A submission counts
+ * exactly for a role that holds reports:exact unless counts=suppressed is asked; any other run is suppressed
+ * unless counts=exact (reports:exact; never for publication). Asking for a publication release that a run
+ * cannot be is refused.
  */
 function countingMode(ctx, period = { from: '', to: '' }, opts = {}) {
   const rel = release(ctx, period, opts);
-  const purpose = ctx.query.get('purpose') || (rel.publishable ? 'publication' : 'internal');
+  const asked = ctx.query.get('purpose');
+  const internalOk = auth.hasPerm(ctx.user, 'reports:internal');
+  const purpose = asked || (internalOk ? 'submission' : rel.publishable ? 'publication' : 'internal');
   if (!PURPOSES.includes(purpose)) throw badRequest('purpose must be publication (a release to publish or share), submission (the programme\'s own report to its funder) or internal');
-  const mode = ctx.query.get('counts') || 'suppressed';
+  const mode = ctx.query.get('counts') || (purpose === 'submission' && auth.hasPerm(ctx.user, 'reports:exact') ? 'exact' : 'suppressed');
   if (!['suppressed', 'exact'].includes(mode)) throw badRequest('counts must be suppressed or exact');
   if (mode === 'exact') {
     if (purpose === 'publication') throw badRequest('Exact counts are only for the programme\'s own submission to its funder (purpose=submission) or internal use. A report to publish or share keeps small cells suppressed.');
-    if (!auth.hasPerm(ctx.user, 'reports:exact')) throw forbidden('Only a supervisor, an administrator or finance can run the funder report with exact counts');
+    if (!auth.hasPerm(ctx.user, 'reports:exact')) throw forbidden('Only a supervisor or an administrator can run the funder report with exact counts');
   }
   if (purpose === 'publication' && !rel.publishable) {
-    throw badRequest(`Only a report on the whole programme for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be labelled for publication; this one cannot, because ${rel.not_publishable.join(' and ')}. Run it without purpose=publication: it is then marked internal, not for publication.`);
+    throw badRequest(`Only a report on the whole programme for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be prepared as a publication release; this one cannot, because ${rel.not_publishable.join(' and ')}. Run it without purpose=publication: it is then ${internalOk ? 'the programme\'s own submission to its funder' : 'marked internal'}, not for publication.`);
   }
   const threshold = Number(db.getSetting('small_cell_threshold', '')) || SMALL_CELL_DEFAULT;
   return { mode, threshold, purpose, release: rel };
 }
-/** The part of the counting mode a response carries as `suppression`. */
-const suppressionOf = (c) => ({ mode: c.mode, threshold: c.threshold, purpose: c.purpose });
+/** What each kind of run is called, prominently, on the page and on its files. */
+const RUN_LABEL = {
+  submission: 'Submission to your funder \u2014 not for publication',
+  internal: 'Internal \u2014 not for publication',
+};
+/** The part of the counting mode a response carries as `suppression` (label: what kind of run it is). */
+const suppressionOf = (c) => ({ mode: c.mode, threshold: c.threshold, purpose: c.purpose, label: c.purpose === 'publication' ? PUBLICATION_LABEL : RUN_LABEL[c.purpose] });
 
 /** What a publication release is called wherever a person reads it: it screens small cells, it does not promise. */
 const PUBLICATION_LABEL = 'Publication release \u2014 small cells screened; review before sharing';
@@ -113,7 +123,7 @@ function countingStatement(s) {
     return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the programme's own ${s.purpose === 'submission' ? 'submission to its funder' : 'internal use'}; not for publication or sharing.`;
   }
   if (s.purpose === 'publication') {
-    return `${PUBLICATION_LABEL}: the whole programme, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it, and a table that cannot be protected is withheld and prints no rows). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
+    return `${PUBLICATION_LABEL}: the whole programme, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it; a table that cannot be protected, or whose protection the check cannot confirm, is withheld, prints no rows and is listed with the reason, and the rest of the release is checked again without it). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
   }
   return `${s.purpose === 'submission' ? 'The programme\'s own submission to its funder' : 'Internal'}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole programme minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the programme and its funder.`;
 }
@@ -128,7 +138,7 @@ const byCount = (a, b) => (b.n - a.n) || String(a.k).localeCompare(String(b.k));
 // with what was typed, and a rare value is not printed as a label beside a small count. "unknown" is never
 // combined (it means none reported, which the race codes rely on).
 const FOLD_KEEP = 10;
-const FOLDED = 'Other (combined)';
+const FOLDED = SC.FOLDED;
 /** counts: Map key -> n. A function mapping each key to the key it is listed under, or null if none is combined. */
 function foldOf(counts, T) {
   if (!T) return null;
@@ -348,7 +358,7 @@ async function build(ctx, range) {
   const counting = countingMode(ctx, { from, to }, { fund });
   // A publication release is computed once for all three reports that publish from it (the funder report,
   // the NDP log and the settlement report) and audited as one (server/publication-release.js).
-  if (counting.purpose === 'publication') return require('./publication-release').release(ctx, range, counting).funder;
+  if (counting.purpose === 'publication') return (await require('./publication-release').release(ctx, range, counting)).funder;
   const { raw } = await runAsync(figures(ctx, range, fund));
   const sc = { threshold: counting.threshold, exact: counting.mode === 'exact' };
   return { ...header(counting, from, to, fund), caseload_scope_note: raw.caseload_scope_note, ...suppress(raw, sc) };
@@ -367,7 +377,7 @@ function header(counting, from, to, fund = null) {
 }
 
 const PARTITIONS = ['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_ethnicity'];
-const withCell = (x, key, v) => ({ ...x, [key]: v, ...(isNum(v) ? {} : { suppressed: true }) });
+const withCell = SC.withCell;
 /**
  * Small-cell suppression of the report's figures (server/small-cells.js), a pure function of them so it can be
  * tested against brute force. The people served are one marginal shared by: the total; the single-valued
@@ -399,10 +409,14 @@ function suppress(raw, sc) {
   const o = overdoseProtect(od, sc);
   // A median over fewer people than the threshold is one of them.
   const smallGroup = isNum(ep.discharges) && ep.discharges > 0 && ep.discharges < sc.threshold;
+  // The people served are never hidden beside figures a reader takes as bounding them: when the total is
+  // hidden, so are the new admissions and the episodes opened (13 new admissions beside people served
+  // "suppressed" said there were at least 13). A count under the threshold is "<T" anyway; 0 stays 0.
+  const follows = (v) => (!isNum(s.total) && isNum(v) && v >= sc.threshold ? SC.SECONDARY : one(v));
   return {
-    unduplicated: { served: s.total, new_admissions: one(u.new_admissions), with_a_referral: s.subsets[1], admitted_after_referral: s.subsets[2], on_mat: s.subsets[0] },
+    unduplicated: { served: s.total, new_admissions: follows(u.new_admissions), with_a_referral: s.subsets[1], admitted_after_referral: s.subsets[2], on_mat: s.subsets[0] },
     demographics: Object.fromEntries(order.map(k => [k, demographics[k]])), withheld,
-    episodes: { ...ep, admissions: one(ep.admissions), discharges: discharges.totals.n, open_at_end: one(ep.open_at_end), by_discharge_reason: discharges.rows,
+    episodes: { ...ep, admissions: follows(ep.admissions), discharges: discharges.totals.n, open_at_end: one(ep.open_at_end), by_discharge_reason: discharges.rows,
       median_length_of_stay_days: smallGroup ? SC.SECONDARY : ep.median_length_of_stay_days },
     overdose: { ...od, ...o },
     naloxone_distribution: raw.naloxone_distribution,
@@ -458,4 +472,4 @@ function sheets(d, ctx, fundName) {
   };
 }
 
-module.exports = { build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };
+module.exports = { RUN_LABEL, build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };

@@ -62,7 +62,7 @@ function exposed(cells, total, T, secondaryLo = T) {
 const lonely = (cells) => cells.filter(v => !isNum(v)).length === 1 && cells.some(v => isNum(v) && v > 0);
 
 test('funder report: every count of people under the threshold is suppressed, in every table', async () => {
-  const d = (await sup.get(`/api/reports/funder?${PERIOD}`)).data;
+  const d = (await sup.get(`/api/reports/funder?${PERIOD}&purpose=internal`)).data;
   assert.equal(d.suppression.mode, 'suppressed');
   const T = d.suppression.threshold;
   // People per fund: Beta served three people.
@@ -91,7 +91,7 @@ test('funder report: every count of people under the threshold is suppressed, in
 
 test('funder report: no suppressed cell can be recovered as total minus the visible cells', async () => {
   for (const q of [PERIOD, `${PERIOD}&funding_source_id=${beta}`, `${PERIOD}&funding_source_id=${alpha}`]) {
-    const d = (await sup.get(`/api/reports/funder?${q}`)).data; const T = d.suppression.threshold;
+    const d = (await sup.get(`/api/reports/funder?${q}&purpose=internal`)).data; const T = d.suppression.threshold;
     const tables = [
       ...['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_ethnicity'].map(k => [k, d.demographics[k].map(x => x.n), d.unduplicated.served]),
       ['by_discharge_reason', d.episodes.by_discharge_reason.map(x => x.n), d.episodes.discharges],
@@ -106,7 +106,7 @@ test('funder report: no suppressed cell can be recovered as total minus the visi
     }
   }
   // The same data in the exported file: the "Who was served" rows carry the same suppressed values.
-  const csv = String((await sup.get(`/api/reports/funder/export?${PERIOD}&format=csv`)).data);
+  const csv = String((await sup.get(`/api/reports/funder/export?${PERIOD}&purpose=internal&format=csv`)).data);
   assert.ok(!/Discharge reason,moved,2\b/.test(csv), 'the export is suppressed too');
 });
 
@@ -125,7 +125,7 @@ test('NDP log: reversal rows are suppressed, complementary cells too; a read-onl
   // figures could otherwise be subtracted from a release (test/report-access.test.js).
   assert.equal((await ro.get(`/api/reports/naloxone-ndp?${PERIOD}`)).status, 403);
   for (const c of [sup]) {
-    const d = (await c.get(`/api/reports/naloxone-ndp?${PERIOD}`)).data; const T = d.suppression.threshold;
+    const d = (await c.get(`/api/reports/naloxone-ndp?${PERIOD}&purpose=internal`)).data; const T = d.suppression.threshold;
     assert.equal(d.suppression.mode, 'suppressed');
     const rev = d.rows.filter(r => r.entry === 'reversal');
     assert.equal(rev.length, 2);
@@ -139,14 +139,14 @@ test('NDP log: reversal rows are suppressed, complementary cells too; a read-onl
   const exact = (await sup.get(`/api/reports/naloxone-ndp?${PERIOD}${EXACT}`)).data;
   assert.deepEqual(exact.rows.filter(r => r.entry === 'reversal').map(r => r.reversals).sort(), [1, 11]);
   assert.equal(exact.suppression.mode, 'exact');
-  const csv = await sup.get(`/api/reports/naloxone-ndp/export?${PERIOD}&format=csv`);
+  const csv = await sup.get(`/api/reports/naloxone-ndp/export?${PERIOD}&purpose=internal&format=csv`);
   assert.match(csv.headers.get('x-suds-report-counts'), /suppressed/);
   assert.match(csv.headers.get('content-disposition'), /suppressed/);
   assert.ok(!/Reversal reported,[^\n]*,1,2,/.test(String(csv.data)), 'the export is suppressed');
 });
 
 test('opioid settlement report: people per allowable use are suppressed, services and kits are not', async () => {
-  const d = (await sup.get(`/api/reports/opioid-settlement?${PERIOD}`)).data;
+  const d = (await sup.get(`/api/reports/opioid-settlement?${PERIOD}&purpose=internal`)).data;
   const row = d.services_by_use[0];
   assert.equal(row.people, `<${d.suppression.threshold}`);
   assert.equal(row.services, 3); assert.equal(row.naloxone_kits, 6);
@@ -260,13 +260,13 @@ async function seedAttacks() {
 }
 
 test('attack 1, differencing: a fund-filtered or custom-period run is never a publication release', async () => {
-  const whole = (await sup.get(`/api/reports/funder?${JAN}`)).data;
-  assert.equal(whole.suppression.purpose, 'publication', 'a whole month that has ended, for the whole programme, is a publication release');
+  const whole = (await sup.get(`/api/reports/funder?${JAN}&purpose=publication`)).data;
+  assert.equal(whole.suppression.purpose, 'publication', 'a whole month that has ended, for the whole programme, can be a publication release');
   assert.equal(whole.release.publishable, true); assert.equal(whole.release.period, 'month');
   // The fund-A run, which with the programme total gave away the one person (and her gender) under fund B only.
   const a = await sup.get(`/api/reports/funder?${JAN}&funding_source_id=${fundA}`);
   assert.equal(a.status, 200);
-  assert.equal(a.data.suppression.purpose, 'internal', 'filtered to one fund, the run is internal');
+  assert.equal(a.data.suppression.purpose, 'submission', 'filtered to one fund, the run is the programme\'s submission to that fund, not for publication');
   assert.match(a.data.counting_statement, /not for publication/i);
   assert.doesNotMatch(a.data.counting_statement, /Suitable for publication/i);
   assert.ok(a.data.release.not_publishable.some(x => /fund/i.test(x)), JSON.stringify(a.data.release));
@@ -277,7 +277,8 @@ test('attack 1, differencing: a fund-filtered or custom-period run is never a pu
   for (const q of ['from=2025-01-01&to=2025-06-30', 'from=2025-01-01&to=2025-05-31', 'from=2025-01-05&to=2025-01-31']) {
     assert.equal((await sup.get(`/api/reports/funder?${q}&purpose=publication`)).status, 400, `${q} is not a standard period`);
     const d = (await sup.get(`/api/reports/funder?${q}`)).data;
-    assert.equal(d.suppression.purpose, 'internal', q); assert.match(d.counting_statement, /not for publication/i);
+    assert.equal(d.suppression.purpose, 'submission', q); assert.match(d.counting_statement, /not for publication/i);
+    assert.equal((await sup.get(`/api/reports/funder?${q}&purpose=internal`)).data.suppression.purpose, 'internal', q);
   }
   // Standard periods: a quarter and a fiscal year starting on a quarter; a period not yet over is not one.
   assert.equal((await sup.get('/api/reports/funder?from=2025-01-01&to=2025-03-31')).data.release.period, 'quarter');
@@ -285,7 +286,8 @@ test('attack 1, differencing: a fund-filtered or custom-period run is never a pu
   const today = new Date().toISOString().slice(0, 10); const monthStart = `${today.slice(0, 7)}-01`;
   const monthEnd = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0)).toISOString().slice(0, 10);
   const open = (await sup.get(`/api/reports/funder?from=${monthStart}&to=${monthEnd}`)).data;
-  assert.equal(open.suppression.purpose, 'internal', 'the current month has not ended: rerun tomorrow, it would give away today');
+  assert.equal(open.suppression.purpose, 'submission', 'the current month has not ended: rerun tomorrow, it would give away today');
+  assert.equal((await sup.get(`/api/reports/funder?from=${monthStart}&to=${monthEnd}&purpose=publication`)).status, 400, 'so it cannot be published');
   assert.ok(open.release.not_publishable.some(x => /ended/i.test(x)));
   // Exact counts are never labelled for publication either; the funder's own submission still works.
   assert.equal((await sup.get(`/api/reports/funder?${JAN}&purpose=publication&counts=exact`)).status, 400);
@@ -299,7 +301,7 @@ test('attack 1, differencing: a fund-filtered or custom-period run is never a pu
 });
 
 test('attack 2, one release: the total hidden too late is still printed by every complete breakdown', async () => {
-  const d = (await sup.get(`/api/reports/funder?${FEB}`)).data; const T = d.suppression.threshold;
+  const d = (await sup.get(`/api/reports/funder?${FEB}&purpose=publication`)).data; const T = d.suppression.threshold;
   assert.equal(d.suppression.purpose, 'publication');
   const truth = (await sup.get(`/api/reports/funder?${FEB}${EXACT}`)).data;
   assert.equal(truth.unduplicated.served, 20);
@@ -358,18 +360,18 @@ test('NDP log and settlement report: publication only for the whole programme an
   const MARCH = 'from=2026-03-01&to=2026-03-31';
   for (const path of ['/api/reports/naloxone-ndp', '/api/reports/opioid-settlement']) {
     const custom = (await sup.get(`${path}?${PERIOD}`)).data;
-    assert.equal(custom.suppression.purpose, 'internal', `${path}: a custom range is internal`);
+    assert.equal(custom.suppression.purpose, 'submission', `${path}: a custom range is the programme's submission, not for publication`);
     assert.match(custom.counting_statement, /not for publication/i);
     assert.equal((await sup.get(`${path}?${PERIOD}&purpose=publication`)).status, 400, `${path}: and cannot be labelled for publication`);
-    const pub = (await sup.get(`${path}?${MARCH}`)).data;
+    const pub = (await sup.get(`${path}?${MARCH}&purpose=publication`)).data;
     assert.equal(pub.suppression.purpose, 'publication', path);
     assert.match(pub.counting_statement, /Publication release — small cells screened; review before sharing/);
   }
   // Published, the NDP log is by month, and its reversals are the funder report's for the same release,
   // hidden the same way, so neither can be subtracted from the other.
-  const ndp = (await sup.get(`/api/reports/naloxone-ndp?${MARCH}`)).data;
+  const ndp = (await sup.get(`/api/reports/naloxone-ndp?${MARCH}&purpose=publication`)).data;
   for (const row of ndp.rows) assert.match(row.date, /^\d{4}-\d{2}$/, 'rows are months, not days');
-  const funder = (await sup.get(`/api/reports/funder?${MARCH}`)).data;
+  const funder = (await sup.get(`/api/reports/funder?${MARCH}&purpose=publication`)).data;
   assert.deepEqual(ndp.rows.filter(x => x.entry === 'reversal').map(x => [x.date, x.reversals]), funder.overdose.by_month.filter(x => x.reversals !== 0).map(x => [x.month, x.reversals]));
   assert.deepEqual(ndp.totals.reversals, funder.overdose.reversals);
   // The day-by-day log is still there for the programme's own submission to the NDP.

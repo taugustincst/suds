@@ -69,42 +69,81 @@ export function publicationReview(needed) {
   };
 }
 
+/**
+ * What kind of run this is, prominently: a submission to the funder (the default for a supervisor or an
+ * administrator), an internal run, or a publication release. The label comes from the server
+ * (suppression.label), which puts the same words on the file's About sheet.
+ */
+export function runKindBanner(d, extra = null) {
+  const kind = d.suppression.purpose; const T = d.suppression.threshold;
+  const exact = d.suppression.mode === 'exact';
+  const label = d.suppression.label || (kind === 'publication' ? 'Publication release — small cells screened; review before sharing' : kind === 'submission' ? 'Submission to your funder — not for publication' : 'Internal — not for publication');
+  // Two plain lines; the full statement (the same words as the file's About sheet) is one click away.
+  const line = exact
+    ? 'Exact counts, including groups of fewer than ' + T + ' people. Send it to your funder; do not publish or share it further.'
+    : kind === 'publication'
+      ? `Counts of fewer than ${T} people show as "<${T}", and a few more are hidden so they cannot be worked out. Review it before you share it.`
+      : `Counts of fewer than ${T} people show as "<${T}", and a few more are hidden so they cannot be worked out. It stays within the programme${kind === 'submission' ? ' and its funder' : ''}.`;
+  return h('div', { class: `banner run-kind ${kind === 'publication' ? 'info' : 'warn'}`, 'data-counting-mode': d.suppression.mode, 'data-purpose': kind, 'data-run-kind': kind },
+    h('h2', { class: 'run-kind-title' }, label),
+    h('p', { class: 'run-kind-line' }, line),
+    h('details', { class: 'small', 'data-counting-details': '1' }, h('summary', {}, exact ? 'About these counts' : 'Why some numbers are hidden'), h('p', {}, d.counting_statement)),
+    extra);
+}
+
+/** The tables a publication release withheld, each with the reason (server/release-audit.js withheldReasons). */
+export function withheldTables(d) {
+  const list = (d.release && d.release.withheld_reasons) || [];
+  return h('div', { class: 'mb', 'data-withheld-tables': String(list.length) },
+    list.length
+      ? [h('p', { class: 'small' }, h('strong', {}, `Withheld from this release (${list.length}): `), 'these tables are left out of every report of the release, and the rest was checked again without them.'),
+        h('ul', { class: 'small' }, list.map(x => h('li', { 'data-withheld-table': x.table }, h('strong', {}, x.label), ` — ${x.why}`)))]
+      : h('p', { class: 'small' }, h('strong', {}, 'Nothing was withheld: '), 'every table of this release is shown, with small counts screened.'));
+}
+
 route('funder', async (r) => {
   const internalOk = mayRunInternalReports();
+  // A supervisor or an administrator opens the programme's own submission to its funder; publication is a step
+  // they choose ("Prepare a publication release"). Finance and read-only accounts run publication releases only.
+  const submissionOk = can('reports:internal');
   const { lastMonth, lastQuarter, lastYear } = publishablePeriods();
+  const wantPublication = submissionOk && r.query.get('purpose') === 'publication';
   // A role that runs publication releases only opens on the last quarter that has ended, not a year to date.
   const [dFrom, dTo] = internalOk ? [null, null] : lastQuarter();
   const to = r.query.get('to') || dTo || fmt.today();
   const from = r.query.get('from') || dFrom || `${to.slice(0, 4)}-01-01`;
-  const fund = internalOk ? r.query.get('funding_source_id') || '' : '';
-  // Small-cell suppression is on unless this is the programme's own submission to its funder and someone
-  // allowed to (supervisor, administrator: reports:exact) asks for exact counts.
-  const exact = r.query.get('counts') === 'exact' && can('reports:exact');
-  const countQs = exact ? '&purpose=submission&counts=exact' : '';
+  const fund = internalOk && !wantPublication ? r.query.get('funding_source_id') || '' : '';
+  // A submission counts exactly for a role that holds reports:exact (the server's default); it can choose
+  // small cells suppressed instead. counts=exact (older links) is the default already.
+  const suppressedAsked = r.query.get('counts') === 'suppressed' && can('reports:exact');
+  const countQs = wantPublication ? '&purpose=publication' : suppressedAsked ? '&counts=suppressed' : '';
   const qs = `from=${from}&to=${to}${fund ? `&funding_source_id=${fund}` : ''}${countQs}`;
-  const periodButtons = (onPick) => h('div', { class: 'filters', role: 'group', 'aria-label': 'Periods you can publish', 'data-publishable-periods': '1' },
-    h('span', { class: 'small muted' }, 'Periods you can publish (whole programme, ended):'),
+  const periodButtons = (onPick, label = 'Periods you can publish (whole programme, ended):') => h('div', { class: 'filters', role: 'group', 'aria-label': 'Periods you can publish', 'data-publishable-periods': '1' },
+    h('span', { class: 'small muted' }, label),
     h('button', { class: 'btn ghost sm', 'data-period': 'month', onClick: () => onPick(lastMonth()) }, 'Last month'),
     h('button', { class: 'btn ghost sm', 'data-period': 'quarter', onClick: () => onPick(lastQuarter()) }, 'Last quarter'),
     h('button', { class: 'btn ghost sm', 'data-period': 'year-jul', onClick: () => onPick(lastYear(7)) }, 'Last fiscal year (Jul–Jun)'),
     h('button', { class: 'btn ghost sm', 'data-period': 'year-oct', onClick: () => onPick(lastYear(10)) }, 'Last fiscal year (Oct–Sep)'));
+  const publish = ([s, e]) => nav(`funder?from=${s}&to=${e}&purpose=publication`);
+  const backToSubmission = () => h('button', { class: 'btn', 'data-back-to-submission': '1', onClick: () => nav(`funder?from=${from}&to=${to}`) }, 'Back to the submission to your funder');
   let d;
   try { d = await get(`/api/reports/funder?${qs}`); } catch (err) {
     // 422: the period's release could not be verified, so it is not published (server/publication-release.js).
-    if (err.status !== 403 && err.status !== 422) throw err;
-    // A role that runs publication releases only, given a link to any other run: say why, and offer the
-    // periods it can run instead of an error page.
+    if (err.status !== 403 && err.status !== 422 && err.status !== 400) throw err;
+    // A role that runs publication releases only, given a link to any other run, or a publication release that
+    // was refused: say why, and offer what can be run instead of an error page.
     return h('div', {}, pageHead('Funder report'),
       h('div', { class: 'banner warn', role: 'alert', 'data-funder-refused': '1' }, err.message),
-      periodButtons(([s, e]) => nav(`funder?from=${s}&to=${e}`)));
+      submissionOk ? h('p', {}, backToSubmission()) : null,
+      periodButtons(submissionOk ? publish : ([s, e]) => nav(`funder?from=${s}&to=${e}`)));
   }
 
   const fromI = h('input', { type: 'date', value: from, 'aria-label': 'From' });
   const toI = h('input', { type: 'date', value: to, 'aria-label': 'To' });
   const countsI = can('reports:exact') ? h('select', { 'aria-label': 'Counts', 'data-counts': '1' },
-    h('option', { value: '', selected: !exact }, 'Small cells suppressed'),
-    h('option', { value: 'exact', selected: exact }, 'Exact counts (our own submission to the funder)')) : null;
-  const go = (f, t) => nav(`funder?from=${f}&to=${t}${fundI.value ? `&funding_source_id=${fundI.value}` : ''}${countsI && countsI.value === 'exact' ? '&counts=exact' : ''}`);
+    h('option', { value: '', selected: !suppressedAsked }, 'Exact counts (for your funder)'),
+    h('option', { value: 'suppressed', selected: suppressedAsked }, 'Small cells suppressed')) : null;
+  const go = (f, t) => nav(`funder?from=${f}&to=${t}${fundI.value ? `&funding_source_id=${fundI.value}` : ''}${countsI && countsI.value === 'suppressed' ? '&counts=suppressed' : ''}`);
   const fundI = h('select', { 'aria-label': 'Funding source' },
     h('option', { value: '' }, 'All funding sources'),
     state.funds.map(f => h('option', { value: f.id, selected: f.id === fund }, f.name)));
@@ -126,22 +165,30 @@ route('funder', async (r) => {
   const admitRate = isNum(u.with_a_referral) && isNum(u.admitted_after_referral) && u.with_a_referral ? Math.round((u.admitted_after_referral / u.with_a_referral) * 100) : null;
 
   const review = publicationReview(publishable && can('export:read'));
+  // "Prepare a publication release": only to publish or share beyond the funder. It covers the whole programme
+  // for one standard period that has ended; the current range when it is one, or one of the periods offered.
+  const canPublishThis = isPublishablePeriod(from, to) && !fund;
+  const preparePublication = submissionOk && !publishable ? h('section', { class: 'card', 'data-prepare-publication': '1' },
+    h('h2', {}, 'Prepare a publication release'),
+    h('p', { class: 'small muted' }, 'Only when figures will be published or shared beyond your funder: a public dashboard, a board pack, a county website. A publication release covers the whole programme for one month, quarter or fiscal year that has ended. Small counts are screened; a table the automatic check cannot confirm is protected is withheld and listed with the reason; and you confirm you have reviewed it before its files are exported. The submission above is what your funder asks for.'),
+    canPublishThis ? h('p', {}, h('button', { class: 'btn', 'data-prepare-publication-button': '1', onClick: () => publish([from, to]) }, `Prepare a publication release for ${fmt.date(from)} – ${fmt.date(to)}`)) : null,
+    periodButtons(publish, canPublishThis ? 'Or another period (whole programme, ended):' : 'Choose a period (whole programme, ended):')) : null;
   return h('div', {},
     pageHead('Funder report',
       can('export:read') ? h('button', { class: 'btn', 'data-funder-export': 'xlsx', onClick: () => review.download(`/api/reports/funder/export?${qs}&format=xlsx`, downloadCsv) }, 'This report (Excel)') : null,
       can('export:read') ? h('button', { class: 'btn ghost', 'data-funder-export': 'csv', onClick: () => review.download(`/api/reports/funder/export?${qs}`, downloadCsv) }, 'CSV') : null,
       can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Export everything to Excel') : null),
+    // Which kind of run this is, first: the exported file says the same on its About sheet.
+    runKindBanner(d, publishable || submissionOk ? null : h('p', { class: 'small' }, 'To publish or share figures, a supervisor or an administrator prepares a publication release.')),
     h('p', { class: 'muted' }, 'Counts of people, each counted once however many times they were served. This is the shape most grant reporting asks for. It is not a CalOMS Tx submission: CalOMS records are collected, checked and extracted under Reports → State reporting.'),
-    // Which counting this run used; the exported file says the same on its About sheet.
-    // Whether this run is a publication release, and if not, why not.
-    h('div', { class: `banner small ${publishable ? 'info' : 'warn'}`, 'data-counting-mode': d.suppression.mode, 'data-purpose': d.suppression.purpose },
-      h('strong', {}, publishable ? 'Publication release. ' : 'Internal, not for publication. '), d.counting_statement,
-      publishable ? null : h('span', {}, ' To publish or share figures, run the report for all funding sources and one of the periods under "Periods you can publish".')),
-    publishable ? publicationGuidance() : null,
-    review.box,
+    // A publication release: what was withheld and why, what to do before sharing it, and the confirmation its files need.
+    publishable ? h('section', { class: 'card', 'data-publication-review-step': '1' },
+      h('h2', {}, 'Review before you share it'),
+      withheldTables(d), publicationGuidance(), review.box,
+      submissionOk ? backToSubmission() : null) : null,
 
-    // Custom ranges, one fund and year-to-date runs are internal: offered only to a role that may run them.
-    internalOk ? h('div', { class: 'filters', 'data-custom-range': '1' },
+    // Custom ranges, one fund and year-to-date runs are not publication releases: offered only to a role that may run them.
+    internalOk && !publishable ? h('div', { class: 'filters', 'data-custom-range': '1' },
       h('div', { class: 'field' }, h('label', {}, 'From'), fromI),
       h('div', { class: 'field' }, h('label', {}, 'To'), toI),
       h('div', { class: 'field' }, h('label', {}, 'Funding source'), fundI),
@@ -150,9 +197,13 @@ route('funder', async (r) => {
       h('button', { class: 'btn ghost sm', onClick: () => { const [s, e] = fy(7); go(s, e); } }, 'Fiscal year (Jul–Jun)'),
       h('button', { class: 'btn ghost sm', onClick: () => { const [s, e] = fy(10); go(s, e); } }, 'Fiscal year (Oct–Sep)'),
       h('button', { class: 'btn ghost sm', onClick: () => go(`${to.slice(0, 4)}-01-01`, to) }, 'Calendar year'))
-      : h('p', { class: 'small muted', 'data-publication-only': '1' }, 'Your role runs publication releases: the whole programme for one month, quarter or fiscal year that has ended. Custom ranges and single funds are internal reports, run by a supervisor or administrator.',
-        can('budget:read') ? ' Money and staff hours for any period or fund are on Funding & spending.' : ''),
-    periodButtons(([s, e]) => { fundI.value = ''; go(s, e); }),
+      : null,
+    internalOk ? null : h('p', { class: 'small muted', 'data-publication-only': '1' }, 'Your role runs publication releases only: the whole programme for one month, quarter or fiscal year that has ended, with small counts screened. The programme\'s submission to its funder, custom ranges and single funds are run by a supervisor or administrator.',
+      can('budget:read') ? ' Money and staff hours for any period or fund are on Funding & spending.' : ''),
+    // Other periods: a supervisor preparing a release picks another period to publish; a publication-only role
+    // runs one of them; a caseload-scoped role's runs are internal, so it gets none.
+    publishable ? periodButtons(submissionOk ? publish : ([s, e]) => nav(`funder?from=${s}&to=${e}`)) : internalOk ? null : periodButtons(([s, e]) => nav(`funder?from=${s}&to=${e}`)),
+    preparePublication,
     d.caseload_scope_note ? h('p', { class: 'small muted', 'data-caseload-scope': '1' }, d.caseload_scope_note) : null,
 
     // What would otherwise be missing without a word: services charged to no fund, and staff time nobody
