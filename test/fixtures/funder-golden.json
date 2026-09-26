@@ -234,19 +234,19 @@
    "by_administered_by": [
     {
      "k": "bystander",
-     "n": 71
+     "n": 66
     },
     {
      "k": "first_responder",
-     "n": 67
+     "n": 61
     },
     {
      "k": "staff",
-     "n": 65
+     "n": 59
     },
     {
      "k": "unknown",
-     "n": 64
+     "n": 59
     }
    ]
   },
@@ -479,15 +479,15 @@
     },
     {
      "k": "first_responder",
-     "n": 14
+     "n": 13
     },
     {
      "k": "staff",
-     "n": 14
+     "n": 13
     },
     {
      "k": "unknown",
-     "n": 29
+     "n": 28
     }
    ]
   },
@@ -967,19 +967,19 @@
    "by_administered_by": [
     {
      "k": "bystander",
-     "n": 71
+     "n": 66
     },
     {
      "k": "first_responder",
-     "n": 67
+     "n": 61
     },
     {
      "k": "staff",
-     "n": 65
+     "n": 59
     },
     {
      "k": "unknown",
-     "n": 64
+     "n": 59
     }
    ]
   },
@@ -1235,19 +1235,19 @@
    "by_administered_by": [
     {
      "k": "bystander",
-     "n": 71
+     "n": 66
     },
     {
      "k": "first_responder",
-     "n": 67
+     "n": 61
     },
     {
      "k": "staff",
-     "n": 65
+     "n": 59
     },
     {
      "k": "unknown",
-     "n": 64
+     "n": 59
     }
    ]
   },

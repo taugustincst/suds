@@ -92,11 +92,12 @@ route('reports', async (r) => {
   // Small cells are suppressed in both files (reversals and people are counts of people) unless someone
   // allowed to (reports:exact) chooses exact counts for the programme's own submission, as on the funder report.
   const hrCounts = can('reports:exact') ? h('select', { id: 'hr-counts', 'data-hr-counts': '1' },
-    h('option', { value: '' }, 'Small cells suppressed (to publish or share)'),
+    h('option', { value: '' }, 'Small cells suppressed'),
     h('option', { value: 'exact' }, 'Exact counts (our own submission to the funder)')) : null;
   const hrQs = () => (hrCounts && hrCounts.value === 'exact' ? '&purpose=submission&counts=exact' : '');
   const harmReduction = () => h('div', { class: 'mt', 'data-harm-reduction-reports': '1' }, h('h4', { class: 'small', style: { margin: '.75rem 0 .25rem' } }, 'Harm-reduction reporting'),
       h('p', { class: 'small muted' }, 'For the range above. Aggregate counts and amounts only: no names or client codes. Reversals and people counted under the small-cell threshold are suppressed; kits, doses and amounts are exact.'),
+      h('p', { class: 'small muted', 'data-hr-publication-note': '1' }, 'A file is a publication release only when the range above is one calendar month, quarter or fiscal year (starting in January, April, July or October) that has ended; the NDP log is then by month, for all sites. Any other range gives a file marked internal, not for publication.'),
       hrCounts ? h('div', { class: 'field mb' }, h('label', { for: 'hr-counts' }, 'Counts'), hrCounts) : null,
       h('div', { class: 'row mb' }, h('span', {}, h('b', {}, 'Naloxone distribution & reversal log (NDP-style)'), h('span', { class: 'small muted' }, ' — kits and doses by day, site and recipient type; reversals reported. Check the columns against the current NDP reporting template before submitting.')),
         h('button', { class: 'btn sm', 'data-ndp-export': 'xlsx', onClick: () => downloadCsv(`/api/reports/naloxone-ndp/export?from=${from}&to=${to}&format=xlsx${hrQs()}`) }, 'NDP log (Excel)'), h('button', { class: 'btn sm ghost', 'data-ndp-export': 'csv', onClick: () => downloadCsv(`/api/reports/naloxone-ndp/export?from=${from}&to=${to}${hrQs()}`) }, 'CSV')),

@@ -2,6 +2,20 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+- **Small cells: publication releases that hold up.** Two leaks in 1.12.0's "suitable for publication" counts
+  are closed. (1) Differencing across reports: a run filtered to one fund, or for a custom range, could be
+  subtracted from the whole-programme report to reveal a small group. Only the whole programme, for one
+  calendar month, quarter or year (starting January, April, July or October) that has ended, is now a
+  publication release; every other run is *internal, not for publication* and asking to label it for
+  publication is refused. (2) Within one report the total was hidden too late: a complete breakdown still
+  printed it. Tables sharing a total are now protected together to a fixpoint, keeping the total visible
+  when hiding more cells is enough, and the attacker is assumed to know that a `suppressed` cell is at least
+  the threshold. Published, the NDP log is by month and matches the funder report's reversals; "Who gave the
+  naloxone" counts reversals. Cross-period differencing (a quarter and its year) remains a documented
+  residual risk (docs/HIPAA.md, *Small cells in aggregate reports*).
+
 ## 1.12.0 — 2026-09-26
 
 Answers the critical evaluation. The owner chose to commit (its option B) and to reposition SUDS around
