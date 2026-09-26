@@ -102,10 +102,11 @@ test('small cells are suppressed by default and the report says which mode it us
   assert.ok(Object.values(r.data.demographics).flat().some(x => x.n === '<11'), 'a one-day report has small cells');
 });
 
-test('exact counts: only for the programme\'s own submission, and only supervisor, administrator or finance', async () => {
+test('exact counts: only for the programme\'s own submission, and only supervisor or administrator', async () => {
   const q = '/api/reports/funder?from=2026-02-14&to=2026-02-14&purpose=submission&counts=exact';
-  for (const c of [nav, ro]) assert.equal((await c.get(q)).status, 403, 'a navigator or read-only account cannot switch suppression off');
-  for (const c of [sup, admin, fin]) {
+  // Finance runs publication releases only (test/report-access.test.js): its money and hours are exact there.
+  for (const c of [nav, ro, fin]) assert.equal((await c.get(q)).status, 403, 'a navigator, finance or read-only account cannot switch suppression off');
+  for (const c of [sup, admin]) {
     const r = await c.get(q);
     assert.equal(r.status, 200, JSON.stringify(r.data));
     assert.deepEqual(r.data.suppression, { mode: 'exact', threshold: 11, purpose: 'submission' });

@@ -2,7 +2,7 @@
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
-const { sendJson, badRequest } = require('../http');
+const { sendJson, badRequest, forbidden } = require('../http');
 const M = require('../clients-model');
 const CFX = require('../client-filters');
 // Yield to other work between sheets; setImmediate does not exist in the browser kernel.
@@ -32,6 +32,35 @@ function range(ctx) {
   const lo = fromTs < from ? fromTs : from; const hi = toEnd > to ? toEnd : to;
   const ts = (col) => `(${col} BETWEEN ? AND ? AND ((length(${col})>10 AND ${col} BETWEEN ? AND ?) OR (length(${col})=10 AND ${col} BETWEEN ? AND ?)))`;
   return { from, to, fromTs, toEnd, ts, tsP: [lo, hi, fromTs, toEnd, from, to] };
+}
+
+/**
+ * Who may run a report that is not a publication release (auth.reportRunAllowed): the funder report, the NDP
+ * log and the settlement report. A publication release is the whole programme for one standard period that
+ * has ended (FR.release); every other run — purpose=internal or submission, exact or suppressed, a custom
+ * range, one fund, a period not yet ended — can be subtracted from a release to reveal a small group, so it
+ * needs reports:internal, or client-level access to everyone it counts. Checked before the report is built;
+ * whether a run asked for publication may have it is still FR.countingMode's (400).
+ */
+function requireReportRun({ caseloadScoped, fund = false }) {
+  return (ctx) => {
+    const asked = ctx.query.get('purpose') || '';
+    const exact = ctx.query.get('counts') === 'exact';
+    // Exact counts need reports:exact as well (supervisor, administrator); FR.countingMode checks it again.
+    if (exact && asked !== 'publication' && !auth.hasPerm(ctx.user, 'reports:exact')) {
+      audit.log({ user: ctx.user, action: 'authz.denied', ip: ctx.ip, success: false, details: { perms: ['reports:exact'], path: ctx.path } });
+      throw forbidden('Only a supervisor or an administrator can run this report with exact counts. Small cells stay suppressed for everyone else.');
+    }
+    if (asked === 'publication' && !exact) return;
+    if (asked && !['submission', 'internal'].includes(asked)) return; // FR.countingMode refuses it (400)
+    const { from, to } = range(ctx);
+    const rel = FR.release(ctx, { from, to }, { fund: fund ? ctx.query.get('funding_source_id') || null : null });
+    const internal = asked || exact || !rel.publishable;
+    if (!internal || auth.reportRunAllowed(ctx.user, { caseloadScoped })) return;
+    audit.log({ user: ctx.user, action: 'authz.denied', ip: ctx.ip, success: false, details: { perms: ['reports:internal'], path: ctx.path, purpose: asked || 'internal', counts: ctx.query.get('counts') || 'suppressed' } });
+    const why = asked ? `it asks for ${exact ? 'exact counts' : `purpose=${asked}`}` : rel.not_publishable.join(' and ');
+    throw forbidden(`Your role can run this report only as a publication release: the whole programme (all funding sources) for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended. This run is not one, because ${why}. Internal and submission runs, and exact counts, are for supervisors and administrators.`);
+  };
 }
 
 module.exports = (r) => {
@@ -145,7 +174,7 @@ module.exports = (r) => {
   // the way a grant report is. Small cells are suppressed unless a run that is not for publication asks for
   // exact counts (reports:exact); only the whole programme for one standard period that has ended is a
   // publication release. The response says which (suppression, release).
-  r.get('/api/reports/funder', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
+  r.get('/api/reports/funder', auth.requireAuth, auth.requirePerm('reports:read'), requireReportRun({ caseloadScoped: true, fund: true }), async (ctx) => {
     const out = await FR.build(ctx, range(ctx));
     audit.log({ user: ctx.user, action: 'report.funder', ip: ctx.ip, details: { from: out.from, to: out.to, funding_source_id: out.funding_source_id || undefined, served: out.unduplicated.served, counts: out.suppression.mode, purpose: out.suppression.purpose } });
     return out;
@@ -153,7 +182,7 @@ module.exports = (r) => {
   // The same report as a file: an Excel workbook whose About sheet states the counting mode, or a CSV whose
   // first rows do; the mode is also in the filename and the X-SUDS-Report-Counts header. Aggregate counts
   // only — no names, client codes or dates of service — so it is not a disclosure, but it is audited.
-  r.get('/api/reports/funder/export', auth.requireAuth, auth.requirePerm('reports:read'), auth.requirePerm('export:read'), async (ctx) => {
+  r.get('/api/reports/funder/export', auth.requireAuth, auth.requirePerm('reports:read'), auth.requirePerm('export:read'), requireReportRun({ caseloadScoped: true, fund: true }), async (ctx) => {
     const d = await FR.build(ctx, range(ctx));
     const fundName = d.funding_source_id ? db.one(`SELECT name FROM funding_sources WHERE id=?`, d.funding_source_id)?.name : null;
     const sh = FR.sheets(d, ctx, fundName);
@@ -171,7 +200,12 @@ module.exports = (r) => {
 
   // California harm-reduction reporting (server/harm-reduction-reports.js): the Naloxone Distribution Project
   // log and the opioid settlement expenditure report.
-  require('../harm-reduction-reports').routes(r, range);
+  // Each of their routes gets the same check as the funder report, just before its handler: the NDP log
+  // counts a caseload-scoped role's own caseload (and anonymous community work); the settlement report
+  // counts the whole programme's people whoever runs it.
+  const HR_SCOPED = { '/api/reports/naloxone-ndp': true, '/api/reports/naloxone-ndp/export': true };
+  const hrRouter = { get: (path, ...fns) => r.get(path, ...fns.slice(0, -1), requireReportRun({ caseloadScoped: !!HR_SCOPED[path] }), fns[fns.length - 1]) };
+  require('../harm-reduction-reports').routes(hrRouter, range);
 
   // Exports: CSV or Excel per table, or one Excel workbook with every table. Needs export:read; de-identified
   // (HIPAA Safe Harbor) unless identified=1 and the user holds export:identified — and an identified export

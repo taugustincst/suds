@@ -142,7 +142,9 @@ test('a fund and an expenditure carry a settlement category', async () => {
 });
 
 test('the opioid settlement report groups settlement spending by allowable use and HIAA', async () => {
-  const r = await fin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31');
+  // The year has not ended, so this is an internal run: a supervisor's (finance and navigators run
+  // publication releases of this report only, test/report-access.test.js).
+  const r = await sup.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31');
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const core = r.data.by_use.find(x => x.code === 'core_a');
   assert.equal(core.approved_amount, 1200, 'the fund\'s default category');
@@ -152,18 +154,19 @@ test('the opioid settlement report groups settlement spending by allowable use a
   assert.equal(r.data.totals.hiaa_amount, 1200, 'the training line was marked as not HIAA');
   assert.equal(r.data.totals.hiaa_share, 60);
   assert.match(r.data.source_note, /verif/i);
-  assert.equal((await nav.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 200, 'a navigator holds budget:read');
+  assert.equal((await nav.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'a navigator holds budget:read, but an internal run of a whole-programme report needs reports:internal');
+  assert.equal((await fin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'so does finance');
   assert.equal((await clin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'a clinician holds no budget permission');
   assert.equal((await ro.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403);
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='report.opioid_settlement'`));
 });
 
 test('the opioid settlement report exports to CSV and Excel', async () => {
-  const csv = await fin.get('/api/reports/opioid-settlement/export?from=2026-01-01&to=2026-12-31&format=csv');
+  const csv = await sup.get('/api/reports/opioid-settlement/export?from=2026-01-01&to=2026-12-31&format=csv');
   assert.equal(csv.status, 200);
   assert.match(String(csv.data).split('\r\n')[0], /^Schedule,Category,High Impact Abatement Activity/);
   assert.ok(String(csv.data).includes('1200'));
-  const xl = await fin.get('/api/reports/opioid-settlement/export?from=2026-01-01&to=2026-12-31&format=xlsx');
+  const xl = await sup.get('/api/reports/opioid-settlement/export?from=2026-01-01&to=2026-12-31&format=xlsx');
   assert.equal(xl.status, 200);
   assert.match(xl.headers.get('content-type'), /spreadsheetml/);
   assert.equal((await clin.get('/api/reports/opioid-settlement/export?from=2026-01-01&to=2026-12-31')).status, 403);
