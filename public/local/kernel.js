@@ -9036,6 +9036,9 @@ var require_constants = __commonJS({
       OVERDOSE_KINDS: ["overdose", "reversal", "fatal"],
       ADMINISTERED_BY: ["bystander", "first_responder", "staff", "self", "family", "unknown"],
       // Why an episode of care ended ('deceased' also marks the client deceased: server/routes/episodes.js).
+      // Safety flags on a client (free text, comma separated; these are the codes a flag may also be stored
+      // as, e.g. by an import or the sample data, shown with their label rather than the code).
+      CLIENT_FLAGS: ["no_home_visits", "visit_in_pairs", "do_not_contact_family", "no_voicemail", "safety_plan"],
       DISCHARGE_REASONS: ["completed", "transferred", "incarcerated", "moved", "lost_contact", "declined", "deceased", "administrative", "other"],
       // A referral outcome's "If it did not happen, why" (stored encrypted in referrals.barrier_enc).
       REFERRAL_BARRIERS: ["none", "transportation", "insurance", "waitlist", "no_beds", "client_declined", "childcare", "documentation", "legal", "phone_access", "other"],
@@ -9387,6 +9390,13 @@ var require_options = __commonJS({
         name: "Primary substance",
         codes: C.SUBSTANCES,
         protect: { unknown: "a blank answer is counted as Unknown in reports and filters" }
+      },
+      {
+        key: "CLIENT_FLAGS",
+        group: "Clients",
+        name: "Safety flags",
+        codes: C.CLIENT_FLAGS,
+        labels: { no_home_visits: "No home visits alone", visit_in_pairs: "Visit in pairs", do_not_contact_family: "Do not contact through family", no_voicemail: "No voicemail", safety_plan: "Safety plan in place" }
       },
       {
         key: "DISCHARGE_REASONS",
@@ -25062,12 +25072,27 @@ var require_notes = __commonJS({
         return { ok: true, cosignature_hash: applyCosign(ctx, n, note, identity, false) };
       });
       r.post("/api/notes/cosign-batch", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
-        const v = validate(ctx.body, { ids: { type: "array", required: true, maxLen: 100, of: "string" }, password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, note: { type: "string", maxLen: 1e3 } });
+        const v = validate(ctx.body, { ids: { type: "array", required: true, maxLen: 100, of: "string" }, password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, note: { type: "string", maxLen: 1e3 }, comments: { type: "object" } });
         if (!v.ids.length) throw badRequest("Choose at least one note to countersign");
+        const ids = [...new Set(v.ids)];
+        const comments = {};
+        if (v.comments !== void 0 && v.comments !== null) {
+          if (Array.isArray(v.comments)) throw badRequest("Validation failed", { fields: { comments: "must be an object of note id to comment" } });
+          for (const [id, text] of Object.entries(v.comments)) {
+            if (!ids.includes(id)) throw badRequest("Validation failed", { fields: { comments: "a comment is for a note that is not in this batch" } });
+            if (typeof text !== "string" || text.length > 1e3) throw badRequest("Validation failed", { fields: { comments: "each comment must be text of at most 1000 characters" } });
+            if (text.trim()) comments[id] = text.trim();
+          }
+        }
+        if (v.note && v.note.trim()) {
+          if (Object.keys(comments).length) throw badRequest("Give each note its own comment, not a shared one as well");
+          const clients = new Set(ids.map((id) => (db3.one(`SELECT client_id FROM notes WHERE id=? AND deleted_at IS NULL`, id) || {}).client_id).filter(Boolean));
+          if (clients.size > 1) throw badRequest("One comment cannot be applied to notes about different clients. Give each note its own comment, or countersign it on its own.", { fields: { note: "one comment for several clients" } });
+        }
         const identity = await verifyIdentity(ctx);
         const cosigned = [];
         const skipped = [];
-        for (const id of [...new Set(v.ids)]) {
+        for (const id of ids) {
           const n = db3.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id);
           if (!n) {
             skipped.push({ id, reason: "Note not found" });
@@ -25082,7 +25107,7 @@ var require_notes = __commonJS({
             skipped.push({ id, reason: why });
             continue;
           }
-          applyCosign(ctx, n, v.note, identity, true);
+          applyCosign(ctx, n, comments[id] || v.note && v.note.trim() || void 0, identity, true);
           cosigned.push(id);
         }
         return { ok: true, cosigned, skipped };
@@ -30385,7 +30410,8 @@ var require_setup = __commonJS({
           port: { type: "number", integer: true, min: 1, max: 65535 },
           https: { type: "boolean" },
           extra_hosts: { type: "string", maxLen: 300 },
-          // "Allow staff to keep an offline copy on their devices?" — omitted means No, the recommended answer.
+          // "Allow staff to keep an offline copy on their devices?" — omitted means No: without an answer local mode stays off
+          // (the wizard itself recommends Yes for a harm-reduction programme and No for a treatment-adjacent one).
           local_mode: { type: "boolean" },
           // What kind of programme this is (server/programme.js); omitted means harm reduction & outreach.
           programme_profile: { type: "string", enum: Object.keys(require_programme().PROFILES) },
