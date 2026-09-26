@@ -2,7 +2,14 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.12.4 — 2026-09-26
+
+- **The first user is "guest".** A new office server creates its first administrator as `guest`
+  (`SUDS_ADMIN_USERNAME` still names another); its password stays random per install, printed once and
+  changed at the first sign-in, so no working credential is shared between installs. The setup wizard and the
+  on-device first-account form suggest `guest`; the person chooses the password.
+- `npm test` runs a sample of the publication-release disclosure sweeps; the full sweeps (`SUDS_THOROUGH=1`)
+  run in a new CI job, `thorough`, which the release gate requires.
 
 - **The pattern of what a publication release hides no longer gives counts away to someone who knows the
   method.** SUDS is open source, so an attacker can run the audit on every programme that could lie behind a

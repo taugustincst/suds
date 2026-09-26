@@ -13,7 +13,7 @@ const jobs = (overrides = {}) => [...REQUIRED_JOBS, 'webkit'].map((name) => ({ n
 
 test('passes only when a push run for the exact commit succeeded with every required job green', () => {
   assert.equal(evaluate(SHA, [run(1)], { 1: jobs() }).decision, 'pass');
-  assert.deepEqual(REQUIRED_JOBS.slice().sort(), ['browser', 'dr-drill', 'node24', 'test'], 'the browser suite, Node 24 and the recovery drill are required');
+  assert.deepEqual(REQUIRED_JOBS.slice().sort(), ['browser', 'dr-drill', 'node24', 'test', 'thorough'], 'the browser suite, Node 24, the recovery drill and the thorough disclosure sweeps are required');
 });
 
 test('refuses when the browser suite failed, even if the run as a whole is marked success', () => {

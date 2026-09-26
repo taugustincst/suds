@@ -13,7 +13,7 @@
 // (default 60). The `evaluate` function is pure and tested in test/release-gate.test.js.
 
 // Jobs that must have succeeded. `webkit` is advisory (continue-on-error in ci.yml) and deliberately absent.
-const REQUIRED_JOBS = ['test', 'browser', 'node24', 'dr-drill'];
+const REQUIRED_JOBS = ['test', 'browser', 'node24', 'dr-drill', 'thorough'];
 
 /**
  * Decide from CI runs for one commit (newest first, as the API lists them) and their jobs.

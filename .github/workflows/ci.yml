@@ -37,6 +37,27 @@ jobs:
       - name: Syntax-check browser modules
         working-directory: src
         run: for f in public/*.js public/views/*.js; do node --input-type=module --check < "$f" || exit 1; done
+  # The publication-release disclosure sweeps at full size (SUDS_THOROUGH=1): the random-programme property
+  # test, the algorithm-aware attacker at thresholds 3 and 5, and the refusal sweep. npm test runs a sample.
+  thorough:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Node major matches .nvmrc
+        working-directory: src
+        run: |
+          want="$(tr -d '[:space:]' < .nvmrc)"; have="$(node -p 'process.versions.node.split(".")[0]')"
+          node --version; [ "$have" = "$want" ] || { echo "::error::The runner has Node $have but .nvmrc pins major $want"; exit 1; }
+      - name: Install
+        working-directory: src
+        run: npm ci --no-audit --no-fund
+      - name: Disclosure sweeps, full size
+        working-directory: src
+        env:
+          SUDS_THOROUGH: '1'
+        run: node --no-warnings=ExperimentalWarning --test test/publication-release.test.js
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 45

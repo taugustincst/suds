@@ -6682,7 +6682,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.12.3" : "local",
+      version: true ? "1.12.4" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -23290,15 +23290,16 @@ var require_sdc = __commonJS({
     function intMax(prob, c, known, { enough = Infinity, budget = 4e3, deadline = Infinity } = {}) {
       const dot = (x) => c.reduce((s, cj, j) => s + cj * x[j], 0);
       let best = known ? Math.round(dot(known)) : -Infinity;
-      if (best >= enough) return { value: best, exact: true };
+      let bestX = known ? known.slice() : null;
+      if (best >= enough) return { value: best, exact: true, x: bestX };
       const stack = [[prob.lb.slice(), prob.ub.slice()]];
       let nodes = 0;
       while (stack.length) {
-        if (++nodes > budget || Date.now() > deadline) return { value: best, exact: false };
+        if (++nodes > budget || Date.now() > deadline) return { value: best, exact: false, x: bestX };
         const [lb, ub] = stack.pop();
         const r = simplex(prob.n, prob.rows, lb, ub, c);
         if (r.status === "infeasible") continue;
-        if (r.status === "unbounded") return { value: Infinity, exact: true };
+        if (r.status === "unbounded") return { value: Infinity, exact: true, x: null };
         const bound = Math.floor(r.value + 1e-6);
         if (bound <= best) continue;
         let fj = -1;
@@ -23307,8 +23308,12 @@ var require_sdc = __commonJS({
           break;
         }
         if (fj < 0) {
-          best = Math.max(best, Math.round(r.value));
-          if (best >= enough) return { value: best, exact: true };
+          const v = Math.round(r.value);
+          if (v > best) {
+            best = v;
+            bestX = r.x.map(Math.round);
+          }
+          if (best >= enough) return { value: best, exact: true, x: bestX };
           continue;
         }
         const f = Math.floor(r.x[fj]);
@@ -23318,10 +23323,10 @@ var require_sdc = __commonJS({
         down[1][fj] = f;
         stack.push(up, down);
       }
-      return { value: best, exact: true };
+      return { value: best, exact: true, x: bestX };
     }
-    function intFeasible(prob, c, v, { budget = 4e3, deadline = Infinity } = {}) {
-      const rows = [...prob.rows, { a: c, op: "=", b: v }];
+    function intFeasibleIn(prob, c, lo, hi, { budget = 4e3, deadline = Infinity } = {}) {
+      const rows = lo === hi ? [...prob.rows, { a: c, op: "=", b: lo }] : [...prob.rows, { a: c, op: ">=", b: lo }, { a: c, op: "<=", b: hi }];
       const zero = new Array(prob.n).fill(0);
       const stack = [[prob.lb.slice(), prob.ub.slice()]];
       let nodes = 0;
@@ -23348,221 +23353,526 @@ var require_sdc = __commonJS({
       }
       return { feasible: false, exact: true };
     }
-    function protect(model, T, { budget = 4e3, timeLimitMs = Infinity } = {}) {
-      const deadline = Date.now() + timeLimitMs;
+    var intFeasible = (prob, c, v, opts) => intFeasibleIn(prob, c, v, v, opts);
+    function auditor(model, T, { budget, deadline }) {
       const { vars, derived = [], mirror = [] } = model;
-      const cons = model.cons.filter((k) => {
-        const lhs = k.terms.reduce((s2, [i, c]) => s2 + c * vars[i].value, 0);
-        const ok = k.op === "=" ? lhs === k.rhs : k.op === "<=" ? lhs <= k.rhs : lhs >= k.rhs;
-        if (!ok && model.strict && !k.soft) throw new Error(`the truth violates ${JSON.stringify(k.terms.map(([i, c]) => [vars[i].id, c]))} ${k.op} ${k.rhs}`);
-        return ok;
-      });
       const P2 = Math.ceil(T / 2);
-      const nv = vars.length;
-      const st = vars.map((v) => !v.published ? "unpub" : v.people && v.value > 0 && v.value < T ? "pri" : "vis");
       const small = (x) => x > 0 && x < T;
-      const byVar = vars.map(() => []);
-      cons.forEach((k, ci) => {
-        for (const [i] of k.terms) byVar[i].push(ci);
-      });
+      const opt = { budget, deadline };
       const tableOf = /* @__PURE__ */ new Map();
       vars.forEach((v, i) => {
         if (!tableOf.has(v.table)) tableOf.set(v.table, []);
         tableOf.get(v.table).push(i);
       });
-      const withheldTables = /* @__PURE__ */ new Set();
-      const applyMirror = (s2) => {
-        for (const [p, f] of mirror) if ((s2[p] === "pri" || s2[p] === "sec") && s2[f] === "vis") s2[f] = "sec";
-        else if (s2[p] === "withheld" && s2[f] === "vis") s2[f] = "withheld";
-      };
-      const bounds = (s2, i) => {
-        const v = vars[i];
-        switch (s2[i]) {
-          case "vis":
-            return [v.value, v.value];
-          case "pri":
-            return [1, T - 1];
-          case "sec":
-            return v.people ? [T, Infinity] : [0, Infinity];
-          default:
-            return [0, Infinity];
-        }
-      };
-      function problem(s2, terms) {
-        const idx = /* @__PURE__ */ new Map();
-        const queue = [];
-        for (const [i] of terms) if (s2[i] !== "vis" && !idx.has(i)) {
-          idx.set(i, idx.size);
-          queue.push(i);
-        }
-        for (let q = 0; q < queue.length; q++) {
-          for (const ci of byVar[queue[q]]) for (const [j] of cons[ci].terms) if (s2[j] !== "vis" && !idx.has(j)) {
-            idx.set(j, idx.size);
-            queue.push(j);
-          }
-        }
-        const members = queue;
-        const n = members.length;
-        const touched = /* @__PURE__ */ new Set();
-        for (const i of members) for (const ci of byVar[i]) touched.add(ci);
-        const rows = [...touched].sort((a, b) => a - b).map((ci) => {
-          const k = cons[ci];
-          const a = new Array(n).fill(0);
-          let rhs = k.rhs;
-          for (const [j, c2] of k.terms) {
-            if (idx.has(j)) a[idx.get(j)] += c2;
-            else rhs -= c2 * vars[j].value;
-          }
-          return { a, op: k.op, b: rhs };
-        });
-        const lb = members.map((i) => bounds(s2, i)[0]);
-        const ub = members.map((i) => bounds(s2, i)[1]);
-        const c = new Array(n).fill(0);
-        let constant = 0;
-        for (const [i, co] of terms) {
-          if (idx.has(i)) c[idx.get(i)] += co;
-          else constant += co * vars[i].value;
-        }
-        const truth = members.map((i) => vars[i].value);
-        const key = members.map((i) => `${i}:${s2[i]}`).join(",");
-        return { prob: { n, rows, lb, ub }, c, constant, truth, key, n };
-      }
       const cache = /* @__PURE__ */ new Map();
-      function deficit(s2, q) {
-        const p = problem(s2, q.terms);
-        const key = `${q.id}|${q.kind}|${p.key}`;
-        if (cache.has(key)) return cache.get(key);
-        let d = 0;
-        if (p.n === 0) {
-          d = q.kind === "small" ? (p.constant === 1 ? 0 : 1) + (p.constant === T - 1 ? 0 : 1) : P2;
-        } else if (q.kind === "small") {
-          for (const v of [1, T - 1]) {
-            if (q.truth === v) continue;
-            const r = intFeasible(p.prob, p.c, v - p.constant, { budget, deadline });
-            if (!r.feasible) d += 1;
-          }
-        } else {
-          const lo = -intMax(p.prob, p.c.map((x) => -x), p.truth, { budget, deadline }).value + p.constant;
-          const hiR = intMax(p.prob, p.c, p.truth, { budget, deadline, enough: lo - p.constant + P2 });
-          const hi = hiR.value + p.constant;
-          d = Math.max(0, P2 - (hi - lo));
-        }
-        cache.set(key, d);
-        return d;
-      }
-      function quantities(s2) {
-        const out2 = [];
-        vars.forEach((v, i) => {
-          if (!v.people) return;
-          if (s2[i] === "pri") out2.push({ id: v.id, terms: [[i, 1]], kind: "small", truth: v.value, home: [i] });
-          else if (s2[i] === "sec") out2.push({ id: v.id, terms: [[i, 1]], kind: "sec", truth: v.value, home: [i] });
-          else if ((s2[i] === "withheld" || s2[i] === "unpub") && small(v.value) && byVar[i].length) out2.push({ id: v.id, terms: [[i, 1]], kind: "small", truth: v.value, home: [i] });
+      function relationships(values) {
+        const cons = [];
+        const dropped = [];
+        model.cons.forEach((k, ci) => {
+          const lhs = k.terms.reduce((s, [i, c]) => s + c * values[i], 0);
+          const ok = k.op === "=" ? lhs === k.rhs : k.op === "<=" ? lhs <= k.rhs : lhs >= k.rhs;
+          if (!ok && model.strict && !k.soft) throw new Error(`the truth violates ${JSON.stringify(k.terms.map(([i, c]) => [vars[i].id, c]))} ${k.op} ${k.rhs}`);
+          if (ok) cons.push(k);
+          else dropped.push(ci);
         });
-        for (const q of derived) {
-          const truth = q.terms.reduce((a, [i, c]) => a + c * vars[i].value, 0);
-          if (small(truth)) out2.push({ id: q.id, terms: q.terms, kind: "small", truth, home: q.terms.map(([i]) => i) });
-        }
-        return out2;
+        const byVar = vars.map(() => []);
+        cons.forEach((k, ci) => {
+          for (const [i] of k.terms) byVar[i].push(ci);
+        });
+        return { cons, byVar, sig: dropped.join(",") };
       }
-      function levels(q) {
-        const level = /* @__PURE__ */ new Map();
-        let frontier = [...new Set(q.home)];
-        frontier.forEach((i) => level.set(i, 0));
-        for (let d = 1; frontier.length; d++) {
-          const next = [];
-          for (const i of frontier) for (const ci of byVar[i]) for (const [j] of cons[ci].terms) if (!level.has(j)) {
-            level.set(j, d);
-            next.push(j);
+      function world(values) {
+        const { cons, byVar, sig } = relationships(values);
+        const applyMirror = (s) => {
+          for (const [p, f] of mirror) if ((s[p] === "pri" || s[p] === "sec") && s[f] === "vis") s[f] = "sec";
+          else if (s[p] === "withheld" && s[f] === "vis") s[f] = "withheld";
+        };
+        const bounds = (s, i) => {
+          switch (s[i]) {
+            case "vis":
+              return [values[i], values[i]];
+            case "pri":
+              return [1, T - 1];
+            case "sec":
+              return vars[i].people ? [T, Infinity] : [0, Infinity];
+            default:
+              return [0, Infinity];
           }
-          frontier = next;
+        };
+        function problem(s, terms, all = false) {
+          const idx = /* @__PURE__ */ new Map();
+          const queue = [];
+          const add = (i) => {
+            if (s[i] !== "vis" && !idx.has(i)) {
+              idx.set(i, idx.size);
+              queue.push(i);
+            }
+          };
+          if (all) vars.forEach((_, i) => add(i));
+          else for (const [i] of terms) add(i);
+          for (let q = 0; q < queue.length; q++) for (const ci of byVar[queue[q]]) for (const [j] of cons[ci].terms) add(j);
+          const members = queue;
+          const n = members.length;
+          const touched = /* @__PURE__ */ new Set();
+          for (const i of members) for (const ci of byVar[i]) touched.add(ci);
+          const order = [...touched].sort((a, b) => a - b);
+          const rhs = order.map((ci) => {
+            let b = cons[ci].rhs;
+            for (const [j, c2] of cons[ci].terms) if (!idx.has(j)) b -= c2 * values[j];
+            return b;
+          });
+          let constant = 0;
+          for (const [i, co] of terms) if (!idx.has(i)) constant += co * values[i];
+          const key = `${sig}|${members.map((i) => i + s[i]).join(",")}|${rhs.join(",")}|${constant}`;
+          let prob = null;
+          let c = null;
+          const build = () => {
+            const rows = order.map((ci, r) => {
+              const a = new Array(n).fill(0);
+              for (const [j, co] of cons[ci].terms) if (idx.has(j)) a[idx.get(j)] += co;
+              return { a, op: cons[ci].op, b: rhs[r] };
+            });
+            prob = { n, rows, lb: members.map((i) => bounds(s, i)[0]), ub: members.map((i) => bounds(s, i)[1]) };
+            c = new Array(n).fill(0);
+            for (const [i, co] of terms) if (idx.has(i)) c[idx.get(i)] += co;
+          };
+          return { get prob() {
+            if (!prob) build();
+            return prob;
+          }, get c() {
+            if (!c) build();
+            return c;
+          }, constant, key, n, members, idx };
         }
-        return level;
+        function reaches(p) {
+          if (p.n === 0) return small(p.constant);
+          const r = intFeasibleIn(p.prob, p.c, 1 - p.constant, T - 1 - p.constant, opt);
+          return r.feasible || !r.exact;
+        }
+        const classCode = (s, i) => s[i] === "pri" ? "s" : s[i] === "vis" ? values[i] === 0 ? "0" : vars[i].people ? "b" : "a" : s[i] === "sec" && vars[i].people ? "b" : "a";
+        const classSigs = /* @__PURE__ */ new WeakMap();
+        function targets(s, q) {
+          if (!classSigs.has(s)) classSigs.set(s, vars.map((_, i) => classCode(s, i)).join(""));
+          const quick = `${sig}|sym|${q.id}|${classSigs.get(s)}`;
+          if (cache.has(quick)) return cache.get(quick);
+          const out2 = targetsOf(s, q);
+          cache.set(quick, out2);
+          return out2;
+        }
+        function targetsOf(s, q) {
+          const cls = (i) => {
+            if (s[i] === "pri") return [1, T - 1];
+            if (s[i] === "vis") return values[i] === 0 ? [0, 0] : vars[i].people ? [T, Infinity] : [0, Infinity];
+            if (s[i] === "sec" && vars[i].people) return [T, Infinity];
+            return [0, Infinity];
+          };
+          const idx = /* @__PURE__ */ new Map();
+          const queue = [];
+          const add = (i) => {
+            if (!idx.has(i)) {
+              idx.set(i, idx.size);
+              queue.push(i);
+            }
+          };
+          for (const [i] of q.terms) add(i);
+          for (let k = 0; k < queue.length; k++) {
+            const [lo2, hi2] = cls(queue[k]);
+            if (lo2 === hi2) continue;
+            for (const ci of byVar[queue[k]]) for (const [j] of cons[ci].terms) add(j);
+          }
+          const key = `${sig}|sym|${q.id}|${queue.map((i) => `${i}:${cls(i).join(":")}`).join(",")}`;
+          if (cache.has(key)) return cache.get(key);
+          const n = queue.length;
+          const touched = /* @__PURE__ */ new Set();
+          for (const i of queue) {
+            const [lo2, hi2] = cls(i);
+            if (lo2 !== hi2) for (const ci of byVar[i]) touched.add(ci);
+          }
+          const rows = [...touched].sort((a2, b2) => a2 - b2).map((ci) => {
+            const a2 = new Array(n).fill(0);
+            for (const [j, c2] of cons[ci].terms) a2[idx.get(j)] += c2;
+            return { a: a2, op: cons[ci].op, b: cons[ci].rhs };
+          });
+          const lb = queue.map((i) => cls(i)[0]);
+          const ub = queue.map((i) => cls(i)[1]);
+          const c = new Array(n).fill(0);
+          for (const [i, co] of q.terms) c[idx.get(i)] += co;
+          const hi = simplex(n, rows, lb, ub, c);
+          const lo = simplex(n, rows, lb, ub, c.map((x) => -x));
+          const a = lo.status === "optimal" ? Math.max(1, Math.ceil(-lo.value - 1e-6)) : 1;
+          const b = hi.status === "optimal" ? Math.min(T - 1, Math.floor(hi.value + 1e-6)) : T - 1;
+          const out2 = a > b ? [] : a === b ? [a] : [a, b];
+          out2.open = hi.status !== "optimal" || hi.value >= T - 1e-6;
+          cache.set(key, out2);
+          return out2;
+        }
+        function deficit(s, q) {
+          const p = problem(s, q.terms);
+          const t = q.kind === "sec" ? null : targets(s, q);
+          const key = `${q.id}|${q.kind}|${p.key}|${t ? `${t.join(",")}:${t.open}` : ""}`;
+          if (cache.has(key)) return cache.get(key);
+          let d = 0;
+          if (q.kind === "pri" || q.kind === "cond") {
+            if (q.kind === "cond" && !reaches(p)) d = 0;
+            else if (p.n === 0) d = t.filter((v) => p.constant !== v).length + (q.kind === "cond" && t.open ? 1 : 0);
+            else {
+              d = t.filter((v) => !intFeasible(p.prob, p.c, v - p.constant, opt).feasible).length;
+              if (q.kind === "cond" && t.open && intMax(p.prob, p.c, null, { ...opt, enough: T - p.constant }).value + p.constant < T) d += 1;
+            }
+          } else {
+            const lo = -intMax(p.prob, p.c.map((x) => -x), null, opt).value + p.constant;
+            const hi = intMax(p.prob, p.c, null, { ...opt, enough: lo - p.constant + P2 }).value + p.constant;
+            d = hi - lo >= P2 ? 0 : Number.isFinite(hi - lo) ? P2 - (hi - lo) : P2 + 1;
+          }
+          cache.set(key, d);
+          return d;
+        }
+        function quantities(s) {
+          const out2 = [];
+          vars.forEach((v, i) => {
+            if (!v.people) return;
+            if (s[i] === "pri") out2.push({ id: v.id, terms: [[i, 1]], kind: "pri", home: [i] });
+            else if (s[i] === "sec") out2.push({ id: v.id, terms: [[i, 1]], kind: "sec", home: [i] });
+            else if ((s[i] === "withheld" || s[i] === "unpub") && byVar[i].length) out2.push({ id: v.id, terms: [[i, 1]], kind: "cond", home: [i] });
+          });
+          for (const q of derived) out2.push({ id: q.id, terms: q.terms, kind: "cond", derived: true, home: q.terms.map(([i]) => i) });
+          return out2;
+        }
+        function levels(q) {
+          const level = /* @__PURE__ */ new Map();
+          let frontier = [...new Set(q.home)];
+          frontier.forEach((i) => level.set(i, 0));
+          for (let d = 1; frontier.length; d++) {
+            const next = [];
+            for (const i of frontier) for (const ci of byVar[i]) for (const [j] of cons[ci].terms) if (!level.has(j)) {
+              level.set(j, d);
+              next.push(j);
+            }
+            frontier = next;
+          }
+          return level;
+        }
+        return { applyMirror, problem, deficit, quantities, levels, reaches, targets, values, cons, byVar };
       }
-      const hideable = (s2, i) => s2[i] === "vis" && vars[i].published && vars[i].value > 0 && !withheldTables.has(vars[i].table);
-      const withStatus = (s2, i, x) => {
-        const t = s2.slice();
-        t[i] = x;
-        applyMirror(t);
-        return t;
-      };
-      const withTable = (s2, table) => {
-        const t = s2.slice();
-        for (const i of tableOf.get(table)) if (vars[i].published) t[i] = "withheld";
-        applyMirror(t);
-        return t;
-      };
       const TRIES = 12;
-      applyMirror(st);
-      let s = st;
-      let outOfTime = false;
-      for (let guard = 0; guard < 5e3; guard++) {
-        if (Date.now() > deadline) {
-          outOfTime = true;
-          break;
+      const WITNESS_TRIES = 8;
+      const WORLD_RUNS = 400;
+      const WITNESS_RUNS = 24;
+      function run2(values) {
+        const w = world(values);
+        const withheldTables = /* @__PURE__ */ new Set();
+        const hideable = (s2, i) => s2[i] === "vis" && vars[i].published && values[i] > 0 && !withheldTables.has(vars[i].table);
+        const withStatus = (s2, i, x) => {
+          const t = s2.slice();
+          t[i] = x;
+          w.applyMirror(t);
+          return t;
+        };
+        const withTable = (s2, table) => {
+          const t = s2.slice();
+          for (const i of tableOf.get(table)) if (vars[i].published) t[i] = "withheld";
+          w.applyMirror(t);
+          return t;
+        };
+        let s = vars.map((v, i) => !v.published ? "unpub" : v.people && small(values[i]) ? "pri" : "vis");
+        for (const k of w.cons) {
+          if (k.op !== "=" || k.rhs !== 0) continue;
+          const tot = k.terms.filter(([, c]) => c === -1);
+          const parts = k.terms.filter(([, c]) => c === 1);
+          if (tot.length !== 1 || parts.length + 1 !== k.terms.length || parts.length < 2) continue;
+          const t = tot[0][0];
+          if (!vars[t].people || s[t] !== "vis" || values[t] === 0) continue;
+          if (parts.every(([i]) => s[i] === "pri" || s[i] === "vis" && values[i] === 0) && parts.some(([i]) => s[i] === "pri")) s[t] = "sec";
         }
-        let bad = null;
-        let bd = 0;
-        for (const q of quantities(s)) {
-          const d = deficit(s, q);
-          if (d > 0) {
-            bad = q;
-            bd = d;
+        const hiddenTotals = new Set(vars.map((_, i) => i).filter((i) => s[i] === "sec"));
+        for (const k of w.cons) {
+          if (k.op !== "<=" || k.rhs !== 0 || k.terms.length !== 2) continue;
+          const [[a, ca], [b, cb]] = k.terms;
+          const [sub, tot] = ca === 1 && cb === -1 ? [a, b] : ca === -1 && cb === 1 ? [b, a] : [null, null];
+          if (sub !== null && hiddenTotals.has(tot) && vars[sub].people && s[sub] === "vis" && values[sub] >= T) s[sub] = "sec";
+        }
+        w.applyMirror(s);
+        let outOfTime = false;
+        const passed = /* @__PURE__ */ new Map();
+        const touchOf = (st, q) => {
+          const p = w.problem(st, q.terms);
+          const t = new Set(q.terms.map(([i]) => i));
+          for (const i of p.members) {
+            t.add(i);
+            for (const ci of w.byVar[i]) for (const [j] of w.cons[ci].terms) t.add(j);
+          }
+          for (const [i] of q.terms) for (const ci of w.byVar[i]) for (const [j] of w.cons[ci].terms) t.add(j);
+          return t;
+        };
+        for (let guard = 0; guard < 5e3; guard++) {
+          if (Date.now() > deadline) {
+            outOfTime = true;
             break;
           }
-        }
-        if (!bad) break;
-        const level = levels(bad);
-        const cands = [...level.keys()].filter((i) => hideable(s, i)).sort((a, b) => level.get(a) - level.get(b) || vars[a].total - vars[b].total || vars[b].people - vars[a].people || vars[a].value - vars[b].value || a - b);
-        let choice = null;
-        if (cands.length) {
-          let helped2 = null;
-          for (const i of cands.slice(0, TRIES)) {
-            const t2 = withStatus(s, i, "sec");
-            const d = deficit(t2, bad);
-            if (d === 0) {
-              choice = t2;
+          let bad = null;
+          let bd = 0;
+          for (const q of w.quantities(s)) {
+            if (passed.has(q.id)) continue;
+            const d = w.deficit(s, q);
+            if (d > 0) {
+              bad = q;
+              bd = d;
               break;
             }
-            if (d < bd && !helped2) helped2 = t2;
+            passed.set(q.id, touchOf(s, q));
           }
-          s = choice || helped2 || withStatus(s, cands[0], "sec");
-          continue;
+          if (!bad) break;
+          const level = w.levels(bad);
+          const cands = [...level.keys()].filter((i) => hideable(s, i)).sort((a, b) => level.get(a) - level.get(b) || vars[a].total - vars[b].total || vars[b].people - vars[a].people || a - b);
+          if (cands.length) {
+            let choice = null;
+            let helped2 = null;
+            for (const i of cands.slice(0, TRIES)) {
+              const t2 = withStatus(s, i, "sec");
+              const d = w.deficit(t2, bad);
+              if (d === 0) {
+                choice = t2;
+                break;
+              }
+              if (d < bd && !helped2) helped2 = t2;
+            }
+            const next = choice || helped2 || withStatus(s, cands[0], "sec");
+            const changed = [];
+            next.forEach((x, i) => {
+              if (x !== s[i]) changed.push(i);
+            });
+            for (const [id, touch] of passed) if (changed.some((i) => touch.has(i))) passed.delete(id);
+            s = next;
+            continue;
+          }
+          const tables = [];
+          const seen2 = /* @__PURE__ */ new Set();
+          for (const i of [...level.keys()].sort((a, b) => level.get(a) - level.get(b) || a - b)) {
+            const t2 = vars[i].table;
+            if (seen2.has(t2) || withheldTables.has(t2) || !vars[i].published) continue;
+            seen2.add(t2);
+            tables.push(t2);
+          }
+          if (!tables.length) break;
+          let pick = null;
+          let helped = null;
+          for (const t2 of tables.slice(0, TRIES)) {
+            const d = w.deficit(withTable(s, t2), bad);
+            if (d === 0) {
+              pick = t2;
+              break;
+            }
+            if (d < bd && !helped) helped = t2;
+          }
+          const t = pick || helped || tables[0];
+          withheldTables.add(t);
+          s = withTable(s, t);
+          passed.clear();
         }
-        const tables = [];
-        const seen2 = /* @__PURE__ */ new Set();
-        for (const i of [...level.keys()].sort((a, b) => level.get(a) - level.get(b) || a - b)) {
-          const t2 = vars[i].table;
-          if (seen2.has(t2) || withheldTables.has(t2) || !vars[i].published) continue;
-          seen2.add(t2);
-          tables.push(t2);
-        }
-        if (!tables.length) break;
-        let pick = null;
-        let helped = null;
-        for (const t2 of tables.slice(0, TRIES)) {
-          const d = deficit(withTable(s, t2), bad);
-          if (d === 0) {
-            pick = t2;
+        const unprotected = [];
+        if (!outOfTime) for (const q of w.quantities(s)) {
+          if (!passed.has(q.id) && w.deficit(s, q) > 0) unprotected.push(q.id);
+          if (Date.now() > deadline) {
+            outOfTime = true;
             break;
           }
-          if (d < bd && !helped) helped = t2;
         }
-        const t = pick || helped || tables[0];
-        withheldTables.add(t);
-        s = withTable(s, t);
+        return { status: s, withheldTables: [...withheldTables], verified: !outOfTime && !unprotected.length, unprotected, outOfTime, world: w };
       }
-      const unprotected = [];
-      if (!outOfTime) for (const q of quantities(s)) {
-        if (deficit(s, q) > 0) unprotected.push(q.id);
-        if (Date.now() > deadline) {
-          outOfTime = true;
-          break;
+      function consistent(base) {
+        const S = base.status;
+        const tables = [...base.withheldTables].sort().join("|");
+        const w = base.world;
+        const truth = w.values;
+        const G = [truth];
+        const seen2 = /* @__PURE__ */ new Map([[truth.join(","), true]]);
+        let outOfTime = false;
+        let gaveUp = false;
+        const valueOf = (vals, terms) => terms.reduce((a, [i, c]) => a + c * vals[i], 0);
+        const same = (r) => r.verified && [...r.withheldTables].sort().join("|") === tables && r.status.every((x, i) => x === S[i]);
+        const tryWorld = (vals) => {
+          const key = vals.join(",");
+          if (seen2.has(key)) return seen2.get(key);
+          if (seen2.size >= WORLD_RUNS) {
+            gaveUp = true;
+            return false;
+          }
+          let ok = false;
+          try {
+            ok = same(run2(vals));
+          } catch {
+            ok = false;
+          }
+          seen2.set(key, ok);
+          if (ok) G.push(vals);
+          if (Date.now() > deadline) outOfTime = true;
+          return ok;
+        };
+        function* candidates(q, v) {
+          const p = w.problem(S, q.terms);
+          if (!p.n) return;
+          const n = p.n;
+          const prob = { ...p.prob, rows: [...p.prob.rows, { a: p.c, op: "=", b: v - p.constant }] };
+          const worldOf = (x) => {
+            const vals = truth.slice();
+            p.members.forEach((i, j) => {
+              vals[i] = x[j];
+            });
+            return vals;
+          };
+          const cls = (x) => x === 0 ? [0, 0] : x < T ? [1, T - 1] : [T, Infinity];
+          const keep = { ...prob, rows: prob.rows.slice(), lb: prob.lb.slice(), ub: prob.ub.slice() };
+          p.members.forEach((i, j) => {
+            if (vars[i].people && !q.terms.some(([t]) => t === i)) {
+              const [a, b] = cls(truth[i]);
+              keep.lb[j] = Math.max(keep.lb[j], a);
+              keep.ub[j] = Math.min(keep.ub[j], b);
+            }
+          });
+          for (const dq of derived) {
+            if (dq.id === q.id) continue;
+            const a = new Array(n).fill(0);
+            let k2 = 0;
+            let moves = false;
+            for (const [i, co] of dq.terms) {
+              if (p.idx.has(i)) {
+                a[p.idx.get(i)] += co;
+                moves = true;
+              } else k2 += co * truth[i];
+            }
+            if (!moves) continue;
+            const [lo, hi] = cls(valueOf(truth, dq.terms));
+            keep.rows.push({ a, op: ">=", b: lo - k2 });
+            if (hi !== Infinity) keep.rows.push({ a, op: "<=", b: hi - k2 });
+          }
+          const nearest = (pr, anchor) => {
+            const pad = new Array(n).fill(0);
+            const rows = pr.rows.map((r2) => ({ a: [...r2.a, ...pad], op: r2.op, b: r2.b }));
+            p.members.forEach((i, j) => {
+              const up = new Array(2 * n).fill(0);
+              up[j] = 1;
+              up[n + j] = -1;
+              rows.push({ a: up, op: "<=", b: anchor[i] });
+              const dn = new Array(2 * n).fill(0);
+              dn[j] = -1;
+              dn[n + j] = -1;
+              rows.push({ a: dn, op: "<=", b: -anchor[i] });
+            });
+            const r = intMax({ n: 2 * n, rows, lb: [...pr.lb, ...pad], ub: [...pr.ub, ...new Array(n).fill(Infinity)] }, [...pad, ...new Array(n).fill(-1)], null, opt);
+            return r.x ? r.x.slice(0, n) : null;
+          };
+          for (const pr of [keep, prob]) {
+            for (const anchor of [truth, ...G.slice(1).slice(-3).reverse()]) {
+              if (outOfTime || gaveUp) return;
+              const x = nearest(pr, anchor);
+              if (x) yield worldOf(x);
+            }
+          }
+          let k = 0;
+          for (const i of p.members) {
+            if (!vars[i].people || q.terms.some(([t]) => t === i) || k++ >= 6) continue;
+            for (const dir of [1, -1]) {
+              if (outOfTime || gaveUp) return;
+              const o = new Array(n).fill(0);
+              o[p.idx.get(i)] = dir;
+              const r = intMax(keep, o, null, opt);
+              if (r.x && Number.isFinite(r.value)) yield worldOf(r.x);
+            }
+          }
+          const own = new Set(q.terms.map(([i]) => i));
+          const nonzero = { ...prob, lb: p.members.map((i, j) => vars[i].people && !own.has(i) ? Math.max(1, prob.lb[j]) : prob.lb[j]) };
+          const down = p.members.map(() => -1);
+          const tight = down.slice();
+          for (const dq of derived) for (const [i, co] of dq.terms) if (p.idx.has(i)) tight[p.idx.get(i)] -= 4 * co;
+          let seed = 2166136261;
+          for (const ch of `${q.id}|${v}`) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
+          const rnd = () => {
+            seed = Math.imul(seed, 1664525) + 1013904223 >>> 0;
+            return seed / 2 ** 32;
+          };
+          const corners = [[nonzero, down], [nonzero, tight], [prob, tight], [prob, down]];
+          for (let k2 = 0; k2 < WITNESS_TRIES; k2++) corners.push([nonzero, p.members.map(() => -(1 + Math.floor(rnd() * 8)))]);
+          for (const [pr, o] of corners) {
+            if (outOfTime || gaveUp) return;
+            const r = intMax(pr, o, null, opt);
+            if (r.x) yield worldOf(r.x);
+          }
+          let m = 0;
+          for (const i of p.members) {
+            if (!vars[i].people || own.has(i) || m++ >= 4) continue;
+            const j = p.idx.get(i);
+            for (let x = prob.lb[j]; x <= prob.lb[j] + 2 * T && x <= prob.ub[j]; x++) {
+              if (outOfTime || gaveUp) return;
+              const fixed = { ...prob, lb: prob.lb.slice(), ub: prob.ub.slice() };
+              fixed.lb[j] = x;
+              fixed.ub[j] = x;
+              const y = nearest(fixed, truth);
+              if (y) yield worldOf(y);
+            }
+          }
         }
+        const witness = (q, v, cap = WITNESS_RUNS) => {
+          if (G.some((vals) => valueOf(vals, q.terms) === v)) return true;
+          let runs = 0;
+          for (const vals of candidates(q, v)) {
+            const fresh = !seen2.has(vals.join(","));
+            if (tryWorld(vals) && valueOf(vals, q.terms) === v) return true;
+            if (fresh && ++runs >= cap) return false;
+          }
+          return false;
+        };
+        const unprotected = [];
+        for (const q of w.quantities(S)) {
+          if (outOfTime || Date.now() > deadline) {
+            outOfTime = true;
+            break;
+          }
+          if (gaveUp) {
+            unprotected.push(q.id);
+            continue;
+          }
+          let ok = true;
+          if (q.kind === "pri" || q.kind === "cond" && !q.derived) {
+            const t = q.kind === "pri" || w.reaches(w.problem(S, q.terms)) ? w.targets(S, q) : [];
+            if (t.length) {
+              const [L, U2] = [t[0], t[t.length - 1]];
+              const top = Math.min(U2, L + P2 - 1);
+              ok = witness(q, L);
+              const high = () => G.some((vals) => {
+                const x = valueOf(vals, q.terms);
+                return x >= top && x <= U2;
+              });
+              for (let v = U2; ok && !high() && v >= top && !outOfTime; v--) witness(q, v);
+              ok = ok && high();
+            }
+          } else if (q.kind === "sec") {
+            const p = w.problem(S, q.terms);
+            const x = valueOf(truth, q.terms);
+            const lo = -intMax(p.prob, p.c.map((c) => -c), null, opt).value + p.constant;
+            const hi = intMax(p.prob, p.c, null, opt).value + p.constant;
+            const found = G.map((vals) => valueOf(vals, q.terms));
+            let a = Math.min(x, ...found);
+            let b = Math.max(x, ...found);
+            for (let v = a - 1; b - a < P2 && v >= lo && v >= x - 2 * T && !outOfTime && witness(q, v, 8); v--) a = v;
+            for (let v = b + 1; b - a < P2 && v <= hi && v <= x + 2 * T && !outOfTime && witness(q, v, 8); v++) b = v;
+            ok = b - a >= P2;
+          }
+          if (!ok) unprotected.push(q.id);
+        }
+        return { ok: !outOfTime && !gaveUp && !unprotected.length, unprotected, outOfTime, worlds: G.length, tried: seen2.size, G };
       }
-      const verified = !outOfTime && !unprotected.length;
-      return { status: s, withheldTables: [...withheldTables], verified, unprotected, outOfTime };
+      return { run: run2, consistent };
     }
-    module.exports = { simplex, intMax, intFeasible, protect };
+    function protect(model, T, { budget = 4e3, timeLimitMs = Infinity, consistency = true, debug = false } = {}) {
+      const deadline = Date.now() + timeLimitMs;
+      const a = auditor(model, T, { budget, deadline });
+      const base = a.run(model.vars.map((v) => v.value));
+      const { world, ...out2 } = base;
+      if (!base.verified || !consistency) return out2;
+      const c = a.consistent(base);
+      return { ...out2, verified: c.ok, unprotected: c.unprotected, outOfTime: c.outOfTime, consistency: { worlds: c.worlds, tried: c.tried }, ...debug ? { G: c.G } : {} };
+    }
+    module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect };
   }
 });
 
@@ -23757,8 +24067,8 @@ var require_harm_reduction_reports = __commonJS({
       }
       return { ...d, funds: d.funds.map(({ is_active, ...f }) => f), services_by_use: d.services_by_use.map((x, i) => FR.withCell(x, "people", people[i])), ...header(counting) };
     }
-    var countsSuffix = (d) => d.suppression.mode === "exact" ? "exact-counts" : d.suppression.purpose === "publication" ? "publication-suppressed" : "internal-suppressed";
-    var purposeLine = (d) => ({ k: "Purpose", v: d.suppression.purpose === "publication" ? "Publication release (whole programme, one standard period)" : d.suppression.purpose === "submission" ? "The programme's own submission, not for publication" : "Internal, not for publication" });
+    var countsSuffix = (d) => d.suppression.mode === "exact" ? "exact-counts" : d.suppression.purpose === "publication" ? "publication-screened-review-before-sharing" : "internal-suppressed";
+    var purposeLine = (d) => ({ k: "Purpose", v: d.suppression.purpose === "publication" ? `${FR.PUBLICATION_LABEL} (whole programme, one standard period)` : d.suppression.purpose === "submission" ? "The programme's own submission, not for publication" : "Internal, not for publication" });
     var purposeRows = (d) => [purposeLine(d), ...d.suppression.purpose === "publication" ? [{ k: "Before publishing", v: FR.PUBLICATION_GUIDANCE }] : []];
     function send(ctx, { body, filename, xlsx, classification, suppression }) {
       ctx.res.writeHead(200, {
@@ -23789,6 +24099,7 @@ var require_harm_reduction_reports = __commonJS({
         const d = ndp(ctx, range(ctx));
         const xlsx = ctx.query.get("format") === "xlsx";
         const rows = ndpRows(d);
+        FR.requirePublicationReview(ctx, d, "naloxone-ndp");
         audit3.log({ user: ctx.user, action: "report.naloxone_ndp.export", ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv" } });
         const body = xlsx ? S.writeWorkbook([{ name: "NDP log", columns: NDP_COLUMNS, rows }, aboutSheet(ctx, [
           { k: "Report", v: "Naloxone distribution and reversal log (NDP-style)" },
@@ -23811,6 +24122,7 @@ var require_harm_reduction_reports = __commonJS({
       r.get("/api/reports/opioid-settlement/export", auth3.requireAuth, auth3.requirePerm("budget:read"), auth3.requirePerm("export:read"), (ctx) => {
         const d = settlement(ctx, range(ctx));
         const xlsx = ctx.query.get("format") === "xlsx";
+        FR.requirePublicationReview(ctx, d, "opioid-settlement");
         audit3.log({ user: ctx.user, action: "report.opioid_settlement.export", ip: ctx.ip, details: { from: d.from, to: d.to, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv" } });
         const detailCols = [["schedule", "Schedule"], ["use_label", "Category"], ["hiaa_label", "High Impact Abatement Activity"], ["approved_amount", "Approved or reimbursed ($)"], ["pending_amount", "Pending ($)"], ["expenditures", "Expenditures"]].map(([key, label]) => ({ key, label }));
         const body = xlsx ? S.writeWorkbook([
@@ -24153,7 +24465,7 @@ var require_funder_report = __commonJS({
     init_globals_inject();
     var db3 = require_db();
     var auth3 = require_auth2();
-    var { badRequest, forbidden } = require_http();
+    var { badRequest, forbidden, HttpError: HttpError3 } = require_http();
     var { uuid: uuid2 } = require_crypto();
     var { defer } = require_spreadsheet();
     var SC = require_small_cells();
@@ -24203,6 +24515,15 @@ var require_funder_report = __commonJS({
       return { mode, threshold, purpose, release: rel };
     }
     var suppressionOf = (c) => ({ mode: c.mode, threshold: c.threshold, purpose: c.purpose });
+    var PUBLICATION_LABEL = "Publication release \u2014 small cells screened; review before sharing";
+    var REVIEW_CONFIRMATION = "I have reviewed the withheld and small figures before sharing";
+    function requirePublicationReview(ctx, d, report) {
+      if (!d.suppression || d.suppression.purpose !== "publication") return;
+      if (ctx.query.get("reviewed") !== "1") {
+        throw new HttpError3(428, `Before exporting a publication release, review its withheld and small figures and confirm it: "${REVIEW_CONFIRMATION}" (reviewed=1). Small cells are screened automatically, which is a conservative default, not a guarantee or an expert determination.`, { code: "publication_review_required" });
+      }
+      require_audit().log({ user: ctx.user, action: "report.publication.reviewed", ip: ctx.ip, details: { report, release_id: d.release ? d.release.id : null, from: d.from, to: d.to, confirmation: REVIEW_CONFIRMATION } });
+    }
     var PUBLICATION_GUIDANCE = "Before publishing: publish each standard period once, after its data are complete, and never two periods that overlap or where one contains the other (a quarter and the year that contains it): two such releases, or the same period run again after late entries, can be subtracted from each other to reveal a small group, which suppression within one release cannot prevent. Review the withheld and suppressed tables before release. This suppression is a conservative automated default, not a statistical expert determination (45 CFR 164.514(b)(1)).";
     function countingStatement(s) {
       const T = s.threshold;
@@ -24213,7 +24534,7 @@ var require_funder_report = __commonJS({
         return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the programme's own ${s.purpose === "submission" ? "submission to its funder" : "internal use"}; not for publication or sharing.`;
       }
       if (s.purpose === "publication") {
-        return `Publication release: the whole programme, ${PERIOD_LABEL[rel.period] || "one standard period"}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: nothing any of them prints says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it, and a table that cannot be protected is withheld and prints no rows). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Suitable for publication or sharing. ${PUBLICATION_GUIDANCE}`;
+        return `${PUBLICATION_LABEL}: the whole programme, ${PERIOD_LABEL[rel.period] || "one standard period"}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it, and a table that cannot be protected is withheld and prints no rows). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
       }
       return `${s.purpose === "submission" ? "The programme's own submission to its funder" : "Internal"}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole programme minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the programme and its funder.`;
     }
@@ -24505,7 +24826,7 @@ var require_funder_report = __commonJS({
         { k: "Report", v: "Funder report (unduplicated people served)" },
         { k: "Period", v: `${d.from} to ${d.to}` },
         { k: "Funding source", v: fundName || "All funding sources" },
-        { k: "Purpose", v: d.suppression.purpose === "publication" ? "Publication release (whole programme, one standard period)" : d.suppression.purpose === "submission" ? "The programme's own submission to its funder, not for publication" : "Internal, not for publication" },
+        { k: "Purpose", v: d.suppression.purpose === "publication" ? `${PUBLICATION_LABEL} (whole programme, one standard period)` : d.suppression.purpose === "submission" ? "The programme's own submission to its funder, not for publication" : "Internal, not for publication" },
         { k: "Counts", v: d.counting_statement },
         ...d.suppression.purpose === "publication" ? [{ k: "Before publishing", v: PUBLICATION_GUIDANCE }] : [],
         ...d.caseload_scope_note ? [{ k: "Scope", v: d.caseload_scope_note }] : [],
@@ -24564,7 +24885,7 @@ var require_funder_report = __commonJS({
         csvColumns: long
       };
     }
-    module.exports = { build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, PUBLICATION_GUIDANCE };
+    module.exports = { build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };
   }
 });
 
@@ -24768,11 +25089,12 @@ var require_reports = __commonJS({
       });
       r.get("/api/reports/funder/export", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("export:read"), requireReportRun({ caseloadScoped: true, fund: true }), async (ctx) => {
         const d = await FR.build(ctx, range(ctx));
+        FR.requirePublicationReview(ctx, d, "funder");
         const fundName = d.funding_source_id ? db3.one(`SELECT name FROM funding_sources WHERE id=?`, d.funding_source_id)?.name : null;
         const sh = FR.sheets(d, ctx, fundName);
         const S = require_spreadsheet();
         const xlsx = ctx.query.get("format") === "xlsx";
-        const mode = d.suppression.mode === "exact" ? "exact-counts" : d.suppression.purpose === "publication" ? "publication-suppressed" : "internal-suppressed";
+        const mode = d.suppression.mode === "exact" ? "exact-counts" : d.suppression.purpose === "publication" ? "publication-screened-review-before-sharing" : "internal-suppressed";
         const filename = `suds-funder-report-${d.from}_${d.to}-${mode}.${xlsx ? "xlsx" : "csv"}`;
         const body = xlsx ? S.writeWorkbook(sh.workbook) : S.toCsv(sh.csv, sh.csvColumns);
         audit3.log({ user: ctx.user, action: "report.funder.export", ip: ctx.ip, details: { from: d.from, to: d.to, funding_source_id: d.funding_source_id || void 0, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv" } });

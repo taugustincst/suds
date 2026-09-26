@@ -1,4 +1,7 @@
 'use strict';
+// SUDS_THOROUGH=1 runs the full sweeps (a required CI job, `thorough`, runs them on every push); the default
+// run takes a representative sample of the same generators so `npm test` stays quick.
+const THOROUGH = process.env.SUDS_THOROUGH === '1';
 // One publication release per period (server/publication-release.js), audited as one constraint system
 // (server/sdc.js), and attacked with everything its three reports publish by an attacker that shares no code
 // with it (test/fixtures/release-attacker.js). docs/HIPAA.md "Small cells in aggregate reports".
@@ -408,7 +411,7 @@ function randomProgramme(r) {
 
 test('property: nothing any report of a release publishes lets an attacker narrow a hidden count beyond the rule', () => {
   const r = rng(Number(process.env.PR_SEED) || 20260926);
-  const runs = Number(process.env.PR_RUNS) || 250;
+  const runs = Number(process.env.PR_RUNS) || (THOROUGH ? 250 : 40);
   let hidden = 0; let secondary = 0; let withheld = 0; let refused = 0;
   for (let run = 0; run < runs; run++) {
     const { T, prog } = randomProgramme(r);
@@ -433,7 +436,7 @@ test('property: nothing any report of a release publishes lets an attacker narro
 test('determinism: the same figures give the same release, cell for cell', () => {
   const PR = require('../server/publication-release');
   const r = rng(99);
-  for (let run = 0; run < 20; run++) {
+  for (let run = 0; run < (THOROUGH ? 20 : 6); run++) {
     const { T, prog } = randomProgramme(r);
     const copy = { funder: JSON.parse(JSON.stringify(prog.inputs.funder)), perFund: new Map(prog.inputs.perFund), settlement: JSON.parse(JSON.stringify(prog.inputs.settlement)), domains: JSON.parse(JSON.stringify(prog.inputs.domains)) };
     const a = PR.protectFigures(prog.inputs, T); const b = PR.protectFigures(copy, T);
@@ -516,7 +519,8 @@ test('a release the audit cannot verify is refused, never published: no node bud
   // publishes nothing (1.12.2 gave up and published it: 111 of 150 programmes leaked).
   const r = rng(555);
   let refused = 0; let published = 0;
-  for (let run = 0; run < 150; run++) {
+  const runs = THOROUGH ? 150 : 30;
+  for (let run = 0; run < runs; run++) {
     const { T, prog } = randomProgramme(r);
     for (const budget of [0, 1]) {
       const { p, pub, truth } = publish(prog, T, { budget });
@@ -525,7 +529,7 @@ test('a release the audit cannot verify is refused, never published: no node bud
       assert.deepEqual(attack(pub, truth, T), [], `run ${run}, budget ${budget}`);
     }
   }
-  assert.ok(refused > 100, `refused ${refused}, published ${published}`);
+  assert.ok(refused > (2 * runs) / 3, `refused ${refused}, published ${published}`); // most, with no budget to settle them (150 runs: > 100)
   // Out of time: refused, and says so.
   const { T, prog } = randomProgramme(rng(3));
   const { p } = publish(prog, T, { timeLimitMs: -1 });
@@ -597,7 +601,7 @@ test('algorithm-aware attacker: the reviewer\'s cases - 12 beside <11, events 12
   assertNoPatternLeak('gender and MAT', pattern.genderMat(10, 18), 11);
 });
 test('algorithm-aware attacker: small programmes at thresholds 3 and 5', () => {
-  for (const T of [3, 5]) {
+  for (const T of THOROUGH ? [3, 5] : [3]) {
     assertNoPatternLeak('served and on MAT', pattern.subset(3 * T + 4, 5 * T + 4, 'mat'), T);
     assertNoPatternLeak('served and referred', pattern.subset(2 * T + 2, 4 * T + 2, 'referred'), T);
     assertNoPatternLeak('gender and MAT', pattern.genderMat(2 * T + 1, 3 * T + 1), T);
