@@ -35,6 +35,32 @@ Rules for every release:
    release each.
 5. The staged rollout ([ADOPTION.md](ADOPTION.md#3-staged-release-cadence)) still applies: pilot group first.
 
+### The policy is checked, not only written down
+
+The release workflow's `gate` job runs `scripts/release-policy.js` after the CI check. It compares the
+version being released with the previous release tag and, **for a patch bump**, fails if the tree adds
+anything the table above keeps for feature releases:
+
+* a schema migration (`server/db.js`, the length of the `migrations` array),
+* a permission (`server/auth.js` `PERMS`: a permission name not in the previous release, or an existing one
+  granted to another role),
+* a route (every `METHOD path` the route modules register, including generated CRUD routes).
+
+A minor or major bump is not checked. When a patch release genuinely needs one of these (a security fix that
+needs a route, say), run the release from the Actions tab (*Run workflow*) with **`allow_patch_changes`** set
+to the reason. The gate then passes with a warning, and the release job puts the reason and the list of
+exceptions at the top of the GitHub Release notes, where a county reviewing the release reads it. A tag push
+cannot carry the override; an empty input is no override. Dry run before tagging:
+`node scripts/release-policy.js` (compares the working tree with the latest tag). The detection logic is
+tested in `test/release-policy.test.js`.
+
+**Record: 1.12.0–1.12.4 broke this policy.** 1.12.0 came fourteen hours after the 1.11.0 feature release
+(not a month), and 1.12.1–1.12.4 followed within twelve hours; 1.12.1 carried migration 41 and the route
+`POST /api/auth/oidc/reauth`, 1.12.2 the permission `reports:internal` (found afterwards with
+`node scripts/release-policy.js --previous-ref <commit> --next-ref <commit>`). They were security and privacy
+fixes from an independent review, shipped as soon as each was ready rather than batched. The check above
+exists so the next exception is an explicit, recorded decision rather than an oversight.
+
 ## Cutting a release
 ```bash
 git checkout main && git pull
