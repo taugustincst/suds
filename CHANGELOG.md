@@ -20,7 +20,9 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   `npm test`. Migrations are now also tested from databases written by 1.9.4 and 1.11.0 (records present,
   ciphertext decrypts, audit chain verifies). A new test runs the browser kernel under sql.js in Node and
   requires the same answers as the office server for sign-up, client, visit, note, consent, referral and the
-  funder report.
+  funder report. It found a device defect, now fixed: a background save that landed while the funder report
+  was running on a device (sql.js's export drops temporary tables) failed the report with "Something went
+  wrong on this device"; saves now wait for the report to finish.
 - **CI.** The Node 24 job installs a pinned version checked against a pinned SHA-256 (RELEASE.md says how to
   bump it). The WebKit job reports two service-worker cache checks that Playwright's WebKit on Linux cannot
   reproduce as skipped, with their diagnostics; iPhone offline-after-update is on the real-device checklist.
