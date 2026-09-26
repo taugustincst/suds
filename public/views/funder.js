@@ -96,7 +96,7 @@ export function withheldTables(d) {
   const list = (d.release && d.release.withheld_reasons) || [];
   return h('div', { class: 'mb', 'data-withheld-tables': String(list.length) },
     list.length
-      ? [h('p', { class: 'small' }, h('strong', {}, `Withheld from this release (${list.length}): `), 'these tables are left out of every report of the release, and the rest was checked again without them.'),
+      ? [h('p', { class: 'small' }, h('strong', {}, `Withheld from this release (${list.length}): `), 'they are left out of every report of this release (the funder report, the NDP log and the settlement report); the reason is beside each.'),
         h('ul', { class: 'small' }, list.map(x => h('li', { 'data-withheld-table': x.table }, h('strong', {}, x.label), ` — ${x.why}`)))]
       : h('p', { class: 'small' }, h('strong', {}, 'Nothing was withheld: '), 'every table of this release is shown, with small counts screened.'));
 }
