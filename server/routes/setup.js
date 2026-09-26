@@ -17,7 +17,10 @@ const selfsigned = require('../selfsigned');
 // (keys from env, or SUDS_SKIP_SETUP=1) use the bootstrap admin printed at first start instead.
 function setupNeeded() { return !config.setupComplete && !config.isTest && config.keySource !== 'env' && !process.env.SUDS_SKIP_SETUP; }
 function userCount() { return db.one(`SELECT COUNT(*) n FROM users`).n; }
-function onlyBootstrapAdmin() { return db.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0; }
+// The placeholder is the first administrator server/bootstrap.js created: "guest" unless SUDS_ADMIN_USERNAME
+// names another (1.12.4 renamed it and this check still looked for "admin", so a new server skipped the wizard).
+const bootstrapName = () => require('../bootstrap').adminUsername();
+function onlyBootstrapAdmin() { return db.one(`SELECT COUNT(*) n FROM users WHERE NOT (username=? AND must_change_password=1 AND last_login_at IS NULL)`, bootstrapName()).n === 0; }
 /**
  * Defaults a production install gets from the wizard rather than from someone remembering to set them:
  * scheduled backups every 4 hours (a new install used to run with none until an administrator found the
@@ -82,7 +85,7 @@ module.exports = (r) => {
     require('../bootstrap').discardPasswordFile();
     let mainFund = null;
     db.transaction(() => {
-      db.run(`DELETE FROM users WHERE username='admin' AND must_change_password=1 AND last_login_at IS NULL`);
+      db.run(`DELETE FROM users WHERE username=? AND must_change_password=1 AND last_login_at IS NULL`, bootstrapName());
       db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid(), v.admin_username, adminHash, v.admin_display_name, 'admin', db.now());
       db.setSetting('org_name', v.org_name); if (v.county_name) db.setSetting('county_name', v.county_name); if (v.program_contact) db.setSetting('program_contact', v.program_contact);
       db.setSetting('caseload_restriction', '1');

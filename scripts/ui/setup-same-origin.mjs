@@ -16,7 +16,7 @@ import { makeChecks, until, settle } from './assert.mjs';
 const { ok, eq, finish } = makeChecks('setup-same-origin');
 const port = await new Promise((resolve) => { const s = createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 const dataDir = mkdtempSync(path.join(process.env.SUDS_UI_TMP || '/tmp', 'suds-setup-same-origin-'));
-const env = { ...process.env, SUDS_ENV: 'production', SUDS_DATA_DIR: dataDir, PORT: String(port), SUDS_ADMIN_PASSWORD: '', LOCAL_MODE_ENABLED: '', LOGIN_RATE_LIMIT: '' };
+const env = { ...process.env, SUDS_ENV: 'production', SUDS_DATA_DIR: dataDir, PORT: String(port), SUDS_ADMIN_PASSWORD: '', SUDS_ADMIN_USERNAME: '', LOCAL_MODE_ENABLED: '', LOGIN_RATE_LIMIT: '' };
 const server = spawn(process.execPath, ['--no-warnings=ExperimentalWarning', 'server/index.js'], { env, stdio: 'ignore' });
 const base = `http://localhost:${port}`;
 const up = await until(() => fetch(`${base}/api/setup/status`).then(r => r.ok).catch(() => false), { timeout: 20000, every: 250 });
