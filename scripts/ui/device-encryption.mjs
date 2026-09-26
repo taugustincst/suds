@@ -278,6 +278,11 @@ const NAME = { first: 'Quintessa', last: 'Zabriskie', city: 'Xanaduville' };
   const before = await opensWith(known, await sealedNow(page));
   ok(before.image && before.keys, 'rekey: (the window: the restored image opens with the key in the backup)', before);
 
+  // Someone given an account on the restored device before any backed-up account signs in: their wrap opens
+  // the backup's key, so the rotation below drops it (ADR-0008), and their next sign-in must say so.
+  const third = await kernel(page, 'POST', '/api/local/signup', { display_name: 'Rekey Third', username: 'rkthird', password: PW2 });
+  eq(third.status, 200, 'rekey: an account is added on the restored device before the rotation', third.json);
+
   const login = await kernel(page, 'POST', '/api/auth/login', { username: 'rkowner', password: PW });
   eq(login.status, 200, 'rekey: the backed-up owner signs in with the password they had', login.json);
   eq(await page.evaluate(() => window.SUDS_LOCAL.rekeyPending()), false, 'rekey: and the device key is rotated at that sign-in');
@@ -286,8 +291,20 @@ const NAME = { first: 'Quintessa', last: 'Zabriskie', city: 'Xanaduville' };
   const after = await opensWith(known, await sealedNow(page));
   ok(!after.image && !after.keys, 'rekey: neither the stored image nor the vault\'s column keys open with the key in the backup any more', after);
 
+  // The rotation's device audit entry names the account it dropped (its id), not just how many.
+  const rot = (await kernel(page, 'GET', '/api/admin/audit?action=device.key_rotated&limit=5')).json;
+  const rotRow = (rot.rows || rot.entries || rot.items || []).find(x => x.action === 'device.key_rotated');
+  const thirdId = (await kernel(page, 'GET', '/api/users')).json.users?.find(u => u.username === 'rkthird')?.id;
+  ok(rotRow && thirdId && JSON.stringify(rotRow.details || '').includes(thirdId), 'rekey: the device audit records which account was dropped at the rotation', { rotRow, thirdId });
+
   // The restore was made from the first-run page (#/login?mode=signup): open Log in.
   await page.goto(base + '/#/login?mode=login'); await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 });
+  // The dropped account is told what happened, not "Username or password is incorrect".
+  eq(await tryLogin(page, 'rkthird', PW2), 'refused', 'rekey: the account dropped at the rotation cannot unlock the device on its own');
+  const said = await page.textContent('.login .banner.danger');
+  ok(/restored from a backup/i.test(said) && /re-approved/i.test(said) && !/incorrect/i.test(said), 'rekey: and is told the device was restored and moved to a new key, and that someone must re-approve it', said);
+  ok(await page.$('.login input[name=sponsor_username]'), 'rekey: with the fields for someone who can sign in here to let it in');
+  await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 });
   eq(await tryLogin(page, 'rksecond', PW2), 'in', 'rekey: the second backed-up account, not yet signed in since the restore, still unlocks the device with its old password');
   eq((await kernel(page, 'GET', '/api/auth/me')).json.user.username, 'rksecond', 'rekey: as itself');
   await logout(page); await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 });
