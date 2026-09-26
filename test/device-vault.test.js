@@ -114,3 +114,47 @@ test('plaintext detection finds a database stored in the clear, in any binary fo
   assert.deepStrictEqual(V.plaintextLeft([['db', plain], ['db2:1', { format: 'x' }], ['epoch', 5]]), ['db']);
   assert.deepStrictEqual(V.plaintextLeft([['epoch', 5]]), []);
 });
+
+// 1.12.0 defect: the restored device's key (`next_dek`) travels inside the backup, so whoever held the backup
+// and its passphrase and later got the device's browser storage could read everything recorded after the
+// restore. The first sign-in after a restore now moves the device to a key the backup never held.
+test('the first sign-in after a restore moves the device to a key the backup never held, and no account is locked out', async () => {
+  const dek0 = V.newDek(); const key0 = await V.importDek(dek0);
+  const keys = { enc: '3'.repeat(64), idx: '4'.repeat(64) };
+  let v = await V.create(key0, keys);
+  v = V.withWrap(v, await V.wrapDek(dek0, 'Owner-Password-1', { userId: 'u1', name: await V.nameHash(v.salt, 'owner') }));
+  v = V.withWrap(v, await V.wrapDek(dek0, 'Second-Password-2', { userId: 'u2', name: await V.nameHash(v.salt, 'second') }));
+  const rec = JSON.parse(JSON.stringify(await V.backupRecord(v, key0, V.newDek())));
+  const known = Uint8Array.from(Buffer.from(rec.next_dek, 'hex')); // what the backup's holder knows
+  const r = await V.fromBackupRecord(rec, keys, { users: 3 });
+  assert.equal(r.vault.rekey, 'restore', 'a restored vault is marked: its key is written in the backup');
+  // Someone enrolled on the restored device before any backed-up account signed in (vouched for, say): a wrap
+  // of the key the backup holds.
+  const rv = V.withWrap(r.vault, await V.wrapDek(r.dek, 'Third-Password-3', { userId: 'u3', name: await V.nameHash(r.vault.salt, 'third') }));
+  assert.ok(rv.chain, 'the carried wraps still need the chain');
+
+  assert.equal(await V.rekeyAfterRestore(rv, r.dek, 'owner', 'wrong password', { userId: 'u1', keys }), null, 'a wrong password rotates nothing');
+  assert.equal(await V.rekeyAfterRestore(rv, r.dek, 'third', 'Third-Password-3', { userId: 'u3', keys }), null, 'an account with no carried wrap cannot rotate (it cannot reach the backed-up device\'s key)');
+  const out = await V.rekeyAfterRestore(rv, r.dek, 'owner', 'Owner-Password-1', { userId: 'u1', keys });
+  assert.ok(out, 'the backed-up owner\'s first sign-in rotates the key');
+  assert.notDeepStrictEqual(out.dek, known, 'to a key that is not the one in the backup');
+  assert.ok(!out.vault.rekey, 'and the mark is cleared');
+  // Nothing in the new vault, nor an image sealed under the new key, opens with the key the backup holds.
+  const knownKey = await V.importDek(known);
+  await assert.rejects(V.openKeys(knownKey, out.vault.keys));
+  assert.deepStrictEqual(await V.openKeys(out.key, out.vault.keys), keys);
+  const image = await V.seal(out.key, sqliteLike());
+  await assert.rejects(V.open(knownKey, image));
+  await assert.rejects(V.open(knownKey, { format: 'suds-sealed-db', version: 1, iv: out.vault.chain.iv, ct: out.vault.chain.ct }, 'suds-device-dek-chain/v1'), 'the chain is not sealed under the backup\'s key either');
+  // The owner opens the new key with an ordinary wrap; the second backed-up account, which has not signed in
+  // yet, still reaches it with the password it had (its wrap -> the backed-up device's key -> the new chain).
+  const o = await V.unlock(out.vault, 'owner', 'Owner-Password-1'); assert.deepStrictEqual(o.dek, out.dek); assert.ok(!o.wrap.chained);
+  const s = await V.unlock(out.vault, 'second', 'Second-Password-2'); assert.deepStrictEqual(s.dek, out.dek);
+  // The wrap made before the rotation opened the backup's key: it is dropped, and that account is vouched for next time.
+  assert.equal(await V.unlock(out.vault, 'third', 'Third-Password-3'), null);
+  assert.deepStrictEqual(out.dropped, ['u3']);
+  // The second account's first sign-in gives it its own wrap; the chain goes with the last carried wrap.
+  const done = V.withWrap(out.vault, await V.wrapDek(out.dek, 'Second-Password-2', { userId: 'u2', name: await V.nameHash(out.vault.salt, 'second') }));
+  assert.ok(!done.chain && done.wraps.every(w => !w.chained));
+  assert.equal(await V.rekeyAfterRestore(done, out.dek, 'second', 'Second-Password-2', { userId: 'u2', keys }), null, 'once rotated, never again');
+});

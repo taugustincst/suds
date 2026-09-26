@@ -61,6 +61,24 @@ does not store is the password its people type.
   page to it in place; the accounts log in with the passwords they had when the backup was made (wrap → old
   DEK → chain → new DEK) and are re-wrapped directly at their first sign-in. A backup from before this change
   carries no wraps: the first of its accounts to sign in, in that page, gets one, and the rest are vouched for.
+- **Key rotation after a restore (1.12.1).** The fresh key a backup carries (`next_dek`) is written in the
+  backup, so up to 1.12.0 whoever held the backup and its passphrase, and later the device's browser storage,
+  could read everything recorded after the restore. A restored vault is now marked `rekey: 'restore'`; the
+  first time an account from the backup proves its password on the device (its sign-in, or vouching for
+  someone), `vault.rekeyAfterRestore` makes a new DEK, re-seals the column keys under it, wraps it for that
+  account, keeps the other carried wraps (each opens the backed-up device's DEK, D0, with its password) and
+  re-seals the chain **from D0 to the new DEK**, and drops any other wrap (an account enrolled before, which
+  wraps the backup's key; it is vouched for again). `local/kernel.js` `rekeyIfRestored` swaps the key and stores
+  the re-sealed image with the new vault in one write, or changes nothing if that write does not land. Why
+  this scheme: re-wrapping every account at once is impossible without their passwords, and sealing the new
+  key under the backup's key would defeat the rotation; D0 is the one secret every backed-up account can reach
+  and the backup's holder cannot (the backup holds only password-protected wraps of it). Rejected: rotating
+  only when every account has signed in once (leaves the window open indefinitely on a shared device), and
+  rotating only for a sole account. The window that remains — from the restore to the first such sign-in —
+  holds only the restore's audit entry unless an account without a carried wrap is let in first (then the
+  rotation waits for a backed-up account); stale copies the browser's storage engine keeps until compaction
+  are outside SUDS's reach. The column keys are not rotated (the image that holds their ciphertext is sealed
+  under the new DEK).
 
 ## Consequences
 
@@ -98,9 +116,11 @@ vouching fields), [docs/security/ENCRYPTION-AND-KEYS.md](../security/ENCRYPTION-
 
 ## Tests that pin it
 
-`test/device-vault.test.js` (sealing, wraps, iterations, per-wrap salts, key sealing, the backup chain,
-plaintext detection — under Node's WebCrypto); browser `scripts/ui/device-encryption.mjs` (raw IndexedDB holds
+`test/device-vault.test.js` (sealing, wraps, iterations, per-wrap salts, key sealing, the backup chain, the
+key rotation after a restore, plaintext detection — under Node's WebCrypto); browser `scripts/ui/device-encryption.mjs` (raw IndexedDB holds
 no name, plaintext column or SQLite header; no key material in `localStorage`; locked after reload; wrong
-password; second account; password change; ~5 MB save timings; migration from a plaintext store);
+password; second account; password change; ~5 MB save timings; migration from a plaintext store; after a
+restore, the stored image and column keys stop opening with the key in the backup at the first sign-in, and the
+other backed-up account still unlocks with its old password);
 `scripts/ui/signup.mjs` (vouched sign-up, backup and restore with both accounts); `scripts/ui/multitab.mjs`
 (fencing and takeover with sealed saves, an old-release tab's plaintext copy removed).

@@ -1,8 +1,8 @@
 // Encryption at rest on the device (docs/architecture/ADR-0008-device-encryption.md), on the static build
 // ("SUDS on this device") in a real browser: what is actually stored in IndexedDB and localStorage, the
 // lock after every page load, a wrong password, a second account, a password change, the save timings,
-// and a device set up before encryption at rest (its database in the clear, its keys in localStorage)
-// sealed at its next sign-in with every plaintext copy gone.
+// a device set up before encryption at rest (its database in the clear, its keys in localStorage)
+// sealed at its next sign-in with every plaintext copy gone, and the key rotation after a restore.
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -223,6 +223,79 @@ const NAME = { first: 'Quintessa', last: 'Zabriskie', city: 'Xanaduville' };
   const notice = await page.textContent('[data-storage-notice]');
   ok(/encrypted with your password/.test(notice) && /cannot be recovered/.test(notice) && /backup/.test(notice), 'the set-up screen says the records are encrypted with the password, and that a forgotten one cannot be recovered without a backup', notice);
   ok(!/keys are kept in the same browser/.test(notice), 'and no longer says the keys sit beside the data');
+  await ctx.close();
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// 4. A restore moves the device off the key its backup carried. The backup holds the restored device's key
+//    (next_dek), so whoever has the file and its passphrase, and later the browser's storage, could read what
+//    was recorded after the restore; the first backed-up account to sign in rotates it (vault.rekeyAfterRestore).
+// ---------------------------------------------------------------------------------------------------------
+{
+  const here = path.dirname(new URL(import.meta.url).pathname);
+  const backupMod = await import('data:text/javascript;base64,' + fs.readFileSync(path.join(here, '../../local/backup.js')).toString('base64'));
+  const V = await import('data:text/javascript;base64,' + fs.readFileSync(path.join(here, '../../local/vault.js')).toString('base64'));
+  // The sealed image and the vault's sealed column keys, as stored.
+  const sealedNow = (page) => page.evaluate(() => new Promise((resolve, reject) => {
+    const o = indexedDB.open('suds-local', 1);
+    o.onerror = () => reject(o.error);
+    o.onsuccess = () => {
+      const s = o.result.transaction('kv', 'readonly').objectStore('kv'); const k = s.getAllKeys(); const v = s.getAll();
+      v.onsuccess = () => {
+        const at = (key) => v.result[k.result.findIndex(x => String(x) === key)];
+        const epoch = at('epoch'); const img = at('db2:' + epoch); const vault = at('vault');
+        o.result.close();
+        resolve({ image: img ? { iv: Array.from(img.iv), ct: Array.from(img.ct) } : null, keys: vault && vault.keys ? { iv: Array.from(vault.keys.iv), ct: Array.from(vault.keys.ct) } : null });
+      };
+    };
+  }));
+  const opensWith = async (dekHex, s) => {
+    const key = await V.importDek(Uint8Array.from(Buffer.from(dekHex, 'hex')));
+    const image = await V.open(key, { format: 'suds-sealed-db', version: 1, iv: Uint8Array.from(s.image.iv), ct: Uint8Array.from(s.image.ct) }).then(() => true, () => false);
+    const keys = await V.openKeys(key, { iv: Uint8Array.from(s.keys.iv), ct: Uint8Array.from(s.keys.ct) }).then(() => true, () => false);
+    return { image, keys };
+  };
+
+  const src = await browser.newContext({ viewport: { width: 1100, height: 850 } });
+  const sp = watch(await src.newPage(), 'rekey-source');
+  await firstRun(sp, { name: 'Rekey Owner', username: 'rkowner', password: PW });
+  eq((await kernel(sp, 'POST', '/api/clients', { first_name: 'Before', last_name: 'Backup', city: 'Restoreville' })).status, 201, 'rekey: a client on the source device');
+  eq((await kernel(sp, 'POST', '/api/local/signup', { display_name: 'Rekey Second', username: 'rksecond', password: PW2 })).status, 200, 'rekey: and a second account');
+  const b = await kernel(sp, 'POST', '/api/local/backup', { passphrase: 'rekey passphrase' });
+  eq(b.status, 200, 'rekey: its backup is taken');
+  const opened = await backupMod.open(Uint8Array.from(b.body), 'rekey passphrase');
+  const known = opened.meta.device && opened.meta.device.next_dek;
+  ok(/^[0-9a-f]{64}$/.test(known || ''), 'rekey: the backup carries the restored device\'s key (what its holder would know)');
+  await src.close();
+
+  const ctx = await browser.newContext({ viewport: { width: 1100, height: 850 } });
+  const page = watch(await ctx.newPage(), 'rekey-restored');
+  await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 20000 });
+  const r = await kernel(page, 'POST', '/api/local/restore', { file_b64: Buffer.from(b.body).toString('base64'), passphrase: 'rekey passphrase', confirm: 'RESTORE' });
+  eq(r.status, 200, 'rekey: the backup is restored onto a new device', r.json);
+  await page.evaluate(() => window.SUDS_LOCAL.flush({ force: true }));
+  eq(await page.evaluate(() => window.SUDS_LOCAL.rekeyPending()), true, 'rekey: until someone signs in, the device runs under the backup\'s key');
+  const before = await opensWith(known, await sealedNow(page));
+  ok(before.image && before.keys, 'rekey: (the window: the restored image opens with the key in the backup)', before);
+
+  const login = await kernel(page, 'POST', '/api/auth/login', { username: 'rkowner', password: PW });
+  eq(login.status, 200, 'rekey: the backed-up owner signs in with the password they had', login.json);
+  eq(await page.evaluate(() => window.SUDS_LOCAL.rekeyPending()), false, 'rekey: and the device key is rotated at that sign-in');
+  eq((await kernel(page, 'POST', '/api/clients', { first_name: 'After', last_name: 'Restore', city: 'Newkeyton' })).status, 201, 'rekey: a client recorded after the restore');
+  await page.evaluate(() => window.SUDS_LOCAL.flush({ force: true }));
+  const after = await opensWith(known, await sealedNow(page));
+  ok(!after.image && !after.keys, 'rekey: neither the stored image nor the vault\'s column keys open with the key in the backup any more', after);
+
+  // The restore was made from the first-run page (#/login?mode=signup): open Log in.
+  await page.goto(base + '/#/login?mode=login'); await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 });
+  eq(await tryLogin(page, 'rksecond', PW2), 'in', 'rekey: the second backed-up account, not yet signed in since the restore, still unlocks the device with its old password');
+  eq((await kernel(page, 'GET', '/api/auth/me')).json.user.username, 'rksecond', 'rekey: as itself');
+  await logout(page); await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 });
+  eq(await tryLogin(page, 'rkowner', PW), 'in', 'rekey: and the owner signs in again under the new key');
+  const mine = (await kernel(page, 'GET', '/api/clients?limit=10')).json.clients;
+  ok(mine.some(x => x.last_name === 'Backup') && mine.some(x => x.last_name === 'Restore' && x.city === 'Newkeyton'), 'rekey: with the restored records and what was recorded after the restore', mine.map(x => x.last_name));
+  const later = await opensWith(known, await sealedNow(page));
+  ok(!later.image && !later.keys, 'rekey: still nothing the backup\'s key opens', later);
   await ctx.close();
 }
 
