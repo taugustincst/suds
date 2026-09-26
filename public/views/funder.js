@@ -37,6 +37,16 @@ export function mayRunInternalReports({ caseloadScoped = true } = {}) {
   return can('reports:internal') || (can('clients:read') && (caseloadScoped || can('clients:all')));
 }
 
+/** What to do before sharing a publication release (docs/HIPAA.md "Small cells in aggregate reports"). */
+export function publicationGuidance() {
+  return h('div', { class: 'small', 'data-publication-guidance': '1' },
+    h('p', { class: 'mb' }, h('strong', {}, 'Before you publish: ')),
+    h('ul', {},
+      h('li', {}, 'Publish each period once. Never publish two periods that overlap or where one contains the other, such as a quarter and its year: they can be subtracted to reveal a small group.'),
+      h('li', {}, 'Review the tables marked withheld or suppressed before you release the figures.'),
+      h('li', {}, 'This suppression is a cautious automatic default, not a statistical expert determination.')));
+}
+
 route('funder', async (r) => {
   const internalOk = mayRunInternalReports();
   const { lastMonth, lastQuarter, lastYear } = publishablePeriods();
@@ -58,7 +68,8 @@ route('funder', async (r) => {
     h('button', { class: 'btn ghost sm', 'data-period': 'year-oct', onClick: () => onPick(lastYear(10)) }, 'Last fiscal year (Oct–Sep)'));
   let d;
   try { d = await get(`/api/reports/funder?${qs}`); } catch (err) {
-    if (err.status !== 403) throw err;
+    // 422: the period's release could not be verified, so it is not published (server/publication-release.js).
+    if (err.status !== 403 && err.status !== 422) throw err;
     // A role that runs publication releases only, given a link to any other run: say why, and offer the
     // periods it can run instead of an error page.
     return h('div', {}, pageHead('Funder report'),
@@ -77,6 +88,8 @@ route('funder', async (r) => {
     state.funds.map(f => h('option', { value: f.id, selected: f.id === fund }, f.name)));
 
   const publishable = d.suppression.purpose === 'publication';
+  // A table withheld whole has no rows; say so where it would have been.
+  const withheldNote = (keys, text) => { const w = (d.withheld || []).filter(k => keys.includes(k)); return w.length ? h('p', { class: 'small muted', 'data-withheld': w.join(',') }, text) : null; };
 
   // Fiscal-year shortcuts, because that is the period a grant report covers.
   const fy = (startMonth) => {
@@ -101,6 +114,7 @@ route('funder', async (r) => {
     h('div', { class: `banner small ${publishable ? 'info' : 'warn'}`, 'data-counting-mode': d.suppression.mode, 'data-purpose': d.suppression.purpose },
       h('strong', {}, publishable ? 'Publication release. ' : 'Internal, not for publication. '), d.counting_statement,
       publishable ? null : h('span', {}, ' To publish or share figures, run the report for all funding sources and one of the periods under "Periods you can publish".')),
+    publishable ? publicationGuidance() : null,
 
     // Custom ranges, one fund and year-to-date runs are internal: offered only to a role that may run them.
     internalOk ? h('div', { class: 'filters', 'data-custom-range': '1' },
@@ -155,15 +169,17 @@ route('funder', async (r) => {
         stat('Naloxone kits distributed', num(d.naloxone_distribution.kits)),
         stat('— of those, community distribution', num(d.naloxone_distribution.community_kits)),
         stat('Fentanyl test strips', num(d.naloxone_distribution.strips))),
-      d.overdose.by_administered_by.length ? h('div', { class: 'grid cols-2 mt' },
+      // A publication release lists every code and every month, zero or not; nothing to draw if all are 0.
+      d.overdose.by_administered_by.some(x => x.n !== 0) ? h('div', { class: 'grid cols-2 mt' },
         h('div', {}, h('h2', {}, 'Who gave the naloxone (reversals)'), bars(d.overdose.by_administered_by, { valueKey: 'n', labelKey: 'k', list: 'ADMINISTERED_BY' })),
         h('div', {}, h('h2', {}, 'By month'), bars(d.overdose.by_month.map(x => ({ k: x.month, n: x.n })), { valueKey: 'n', labelKey: 'k' }))) : null,
-      d.suppression.mode === 'exact' ? null : h('p', { class: 'small muted', 'data-suppression-note': '1' }, `"<${d.suppression.threshold}" is a count of fewer than ${d.suppression.threshold} people; "suppressed" is hidden so that such a count cannot be worked out from the other figures. Kits, doses and test strips are not counts of people and are exact.`)),
+      withheldNote(['by_administered_by', 'by_month'], 'Who gave the naloxone, or the overdoses by month, are withheld: they could not be shown without giving someone away.'),
+      d.suppression.mode === 'exact' ? null : h('p', { class: 'small muted', 'data-suppression-note': '1' }, `"<${d.suppression.threshold}" is a count of fewer than ${d.suppression.threshold} people; "suppressed" is hidden so that such a count cannot be worked out from the other figures. Kits and test strips are not counts of people and are exact; doses are hidden when they would show how many reversals there were.`)),
 
     h('section', { class: 'card' },
       h('h2', {}, 'Who was served'),
       h('p', { class: 'small muted' }, 'Each person counted once. Race is recorded as codes a funder can count; because people may report more than one, those figures add up to more than the number served.'),
-      d.withheld && d.withheld.length ? h('p', { class: 'small muted', 'data-withheld': d.withheld.join(',') }, 'Some breakdowns are withheld: too few people were served to show them without giving someone away.') : null,
+      withheldNote(['by_race_code', 'by_ethnicity', 'by_gender', 'by_language', 'by_housing', 'by_insurance'], 'Some breakdowns are withheld: too few people were served to show them without giving someone away.'),
       h('div', { class: 'grid cols-3' },
         h('div', {}, h('h2', {}, 'Race'), bars(d.demographics.by_race_code, { valueKey: 'n', labelKey: 'k' })),
         h('div', {}, h('h2', {}, 'Ethnicity'), bars(d.demographics.by_ethnicity, { valueKey: 'n', labelKey: 'k' })),
@@ -179,9 +195,10 @@ route('funder', async (r) => {
         : d.episodes.median_length_of_stay_days !== null
         ? h('p', {}, `Median length of stay: ${d.episodes.median_length_of_stay_days} days.`)
         : h('p', { class: 'muted' }, 'No episodes were closed in this period.'),
-      d.episodes.by_discharge_reason.length
+      withheldNote(['by_discharge_reason'], 'Discharge reasons are withheld: they could not be shown without giving someone away.'),
+      d.episodes.by_discharge_reason.some(x => x.n !== 0)
         ? bars(d.episodes.by_discharge_reason, { valueKey: 'n', labelKey: 'k', list: 'DISCHARGE_REASONS' })
-        : emptyState('Nothing to show', 'Discharge reasons appear here once episodes are closed. Close an episode from a client\'s Episodes tab.')),
+        : (d.withheld || []).includes('by_discharge_reason') ? null : emptyState('Nothing to show', 'Discharge reasons appear here once episodes are closed. Close an episode from a client\'s Episodes tab.')),
 
     h('section', { class: 'card' },
       h('h2', {}, 'By funding source'),

@@ -5,6 +5,11 @@
 // people, "withheld" = unknown) and what anyone knows about how the figures relate, and then, for every
 // hidden or unprinted count of people, works out exactly which values are still possible.
 //
+// Besides the numbers it reads which rows are listed (a table that lists only its non-zero rows says each
+// listed row is at least 1 and each missing key is 0), the order they are listed in (by size says which is
+// larger), the episodes (opened in the period at most closed plus open at the end) and the naloxone doses
+// (1 to 20 per reversal, at most 20 per event). With those, it finds the leaks of 1.12.2.
+//
 // It shares no code with the engine it attacks (server/sdc.js solves linear programs by branch and bound);
 // this is a finite-domain search with bounds propagation: every variable gets a domain [lo, hi] (capped at a
 // value well above anything in the data, which only makes the attacker stronger), constraints tighten the
@@ -74,14 +79,48 @@ function makeSolver(lo0, hi0, cons) {
 }
 
 const isNum = (v) => typeof v === 'number';
+// The most doses one event may record (server/routes/overdose.js validates it; the attacker knows the rule).
+const DOSES_MAX = 20;
+const FOLDED = 'Other (combined)';
+const plainOrder = (a, b) => { const x = String(a); const y = String(b); return x < y ? -1 : x > y ? 1 : 0; };
 
 /**
- * The attacker's model of a release. pub: { funder, settlement, ndp } as published; truth: the same figures
- * exact ({ funder, settlement } from exact runs). Returns { solver, vars: [{ name, shown, truth, people }], derived }.
+ * What the rows a breakdown lists say, whatever the publisher's rule, as long as it is one of the two SUDS
+ * has used: list every key of a fixed list (the months of the period, a code list) zero or not, plus any
+ * other key that is not zero; or list only the keys that are not zero. printed: keys printed; domain: the
+ * fixed list (public: the period and the code lists); gone: the table is withheld and printed nothing;
+ * truthKeys: the true keys, used only for a withheld table (the attacker is assumed to know them, which only
+ * makes it stronger). Returns { keys to model, atLeast1: keys known not to be 0, zero: keys known to be 0 }.
+ */
+function listing(printed, shownZero, domain, gone, truthKeys) {
+  const pk = new Set(printed);
+  const keys = [...new Set([...domain, ...printed, ...(gone && !printed.length ? truthKeys : [])])];
+  const out = { keys, atLeast1: [], zero: [] };
+  if (printed.length) {
+    const full = domain.length > 0 && domain.every(k => pk.has(k));
+    if (full) out.atLeast1 = printed.filter(k => !domain.includes(k)); // outside the list: listed because not 0
+    else if (!shownZero) { out.atLeast1 = printed; out.zero = keys.filter(k => !pk.has(k)); } // only rows that are not 0
+  } else if (!gone) out.zero = keys; // nothing printed and nothing withheld: all 0
+  else out.atLeast1 = truthKeys.filter(k => !domain.includes(k));
+  return out;
+}
+/** Consecutive rows in an order that is not the fixed one (list order, then key) are in order of size. */
+function sizeOrdered(keys, domain, fixedLast) {
+  const rank = (k) => { const i = domain.indexOf(k); return i >= 0 ? i : domain.length; };
+  const fixed = keys.slice().sort((a, b) => ((a === fixedLast) - (b === fixedLast)) || (rank(a) - rank(b)) || plainOrder(a, b));
+  return fixed.some((k, i) => k !== keys[i]);
+}
+
+/**
+ * The attacker's model of a release. pub: { funder, settlement, ndp, domains: { months, administered_by,
+ * discharge_reasons }, withheld: table ids } as published; truth: the same figures exact ({ funder, settlement }
+ * from exact runs). Returns { solver, vars: [{ name, shown, truth, people }] }.
  */
 function modelOf(pub, truth, T) {
   const vars = []; const byName = new Map(); const cons = [];
   const tf = truth.funder;
+  const dom = { months: [], administered_by: [], discharge_reasons: [], ...(pub.domains || {}) };
+  const gone = new Set(pub.withheld || (pub.funder.release && pub.funder.release.withheld) || []);
   // Every true value, by name, so the checks know which unprinted counts are small.
   const tv = new Map();
   tv.set('N', tf.unduplicated.served);
@@ -92,15 +131,19 @@ function modelOf(pub, truth, T) {
   for (const [id, x] of Object.entries(truth.inactiveFunds || {})) { tv.set(`fund:${id}:p`, x.people); tv.set(`fund:${id}:s`, x.services); }
   const od = tf.overdose;
   tv.set('E', od.events); tv.set('R', od.reversals); tv.set('F', od.fatal); tv.set('C', od.community_reported);
-  for (const m of od.by_month) { tv.set(`n:${m.month}`, m.n); tv.set(`r:${m.month}`, m.reversals); }
+  tv.set('Dall', od.naloxone_doses || 0); tv.set('Dr', od.by_month.reduce((a, m) => a + (m.reversal_doses || 0), 0));
+  for (const m of od.by_month) { tv.set(`n:${m.month}`, m.n); tv.set(`r:${m.month}`, m.reversals); tv.set(`d:${m.month}`, m.reversal_doses || 0); }
   for (const x of od.by_administered_by) tv.set(`by:${x.k}`, x.n);
-  tv.set('D', tf.episodes.discharges); for (const x of tf.episodes.by_discharge_reason) tv.set(`dis:${x.k}`, x.n);
+  const te = tf.episodes;
+  tv.set('D', te.discharges); tv.set('A', te.admissions); tv.set('O', te.open_at_end); for (const x of te.by_discharge_reason) tv.set(`dis:${x.k}`, x.n);
   const CAP = Math.max(0, ...tv.values()) + 3 * T + 2;
+  // A key the data do not hold is truly 0.
+  const truthOf = (name) => (tv.has(name) ? tv.get(name) : /^(n|r|d|by|dis):/.test(name) ? 0 : undefined);
 
   // A variable, and what a published symbol says about it (read again, from another report: both hold).
   const V = (name, shown, people = true) => {
     let i = byName.get(name);
-    if (i === undefined) { i = vars.length; byName.set(name, i); vars.push({ name, shown: [], truth: tv.get(name), people, lo: 0, hi: CAP }); }
+    if (i === undefined) { i = vars.length; byName.set(name, i); vars.push({ name, shown: [], truth: truthOf(name), people, lo: 0, hi: CAP }); }
     const x = vars[i];
     if (shown !== undefined) {
       x.shown.push(shown);
@@ -110,50 +153,102 @@ function modelOf(pub, truth, T) {
     return i;
   };
   const add = (terms, op, rhs = 0) => cons.push({ terms, op, rhs });
+  // A relationship that holds for what SUDS records but not for every imported row: the attacker assumes it
+  // whenever the truth satisfies it (an attacker assuming it otherwise would reason from something false).
+  const holds = (terms, op, rhs) => { const s = terms.reduce((a, [i, c]) => a + c * vars[i].truth, 0); return op === '<=' ? s <= rhs : op === '>=' ? s >= rhs : s === rhs; };
+  const addIfTrue = (terms, op, rhs = 0) => { if (holds(terms, op, rhs)) add(terms, op, rhs); };
   const derived = [];
   const rest = (name, i) => derived.push({ name: `${name} (rest)`, terms: [[V('N'), 1], [i, -1]] });
+  const atLeast = (i, v) => { vars[i].lo = Math.max(vars[i].lo, v); };
+  const exactly = (i, v) => { vars[i].lo = Math.max(vars[i].lo, v); vars[i].hi = Math.min(vars[i].hi, v); };
+  const ordered = (idx) => { for (let j = 0; j + 1 < idx.length; j++) add([[idx[j], 1], [idx[j + 1], -1]], '>='); };
 
   // ---- the funder report ----
   const f = pub.funder;
   const N = V('N', f.unduplicated.served);
   for (const k of ['on_mat', 'with_a_referral', 'admitted_after_referral']) { const i = V(k, f.unduplicated[k]); add([[i, 1], [N, -1]], '<='); rest(k, i); }
   // Each single-valued breakdown adds up to the people served (a withheld one is printed as no rows: its
-  // cells are unknown, but still add up).
+  // cells are unknown, but still add up). Rows listed by size say which hidden count is larger.
   for (const k of ['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_ethnicity']) {
     const rows = f.demographics[k].length ? f.demographics[k] : tf.demographics[k].map(x => ({ k: x.k, n: 'withheld' }));
-    add([...rows.map(x => [V(`${k}:${x.k}`, x.n), 1]), [N, -1]], '=');
+    const idx = rows.map(x => V(`${k}:${x.k}`, x.n));
+    add([...idx.map(i => [i, 1]), [N, -1]], '=');
+    if (f.demographics[k].length && sizeOrdered(rows.map(x => x.k), [], FOLDED)) ordered(idx);
   }
   const race = f.demographics.by_race_code.length ? f.demographics.by_race_code : tf.demographics.by_race_code.map(x => ({ k: x.k, n: 'withheld' }));
   const ri = race.map(x => V(`by_race_code:${x.k}`, x.n));
   ri.forEach((i, j) => { add([[i, 1], [N, -1]], '<='); rest(`race ${race[j].k}`, i); });
   if (ri.length) add([...ri.map(i => [i, 1]), [N, -1]], '>=');
+  if (f.demographics.by_race_code.length && sizeOrdered(race.map(x => x.k), [], FOLDED)) ordered(ri);
   const unk = race.findIndex(x => x.k === 'unknown');
   if (unk >= 0) ri.forEach((i, j) => { if (j !== unk) add([[i, 1], [ri[unk], 1], [N, -1]], '<='); });
   for (const r of f.by_funding_source) {
     const p = V(`fund:${r.id}:p`, r.clients_served); const s = V(`fund:${r.id}:s`, r.services, false);
     add([[p, 1], [N, -1]], '<='); add([[p, 1], [s, -1]], '<='); rest(`fund ${r.name}`, p);
   }
+
+  // Overdose events, by month, in the funder report and again in the NDP log.
   const E = V('E', f.overdose.events); const R = V('R', f.overdose.reversals); const F = V('F', f.overdose.fatal); const C = V('C', f.overdose.community_reported);
-  add([...f.overdose.by_month.map(m => [V(`n:${m.month}`, m.n), 1]), [E, -1]], '=');
-  add([...f.overdose.by_month.map(m => [V(`r:${m.month}`, m.reversals), 1]), [R, -1]], '=');
-  for (const m of f.overdose.by_month) {
-    add([[V(`r:${m.month}`), 1], [V(`n:${m.month}`), -1]], '<=');
-    derived.push({ name: `${m.month} not reversed`, terms: [[V(`n:${m.month}`), 1], [V(`r:${m.month}`), -1]] });
+  const ndpRows = pub.ndp.rows.filter(x => x.entry === 'reversal');
+  const monthsGone = !f.overdose.by_month.length && gone.has('overdose.by_month.n') && gone.has('overdose.by_month.reversals');
+  const ndpGone = !ndpRows.length && gone.has('overdose.by_month.reversals');
+  const truthMonths = od.by_month.map(m => m.month);
+  const fl = listing(f.overdose.by_month.map(m => m.month), f.overdose.by_month.some(m => m.n === 0), dom.months, monthsGone, truthMonths);
+  const nl = listing(ndpRows.map(x => x.date), ndpRows.some(x => x.reversals === 0), dom.months, ndpGone, truthMonths);
+  const months = [...new Set([...fl.keys, ...nl.keys, ...(monthsGone || ndpGone ? truthMonths : [])])].sort();
+  const n = (m) => V(`n:${m}`); const r = (m) => V(`r:${m}`); const d = (m) => V(`d:${m}`, undefined, false);
+  for (const m of f.overdose.by_month) { V(`n:${m.month}`, m.n); V(`r:${m.month}`, m.reversals); }
+  for (const x of ndpRows) { V(`r:${x.date}`, x.reversals); V(`d:${x.date}`, x.reversal_doses, false); }
+  add([...months.map(m => [n(m), 1]), [E, -1]], '=');
+  add([...months.map(m => [r(m), 1]), [R, -1]], '=');
+  for (const m of months) {
+    add([[r(m), 1], [n(m), -1]], '<=');
+    derived.push({ name: `${m} not reversed`, terms: [[n(m), 1], [r(m), -1]] });
   }
-  add([...f.overdose.by_administered_by.map(x => [V(`by:${x.k}`, x.n), 1]), [R, -1]], '=');
+  // Which months are listed: in the funder report a month is listed for its events; in the NDP log, when it
+  // does not list every month, for its reversals.
+  for (const m of fl.atLeast1) atLeast(n(m), 1);
+  for (const m of fl.zero) exactly(n(m), 0);
+  const ndpFull = dom.months.length > 0 && dom.months.every(m => ndpRows.some(x => x.date === m));
+  for (const m of nl.atLeast1) atLeast(ndpFull ? n(m) : r(m), 1);
+  for (const m of nl.zero) exactly(r(m), 0);
   add([[F, 1], [E, -1]], '<='); add([[C, 1], [E, -1]], '<=');
   // Fatal and reversed events are distinct for everything recorded through SUDS (not for every imported row).
-  if (od.fatal + od.reversals <= od.events) add([[F, 1], [R, 1], [E, -1]], '<=');
+  addIfTrue([[F, 1], [R, 1], [E, -1]], '<=');
   derived.push({ name: 'E-R', terms: [[E, 1], [R, -1]] }, { name: 'E-F', terms: [[E, 1], [F, -1]] }, { name: 'E-C', terms: [[E, 1], [C, -1]] }, { name: 'E-R-F', terms: [[E, 1], [R, -1], [F, -1]] });
-  const D = V('D', f.episodes.discharges);
-  add([...f.episodes.by_discharge_reason.map(x => [V(`dis:${x.k}`, x.n), 1]), [D, -1]], '=');
+  // Who gave the naloxone: adds up to the reversals.
+  const byRows = f.overdose.by_administered_by;
+  const bl = listing(byRows.map(x => x.k), byRows.some(x => x.n === 0), dom.administered_by, !byRows.length && gone.has('overdose.by_administered_by'), od.by_administered_by.map(x => x.k));
+  for (const x of byRows) V(`by:${x.k}`, x.n);
+  add([...bl.keys.map(k => [V(`by:${k}`), 1]), [R, -1]], '=');
+  for (const k of bl.atLeast1) atLeast(V(`by:${k}`), 1);
+  for (const k of bl.zero) exactly(V(`by:${k}`), 0);
+  if (byRows.length && sizeOrdered(byRows.map(x => x.k), dom.administered_by)) ordered(byRows.map(x => V(`by:${x.k}`)));
 
-  // ---- the NDP log, by month: the reversals again ----
-  for (const row of pub.ndp.rows.filter(x => x.entry === 'reversal')) V(`r:${row.date}`, row.reversals);
+  // Naloxone doses: each reversal records 1 to DOSES_MAX, and every event at most DOSES_MAX.
+  const Dall = V('Dall', f.overdose.naloxone_doses, false); const Dr = V('Dr', pub.ndp.totals.reversal_doses, false);
+  add([...months.map(m => [d(m), 1]), [Dr, -1]], '=');
+  for (const m of months) { addIfTrue([[d(m), 1], [r(m), -1]], '>='); addIfTrue([[d(m), 1], [r(m), -DOSES_MAX]], '<='); }
+  addIfTrue([[Dall, 1], [Dr, -1]], '>='); addIfTrue([[Dall, 1], [E, -DOSES_MAX]], '<='); addIfTrue([[Dall, 1], [Dr, -1], [E, -DOSES_MAX], [R, DOSES_MAX]], '<=');
+
+  // Episodes: discharges add up by reason; every episode opened in the period is closed in it or open at its
+  // end, so the episodes carried in from before are D + O - A >= 0.
+  const D = V('D', f.episodes.discharges); const A = V('A', f.episodes.admissions); const O = V('O', f.episodes.open_at_end);
+  const disRows = f.episodes.by_discharge_reason;
+  const dl = listing(disRows.map(x => x.k), disRows.some(x => x.n === 0), dom.discharge_reasons, !disRows.length && gone.has('episodes.by_discharge_reason'), te.by_discharge_reason.map(x => x.k));
+  for (const x of disRows) V(`dis:${x.k}`, x.n);
+  add([...dl.keys.map(k => [V(`dis:${k}`), 1]), [D, -1]], '=');
+  for (const k of dl.atLeast1) atLeast(V(`dis:${k}`), 1);
+  for (const k of dl.zero) exactly(V(`dis:${k}`), 0);
+  if (disRows.length && sizeOrdered(disRows.map(x => x.k), dom.discharge_reasons)) ordered(disRows.map(x => V(`dis:${x.k}`)));
+  addIfTrue([[A, 1], [D, -1], [O, -1]], '<=');
+  derived.push({ name: 'episodes carried in', terms: [[D, 1], [O, 1], [A, -1]] });
+
+  // ---- the NDP log's total reversals ----
   V('R', pub.ndp.totals.reversals);
 
   // ---- the settlement report ----
-  const listed = new Set(f.by_funding_source.map(r => r.id));
+  const listed = new Set(f.by_funding_source.map(x => x.id));
   const byUse = new Map();
   for (const fund of pub.settlement.funds) {
     const key = fund.settlement_use || 'uncategorised';
@@ -173,9 +268,9 @@ function modelOf(pub, truth, T) {
   for (const [key, ids] of byUse) if (!pub.settlement.services_by_use.some(x => x.use_code === key)) for (const id of ids) { add([[V(`fund:${id}:p`), 1]], '=', 0); add([[V(`fund:${id}:s`), 1]], '=', 0); }
 
   // Derived counts become variables tied to their definition.
-  for (const d of derived) {
-    const i = vars.length; vars.push({ name: d.name, shown: [], truth: d.terms.reduce((a, [j, c]) => a + c * vars[j].truth, 0), people: true, derived: true, lo: -CAP * 3, hi: CAP * 3 });
-    add([[i, 1], ...d.terms.map(([j, c]) => [j, -c])], '=');
+  for (const dv of derived) {
+    const i = vars.length; vars.push({ name: dv.name, shown: [], truth: dv.terms.reduce((a, [j, c]) => a + c * vars[j].truth, 0), people: true, derived: true, lo: -CAP * 3, hi: CAP * 3 });
+    add([[i, 1], ...dv.terms.map(([j, c]) => [j, -c])], '=');
   }
   const solver = makeSolver(vars.map(x => x.lo), vars.map(x => x.hi), cons);
   return { solver, vars, CAP };
@@ -191,7 +286,7 @@ function attack(pub, truth, T) {
   const out = [];
   const P = Math.ceil(T / 2);
   vars.forEach((x, i) => {
-    if (!x.people) return;
+    if (!x.people || x.truth === undefined) return;
     const shown = x.shown;
     const small = shown.includes(`<${T}`) || ((x.derived || !shown.length || shown.every(s => s === 'withheld')) && x.truth > 0 && x.truth < T && !shown.some(isNum));
     if (small) {

@@ -64,8 +64,12 @@ const SETTLEMENT_HIAA = [
   { code: 'hiaa_6', label: '6. The purchase of naloxone for distribution and efforts to expand access to naloxone for opioid overdose reversals' },
 ];
 
+// The most naloxone doses one overdose event may record (server/routes/overdose.js). A publication release
+// relies on it: doses used bound the reversals they were used in (server/publication-release.js).
+const NALOXONE_DOSES_MAX = 20;
+
 module.exports = {
-  RACE_CODES, ETHNICITY_CODES, SETTLEMENT_USES, SETTLEMENT_HIAA,
+  RACE_CODES, ETHNICITY_CODES, SETTLEMENT_USES, SETTLEMENT_HIAA, NALOXONE_DOSES_MAX,
   INTERVENTION_TYPES: ['outreach', 'screening_sbirt', 'assessment', 'intake', 'care_coordination', 'warm_handoff', 'referral', 'case_management', 'harm_reduction', 'naloxone_distribution', 'peer_support', 'crisis_response', 'post_overdose_follow_up', 'transport', 'housing_assistance', 'benefits_enrollment', 'employment_support', 'family_support', 'education', 'court_or_probation', 'hospital_or_ed_visit', 'jail_in_reach', 'recovery_check_in', 'discharge_planning', 'other'],
   // The services that can be recorded with no identified client: street outreach and community naloxone
   // distribution (a kit handed to a stranger). Every other type is work with a person on the caseload, and

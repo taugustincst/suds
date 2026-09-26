@@ -31,6 +31,10 @@
 // the first (smallest) that fixes it, else the first that helps, else the smallest - and the audit runs
 // again. When nothing visible is left to hide, the table that pins it is withheld whole. Everything is
 // deterministic: the same data give the same release, whichever report asks for it.
+//
+// When the loop stops, every sensitive value is checked again. The result says whether all passed
+// (`verified`); one that is not verified - a check that could not be settled, nothing left to withhold, the
+// step or time limit reached - must not be published (server/publication-release.js refuses it).
 
 const EPS = 1e-9;
 const FEAS = 1e-7;
@@ -118,14 +122,14 @@ function simplex(n, rows, lb, ub, c) {
 // (c integer, so the optimum is an integer). `known` is an integer feasible point (the truth), the starting
 // incumbent. `enough`: stop as soon as the incumbent reaches it. Returns { value, exact } - exact false when
 // the node budget ran out (value is then the best integer point found, a valid lower bound on the maximum).
-function intMax(prob, c, known, { enough = Infinity, budget = 4000 } = {}) {
+function intMax(prob, c, known, { enough = Infinity, budget = 4000, deadline = Infinity } = {}) {
   const dot = (x) => c.reduce((s, cj, j) => s + cj * x[j], 0);
   let best = known ? Math.round(dot(known)) : -Infinity;
   if (best >= enough) return { value: best, exact: true };
   const stack = [[prob.lb.slice(), prob.ub.slice()]];
   let nodes = 0;
   while (stack.length) {
-    if (++nodes > budget) return { value: best, exact: false };
+    if (++nodes > budget || Date.now() > deadline) return { value: best, exact: false };
     const [lb, ub] = stack.pop();
     const r = simplex(prob.n, prob.rows, lb, ub, c);
     if (r.status === 'infeasible') continue;
@@ -143,13 +147,13 @@ function intMax(prob, c, known, { enough = Infinity, budget = 4000 } = {}) {
   return { value: best, exact: true };
 }
 /** Is there an integer point with c.x = v? (Branch and bound on feasibility.) */
-function intFeasible(prob, c, v, { budget = 4000 } = {}) {
+function intFeasible(prob, c, v, { budget = 4000, deadline = Infinity } = {}) {
   const rows = [...prob.rows, { a: c, op: '=', b: v }];
   const zero = new Array(prob.n).fill(0);
   const stack = [[prob.lb.slice(), prob.ub.slice()]];
   let nodes = 0;
   while (stack.length) {
-    if (++nodes > budget) return { feasible: false, exact: false };
+    if (++nodes > budget || Date.now() > deadline) return { feasible: false, exact: false };
     const [lb, ub] = stack.pop();
     const r = simplex(prob.n, rows, lb, ub, zero);
     if (r.status !== 'optimal') { if (r.status === 'unbounded') return { feasible: true, exact: true }; continue; }
@@ -175,7 +179,8 @@ function intFeasible(prob, c, v, { budget = 4000 } = {}) {
 // }
 // status per var: 'vis' | 'pri' | 'sec' | 'withheld' | 'unpub'.
 
-function protect(model, T, { budget = 4000 } = {}) {
+function protect(model, T, { budget = 4000, timeLimitMs = Infinity } = {}) {
+  const deadline = Date.now() + timeLimitMs;
   const { vars, derived = [], mirror = [] } = model;
   // A relationship the data do not satisfy would make the audit wrong. One that holds for everything SUDS
   // records but not for every row an import could write (soft) is left out when it fails: an attacker who
@@ -238,12 +243,12 @@ function protect(model, T, { budget = 4000 } = {}) {
     } else if (q.kind === 'small') {
       for (const v of [1, T - 1]) {
         if (q.truth === v) continue;
-        const r = intFeasible(p.prob, p.c, v - p.constant, { budget });
+        const r = intFeasible(p.prob, p.c, v - p.constant, { budget, deadline });
         if (!r.feasible) d += 1;
       }
     } else {
-      const lo = -intMax(p.prob, p.c.map(x => -x), p.truth, { budget }).value + p.constant;
-      const hiR = intMax(p.prob, p.c, p.truth, { budget, enough: lo - p.constant + P });
+      const lo = -intMax(p.prob, p.c.map(x => -x), p.truth, { budget, deadline }).value + p.constant;
+      const hiR = intMax(p.prob, p.c, p.truth, { budget, deadline, enough: lo - p.constant + P });
       const hi = hiR.value + p.constant;
       d = Math.max(0, P - (hi - lo));
     }
@@ -283,7 +288,9 @@ function protect(model, T, { budget = 4000 } = {}) {
 
   applyMirror(st);
   let s = st;
+  let outOfTime = false;
   for (let guard = 0; guard < 5000; guard++) {
+    if (Date.now() > deadline) { outOfTime = true; break; }
     let bad = null; let bd = 0;
     for (const q of quantities(s)) { const d = deficit(s, q); if (d > 0) { bad = q; bd = d; break; } }
     if (!bad) break;
@@ -308,7 +315,7 @@ function protect(model, T, { budget = 4000 } = {}) {
       const t = vars[i].table; if (seen.has(t) || withheldTables.has(t) || !vars[i].published) continue;
       seen.add(t); tables.push(t);
     }
-    if (!tables.length) break; // cannot happen: with everything withheld nothing is tied to anything printed
+    if (!tables.length) break; // nothing left to withhold: the check below refuses the release
     let pick = null; let helped = null;
     for (const t of tables.slice(0, TRIES)) {
       const d = deficit(withTable(s, t), bad);
@@ -318,7 +325,14 @@ function protect(model, T, { budget = 4000 } = {}) {
     const t = pick || helped || tables[0];
     withheldTables.add(t); s = withTable(s, t);
   }
-  return { status: s, withheldTables: [...withheldTables] };
+  // The loop ends when nothing is under-protected - or when it gives up (its step limit, nothing left to
+  // withhold, the time limit). So every sensitive count is checked again here, all of them, each exactly: a
+  // release is verified only if every one passes. One that is not verified must not be published at all
+  // (server/publication-release.js refuses it); it is never returned as if it were protected.
+  const unprotected = [];
+  if (!outOfTime) for (const q of quantities(s)) { if (deficit(s, q) > 0) unprotected.push(q.id); if (Date.now() > deadline) { outOfTime = true; break; } }
+  const verified = !outOfTime && !unprotected.length;
+  return { status: s, withheldTables: [...withheldTables], verified, unprotected, outOfTime };
 }
 
 
