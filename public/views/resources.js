@@ -261,7 +261,9 @@ route('resource', async (r) => {
   // (the kernel is this page), so the page fetches the picture itself; most sites do not allow that
   // (CORS), and the message then says what to do instead.
   const onDevice = !!state.local;
-  const CORS_REFUSED = 'That site does not allow its pictures to be copied from a browser. Save the picture to this device and use + Add pictures, or drag it onto this card.';
+  // The page's Content-Security-Policy (connect-src 'self', server/csp.js) lets it fetch only from its own site;
+  // most other sites would refuse a browser anyway (CORS).
+  const CORS_REFUSED = 'Pictures from other sites cannot be copied from this browser. Save the picture to this device and use + Add pictures, or drag it onto this card.';
   // On a device: https addresses; plain http only for this site's own address (a picture published beside
   // SUDS on this device) or this computer itself (localhost). The browser's own rules (CORS, mixed content)
   // still apply; nothing here reaches the office server.
@@ -290,7 +292,7 @@ route('resource', async (r) => {
   }
   const openAddressDialog = () => {
     const f = form([
-      { name: 'url', label: 'Address of the picture', type: 'url', required: true, span: true, placeholder: 'https://', help: onDevice ? 'The address of a picture (or of the program\'s web page, on the office server). Some sites do not allow their pictures to be copied from a browser.' : 'The address of a picture, or of the program\'s web page (its preview picture is used).' },
+      { name: 'url', label: 'Address of the picture', type: 'url', required: true, span: true, placeholder: 'https://', help: onDevice ? 'The address of a picture on this site. A picture on another site cannot be copied from this browser: save it and use + Add pictures.' : 'The address of a picture, or of the program\'s web page (its preview picture is used).' },
       { name: 'caption', label: 'Caption (optional)', span: true, maxLen: 200 },
     ], { submitText: 'Add picture', onCancel: () => m.close(), onSubmit: async (d) => {
       try { await addFromAddress(d.url, d.caption || ''); }

@@ -83,7 +83,7 @@ register (`HIPAA.md`, *Risk register notes*).
   yourself*, below).
 - **No sync.** The on-device app never exchanges data with an office server. Its **This device** page says so
   and offers no form: a page served from one origin cannot call another origin's API (the office server sends
-  no CORS headers and its `connect-src` forbids it), so a sync attempted from here could only fail, and
+  no CORS headers, and this build's own `connect-src 'self'` forbids it), so a sync attempted from here could only fail, and
   nothing — not even a password — is sent. A programme that needs records shared between staff runs the office
   server instead. The server flag `ALLOW_STATIC_SYNC` is a no-op kept only so existing deployments do not fail
   on an unknown setting.
@@ -164,6 +164,15 @@ one small script that switches the app straight into local mode before anything 
 that differ on this build (no office sync, sign-ups on the device, the first-run storage confirmation, the
 backup reminder). Nothing is drawn on screen because of it, and nothing about the office server changes — it
 still decides its own mode.
+
+**Security headers a static host does not send.** Every page of the build carries the office server's
+Content-Security-Policy as a `<meta http-equiv>` (`server/csp.js`: scripts from this site only, WebAssembly
+for the kernel, `connect-src 'self'` — the build talks to no other host) and loads `frame-guard.js` as its
+first script, which hides the page and takes over the top window if another site frames it: a `<meta>`
+policy cannot set `frame-ancestors`, and GitHub Pages sends no `X-Frame-Options` (`scripts/static-site-security.js`,
+`test/static-site-csp.test.js`). A county serving the build from its own web server should also send
+`Content-Security-Policy: frame-ancestors 'none'` (or `X-Frame-Options: DENY`) and `Referrer-Policy: no-referrer`
+as headers.
 
 **Provider pictures.** The build also downloads each starter-directory provider's picture (its website's
 social preview image or touch icon: the same choice, address checks and file-type check as the office

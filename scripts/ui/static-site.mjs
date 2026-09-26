@@ -24,7 +24,8 @@ page.on('pageerror', e => errors.push('PAGEERROR ' + e.message));
 // the kernel learns there are none (checked below).
 // The web-address check below asks for the office server's health check from this origin, which it refuses (no CORS).
 const probe = (u) => /\/app$|no-such-view|region-pictures\/|\/api\/health$/.test(u);
-page.on('console', m => { if (m.type() === 'error' && !probe(m.location()?.url || '') && !/404/.test(m.text()) && !/\/api\/health' from origin .* has been blocked by CORS/.test(m.text())) errors.push('CONSOLE ' + m.text().slice(0, 250)); });
+// Since 1.12.5 this build's Content-Security-Policy (connect-src 'self') refuses that request before CORS is reached.
+page.on('console', m => { if (m.type() === 'error' && !probe(m.location()?.url || '') && !/404/.test(m.text()) && !/\/api\/health' from origin .* has been blocked by CORS/.test(m.text()) && !/Refused to connect to '[^']*\/api\/health'/.test(m.text())) errors.push('CONSOLE ' + m.text().slice(0, 250)); });
 page.on('response', r => { if (r.status() >= 400 && !probe(r.url())) errors.push(`HTTP ${r.status()} ${r.url()}`); });
 
 await page.goto(base + '/'); await settle(page);
@@ -33,6 +34,18 @@ ok(await page.evaluate(() => window.SUDS_STATIC_HOST === true), 'and marks itsel
 // The production on-device app: no demo/evaluation banner, and no wording that says so, anywhere.
 ok(!(await page.$('.static-demo-banner')), 'there is no demo banner on the page');
 ok(!/demo|evaluation|do not enter real client/i.test(await page.textContent('body')), 'and nothing on the first screen calls this a demo or an evaluation copy', (await page.textContent('body')).slice(0, 200));
+// A static host sends no security headers, so the build carries its own (scripts/static-site-security.js):
+// the office server's Content-Security-Policy as a <meta>, and a frame guard against clickjacking.
+const cspMeta = await page.getAttribute('meta[http-equiv="Content-Security-Policy"]', 'content').catch(() => null);
+ok(cspMeta && /connect-src 'self'(;|$)/.test(cspMeta) && /script-src 'self' 'wasm-unsafe-eval'(;|$)/.test(cspMeta), 'every page carries the Content-Security-Policy, connect-src this site only', cspMeta);
+{
+  const framer = await ctx.newPage();
+  await framer.setContent(`<iframe src="${base}/get-app.html" width="300" height="300"></iframe>`);
+  const frame = await until(() => framer.frames().find(f => f.url().startsWith(base)) || null, { timeout: 10000 });
+  const hidden = frame && await until(() => frame.evaluate(() => document.documentElement.style.display === 'none').catch(() => true), { timeout: 10000 });
+  ok(hidden, 'framed by another page, the build hides itself (the frame guard)');
+  await framer.close();
+}
 ok(await page.$('input[name=display_name]'), 'so opening it with no query string at all still lands on first-run setup, not a login screen for a server that does not exist');
 eq(await page.getAttribute('[data-mode-tab=signup]', 'aria-selected'), 'true', 'first-run set-up is the Sign up option, selected because the device has no account');
 ok(await page.$('[data-storage-notice]') && /nowhere else/.test(await page.textContent('[data-storage-notice]')), 'it says once where the records are kept');
@@ -223,9 +236,9 @@ if (process.env.SUDS_STATIC_DIR) {
   const other = `${process.env.SUDS_URL || 'http://127.0.0.1:8090'}/api/health`;
   await dialog.getByLabel('Address of the picture').fill(other);
   await dialog.getByRole('button', { name: 'Add picture', exact: true }).click();
-  const why = await until(() => dialog.locator('.banner.danger').textContent().then(t => /does not allow its pictures to be copied/.test(t) ? t : null).catch(() => null), { timeout: 15000 });
+  const why = await until(() => dialog.locator('.banner.danger').textContent().then(t => /cannot be copied from this browser/.test(t) ? t : null).catch(() => null), { timeout: 15000 });
   ok(why && /\+ Add pictures/.test(why) && /drag it onto this card/.test(why), 'web address: a site that does not allow copying gets the explanation and the other ways in', why);
-  ok(/does not allow its pictures/.test(await page.textContent('#toasts')), 'web address: in a toast as well');
+  ok(/cannot be copied from this browser/.test(await page.textContent('#toasts')), 'web address: in a toast as well');
   eq((await count()).length, 1, 'web address: and nothing is added');
   // https only, apart from this site and this computer
   await dialog.getByLabel('Address of the picture').fill('http://pictures.example.org/a.png');
