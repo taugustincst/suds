@@ -302,22 +302,37 @@ test('GET /api/admin/certificate serves the CA for phones to trust, to settings:
   assert.equal((await admin.get('/api/admin/certificate')).data, 'leaf', 'an older certs folder still serves its leaf');
 });
 
-test('GET /api/admin/keys-backup downloads keys.json only when the keys come from that file, and records when', async () => {
-  assert.equal((await sup.get('/api/admin/keys-backup')).status, 403);
-  assert.equal((await nav.get('/api/admin/keys-backup')).status, 403);
+test('POST /api/admin/keys-backup downloads keys.json only after the administrator proves it is them, and records when', async () => {
+  // Security review of 1.12.4, 8(a): the keys open every backup, so a session alone (a cookie left on an
+  // unlocked workstation) is not enough: the password or authenticator code again, or a confirmation within
+  // the few minutes after the last one (auth.verifySigner, as for signing a note). Every attempt is audited.
+  assert.equal((await sup.post('/api/admin/keys-backup', { confirm: true })).status, 403);
+  assert.equal((await nav.post('/api/admin/keys-backup', { confirm: true })).status, 403);
+  assert.ok([404, 405].includes((await admin.get('/api/admin/keys-backup')).status), 'no longer a plain link a session can follow');
   const was = config.keySource;
+  const adminId = H.db.one(`SELECT id FROM users WHERE username='admin'`).id;
   try {
     config.keySource = 'env';
-    const env = await admin.get('/api/admin/keys-backup');
+    const env = await admin.post('/api/admin/keys-backup', { password: 'AdminPassw0rd!x' });
     assert.equal(env.status, 400); assert.match(env.data.error, /environment/);
     config.keySource = 'file';
     const body = JSON.stringify({ SUDS_ENCRYPTION_KEY: 'a'.repeat(64), SUDS_INDEX_KEY: 'b'.repeat(64) });
     fs.writeFileSync(config.keysJsonPath, body);
-    const r = await admin.get('/api/admin/keys-backup');
+    // Long after signing in: a confirmation alone is refused, and so is a wrong password.
+    H.db.run(`UPDATE sessions SET reauth_at='2020-01-01T00:00:00.000Z' WHERE user_id=?`, adminId);
+    const stale = await admin.post('/api/admin/keys-backup', { confirm: true });
+    assert.equal(stale.status, 403); assert.equal(stale.data.reauthRequired, true);
+    assert.equal((await admin.post('/api/admin/keys-backup', { password: 'wrong-password' })).status, 403);
+    assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='keys.download.failed' AND user_id=?`, adminId), 'the failed attempt is audited');
+    H.db.run(`UPDATE users SET failed_attempts=0 WHERE id=?`, adminId);
+    const r = await admin.post('/api/admin/keys-backup', { password: 'AdminPassw0rd!x' });
     assert.equal(r.status, 200);
     assert.match(r.headers.get('content-disposition'), /suds-keys-KEEP-SECRET\.json/);
     assert.deepEqual(r.data, JSON.parse(body));
     assert.ok(H.db.getSetting('keys_backup_at', null), 'the dashboard can stop asking');
-    assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='keys.download'`));
+    const a = H.db.one(`SELECT * FROM audit_log WHERE action='keys.download' ORDER BY id DESC LIMIT 1`);
+    assert.equal(JSON.parse(a.details).method, 'password', 'the audit entry says how the administrator proved it');
+    // Within the few minutes after the password, a confirmation is enough (the same rule as signing).
+    assert.equal((await admin.post('/api/admin/keys-backup', { confirm: true })).status, 200);
   } finally { config.keySource = was; fs.rmSync(config.keysJsonPath, { force: true }); }
 });

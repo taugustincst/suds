@@ -197,9 +197,10 @@ function hasLocalPassword(hash) { return /^scrypt\$/.test(String(hash || '')); }
 /**
  * Establish who is signing: the password (or, with two-step verification on, the authenticator code) given
  * with this request, or a recent re-authentication plus an explicit confirmation. Returns how, for the audit
- * entry: 'password', 'totp' or 'recent_auth'. `action` names the failed-attempt audit entry.
+ * entry: 'password', 'totp' or 'recent_auth'. `action` names the failed-attempt audit entry; `purpose` finishes
+ * the messages ("Enter your password to ..."): signing a note, or downloading the key backup.
  */
-async function verifySigner(ctx, body, { action = 'note.sign.failed' } = {}) {
+async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 'sign' } = {}) {
   const password = typeof body.password === 'string' && body.password ? body.password : null;
   const code = typeof body.code === 'string' && body.code.trim() ? body.code.trim() : null;
   const u = db.one(`SELECT id, password_hash, mfa_enabled, mfa_secret_enc, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
@@ -242,9 +243,9 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed' } = {}) {
   }
   const st = reauthStatus(ctx);
   // validate() stores booleans as 1/0 (SQLite); either spelling is the confirmation.
-  if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? 'Confirm the attestation to sign' : st.method === 'totp' ? 'Enter the code from your authenticator app to sign' : st.method === 'sso' ? 'Confirm with single sign-on, then sign' : 'Your password is required to sign');
+  if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? `Confirm the attestation to ${purpose}` : st.method === 'totp' ? `Enter the code from your authenticator app to ${purpose}` : st.method === 'sso' ? `Confirm with single sign-on, then ${purpose}` : `Your password is required to ${purpose}`);
   if (!st.recent) {
-    const how = { totp: 'Enter the code from your authenticator app to sign.', sso: 'Confirm with single sign-on to sign.', password: 'Enter your password to sign.' }[st.method];
+    const how = { totp: `Enter the code from your authenticator app to ${purpose}.`, sso: `Confirm with single sign-on to ${purpose}.`, password: `Enter your password to ${purpose}.` }[st.method];
     throw new HttpError(403, `It has been a while since you last confirmed it is you. ${how}`, { reauthRequired: true, method: st.method, sso: st.sso });
   }
   return 'recent_auth';
