@@ -32073,8 +32073,9 @@ var require_setup = __commonJS({
     function setupNeeded() {
       return !config2.setupComplete && !config2.isTest && config2.keySource !== "env" && !proc.env.SUDS_SKIP_SETUP;
     }
+    var bootstrapName = () => (init_bootstrap(), __toCommonJS(bootstrap_exports)).adminUsername();
     function onlyBootstrapAdmin() {
-      return db3.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0;
+      return db3.one(`SELECT COUNT(*) n FROM users WHERE NOT (username=? AND must_change_password=1 AND last_login_at IS NULL)`, bootstrapName()).n === 0;
     }
     var PRODUCTION_DEFAULTS = { backup_schedule_hours: "4" };
     function applyProductionDefaults({ isProd = config2.isProd } = {}) {
@@ -32130,7 +32131,7 @@ var require_setup = __commonJS({
         (init_bootstrap(), __toCommonJS(bootstrap_exports)).discardPasswordFile();
         let mainFund = null;
         db3.transaction(() => {
-          db3.run(`DELETE FROM users WHERE username='admin' AND must_change_password=1 AND last_login_at IS NULL`);
+          db3.run(`DELETE FROM users WHERE username=? AND must_change_password=1 AND last_login_at IS NULL`, bootstrapName());
           db3.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid2(), v.admin_username, adminHash, v.admin_display_name, "admin", db3.now());
           db3.setSetting("org_name", v.org_name);
           if (v.county_name) db3.setSetting("county_name", v.county_name);
