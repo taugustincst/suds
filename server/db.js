@@ -604,6 +604,22 @@ const migrations = [
   //     (intervention_supplies), the site it drew from, and the syringes and sharps brought back.
   //     Self-contained and idempotent: every step checks what is already there.
   (d) => migrateSupplies(d, safeSchema()),
+  // 46: the sample data (server/demo.js) wrote a client's preferred name but not its search index until 1.14.0,
+  //     so a sample client could not be found by the name it goes by. Every client with a preferred name and no
+  //     index gets the index its name derives (clients-model preferredNameIndex, as a save writes it). Only
+  //     those rows: an index already written is left alone, and a second run finds nothing to do. A row that
+  //     cannot be decrypted keeps what it had (as migration 26). updated_at is not touched: the index is
+  //     derived, never synchronised, and each device's own copy of this migration fills in its own.
+  (d) => {
+    const { decrypt } = require('./crypto');
+    const M = require('./clients-model');
+    const upd = d.prepare(`UPDATE clients SET preferred_name_idx=? WHERE id=? AND preferred_name_idx IS NULL`);
+    for (const c of d.prepare(`SELECT id, preferred_name_enc FROM clients WHERE preferred_name_enc IS NOT NULL AND preferred_name_idx IS NULL`).all()) {
+      let name; try { name = decrypt(c.preferred_name_enc); } catch { continue; }
+      const idx = M.preferredNameIndex(name);
+      if (idx) upd.run(idx, c.id);
+    }
+  },
 ];
 
 // The site every install starts with: created with this fixed id on a fresh database and by migration 45, so

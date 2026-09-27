@@ -254,13 +254,39 @@ test('migration 35: a free-text scope covers nothing automated unless it plainly
   assert.ok(db().one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='caloms_submissions'`));
 });
 
+test('migration 46: a preferred name with no search index gets one; a written index, an empty name and a second run are left alone', () => {
+  const d = require('../server/db');
+  const { encrypt } = require('../server/crypto');
+  const M = require('../server/clients-model');
+  const ids = { missing: 'm46-missing', written: 'm46-written', none: 'm46-none', unreadable: 'm46-unreadable' };
+  const add = (id, pref, idx) => db().run(`INSERT INTO clients(id,client_code,first_name_enc,last_name_enc,preferred_name_enc,preferred_name_idx) VALUES(?,?,?,?,?,?)`, id, id, encrypt('Ana'), encrypt('Lopez'), pref, idx);
+  add(ids.missing, encrypt('Annie'), null);
+  add(ids.written, encrypt('Nita'), 'kept-as-written');
+  add(ids.none, null, null);
+  add(ids.unreadable, 'not-ciphertext', null);
+  // Run migration 46 again, as an upgrade from 45 would.
+  db().setSetting('schema_version', String(d.LATEST_SCHEMA_VERSION - 1));
+  d.close(); d.open(dbPath);
+  const idx = (id) => db().one(`SELECT preferred_name_idx i FROM clients WHERE id=?`, id).i;
+  assert.equal(idx(ids.missing), M.preferredNameIndex('Annie'), 'filled in from the decrypted name');
+  assert.equal(idx(ids.written), 'kept-as-written', 'an index already written is left alone');
+  assert.equal(idx(ids.none), null, 'no name, no index');
+  assert.equal(idx(ids.unreadable), null, 'a row that cannot be decrypted keeps what it had');
+  assert.equal(db().getSetting('schema_version'), String(d.LATEST_SCHEMA_VERSION));
+  // A second run changes nothing.
+  db().setSetting('schema_version', String(d.LATEST_SCHEMA_VERSION - 1));
+  d.close(); d.open(dbPath);
+  assert.equal(idx(ids.missing), M.preferredNameIndex('Annie')); assert.equal(idx(ids.written), 'kept-as-written');
+  for (const id of Object.values(ids)) db().run(`DELETE FROM clients WHERE id=?`, id);
+});
+
 // ---- Databases written by later releases ----
 // 1.6.1 is not the only starting point a county has: each fixture below is a database a released SUDS created
 // and wrote through its own API (test/fixtures/make-release-fixture.js: schema, the rows, indexes, triggers;
 // fictional data, the test keys above). Each is upgraded to the current schema and must end structurally
 // identical to a fresh install, with its records present and its ciphertext still readable.
-// The --rich fixtures (1.11.0, and 1.13.0: schema 43, the last before 1.13.1, which adds no migration - so it is
-// the starting point the next migration is tested from) hold several rows in every table with an encrypted
+// The --rich fixtures (1.11.0, and 1.13.0: schema 43, the last release before 1.14.0's migrations 44 to 46, so
+// it is the starting point they are tested from) hold several rows in every table with an encrypted
 // column, NULLs and text in other scripts among them: every value must still decrypt, to what it was, and every
 // blind index must still match, after the upgrade.
 for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql']) {
@@ -355,20 +381,21 @@ for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.
       if (expect.rich && expect.schema_version < 43) assert.ok(migrated >= 2, `${migrated} plaintext values a migration encrypted, compared`);
       // Every blind index matches the value it indexes after the upgrade - as the release wrote it, or as a
       // migration recomputed it (the name indexes of names in other scripts were, between 1.11.0 and 1.13.0) - or
-      // a search would stop finding a client. (1.13.0's sample data wrote no preferred-name index: server/demo.js,
-      // fixed in 1.13.1; such a row is left as it was.)
+      // a search would stop finding a client. 1.13.0's sample data wrote no preferred-name index (server/demo.js,
+      // fixed in 1.14.0): migration 46 fills it in, and it is checked like the rest.
       const M = require('../server/clients-model');
-      let indexed = 0;
+      let indexed = 0; let backfilled = 0;
       for (const c of db().all(`SELECT * FROM clients`)) {
         const plain = { first_name: c.first_name_enc && decrypt(c.first_name_enc), last_name: c.last_name_enc && decrypt(c.last_name_enc), preferred_name: c.preferred_name_enc ? decrypt(c.preferred_name_enc) : null, dob: c.dob_enc ? decrypt(c.dob_enc) : null, phone: c.phone_enc ? decrypt(c.phone_enc) : null };
         const was = idxBefore[c.id] || {};
         for (const [col, v] of Object.entries(M.clientIndexes(plain))) {
           if (!(col in c)) continue;
-          if (was[col] === null && c[col] === null && v !== null && col === 'preferred_name_idx') continue; // never written (above)
+          if (col === 'preferred_name_idx' && v !== null && was[col] === null) backfilled++;
           assert.equal(c[col], v, `clients.${col} of ${c.client_code} matches its value after the upgrade`); indexed++;
         }
       }
       assert.ok(indexed >= 9, `${indexed} blind indexes checked`);
+      if (expect.version === '1.13.0') assert.ok(backfilled > 0, `migration 46 wrote the preferred-name index the sample data left out (${backfilled})`);
       if (expect.rich) {
         // Several rows in every table the release had with an encrypted column, each column holding a value in
         // some row; text in other scripts among them.
