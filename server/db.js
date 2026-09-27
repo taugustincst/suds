@@ -619,6 +619,7 @@ const migrations = [
       const idx = M.preferredNameIndex(name);
       if (idx) upd.run(idx, c.id);
     }
+  },
   // 47: indexes for what was slow at 20,000 clients, 100,000 visits and 200,000 notes (docs/PERFORMANCE.md): a
   //     worker's caseload, a device's sync pull (client and updated_at together), the Home dashboard's visits
   //     and unsigned notes, a note's addenda, a caseload's notes list, the merged duplicates of a caseload, and

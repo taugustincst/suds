@@ -6981,7 +6981,9 @@ CREATE TABLE IF NOT EXISTS assignments (
 );
 CREATE INDEX IF NOT EXISTS idx_assignments_updated ON assignments(updated_at);
 CREATE INDEX IF NOT EXISTS idx_assign_client ON assignments(client_id);
-CREATE INDEX IF NOT EXISTS idx_assign_user ON assignments(user_id);
+-- A worker's caseload, read from the index alone (every caseload-scoped query asks it; migration 47 widened
+-- idx_assign_user): whose it is, which client, and whether the assignment has ended.
+CREATE INDEX IF NOT EXISTS idx_assign_caseload ON assignments(user_id, client_id, end_date, ended_at);
 
 CREATE TABLE IF NOT EXISTS funding_sources (
   id TEXT PRIMARY KEY,
@@ -7058,6 +7060,11 @@ CREATE INDEX IF NOT EXISTS idx_interventions_user ON interventions(user_id, occu
 -- the columns the funder report counts ride along, so a year of visits is read from the index alone.
 CREATE INDEX IF NOT EXISTS idx_interventions_period ON interventions(occurred_at, funding_source_id, client_id, naloxone_kits, fentanyl_strips);
 CREATE INDEX IF NOT EXISTS idx_interventions_updated ON interventions(updated_at);
+-- Sync reads (migration 47, docs/PERFORMANCE.md): a device's pull finds where its page ends from a caseload's
+-- updated_at values alone, so client, time and owner are in the index and the rows are read only when sent.
+CREATE INDEX IF NOT EXISTS idx_interventions_sync ON interventions(client_id, updated_at, user_id);
+-- The Home dashboard's pass over the period's visits (migration 47), read from the index alone.
+CREATE INDEX IF NOT EXISTS idx_interventions_dashboard ON interventions(occurred_at, client_id, user_id, type, duration_minutes, naloxone_kits, fentanyl_strips);
 
 CREATE TABLE IF NOT EXISTS calls (
   id TEXT PRIMARY KEY,
@@ -7085,6 +7092,7 @@ CREATE INDEX IF NOT EXISTS idx_calls_client ON calls(client_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_user ON calls(user_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_started ON calls(started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_updated ON calls(updated_at);
+CREATE INDEX IF NOT EXISTS idx_calls_sync ON calls(client_id, updated_at, user_id);
 
 CREATE TABLE IF NOT EXISTS time_entries (
   id TEXT PRIMARY KEY,
@@ -7304,8 +7312,12 @@ CREATE TABLE IF NOT EXISTS notes (
   -- each service to the problem list). Ids only, never the problem text.
   problem_ids TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_notes_client ON notes(client_id, occurred_at);
+-- A client's notes by date, and a caseload's notes list, read from the index alone (migration 47 widened idx_notes_client).
+CREATE INDEX IF NOT EXISTS idx_notes_list ON notes(client_id, occurred_at, kind, deleted_at, author_id);
 CREATE INDEX IF NOT EXISTS idx_notes_author ON notes(author_id);
+CREATE INDEX IF NOT EXISTS idx_notes_sync ON notes(client_id, updated_at);
+-- Unsigned notes (Home's alert, migration 47): the drafts only, a handful of rows however many notes there are.
+CREATE INDEX IF NOT EXISTS idx_notes_drafts ON notes(author_id, created_at) WHERE status='draft' AND deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS note_addenda (
   id TEXT PRIMARY KEY,
@@ -7317,6 +7329,8 @@ CREATE TABLE IF NOT EXISTS note_addenda (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_note_addenda_updated ON note_addenda(updated_at);
+-- A note's addenda (the notes list counts them per note; migration 47).
+CREATE INDEX IF NOT EXISTS idx_note_addenda_note ON note_addenda(note_id);
 
 CREATE TABLE IF NOT EXISTS consents (
   id TEXT PRIMARY KEY,
@@ -7561,6 +7575,8 @@ CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_id
 CREATE INDEX IF NOT EXISTS idx_clients_first_name ON clients(first_name_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_first_name_prefix ON clients(first_name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_preferred_name ON clients(preferred_name_idx);
+-- The duplicates merged into a caseload's clients travel with them (sync pull; migration 47).
+CREATE INDEX IF NOT EXISTS idx_clients_merged ON clients(merged_into) WHERE merged_into IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);
 CREATE INDEX IF NOT EXISTS idx_resource_photos_updated ON resource_photos(updated_at);
 CREATE INDEX IF NOT EXISTS idx_funding_sources_updated ON funding_sources(updated_at);
@@ -7727,7 +7743,7 @@ CREATE TABLE IF NOT EXISTS intervention_supplies (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_intervention_supplies_visit ON intervention_supplies(intervention_id);
-CREATE INDEX IF NOT EXISTS idx_intervention_supplies_client ON intervention_supplies(client_id);
+CREATE INDEX IF NOT EXISTS idx_intervention_supplies_sync ON intervention_supplies(client_id, updated_at, user_id);
 CREATE INDEX IF NOT EXISTS idx_intervention_supplies_updated ON intervention_supplies(updated_at);
 
 -- The stock ledger. Append-only: a row is never changed or removed (a mistake is corrected by another row),
@@ -7759,7 +7775,9 @@ CREATE TABLE IF NOT EXISTS supply_ledger (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_supply_ledger_updated ON supply_ledger(updated_at);
-CREATE INDEX IF NOT EXISTS idx_supply_ledger_stock ON supply_ledger(item_id, site_id, expires_on, lot_number);
+-- On hand is SUM(quantity) per item, site and lot: read from this index alone (migration 47 added quantity).
+CREATE INDEX IF NOT EXISTS idx_supply_ledger_onhand ON supply_ledger(item_id, site_id, expires_on, lot_number, quantity);
+CREATE INDEX IF NOT EXISTS idx_supply_ledger_item_created ON supply_ledger(item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_supply_ledger_visit ON supply_ledger(intervention_id) WHERE intervention_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_supply_ledger_occurred ON supply_ledger(occurred_on);
 
@@ -8124,6 +8142,7 @@ CREATE TABLE IF NOT EXISTS suprt_assessments (
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_client ON suprt_assessments(client_id, assessment_date);
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_date ON suprt_assessments(assessment_date);
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_updated ON suprt_assessments(updated_at);
+CREATE INDEX IF NOT EXISTS idx_suprt_assessments_sync ON suprt_assessments(client_id, updated_at);
 `;
   }
 });
@@ -8488,9 +8507,11 @@ var require_clients_model = __commonJS({
       db3.setSetting(counterKey, String(n));
       return code;
     }
+    var SUMMARY_KEEP = ["id", "client_code", "display_name", "first_name", "last_name", "preferred_name", "dob", "phone", "status", "risk_level", "primary_substance", "mat_status", "intake_date", "referral_date", "engagement_date", "city", "flags", "ok_to_text", "ok_to_voicemail", "updated_at"];
+    var SUMMARY_READS = new Set([...SUMMARY_KEEP, "deleted_at", "merged_into"].flatMap((k) => [k, `${k}_enc`]));
     function summary(row, opts) {
-      const d = decryptRow(row, opts);
-      const keep = ["id", "client_code", "display_name", "first_name", "last_name", "preferred_name", "dob", "phone", "status", "risk_level", "primary_substance", "mat_status", "intake_date", "referral_date", "engagement_date", "city", "flags", "ok_to_text", "ok_to_voicemail", "updated_at"];
+      const d = decryptRow(row ? Object.fromEntries(Object.entries(row).filter(([k]) => SUMMARY_READS.has(k))) : row, opts);
+      const keep = SUMMARY_KEEP;
       const o = {};
       for (const k of keep) if (d[k] !== void 0) o[k] = d[k];
       o.days_to_engagement = daysToEngagement(d);
@@ -9307,6 +9328,771 @@ var require_csp = __commonJS({
   }
 });
 
+// node_modules/fflate/esm/browser.js
+function deflateSync(data, opts) {
+  return dopt(data, opts || {}, 0, 0);
+}
+function inflateSync(data, opts) {
+  return inflt(data, { i: 2 }, opts && opts.out, opts && opts.dictionary);
+}
+function zlibSync(data, opts) {
+  if (!opts)
+    opts = {};
+  var a = adler();
+  a.p(data);
+  var d = dopt(data, opts, opts.dictionary ? 6 : 2, 4);
+  return zlh(d, opts), wbytes(d, d.length - 4, a.d()), d;
+}
+function unzlibSync(data, opts) {
+  return inflt(data.subarray(zls(data, opts && opts.dictionary), -4), { i: 2 }, opts && opts.out, opts && opts.dictionary);
+}
+var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
+var init_browser = __esm({
+  "node_modules/fflate/esm/browser.js"() {
+    init_globals_inject();
+    u82 = Uint8Array;
+    u16 = Uint16Array;
+    i32 = Int32Array;
+    fleb = new u82([
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      2,
+      2,
+      2,
+      2,
+      3,
+      3,
+      3,
+      3,
+      4,
+      4,
+      4,
+      4,
+      5,
+      5,
+      5,
+      5,
+      0,
+      /* unused */
+      0,
+      0,
+      /* impossible */
+      0
+    ]);
+    fdeb = new u82([
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      2,
+      2,
+      3,
+      3,
+      4,
+      4,
+      5,
+      5,
+      6,
+      6,
+      7,
+      7,
+      8,
+      8,
+      9,
+      9,
+      10,
+      10,
+      11,
+      11,
+      12,
+      12,
+      13,
+      13,
+      /* unused */
+      0,
+      0
+    ]);
+    clim = new u82([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]);
+    freb = function(eb, start2) {
+      var b = new u16(31);
+      for (var i = 0; i < 31; ++i) {
+        b[i] = start2 += 1 << eb[i - 1];
+      }
+      var r = new i32(b[30]);
+      for (var i = 1; i < 30; ++i) {
+        for (var j = b[i]; j < b[i + 1]; ++j) {
+          r[j] = j - b[i] << 5 | i;
+        }
+      }
+      return { b, r };
+    };
+    _a = freb(fleb, 2);
+    fl = _a.b;
+    revfl = _a.r;
+    fl[28] = 258, revfl[258] = 28;
+    _b = freb(fdeb, 0);
+    fd = _b.b;
+    revfd = _b.r;
+    rev = new u16(32768);
+    for (i = 0; i < 32768; ++i) {
+      x = (i & 43690) >> 1 | (i & 21845) << 1;
+      x = (x & 52428) >> 2 | (x & 13107) << 2;
+      x = (x & 61680) >> 4 | (x & 3855) << 4;
+      rev[i] = ((x & 65280) >> 8 | (x & 255) << 8) >> 1;
+    }
+    hMap = function(cd, mb, r) {
+      var s = cd.length;
+      var i = 0;
+      var l = new u16(mb);
+      for (; i < s; ++i) {
+        if (cd[i])
+          ++l[cd[i] - 1];
+      }
+      var le = new u16(mb);
+      for (i = 1; i < mb; ++i) {
+        le[i] = le[i - 1] + l[i - 1] << 1;
+      }
+      var co;
+      if (r) {
+        co = new u16(1 << mb);
+        var rvb = 15 - mb;
+        for (i = 0; i < s; ++i) {
+          if (cd[i]) {
+            var sv = i << 4 | cd[i];
+            var r_1 = mb - cd[i];
+            var v = le[cd[i] - 1]++ << r_1;
+            for (var m = v | (1 << r_1) - 1; v <= m; ++v) {
+              co[rev[v] >> rvb] = sv;
+            }
+          }
+        }
+      } else {
+        co = new u16(s);
+        for (i = 0; i < s; ++i) {
+          if (cd[i]) {
+            co[i] = rev[le[cd[i] - 1]++] >> 15 - cd[i];
+          }
+        }
+      }
+      return co;
+    };
+    flt = new u82(288);
+    for (i = 0; i < 144; ++i)
+      flt[i] = 8;
+    for (i = 144; i < 256; ++i)
+      flt[i] = 9;
+    for (i = 256; i < 280; ++i)
+      flt[i] = 7;
+    for (i = 280; i < 288; ++i)
+      flt[i] = 8;
+    fdt = new u82(32);
+    for (i = 0; i < 32; ++i)
+      fdt[i] = 5;
+    flm = /* @__PURE__ */ hMap(flt, 9, 0);
+    flrm = /* @__PURE__ */ hMap(flt, 9, 1);
+    fdm = /* @__PURE__ */ hMap(fdt, 5, 0);
+    fdrm = /* @__PURE__ */ hMap(fdt, 5, 1);
+    max = function(a) {
+      var m = a[0];
+      for (var i = 1; i < a.length; ++i) {
+        if (a[i] > m)
+          m = a[i];
+      }
+      return m;
+    };
+    bits = function(d, p, m) {
+      var o = p / 8 | 0;
+      return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
+    };
+    bits16 = function(d, p) {
+      var o = p / 8 | 0;
+      return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
+    };
+    shft = function(p) {
+      return (p + 7) / 8 | 0;
+    };
+    slc = function(v, s, e) {
+      if (s == null || s < 0)
+        s = 0;
+      if (e == null || e > v.length)
+        e = v.length;
+      return new u82(v.subarray(s, e));
+    };
+    ec = [
+      "unexpected EOF",
+      "invalid block type",
+      "invalid length/literal",
+      "invalid distance",
+      "stream finished",
+      "no stream handler",
+      ,
+      "no callback",
+      "invalid UTF-8 data",
+      "extra field too long",
+      "date not in range 1980-2099",
+      "filename too long",
+      "stream finishing",
+      "invalid zip data"
+      // determined by unknown compression method
+    ];
+    err = function(ind, msg, nt) {
+      var e = new Error(msg || ec[ind]);
+      e.code = ind;
+      if (Error.captureStackTrace)
+        Error.captureStackTrace(e, err);
+      if (!nt)
+        throw e;
+      return e;
+    };
+    inflt = function(dat, st, buf, dict) {
+      var sl = dat.length, dl = dict ? dict.length : 0;
+      if (!sl || st.f && !st.l)
+        return buf || new u82(0);
+      var noBuf = !buf;
+      var resize = noBuf || st.i != 2;
+      var noSt = st.i;
+      if (noBuf)
+        buf = new u82(sl * 3);
+      var cbuf = function(l2) {
+        var bl = buf.length;
+        if (l2 > bl) {
+          var nbuf = new u82(Math.max(bl * 2, l2));
+          nbuf.set(buf);
+          buf = nbuf;
+        }
+      };
+      var final = st.f || 0, pos = st.p || 0, bt = st.b || 0, lm = st.l, dm = st.d, lbt = st.m, dbt = st.n;
+      var tbts = sl * 8;
+      do {
+        if (!lm) {
+          final = bits(dat, pos, 1);
+          var type = bits(dat, pos + 1, 3);
+          pos += 3;
+          if (!type) {
+            var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
+            if (t > sl) {
+              if (noSt)
+                err(0);
+              break;
+            }
+            if (resize)
+              cbuf(bt + l);
+            buf.set(dat.subarray(s, t), bt);
+            st.b = bt += l, st.p = pos = t * 8, st.f = final;
+            continue;
+          } else if (type == 1)
+            lm = flrm, dm = fdrm, lbt = 9, dbt = 5;
+          else if (type == 2) {
+            var hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
+            var tl = hLit + bits(dat, pos + 5, 31) + 1;
+            pos += 14;
+            var ldt = new u82(tl);
+            var clt = new u82(19);
+            for (var i = 0; i < hcLen; ++i) {
+              clt[clim[i]] = bits(dat, pos + i * 3, 7);
+            }
+            pos += hcLen * 3;
+            var clb = max(clt), clbmsk = (1 << clb) - 1;
+            var clm = hMap(clt, clb, 1);
+            for (var i = 0; i < tl; ) {
+              var r = clm[bits(dat, pos, clbmsk)];
+              pos += r & 15;
+              var s = r >> 4;
+              if (s < 16) {
+                ldt[i++] = s;
+              } else {
+                var c = 0, n = 0;
+                if (s == 16)
+                  n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
+                else if (s == 17)
+                  n = 3 + bits(dat, pos, 7), pos += 3;
+                else if (s == 18)
+                  n = 11 + bits(dat, pos, 127), pos += 7;
+                while (n--)
+                  ldt[i++] = c;
+              }
+            }
+            var lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
+            lbt = max(lt);
+            dbt = max(dt);
+            lm = hMap(lt, lbt, 1);
+            dm = hMap(dt, dbt, 1);
+          } else
+            err(1);
+          if (pos > tbts) {
+            if (noSt)
+              err(0);
+            break;
+          }
+        }
+        if (resize)
+          cbuf(bt + 131072);
+        var lms = (1 << lbt) - 1, dms = (1 << dbt) - 1;
+        var lpos = pos;
+        for (; ; lpos = pos) {
+          var c = lm[bits16(dat, pos) & lms], sym = c >> 4;
+          pos += c & 15;
+          if (pos > tbts) {
+            if (noSt)
+              err(0);
+            break;
+          }
+          if (!c)
+            err(2);
+          if (sym < 256)
+            buf[bt++] = sym;
+          else if (sym == 256) {
+            lpos = pos, lm = null;
+            break;
+          } else {
+            var add = sym - 254;
+            if (sym > 264) {
+              var i = sym - 257, b = fleb[i];
+              add = bits(dat, pos, (1 << b) - 1) + fl[i];
+              pos += b;
+            }
+            var d = dm[bits16(dat, pos) & dms], dsym = d >> 4;
+            if (!d)
+              err(3);
+            pos += d & 15;
+            var dt = fd[dsym];
+            if (dsym > 3) {
+              var b = fdeb[dsym];
+              dt += bits16(dat, pos) & (1 << b) - 1, pos += b;
+            }
+            if (pos > tbts) {
+              if (noSt)
+                err(0);
+              break;
+            }
+            if (resize)
+              cbuf(bt + 131072);
+            var end = bt + add;
+            if (bt < dt) {
+              var shift = dl - dt, dend = Math.min(dt, end);
+              if (shift + bt < 0)
+                err(3);
+              for (; bt < dend; ++bt)
+                buf[bt] = dict[shift + bt];
+            }
+            for (; bt < end; ++bt)
+              buf[bt] = buf[bt - dt];
+          }
+        }
+        st.l = lm, st.p = lpos, st.b = bt, st.f = final;
+        if (lm)
+          final = 1, st.m = lbt, st.d = dm, st.n = dbt;
+      } while (!final);
+      return bt != buf.length && noBuf ? slc(buf, 0, bt) : buf.subarray(0, bt);
+    };
+    wbits = function(d, p, v) {
+      v <<= p & 7;
+      var o = p / 8 | 0;
+      d[o] |= v;
+      d[o + 1] |= v >> 8;
+    };
+    wbits16 = function(d, p, v) {
+      v <<= p & 7;
+      var o = p / 8 | 0;
+      d[o] |= v;
+      d[o + 1] |= v >> 8;
+      d[o + 2] |= v >> 16;
+    };
+    hTree = function(d, mb) {
+      var t = [];
+      for (var i = 0; i < d.length; ++i) {
+        if (d[i])
+          t.push({ s: i, f: d[i] });
+      }
+      var s = t.length;
+      var t2 = t.slice();
+      if (!s)
+        return { t: et, l: 0 };
+      if (s == 1) {
+        var v = new u82(t[0].s + 1);
+        v[t[0].s] = 1;
+        return { t: v, l: 1 };
+      }
+      t.sort(function(a, b) {
+        return a.f - b.f;
+      });
+      t.push({ s: -1, f: 25001 });
+      var l = t[0], r = t[1], i0 = 0, i1 = 1, i2 = 2;
+      t[0] = { s: -1, f: l.f + r.f, l, r };
+      while (i1 != s - 1) {
+        l = t[t[i0].f < t[i2].f ? i0++ : i2++];
+        r = t[i0 != i1 && t[i0].f < t[i2].f ? i0++ : i2++];
+        t[i1++] = { s: -1, f: l.f + r.f, l, r };
+      }
+      var maxSym = t2[0].s;
+      for (var i = 1; i < s; ++i) {
+        if (t2[i].s > maxSym)
+          maxSym = t2[i].s;
+      }
+      var tr = new u16(maxSym + 1);
+      var mbt = ln(t[i1 - 1], tr, 0);
+      if (mbt > mb) {
+        var i = 0, dt = 0;
+        var lft = mbt - mb, cst = 1 << lft;
+        t2.sort(function(a, b) {
+          return tr[b.s] - tr[a.s] || a.f - b.f;
+        });
+        for (; i < s; ++i) {
+          var i2_1 = t2[i].s;
+          if (tr[i2_1] > mb) {
+            dt += cst - (1 << mbt - tr[i2_1]);
+            tr[i2_1] = mb;
+          } else
+            break;
+        }
+        dt >>= lft;
+        while (dt > 0) {
+          var i2_2 = t2[i].s;
+          if (tr[i2_2] < mb)
+            dt -= 1 << mb - tr[i2_2]++ - 1;
+          else
+            ++i;
+        }
+        for (; i >= 0 && dt; --i) {
+          var i2_3 = t2[i].s;
+          if (tr[i2_3] == mb) {
+            --tr[i2_3];
+            ++dt;
+          }
+        }
+        mbt = mb;
+      }
+      return { t: new u82(tr), l: mbt };
+    };
+    ln = function(n, l, d) {
+      return n.s == -1 ? Math.max(ln(n.l, l, d + 1), ln(n.r, l, d + 1)) : l[n.s] = d;
+    };
+    lc = function(c) {
+      var s = c.length;
+      while (s && !c[--s])
+        ;
+      var cl = new u16(++s);
+      var cli = 0, cln = c[0], cls = 1;
+      var w = function(v) {
+        cl[cli++] = v;
+      };
+      for (var i = 1; i <= s; ++i) {
+        if (c[i] == cln && i != s)
+          ++cls;
+        else {
+          if (!cln && cls > 2) {
+            for (; cls > 138; cls -= 138)
+              w(32754);
+            if (cls > 2) {
+              w(cls > 10 ? cls - 11 << 5 | 28690 : cls - 3 << 5 | 12305);
+              cls = 0;
+            }
+          } else if (cls > 3) {
+            w(cln), --cls;
+            for (; cls > 6; cls -= 6)
+              w(8304);
+            if (cls > 2)
+              w(cls - 3 << 5 | 8208), cls = 0;
+          }
+          while (cls--)
+            w(cln);
+          cls = 1;
+          cln = c[i];
+        }
+      }
+      return { c: cl.subarray(0, cli), n: s };
+    };
+    clen = function(cf, cl) {
+      var l = 0;
+      for (var i = 0; i < cl.length; ++i)
+        l += cf[i] * cl[i];
+      return l;
+    };
+    wfblk = function(out2, pos, dat) {
+      var s = dat.length;
+      var o = shft(pos + 2);
+      out2[o] = s & 255;
+      out2[o + 1] = s >> 8;
+      out2[o + 2] = out2[o] ^ 255;
+      out2[o + 3] = out2[o + 1] ^ 255;
+      for (var i = 0; i < s; ++i)
+        out2[o + i + 4] = dat[i];
+      return (o + 4 + s) * 8;
+    };
+    wblk = function(dat, out2, final, syms, lf, df, eb, li, bs, bl, p) {
+      wbits(out2, p++, final);
+      ++lf[256];
+      var _a2 = hTree(lf, 15), dlt = _a2.t, mlb = _a2.l;
+      var _b2 = hTree(df, 15), ddt = _b2.t, mdb = _b2.l;
+      var _c = lc(dlt), lclt = _c.c, nlc = _c.n;
+      var _d = lc(ddt), lcdt = _d.c, ndc = _d.n;
+      var lcfreq = new u16(19);
+      for (var i = 0; i < lclt.length; ++i)
+        ++lcfreq[lclt[i] & 31];
+      for (var i = 0; i < lcdt.length; ++i)
+        ++lcfreq[lcdt[i] & 31];
+      var _e = hTree(lcfreq, 7), lct = _e.t, mlcb = _e.l;
+      var nlcc = 19;
+      for (; nlcc > 4 && !lct[clim[nlcc - 1]]; --nlcc)
+        ;
+      var flen = bl + 5 << 3;
+      var ftlen = clen(lf, flt) + clen(df, fdt) + eb;
+      var dtlen = clen(lf, dlt) + clen(df, ddt) + eb + 14 + 3 * nlcc + clen(lcfreq, lct) + 2 * lcfreq[16] + 3 * lcfreq[17] + 7 * lcfreq[18];
+      if (bs >= 0 && flen <= ftlen && flen <= dtlen)
+        return wfblk(out2, p, dat.subarray(bs, bs + bl));
+      var lm, ll, dm, dl;
+      wbits(out2, p, 1 + (dtlen < ftlen)), p += 2;
+      if (dtlen < ftlen) {
+        lm = hMap(dlt, mlb, 0), ll = dlt, dm = hMap(ddt, mdb, 0), dl = ddt;
+        var llm = hMap(lct, mlcb, 0);
+        wbits(out2, p, nlc - 257);
+        wbits(out2, p + 5, ndc - 1);
+        wbits(out2, p + 10, nlcc - 4);
+        p += 14;
+        for (var i = 0; i < nlcc; ++i)
+          wbits(out2, p + 3 * i, lct[clim[i]]);
+        p += 3 * nlcc;
+        var lcts = [lclt, lcdt];
+        for (var it = 0; it < 2; ++it) {
+          var clct = lcts[it];
+          for (var i = 0; i < clct.length; ++i) {
+            var len = clct[i] & 31;
+            wbits(out2, p, llm[len]), p += lct[len];
+            if (len > 15)
+              wbits(out2, p, clct[i] >> 5 & 127), p += clct[i] >> 12;
+          }
+        }
+      } else {
+        lm = flm, ll = flt, dm = fdm, dl = fdt;
+      }
+      for (var i = 0; i < li; ++i) {
+        var sym = syms[i];
+        if (sym > 255) {
+          var len = sym >> 18 & 31;
+          wbits16(out2, p, lm[len + 257]), p += ll[len + 257];
+          if (len > 7)
+            wbits(out2, p, sym >> 23 & 31), p += fleb[len];
+          var dst = sym & 31;
+          wbits16(out2, p, dm[dst]), p += dl[dst];
+          if (dst > 3)
+            wbits16(out2, p, sym >> 5 & 8191), p += fdeb[dst];
+        } else {
+          wbits16(out2, p, lm[sym]), p += ll[sym];
+        }
+      }
+      wbits16(out2, p, lm[256]);
+      return p + ll[256];
+    };
+    deo = /* @__PURE__ */ new i32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
+    et = /* @__PURE__ */ new u82(0);
+    dflt = function(dat, lvl, plvl, pre, post, st) {
+      var s = st.z || dat.length;
+      var o = new u82(pre + s + 5 * (1 + Math.ceil(s / 7e3)) + post);
+      var w = o.subarray(pre, o.length - post);
+      var lst = st.l;
+      var pos = (st.r || 0) & 7;
+      if (lvl) {
+        if (pos)
+          w[0] = st.r >> 3;
+        var opt = deo[lvl - 1];
+        var n = opt >> 13, c = opt & 8191;
+        var msk_1 = (1 << plvl) - 1;
+        var prev = st.p || new u16(32768), head = st.h || new u16(msk_1 + 1);
+        var bs1_1 = Math.ceil(plvl / 3), bs2_1 = 2 * bs1_1;
+        var hsh = function(i2) {
+          return (dat[i2] ^ dat[i2 + 1] << bs1_1 ^ dat[i2 + 2] << bs2_1) & msk_1;
+        };
+        var syms = new i32(25e3);
+        var lf = new u16(288), df = new u16(32);
+        var lc_1 = 0, eb = 0, i = st.i || 0, li = 0, wi = st.w || 0, bs = 0;
+        for (; i + 2 < s; ++i) {
+          var hv = hsh(i);
+          var imod = i & 32767, pimod = head[hv];
+          prev[imod] = pimod;
+          head[hv] = imod;
+          if (wi <= i) {
+            var rem = s - i;
+            if ((lc_1 > 7e3 || li > 24576) && (rem > 423 || !lst)) {
+              pos = wblk(dat, w, 0, syms, lf, df, eb, li, bs, i - bs, pos);
+              li = lc_1 = eb = 0, bs = i;
+              for (var j = 0; j < 286; ++j)
+                lf[j] = 0;
+              for (var j = 0; j < 30; ++j)
+                df[j] = 0;
+            }
+            var l = 2, d = 0, ch_1 = c, dif = imod - pimod & 32767;
+            if (rem > 2 && hv == hsh(i - dif)) {
+              var maxn = Math.min(n, rem) - 1;
+              var maxd = Math.min(32767, i);
+              var ml = Math.min(258, rem);
+              while (dif <= maxd && --ch_1 && imod != pimod) {
+                if (dat[i + l] == dat[i + l - dif]) {
+                  var nl = 0;
+                  for (; nl < ml && dat[i + nl] == dat[i + nl - dif]; ++nl)
+                    ;
+                  if (nl > l) {
+                    l = nl, d = dif;
+                    if (nl > maxn)
+                      break;
+                    var mmd = Math.min(dif, nl - 2);
+                    var md = 0;
+                    for (var j = 0; j < mmd; ++j) {
+                      var ti = i - dif + j & 32767;
+                      var pti = prev[ti];
+                      var cd = ti - pti & 32767;
+                      if (cd > md)
+                        md = cd, pimod = ti;
+                    }
+                  }
+                }
+                imod = pimod, pimod = prev[imod];
+                dif += imod - pimod & 32767;
+              }
+            }
+            if (d) {
+              syms[li++] = 268435456 | revfl[l] << 18 | revfd[d];
+              var lin = revfl[l] & 31, din = revfd[d] & 31;
+              eb += fleb[lin] + fdeb[din];
+              ++lf[257 + lin];
+              ++df[din];
+              wi = i + l;
+              ++lc_1;
+            } else {
+              syms[li++] = dat[i];
+              ++lf[dat[i]];
+            }
+          }
+        }
+        for (i = Math.max(i, wi); i < s; ++i) {
+          syms[li++] = dat[i];
+          ++lf[dat[i]];
+        }
+        pos = wblk(dat, w, lst, syms, lf, df, eb, li, bs, i - bs, pos);
+        if (!lst) {
+          st.r = pos & 7 | w[pos / 8 | 0] << 3;
+          pos -= 7;
+          st.h = head, st.p = prev, st.i = i, st.w = wi;
+        }
+      } else {
+        for (var i = st.w || 0; i < s + lst; i += 65535) {
+          var e = i + 65535;
+          if (e >= s) {
+            w[pos / 8 | 0] = lst;
+            e = s;
+          }
+          pos = wfblk(w, pos + 1, dat.subarray(i, e));
+        }
+        st.i = s;
+      }
+      return slc(o, 0, pre + shft(pos) + post);
+    };
+    adler = function() {
+      var a = 1, b = 0;
+      return {
+        p: function(d) {
+          var n = a, m = b;
+          var l = d.length | 0;
+          for (var i = 0; i != l; ) {
+            var e = Math.min(i + 2655, l);
+            for (; i < e; ++i)
+              m += n += d[i];
+            n = (n & 65535) + 15 * (n >> 16), m = (m & 65535) + 15 * (m >> 16);
+          }
+          a = n, b = m;
+        },
+        d: function() {
+          a %= 65521, b %= 65521;
+          return (a & 255) << 24 | (a & 65280) << 8 | (b & 255) << 8 | b >> 8;
+        }
+      };
+    };
+    dopt = function(dat, opt, pre, post, st) {
+      if (!st) {
+        st = { l: 1 };
+        if (opt.dictionary) {
+          var dict = opt.dictionary.subarray(-32768);
+          var newDat = new u82(dict.length + dat.length);
+          newDat.set(dict);
+          newDat.set(dat, dict.length);
+          dat = newDat;
+          st.w = dict.length;
+        }
+      }
+      return dflt(dat, opt.level == null ? 6 : opt.level, opt.mem == null ? st.l ? Math.ceil(Math.max(8, Math.min(13, Math.log(dat.length))) * 1.5) : 20 : 12 + opt.mem, pre, post, st);
+    };
+    wbytes = function(d, b, v) {
+      for (; v; ++b)
+        d[b] = v, v >>>= 8;
+    };
+    zlh = function(c, o) {
+      var lv = o.level, fl2 = lv == 0 ? 0 : lv < 6 ? 1 : lv == 9 ? 3 : 2;
+      c[0] = 120, c[1] = fl2 << 6 | (o.dictionary && 32);
+      c[1] |= 31 - (c[0] << 8 | c[1]) % 31;
+      if (o.dictionary) {
+        var h = adler();
+        h.p(o.dictionary);
+        wbytes(c, 2, h.d());
+      }
+    };
+    zls = function(d, dict) {
+      if ((d[0] & 15) != 8 || d[0] >> 4 > 7 || (d[0] << 8 | d[1]) % 31)
+        err(6, "invalid zlib data");
+      if ((d[1] >> 5 & 1) == +!dict)
+        err(6, "invalid zlib data: " + (d[1] & 32 ? "need" : "unexpected") + " dictionary");
+      return (d[1] >> 3 & 4) + 2;
+    };
+    td = typeof TextDecoder != "undefined" && /* @__PURE__ */ new TextDecoder();
+    tds = 0;
+    try {
+      td.decode(et, { stream: true });
+      tds = 1;
+    } catch (e) {
+    }
+  }
+});
+
+// local/shims/zlib.js
+var zlib_exports = {};
+__export(zlib_exports, {
+  default: () => zlib_default,
+  deflateRawSync: () => deflateRawSync,
+  deflateSync: () => deflateSync2,
+  inflateRawSync: () => inflateRawSync,
+  inflateSync: () => inflateSync2
+});
+function inflateRawSync(buf) {
+  return import_buffer.Buffer.from(inflateSync(new Uint8Array(buf)));
+}
+function deflateRawSync(buf) {
+  return import_buffer.Buffer.from(deflateSync(new Uint8Array(buf)));
+}
+function deflateSync2(buf) {
+  return import_buffer.Buffer.from(zlibSync(new Uint8Array(buf)));
+}
+function inflateSync2(buf) {
+  return import_buffer.Buffer.from(unzlibSync(new Uint8Array(buf)));
+}
+var zlib_default;
+var init_zlib = __esm({
+  "local/shims/zlib.js"() {
+    init_globals_inject();
+    init_browser();
+    zlib_default = { inflateRawSync, deflateRawSync, deflateSync: deflateSync2, inflateSync: inflateSync2 };
+  }
+});
+
 // server/http.js
 var require_http = __commonJS({
   "server/http.js"(exports, module) {
@@ -9458,33 +10244,150 @@ var require_http = __commonJS({
       res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(body) });
       res.end(body);
     }
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    var COMPRESS_MIN = 1024;
+    var BR_QUALITY = 4;
+    function accepts(req, enc2) {
+      const header = String(req && req.headers && req.headers["accept-encoding"] || "").toLowerCase();
+      for (const part of header.split(",")) {
+        const [name, ...params] = part.trim().split(";").map((x) => x.trim());
+        if (name !== enc2) continue;
+        const q = params.find((x) => x.startsWith("q="));
+        return !q || Number(q.slice(2)) > 0;
+      }
+      return false;
+    }
+    function chooseEncoding(req) {
+      if (typeof zlib.brotliCompress !== "function" || typeof zlib.gzip !== "function") return null;
+      if (accepts(req, "br")) return "br";
+      if (accepts(req, "gzip")) return "gzip";
+      return null;
+    }
+    function compress(buf, enc2, { quality = BR_QUALITY, level = 6 } = {}) {
+      return new Promise((resolve2, reject) => {
+        const done = (err2, out2) => err2 ? reject(err2) : resolve2(out2);
+        if (enc2 === "br") zlib.brotliCompress(buf, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: quality, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: buf.length } }, done);
+        else zlib.gzip(buf, { level }, done);
+      });
+    }
+    function sendJsonTo(req, res, status, obj) {
+      const body = import_buffer.Buffer.from(JSON.stringify(obj ?? null));
+      const big = body.length >= COMPRESS_MIN;
+      const enc2 = big ? chooseEncoding(req) : null;
+      const plain = () => {
+        const headers = { "Content-Type": "application/json; charset=utf-8", "Content-Length": body.length };
+        if (big) headers.Vary = "Accept-Encoding";
+        res.writeHead(status, headers);
+        res.end(body);
+      };
+      if (!enc2) {
+        plain();
+        return void 0;
+      }
+      return compress(body, enc2).then((out2) => {
+        if (res.headersSent || res.destroyed) return;
+        res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Encoding": enc2, Vary: "Accept-Encoding", "Content-Length": out2.length });
+        res.end(out2);
+      }, (err2) => {
+        console.error("[suds] compressing a response failed; sending it uncompressed:", err2 && err2.message);
+        if (!res.headersSent && !res.destroyed) plain();
+      });
+    }
     var PRECOMPRESSED = [["br", ".br"], ["gzip", ".gz"]];
     function pickEncoding(req, filePath) {
-      const accept = String(req && req.headers && req.headers["accept-encoding"] || "").toLowerCase();
       for (const [enc2, ext] of PRECOMPRESSED) {
-        if (!new RegExp(`(^|,)\\s*${enc2}\\s*(;|,|$)`).test(accept)) continue;
+        if (!accepts(req, enc2)) continue;
         if (fs.existsSync(filePath + ext)) return { enc: enc2, file: filePath + ext };
       }
       return null;
     }
-    function cachePolicy(url) {
+    var REVALIDATE = /* @__PURE__ */ new Set([".js", ".css", ".svg", ".png", ".ico", ".woff2", ".webmanifest"]);
+    var NO_STORE_FILES = /* @__PURE__ */ new Set(["sw.js", "version.json"]);
+    function cachePolicy(url, filePath) {
       if (url && url.pathname.startsWith("/local/") && url.searchParams.get("v")) return "public, max-age=31536000, immutable";
-      return null;
+      if (!url || !filePath || url.pathname.startsWith("/local/")) return null;
+      if (NO_STORE_FILES.has(path.basename(filePath)) || !REVALIDATE.has(path.extname(filePath).toLowerCase())) return null;
+      return "no-cache";
+    }
+    var COMPRESSIBLE = /* @__PURE__ */ new Set([".html", ".js", ".css", ".json", ".svg", ".txt", ".md", ".webmanifest", ".ico"]);
+    var FILE_CACHE_MAX = 400;
+    var fileCache = /* @__PURE__ */ new Map();
+    function cachedFile(filePath) {
+      const st = fs.statSync(filePath);
+      let e = fileCache.get(filePath);
+      if (e && e.size === st.size && e.mtimeMs === st.mtimeMs) return e;
+      const data = fs.readFileSync(filePath);
+      e = {
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+        data,
+        variants: /* @__PURE__ */ new Map(),
+        etag: `W/"${(init_crypto2(), __toCommonJS(crypto_exports)).createHash("sha256").update(data).digest("base64url").slice(0, 32)}"`
+      };
+      if (fileCache.size >= FILE_CACHE_MAX) fileCache.clear();
+      fileCache.set(filePath, e);
+      return e;
+    }
+    function compressedVariant(e, enc2) {
+      if (!e.variants.has(enc2)) {
+        e.variants.set(enc2, compress(e.data, enc2, { quality: zlib.constants.BROTLI_MAX_QUALITY, level: 9 }).then((out2) => out2.length < e.data.length ? out2 : null, () => null));
+      }
+      return e.variants.get(enc2);
+    }
+    function notModified(req, etag) {
+      const inm = req && req.headers && req.headers["if-none-match"];
+      if (!inm) return false;
+      const opaque = (t) => t.trim().replace(/^W\//, "");
+      return String(inm).split(",").some((t) => opaque(t) === "*" || opaque(t) === opaque(etag));
     }
     function sendFile(res, filePath, { req, url } = {}) {
       const ext = path.extname(filePath).toLowerCase();
       const headers = { "Content-Type": MIME[ext] || "application/octet-stream" };
-      const cache = cachePolicy(url);
+      const cache = cachePolicy(url, filePath);
       if (cache) headers["Cache-Control"] = cache;
       const pre = req ? pickEncoding(req, filePath) : null;
       if (pre) {
         headers["Content-Encoding"] = pre.enc;
         headers.Vary = "Accept-Encoding";
+        const data = fs.readFileSync(pre.file);
+        headers["Content-Length"] = data.length;
+        res.writeHead(200, headers);
+        res.end(data);
+        return void 0;
       }
-      const data = fs.readFileSync(pre ? pre.file : filePath);
-      headers["Content-Length"] = data.length;
-      res.writeHead(200, headers);
-      res.end(data);
+      const e = cachedFile(filePath);
+      const compressible = COMPRESSIBLE.has(ext) && e.data.length >= COMPRESS_MIN;
+      if (compressible) headers.Vary = "Accept-Encoding";
+      if (cache === "no-cache") {
+        headers.ETag = e.etag;
+        if (notModified(req, e.etag)) {
+          delete headers["Content-Type"];
+          res.writeHead(304, headers);
+          res.end();
+          return void 0;
+        }
+      }
+      const plain = () => {
+        headers["Content-Length"] = e.data.length;
+        res.writeHead(200, headers);
+        res.end(e.data);
+      };
+      const enc2 = compressible && req ? chooseEncoding(req) : null;
+      if (!enc2) {
+        plain();
+        return void 0;
+      }
+      return compressedVariant(e, enc2).then((out2) => {
+        if (res.headersSent || res.destroyed) return;
+        if (!out2) {
+          plain();
+          return;
+        }
+        headers["Content-Encoding"] = enc2;
+        headers["Content-Length"] = out2.length;
+        res.writeHead(200, headers);
+        res.end(out2);
+      });
     }
     function serveStatic(root) {
       root = path.resolve(root);
@@ -9504,11 +10407,16 @@ var require_http = __commonJS({
           sendJson(res, 404, { error: "Not found" });
           return true;
         }
-        sendFile(res, file, { req, url });
+        const pending = sendFile(res, file, { req, url });
+        if (pending) pending.catch((e) => {
+          console.error("[suds] static file:", e && e.message);
+          if (!res.headersSent) sendJson(res, 500, { error: "Internal server error" });
+          else res.destroy();
+        });
         return true;
       };
     }
-    module.exports = { Router: Router2, HttpError: HttpError3, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, parseRequestUrl, readBody, securityHeaders, contentDisposition, sendJson, sendFile, serveStatic };
+    module.exports = { Router: Router2, HttpError: HttpError3, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, parseRequestUrl, readBody, securityHeaders, contentDisposition, sendJson, sendJsonTo, sendFile, serveStatic, chooseEncoding, COMPRESS_MIN };
   }
 });
 
@@ -11739,11 +12647,16 @@ var require_clients = __commonJS({
           overdue: "overdue_tasks DESC, last_contact ASC",
           risk: `CASE c.risk_level WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'moderate' THEN 2 ELSE 3 END, last_contact ASC`
         }[sort] || "c.updated_at DESC";
-        const rows = db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth3.activeAssignment("a.")}) AS assigned_workers,
-      (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied'))) AS last_contact,
-      (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END)) AS overdue_tasks
+        const now2 = db3.now();
+        const LAST_CONTACT = `(SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied')))`;
+        const OVERDUE = `(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END))`;
+        const sortCols = sort === "overdue" ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [now2] } : sort === "last_contact" || sort === "risk" ? { sql: `, ${LAST_CONTACT} AS last_contact`, params: [] } : { sql: "", params: [] };
+        const pageIds = db3.all(`SELECT c.id ${sortCols.sql} FROM clients c ${w} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`, ...sortCols.params, ...params, limit2, offset).map((x) => x.id);
+        const byId = new Map(db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth3.activeAssignment("a.")}) AS assigned_workers,
+      ${LAST_CONTACT} AS last_contact, ${OVERDUE} AS overdue_tasks
       ${consentWindow ? `, (SELECT MIN(co.expires_at) FROM consents co WHERE co.client_id=c.id AND co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ?) AS consent_expires_at` : ""}
-      FROM clients c ${w} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`, db3.now(), ...consentWindow ? [consentWindow.from, consentWindow.to] : [], ...params, limit2, offset);
+      FROM clients c WHERE c.id IN (SELECT value FROM json_each(?))`, now2, ...consentWindow ? [consentWindow.from, consentWindow.to] : [], JSON.stringify(pageIds)).map((x) => [x.id, x]));
+        const rows = pageIds.map((id) => byId.get(id));
         const total = db3.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
         audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", status, sort: sort || void 0, filters: filters.length ? filters : void 0, offset: offset || void 0, count: rows.length, deidentified: deidentify } });
         return { clients: rows.map((x) => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks, ...consentWindow ? { consent_expires_at: x.consent_expires_at } : {} })), total, limit: limit2, offset };
@@ -11966,7 +12879,7 @@ var require_clients = __commonJS({
         audit3.log({ user: ctx.user, action: "client.delete", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason_recorded: true } });
         return { ok: true };
       });
-      r.get("/api/clients/:id/timeline", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
+      r.get("/api/clients/:id/timeline", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => O.cached(() => {
         const row = loadClient(ctx, ctx.params.id);
         const id = row.id;
         const canClinical = auth3.hasPerm(ctx.user, "notes:clinical:read");
@@ -11976,30 +12889,31 @@ var require_clients = __commonJS({
         const cut = (col) => before ? `AND ${col} < ?` : "";
         const cutP = before ? [before] : [];
         const events = [];
+        const add = (at, build) => events.push({ at, build });
         for (const x of db3.all(`SELECT i.*, u.display_name AS worker FROM interventions i JOIN users u ON u.id=i.user_id WHERE client_id=? ${cut("i.occurred_at")} ORDER BY i.occurred_at DESC LIMIT ?`, id, ...cutP, per))
-          events.push({ kind: "intervention", id: x.id, at: x.occurred_at, title: O.labelOf("INTERVENTION_TYPES", x.type), detail: x.summary_enc ? decrypt3(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf("OUTCOMES", x.outcome) : null, location: x.location } });
+          add(x.occurred_at, () => ({ kind: "intervention", id: x.id, at: x.occurred_at, title: O.labelOf("INTERVENTION_TYPES", x.type), detail: x.summary_enc ? decrypt3(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf("OUTCOMES", x.outcome) : null, location: x.location } }));
         for (const x of db3.all(`SELECT c.*, u.display_name AS worker FROM calls c JOIN users u ON u.id=c.user_id WHERE client_id=? ${cut("c.started_at")} ORDER BY c.started_at DESC LIMIT ?`, id, ...cutP, per))
-          events.push({ kind: "call", id: x.id, at: x.started_at, title: `${x.direction} ${x.method === "text" ? "text message" : "call"} (${O.labelOf("CALL_CONTACT_TYPES", x.contact_type)})`, detail: x.summary_enc ? decrypt3(x.summary_enc) : x.purpose_enc ? decrypt3(x.purpose_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf(x.method === "text" ? "TEXT_OUTCOMES" : "CALL_OUTCOMES", x.outcome) : null, crisis: !!x.crisis } });
+          add(x.started_at, () => ({ kind: "call", id: x.id, at: x.started_at, title: `${x.direction} ${x.method === "text" ? "text message" : "call"} (${O.labelOf("CALL_CONTACT_TYPES", x.contact_type)})`, detail: x.summary_enc ? decrypt3(x.summary_enc) : x.purpose_enc ? decrypt3(x.purpose_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf(x.method === "text" ? "TEXT_OUTCOMES" : "CALL_OUTCOMES", x.outcome) : null, crisis: !!x.crisis } }));
         for (const x of db3.all(`SELECT n.id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.source,u.display_name AS worker FROM notes n JOIN users u ON u.id=n.author_id WHERE client_id=? AND deleted_at IS NULL ${cut("n.occurred_at")} ORDER BY n.occurred_at DESC LIMIT ?`, id, ...cutP, per))
-          if (x.kind === "admin" || canClinical) events.push({ kind: "note", id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt3(x.title_enc) : O.labelOf("NOTE_FORMATS", x.format)}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } });
+          if (x.kind === "admin" || canClinical) add(x.occurred_at, () => ({ kind: "note", id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt3(x.title_enc) : O.labelOf("NOTE_FORMATS", x.format)}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } }));
         for (const x of db3.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=? ${cut("r.referred_at")} ORDER BY r.referred_at DESC LIMIT ?`, id, ...cutP, per))
-          events.push({ kind: "referral", id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes_enc ? decrypt3(x.notes_enc) : null, worker: x.worker, meta: { status: x.status, outcome: x.outcome_enc ? decrypt3(x.outcome_enc) : null } });
+          add(x.referred_at, () => ({ kind: "referral", id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes_enc ? decrypt3(x.notes_enc) : null, worker: x.worker, meta: { status: x.status, outcome: x.outcome_enc ? decrypt3(x.outcome_enc) : null } }));
         for (const x of db3.all(`SELECT t.*, u.display_name AS worker FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE client_id=? ORDER BY COALESCE(t.completed_at, t.due_at, t.created_at) DESC LIMIT ?`, id, per))
-          events.push({ kind: x.is_milestone ? "milestone" : "task", id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title_enc ? decrypt3(x.title_enc) : "", detail: x.description_enc ? decrypt3(x.description_enc) : null, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } });
+          add(x.completed_at || x.due_at || x.created_at, () => ({ kind: x.is_milestone ? "milestone" : "task", id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title_enc ? decrypt3(x.title_enc) : "", detail: x.description_enc ? decrypt3(x.description_enc) : null, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } }));
         for (const x of db3.all(`SELECT * FROM consents WHERE client_id=? ORDER BY signed_at DESC LIMIT ?`, id, per))
-          events.push({ kind: "consent", id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, " ")}${x.recipient_enc ? " \u2192 " + decrypt3(x.recipient_enc) : ""}`, detail: x.purpose_enc ? decrypt3(x.purpose_enc) : null, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } });
+          add(x.signed_at, () => ({ kind: "consent", id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, " ")}${x.recipient_enc ? " \u2192 " + decrypt3(x.recipient_enc) : ""}`, detail: x.purpose_enc ? decrypt3(x.purpose_enc) : null, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } }));
         if (auth3.hasPerm(ctx.user, "budget:read"))
           for (const x of db3.all(`SELECT e.*, f.name AS fund FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE client_id=? ORDER BY e.spent_at DESC LIMIT ?`, id, per))
-            events.push({ kind: "expense", id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, " ")}`, detail: x.description_enc ? decrypt3(x.description_enc) : null, meta: { fund: x.fund, status: x.status } });
-        events.push({ kind: "milestone", id: "intake", at: row.intake_date, title: "Program intake", meta: {} });
-        if (row.referral_date) events.push({ kind: "milestone", id: "referral", at: row.referral_date, title: "Referred in", meta: {} });
-        if (row.engagement_date) events.push({ kind: "milestone", id: "engagement", at: row.engagement_date, title: "Engaged with services", meta: {} });
-        if (row.discharge_date) events.push({ kind: "milestone", id: "discharge", at: row.discharge_date, title: `Discharge: ${row.discharge_reason ? /^[a-z_]+$/.test(row.discharge_reason) ? O.labelOf("DISCHARGE_REASONS", row.discharge_reason) : row.discharge_reason : ""}`, meta: {} });
+            add(x.spent_at, () => ({ kind: "expense", id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, " ")}`, detail: x.description_enc ? decrypt3(x.description_enc) : null, meta: { fund: x.fund, status: x.status } }));
+        add(row.intake_date, () => ({ kind: "milestone", id: "intake", at: row.intake_date, title: "Program intake", meta: {} }));
+        if (row.referral_date) add(row.referral_date, () => ({ kind: "milestone", id: "referral", at: row.referral_date, title: "Referred in", meta: {} }));
+        if (row.engagement_date) add(row.engagement_date, () => ({ kind: "milestone", id: "engagement", at: row.engagement_date, title: "Engaged with services", meta: {} }));
+        if (row.discharge_date) add(row.discharge_date, () => ({ kind: "milestone", id: "discharge", at: row.discharge_date, title: `Discharge: ${row.discharge_reason ? /^[a-z_]+$/.test(row.discharge_reason) ? O.labelOf("DISCHARGE_REASONS", row.discharge_reason) : row.discharge_reason : ""}`, meta: {} }));
         events.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
-        const page = events.slice(offset, offset + limit2);
+        const page = events.slice(offset, offset + limit2).map((e) => e.build());
         audit3.log({ user: ctx.user, action: "client.timeline", entity: "client", entityId: id, clientId: id, ip: ctx.ip, details: { events: page.length } });
         return { events: page, limit: limit2, offset, more: events.length > offset + limit2 };
-      });
+      }));
     };
     module.exports.possibleDuplicates = possibleDuplicates;
     module.exports.flagForReview = flagForReview;
@@ -12890,24 +13804,27 @@ var require_supplies = __commonJS({
     var estimateReturns = (litres) => Math.round(Number(litres || 0) * syringesPerLitre());
     function stock({ date = today() } = {}) {
       const warnBy = addDays(date, expiryWarnDays());
-      const lotRows = db3.all(`SELECT item_id, site_id, lot_number, expires_on, SUM(quantity) quantity FROM supply_ledger GROUP BY item_id, site_id, lot_number, expires_on HAVING SUM(quantity) <> 0`).map((l) => ({ ...l, state: !l.expires_on ? "no_expiry" : l.expires_on < date ? "expired" : l.expires_on <= warnBy ? "expiring" : "ok" }));
+      const sums = db3.all(`SELECT item_id, site_id, lot_number, expires_on, SUM(quantity) quantity FROM supply_ledger GROUP BY item_id, site_id, lot_number, expires_on`);
+      const lotRows = sums.filter((l) => l.quantity !== 0).map((l) => ({ ...l, state: !l.expires_on ? "no_expiry" : l.expires_on < date ? "expired" : l.expires_on <= warnBy ? "expiring" : "ok" }));
       const totals = /* @__PURE__ */ new Map();
       for (const l of lotRows) {
         const k = `${l.item_id}|${l.site_id}`;
         totals.set(k, (totals.get(k) || 0) + l.quantity);
       }
-      return { lots: lotRows, bySite: [...totals].map(([k, quantity]) => {
+      const out2 = { lots: lotRows, bySite: [...totals].map(([k, quantity]) => {
         const [item_id, site_id] = k.split("|");
         return { item_id, site_id, quantity };
       }), warn_by: warnBy, date };
+      Object.defineProperty(out2, "onHandOf", { enumerable: false, value: (itemId, siteId) => totals.get(`${itemId}|${siteId}`) || 0 });
+      return out2;
     }
-    function alerts({ date = today() } = {}) {
-      const s = stock({ date });
+    function alerts({ date = today(), stock: s = null } = {}) {
+      if (!s || s.date !== date) s = stock({ date });
       const positive = s.lots.filter((l) => l.quantity > 0);
       const lowRows = [];
       for (const it of db3.all(`SELECT id, name, low_stock FROM supply_items WHERE is_active=1 AND low_stock IS NOT NULL`)) {
         for (const st of db3.all(`SELECT id, name FROM supply_sites WHERE is_active=1 AND id IN (SELECT site_id FROM supply_ledger WHERE item_id=?)`, it.id)) {
-          const q = onHand(it.id, st.id);
+          const q = s.onHandOf(it.id, st.id);
           if (q <= it.low_stock) lowRows.push({ item_id: it.id, site_id: st.id, quantity: q, low_stock: it.low_stock });
         }
       }
@@ -15129,771 +16046,6 @@ var require_suprt = __commonJS({
   }
 });
 
-// node_modules/fflate/esm/browser.js
-function deflateSync(data, opts) {
-  return dopt(data, opts || {}, 0, 0);
-}
-function inflateSync(data, opts) {
-  return inflt(data, { i: 2 }, opts && opts.out, opts && opts.dictionary);
-}
-function zlibSync(data, opts) {
-  if (!opts)
-    opts = {};
-  var a = adler();
-  a.p(data);
-  var d = dopt(data, opts, opts.dictionary ? 6 : 2, 4);
-  return zlh(d, opts), wbytes(d, d.length - 4, a.d()), d;
-}
-function unzlibSync(data, opts) {
-  return inflt(data.subarray(zls(data, opts && opts.dictionary), -4), { i: 2 }, opts && opts.out, opts && opts.dictionary);
-}
-var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
-var init_browser = __esm({
-  "node_modules/fflate/esm/browser.js"() {
-    init_globals_inject();
-    u82 = Uint8Array;
-    u16 = Uint16Array;
-    i32 = Int32Array;
-    fleb = new u82([
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      1,
-      1,
-      1,
-      1,
-      2,
-      2,
-      2,
-      2,
-      3,
-      3,
-      3,
-      3,
-      4,
-      4,
-      4,
-      4,
-      5,
-      5,
-      5,
-      5,
-      0,
-      /* unused */
-      0,
-      0,
-      /* impossible */
-      0
-    ]);
-    fdeb = new u82([
-      0,
-      0,
-      0,
-      0,
-      1,
-      1,
-      2,
-      2,
-      3,
-      3,
-      4,
-      4,
-      5,
-      5,
-      6,
-      6,
-      7,
-      7,
-      8,
-      8,
-      9,
-      9,
-      10,
-      10,
-      11,
-      11,
-      12,
-      12,
-      13,
-      13,
-      /* unused */
-      0,
-      0
-    ]);
-    clim = new u82([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]);
-    freb = function(eb, start2) {
-      var b = new u16(31);
-      for (var i = 0; i < 31; ++i) {
-        b[i] = start2 += 1 << eb[i - 1];
-      }
-      var r = new i32(b[30]);
-      for (var i = 1; i < 30; ++i) {
-        for (var j = b[i]; j < b[i + 1]; ++j) {
-          r[j] = j - b[i] << 5 | i;
-        }
-      }
-      return { b, r };
-    };
-    _a = freb(fleb, 2);
-    fl = _a.b;
-    revfl = _a.r;
-    fl[28] = 258, revfl[258] = 28;
-    _b = freb(fdeb, 0);
-    fd = _b.b;
-    revfd = _b.r;
-    rev = new u16(32768);
-    for (i = 0; i < 32768; ++i) {
-      x = (i & 43690) >> 1 | (i & 21845) << 1;
-      x = (x & 52428) >> 2 | (x & 13107) << 2;
-      x = (x & 61680) >> 4 | (x & 3855) << 4;
-      rev[i] = ((x & 65280) >> 8 | (x & 255) << 8) >> 1;
-    }
-    hMap = function(cd, mb, r) {
-      var s = cd.length;
-      var i = 0;
-      var l = new u16(mb);
-      for (; i < s; ++i) {
-        if (cd[i])
-          ++l[cd[i] - 1];
-      }
-      var le = new u16(mb);
-      for (i = 1; i < mb; ++i) {
-        le[i] = le[i - 1] + l[i - 1] << 1;
-      }
-      var co;
-      if (r) {
-        co = new u16(1 << mb);
-        var rvb = 15 - mb;
-        for (i = 0; i < s; ++i) {
-          if (cd[i]) {
-            var sv = i << 4 | cd[i];
-            var r_1 = mb - cd[i];
-            var v = le[cd[i] - 1]++ << r_1;
-            for (var m = v | (1 << r_1) - 1; v <= m; ++v) {
-              co[rev[v] >> rvb] = sv;
-            }
-          }
-        }
-      } else {
-        co = new u16(s);
-        for (i = 0; i < s; ++i) {
-          if (cd[i]) {
-            co[i] = rev[le[cd[i] - 1]++] >> 15 - cd[i];
-          }
-        }
-      }
-      return co;
-    };
-    flt = new u82(288);
-    for (i = 0; i < 144; ++i)
-      flt[i] = 8;
-    for (i = 144; i < 256; ++i)
-      flt[i] = 9;
-    for (i = 256; i < 280; ++i)
-      flt[i] = 7;
-    for (i = 280; i < 288; ++i)
-      flt[i] = 8;
-    fdt = new u82(32);
-    for (i = 0; i < 32; ++i)
-      fdt[i] = 5;
-    flm = /* @__PURE__ */ hMap(flt, 9, 0);
-    flrm = /* @__PURE__ */ hMap(flt, 9, 1);
-    fdm = /* @__PURE__ */ hMap(fdt, 5, 0);
-    fdrm = /* @__PURE__ */ hMap(fdt, 5, 1);
-    max = function(a) {
-      var m = a[0];
-      for (var i = 1; i < a.length; ++i) {
-        if (a[i] > m)
-          m = a[i];
-      }
-      return m;
-    };
-    bits = function(d, p, m) {
-      var o = p / 8 | 0;
-      return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
-    };
-    bits16 = function(d, p) {
-      var o = p / 8 | 0;
-      return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
-    };
-    shft = function(p) {
-      return (p + 7) / 8 | 0;
-    };
-    slc = function(v, s, e) {
-      if (s == null || s < 0)
-        s = 0;
-      if (e == null || e > v.length)
-        e = v.length;
-      return new u82(v.subarray(s, e));
-    };
-    ec = [
-      "unexpected EOF",
-      "invalid block type",
-      "invalid length/literal",
-      "invalid distance",
-      "stream finished",
-      "no stream handler",
-      ,
-      "no callback",
-      "invalid UTF-8 data",
-      "extra field too long",
-      "date not in range 1980-2099",
-      "filename too long",
-      "stream finishing",
-      "invalid zip data"
-      // determined by unknown compression method
-    ];
-    err = function(ind, msg, nt) {
-      var e = new Error(msg || ec[ind]);
-      e.code = ind;
-      if (Error.captureStackTrace)
-        Error.captureStackTrace(e, err);
-      if (!nt)
-        throw e;
-      return e;
-    };
-    inflt = function(dat, st, buf, dict) {
-      var sl = dat.length, dl = dict ? dict.length : 0;
-      if (!sl || st.f && !st.l)
-        return buf || new u82(0);
-      var noBuf = !buf;
-      var resize = noBuf || st.i != 2;
-      var noSt = st.i;
-      if (noBuf)
-        buf = new u82(sl * 3);
-      var cbuf = function(l2) {
-        var bl = buf.length;
-        if (l2 > bl) {
-          var nbuf = new u82(Math.max(bl * 2, l2));
-          nbuf.set(buf);
-          buf = nbuf;
-        }
-      };
-      var final = st.f || 0, pos = st.p || 0, bt = st.b || 0, lm = st.l, dm = st.d, lbt = st.m, dbt = st.n;
-      var tbts = sl * 8;
-      do {
-        if (!lm) {
-          final = bits(dat, pos, 1);
-          var type = bits(dat, pos + 1, 3);
-          pos += 3;
-          if (!type) {
-            var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
-            if (t > sl) {
-              if (noSt)
-                err(0);
-              break;
-            }
-            if (resize)
-              cbuf(bt + l);
-            buf.set(dat.subarray(s, t), bt);
-            st.b = bt += l, st.p = pos = t * 8, st.f = final;
-            continue;
-          } else if (type == 1)
-            lm = flrm, dm = fdrm, lbt = 9, dbt = 5;
-          else if (type == 2) {
-            var hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
-            var tl = hLit + bits(dat, pos + 5, 31) + 1;
-            pos += 14;
-            var ldt = new u82(tl);
-            var clt = new u82(19);
-            for (var i = 0; i < hcLen; ++i) {
-              clt[clim[i]] = bits(dat, pos + i * 3, 7);
-            }
-            pos += hcLen * 3;
-            var clb = max(clt), clbmsk = (1 << clb) - 1;
-            var clm = hMap(clt, clb, 1);
-            for (var i = 0; i < tl; ) {
-              var r = clm[bits(dat, pos, clbmsk)];
-              pos += r & 15;
-              var s = r >> 4;
-              if (s < 16) {
-                ldt[i++] = s;
-              } else {
-                var c = 0, n = 0;
-                if (s == 16)
-                  n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
-                else if (s == 17)
-                  n = 3 + bits(dat, pos, 7), pos += 3;
-                else if (s == 18)
-                  n = 11 + bits(dat, pos, 127), pos += 7;
-                while (n--)
-                  ldt[i++] = c;
-              }
-            }
-            var lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
-            lbt = max(lt);
-            dbt = max(dt);
-            lm = hMap(lt, lbt, 1);
-            dm = hMap(dt, dbt, 1);
-          } else
-            err(1);
-          if (pos > tbts) {
-            if (noSt)
-              err(0);
-            break;
-          }
-        }
-        if (resize)
-          cbuf(bt + 131072);
-        var lms = (1 << lbt) - 1, dms = (1 << dbt) - 1;
-        var lpos = pos;
-        for (; ; lpos = pos) {
-          var c = lm[bits16(dat, pos) & lms], sym = c >> 4;
-          pos += c & 15;
-          if (pos > tbts) {
-            if (noSt)
-              err(0);
-            break;
-          }
-          if (!c)
-            err(2);
-          if (sym < 256)
-            buf[bt++] = sym;
-          else if (sym == 256) {
-            lpos = pos, lm = null;
-            break;
-          } else {
-            var add = sym - 254;
-            if (sym > 264) {
-              var i = sym - 257, b = fleb[i];
-              add = bits(dat, pos, (1 << b) - 1) + fl[i];
-              pos += b;
-            }
-            var d = dm[bits16(dat, pos) & dms], dsym = d >> 4;
-            if (!d)
-              err(3);
-            pos += d & 15;
-            var dt = fd[dsym];
-            if (dsym > 3) {
-              var b = fdeb[dsym];
-              dt += bits16(dat, pos) & (1 << b) - 1, pos += b;
-            }
-            if (pos > tbts) {
-              if (noSt)
-                err(0);
-              break;
-            }
-            if (resize)
-              cbuf(bt + 131072);
-            var end = bt + add;
-            if (bt < dt) {
-              var shift = dl - dt, dend = Math.min(dt, end);
-              if (shift + bt < 0)
-                err(3);
-              for (; bt < dend; ++bt)
-                buf[bt] = dict[shift + bt];
-            }
-            for (; bt < end; ++bt)
-              buf[bt] = buf[bt - dt];
-          }
-        }
-        st.l = lm, st.p = lpos, st.b = bt, st.f = final;
-        if (lm)
-          final = 1, st.m = lbt, st.d = dm, st.n = dbt;
-      } while (!final);
-      return bt != buf.length && noBuf ? slc(buf, 0, bt) : buf.subarray(0, bt);
-    };
-    wbits = function(d, p, v) {
-      v <<= p & 7;
-      var o = p / 8 | 0;
-      d[o] |= v;
-      d[o + 1] |= v >> 8;
-    };
-    wbits16 = function(d, p, v) {
-      v <<= p & 7;
-      var o = p / 8 | 0;
-      d[o] |= v;
-      d[o + 1] |= v >> 8;
-      d[o + 2] |= v >> 16;
-    };
-    hTree = function(d, mb) {
-      var t = [];
-      for (var i = 0; i < d.length; ++i) {
-        if (d[i])
-          t.push({ s: i, f: d[i] });
-      }
-      var s = t.length;
-      var t2 = t.slice();
-      if (!s)
-        return { t: et, l: 0 };
-      if (s == 1) {
-        var v = new u82(t[0].s + 1);
-        v[t[0].s] = 1;
-        return { t: v, l: 1 };
-      }
-      t.sort(function(a, b) {
-        return a.f - b.f;
-      });
-      t.push({ s: -1, f: 25001 });
-      var l = t[0], r = t[1], i0 = 0, i1 = 1, i2 = 2;
-      t[0] = { s: -1, f: l.f + r.f, l, r };
-      while (i1 != s - 1) {
-        l = t[t[i0].f < t[i2].f ? i0++ : i2++];
-        r = t[i0 != i1 && t[i0].f < t[i2].f ? i0++ : i2++];
-        t[i1++] = { s: -1, f: l.f + r.f, l, r };
-      }
-      var maxSym = t2[0].s;
-      for (var i = 1; i < s; ++i) {
-        if (t2[i].s > maxSym)
-          maxSym = t2[i].s;
-      }
-      var tr = new u16(maxSym + 1);
-      var mbt = ln(t[i1 - 1], tr, 0);
-      if (mbt > mb) {
-        var i = 0, dt = 0;
-        var lft = mbt - mb, cst = 1 << lft;
-        t2.sort(function(a, b) {
-          return tr[b.s] - tr[a.s] || a.f - b.f;
-        });
-        for (; i < s; ++i) {
-          var i2_1 = t2[i].s;
-          if (tr[i2_1] > mb) {
-            dt += cst - (1 << mbt - tr[i2_1]);
-            tr[i2_1] = mb;
-          } else
-            break;
-        }
-        dt >>= lft;
-        while (dt > 0) {
-          var i2_2 = t2[i].s;
-          if (tr[i2_2] < mb)
-            dt -= 1 << mb - tr[i2_2]++ - 1;
-          else
-            ++i;
-        }
-        for (; i >= 0 && dt; --i) {
-          var i2_3 = t2[i].s;
-          if (tr[i2_3] == mb) {
-            --tr[i2_3];
-            ++dt;
-          }
-        }
-        mbt = mb;
-      }
-      return { t: new u82(tr), l: mbt };
-    };
-    ln = function(n, l, d) {
-      return n.s == -1 ? Math.max(ln(n.l, l, d + 1), ln(n.r, l, d + 1)) : l[n.s] = d;
-    };
-    lc = function(c) {
-      var s = c.length;
-      while (s && !c[--s])
-        ;
-      var cl = new u16(++s);
-      var cli = 0, cln = c[0], cls = 1;
-      var w = function(v) {
-        cl[cli++] = v;
-      };
-      for (var i = 1; i <= s; ++i) {
-        if (c[i] == cln && i != s)
-          ++cls;
-        else {
-          if (!cln && cls > 2) {
-            for (; cls > 138; cls -= 138)
-              w(32754);
-            if (cls > 2) {
-              w(cls > 10 ? cls - 11 << 5 | 28690 : cls - 3 << 5 | 12305);
-              cls = 0;
-            }
-          } else if (cls > 3) {
-            w(cln), --cls;
-            for (; cls > 6; cls -= 6)
-              w(8304);
-            if (cls > 2)
-              w(cls - 3 << 5 | 8208), cls = 0;
-          }
-          while (cls--)
-            w(cln);
-          cls = 1;
-          cln = c[i];
-        }
-      }
-      return { c: cl.subarray(0, cli), n: s };
-    };
-    clen = function(cf, cl) {
-      var l = 0;
-      for (var i = 0; i < cl.length; ++i)
-        l += cf[i] * cl[i];
-      return l;
-    };
-    wfblk = function(out2, pos, dat) {
-      var s = dat.length;
-      var o = shft(pos + 2);
-      out2[o] = s & 255;
-      out2[o + 1] = s >> 8;
-      out2[o + 2] = out2[o] ^ 255;
-      out2[o + 3] = out2[o + 1] ^ 255;
-      for (var i = 0; i < s; ++i)
-        out2[o + i + 4] = dat[i];
-      return (o + 4 + s) * 8;
-    };
-    wblk = function(dat, out2, final, syms, lf, df, eb, li, bs, bl, p) {
-      wbits(out2, p++, final);
-      ++lf[256];
-      var _a2 = hTree(lf, 15), dlt = _a2.t, mlb = _a2.l;
-      var _b2 = hTree(df, 15), ddt = _b2.t, mdb = _b2.l;
-      var _c = lc(dlt), lclt = _c.c, nlc = _c.n;
-      var _d = lc(ddt), lcdt = _d.c, ndc = _d.n;
-      var lcfreq = new u16(19);
-      for (var i = 0; i < lclt.length; ++i)
-        ++lcfreq[lclt[i] & 31];
-      for (var i = 0; i < lcdt.length; ++i)
-        ++lcfreq[lcdt[i] & 31];
-      var _e = hTree(lcfreq, 7), lct = _e.t, mlcb = _e.l;
-      var nlcc = 19;
-      for (; nlcc > 4 && !lct[clim[nlcc - 1]]; --nlcc)
-        ;
-      var flen = bl + 5 << 3;
-      var ftlen = clen(lf, flt) + clen(df, fdt) + eb;
-      var dtlen = clen(lf, dlt) + clen(df, ddt) + eb + 14 + 3 * nlcc + clen(lcfreq, lct) + 2 * lcfreq[16] + 3 * lcfreq[17] + 7 * lcfreq[18];
-      if (bs >= 0 && flen <= ftlen && flen <= dtlen)
-        return wfblk(out2, p, dat.subarray(bs, bs + bl));
-      var lm, ll, dm, dl;
-      wbits(out2, p, 1 + (dtlen < ftlen)), p += 2;
-      if (dtlen < ftlen) {
-        lm = hMap(dlt, mlb, 0), ll = dlt, dm = hMap(ddt, mdb, 0), dl = ddt;
-        var llm = hMap(lct, mlcb, 0);
-        wbits(out2, p, nlc - 257);
-        wbits(out2, p + 5, ndc - 1);
-        wbits(out2, p + 10, nlcc - 4);
-        p += 14;
-        for (var i = 0; i < nlcc; ++i)
-          wbits(out2, p + 3 * i, lct[clim[i]]);
-        p += 3 * nlcc;
-        var lcts = [lclt, lcdt];
-        for (var it = 0; it < 2; ++it) {
-          var clct = lcts[it];
-          for (var i = 0; i < clct.length; ++i) {
-            var len = clct[i] & 31;
-            wbits(out2, p, llm[len]), p += lct[len];
-            if (len > 15)
-              wbits(out2, p, clct[i] >> 5 & 127), p += clct[i] >> 12;
-          }
-        }
-      } else {
-        lm = flm, ll = flt, dm = fdm, dl = fdt;
-      }
-      for (var i = 0; i < li; ++i) {
-        var sym = syms[i];
-        if (sym > 255) {
-          var len = sym >> 18 & 31;
-          wbits16(out2, p, lm[len + 257]), p += ll[len + 257];
-          if (len > 7)
-            wbits(out2, p, sym >> 23 & 31), p += fleb[len];
-          var dst = sym & 31;
-          wbits16(out2, p, dm[dst]), p += dl[dst];
-          if (dst > 3)
-            wbits16(out2, p, sym >> 5 & 8191), p += fdeb[dst];
-        } else {
-          wbits16(out2, p, lm[sym]), p += ll[sym];
-        }
-      }
-      wbits16(out2, p, lm[256]);
-      return p + ll[256];
-    };
-    deo = /* @__PURE__ */ new i32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
-    et = /* @__PURE__ */ new u82(0);
-    dflt = function(dat, lvl, plvl, pre, post, st) {
-      var s = st.z || dat.length;
-      var o = new u82(pre + s + 5 * (1 + Math.ceil(s / 7e3)) + post);
-      var w = o.subarray(pre, o.length - post);
-      var lst = st.l;
-      var pos = (st.r || 0) & 7;
-      if (lvl) {
-        if (pos)
-          w[0] = st.r >> 3;
-        var opt = deo[lvl - 1];
-        var n = opt >> 13, c = opt & 8191;
-        var msk_1 = (1 << plvl) - 1;
-        var prev = st.p || new u16(32768), head = st.h || new u16(msk_1 + 1);
-        var bs1_1 = Math.ceil(plvl / 3), bs2_1 = 2 * bs1_1;
-        var hsh = function(i2) {
-          return (dat[i2] ^ dat[i2 + 1] << bs1_1 ^ dat[i2 + 2] << bs2_1) & msk_1;
-        };
-        var syms = new i32(25e3);
-        var lf = new u16(288), df = new u16(32);
-        var lc_1 = 0, eb = 0, i = st.i || 0, li = 0, wi = st.w || 0, bs = 0;
-        for (; i + 2 < s; ++i) {
-          var hv = hsh(i);
-          var imod = i & 32767, pimod = head[hv];
-          prev[imod] = pimod;
-          head[hv] = imod;
-          if (wi <= i) {
-            var rem = s - i;
-            if ((lc_1 > 7e3 || li > 24576) && (rem > 423 || !lst)) {
-              pos = wblk(dat, w, 0, syms, lf, df, eb, li, bs, i - bs, pos);
-              li = lc_1 = eb = 0, bs = i;
-              for (var j = 0; j < 286; ++j)
-                lf[j] = 0;
-              for (var j = 0; j < 30; ++j)
-                df[j] = 0;
-            }
-            var l = 2, d = 0, ch_1 = c, dif = imod - pimod & 32767;
-            if (rem > 2 && hv == hsh(i - dif)) {
-              var maxn = Math.min(n, rem) - 1;
-              var maxd = Math.min(32767, i);
-              var ml = Math.min(258, rem);
-              while (dif <= maxd && --ch_1 && imod != pimod) {
-                if (dat[i + l] == dat[i + l - dif]) {
-                  var nl = 0;
-                  for (; nl < ml && dat[i + nl] == dat[i + nl - dif]; ++nl)
-                    ;
-                  if (nl > l) {
-                    l = nl, d = dif;
-                    if (nl > maxn)
-                      break;
-                    var mmd = Math.min(dif, nl - 2);
-                    var md = 0;
-                    for (var j = 0; j < mmd; ++j) {
-                      var ti = i - dif + j & 32767;
-                      var pti = prev[ti];
-                      var cd = ti - pti & 32767;
-                      if (cd > md)
-                        md = cd, pimod = ti;
-                    }
-                  }
-                }
-                imod = pimod, pimod = prev[imod];
-                dif += imod - pimod & 32767;
-              }
-            }
-            if (d) {
-              syms[li++] = 268435456 | revfl[l] << 18 | revfd[d];
-              var lin = revfl[l] & 31, din = revfd[d] & 31;
-              eb += fleb[lin] + fdeb[din];
-              ++lf[257 + lin];
-              ++df[din];
-              wi = i + l;
-              ++lc_1;
-            } else {
-              syms[li++] = dat[i];
-              ++lf[dat[i]];
-            }
-          }
-        }
-        for (i = Math.max(i, wi); i < s; ++i) {
-          syms[li++] = dat[i];
-          ++lf[dat[i]];
-        }
-        pos = wblk(dat, w, lst, syms, lf, df, eb, li, bs, i - bs, pos);
-        if (!lst) {
-          st.r = pos & 7 | w[pos / 8 | 0] << 3;
-          pos -= 7;
-          st.h = head, st.p = prev, st.i = i, st.w = wi;
-        }
-      } else {
-        for (var i = st.w || 0; i < s + lst; i += 65535) {
-          var e = i + 65535;
-          if (e >= s) {
-            w[pos / 8 | 0] = lst;
-            e = s;
-          }
-          pos = wfblk(w, pos + 1, dat.subarray(i, e));
-        }
-        st.i = s;
-      }
-      return slc(o, 0, pre + shft(pos) + post);
-    };
-    adler = function() {
-      var a = 1, b = 0;
-      return {
-        p: function(d) {
-          var n = a, m = b;
-          var l = d.length | 0;
-          for (var i = 0; i != l; ) {
-            var e = Math.min(i + 2655, l);
-            for (; i < e; ++i)
-              m += n += d[i];
-            n = (n & 65535) + 15 * (n >> 16), m = (m & 65535) + 15 * (m >> 16);
-          }
-          a = n, b = m;
-        },
-        d: function() {
-          a %= 65521, b %= 65521;
-          return (a & 255) << 24 | (a & 65280) << 8 | (b & 255) << 8 | b >> 8;
-        }
-      };
-    };
-    dopt = function(dat, opt, pre, post, st) {
-      if (!st) {
-        st = { l: 1 };
-        if (opt.dictionary) {
-          var dict = opt.dictionary.subarray(-32768);
-          var newDat = new u82(dict.length + dat.length);
-          newDat.set(dict);
-          newDat.set(dat, dict.length);
-          dat = newDat;
-          st.w = dict.length;
-        }
-      }
-      return dflt(dat, opt.level == null ? 6 : opt.level, opt.mem == null ? st.l ? Math.ceil(Math.max(8, Math.min(13, Math.log(dat.length))) * 1.5) : 20 : 12 + opt.mem, pre, post, st);
-    };
-    wbytes = function(d, b, v) {
-      for (; v; ++b)
-        d[b] = v, v >>>= 8;
-    };
-    zlh = function(c, o) {
-      var lv = o.level, fl2 = lv == 0 ? 0 : lv < 6 ? 1 : lv == 9 ? 3 : 2;
-      c[0] = 120, c[1] = fl2 << 6 | (o.dictionary && 32);
-      c[1] |= 31 - (c[0] << 8 | c[1]) % 31;
-      if (o.dictionary) {
-        var h = adler();
-        h.p(o.dictionary);
-        wbytes(c, 2, h.d());
-      }
-    };
-    zls = function(d, dict) {
-      if ((d[0] & 15) != 8 || d[0] >> 4 > 7 || (d[0] << 8 | d[1]) % 31)
-        err(6, "invalid zlib data");
-      if ((d[1] >> 5 & 1) == +!dict)
-        err(6, "invalid zlib data: " + (d[1] & 32 ? "need" : "unexpected") + " dictionary");
-      return (d[1] >> 3 & 4) + 2;
-    };
-    td = typeof TextDecoder != "undefined" && /* @__PURE__ */ new TextDecoder();
-    tds = 0;
-    try {
-      td.decode(et, { stream: true });
-      tds = 1;
-    } catch (e) {
-    }
-  }
-});
-
-// local/shims/zlib.js
-var zlib_exports = {};
-__export(zlib_exports, {
-  default: () => zlib_default,
-  deflateRawSync: () => deflateRawSync,
-  deflateSync: () => deflateSync2,
-  inflateRawSync: () => inflateRawSync,
-  inflateSync: () => inflateSync2
-});
-function inflateRawSync(buf) {
-  return import_buffer.Buffer.from(inflateSync(new Uint8Array(buf)));
-}
-function deflateRawSync(buf) {
-  return import_buffer.Buffer.from(deflateSync(new Uint8Array(buf)));
-}
-function deflateSync2(buf) {
-  return import_buffer.Buffer.from(zlibSync(new Uint8Array(buf)));
-}
-function inflateSync2(buf) {
-  return import_buffer.Buffer.from(unzlibSync(new Uint8Array(buf)));
-}
-var zlib_default;
-var init_zlib = __esm({
-  "local/shims/zlib.js"() {
-    init_globals_inject();
-    init_browser();
-    zlib_default = { inflateRawSync, deflateRawSync, deflateSync: deflateSync2, inflateSync: inflateSync2 };
-  }
-});
-
 // server/importers/text.js
 var require_text = __commonJS({
   "server/importers/text.js"(exports, module) {
@@ -16951,6 +17103,9 @@ var require_crud = __commonJS({
     function clientExists(id) {
       return !!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id);
     }
+    function countJoins(joins, where) {
+      return joins.replace(/\s*LEFT JOIN (\w+) (\w+) ON \2\.id=\w+\.\w+/g, (clause, _table, alias) => new RegExp(`\\b${alias}\\.`).test(where) ? clause : "");
+    }
     var STALE_MESSAGE = "This record was changed by someone else since you opened it. Reload to see their changes.";
     function assertFresh(ctx, row, entity) {
       const token2 = ctx.body && typeof ctx.body === "object" ? ctx.body.if_updated_at : void 0;
@@ -17029,7 +17184,7 @@ var require_crud = __commonJS({
         const w = "WHERE " + where.join(" AND ");
         const order = opts.order || `${table}.${dateCol} DESC`;
         const rows = db3.all(`SELECT ${select} FROM ${table} ${joins} ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, limit2, offset);
-        const total = db3.one(`SELECT COUNT(*) n FROM ${table} ${joins} ${w}`, ...params).n;
+        const total = db3.one(`SELECT COUNT(*) n FROM ${table} ${countJoins(joins, w)} ${w}`, ...params).n;
         audit3.log({ user: ctx.user, action: `${entity}.list`, ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: rows.length } });
         return { rows: decorate(ctx, rows), total, limit: limit2, offset };
       });
@@ -17137,11 +17292,22 @@ var require_budget = __commonJS({
     function validTimezone(tz) {
       if (typeof tz !== "string" || !tz.trim() || tz.length > 64) return false;
       try {
-        new Intl.DateTimeFormat("en-US", { timeZone: tz });
+        formatter("en-US", { timeZone: tz });
         return true;
       } catch {
         return false;
       }
+    }
+    var formatters = /* @__PURE__ */ new Map();
+    function formatter(locale, opts) {
+      const key = `${locale}|${JSON.stringify(opts)}`;
+      let f = formatters.get(key);
+      if (!f) {
+        f = new Intl.DateTimeFormat(locale, opts);
+        if (formatters.size > 200) formatters.clear();
+        formatters.set(key, f);
+      }
+      return f;
     }
     function orgTimezone() {
       let v = null;
@@ -17155,7 +17321,7 @@ var require_budget = __commonJS({
       const d = when instanceof Date ? when : new Date(when);
       if (!Number.isFinite(d.getTime())) return null;
       try {
-        return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+        return formatter("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
       } catch {
         return d.toISOString().slice(0, 10);
       }
@@ -17165,7 +17331,7 @@ var require_budget = __commonJS({
       if (!Number.isFinite(guess)) return null;
       const offset = (ms) => {
         try {
-          const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+          const p = Object.fromEntries(formatter("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
           return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - ms % 1e3);
         } catch {
           return 0;
@@ -30058,6 +30224,36 @@ var require_reports = __commonJS({
       const all = !auth3.caseloadRestricted(user) || auth3.hasPerm(user, "clients:all");
       return { sql: `(CASE WHEN ${alias}.client_id IS NULL THEN (${alias}.user_id=? OR ?) ELSE ${cf.sql} END)`, params: [user.id, all ? 1 : 0, ...cf.params] };
     }
+    var dashGroups = {
+      count: (groups) => groups.reduce((s, g) => s + g.n, 0),
+      /** COALESCE(SUM(field), 0) over the groups. */
+      sum: (groups, field) => groups.reduce((s, g) => s + (g[field] ?? 0), 0),
+      cmp(a, b) {
+        const rank = (v) => v === null || v === void 0 ? 0 : typeof v === "number" ? 1 : 2;
+        if (rank(a) !== rank(b)) return rank(a) - rank(b);
+        if (a === null || a === void 0) return 0;
+        if (typeof a === "number") return a - b;
+        return a < b ? -1 : a > b ? 1 : 0;
+      },
+      /** GROUP BY key(g): [{ [name]: key, n, ...SUM(sums) }], in key order. */
+      rollup(groups, key, name = "k", sums = []) {
+        const m = /* @__PURE__ */ new Map();
+        for (const g of groups) {
+          const k = key(g);
+          let r = m.get(k);
+          if (!r) {
+            r = { [name]: k, n: 0 };
+            for (const f of sums) r[f] = null;
+            m.set(k, r);
+          }
+          r.n += g.n;
+          for (const f of sums) if (g[f] !== null && g[f] !== void 0) r[f] = (r[f] ?? 0) + g[f];
+        }
+        return [...m.values()].sort((a, b) => dashGroups.cmp(a[name], b[name]));
+      },
+      /** ORDER BY n DESC over rows in key order; equal counts in reverse key order. */
+      byCount: (rows) => rows.map((r, i) => [r, i]).sort((a, b) => b[0].n - a[0].n || b[1] - a[1]).map(([r]) => r)
+    };
     module.exports = (r) => {
       r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), async (ctx) => {
         const { from, to, ts, tsP } = range(ctx);
@@ -30082,46 +30278,52 @@ var require_reports = __commonJS({
           return v;
         };
         const vs = visitScope(ctx.user);
+        const hr = CFX.risk("high");
+        const clientGroups = await q(() => scoped(`SELECT status, primary_substance, mat_status, (${hr.sql}) AS high, COUNT(*) n, SUM(CASE WHEN intake_date BETWEEN ? AND ? THEN 1 ELSE 0 END) AS new_n
+      FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status, primary_substance, mat_status, high`, ...hr.params, from, to));
+        const active = clientGroups.filter((g) => g.status === "active");
+        const visitGroups = await q(() => db3.all(`SELECT i.type, i.user_id, strftime('%Y-%W', i.occurred_at) AS wk, COUNT(*) n, SUM(i.duration_minutes) minutes, SUM(i.naloxone_kits) kits, SUM(i.fentanyl_strips) strips
+      FROM interventions i WHERE ${ts("i.occurred_at")} AND ${vs.sql} GROUP BY i.type, i.user_id, wk`, ...tsP, ...vs.params));
+        const callGroups = await q(() => db3.all(`SELECT outcome, direction, crisis, method, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE ${ts("started_at")} GROUP BY outcome, direction, crisis, method`, ...tsP));
+        const workerNames = new Map(db3.all(`SELECT id, display_name FROM users`).map((u) => [u.id, u.display_name]));
+        const G = dashGroups;
         const out2 = {
           from,
           to,
           clients: {
-            active: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n),
-            waitlist: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n),
-            new_in_range: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n),
+            active: G.count(active),
+            waitlist: G.count(clientGroups.filter((g) => g.status === "waitlist")),
+            new_in_range: G.sum(clientGroups, "new_n"),
             // The tiles use the client list's own predicates (server/client-filters.js), so a tile and the list it
             // opens count the same people.
-            high_risk: await q(() => {
-              const f = CFX.risk("high");
-              return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
-            }),
+            high_risk: G.count(active.filter((g) => g.high)),
             no_contact_30d: await q(() => {
               const f = CFX.noContactSince();
               return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND ${f.sql}`, ...f.params).n;
             }),
-            by_status: await q(() => scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`)),
-            by_substance: await q(() => scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`)),
-            mat: await q(() => scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`))
+            by_status: G.rollup(clientGroups, (g) => g.status, "status").map((r2) => ({ status: r2.status, n: r2.n })),
+            by_substance: G.byCount(G.rollup(active, (g) => g.primary_substance ?? "unknown")),
+            mat: G.rollup(active, (g) => g.mat_status ?? "unknown")
           },
-          // The period's totals in one pass over its visits, not one pass per figure.
-          // Every visit in the period, with or without a client (visitScope): an anonymous distribution of ten kits
-          // is ten kits on Home and Reports as it is in the funder report and the NDP log.
           interventions: {
-            ...await q(() => db3.one(`SELECT COUNT(*) total, COALESCE(SUM(duration_minutes),0) minutes, COALESCE(SUM(naloxone_kits),0) naloxone_kits, COALESCE(SUM(fentanyl_strips),0) fentanyl_strips
-          FROM interventions i WHERE ${ts("i.occurred_at")} AND ${vs.sql}`, ...tsP, ...vs.params)),
-            by_type: await q(() => db3.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i WHERE ${ts("i.occurred_at")} AND ${vs.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...vs.params)),
-            by_week: await q(() => db3.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i WHERE ${ts("i.occurred_at")} AND ${vs.sql} GROUP BY k ORDER BY k`, ...tsP, ...vs.params)),
-            by_worker: await q(() => db3.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id WHERE ${ts("i.occurred_at")} AND ${vs.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...vs.params))
+            total: G.count(visitGroups),
+            minutes: G.sum(visitGroups, "minutes"),
+            naloxone_kits: G.sum(visitGroups, "kits"),
+            fentanyl_strips: G.sum(visitGroups, "strips"),
+            by_type: G.byCount(G.rollup(visitGroups, (g) => g.type, "k", ["minutes"])),
+            by_week: G.rollup(visitGroups, (g) => g.wk),
+            // Grouped by worker (the user id); a visit whose worker is not in users has no row, as the join had none.
+            by_worker: G.byCount(G.rollup(visitGroups.filter((g) => workerNames.has(g.user_id)), (g) => g.user_id, "id", ["minutes"])).map((r2) => ({ k: workerNames.get(r2.id), n: r2.n, minutes: r2.minutes }))
           },
-          calls: await q(() => ({
-            total: db3.one(`SELECT COUNT(*) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
-            minutes: db3.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
-            crisis: db3.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts("started_at")}`, ...tsP).n,
-            by_outcome: db3.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY outcome ORDER BY n DESC`, ...tsP),
-            by_direction: db3.all(`SELECT direction k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY direction`, ...tsP),
+          calls: {
+            total: G.count(callGroups),
+            minutes: G.sum(callGroups, "minutes"),
+            crisis: G.count(callGroups.filter((g) => g.crisis === 1)),
+            by_outcome: G.byCount(G.rollup(callGroups, (g) => g.outcome)),
+            by_direction: G.rollup(callGroups, (g) => g.direction),
             // Texts are logged alongside calls, so say how the total splits rather than reporting them as calls.
-            texts: db3.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts("started_at")}`, ...tsP).n
-          })),
+            texts: G.count(callGroups.filter((g) => g.method === "text"))
+          },
           referrals: await q(() => ({
             total: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql}`, ...tsP, ...cf.params).n,
             by_status: db3.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, ...tsP, ...cf.params),
@@ -30362,6 +30564,7 @@ var require_reports = __commonJS({
     };
     module.exports.range = range;
     module.exports.monthlyFigures = monthlyFigures;
+    module.exports.dashGroups = dashGroups;
   }
 });
 
@@ -31135,7 +31338,7 @@ var require_supplies2 = __commonJS({
       r.get("/api/supplies", ...read, (ctx) => {
         const stock = S.stock();
         const me = db3.one(`SELECT default_site_id FROM users WHERE id=?`, ctx.user.id);
-        const al = S.alerts();
+        const al = S.alerts({ date: stock.date, stock });
         const naloxone = S.defaultItemFor("naloxone");
         const fts = S.defaultItemFor("fentanyl_test_strips");
         return {
@@ -31977,10 +32180,12 @@ var require_notes2 = __commonJS({
           params.push(ctx.query.get("to") + "T23:59:59.999Z");
         }
         const w = "WHERE " + where.join(" AND ");
-        const rows = db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
+        const pageIds = db3.all(`SELECT n.rowid AS rid FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset).map((x) => x.rid);
+        const byId = new Map(db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
       n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
-      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda
-      FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
+      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda, n.rowid AS rid
+      FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id WHERE n.rowid IN (SELECT value FROM json_each(?))`, JSON.stringify(pageIds)).map(({ rid, ...x }) => [rid, x]));
+        const rows = pageIds.map((id) => byId.get(id));
         const out2 = rows.map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0, ...signatureState(x) }));
         audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: out2.length, kinds, filter: ctx.query.get("awaiting_cosign") === "1" ? "awaiting_cosign" : void 0 } });
         return { rows: out2, total: db3.one(`SELECT COUNT(*) n FROM notes n ${w}`, ...params).n };
@@ -38020,7 +38225,8 @@ var require_sync = __commonJS({
       return { since, bf: { from: bf.from, t: bf.t, k: bf.k, i: bf.i } };
     }
     function backfillPage(user, until, bf, limit2) {
-      const arrivedQ = newlyInScopeSql(user, bf.from, until);
+      const q = newlyInScopeSql(user, bf.from, until);
+      const arrivedQ = { sql: "SELECT value FROM json_each(?)", params: [JSON.stringify(db3.all(q.sql, ...q.params).map((r) => r.client_id))] };
       const tables = bfTables();
       const raw = {};
       let budget = limit2;
@@ -38061,24 +38267,24 @@ var require_sync = __commonJS({
       if (bf) return pullBackfill(user, since, bf, limit2, serverNow);
       const raw = {};
       const capped = [];
+      const scopes = /* @__PURE__ */ new Map();
       for (const t of SYNC2.tables) {
+        const newest = db3.one(`SELECT MAX(updated_at) m FROM ${t.name}`).m;
+        if (newest === null || newest === void 0 || newest <= since) continue;
         const sc = scopeSql(t, user, "x");
-        const rows = db3.all(`SELECT x.* FROM ${t.name} x WHERE x.updated_at > ? AND ${sc.sql} ORDER BY x.updated_at LIMIT ?`, since, ...sc.params, limit2 + 1);
-        if (rows.length <= limit2) {
-          raw[t.name] = rows;
-          continue;
+        scopes.set(t.name, sc);
+        const stamps = db3.all(`SELECT x.updated_at u FROM ${t.name} x WHERE x.updated_at > ? AND ${sc.sql} ORDER BY x.updated_at LIMIT ?`, since, ...sc.params, limit2 + 1);
+        if (stamps.length <= limit2) continue;
+        const boundary = stamps[limit2].u;
+        let lastSafe = null;
+        for (const s of stamps) {
+          if (s.u < boundary) lastSafe = s.u;
+          else break;
         }
-        const boundary = rows[limit2].updated_at;
-        const safe = rows.filter((r) => r.updated_at < boundary);
-        if (safe.length) {
-          raw[t.name] = safe;
-          capped.push(safe[safe.length - 1].updated_at);
-          continue;
-        }
-        raw[t.name] = db3.all(`SELECT x.* FROM ${t.name} x WHERE x.updated_at = ? AND ${sc.sql} ORDER BY x.updated_at`, boundary, ...sc.params);
-        capped.push(boundary);
+        capped.push(lastSafe !== null ? lastSafe : boundary);
       }
       const cursor = capped.length ? capped.reduce((a, b) => a < b ? a : b) : serverNow;
+      for (const [name, sc] of scopes) raw[name] = db3.all(`SELECT x.* FROM ${name} x WHERE x.updated_at > ? AND x.updated_at <= ? AND ${sc.sql} ORDER BY x.updated_at`, since, cursor, ...sc.params);
       const out2 = baseAnswer(cursor, serverNow, capped.length === 0);
       exportInto(out2, user, raw, cursor);
       if (newlyInScope(user, since, cursor).length) {
@@ -38180,6 +38386,7 @@ var require_sync = __commonJS({
     };
     module.exports.pull = pull;
     module.exports.push = push;
+    module.exports.scopeSql = scopeSql;
   }
 });
 
@@ -38580,7 +38787,7 @@ var require_app2 = __commonJS({
     var audit3 = require_audit();
     var auth3 = require_auth2();
     var idempotency2 = require_idempotency();
-    var { Router: Router2, HttpError: HttpError3, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, serveStatic } = require_http();
+    var { Router: Router2, HttpError: HttpError3, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, sendJsonTo, serveStatic } = require_http();
     var buckets = /* @__PURE__ */ new Map();
     function rateLimit(key, max2, windowMs) {
       const now2 = Date.now();
@@ -38763,7 +38970,7 @@ var require_app2 = __commonJS({
             return out2;
           });
           if (ctx.idempotentReplay && !res.headersSent) res.setHeader("Idempotent-Replayed", "true");
-          if (!res.headersSent) sendJson(res, result === void 0 ? 204 : ctx.status || 200, result === void 0 ? null : result);
+          if (!res.headersSent) await sendJsonTo(req, res, result === void 0 ? 204 : ctx.status || 200, result === void 0 ? null : result);
         } catch (err2) {
           if (err2 instanceof HttpError3 && url.pathname.startsWith("/fhir/")) {
             if (err2.status === 413 && !res.headersSent) res.setHeader("Connection", "close");
@@ -40620,8 +40827,40 @@ var require_db = __commonJS({
           const idx = M.preferredNameIndex(name);
           if (idx) upd.run(idx, c.id);
         }
+      },
+      // 47: indexes for what was slow at 20,000 clients, 100,000 visits and 200,000 notes (docs/PERFORMANCE.md): a
+      //     worker's caseload, a device's sync pull (client and updated_at together), the Home dashboard's visits
+      //     and unsigned notes, a note's addenda, a caseload's notes list, the merged duplicates of a caseload, and
+      //     supplies on hand read from the index alone. Four indexes become wider ones and are dropped.
+      //     Self-contained and idempotent: each index is created from its line in schema.sql only when missing, so
+      //     it can be renumbered beside other 1.14.0 migrations.
+      (d) => {
+        for (const old of ["idx_intervention_supplies_client", "idx_supply_ledger_stock", "idx_notes_client", "idx_assign_user"]) d.exec(`DROP INDEX IF EXISTS ${old}`);
+        createIndexesFromSchema(d, safeSchema(), PERF_INDEXES_47);
       }
     ];
+    var PERF_INDEXES_47 = [
+      "idx_assign_caseload",
+      "idx_interventions_sync",
+      "idx_interventions_dashboard",
+      "idx_calls_sync",
+      "idx_notes_list",
+      "idx_notes_sync",
+      "idx_notes_drafts",
+      "idx_note_addenda_note",
+      "idx_clients_merged",
+      "idx_intervention_supplies_sync",
+      "idx_supply_ledger_onhand",
+      "idx_supply_ledger_item_created",
+      "idx_suprt_assessments_sync"
+    ];
+    function createIndexesFromSchema(d, schemaText, names) {
+      for (const name of names) {
+        const line = schemaText.split("\n").map((l) => l.trim()).find((l) => l.startsWith(`CREATE INDEX IF NOT EXISTS ${name} ON `));
+        if (!line) throw new Error(`migration: no definition for index ${name} in schema`);
+        d.exec(line);
+      }
+    }
     var MAIN_SITE_ID = "site-main";
     function ensureMainSite(d) {
       d.prepare(`INSERT OR IGNORE INTO supply_sites(id,name,kind,sort_order) VALUES(?,?,?,0)`).run(MAIN_SITE_ID, "Main office", "office");
@@ -40941,6 +41180,8 @@ var require_db = __commonJS({
     }
     function close() {
       if (db3) {
+        stmts = /* @__PURE__ */ new Map();
+        stmtsFor = null;
         db3.close();
         db3 = void 0;
         openedPath = null;
@@ -40952,14 +41193,33 @@ var require_db = __commonJS({
     function now2() {
       return (/* @__PURE__ */ new Date()).toISOString();
     }
+    var STMT_CACHE_MAX = 2e3;
+    var stmts = /* @__PURE__ */ new Map();
+    var stmtsFor = null;
+    function prepared(sql) {
+      const snap = snapshotStore && snapshotStore.getStore();
+      if (snap) return snap.prepare(sql);
+      const d = get();
+      if (stmtsFor !== d) {
+        stmts = /* @__PURE__ */ new Map();
+        stmtsFor = d;
+      }
+      let st = stmts.get(sql);
+      if (!st) {
+        st = d.prepare(sql);
+        if (stmts.size >= STMT_CACHE_MAX) stmts.clear();
+        stmts.set(sql, st);
+      }
+      return st;
+    }
     function all(sql, ...params) {
-      return get().prepare(sql).all(...params);
+      return prepared(sql).all(...params);
     }
     function one(sql, ...params) {
-      return get().prepare(sql).get(...params);
+      return prepared(sql).get(...params);
     }
     function run2(sql, ...params) {
-      return get().prepare(sql).run(...params);
+      return prepared(sql).run(...params);
     }
     var txDepth = 0;
     function transaction(fn) {
