@@ -445,7 +445,12 @@ async function build(ctx, range) {
   // A publication release is computed once for all three reports that publish from it (the funder report,
   // the NDP log and the settlement report) and audited as one (server/publication-release.js).
   if (counting.purpose === 'publication') return (await require('./publication-release').release(ctx, range, counting)).funder;
-  const { raw } = await runAsync(figures(ctx, range, fund));
+  // One state of the data, as a publication release and the monthly trend read (db.readSnapshot): the figures
+  // are read in phases that let the event loop go, and a visit saved between two phases used to be able to
+  // land in one table of the report and not the next. Where no snapshot can be opened (the browser kernel, an
+  // in-memory database) it reads as it always did, still letting the event loop go between phases so a
+  // device's screen stays responsive during a year's report (test/kernel-parity.test.js).
+  const { raw } = await db.readSnapshot(async () => runAsync(figures(ctx, range, fund)));
   const sc = { threshold: counting.threshold, exact: counting.mode === 'exact' };
   return { ...header(counting, from, to, fund), caseload_scope_note: raw.caseload_scope_note, ...suppress(raw, sc) };
 }

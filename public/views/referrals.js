@@ -176,7 +176,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
       toast('Consent recorded — carry on with the referral', 'ok');
     } });
   sel.addEventListener('change', () => { if (sel.value !== ADD) reloadConsents(); });
-  const m = modal(isNew ? 'New referral' : 'Edit referral', f, { wide: true });
+  const m = modal(isNew ? 'Make a referral' : 'Edit referral', f, { wide: true });
 }
 /** Close the loop: what happened, and were they admitted? This is what makes referrals reportable. */
 export async function openOutcomeForm(r, onDone) {
@@ -228,7 +228,7 @@ route('referrals', async (r) => {
   const refresh = () => nav(`referrals?status=${status}&_=${Date.now()}`);
   const sel = h('select', { onChange: () => nav(`referrals?status=${sel.value}`) }, [['open', 'Open (pending → scheduled)'], ['all', 'All'], ...listFilterOptions('REFERRAL_STATUSES').map(o => [o.value, o.label])].map(([v, l]) => h('option', { value: v, selected: v === status }, l)));
   return h('div', {},
-    pageHead('Referrals', can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, { onDone: refresh }) }, '+ Referral') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/referrals?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
+    pageHead('Referrals', can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, { onDone: refresh }) }, '+ Make a referral') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/referrals?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel)),
     pagedList({ first: data, url: `/api/referrals${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => referralTable(rows, { onChange: refresh }), summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} referrals`) }));
 });

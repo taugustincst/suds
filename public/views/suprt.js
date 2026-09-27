@@ -2,7 +2,7 @@
 // docs/compliance/SUPRT.md). A client's assessments and what is due (the client record's SUPRT-A tab), the
 // follow-ups due on the To-dos page, and the program page: completion rates, the file for entry into SPARS
 // (a disclosure) and the grant and site IDs. Shown only while the SUPRT-A module is on (server/programme.js).
-import { h, route, get, post, put, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, stat, kv, moduleOn } from '../app.js';
+import { h, route, get, post, put, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, stat, kv, moduleOn, loadingFor } from '../app.js';
 import { withRestrictionCheck } from './part2.js';
 import { fetchDownload, downloadedMessage } from './reports.js';
 
@@ -118,6 +118,7 @@ function openExport(from, to, def) {
     h('p', { class: 'small' }, def.export_note), f));
 }
 
+loadingFor('suprt', () => 'Counting SUPRT-A records due and done…');
 route('suprt', async (r) => {
   if (!moduleOn('suprt')) return h('div', {}, pageHead('SUPRT-A'), emptyState('SUPRT-A is switched off', 'SUPRT-A records are for programs with State Opioid Response (SOR) funding. An administrator can switch the module on in Settings › Program › Modules.', null, { level: 2 }));
   const to = r.query.get('to') || fmt.today(); const from = r.query.get('from') || new Date(Date.parse(to) - 89 * 86400000).toISOString().slice(0, 10);

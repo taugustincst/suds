@@ -1,7 +1,7 @@
 import { backupReminderCard } from './local.js';
-import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName, prefs } from '../app.js';
+import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName, prefs, welcomeCard } from '../app.js';
 
-route('dashboard', async () => {
+route('dashboard', async (r) => {
   const [d, cont, caseload, handoffs] = await Promise.all([get('/api/reports/dashboard'), get('/api/me/continue'), can('clients:read') ? get('/api/caseload') : { caseload: [] },
     can('notes:admin:read') ? get('/api/notes/handoffs?hours=24', { quiet: true }).catch(() => null) : null]);
   // "Today" is really "due by the end of today": anything from before today is overdue and goes first.
@@ -26,7 +26,10 @@ route('dashboard', async () => {
   // A count of people can come back as "<11" for a role that runs publication releases only
   // (server/dashboard-mask.js): plural, since it stands for more than one.
   const many = (n) => typeof n === 'string' || n > 1;
-  if (d.tasks.overdue) alerts.push(['danger', `${d.tasks.overdue} overdue to-do${d.tasks.overdue > 1 ? 's' : ''}`, '#/tasks?overdue=1']);
+  // Your own overdue to-dos are counted in one place, the bell in the header (and listed under To-dos for
+  // today below); a pill here said the same number a third time. A supervisor's count covers the team, which
+  // the bell does not, so theirs stays, and says so.
+  if (d.tasks.overdue && can('clients:all')) alerts.push(['danger', `${d.tasks.overdue} overdue to-do${d.tasks.overdue > 1 ? 's' : ''} across the team`, '#/tasks?overdue=1']);
   if (d.notes.unsigned) alerts.push([d.notes.unsigned_overdue ? 'danger' : 'warn', `${d.notes.unsigned} unsigned note${d.notes.unsigned > 1 ? 's' : ''}${d.notes.team ? ' across your team' : ''}`, d.notes.team ? '#/supervision' : '#/notes?status=draft&mine=1']);
   if (cont.staged_imports) alerts.push(['info', `${cont.staged_imports} imported note${cont.staged_imports > 1 ? 's' : ''} to review`, '#/imports']);
   if (c.no_contact_30d) alerts.push(['warn', `${c.no_contact_30d} client${many(c.no_contact_30d) ? 's' : ''} not contacted in 30 days`, '#/clients?stale=1']);
@@ -194,6 +197,7 @@ route('dashboard', async () => {
   };
   return h('div', {},
     pageHead(`${greet}, ${who}`, autoToggle),
+    welcomeCard({ force: r && r.query && r.query.get('welcome') === '1' }),
     backupReminder,
     securityNotes,
     sample,
@@ -204,7 +208,7 @@ route('dashboard', async () => {
     d.small_cells ? h('p', { class: 'small muted mb', 'data-small-cells': '1' }, `Counts of people from 1 to ${d.small_cells.threshold - 1} are shown as "<${d.small_cells.threshold}" for your role, as they are in the funder report.`) : null,
     alerts.length ? h('div', { class: 'row mb' }, alerts.map(([k, t, href]) => h('a', { href, class: `badge ${k}`, style: { fontSize: '.9rem', padding: '.4rem .8rem' } }, t))) : null,
     h('div', { class: 'grid cols-2 mb' },
-      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Today'), can('tasks:read') ? h('a', { href: '#/tasks' }, 'All to-dos') : null),
+      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'To-dos for today'), can('tasks:read') ? h('a', { href: '#/tasks' }, 'All to-dos') : null),
         cont.due_today.length ? cont.due_today.map(t => h('div', { class: 'today-item', 'data-overdue': isOverdue(t) ? '1' : '0' }, h('label', { class: 'check', style: { marginTop: 0 } }, h('span', { class: 'tap-target' }, h('input', { type: 'checkbox', 'aria-label': `Mark "${t.title}" done`, onChange: (e) => done(t, e.target) })), h('span', {}, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null)), h('span', { class: 'small today-due', style: isOverdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, isOverdue(t) ? [badge('Overdue', 'danger'), ' '] : null, h('span', { class: 'nowrap' }, fmt.dt(t.due_at))))) : emptyState('Nothing due today', 'Reminders you set for today will appear here.', can('tasks:write') ? h('button', { class: 'btn sm', onClick: async () => (await import('./tasks.js')).openTaskForm(null, { onDone: () => nav('dashboard?_=' + Date.now()) }) }, '+ Add a reminder') : null)),
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Continue where you left off'), h('span', { class: 'muted small' }, 'from any device')),
         cont.drafts.length ? h('div', { class: 'mb' }, h('h3', { class: 'eyebrow' }, 'Unfinished notes'), cont.drafts.slice(0, 4).map(n => h('div', { class: 'today-item' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, n.title || `${fmt.label(n.format, 'NOTE_FORMATS')} note`, h('span', { class: 'muted small' }, ` · ${n.client_name}`)), h('span', { class: 'muted small' }, fmt.ago(n.updated_at))))) : null,
@@ -213,7 +217,7 @@ route('dashboard', async () => {
     handoffs && handoffs.rows.length ? h('div', { class: 'card mb', 'data-handoffs': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Hand-offs from the last 24h'), h('span', { class: 'muted small' }, 'for the whole team')),
       handoffs.rows.map(n => h('div', { class: 'hand-off' }, h('div', {}, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, h('b', {}, n.title || 'Hand-off')), ' ', h('span', { class: 'muted small' }, `· ${n.client_name || n.client_code} · ${n.author} · ${fmt.dt(n.occurred_at)}`)), h('div', { class: 'small excerpt' }, n.excerpt)))) : null,
     h('div', { class: 'grid cols-4 mb' },
-      stat('Active clients', fmt.num(c.active), '', 'clients?status=active', 'All active clients, any time — not limited to the last 90 days'), stat('High-risk clients', fmt.num(c.high_risk), c.high_risk ? 'danger' : '', 'clients?status=active&risk=high'), stat('Visits (90 days)', fmt.num(i.total), '', 'interventions', `${fmt.date(d.from)} – ${fmt.date(d.to)}; other numbers on this page are all-time`), stat('Naloxone kits given', fmt.num(i.naloxone_kits), '', 'interventions?type=naloxone_distribution'),
+      stat('Active clients', fmt.num(c.active), '', 'clients?status=active', 'All active clients, any time — not limited to the last 90 days'), stat('High-risk clients', fmt.num(c.high_risk), c.high_risk ? 'danger' : '', 'clients?status=active&risk=high'), stat('Visits (90 days)', fmt.num(i.total), '', 'interventions', `${fmt.date(d.from)} – ${fmt.date(d.to)}; other numbers on this page are all-time`), stat('Naloxone kits given', fmt.num(i.naloxone_kits), '', `interventions?naloxone=1&from=${String(d.from).slice(0, 10)}&to=${String(d.to).slice(0, 10)}`, 'Kits handed out on any visit in the last 90 days, whatever the visit type'),
       stat('Calls', fmt.num(d.calls.total), '', 'calls'), stat('Open referrals', fmt.num(d.referrals.open), d.referrals.open ? 'warn' : '', 'referrals?status=open'),
       pr ? h('div', { 'data-patient-requests': '1', style: { display: 'contents' } }, stat('Open client rights requests', pr.overdue ? `${fmt.num(pr.n)} (${pr.overdue} overdue)` : fmt.num(pr.n), pr.overdue ? 'danger' : pr.n ? 'warn' : '', 'clients?status=all&patient_requests=1', 'Requests for access, amendment, restriction or an accounting of disclosures — each must be answered within 30 days')) : null, d.time ? stat(can('time:all') ? 'Team hours logged' : 'My hours logged', (d.time.minutes / 60).toFixed(1), '', 'time') : null, d.budget && can('budget:approve') ? stat('Spent of budget', h('span', {}, h('span', { class: 'money' }, fmt.money(d.budget.spent)), ' / ', h('span', { class: 'money' }, fmt.money(d.budget.total))), '', 'budget') : null, supplies ? supplies.tile : null),
     h('div', { class: 'grid cols-2' },

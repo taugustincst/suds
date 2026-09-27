@@ -48,6 +48,11 @@ transfers, adjustments, disposal). Finance and read-only accounts do not see the
 
 ## Visits hand supplies out
 
+**Hand out** on the Supplies page (and on each item's row) is the way to record supplies given on the street,
+to someone who gives no name: it opens the visit form preset to a naloxone distribution (or to outreach, for an
+item that is not naloxone), with the item on it and the site chosen above, and the client left optional. It is an
+ordinary visit, so the stock, the NDP log and the funder report count it like any other.
+
 The visit form lists the programme's usual items as rows with a − count + stepper; any other item is one choice
 away, and anonymous outreach contacts use the same list. The visit records every item handed out
 (`intervention_supplies`), the site the stock came from, and the **syringes and sharps brought back**: a count, or an
@@ -71,7 +76,7 @@ estimate from the container's volume at the programme's syringes-per-litre (Supp
 
 ## Syringe services summary
 
-Supplies → *Syringe services report* (and Reports → Harm-reduction reporting): for a period, participants served,
+Supplies → *SSP report* (the syringe services program report; and Reports → Harm-reduction reporting): for a period, participants served,
 contacts (visits and anonymous outreach at which supplies were handed out or sharps brought back), syringes
 distributed and returned and the returns per syringe distributed, sharps containers, naloxone by product, fentanyl
 and xylazine test strips, the other supplies, and referrals made, by month and by site, as CSV or Excel

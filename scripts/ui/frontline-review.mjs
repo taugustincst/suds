@@ -52,7 +52,7 @@ eq(prov.status, 201, 'a provider');
 {
   const { page, api } = nav;
   await go(page, 'referrals');
-  ok(await page.$('.main button:text-is("+ Referral")'), 'the Referrals page button reads "+ Referral"');
+  ok(await page.$('.main button:text-is("+ Make a referral")'), 'the Referrals page button reads "+ Make a referral" (one verb for the action everywhere, 1.14.0)');
   await page.evaluate(async ({ id, rid }) => (await import('./views/referrals.js')).openReferralForm(null, { clientId: id, clientDisplay: 'Quintero-Vasquez, Rosalind', resourceId: rid }), { id: clientId, rid: prov.data.id });
   const btn = await until(() => page.$('.modal [data-record-consent-naming]'));
   ok(btn, 'with no consent naming the provider, the referral form offers to record one');

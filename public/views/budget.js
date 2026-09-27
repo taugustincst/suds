@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, bars, downloadCsv, loadRefData, pageTabs, flag } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, bars, downloadCsv, loadRefData, pageTabs, flag, loadingFor } from '../app.js';
 
 export function openExpenditureForm(values, { clientId, clientDisplay, onDone } = {}) {
   const C = state.constants; const isNew = !values;
@@ -108,6 +108,7 @@ function openLineForm(fund, values, onDone, { parentId } = {}) {
   ], { values: values || {}, submitText: 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post(`/api/budget/funds/${fund.id}/lines`, d); else await put(`/api/budget/lines/${values.id}`, { ...d, if_updated_at: values.updated_at }); m.close(); await loadRefData(); onDone(); } });
   const m = modal(`${fund.name} — budget line`, f);
 }
+loadingFor('budget', () => 'Adding up funds, budget lines and spending…');
 route('budget', async (r) => {
   const tab = r.query.get('tab') || 'overview';
   const [sum, exp] = await Promise.all([get('/api/budget/summary'), get(`/api/budget/expenditures?limit=300${r.query.get('status') ? '&status=' + r.query.get('status') : ''}`)]);
