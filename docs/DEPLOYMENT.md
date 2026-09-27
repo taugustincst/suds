@@ -12,9 +12,9 @@
 
 SUDS is pinned to Node 22 (`.nvmrc`, the Dockerfile, CI). Node 22 leaves maintenance at the end of April 2027, and `node:sqlite` is still marked experimental in both 22 and 24, so its API can change between releases. The plan:
 
-1. **Now:** CI runs the full `npm test` suite on Node 24 (`node24` in `.github/workflows/ci.yml`). It was advisory until 1.11.0 and is now a required job: the release gate (RELEASE.md, "Release gate") refuses a commit where it failed. `.nvmrc` stays at 22.
+1. **Now:** CI runs the full `npm test` suite on Node 24 (`node24` in `.github/workflows/ci.yml`). It was advisory until 1.11.0 and is now a required job: the release gate (RELEASE.md, "Release gate") refuses a commit where it failed. `.nvmrc` stays at 22. Both lines are pinned to an exact release checked against a SHA-256 in the workflow (Node 22 since 1.13.1; RELEASE.md, "Bumping the pinned Node versions"). On Node 24 (24.21.0), `node:sqlite` no longer prints the experimental warning it prints on 22, and the API SUDS uses (`DatabaseSync` with `prepare` and `exec`, and the read-only second connection report snapshots use since 1.13.1) behaves the same (the suite passes on it); it is still a young module, so each Node 24 bump runs the whole suite before it is taken.
 2. **When the Node 24 job has been green for a full release cycle, and no later than January 2027:** move `.nvmrc`, the Dockerfile base image and `package.json` `engines` to 24 in one release; the Node-22 job becomes the advisory one for a release, then is dropped. The browser suite and a real-device check (ADOPTION.md) run on the release candidate as usual.
-3. **Before April 2027:** every county install is on that release. Upgrading Node is a host change: install Node 24 LTS, restart the service; the database and `data/` are untouched.
+3. **Before April 2027 (Node 22's end of life, 30 April 2027):** every county install is on that release, and Node 24 LTS is the supported runtime; Node 22 is then unsupported. Upgrading Node is a host change: install Node 24 LTS, restart the service; the database and `data/` are untouched.
 
 If `node:sqlite` changes shape in a way SUDS cannot absorb, the fallback is to pin the last Node 22 patch until the code is adapted — never to add an npm SQLite binding (CLAUDE.md: zero runtime dependencies).
 

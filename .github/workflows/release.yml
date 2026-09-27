@@ -12,12 +12,22 @@ on:
         required: true
         default: ''
       # The release policy (docs/RELEASE.md, "Release cadence"): a patch release carries no migration, no new
-      # permission and no new route. scripts/release-policy.js refuses one that does, unless this is set to
-      # the reason, which is then printed at the top of the release notes. Leave empty for no override.
-      allow_patch_changes:
-        description: "Only to let a PATCH release add a migration, permission or route: the reason (printed in the release notes)"
+      # permission and no new route, and a feature (minor or major) release comes at most once every 28 days.
+      # scripts/release-policy.js refuses a release that breaks either, unless policy_exception is set to the
+      # reason, which is then printed at the top of the release notes. Leave empty for no exception.
+      policy_exception:
+        description: "Only to release against the release policy (a PATCH release adding a migration, permission or route, or a feature release within 28 days of the last): the reason (printed at the top of the release notes)"
         required: false
         default: ''
+      # The same, under its name before 1.13.1 (patch releases only then); kept so a saved dispatch still works.
+      allow_patch_changes:
+        description: "Earlier name of policy_exception (the same effect)"
+        required: false
+        default: ''
+# The Node 22 the release is tested and packaged on: the release ci.yml pins, with the same checksum.
+env:
+  NODE22_VERSION: v22.23.3
+  NODE22_SHA256: df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de
 permissions:
   contents: write
   # `gh workflow run web-app.yml` below: a release this workflow creates with GITHUB_TOKEN does not fire the
@@ -42,11 +52,13 @@ jobs:
       - name: CI passed for this exact commit
         working-directory: src
         run: node scripts/release-gate.js "${GITHUB_SHA}"
-      # A patch bump may not add a migration, permission or route (scripts/release-policy.js compares with the
-      # previous release tag). The override arrives through the environment, never pasted into the script.
-      - name: Release policy (patch releases add no migration, permission or route)
+      # A patch bump may not add a migration, permission or route, and a minor or major bump may not come within
+      # 28 days of the previous feature release (scripts/release-policy.js compares with the previous release
+      # tags and their dates). The exception arrives through the environment, never pasted into the script.
+      - name: Release policy (patch releases add no migration, permission or route; feature releases at most every 28 days)
         working-directory: src
         env:
+          RELEASE_POLICY_EXCEPTION: ${{ github.event.inputs.policy_exception }}
           ALLOW_PATCH_CHANGES: ${{ github.event.inputs.allow_patch_changes }}
         run: |
           git fetch --quiet --depth 1 origin '+refs/tags/v*:refs/tags/v*'
@@ -70,11 +82,20 @@ jobs:
       # These were one `&&`/`||` chain. Both operators bind at the same precedence and associate left, so a
       # failing `npm test` fell through to the `echo` and the step exited 0 — releases were published with
       # failing tests. They are separate steps now, and a stale kernel fails rather than warns.
-      - name: Node major matches .nvmrc
+      - name: Install Node 22 (pinned version, pinned checksum)
+        run: |
+          file="node-${NODE22_VERSION}-linux-x64.tar.xz"
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://nodejs.org/dist/${NODE22_VERSION}/${file}"
+          echo "${NODE22_SHA256}  ${file}" | sha256sum -c - || { echo "::error::${file} does not match the SHA-256 pinned in the workflow"; exit 1; }
+          mkdir -p node22 && tar -xJf "$file" -C node22 --strip-components=1
+          echo "$RUNNER_TEMP/node22/bin" >> "$GITHUB_PATH"
+      - name: Node is the pinned release, of the major .nvmrc names
         working-directory: src
         run: |
           want="$(tr -d '[:space:]' < .nvmrc)"; have="$(node -p 'process.versions.node.split(".")[0]')"
-          node --version; [ "$have" = "$want" ] || { echo "::error::The runner has Node $have but .nvmrc pins major $want"; exit 1; }
+          node --version; [ "$have" = "$want" ] || { echo "::error::Node $have is running but .nvmrc pins major $want"; exit 1; }
+          [ "$(node --version)" = "$NODE22_VERSION" ] || { echo "::error::$(node --version) is running, not the pinned $NODE22_VERSION"; exit 1; }
       - name: Install
         working-directory: src
         run: npm ci --no-audit --no-fund
@@ -92,6 +113,7 @@ jobs:
       - name: Package and publish
         working-directory: src
         env:
+          RELEASE_POLICY_EXCEPTION: ${{ github.event.inputs.policy_exception }}
           ALLOW_PATCH_CHANGES: ${{ github.event.inputs.allow_patch_changes }}
         run: |
           ver="v$(node -p "require('./package.json').version")"
@@ -100,7 +122,9 @@ jobs:
           # A checksum beside the zip: docs/DEPLOYMENT.md tells an installer to compare it before unpacking.
           sha256sum "suds-$ver.zip" > "suds-$ver.zip.sha256"
           notes=$(awk -v v="${ver#v}" '/^## /{p = index($0, v) > 0} p' CHANGELOG.md)
-          # An allow_patch_changes override (already checked in the gate) is stated at the top of the notes, with its reason.
+          # A policy exception (already checked in the gate) is stated at the top of the notes, with its reason.
+          # The tags and their dates are needed for the feature-release interval, as in the gate.
+          git fetch --quiet --depth 1 origin '+refs/tags/v*:refs/tags/v*' || true
           node scripts/release-policy.js --notes-out "$RUNNER_TEMP/policy-notes.md"
           if [ -s "$RUNNER_TEMP/policy-notes.md" ]; then notes="$(cat "$RUNNER_TEMP/policy-notes.md")"$'\n\n'"${notes}"; fi
           if gh release view "$ver" >/dev/null 2>&1; then gh release upload "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --clobber; else

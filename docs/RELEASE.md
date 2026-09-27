@@ -46,20 +46,35 @@ anything the table above keeps for feature releases:
   granted to another role),
 * a route (every `METHOD path` the route modules register, including generated CRUD routes).
 
-A minor or major bump is not checked. When a patch release genuinely needs one of these (a security fix that
-needs a route, say), run the release from the Actions tab (*Run workflow*) with **`allow_patch_changes`** set
-to the reason. The gate then passes with a warning, and the release job puts the reason and the list of
-exceptions at the top of the GitHub Release notes, where a county reviewing the release reads it. A tag push
-cannot carry the override; an empty input is no override. Dry run before tagging:
-`node scripts/release-policy.js` (compares the working tree with the latest tag). The detection logic is
-tested in `test/release-policy.test.js`.
+A minor or major bump may add all of these; it is held to the cadence instead (below). When a release
+genuinely has to break the policy (a security fix that needs a route, say), run it from the Actions tab
+(*Run workflow*) with **`policy_exception`** set to the reason. The gate then passes with a warning, and the
+release job puts the reason and the list of exceptions at the top of the GitHub Release notes, where a county
+reviewing the release reads it. A tag push cannot carry an exception; an empty input is none. Until 1.13.1 the
+input was called `allow_patch_changes` and covered patch releases only; that name still works, with the same
+effect. Dry run before tagging: `node scripts/release-policy.js` (compares the working tree with the latest
+tag; `--now <date>` to ask as of another day). The logic is tested in `test/release-policy.test.js`.
+
+### Feature releases are checked too
+
+The table above allows one feature release a month, and until 1.13.1 nothing checked it: 1.13.0 was tagged
+about 21 hours after 1.12.0. Now, **for a minor or major bump**, the same `gate` step finds the previous
+feature release — the newest `vX.Y.0` tag below the version — and fails if its tag is less than **28 days**
+old (`FEATURE_INTERVAL_DAYS` in `scripts/release-policy.js`; the tag's own date for an annotated tag, its
+commit's date for a lightweight one, read after the gate fetches the tags). The refusal says the date from
+which the release may go out. A patch release is not held to the interval, only to its own rule, so fixes
+still ship as soon as they are ready. An early feature release needs a `policy_exception` like any other
+exception, and its reason is printed at the top of the release notes. If the previous tag's date cannot be
+read, the gate warns and does not check the interval.
 
 **Record: 1.12.0–1.12.4 broke this policy.** 1.12.0 came fourteen hours after the 1.11.0 feature release
 (not a month), and 1.12.1–1.12.4 followed within twelve hours; 1.12.1 carried migration 41 and the route
 `POST /api/auth/oidc/reauth`, 1.12.2 the permission `reports:internal` (found afterwards with
 `node scripts/release-policy.js --previous-ref <commit> --next-ref <commit>`). They were security and privacy
 fixes from an independent review, shipped as soon as each was ready rather than batched. The check above
-exists so the next exception is an explicit, recorded decision rather than an oversight.
+exists so the next exception is an explicit, recorded decision rather than an oversight. The same check run
+against 1.13.0 as of its tag (`node scripts/release-policy.js --version 1.13.0 --previous v1.12.4 --next-ref v1.13.0 --now 2026-09-26T20:52:21Z`)
+refuses it as a feature release 21 hours after 1.12.0.
 
 ## Cutting a release
 ```bash
@@ -112,21 +127,27 @@ git add package.json package-lock.json public/local && git commit -m "Update esb
 
 The remaining kernel libraries (`@noble/*`, `fflate`, `buffer`) come as one grouped monthly Dependabot PR; check it out, run `npm run build:local`, and push the rebuilt kernel to that PR's branch so CI's drift check passes.
 
-## Bumping the pinned Node 24
-The `node24` CI job installs an exact Node 24 release checked against a SHA-256 written in `ci.yml`
-(`NODE24_VERSION`, `NODE24_SHA256`), not whatever `latest-v24.x` is that day against a checksum file from the
-same server. Dependabot cannot see a version in a workflow's `env`, so bump it by hand — monthly with the
-grouped Dependabot PR, and at once for a Node security release (nodejs.org/en/blog/vulnerability):
+## Bumping the pinned Node versions
+Every CI job installs an exact Node release checked against a SHA-256 written in the workflow, not whatever
+`latest-v24.x` is that day, nor whatever Node 22 the runner image carries: the `node24` job
+(`NODE24_VERSION`, `NODE24_SHA256` in `ci.yml`), and since 1.13.1 every Node 22 job — `test`, `thorough`,
+`browser`, `dr-drill`, and the release job that tests and packages a release (`NODE22_VERSION`,
+`NODE22_SHA256` at the top of `ci.yml` and of `release.yml`, the same in both). Until 1.13.1 the Node 22 jobs
+checked only the major against `.nvmrc`, so the Node a push was tested on could change without a commit.
+Dependabot cannot see a version in a workflow's `env`, so bump them by hand — monthly with the grouped
+Dependabot PR, and at once for a Node security release (nodejs.org/en/blog/vulnerability):
 
 ```bash
-v=v24.x.y                                                     # the newest v24 on https://nodejs.org/dist/
-curl -fsSLO https://nodejs.org/dist/$v/SHASUMS256.txt{,.asc}
-gpg --verify SHASUMS256.txt.asc SHASUMS256.txt                # release keys: github.com/nodejs/release-keys
-grep ' node-'$v'-linux-x64.tar.xz$' SHASUMS256.txt            # the hash for NODE24_SHA256
+v=v24.x.y                                                     # or v22.x.y: the newest of that line on https://nodejs.org/dist/
+curl -fsSLO https://nodejs.org/dist/$v/SHASUMS256.txt.asc     # clearsigned: the checksums and their signature
+gpg --verify SHASUMS256.txt.asc                               # release keys: github.com/nodejs/release-keys
+grep ' node-'$v'-linux-x64.tar.xz$' SHASUMS256.txt.asc        # the hash for NODE24_SHA256 / NODE22_SHA256
 ```
 
-Change both lines in `.github/workflows/ci.yml` in one commit ("CI: Node 24 → $v"); `test/release-gate.test.js`
-checks their shape. The Node 22 used by the other jobs is the runner's own, checked against `.nvmrc`'s major.
+Change the two lines in one commit ("CI: Node 24 → $v"; for Node 22 in `ci.yml` and `release.yml` together);
+`test/release-gate.test.js` checks their shape, that the two workflows agree, and that Node 22's major is
+`.nvmrc`'s. 1.13.1 pinned v22.23.3 (released 2026-09-23; its `SHASUMS256.txt.asc` verified against the
+releaser's key from github.com/nodejs/release-keys).
 
 ## Upgrading an existing install
 1. Download an encrypted backup (Settings → System & backups).

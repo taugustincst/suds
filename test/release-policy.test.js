@@ -1,6 +1,7 @@
 'use strict';
-// scripts/release-policy.js: a patch release carries no migration, no new permission and no new route unless
-// the release is run with allow_patch_changes, whose reason is then printed in the release notes.
+// scripts/release-policy.js: a patch release carries no migration, no new permission and no new route, and a
+// feature release comes at most once every 28 days, unless the release is run with a policy exception
+// (policy_exception, or allow_patch_changes, its earlier name), whose reason is then printed in the release notes.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -66,7 +67,8 @@ test('a patch release that adds a migration, permission or route fails without t
   const out = P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.12.5', diff: P.diffSurfaces(base, next) });
   assert.equal(out.decision, 'fail');
   assert.match(out.reason, /1 schema migration/);
-  assert.match(out.reason, /allow_patch_changes/, 'the refusal says how to override');
+  assert.match(out.reason, /policy_exception/, 'the refusal says how to make an exception');
+  assert.match(out.reason, /allow_patch_changes/, 'and that the earlier name still works');
   for (const blank of ['', '   ', undefined]) {
     assert.equal(P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.12.5', diff: P.diffSurfaces(base, next), override: blank }).decision, 'fail', 'an empty override is no override');
   }
@@ -76,10 +78,76 @@ test('the override passes the release and puts the reason and every exception in
   const next = clone(base); next.routes.push('POST /api/auth/oidc/reauth'); next.perms.admin.push('reports:internal');
   const out = P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.12.5', diff: P.diffSurfaces(base, next), override: 'Security fix from the independent review:\nre-authentication for SSO users' });
   assert.equal(out.decision, 'override');
-  assert.match(out.notes, /Release policy override/);
+  assert.match(out.notes, /Release policy override: a policy exception/);
   assert.match(out.notes, /Security fix from the independent review: re-authentication for SSO users/, 'the reason, on one line');
   assert.match(out.notes, /new route POST \/api\/auth\/oidc\/reauth/);
   assert.match(out.notes, /new permission reports:internal/);
+});
+
+// ---- feature releases (1.13.1): at most one every 28 days ----
+// 1.12.0 was tagged 2026-09-26T00:21Z and 1.13.0 the same day at 20:52Z: a feature release within a day of the
+// previous one, which the check did not look at (it checked patch releases only).
+const V1120 = { tag: 'v1.12.0', date: '2026-09-26T00:21:01+00:00' };
+const HOUR = 3600e3;
+test('the previous feature release is the newest vX.Y.0 tag below the version', () => {
+  const tags = ['v1.11.0', 'v1.11.1', 'v1.12.0', 'v1.12.4', 'v1.13.0', 'v1.13.1', 'v2.0.0'];
+  assert.equal(P.previousFeatureTag(tags, '1.14.0'), 'v1.13.0');
+  assert.equal(P.previousFeatureTag(tags, '1.13.0'), 'v1.12.0', 'the release itself does not count');
+  assert.equal(P.previousFeatureTag(tags, '3.0.0'), 'v2.0.0');
+  assert.equal(P.previousFeatureTag(['v1.9.4'], '1.10.0'), null, 'no feature release below: nothing to compare with');
+  assert.equal(P.FEATURE_INTERVAL_DAYS, 28);
+});
+test('a minor release 22 hours after the previous feature release fails without a policy exception', () => {
+  const same = P.diffSurfaces(base, clone(base));
+  const now = Date.parse(V1120.date) + 22 * HOUR;
+  const out = P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.13.0', diff: same, feature: V1120, now });
+  assert.equal(out.decision, 'fail');
+  assert.equal(out.kind, 'minor');
+  assert.match(out.reason, /22 hours after the previous one \(v1\.12\.0\)/);
+  assert.match(out.reason, /at most once every 28 days/);
+  assert.match(out.reason, /Wait until 2026-10-24/, 'says when it may be released');
+  assert.match(out.reason, /policy_exception/, 'and how to make an exception');
+  for (const blank of ['', '  ', undefined]) assert.equal(P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.13.0', diff: same, feature: V1120, now, override: blank }).decision, 'fail', 'an empty exception is none');
+  // A major bump is a feature release too; a Date works as the clock.
+  assert.equal(P.decide({ prevVersion: 'v1.12.4', nextVersion: '2.0.0', diff: same, feature: V1120, now: new Date(now) }).decision, 'fail');
+});
+test('a minor release 30 days after the previous feature release passes (and may add migrations, permissions and routes)', () => {
+  const next = clone(base); next.migrations = 42; next.routes.push('GET /api/b'); next.perms.admin.push('b:read');
+  const out = P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.13.0', diff: P.diffSurfaces(base, next), feature: V1120, now: Date.parse(V1120.date) + 30 * 24 * HOUR });
+  assert.equal(out.decision, 'pass', out.reason);
+  assert.match(out.reason, /30 days after v1\.12\.0/);
+  // Exactly 28 days is enough; a minute less is not.
+  const at28 = Date.parse(V1120.date) + 28 * 24 * HOUR;
+  assert.equal(P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.13.0', diff: P.diffSurfaces(base, clone(base)), feature: V1120, now: at28 }).decision, 'pass');
+  assert.equal(P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.13.0', diff: P.diffSurfaces(base, clone(base)), feature: V1120, now: at28 - 60e3 }).decision, 'fail');
+  // With no earlier feature release, or its date unknown, there is nothing to compare with.
+  assert.equal(P.decide({ prevVersion: 'v1.9.4', nextVersion: '1.10.0', diff: P.diffSurfaces(base, clone(base)), feature: null }).decision, 'pass');
+  assert.equal(P.decide({ prevVersion: 'v1.9.4', nextVersion: '1.10.0', diff: P.diffSurfaces(base, clone(base)), feature: { tag: 'v1.9.0', date: null } }).decision, 'pass');
+});
+test('a policy exception lets the early feature release through, with its reason at the top of the release notes', () => {
+  const out = P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.13.0', diff: P.diffSurfaces(base, clone(base)), feature: V1120, now: Date.parse(V1120.date) + 22 * HOUR, override: 'Encrypts document references (migration 43)\nbefore the county pilot' });
+  assert.equal(out.decision, 'override');
+  assert.match(out.reason, /policy_exception: Encrypts document references/);
+  assert.match(out.notes, /^> \*\*Release policy override: a policy exception\.\*\* This is a minor release less than 28 days after the previous feature release/);
+  assert.match(out.notes, /Reason given \(`policy_exception`\): Encrypts document references \(migration 43\) before the county pilot/, 'the reason, on one line');
+  assert.match(out.notes, /> \* feature release 1\.13\.0 22 hours after the previous one \(v1\.12\.0\)/);
+});
+test('a patch release is not held to the feature-release interval', () => {
+  const same = P.diffSurfaces(base, clone(base));
+  const now = Date.parse(V1120.date) + HOUR;
+  const out = P.decide({ prevVersion: 'v1.12.0', nextVersion: '1.12.1', diff: same, feature: V1120, now });
+  assert.equal(out.decision, 'pass');
+  assert.equal(out.violations.length, 0);
+  // ... and still to its own rule: an added route fails, and passes with an exception.
+  const next = clone(base); next.routes.push('POST /api/auth/oidc/reauth');
+  assert.equal(P.decide({ prevVersion: 'v1.12.0', nextVersion: '1.12.1', diff: P.diffSurfaces(base, next), feature: V1120, now }).decision, 'fail');
+  assert.equal(P.decide({ prevVersion: 'v1.12.0', nextVersion: '1.12.1', diff: P.diffSurfaces(base, next), feature: V1120, now, override: 'security fix' }).decision, 'override');
+});
+test('the dates are read from the tags: 1.13.0 came less than a day after 1.12.0', () => {
+  const d12 = P.tagDate('v1.12.0'); const d13 = P.tagDate('v1.13.0');
+  if (!d12 || !d13) return; // a checkout without the release tags (a shallow CI clone) has nothing to read
+  const out = P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.13.0', diff: P.diffSurfaces(base, clone(base)), feature: { tag: 'v1.12.0', date: d12 }, now: Date.parse(d13) });
+  assert.equal(out.decision, 'fail', 'had the check existed, 1.13.0 would have needed a recorded exception');
 });
 
 test('releasing the same version again, or an older one, fails', () => {
@@ -98,7 +166,7 @@ test('reading the current tree finds the real migration count, permissions and r
   assert.ok(s.routes.some((r) => r.startsWith('GET /fhir/')));
 });
 
-test('release.yml runs the policy in the gate and takes the override only as an explicit input', () => {
+test('release.yml runs the policy in the gate and takes the exception only as an explicit input', () => {
   const rel = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8');
   const gate = rel.slice(rel.indexOf('\n  gate:'), rel.indexOf('\n  release:'));
   assert.match(gate, /node scripts\/release-policy\.js/, 'the gate job runs the policy check before anything is built');
@@ -108,4 +176,11 @@ test('release.yml runs the policy in the gate and takes the override only as an 
   assert.match(rel, /ALLOW_PATCH_CHANGES: \$\{\{ github\.event\.inputs\.allow_patch_changes \}\}/, 'passed through the environment, never pasted into a script');
   assert.ok(!/run:.*\$\{\{ github\.event\.inputs\.allow_patch_changes/.test(rel), 'no script injection through the reason');
   assert.match(rel, /--notes-out/, 'the release job writes the override into the release notes');
+  // 1.13.1: the exception's own name, for both rules; the earlier name still works.
+  assert.match(rel, /policy_exception:\n\s+description:/);
+  assert.equal((rel.match(/RELEASE_POLICY_EXCEPTION: \$\{\{ github\.event\.inputs\.policy_exception \}\}/g) || []).length, 2, 'passed through the environment to the gate and to the notes');
+  assert.ok(!/run:.*\$\{\{ github\.event\.inputs\.policy_exception/.test(rel), 'no script injection through the reason');
+  assert.match(gate, /RELEASE_POLICY_EXCEPTION/, 'the gate sees the exception');
+  const policy = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'release-policy.js'), 'utf8');
+  assert.match(policy, /process\.env\.RELEASE_POLICY_EXCEPTION \|\| process\.env\.ALLOW_PATCH_CHANGES/);
 });
