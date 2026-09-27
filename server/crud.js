@@ -14,6 +14,14 @@ const DEID = { deidentified: true };
 
 function clientExists(id) { return !!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id); }
 
+// The joins a list's total needs. A LEFT JOIN on the joined table's primary key (`LEFT JOIN clients c ON
+// c.id=…`) finds at most one row for each row of the list, so it cannot change how many there are; when the
+// filters do not mention its alias it is left out of the COUNT. At 100,000 visits the lookups it made cost
+// 90 ms on every page of the visits list (300 ms with a date range), for a number they could not change.
+function countJoins(joins, where) {
+  return joins.replace(/\s*LEFT JOIN (\w+) (\w+) ON \2\.id=\w+\.\w+/g, (clause, _table, alias) => (new RegExp(`\\b${alias}\\.`).test(where) ? clause : ''));
+}
+
 // ---- optimistic concurrency ----
 // Two people editing the same record used to be last-write-wins, silently: the second save put back every
 // field the first person had just changed. A form now sends the updated_at it was opened with as
@@ -85,7 +93,7 @@ function build(r, opts) {
     const w = 'WHERE ' + where.join(' AND ');
     const order = opts.order || `${table}.${dateCol} DESC`;
     const rows = db.all(`SELECT ${select} FROM ${table} ${joins} ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, limit, offset);
-    const total = db.one(`SELECT COUNT(*) n FROM ${table} ${joins} ${w}`, ...params).n;
+    const total = db.one(`SELECT COUNT(*) n FROM ${table} ${countJoins(joins, w)} ${w}`, ...params).n;
     audit.log({ user: ctx.user, action: `${entity}.list`, ip: ctx.ip, clientId: ctx.query.get('client_id') || null, details: { count: rows.length } });
     return { rows: decorate(ctx, rows), total, limit, offset };
   });

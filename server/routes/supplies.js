@@ -82,7 +82,7 @@ module.exports = (r) => {
   r.get('/api/supplies', ...read, (ctx) => {
     const stock = S.stock();
     const me = db.one(`SELECT default_site_id FROM users WHERE id=?`, ctx.user.id);
-    const al = S.alerts();
+    const al = S.alerts({ date: stock.date, stock });
     const naloxone = S.defaultItemFor('naloxone'); const fts = S.defaultItemFor('fentanyl_test_strips');
     return {
       rows: legacyRows(stock),

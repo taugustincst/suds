@@ -602,7 +602,27 @@ const migrations = [
   //     (intervention_supplies), the site it drew from, and the syringes and sharps brought back.
   //     Self-contained and idempotent: every step checks what is already there.
   (d) => migrateSupplies(d, safeSchema()),
+  // 46: indexes for what was slow at 20,000 clients, 100,000 visits and 200,000 notes (docs/PERFORMANCE.md): a
+  //     worker's caseload, a device's sync pull (client and updated_at together), the Home dashboard's visits
+  //     and unsigned notes, a note's addenda, a caseload's notes list, the merged duplicates of a caseload, and
+  //     supplies on hand read from the index alone. Four indexes become wider ones and are dropped.
+  //     Self-contained and idempotent: each index is created from its line in schema.sql only when missing, so
+  //     it can be renumbered beside other 1.14.0 migrations.
+  (d) => {
+    for (const old of ['idx_intervention_supplies_client', 'idx_supply_ledger_stock', 'idx_notes_client', 'idx_assign_user']) d.exec(`DROP INDEX IF EXISTS ${old}`);
+    createIndexesFromSchema(d, safeSchema(), PERF_INDEXES_46);
+  },
 ];
+const PERF_INDEXES_46 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
+  'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];
+/** Create the named indexes exactly as schema.sql declares them (so a fresh and an upgraded database match). */
+function createIndexesFromSchema(d, schemaText, names) {
+  for (const name of names) {
+    const line = schemaText.split('\n').map(l => l.trim()).find(l => l.startsWith(`CREATE INDEX IF NOT EXISTS ${name} ON `));
+    if (!line) throw new Error(`migration: no definition for index ${name} in schema`);
+    d.exec(line);
+  }
+}
 
 // The site every install starts with: created with this fixed id on a fresh database and by migration 45, so
 // an office and every device that syncs with it hold the same row (a device never creates sites of its own).
@@ -884,15 +904,35 @@ function migrate(d, dbPath) {
 }
 
 function get() { if (!db) open(); return db; }
-function close() { if (db) { db.close(); db = undefined; } }
+function close() { if (db) { stmts = new Map(); stmtsFor = null; db.close(); db = undefined; } }
 /** Is a database handle open now? Does not open one (unlike get()) — /api/health/ready asks this. */
 function isOpen() { return !!db; }
 
 // helpers
 function now() { return new Date().toISOString(); }
-function all(sql, ...params) { return get().prepare(sql).all(...params); }
-function one(sql, ...params) { return get().prepare(sql).get(...params); }
-function run(sql, ...params) { return get().prepare(sql).run(...params); }
+// Prepared statements are kept and reused, per open handle. Compiling a statement costs several times what
+// running a simple one does (a settings read: 9 µs prepared each time, under 2 µs reused; the client list's
+// query: 75 µs to compile), and a request runs dozens. Each call below runs its statement to completion
+// (all, get and run reset it before returning), so a kept statement holds no read snapshot and the same one
+// can serve a nested call. SQLite recompiles a kept statement itself when the schema changes under it. The
+// cache is dropped whenever the handle changes (close, reopen, a device loading its copy) and when it fills,
+// since SQL built with a variable number of placeholders would otherwise grow it without bound.
+const STMT_CACHE_MAX = 2000;
+let stmts = new Map(); let stmtsFor = null;
+function prepared(sql) {
+  const d = get();
+  if (stmtsFor !== d) { stmts = new Map(); stmtsFor = d; }
+  let st = stmts.get(sql);
+  if (!st) {
+    st = d.prepare(sql);
+    if (stmts.size >= STMT_CACHE_MAX) stmts.clear();
+    stmts.set(sql, st);
+  }
+  return st;
+}
+function all(sql, ...params) { return prepared(sql).all(...params); }
+function one(sql, ...params) { return prepared(sql).get(...params); }
+function run(sql, ...params) { return prepared(sql).run(...params); }
 // Transactions nest: the outermost is a real BEGIN/COMMIT, inner ones become savepoints, so a helper that
 // opens its own transaction inside a route that already has one cannot silently roll the outer one back.
 let txDepth = 0;

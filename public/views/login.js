@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, offerDeviceReset, nav, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink } from '../app.js';
+import { h, route, get, post, state, form, offerDeviceReset, nav, navAndRender, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink } from '../app.js';
 import { restoreBackupButton, requestPersistentStorage } from './local.js';
 
 const OIDC_ERRORS = {
@@ -38,7 +38,7 @@ function sponsorBox(f, { shown }) {
 }
 async function signInAs(username, password) {
   await post('/api/auth/login', { username, password });
-  await loadSession(); nav('dashboard'); render();
+  await loadSession(); navAndRender('dashboard');
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -108,12 +108,13 @@ async function loginPanel(r, noAccount, back = '') {
     try { r2 = await post('/api/auth/login', d); }
     catch (e) { if (e.data && e.data.sponsorRequired && showSponsor && !d.sponsor_username) { showSponsor(true); if (!e.data.droppedAfterRestore) e.message += ' If your account has not been used on this device since its records were encrypted, someone who can already log in here can let you in below.'; e.labelled = true; } throw e; }
     await loadSession();
-    if (r2.mfaPending) { nav('mfa'); }
+    let to;
+    if (r2.mfaPending) to = 'mfa';
     // Past the deadline the server refuses everything else anyway; inside it, the banner on every page says
     // when -- an error toast and a hijacked landing page every morning is not "advisory".
-    else if (r2.mfaSetupRequired && (!r2.mfaSetupDeadline || Date.parse(r2.mfaSetupDeadline) < Date.now())) { toast('Two-step verification must be set up before you can continue.', 'error'); nav('profile?mfa=1'); }
-    else nav(back || 'dashboard');
-    render();
+    else if (r2.mfaSetupRequired && (!r2.mfaSetupDeadline || Date.parse(r2.mfaSetupDeadline) < Date.now())) { toast('Two-step verification must be set up before you can continue.', 'error'); to = 'profile?mfa=1'; }
+    else to = back || 'dashboard';
+    navAndRender(to);
   } }));
   if (state.local) showSponsor = sponsorBox(f, { shown: false });
   // Local (offline, on-device) mode has no route to an identity provider, so single sign-on is never
@@ -204,7 +205,7 @@ function firstRun() {
         busyText.textContent = 'Adding sample data…';
         const r = await post('/api/local/demo', {});
         toast(`Ready: ${r.counts.clients} fictional clients to explore`, 'ok');
-        await loadSession(); nav('dashboard'); render();
+        await loadSession(); navAndRender('dashboard');
       } catch (e) { btn.disabled = false; busyText.textContent = ''; toast(e.message || 'Could not set up the sample data', 'error'); }
     } }, 'Try it with sample data');
     tryIt = h('details', { class: 'mt', 'data-try-it': '1' }, h('summary', { class: 'small' }, 'Just looking around? Try SUDS with sample data'),
@@ -254,7 +255,7 @@ route('localsetup', accountPage);
 route('mfa', async () => {
   const f = form([{ name: 'code', label: 'Authenticator code', required: true, placeholder: '123456', autocomplete: 'one-time-code', pattern: '[0-9]{6}' }], { submitText: 'Verify', onSubmit: async (d) => {
     await post('/api/auth/mfa/verify', d);
-    state.mfaPending = false; await loadRefData(); nav('dashboard'); render();
+    state.mfaPending = false; await loadRefData(); navAndRender('dashboard');
   } });
   return h('main', { class: 'login-wrap', id: 'main', tabindex: '-1' }, h('div', { class: 'card login' }, h('h1', {}, 'Two-factor verification'), h('p', { class: 'muted' }, 'Enter the 6-digit code from your authenticator app.'), f,
     h('p', { class: 'small center mt' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); await post('/api/auth/logout', {}); state.user = null; state.mfaPending = false; nav('login'); render(); } }, 'Cancel and sign out'))));

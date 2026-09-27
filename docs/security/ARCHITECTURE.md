@@ -44,7 +44,7 @@
 
 | Flow | PHI? | Protection | Code |
 | --- | --- | --- | --- |
-| Browser ⇄ server | Yes | TLS (native or proxy); HSTS; CSRF header required on state-changing requests; `Cache-Control: no-store`; the service worker never caches API responses | `server/http.js` `securityHeaders`, `server/app.js`, `public/sw.js` |
+| Browser ⇄ server | Yes | TLS (native or proxy); HSTS; CSRF header required on state-changing requests; `Cache-Control: no-store` on every API answer and HTML page (the app's own code files and icons, which hold no PHI, are `no-cache` with an ETag, 1.14.0); JSON answers of 1 kB or more compressed when the browser accepts it, which is not a BREACH risk because the session cookie is `SameSite=Strict` ([PERFORMANCE.md](../PERFORMANCE.md)); the service worker never caches API responses | `server/http.js` `securityHeaders`, `sendJsonTo`, `sendFile`, `server/app.js`, `public/sw.js` |
 | Server → database | Yes | Identifiers and free text encrypted per field (AES-256-GCM) before write; blind-index HMACs for search | `server/crypto.js`, `server/clients-model.js` |
 | Server → backups | Yes | Whole-database AES-256-GCM, key derived from `SUDS_BACKUP_KEY` or the PHI key; each scheduled backup is read back and opened to verify it | `server/backup.js`, `server/scheduled-backup.js` |
 | Server → offsite directory | Yes (encrypted file) | Same ciphertext; the directory is never auto-created (an unmounted share is detected) | `server/scheduled-backup.js` |

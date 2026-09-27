@@ -161,9 +161,13 @@ function nextClientCode() {
   return code;
 }
 
+const SUMMARY_KEEP = ['id', 'client_code', 'display_name', 'first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'status', 'risk_level', 'primary_substance', 'mat_status', 'intake_date', 'referral_date', 'engagement_date', 'city', 'flags', 'ok_to_text', 'ok_to_voicemail', 'updated_at'];
+const SUMMARY_READS = new Set([...SUMMARY_KEEP, 'deleted_at', 'merged_into'].flatMap(k => [k, `${k}_enc`]));
 function summary(row, opts) {
-  const d = decryptRow(row, opts);
-  const keep = ['id', 'client_code', 'display_name', 'first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'status', 'risk_level', 'primary_substance', 'mat_status', 'intake_date', 'referral_date', 'engagement_date', 'city', 'flags', 'ok_to_text', 'ok_to_voicemail', 'updated_at'];
+  // Only the encrypted fields a summary shows are decrypted: a client list decrypted all sixteen (the address,
+  // the Medicaid number, the emergency contact…) for every row, to keep six.
+  const d = decryptRow(row ? Object.fromEntries(Object.entries(row).filter(([k]) => SUMMARY_READS.has(k))) : row, opts);
+  const keep = SUMMARY_KEEP;
   const o = {}; for (const k of keep) if (d[k] !== undefined) o[k] = d[k];
   o.days_to_engagement = daysToEngagement(d);
   return o;

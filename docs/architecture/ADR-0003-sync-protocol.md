@@ -29,7 +29,11 @@ clients ends there with `complete: false` and a cursor that carries the backfill
 (`<timestamp>~bf.<base64url JSON {v, from, t, k, i}>`: the window the clients arrived in, and the last
 table/key/id sent); each backfill page holds at most the page limit in all, walked table by table in
 (client — or note, for addenda — , id) keyset order, and the last one hands back the plain timestamp. Up to
-1.12.0 the whole backfill rode on one page (a client with 40,000 visits: one 40,531-row, 25.5 MB answer). The
+1.12.0 the whole backfill rode on one page (a client with 40,000 visits: one 40,531-row, 25.5 MB answer). Since
+1.14.0 the office works a page out in two passes — where each table's page ends, from its `(client_id,
+updated_at)` index alone, then the rows up to the page's cursor — and skips a table with nothing newer than the
+device's cursor; the pages themselves are unchanged, and a large page is sent compressed when the device's
+browser accepts it ([PERFORMANCE.md](../PERFORMANCE.md)). The
 device treats the cursor as opaque and stores it after every page, so an older kernel that only echoes it back
 until `complete` gets the same pages, and a sync cut short resumes the backfill at the next one; a damaged
 cursor is refused (400), and a forged position fetches nothing a full resync would not (every row still passes

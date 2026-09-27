@@ -112,10 +112,15 @@ module.exports = (r) => {
     if (ctx.query.get('from')) { where.push('n.occurred_at >= ?'); params.push(ctx.query.get('from')); }
     if (ctx.query.get('to')) { where.push('n.occurred_at <= ?'); params.push(ctx.query.get('to') + 'T23:59:59.999Z'); }
     const w = 'WHERE ' + where.join(' AND ');
-    const rows = db.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
+    // The page's notes are found first, from the index (idx_notes_list), and only those rows are read: sorting
+    // a caseload's notes whole, bodies and all, to keep a hundred was 140 ms for a 2,000-client caseload.
+    // (By rowid, which the index carries; the id is only in the row.)
+    const pageIds = db.all(`SELECT n.rowid AS rid FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit, offset).map(x => x.rid);
+    const byId = new Map(db.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
       n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
-      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda
-      FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit, offset);
+      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda, n.rowid AS rid
+      FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id WHERE n.rowid IN (SELECT value FROM json_each(?))`, JSON.stringify(pageIds)).map(({ rid, ...x }) => [rid, x]));
+    const rows = pageIds.map(id => byId.get(id));
     const out = rows.map(x => ({ ...x, title: x.title_enc ? decrypt(x.title_enc) : null, title_enc: undefined, ...signatureState(x) }));
     // Listing notes is a PHI read (titles are clinical narrative), so it is audited like any other.
     audit.log({ user: ctx.user, action: 'note.list', ip: ctx.ip, clientId: ctx.query.get('client_id') || null, details: { count: out.length, kinds, filter: ctx.query.get('awaiting_cosign') === '1' ? 'awaiting_cosign' : undefined } });
