@@ -123,7 +123,10 @@ function parseCursor(raw) {
 }
 /** One backfill page: at most `limit` rows in all, from position `bf`. Returns { raw, next } (next null when done). */
 function backfillPage(user, until, bf, limit) {
-  const arrivedQ = newlyInScopeSql(user, bf.from, until);
+  // Which clients arrived is worked out once for the page and handed to each table's query as a list; it used
+  // to be a subquery run again for every table (45 times a page, 0.3 s each at a 2,000-client caseload).
+  const q = newlyInScopeSql(user, bf.from, until);
+  const arrivedQ = { sql: 'SELECT value FROM json_each(?)', params: [JSON.stringify(db.all(q.sql, ...q.params).map(r => r.client_id))] };
   const tables = bfTables();
   const raw = {}; let budget = limit; let next = null;
   for (let ti = tables.findIndex(t => t.name === bf.t); ti < tables.length; ti++) {
@@ -156,28 +159,40 @@ function pull(user, sinceRaw, { limit = PULL_LIMIT } = {}) {
   const serverNow = db.now();
   const { since, bf } = parseCursor(String(sinceRaw || NEVER));
   if (bf) return pullBackfill(user, since, bf, limit, serverNow);
-  const raw = {}; const capped = [];
+  const raw = {}; const capped = []; const scopes = new Map();
 
+  // Where the page ends, in two passes. Up to 1.13 each table's first `limit` rows were read whole, and most of
+  // them were then thrown away, because another table's page ended earlier and every table stops at the same
+  // instant: a first sync of a 2,000-client caseload read every one of its clients' rows again on each of 30
+  // pages. The first pass reads only timestamps, from the indexes (updated_at, and client_id with it for the
+  // big tables: schema.sql, "sync reads"), to find each table's boundary; the second reads whole rows only
+  // for what this page sends. The pages, cursors and rows are exactly those the one-pass version produced.
+  //
+  // A table with nothing newer than `since` at all (MAX(updated_at) is one index lookup) is left out of both
+  // passes: in an incremental sync that is most of them.
   for (const t of SYNC.tables) {
-    const sc = scopeSql(t, user, 'x');
+    const newest = db.one(`SELECT MAX(updated_at) m FROM ${t.name}`).m;
+    if (newest === null || newest === undefined || newest <= since) continue;
+    const sc = scopeSql(t, user, 'x'); scopes.set(t.name, sc);
     // updated_at is NOT NULL on every synced table (migration 5) and indexed, so this is a range scan
     // rather than the full table scan a COALESCE would force.
-    const rows = db.all(`SELECT x.* FROM ${t.name} x WHERE x.updated_at > ? AND ${sc.sql} ORDER BY x.updated_at LIMIT ?`, since, ...sc.params, limit + 1);
-    if (rows.length <= limit) { raw[t.name] = rows; continue; }
-
+    const stamps = db.all(`SELECT x.updated_at u FROM ${t.name} x WHERE x.updated_at > ? AND ${sc.sql} ORDER BY x.updated_at LIMIT ?`, since, ...sc.params, limit + 1);
+    if (stamps.length <= limit) continue;
     // More to come. The first row that did not fit marks the boundary; everything strictly before it is
     // safe to send, because no row of an earlier timestamp can be left behind.
-    const boundary = rows[limit].updated_at;
-    const safe = rows.filter(r => r.updated_at < boundary);
-    if (safe.length) { raw[t.name] = safe; capped.push(safe[safe.length - 1].updated_at); continue; }
-
-    // The whole page is one timestamp, so it cannot be split without losing rows. Send all of it.
-    raw[t.name] = db.all(`SELECT x.* FROM ${t.name} x WHERE x.updated_at = ? AND ${sc.sql} ORDER BY x.updated_at`, boundary, ...sc.params);
-    capped.push(boundary);
+    const boundary = stamps[limit].u;
+    let lastSafe = null;
+    for (const s of stamps) { if (s.u < boundary) lastSafe = s.u; else break; }
+    // The whole page is one timestamp, so it cannot be split without losing rows: all of it is sent
+    // (the second pass reads every row of that instant).
+    capped.push(lastSafe !== null ? lastSafe : boundary);
   }
 
   // Every table stops at the same instant, so the cursor stays a single point in time.
   const cursor = capped.length ? capped.reduce((a, b) => (a < b ? a : b)) : serverNow;
+  // The rows this page sends: (since, cursor] of each table. For a table that was cut short these are the
+  // rows before its boundary (or every row of a single-timestamp page); for the rest, everything they had.
+  for (const [name, sc] of scopes) raw[name] = db.all(`SELECT x.* FROM ${name} x WHERE x.updated_at > ? AND x.updated_at <= ? AND ${sc.sql} ORDER BY x.updated_at`, since, cursor, ...sc.params);
   const out = baseAnswer(cursor, serverNow, capped.length === 0);
   exportInto(out, user, raw, cursor);
   // Newly assigned clients arrive whole: everything recorded about them before `since` as well, in the
@@ -302,3 +317,5 @@ module.exports = (r) => {
   });
 };
 module.exports.pull = pull; module.exports.push = push;
+// For test/perf-sync.test.js, which checks the two-pass page against the one-pass algorithm it replaced.
+module.exports.scopeSql = scopeSql;

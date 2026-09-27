@@ -214,7 +214,9 @@ CREATE TABLE IF NOT EXISTS assignments (
 );
 CREATE INDEX IF NOT EXISTS idx_assignments_updated ON assignments(updated_at);
 CREATE INDEX IF NOT EXISTS idx_assign_client ON assignments(client_id);
-CREATE INDEX IF NOT EXISTS idx_assign_user ON assignments(user_id);
+-- A worker's caseload, read from the index alone (every caseload-scoped query asks it; migration 47 widened
+-- idx_assign_user): whose it is, which client, and whether the assignment has ended.
+CREATE INDEX IF NOT EXISTS idx_assign_caseload ON assignments(user_id, client_id, end_date, ended_at);
 
 CREATE TABLE IF NOT EXISTS funding_sources (
   id TEXT PRIMARY KEY,
@@ -291,6 +293,11 @@ CREATE INDEX IF NOT EXISTS idx_interventions_user ON interventions(user_id, occu
 -- the columns the funder report counts ride along, so a year of visits is read from the index alone.
 CREATE INDEX IF NOT EXISTS idx_interventions_period ON interventions(occurred_at, funding_source_id, client_id, naloxone_kits, fentanyl_strips);
 CREATE INDEX IF NOT EXISTS idx_interventions_updated ON interventions(updated_at);
+-- Sync reads (migration 47, docs/PERFORMANCE.md): a device's pull finds where its page ends from a caseload's
+-- updated_at values alone, so client, time and owner are in the index and the rows are read only when sent.
+CREATE INDEX IF NOT EXISTS idx_interventions_sync ON interventions(client_id, updated_at, user_id);
+-- The Home dashboard's pass over the period's visits (migration 47), read from the index alone.
+CREATE INDEX IF NOT EXISTS idx_interventions_dashboard ON interventions(occurred_at, client_id, user_id, type, duration_minutes, naloxone_kits, fentanyl_strips);
 
 CREATE TABLE IF NOT EXISTS calls (
   id TEXT PRIMARY KEY,
@@ -318,6 +325,7 @@ CREATE INDEX IF NOT EXISTS idx_calls_client ON calls(client_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_user ON calls(user_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_started ON calls(started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_updated ON calls(updated_at);
+CREATE INDEX IF NOT EXISTS idx_calls_sync ON calls(client_id, updated_at, user_id);
 
 CREATE TABLE IF NOT EXISTS time_entries (
   id TEXT PRIMARY KEY,
@@ -537,8 +545,12 @@ CREATE TABLE IF NOT EXISTS notes (
   -- each service to the problem list). Ids only, never the problem text.
   problem_ids TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_notes_client ON notes(client_id, occurred_at);
+-- A client's notes by date, and a caseload's notes list, read from the index alone (migration 47 widened idx_notes_client).
+CREATE INDEX IF NOT EXISTS idx_notes_list ON notes(client_id, occurred_at, kind, deleted_at, author_id);
 CREATE INDEX IF NOT EXISTS idx_notes_author ON notes(author_id);
+CREATE INDEX IF NOT EXISTS idx_notes_sync ON notes(client_id, updated_at);
+-- Unsigned notes (Home's alert, migration 47): the drafts only, a handful of rows however many notes there are.
+CREATE INDEX IF NOT EXISTS idx_notes_drafts ON notes(author_id, created_at) WHERE status='draft' AND deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS note_addenda (
   id TEXT PRIMARY KEY,
@@ -550,6 +562,8 @@ CREATE TABLE IF NOT EXISTS note_addenda (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_note_addenda_updated ON note_addenda(updated_at);
+-- A note's addenda (the notes list counts them per note; migration 47).
+CREATE INDEX IF NOT EXISTS idx_note_addenda_note ON note_addenda(note_id);
 
 CREATE TABLE IF NOT EXISTS consents (
   id TEXT PRIMARY KEY,
@@ -794,6 +808,8 @@ CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_id
 CREATE INDEX IF NOT EXISTS idx_clients_first_name ON clients(first_name_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_first_name_prefix ON clients(first_name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_preferred_name ON clients(preferred_name_idx);
+-- The duplicates merged into a caseload's clients travel with them (sync pull; migration 47).
+CREATE INDEX IF NOT EXISTS idx_clients_merged ON clients(merged_into) WHERE merged_into IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);
 CREATE INDEX IF NOT EXISTS idx_resource_photos_updated ON resource_photos(updated_at);
 CREATE INDEX IF NOT EXISTS idx_funding_sources_updated ON funding_sources(updated_at);
@@ -960,7 +976,7 @@ CREATE TABLE IF NOT EXISTS intervention_supplies (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_intervention_supplies_visit ON intervention_supplies(intervention_id);
-CREATE INDEX IF NOT EXISTS idx_intervention_supplies_client ON intervention_supplies(client_id);
+CREATE INDEX IF NOT EXISTS idx_intervention_supplies_sync ON intervention_supplies(client_id, updated_at, user_id);
 CREATE INDEX IF NOT EXISTS idx_intervention_supplies_updated ON intervention_supplies(updated_at);
 
 -- The stock ledger. Append-only: a row is never changed or removed (a mistake is corrected by another row),
@@ -992,7 +1008,9 @@ CREATE TABLE IF NOT EXISTS supply_ledger (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_supply_ledger_updated ON supply_ledger(updated_at);
-CREATE INDEX IF NOT EXISTS idx_supply_ledger_stock ON supply_ledger(item_id, site_id, expires_on, lot_number);
+-- On hand is SUM(quantity) per item, site and lot: read from this index alone (migration 47 added quantity).
+CREATE INDEX IF NOT EXISTS idx_supply_ledger_onhand ON supply_ledger(item_id, site_id, expires_on, lot_number, quantity);
+CREATE INDEX IF NOT EXISTS idx_supply_ledger_item_created ON supply_ledger(item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_supply_ledger_visit ON supply_ledger(intervention_id) WHERE intervention_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_supply_ledger_occurred ON supply_ledger(occurred_on);
 
@@ -1357,3 +1375,4 @@ CREATE TABLE IF NOT EXISTS suprt_assessments (
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_client ON suprt_assessments(client_id, assessment_date);
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_date ON suprt_assessments(assessment_date);
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_updated ON suprt_assessments(updated_at);
+CREATE INDEX IF NOT EXISTS idx_suprt_assessments_sync ON suprt_assessments(client_id, updated_at);

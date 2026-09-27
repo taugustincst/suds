@@ -2,6 +2,28 @@ import { backupReminderCard } from './local.js';
 import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName, prefs } from '../app.js';
 
 route('dashboard', async () => {
+  // Everything else Home asks the server for is asked for now, alongside the figures below, and waited for
+  // where it is used. Each of these used to wait for the one before it: an administrator's Home was seven
+  // round trips one after another, most of three seconds on a phone's connection before anything showed.
+  const quiet = (p) => get(p, { quiet: true });
+  const early = {
+    requests: can('users:manage') && !state.local ? quiet('/api/users/access-requests').catch(() => null) : null,
+    security: can('settings:manage') && !state.local ? quiet('/api/admin/security/alerts').catch(() => null) : null,
+    caseloads: can('assignments:manage') ? quiet('/api/users/caseloads').catch(() => null) : null,
+    supplies: can('supplies:manage') ? import('./supplies.js').then(m => m.supplyHome()) : null,
+    setup: can('settings:manage') && !state.local ? Promise.all([
+      quiet('/api/forms/starters').catch(() => null),
+      quiet('/api/users').catch(() => ({ users: [] })),
+      quiet('/api/budget/funds').catch(() => ({ funds: [] })),
+      quiet('/api/resources?limit=8').catch(() => ({ total: 0, rows: [] })),
+      quiet('/api/admin/stats').catch(() => ({})),
+      quiet('/api/admin/settings').catch(() => null),
+      quiet('/api/consent-template').catch(() => null),
+      can('interventions:write') ? quiet('/api/supplies').catch(() => null) : null,
+    ]) : null,
+  };
+  // Waited for below, in order; marked handled now so a failure is not reported before its turn comes.
+  for (const p of Object.values(early)) if (p) p.catch(() => {});
   const [d, cont, caseload, handoffs] = await Promise.all([get('/api/reports/dashboard'), get('/api/me/continue'), can('clients:read') ? get('/api/caseload') : { caseload: [] },
     can('notes:admin:read') ? get('/api/notes/handoffs?hours=24', { quiet: true }).catch(() => null) : null]);
   // "Today" is really "due by the end of today": anything from before today is overdue and goes first.
@@ -47,7 +69,7 @@ route('dashboard', async () => {
   if (d.complaints_open) alerts.push(['warn', `${d.complaints_open} open privacy complaint${d.complaints_open > 1 ? 's' : ''}`, '#/compliance?tab=complaints']);
   // Account requests from the sign-in page's Sign up, waiting for an administrator (office server only).
   if (can('users:manage') && !state.local) {
-    const reqs = await get('/api/users/access-requests', { quiet: true }).catch(() => null);
+    const reqs = await early.requests;
     const n = reqs ? reqs.requests.length : 0;
     if (n) alerts.push(['warn', `${n} access request${n > 1 ? 's' : ''} waiting`, '#/admin?tab=users']);
   }
@@ -58,7 +80,7 @@ route('dashboard', async () => {
   // Amber for a finding, red when something has actually failed. Not dismissible: they are security findings.
   let securityNotes = null;
   if (can('settings:manage') && !state.local) {
-    const sec = await get('/api/admin/security/alerts', { quiet: true }).catch(() => null);
+    const sec = await early.security;
     const list = (sec && sec.alerts) || [];
     if (list.length) securityNotes = h('div', { class: 'mb', 'data-security-alerts': '1' }, list.map(a => h('div', { class: `banner ${a.severity === 'warn' ? 'warn' : 'danger'} small mb`, 'data-security-alert': a.key, 'data-severity': a.severity || 'danger' },
       h('b', {}, a.label, '. '), a.explain || a.detail, ' ', h('a', { href: a.link || '#/admin?tab=security' }, a.key === 'backups_off' ? 'Turn on backups' : 'See Security status'))));
@@ -66,7 +88,7 @@ route('dashboard', async () => {
   // Clients still assigned to someone whose account was deactivated: nobody is working them until a
   // supervisor moves them (GET /api/users/caseloads, counts only).
   if (can('assignments:manage')) {
-    const cl = await get('/api/users/caseloads', { quiet: true }).catch(() => null);
+    const cl = await early.caseloads;
     if (cl && (cl.inactive_clients || cl.inactive_tasks)) {
       const gone = cl.users.filter(u => !u.is_active);
       const what = cl.inactive_clients ? `${cl.inactive_clients} client${cl.inactive_clients > 1 ? 's are' : ' is'}` : `${cl.inactive_tasks} open to-do${cl.inactive_tasks > 1 ? 's are' : ' is'}`;
@@ -74,7 +96,7 @@ route('dashboard', async () => {
     }
   }
   // Supplies expired or expiring, running low, or short on the books: for whoever runs the cupboard (views/supplies.js).
-  const supplies = can('supplies:manage') ? await (await import('./supplies.js')).supplyHome() : null;
+  const supplies = await early.supplies;
   if (supplies) alerts.push(...supplies.alerts);
   // The on-device app keeps its records nowhere else: a week without a backup is worth a word on Home.
   const backupReminder = await backupReminderCard();
@@ -102,16 +124,7 @@ route('dashboard', async () => {
   let setupCard = null;
   if (can('settings:manage') && !state.local) {
     try {
-      const [forms, users, funds, resources, sys, settings, consentTemplate, supplies] = await Promise.all([
-        get('/api/forms/starters', { quiet: true }).catch(() => null),
-        get('/api/users', { quiet: true }).catch(() => ({ users: [] })),
-        get('/api/budget/funds', { quiet: true }).catch(() => ({ funds: [] })),
-        get('/api/resources?limit=8', { quiet: true }).catch(() => ({ total: 0, rows: [] })),
-        get('/api/admin/stats', { quiet: true }).catch(() => ({})),
-        get('/api/admin/settings', { quiet: true }).catch(() => null),
-        get('/api/consent-template', { quiet: true }).catch(() => null),
-        can('interventions:write') ? get('/api/supplies', { quiet: true }).catch(() => null) : null,
-      ]);
+      const [forms, users, funds, resources, sys, settings, consentTemplate, supplies] = await early.setup;
       const steps = [];
       // Nothing about the deployment was ever going to point an administrator at these. Backups off and no
       // MFA requirement are the defaults a fresh install runs with until someone finds the Settings tab.

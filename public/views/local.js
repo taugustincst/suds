@@ -3,8 +3,10 @@ import { h, route, get, post, put, state, form, toast, nav, render, loadSession,
 // A column name as the person would say it: `first_name_enc` is "first name" (the suffix is how the
 // database marks an encrypted column, not something a navigator should have to read past).
 const column = (x) => fmt.label(String(x).replace(/_enc$/, '').replace(/_idx$/, '')).toLowerCase();
-import { sampleDataCard } from './admin.js';
 import { isStaticHost } from './login.js';
+// Administration (admin.js, with the lists, security and clinical modules it pulls in) is loaded only when the
+// sample-data card is shown, so the sign-in page and Home do not download it (main.js loads views on demand).
+const sampleDataCard = async (...a) => (await import('./admin.js')).sampleDataCard(...a);
 // Must match local/sync.js (the kernel says the same when a sync is attempted from the on-device app).
 const STATIC_HOST_MESSAGE = 'SUDS on this device does not sync with an office server: your records stay in this browser. Keep them safe with "Download a backup" on this page. If your program runs an office SUDS server, use SUDS at its address instead.';
 const BACKUP_EVERY_DAYS = 7;

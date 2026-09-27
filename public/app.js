@@ -1304,6 +1304,22 @@ window.addEventListener('unhandledrejection', (e) => {
 // ---------- routing ----------
 const routes = {};
 export function route(name, loader) { routes[name] = loader; }
+/**
+ * Pages whose module is loaded the first time one of them is opened (main.js). Until then each name has a
+ * stand-in that imports the module, whose own route() call replaces the stand-in, and then shows the page.
+ * A module that cannot be fetched (offline, before the service worker has it) is shown as the page's error.
+ */
+export function lazyRoute(names, load) {
+  for (const name of names) {
+    if (routes[name]) continue;
+    const stub = async (r) => {
+      await load();
+      if (routes[name] === stub) throw new Error(`The ${name} page is missing from this version of SUDS.`);
+      return routes[name](r);
+    };
+    routes[name] = stub;
+  }
+}
 // "Dr. Kiran Patel" is Kiran, not Dr.
 // The name is used exactly as the person typed it (a single word, all capitals, a hyphenated first
 // name — none of it is re-cased or cut), and a blank display name falls back to the username so a
@@ -1330,6 +1346,15 @@ export function parseHash() {
   return { name: parts[0] || 'dashboard', id: parts[1], sub: parts[2], query: new URLSearchParams(qs || '') };
 }
 export function nav(to) { location.hash = to.startsWith('#') ? to : '#/' + to; }
+/**
+ * Go to `to` and show it, rendering once. A changed address renders through the hashchange listener; calling
+ * render() as well (as signing in used to) drew the page twice, and Home fetched everything it shows twice.
+ */
+export function navAndRender(to) {
+  const before = location.hash;
+  nav(to);
+  if (location.hash === before) render();
+}
 
 // The sidebar. Each entry shows for a role that holds its permission (perm) — and, so a front-line worker's
 // sidebar is the handful of pages they use every day rather than every page they may open, two more marks:

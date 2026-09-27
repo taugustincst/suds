@@ -28,7 +28,17 @@ const cents = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v
 /** True for a time zone name this runtime knows (IANA, e.g. "America/Los_Angeles"). */
 function validTimezone(tz) {
   if (typeof tz !== 'string' || !tz.trim() || tz.length > 64) return false;
-  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch { return false; }
+  try { formatter('en-US', { timeZone: tz }); return true; } catch { return false; }
+}
+// Building an Intl.DateTimeFormat costs tens of microseconds, and "today in the programme's time zone" is asked
+// for many times a request (every visit saved, every report period, every list of what is due). The formatters
+// are made once per zone and kept; a zone the runtime does not know still throws, and is not kept.
+const formatters = new Map();
+function formatter(locale, opts) {
+  const key = `${locale}|${JSON.stringify(opts)}`;
+  let f = formatters.get(key);
+  if (!f) { f = new Intl.DateTimeFormat(locale, opts); if (formatters.size > 200) formatters.clear(); formatters.set(key, f); }
+  return f;
 }
 /**
  * The organisation's time zone: the org_timezone setting (Settings → Program settings) when an
@@ -43,7 +53,7 @@ function orgTimezone() {
 function localDate(when = new Date(), tz = orgTimezone()) {
   const d = when instanceof Date ? when : new Date(when);
   if (!Number.isFinite(d.getTime())) return null;
-  try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); }
+  try { return formatter('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); }
   catch { return d.toISOString().slice(0, 10); }
 }
 
@@ -58,7 +68,7 @@ function localMidnight(date, tz = orgTimezone()) {
   if (!Number.isFinite(guess)) return null;
   const offset = (ms) => {
     try {
-      const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      const p = Object.fromEntries(formatter('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
         .formatToParts(new Date(ms)).map(x => [x.type, x.value]));
       return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - (ms % 1000));
     } catch { return 0; }

@@ -271,23 +271,36 @@ function relinkLines(visit) {
 const estimateReturns = (litres) => Math.round(Number(litres || 0) * syringesPerLitre());
 
 // ---- stock views ----
-/** On hand per item and site, and per lot, with expiry state on `date`. */
+/**
+ * On hand per item and site, and per lot, with expiry state on `date`. One pass over the ledger, read from its
+ * covering index (idx_supply_ledger_onhand: the rows themselves are never read); a lot whose movements add up
+ * to nothing is left out. The Supplies page used to make this pass twice (once more for the alerts) and then
+ * add up each item at each site again, a third of a second at 50,000 ledger rows.
+ */
 function stock({ date = today() } = {}) {
   const warnBy = addDays(date, expiryWarnDays());
-  const lotRows = db.all(`SELECT item_id, site_id, lot_number, expires_on, SUM(quantity) quantity FROM supply_ledger GROUP BY item_id, site_id, lot_number, expires_on HAVING SUM(quantity) <> 0`)
+  const sums = db.all(`SELECT item_id, site_id, lot_number, expires_on, SUM(quantity) quantity FROM supply_ledger GROUP BY item_id, site_id, lot_number, expires_on`);
+  const lotRows = sums.filter(l => l.quantity !== 0)
     .map(l => ({ ...l, state: !l.expires_on ? 'no_expiry' : l.expires_on < date ? 'expired' : l.expires_on <= warnBy ? 'expiring' : 'ok' }));
   const totals = new Map();
   for (const l of lotRows) { const k = `${l.item_id}|${l.site_id}`; totals.set(k, (totals.get(k) || 0) + l.quantity); }
-  return { lots: lotRows, bySite: [...totals].map(([k, quantity]) => { const [item_id, site_id] = k.split('|'); return { item_id, site_id, quantity }; }), warn_by: warnBy, date };
+  const out = { lots: lotRows, bySite: [...totals].map(([k, quantity]) => { const [item_id, site_id] = k.split('|'); return { item_id, site_id, quantity }; }), warn_by: warnBy, date };
+  // What alerts() needs from the same pass, kept off the object the routes send: on hand per item and site
+  // (lots that add up to nothing included, as SUM over the ledger has them).
+  Object.defineProperty(out, 'onHandOf', { enumerable: false, value: (itemId, siteId) => totals.get(`${itemId}|${siteId}`) || 0 });
+  return out;
 }
-/** What needs a supervisor's attention: expired and expiring lots, items running low at a site, recent shortfalls. */
-function alerts({ date = today() } = {}) {
-  const s = stock({ date });
+/**
+ * What needs a supervisor's attention: expired and expiring lots, items running low at a site, recent shortfalls.
+ * `stock` is stock({ date }) when the caller already has it (GET /api/supplies shows both).
+ */
+function alerts({ date = today(), stock: s = null } = {}) {
+  if (!s || s.date !== date) s = stock({ date });
   const positive = s.lots.filter(l => l.quantity > 0);
   const lowRows = [];
   for (const it of db.all(`SELECT id, name, low_stock FROM supply_items WHERE is_active=1 AND low_stock IS NOT NULL`)) {
     for (const st of db.all(`SELECT id, name FROM supply_sites WHERE is_active=1 AND id IN (SELECT site_id FROM supply_ledger WHERE item_id=?)`, it.id)) {
-      const q = onHand(it.id, st.id); if (q <= it.low_stock) lowRows.push({ item_id: it.id, site_id: st.id, quantity: q, low_stock: it.low_stock });
+      const q = s.onHandOf(it.id, st.id); if (q <= it.low_stock) lowRows.push({ item_id: it.id, site_id: st.id, quantity: q, low_stock: it.low_stock });
     }
   }
   const since = addDays(date, -90);
