@@ -107,8 +107,8 @@ fetched the first time it is opened (`app.js` `lazyRoute`), and the sign-in page
 Administration. (`index.html` briefly preloaded the first screen's modules with `<link rel="modulepreload">`;
 that was dropped before release: WebKit served the preloaded `app.js` from its HTTP cache without asking the
 service worker, so on a host that sends `max-age` (GitHub Pages) a phone could keep running the previous build
-after an update. The first-load figures above were measured with it; without it the modules arrive one import
-level at a time, a few round trips more on a slow connection.) Signing in renders Home once (it rendered twice, and fetched everything twice),
+after an update. Measured again without it, on the same 390 px, slow-4G, 4x-CPU profile: sign-in page usable in
+1.6 s (1.5 s with it), Home in 2.2 s (unchanged), 87 kB in 13 requests: lazy loading is what made the difference.) Signing in renders Home once (it rendered twice, and fetched everything twice),
 and Home asks for everything at once where it used to wait for each answer before asking the next question.
 
 **Sync pull in two passes.** A device's pull used to read each table's first 2,000 rows whole, and then throw
