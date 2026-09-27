@@ -73,11 +73,13 @@ const byDate = (a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b
  * and the doses used in them are cells of the same audited release. dist: distributionRows by month; shown:
  * { rows: [{ month, reversals, reversal_doses }] (none when the table is withheld), reversals, reversal_doses }.
  */
-function ndpPublished({ from, to }, counting, dist, shown) {
+/** The settings the published log prints (read with the rest of a release, from its snapshot). */
+const ndpSettings = () => ({ county: db.getSetting('county_name', '') || null, doses_per_kit: dosesPerKit() });
+function ndpPublished({ from, to }, counting, dist, shown, settings = ndpSettings()) {
   const rev = shown.rows.map(x => ({ date: x.month, entry: 'reversal', site_type: 'all', recipient_type: null, kits: null, doses: null, reversals: x.reversals, reversal_doses: x.reversal_doses, administered_by: null,
     ...(typeof x.reversals === 'number' && typeof x.reversal_doses === 'number' ? {} : { suppressed: true }) }));
   const d = [...dist.values()];
-  return { from, to, county: db.getSetting('county_name', '') || null, doses_per_kit: dosesPerKit(), template_note: NDP_TEMPLATE_NOTE, rows: [...d, ...rev].sort(byDate), by: 'month', ...header(counting),
+  return { from, to, county: settings.county, doses_per_kit: settings.doses_per_kit, template_note: NDP_TEMPLATE_NOTE, rows: [...d, ...rev].sort(byDate), by: 'month', ...header(counting),
     totals: { kits: d.reduce((n, r) => n + r.kits, 0), doses: d.reduce((n, r) => n + r.doses, 0), reversals: shown.reversals, reversal_doses: shown.reversal_doses,
       community_kits: d.filter(r => r.recipient_type === 'Community member (anonymous)').reduce((n, r) => n + r.kits, 0) } };
 }
@@ -140,9 +142,12 @@ function settlementFigures({ from, to, ts, tsP }) {
     }
   }
   // Services charged to a settlement fund, by the fund's allowable use: what the money paid for, in people.
-  // People as in the funder report: a deleted client's visits are services, but not a person served.
+  // People as in the funder report: a deleted client's visits are services, but not a person served. The
+  // period's visits are read once and each fund looked up (CROSS JOIN fixes that order): left to itself the
+  // planner took each fund in turn and read the whole period's visits again for it, 1.1 s with 60 settlement
+  // funds at 20,000 clients (0.1 s this way).
   const services = db.all(`SELECT COALESCE(f.settlement_use,'uncategorised') AS use_code, COUNT(*) services, COUNT(DISTINCT CASE WHEN c.deleted_at IS NULL THEN i.client_id END) people, COALESCE(SUM(i.naloxone_kits),0) naloxone_kits
-    FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts('i.occurred_at')} GROUP BY use_code`, ...tsP);
+    FROM interventions i CROSS JOIN funding_sources f ON f.id=i.funding_source_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts('i.occurred_at')} GROUP BY use_code`, ...tsP);
   const fix = (m) => [...m].map(([code, b]) => ({ code, ...b, approved_amount: money(b.approved_amount), pending_amount: money(b.pending_amount) }));
   const useRows = fix(byUse).map(x => ({ ...x, schedule: USE_LABEL[x.code]?.schedule || 'Uncategorised', label: USE_LABEL[x.code]?.label || 'No settlement category recorded' }));
   const hiaaRows = fix(byHiaa).map(x => ({ ...x, label: HIAA_LABEL[x.code] || 'No High Impact Abatement Activity recorded' }));
@@ -237,4 +242,4 @@ function routes(r, range) {
   });
 }
 
-module.exports = { ndp, settlement, settlementFigures, distributionRows, ndpPublished, header, routes, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
+module.exports = { ndp, settlement, settlementFigures, distributionRows, ndpPublished, ndpSettings, header, routes, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };

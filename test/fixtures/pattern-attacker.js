@@ -24,6 +24,9 @@
 // least T for a number or "suppressed" of people), whatever the audit would print for them.
 // A refused release publishes nothing and is not checked. A family is enumerated beyond the sizes whose
 // printouts are checked (`inner`), so that a printout's worlds are not cut off at the edge of the family.
+// Funds a release combines (server/funder-report.js foldFunds) are not in the release's model at all, only a
+// stand-in for one of them: the attacker checks each combined fund's own people (w.fundTruth) as a hidden
+// cell, since which funds are combined is printed (the funds of the table that are not listed).
 const PR = require('../../server/publication-release');
 
 function runAll(worlds, T) {
@@ -32,9 +35,10 @@ function runAll(worlds, T) {
     const m = p.model;
     const value = new Map(m.vars.map(v => [v.id, v.value]));
     for (const d of m.derived) value.set(d.id, d.terms.reduce((a, [i, c]) => a + c * m.vars[i].value, 0));
+    for (const [id, x] of Object.entries(w.fundTruth || {})) if (!value.has(`fund.${id}.people`)) value.set(`fund.${id}.people`, x.people);
     const table = new Map(m.vars.map(v => [v.id, v.table]));
     const key = p.refused ? 'REFUSED' : JSON.stringify({ f: p.funder, u: p.uses, n: p.ndp, w: p.withheld_tables });
-    return { label: w.label, inner: w.inner !== false, p, value, table, key };
+    return { label: w.label, inner: w.inner !== false, p, value, table, key, combined: w.combined || [] };
   });
 }
 
@@ -59,14 +63,17 @@ function attackAll(worlds, T, { limit = 20 } = {}) {
       if (st === 'sec' && v.people) return [v.id, 'big'];
       return [v.id, 'any'];
     }));
+    // A combined fund is known to be small: each would have printed "<T".
+    for (const id of ws[0].combined) cls.set(`fund.${id}.people`, 'small');
     const fits = (x, c) => (c === '0' ? x === 0 : c === 'small' ? x > 0 && x < T : c === 'big' ? x >= T : true);
     // The worlds whose values have the printout's classes (the audit aside).
     const symbolic = all.filter(w => [...cls].every(([id, c]) => fits(w.value.has(id) ? w.value.get(id) : 0, c))
       && [...w.table].every(([id, t]) => cls.has(id) || gone.has(t) || w.value.get(id) === 0));
     const range = (set, id) => { const vs = set.map(w => (w.value.has(id) ? w.value.get(id) : 0)); return [Math.min(...vs), Math.max(...vs)]; };
     const valuesOf = (id) => [...new Set(ws.map(w => (w.value.has(id) ? w.value.get(id) : 0)))].sort((a, b) => a - b);
-    const cells = m.vars.map((v, i) => ({ id: v.id, people: v.people, status: p.status[i], constrained: m.cons.some(k => k.terms.some(([j]) => j === i)) }))
-      .concat(m.derived.map(d => ({ id: d.id, people: true, status: 'derived', constrained: true })));
+    const cells = m.vars.map((v, i) => ({ id: v.id, people: v.people && !v.aux, status: p.status[i], constrained: m.cons.some(k => k.terms.some(([j]) => j === i)) }))
+      .concat(m.derived.map(d => ({ id: d.id, people: true, status: 'derived', constrained: true })))
+      .concat(ws[0].combined.map(id => ({ id: `fund.${id}.people`, people: true, status: 'pri', constrained: true })));
     for (const c of cells) {
       if (!c.people || c.status === 'vis' || !c.constrained) continue;
       const vs = valuesOf(c.id);
