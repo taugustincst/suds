@@ -47,7 +47,10 @@ Administrators may read a clinical note by sending \`X-Break-Glass-Reason: <reas
 
 - **Idempotency-Key** (POST): send a key (1-255 printable characters) and a repeat of the same request by the same user within 24 hours returns the first answer (with \`Idempotent-Replayed: true\`) instead of running again. The same key with a different body is refused with 422. Only successful answers are remembered. Not applied to sign-in, sync, setup or account routes.
 - **if_updated_at** (PUT body): the \`updated_at\` of the record as you loaded it. If the record has changed since, the save is refused with \`409 { error, stale: true, updated_at }\` and nothing is written. Omit it to save unconditionally. Successful PUTs return the new \`updated_at\`.
-- **Re-admission**: \`POST /api/clients/check-duplicates\` returns \`readmit\` (discharged records outside the caller's caseload that match on surname + date of birth or phone). \`POST /api/clients/:id/readmit { first_name, last_name, dob, phone, reason }\` assigns the caller, opens an episode and queues the event for supervisor review.
+- **Re-admission**: \`POST /api/clients/check-duplicates\` returns \`readmit\` (discharged records outside the caller's caseload that match on surname + date of birth or phone). \`POST /api/clients/:id/readmit { first_name, last_name, dob, phone, reason }\` assigns the caller, opens an episode and queues the event for supervisor review; the reason must be at least 8 characters.
+- **A visit with its note**: \`POST /api/interventions\` accepts \`note: { kind, format, title, content, structured, part2_protected }\` (a client is required). The note is created as a draft linked to the visit, in the same transaction, under the notes permissions and rules; the response carries \`note_id\`. A refused note (403, or 400 with \`fields.note_*\`) saves nothing. \`PUT\` does not accept a note.
+- **Time entries' source**: \`GET /api/time\` rows carry \`source\` (\`visit\`, \`call\` or \`manual\`); the list filters on \`source=visit|call|manual\` and, for \`time:all\`, \`user_id\`.
+- **Supplies catalog**: \`GET /api/supplies/catalog\` includes \`can_configure\` (the caller may add items here, so the visit form can offer to add the standard ones).
 `;
 fs.writeFileSync(require('node:path').join(__dirname, '..', 'docs', 'API.md'), out);
 console.log(`${rows.length} routes documented`);

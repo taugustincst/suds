@@ -24,7 +24,11 @@ await page.waitForSelector('.layout'); await dismissTour(page);
 // 1. create client
 await page.goto(base + '/#/clients'); await page.waitForSelector('text=+ New client', { timeout: 10000 }).catch(() => {});
 await page.click('text=+ New client'); await page.waitForSelector('.modal');
+// 1.14.0: "+ New client" is Quick add (the name, date of birth and phone); the whole intake is one button on.
+ok(await page.$('.modal [data-quick-add]') && !(await page.$('.modal select[name=primary_substance]')), 'a new client starts as Quick add, not the 40-field intake');
 await page.fill('.modal input[name=first_name]', 'Test'); await page.fill('.modal input[name=last_name]', 'Playwright'); await page.fill('.modal input[name=dob]', '1990-01-02'); await page.fill('.modal input[name=phone]', '555-0199');
+await page.click('.modal button[data-full-intake]'); await page.waitForSelector('.modal select[name=primary_substance]', { state: 'attached' });
+eq(await page.inputValue('.modal input[name=phone]'), '555-0199', '"Full intake" carries over what was typed');
 await page.evaluate(() => document.querySelectorAll('.modal details.section').forEach(d => { d.open = true; }));
 await page.selectOption('.modal select[name=primary_substance]', 'opioids_fentanyl'); await page.selectOption('.modal select[name=risk_level]', 'high');
 await page.click('.modal button[type=submit]'); await page.waitForURL(/#\/client\//, { timeout: 10000 }).catch(() => {});
@@ -32,7 +36,10 @@ const cid = page.url().split('/client/')[1]?.split('/')[0];
 ok(!!cid, 'creating a client opens their record', page.url());
 // 2. log intervention with time + follow-up
 await page.click('.client-actions.wide button:has-text("+ Log a visit")'); await page.waitForSelector('.modal');
-await page.selectOption('.modal select[name=type]', 'naloxone_distribution'); await page.fill('.modal input[name=naloxone_kits]', '1'); await page.fill('.modal input[name=follow_up_due]', '2026-10-01'); await page.fill('.modal textarea[name=summary]', 'Gave kit');
+await page.selectOption('.modal select[name=type]', 'naloxone_distribution'); await page.fill('.modal input[name=naloxone_kits]', '1'); await page.fill('.modal textarea[name=summary]', 'Gave kit');
+// 1.14.0: the follow-up date is in the visit's "Outcome & follow-up" section, folded until opened.
+ok(!(await page.isVisible('.modal input[name=follow_up_due]')), 'the follow-up date is folded away on a new visit');
+await page.click('.modal details[data-section-key="outcome"] > summary'); await page.fill('.modal input[name=follow_up_due]', '2026-10-01');
 await page.click('.modal button[type=submit]');
 ok(await toastSays(/saved|logged|✓/i), 'a naloxone hand-out is logged');
 // The intervention modal's onDone triggers client.js's async refresh() after closing — wait for it before
@@ -83,8 +90,9 @@ await page.goto(`${base}/#/client/${cid}/consents`); await page.waitForSelector(
 await page.selectOption('.modal select[name=type]', 'part2_disclosure'); await page.fill('.modal input[name=recipient]', 'County OTP'); await page.fill('.modal input[name=purpose]', 'Referral'); await page.fill('.modal input[name=expires_at]', '2027-09-01');
 // A Part 2 consent is refused until every §2.31 element is on it: what is covered, evidence it was signed,
 // and the redisclosure notice. The form marks them; this fills them the way a navigator would.
-ok(await page.$('.modal textarea[name=scope]') && await page.$('.modal input[name=redisclosure_notice_given]') && await page.$('.modal input[name=signed_on_paper]'), 'the consent form carries the Part 2 elements (scope, signature evidence, redisclosure notice)');
-await page.fill('.modal textarea[name=scope]', 'Referral summary and MAT status'); await page.check('.modal input[name=signed_on_paper]'); await page.check('.modal input[name=redisclosure_notice_given]');
+// 1.14.0: what it covers is the ticks (they are what SUDS enforces), written into the consent as its scope.
+ok(await page.$('.modal input[name=cat_referrals]') && !(await page.$('.modal textarea[name=scope]')) && await page.$('.modal input[name=redisclosure_notice_given]') && await page.$('.modal input[name=signed_on_paper]'), 'the consent form carries the Part 2 elements (what it covers, signature evidence, redisclosure notice)');
+await page.check('.modal input[name=cat_referrals]'); await page.fill('.modal textarea[name=scope_note]', 'MAT status'); await page.check('.modal input[name=signed_on_paper]'); await page.check('.modal input[name=redisclosure_notice_given]');
 // The 2024 rule's additions: the consent states the right to revoke, and the consequences of refusing.
 await page.check('.modal input[name=revocation_right_given]'); await page.check('.modal input[name=refusal_consequences_given]'); await page.click('.modal button[type=submit]');
 ok(await toastSays(/saved|recorded|✓/i), 'a 42 CFR Part 2 release is recorded once every element is present');

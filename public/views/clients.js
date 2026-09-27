@@ -1,4 +1,4 @@
-import { h, route, get, post, put, state, form, modal, confirmDialog, toast, nav, table, pagedList, badge, statusKind, fmt, can, pageHead, clear, clientStatus, flag } from '../app.js';
+import { h, route, get, post, put, state, form, modal, toast, nav, table, pagedList, badge, statusKind, fmt, can, pageHead, clear, clientStatus, flag } from '../app.js';
 
 // hasEpisodes: an existing client whose discharge lives on the Episodes tab (the New client form never
 // shows discharge fields: intake opens an episode, and discharging is what closes it).
@@ -20,8 +20,11 @@ export function clientFields(C, { isNew = true, hasEpisodes = false, openEpisode
     { type: 'section', label: 'Program status', collapsible: true, open: true },
     { name: 'status', label: 'Status', type: 'select', options: statusOptions, value: 'active', required: true, noBlank: true, help: openEpisode ? 'An episode of care is open, so "Closed" and "Deceased" are set by discharging on the Episodes tab: that closes the episode, ends the care team and clears open to-dos.' : hasEpisodes ? 'To discharge, use the Episodes tab: it closes the episode, ends the care team and clears open to-dos.' : (isNew ? 'Anyone not on the waitlist is admitted: intake opens their first episode of care.' : undefined) },
     { name: 'intake_date', label: 'Intake date', type: 'date', value: fmt.today() },
-    { name: 'referral_source', label: 'Referral source', type: 'select', options: ['self', 'family', 'emergency_dept', 'hospital', 'ems', 'law_enforcement', 'jail', 'court_probation', 'treatment_provider', 'primary_care', 'shelter', 'outreach', 'hotline', 'school', 'other'] },
-    { name: 'referral_date', label: 'Referral date', type: 'date', help: 'When this person was referred in — not necessarily the same as intake.' },
+    // Inbound: who sent this person to the program. The Referrals section is the other direction — the
+    // referrals the program makes to other providers — so the two are never labelled alike.
+    { name: 'referral_source', label: 'Who referred them to us', type: 'select', options: ['self', 'family', 'emergency_dept', 'hospital', 'ems', 'law_enforcement', 'jail', 'court_probation', 'treatment_provider', 'primary_care', 'shelter', 'outreach', 'hotline', 'school', 'other'],
+      help: 'How this person came to the program. Referrals you make to other providers are recorded under Referrals on their record.' },
+    { name: 'referral_date', label: 'Date they were referred to us', type: 'date', help: 'When this person was referred in — not necessarily the same as intake.' },
     { name: 'engagement_date', label: 'Engagement date', type: 'date', help: 'When they first actually engaged with services. Together with the referral date, this tracks time-to-engagement.' },
     { name: 'housing_status', label: 'Housing status', type: 'select', options: ['stable', 'doubled_up', 'shelter', 'unsheltered', 'transitional', 'sober_living', 'incarcerated', 'treatment_facility', 'unknown'] },
     { name: 'insurance', label: 'Insurance', type: 'select', options: ['medicaid', 'medicare', 'private', 'uninsured', 'va', 'pending', 'unknown'] }, { name: 'medicaid_id', label: 'Medicaid ID' },
@@ -47,66 +50,157 @@ export function checkClientFields(d) {
   if (Object.keys(fields).length) { const e = new Error('Check the highlighted fields.'); e.data = { fields }; throw e; }
 }
 
-export function openClientForm(values, onDone) {
-  const isNew = !values;
-  // Shown when the server thinks this person may already be on the caseload. Entering the same person
-  // twice used to be caught on import but not on direct entry, which is how one client ends up as three
-  // records under three spellings.
-  const dupBox = h('div');
-  let confirmedDuplicate = false;
+// The re-admission reason the server asks for (server/routes/clients.js READMIT_REASON_MIN): something the
+// reviewing supervisor can act on ("walked in", "released from jail").
+const READMIT_MIN = 8;
 
+/**
+ * The duplicate check shared by Quick add and the full intake form: while the name, date of birth or phone are
+ * typed, matching records the worker can open are listed, and a discharged earlier record of the same person
+ * (surname and date of birth) is offered for re-admission — all inside the one dialog. Re-admitting asks for
+ * its reason right there, under the offer, rather than in a second dialog stacked on top (1.14.0).
+ * Returns { box, confirmed(), show(matches, offers), watch() }.
+ */
+function duplicateCheck(f, { getModal, onDone, extra = () => ({}) }) {
+  const box = h('div', { 'data-duplicate-box': '1' });
+  let confirmedDuplicate = false;
+  const read = (n) => f.querySelector(`[name="${n}"]`)?.value || undefined;
   // A returning client whose earlier record was discharged and is on nobody's caseload (so this worker cannot
   // open it): the server offers it for re-admission instead of a dead end, when the surname and date of birth
   // match. Nothing from the stored record is shown — not its code, nor when or why the person was discharged.
-  const readmit = async (x, btn) => {
-    const read = (n) => f.querySelector(`[name="${n}"]`)?.value || undefined;
-    const reason = await confirmDialog('Re-admit this person', 'The earlier record comes onto your caseload, a new episode of care opens, and a supervisor reviews the re-admission. Say why (for example "walked in asking to restart services").', { okText: 'Re-admit', requireReason: true, minLength: 15 });
-    if (!reason) return;
-    btn.disabled = true;
-    try {
-      const r = await post(`/api/clients/${x.id}/readmit`, { first_name: read('first_name'), last_name: read('last_name'), dob: read('dob'), phone: read('phone'), referral_source: read('referral_source'), reason });
-      f.finished(); toast(`${r.client_code} re-admitted to your caseload`, 'ok'); m.close(); onDone ? onDone(r.id) : nav(`client/${r.id}`);
-    } catch (e) { btn.disabled = false; toast(e.message, 'error'); }
+  const readmitPanel = (x, opener) => {
+    const id = `readmit-reason-${x.id}`; const errId = `${id}-err`;
+    const input = h('input', { id, type: 'text', maxlength: 300, autocomplete: 'off', 'aria-describedby': `${id}-help ${errId}`, 'aria-required': 'true', 'data-readmit-reason': x.id });
+    const err = h('div', { class: 'err', id: errId, role: 'alert' });
+    const go = h('button', { class: 'btn sm primary', type: 'button', 'data-readmit-confirm': x.id, onClick: () => submit() }, 'Re-admit');
+    const cancel = h('button', { class: 'btn sm', type: 'button', onClick: () => { panel.remove(); opener.setAttribute('aria-expanded', 'false'); opener.hidden = false; opener.focus(); } }, 'Cancel');
+    const panel = h('div', { class: 'field readmit-panel', 'data-readmit-panel': x.id },
+      h('label', { for: id }, 'Why are you re-admitting them? *'),
+      h('div', { class: 'help', id: `${id}-help` }, `For the supervisor who reviews it, at least ${READMIT_MIN} characters — for example "walked in asking to restart services". The earlier record comes onto your caseload and a new episode of care opens.`),
+      input, err, h('div', { class: 'row', style: { marginTop: '.4rem' } }, cancel, go));
+    // Enter here re-admits; it must not submit the new-client form around it.
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+    async function submit() {
+      const reason = input.value.trim();
+      if (reason.length < READMIT_MIN) {
+        err.textContent = !reason ? 'Say why you are re-admitting this person.' : `Say a little more (at least ${READMIT_MIN} characters), so it can be reviewed.`;
+        panel.classList.add('error'); input.setAttribute('aria-invalid', 'true'); input.focus(); return;
+      }
+      go.disabled = true;
+      try {
+        const r = await post(`/api/clients/${x.id}/readmit`, { first_name: read('first_name'), last_name: read('last_name'), dob: read('dob'), phone: read('phone'), referral_source: read('referral_source'), reason });
+        f.finished(); toast(`${r.client_code} re-admitted to your caseload`, 'ok'); getModal().close(); onDone ? onDone(r.id) : nav(`client/${r.id}`);
+      } catch (e) {
+        go.disabled = false; err.textContent = e.message || 'The re-admission did not go through.'; panel.classList.add('error'); input.setAttribute('aria-invalid', 'true'); input.focus();
+      }
+    }
+    return { panel, input };
   };
-  const readmitBanner = (offers) => offers.length ? h('div', { class: 'banner warn', role: 'alert', 'data-readmit-offer': '1' },
+  const readmitBanner = (offers) => (offers.length ? h('div', { class: 'banner warn', role: 'alert', 'data-readmit-offer': '1' },
     h('div', {},
       h('b', {}, offers.length === 1 ? 'An earlier record exists for this person.' : 'Earlier records exist for this person.'),
-      h('ul', { class: 'tight' }, offers.map(x => h('li', {},
-        h('span', {}, x.message || 'A supervisor will be asked to review it.'),
-        h('div', { class: 'small muted' }, `Matched on ${x.reasons.join(' and ')}.`),
-        h('button', { class: 'btn sm primary', type: 'button', 'data-readmit': x.id, onClick: (e) => readmit(x, e.currentTarget) }, 'Re-admit this person')))),
-      h('p', { class: 'small' }, 'It is not on your caseload, so you cannot open it — but re-admitting carries on their record instead of starting a second one. It is logged and a supervisor reviews it.'))) : null;
-
-  const showDuplicates = (matches, offers = []) => {
-    clear(dupBox);
+      h('ul', { class: 'tight' }, offers.map(x => {
+        const li = h('li', {},
+          h('span', {}, x.message || 'A supervisor will be asked to review it.'),
+          h('div', { class: 'small muted' }, `Matched on ${x.reasons.join(' and ')}.`));
+        const btn = h('button', { class: 'btn sm primary', type: 'button', 'data-readmit': x.id, 'aria-expanded': 'false', onClick: () => {
+          const { panel, input } = readmitPanel(x, btn); btn.setAttribute('aria-expanded', 'true'); btn.hidden = true; li.append(panel); input.focus();
+        } }, 'Re-admit this person');
+        li.append(btn);
+        return li;
+      })),
+      h('p', { class: 'small' }, 'It is not on your caseload, so you cannot open it — but re-admitting carries on their record instead of starting a second one. It is logged and a supervisor reviews it.'))) : null);
+  const show = (matches, offers = []) => {
+    clear(box);
     confirmedDuplicate = false;
-    if (offers.length) dupBox.append(readmitBanner(offers));
-    if (!matches.length) { dupBox.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
-    dupBox.append(h('div', { class: 'banner warn', role: 'alert' },
+    if (offers.length) box.append(readmitBanner(offers));
+    if (!matches.length) { box.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
+    box.append(h('div', { class: 'banner warn', role: 'alert' },
       h('div', {},
         h('b', {}, matches.length === 1 ? 'This person may already be on file.' : 'These people may already be on file.'),
         h('ul', { class: 'tight' }, matches.map(x => h('li', {},
-          h('a', { href: `#/client/${x.id}`, onClick: () => m.close() }, x.display_name || x.client_code),
+          h('a', { href: `#/client/${x.id}`, onClick: () => getModal().close() }, x.display_name || x.client_code),
           ' ', h('span', { class: 'muted small' }, x.client_code, x.dob ? ` · born ${fmt.date(x.dob)}` : '', ` · ${fmt.label(clientStatus(x))}`),
           h('div', { class: 'small muted' }, `Matched on ${x.reasons.join(' and ')}.`)))),
         h('p', { class: 'small' }, 'Open the existing record if it is the same person. If it really is somebody different, confirm below.'),
         h('label', { class: 'check' },
-          h('input', { type: 'checkbox', onChange: (e) => { confirmedDuplicate = e.target.checked; } }),
+          h('input', { type: 'checkbox', 'data-confirm-different': '1', onChange: (e) => { confirmedDuplicate = e.target.checked; } }),
           ' This is a different person — create a new record anyway'))));
-    dupBox.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    box.scrollIntoView({ block: 'center', behavior: 'smooth' });
   };
+  // Check while they are still typing, so the match appears before the form is finished.
+  let timer;
+  const check = async () => {
+    const body = { first_name: read('first_name') || '', last_name: read('last_name') || '', dob: read('dob') || '', phone: read('phone') || '' };
+    if (!body.last_name || (!body.dob && !body.phone && !body.first_name)) return;
+    try {
+      const r = await post('/api/clients/check-duplicates', body, { quiet: true });
+      if (r.matches.length || (r.readmit && r.readmit.length)) show(r.matches, r.readmit || []); else clear(box);
+    } catch { /* a failed check must never block entering a client */ }
+  };
+  const watch = () => {
+    for (const n of ['last_name', 'dob', 'phone']) {
+      const el = f.querySelector(`[name="${n}"]`);
+      if (el) el.addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(check, 250); });
+    }
+  };
+  // Creating: a possible duplicate the server found is shown here (in this dialog), and the save waits for it.
+  const create = async (d) => {
+    try { return await post('/api/clients', { ...d, ...extra(), confirm_duplicate: confirmedDuplicate || undefined }); }
+    catch (e) {
+      if (e.data && e.data.duplicates) { show(e.data.duplicates, e.data.readmit || []); throw new Error('Check the possible match below before continuing.'); }
+      if (e.data && e.data.readmit && e.data.readmit.length) { show([], e.data.readmit); throw new Error('This person has an earlier record. Re-admit it below.'); }
+      throw e;
+    }
+  };
+  return { box, watch, check, create };
+}
 
-  const f = form(clientFields(state.constants, { isNew, hasEpisodes: !!(values && values.counts && values.counts.episodes), openEpisode: !!(values && values.open_episode) }), { values: values || {}, submitText: isNew ? 'Create client' : 'Save changes', onCancel: () => m.close(), extra: dupBox, draftKey: isNew ? 'client:new' : `client:${values.id}`, onSubmit: async (d) => {
+// What a new client is given when Quick add creates them: the same starting values the full intake form has.
+const NEW_CLIENT_DEFAULTS = () => ({ status: 'active', intake_date: fmt.today(), risk_level: 'moderate', preferred_language: 'English' });
+
+/**
+ * Quick add (1.14.0): a new client from the few things the duplicate check needs — the name (or the name they
+ * go by), and a date of birth or phone if they give one. It creates the record and opens it; the rest of the
+ * intake is added there ("Add details"), or all at once with "Full intake".
+ */
+function openQuickAdd(onDone, prefill = null) {
+  const f = form([
+    { name: 'first_name', label: 'First name', required: true }, { name: 'last_name', label: 'Last name', required: true },
+    { name: 'preferred_name', label: 'Preferred name or alias', help: 'What they want to be called, if it is not their first name.' },
+    { name: 'dob', label: 'Date of birth', type: 'date', max: fmt.today(), min: '1900-01-01', help: 'Optional. With the last name, it finds an earlier record of the same person.' },
+    { name: 'phone', label: 'Phone', type: 'tel' },
+  ], { values: prefill || {}, submitText: 'Create client', onCancel: () => m.close(), draftKey: 'client:quick', onSubmit: async (d) => {
+    checkClientFields(d);
+    const r = await dup.create({ ...NEW_CLIENT_DEFAULTS(), ...Object.fromEntries(Object.entries(d).filter(([, v]) => v !== null && v !== '')) });
+    toast(`Client ${r.client_code} created. Add the rest of their details when you have them.`, 'ok'); m.close();
+    // The record then offers "Add details" in place of Edit (client.js), for the rest of this session.
+    state.quickAdded = r.id;
+    onDone ? onDone(r.id) : nav(`client/${r.id}`);
+  } });
+  const dup = duplicateCheck(f, { getModal: () => m, onDone });
+  f.querySelector('.form-grid').after(dup.box);
+  dup.watch();
+  // The whole intake form, carrying over what is typed so far.
+  const full = h('button', { class: 'btn', type: 'button', 'data-full-intake': '1', onClick: () => {
+    const now = {}; for (const [k, i] of Object.entries(f.inputs)) if (i.value) now[k] = i.value;
+    f.finished(); m.close(); openClientForm(null, onDone, { full: true, prefill: now });
+  } }, 'Full intake');
+  f.querySelector('.btn-row button[type=submit]').before(full);
+  const m = modal('New client', h('div', { 'data-quick-add': '1' },
+    h('p', { class: 'small muted' }, 'Only the name is required. The record opens once it is created, and the rest of the intake can be added there when you have it — or use Full intake to enter everything now.'), f));
+  if (prefill && prefill.last_name) dup.check();
+}
+
+export function openClientForm(values, onDone, { full = false, prefill = null } = {}) {
+  const isNew = !values;
+  if (isNew && !full) { openQuickAdd(onDone, prefill); return; }
+  let dup = null;
+  const f = form(clientFields(state.constants, { isNew, hasEpisodes: !!(values && values.counts && values.counts.episodes), openEpisode: !!(values && values.open_episode) }), { values: values || prefill || {}, submitText: isNew ? 'Create client' : 'Save changes', onCancel: () => m.close(), draftKey: isNew ? 'client:new' : `client:${values.id}`, onSubmit: async (d) => {
     checkClientFields(d);
     if (isNew) {
-      try {
-        const r = await post('/api/clients', { ...d, confirm_duplicate: confirmedDuplicate || undefined });
-        toast(`Client ${r.client_code} created`, 'ok'); m.close(); onDone ? onDone(r.id) : nav(`client/${r.id}`);
-      } catch (e) {
-        if (e.data && e.data.duplicates) { showDuplicates(e.data.duplicates, e.data.readmit || []); throw new Error('Check the possible match below before continuing.'); }
-        if (e.data && e.data.readmit && e.data.readmit.length) { showDuplicates([], e.data.readmit); throw new Error('This person has an earlier record. Re-admit it below.'); }
-        throw e;
-      }
+      const r = await dup.create(d);
+      toast(`Client ${r.client_code} created`, 'ok'); m.close(); onDone ? onDone(r.id) : nav(`client/${r.id}`);
     } else {
       // Only what this person changed goes to the server, with the version they opened: a save used to send
       // every field on the form, so it quietly put back whatever a colleague had changed in the meantime.
@@ -117,26 +211,16 @@ export function openClientForm(values, onDone) {
       toast('Client updated', 'ok'); m.close(); onDone && onDone(values.id);
     }
   } });
-
-  // Check while they are still typing, so the match appears before the form is finished.
   if (isNew) {
-    let timer;
-    const check = async () => {
-      const read = (n) => f.querySelector(`[name="${n}"]`)?.value || '';
-      const body = { first_name: read('first_name'), last_name: read('last_name'), dob: read('dob'), phone: read('phone') };
-      if (!body.last_name || (!body.dob && !body.phone && !body.first_name)) return;
-      try {
-        const r = await post('/api/clients/check-duplicates', body, { quiet: true });
-        if (r.matches.length || (r.readmit && r.readmit.length)) showDuplicates(r.matches, r.readmit || []); else clear(dupBox);
-      } catch { /* a failed check must never block entering a client */ }
-    };
-    for (const n of ['last_name', 'dob', 'phone']) {
-      const el = f.querySelector(`[name="${n}"]`);
-      if (el) el.addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(check, 250); });
-    }
+    // Shown when the server thinks this person may already be on the caseload. Entering the same person
+    // twice used to be caught on import but not on direct entry, which is how one client ends up as three
+    // records under three spellings.
+    dup = duplicateCheck(f, { getModal: () => m, onDone });
+    f.querySelector('.form-grid').after(dup.box);
+    dup.watch();
   }
-
-  const m = modal(isNew ? 'New client' : `Edit ${values.display_name}`, f, { wide: true });
+  const m = modal(isNew ? 'New client — full intake' : `Edit ${values.display_name}`, f, { wide: true });
+  if (isNew && prefill && prefill.last_name) dup.check();
 }
 
 const SORTS = [['', 'Recently updated'], ['last_contact', 'Last contact (oldest first)'], ['overdue', 'Overdue follow-ups'], ['risk', 'Risk']];

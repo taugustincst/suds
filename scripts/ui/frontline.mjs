@@ -113,7 +113,8 @@ let consentId;
     await page.selectOption('.modal select[name=type]', 'part2_disclosure');
     await page.fill('.modal input[name=recipient]', 'frontline harbor clinic');
     await page.fill('.modal input[name=purpose]', 'Referral');
-    await page.fill('.modal textarea[name=scope]', 'Referral summary');
+    // 1.14.0: what the consent covers is its ticks (written into its scope), not a second free-text answer.
+    await page.check('.modal input[name=cat_referrals]');
     await page.fill('.modal input[name=expires_at]', '2027-01-01');
     for (const n of ['signed_on_paper', 'revocation_right_given', 'redisclosure_notice_given', 'refusal_consequences_given']) await page.check(`.modal input[name=${n}]`);
     await page.click('.modal button[type=submit]:has-text("Record consent")');
@@ -285,6 +286,9 @@ eq((await admin.api('GET', '/api/supplies')).data.rows.length, 0, 'the supply cu
   await page.evaluate(async () => (await import('./views/interventions.js')).openInterventionForm(null, {}));
   await page.waitForSelector('.modal select[name=type]');
   await page.selectOption('.modal select[name=type]', 'naloxone_distribution');
+  // 1.14.0: said inside the visit form before it is saved, with who can add the items; the toast stays as a fallback.
+  const inForm = await page.$('.modal [data-supplies-missing]');
+  ok(inForm && /not taken off any stock/.test(await inForm.textContent()) && /Ask a supervisor or administrator/.test(await inForm.textContent()), 'the visit form says, before saving, that kits will not come off any stock', inForm && await inForm.textContent());
   await page.fill('.modal input[name=naloxone_kits]', '10');
   await page.click('.modal button[type=submit]');
   const t3 = await until(() => page.$('#toasts .toast:has-text("not taken off Supplies")'), { timeout: 5000 });

@@ -45,6 +45,9 @@ ok(!(await page.$eval('.helptip', e => e.classList.contains('hidden'))), 'the he
 await page.screenshot({ path: '/tmp/suds-shots/ux_help.png' });
 // new client form collapsible
 await page.goto(base + '/#/clients'); await settle(page); await page.click('text=+ New client'); await page.waitForSelector('.modal');
+// 1.14.0: "+ New client" is Quick add (five fields, no sections); the collapsible sections are the full intake's.
+ok(await page.$('.modal [data-quick-add]') && !(await page.$('.modal details.section')), 'New client opens Quick add, with no sections to fold');
+await page.click('.modal button[data-full-intake]'); await page.waitForSelector('.modal details.section');
 const sections = await page.$$eval('.modal details.section', d => d.map(x => x.open));
 ok(sections.length > 0 && sections.some(o => !o), 'the client form keeps the optional sections collapsed', sections); await page.screenshot({ path: '/tmp/suds-shots/ux_client_form.png' }); await page.keyboard.press('Escape');
 // theme pref synced
