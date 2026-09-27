@@ -58,7 +58,7 @@ const [c1, c2, c3] = mine;
 {
   const { page, api } = nav;
   await go(page, `client/${c1.id}`);
-  await page.click('.client-actions.wide button:has-text("+ Visit")');
+  await page.click('.client-actions.wide button:has-text("+ Log a visit")');
   await page.waitForSelector('.modal select[name=type]'); await settle(page);
   const sections = await page.$$eval('.modal details[data-section-key]', ds => ds.map(d => ({ key: d.dataset.sectionKey, open: d.open, heading: !!d.querySelector('summary h3') })));
   for (const key of ['outcome', 'time', 'note']) ok(sections.some(s => s.key === key), `the visit form has a "${key}" section`, sections.map(s => s.key));
@@ -277,7 +277,7 @@ const [c1, c2, c3] = mine;
   ok(/Referrals we make/.test(await page.textContent('.main h1')), 'the Referrals page says these are referrals the program makes', await page.textContent('.main h1'));
   const target = mine[6] || mine[3];
   await go(page, `client/${target.id}/referrals`);
-  await page.click('.main button:has-text("+ Referral")');
+  await page.click('.main button:has-text("+ Make a referral")');
   await page.waitForSelector('.modal select[name=resource_id]'); await settle(page);
   ok(await page.$eval('.modal [data-field="barrier"]', e => e.hidden) && await page.$eval('.modal [data-field="outcome"]', e => e.hidden), 'a new referral under way does not ask for its outcome or barrier');
   await page.selectOption('.modal select[name=status]', 'completed');
