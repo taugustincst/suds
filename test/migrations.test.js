@@ -265,7 +265,7 @@ test('migration 46: a preferred name with no search index gets one; a written in
   add(ids.none, null, null);
   add(ids.unreadable, 'not-ciphertext', null);
   // Run migration 46 again, as an upgrade from 45 would.
-  db().setSetting('schema_version', String(d.LATEST_SCHEMA_VERSION - 1));
+  db().setSetting('schema_version', '45'); // the schema before migration 46, whatever comes after it
   d.close(); d.open(dbPath);
   const idx = (id) => db().one(`SELECT preferred_name_idx i FROM clients WHERE id=?`, id).i;
   assert.equal(idx(ids.missing), M.preferredNameIndex('Annie'), 'filled in from the decrypted name');
@@ -274,7 +274,7 @@ test('migration 46: a preferred name with no search index gets one; a written in
   assert.equal(idx(ids.unreadable), null, 'a row that cannot be decrypted keeps what it had');
   assert.equal(db().getSetting('schema_version'), String(d.LATEST_SCHEMA_VERSION));
   // A second run changes nothing.
-  db().setSetting('schema_version', String(d.LATEST_SCHEMA_VERSION - 1));
+  db().setSetting('schema_version', '45'); // the schema before migration 46, whatever comes after it
   d.close(); d.open(dbPath);
   assert.equal(idx(ids.missing), M.preferredNameIndex('Annie')); assert.equal(idx(ids.written), 'kept-as-written');
   for (const id of Object.values(ids)) db().run(`DELETE FROM clients WHERE id=?`, id);
