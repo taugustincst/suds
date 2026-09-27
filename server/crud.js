@@ -31,14 +31,26 @@ function assertFresh(ctx, row, entity) {
 }
 
 /**
- * opts: { table, entity, perm, shape, clientRequired, dateCol, ownerCol, unlinked, joins, select, filters(ctx,where,params),
+ * opts: { table, entity, perm, shape (default: the table's rules' fields, plus extraShape), clientRequired, dateCol, ownerCol, unlinked, joins, select, filters(ctx,where,params),
  *   beforeInsert(ctx,v), afterInsert(ctx,row), beforeUpdate(ctx,v,row), afterUpdate(ctx,mergedRow,prevRow),
  *   beforeDelete(ctx,row), afterLoad(ctx,row), canEdit(ctx,row), canDelete(ctx,row), insertResult(ctx,row) }
  */
 function build(r, opts) {
-  const { table, entity, perm, shape, dateCol = 'created_at', ownerCol = 'user_id', joins = '', select = `${table}.*`, clientRequired = true } = opts;
+  const { table, entity, perm, dateCol = 'created_at', ownerCol = 'user_id', joins = '', select = `${table}.*`, clientRequired = true } = opts;
+  // The table's rules (server/rules/<table>.js) are the one statement of what may be written to it and by whom:
+  // its fields are this route's shape, its editableBy is canEdit, its owner rule is restrictOwner, and its check
+  // runs on every create and update here exactly as sync push runs it on a device's rows.
+  const rules = require('./rules');
+  const R = rules.forTable(table, { optional: true });
+  const shape = opts.shape || R.shape(opts.extraShape);
+  const canEdit = opts.canEdit || (R.editableBy ? (ctx, row) => !R.editableBy(ctx.user, row) : null);
+  const ownerAll = R.owner && R.owner.col === ownerCol ? R.owner.all : 'clients:all';
+  const restrictOwner = opts.restrictOwner !== undefined ? opts.restrictOwner : !!(R.owner && R.owner.col === ownerCol);
   const base = opts.base || `/api/${entity}s`;
   const readPerm = `${perm}:read`, writePerm = `${perm}:write`;
+  // The permission a device's push of this table needs (server/sync-tables.js writePerm) is this route's: a
+  // mismatch is how patient_requests came to need consents:write by sync and patient-requests:write here.
+  if (R.sync && R.sync.writePerm && R.sync.writePerm !== writePerm) throw new Error(`crud.build(${table}): server/sync-tables.js says a device needs ${R.sync.writePerm}, this route ${writePerm}`);
   // A row with no client is outside caseload scoping: it is its owners' (or a holder of `all`'s). The rule
   // lives with the table's sync description (sync-tables.js `unlinked`) so a device gets exactly what REST
   // shows; an explicit opts.unlinked overrides it.
@@ -94,13 +106,14 @@ function build(r, opts) {
     const v = validate(ctx.body, shape);
     if (clientRequired && !v.client_id) throw require('./http').badRequest('client_id is required');
     checkClient(ctx, v.client_id);
+    rules.assertWrite(table, rules.toColumns(table, v), ctx);
     if (opts.beforeInsert) opts.beforeInsert(ctx, v);
     const id = uuid();
     const cols = { id, ...v };
     // validate() turns a blank field into an explicit null, not undefined — an owner picker left on its
     // "defaults to you" blank option (interventions.js's Worker field) must fall back to the caller the same
     // as an owner column the request never mentioned at all, not attempt a NOT NULL insert with nothing in it.
-    if (ownerCol && (cols[ownerCol] === undefined || cols[ownerCol] === null || (opts.restrictOwner && !auth.hasPerm(ctx.user, 'clients:all')))) cols[ownerCol] = ctx.user.id;
+    if (ownerCol && (cols[ownerCol] === undefined || cols[ownerCol] === null || (restrictOwner && !auth.hasPerm(ctx.user, ownerAll)))) cols[ownerCol] = ctx.user.id;
     if (opts.creatorCol) cols[opts.creatorCol] = ctx.user.id;
     const keys = Object.keys(cols).filter(k => cols[k] !== undefined && !k.startsWith('_'));
     // The insert and whatever it triggers (a time entry, a follow-up task, a client field update) are one
@@ -119,11 +132,12 @@ function build(r, opts) {
     const row = db.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
     if (!row) throw notFound();
     if (row.client_id) auth.assertClientAccess(ctx, row.client_id, DEID); else assertUnlinkedOwner(ctx, row);
-    if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden('You cannot edit this record');
+    if (canEdit && !canEdit(ctx, row)) throw forbidden('You cannot edit this record');
     if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
     const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true, existing: row });
     if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
-    if (opts.restrictOwner && v[ownerCol] !== undefined && !auth.hasPerm(ctx.user, 'clients:all')) delete v[ownerCol];
+    if (restrictOwner && v[ownerCol] !== undefined && !auth.hasPerm(ctx.user, ownerAll)) delete v[ownerCol];
+    rules.assertWrite(table, { id: row.id, ...rules.toColumns(table, v) }, ctx, { existing: row });
     if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
     const keys = Object.keys(v).filter(k => v[k] !== undefined && !k.startsWith('_'));
     const stamp = db.now();
@@ -139,7 +153,7 @@ function build(r, opts) {
     const row = db.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
     if (!row) throw notFound();
     if (row.client_id) auth.assertClientAccess(ctx, row.client_id, DEID); else assertUnlinkedOwner(ctx, row);
-    if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden('You cannot delete this record');
+    if (canEdit && !canEdit(ctx, row)) throw forbidden('You cannot delete this record');
     if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden('You cannot delete this record');
     if (opts.beforeDelete) opts.beforeDelete(ctx, row);
     db.run(`DELETE FROM ${table} WHERE id=?`, row.id); db.tombstone(table, row.id);

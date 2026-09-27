@@ -3,8 +3,8 @@ const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
 const crud = require('../crud');
-const C = require('../constants');
 const config = require('../config');
+const C = require('../constants');
 const { badRequest, notFound, HttpError } = require('../http');
 const { validate } = require('../validate');
 const { uuid, encrypt, decrypt } = require('../crypto');
@@ -67,14 +67,11 @@ function localMidnight(date, tz = orgTimezone()) {
   return new Date(guess - offset(first)).toISOString();
 }
 
-const fundShape = {
-  name: { type: 'string', required: true, maxLen: 200 }, source_type: { type: 'string', enum: C.FUNDING_TYPES }, grant_number: { type: 'string', maxLen: 100 },
-  fiscal_year_start: { type: 'date', required: true }, fiscal_year_end: { type: 'date', required: true }, total_amount: { type: 'number', required: true, min: 0 },
-  restrictions: { type: 'string', maxLen: 2000 }, notes: { type: 'string', maxLen: 2000 }, is_active: { type: 'boolean' },
-  // Opioid settlement categories (constants.SETTLEMENT_USES / SETTLEMENT_HIAA); blank for any other fund.
-  settlement_use: { type: 'string', enum: C.SETTLEMENT_USES.map(x => x.code) }, settlement_hiaa: { type: 'string', enum: [...C.SETTLEMENT_HIAA.map(x => x.code), 'none'] },
-};
-const lineShape = { category: { type: 'string', required: true, enum: C.BUDGET_CATEGORIES }, label: { type: 'string', maxLen: 200 }, allocated_amount: { type: 'number', required: true, min: 0 }, notes: { type: 'string', maxLen: 1000 }, parent_id: { type: 'string' } };
+// The fields of a fund and of a budget line, and what they must satisfy, are the tables' rules
+// (server/rules/funding_sources.js, budget_lines.js), which sync push applies to a device's rows as well.
+const rules = require('../rules');
+const FUNDS = () => rules.forTable('funding_sources');
+const LINES = () => rules.forTable('budget_lines');
 
 // A sub-allocation is carved *out of* its parent's own envelope, not stacked on top of it — allocated_amount
 // never sums up the tree (that would double-count the same money at every level it passes through). Actual
@@ -124,10 +121,6 @@ function assertInPeriod(fund, date, what) {
 }
 
 const money = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-/** A period that ends before it starts is a typo, and every date check downstream would refuse everything. */
-function assertPeriodOrder(start, end) {
-  if (start && end && end < start) throw badRequest(`The period ends (${end}) before it starts (${start})`);
-}
 /**
  * A budget line is carved out of whatever holds it: a sub-allocation out of its parent's allocated_amount,
  * a top-level line out of the fund's total. Lines that together promise more than that read as covered
@@ -184,8 +177,8 @@ module.exports = (r) => {
     return { funds: rows.map(fundSummary) };
   });
   r.post('/api/budget/funds', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
-    const v = validate(ctx.body, fundShape); const id = uuid(); const keys = Object.keys(v);
-    assertPeriodOrder(v.fiscal_year_start, v.fiscal_year_end);
+    const v = validate(ctx.body, FUNDS().shape()); const id = uuid(); const keys = Object.keys(v);
+    rules.assertWrite('funding_sources', v, ctx);
     db.run(`INSERT INTO funding_sources(id,${keys.join(',')}) VALUES(?,${keys.map(() => '?').join(',')})`, id, ...keys.map(k => v[k]));
     audit.log({ user: ctx.user, action: 'fund.create', entity: 'funding_source', entityId: id, ip: ctx.ip });
     ctx.status = 201; return { id };
@@ -193,9 +186,9 @@ module.exports = (r) => {
   r.put('/api/budget/funds/:id', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     const f = db.one(`SELECT * FROM funding_sources WHERE id=?`, ctx.params.id); if (!f) throw notFound();
     require('../crud').assertFresh(ctx, f, 'fund');
-    const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+    const v = validate(ctx.body, FUNDS().partialShape(), { partial: true });
     const keys = Object.keys(v); if (!keys.length) return { ok: true, updated_at: f.updated_at };
-    assertPeriodOrder(v.fiscal_year_start ?? f.fiscal_year_start, v.fiscal_year_end ?? f.fiscal_year_end);
+    rules.assertWrite('funding_sources', { id: f.id, ...v }, ctx, { existing: f });
     const stamp = db.now();
     db.run(`UPDATE funding_sources SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => v[k]), stamp, f.id);
     audit.log({ user: ctx.user, action: 'fund.update', entity: 'funding_source', entityId: f.id, ip: ctx.ip, details: { fields: keys } });
@@ -203,9 +196,8 @@ module.exports = (r) => {
   });
   r.post('/api/budget/funds/:id/lines', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     const f = db.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id); if (!f) throw notFound();
-    const v = validate(ctx.body, lineShape); const id = uuid();
-    if (v.parent_id) { const p = db.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, f.id); if (!p) throw badRequest('Parent allocation does not belong to this fund'); }
-    assertRoom(f.id, v.parent_id || null, v.allocated_amount);
+    const v = validate(ctx.body, LINES().shape()); const id = uuid();
+    rules.assertWrite('budget_lines', { id, funding_source_id: f.id, ...v }, ctx);
     db.run(`INSERT INTO budget_lines(id,funding_source_id,parent_id,category,label,allocated_amount,notes) VALUES(?,?,?,?,?,?,?)`, id, f.id, v.parent_id || null, v.category, v.label || null, v.allocated_amount, v.notes || null);
     audit.log({ user: ctx.user, action: 'budget_line.create', entity: 'budget_line', entityId: id, ip: ctx.ip, details: v.parent_id ? { parent_id: v.parent_id } : undefined });
     ctx.status = 201; return { id };
@@ -213,21 +205,8 @@ module.exports = (r) => {
   r.put('/api/budget/lines/:id', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     const l = db.one(`SELECT * FROM budget_lines WHERE id=?`, ctx.params.id); if (!l) throw notFound();
     require('../crud').assertFresh(ctx, l, 'budget_line');
-    const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
-    if ('parent_id' in v && v.parent_id) {
-      if (v.parent_id === l.id) throw badRequest('A budget line cannot be its own parent');
-      const p = db.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, l.funding_source_id); if (!p) throw badRequest('Parent allocation does not belong to this fund');
-      if (wouldCycle(l.id, v.parent_id)) throw badRequest('That would nest this allocation inside one of its own sub-allocations');
-    }
-    if ('allocated_amount' in v || 'parent_id' in v) {
-      const parentId = 'parent_id' in v ? (v.parent_id || null) : l.parent_id;
-      const amount = v.allocated_amount ?? l.allocated_amount;
-      assertRoom(l.funding_source_id, parentId, amount, { excluding: l.id });
-      // Shrinking a line below what it has already handed down to sub-allocations is the same overrun from
-      // the other side.
-      const handedDown = db.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, l.id).n;
-      if (cents(amount) < cents(handedDown)) throw badRequest(`Its sub-allocations already total ${money(handedDown)}; reduce those first`);
-    }
+    const v = validate(ctx.body, LINES().partialShape(), { partial: true });
+    rules.assertWrite('budget_lines', { id: l.id, ...v }, ctx, { existing: l });
     const keys = Object.keys(v); const stamp = keys.length ? db.now() : l.updated_at;
     if (keys.length) db.run(`UPDATE budget_lines SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => v[k]), stamp, l.id);
     audit.log({ user: ctx.user, action: 'budget_line.update', entity: 'budget_line', entityId: l.id, ip: ctx.ip, details: { fields: keys } });
@@ -250,45 +229,19 @@ module.exports = (r) => {
   });
 
   crud.build(r, {
-    table: 'expenditures', entity: 'expenditure', base: '/api/budget/expenditures', perm: 'budget', dateCol: 'spent_at', clientRequired: false, restrictOwner: true,
+    table: 'expenditures', entity: 'expenditure', base: '/api/budget/expenditures', perm: 'budget', dateCol: 'spent_at', clientRequired: false,
     joins: 'JOIN users u ON u.id=expenditures.user_id JOIN funding_sources f ON f.id=expenditures.funding_source_id LEFT JOIN budget_lines b ON b.id=expenditures.budget_line_id LEFT JOIN clients c ON c.id=expenditures.client_id LEFT JOIN users a ON a.id=expenditures.approved_by',
     select: 'expenditures.*, u.display_name AS worker, f.name AS fund, b.label AS line_label, b.category AS line_category, c.client_code, a.display_name AS approver',
-    // intervention_id is deliberately not writable here: it only ever means "this expenditure was
-    // auto-posted from that service record" (server/routes/interventions.js's syncExpenditure, a raw INSERT
-    // that bypasses this shape entirely). Accepting it from a normal request would let anyone attach a
-    // second expenditure to an already-linked intervention, double-counting its cost.
-    shape: {
-      client_id: { type: 'string' }, user_id: { type: 'string' }, funding_source_id: { type: 'string', required: true }, budget_line_id: { type: 'string' },
-      spent_at: { type: 'date', required: true }, amount: { type: 'number', required: true, min: 0.01 }, category: { type: 'string', required: true, enum: C.BUDGET_CATEGORIES },
-      vendor: { type: 'string', maxLen: 200 }, description: { type: 'string', maxLen: 1000 }, receipt_ref: { type: 'string', maxLen: 200 },
-      // Only when this expenditure's opioid settlement category differs from its fund's.
-      settlement_use: fundShape.settlement_use, settlement_hiaa: fundShape.settlement_hiaa,
-    },
+    // shape, owner, canEdit and the fund/period/line checks: server/rules/expenditures.js (crud.js reads them).
     filters: (ctx, where, params) => {
       const f = ctx.query.get('fund'); if (f) { where.push('expenditures.funding_source_id=?'); params.push(f); }
       const s = ctx.query.get('status'); if (s && s !== 'all') { where.push('expenditures.status=?'); params.push(s); }
     },
-    beforeInsert: (ctx, v) => {
-      v.amount = cents(v.amount);
-      const f = db.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id); if (!f) throw badRequest('Unknown or inactive funding source');
-      assertInPeriod(f, v.spent_at, 'Expenditure date');
-      if (v.budget_line_id) { const l = db.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, f.id); if (!l) throw badRequest('Budget line does not belong to fund'); if (!v.category) v.category = l.category; }
-      encDescription(v);
-    },
-    beforeUpdate: (ctx, v, row) => {
-      if (v.amount !== undefined && v.amount !== null) v.amount = cents(v.amount);
-      // The date and fund are held to the same rules on an edit as on entry: a pending item could otherwise
-      // be recorded in-period and then moved outside it, or into the future, once nobody was looking.
-      if ('spent_at' in v || 'funding_source_id' in v || 'budget_line_id' in v) {
-        const f = db.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id || row.funding_source_id); if (!f) throw badRequest('Unknown or inactive funding source');
-        assertInPeriod(f, v.spent_at || row.spent_at, 'Expenditure date');
-        const lineId = 'budget_line_id' in v ? v.budget_line_id : row.budget_line_id;
-        if (lineId) { const l = db.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, lineId, f.id); if (!l) throw badRequest('Budget line does not belong to fund'); }
-      }
-      encDescription(v);
-    },
+    // The date and fund are held to the same rules on an edit as on entry (the rules' check): a pending item could
+    // otherwise be recorded in-period and then moved outside it, or into the future, once nobody was looking.
+    beforeInsert: (ctx, v) => { v.amount = cents(v.amount); encDescription(v); },
+    beforeUpdate: (ctx, v) => { if (v.amount !== undefined && v.amount !== null) v.amount = cents(v.amount); encDescription(v); },
     afterLoad: (ctx, x) => presentExpenditure(x),
-    canEdit: (ctx, row) => row.status === 'pending' && (row.user_id === ctx.user.id || auth.hasPerm(ctx.user, 'budget:approve')),
   });
   // The approval state machine: pending -> approved | rejected, approved -> reimbursed, nothing else. A
   // second "approve" used to overwrite the first approver's name and date; a rejected item could be
@@ -386,6 +339,7 @@ module.exports.createProgrammeFund = createProgrammeFund;
 // applies budget_lines rows straight through importRow() with no such check — see that file for why.
 module.exports.wouldCycle = wouldCycle;
 module.exports.assertInPeriod = assertInPeriod;
+module.exports.assertRoom = assertRoom;
 module.exports.localDate = localDate;
 module.exports.localMidnight = localMidnight;
 module.exports.orgTimezone = orgTimezone;

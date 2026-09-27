@@ -73,7 +73,8 @@ module.exports = {
     { name: 'form_templates', enc: [], scope: 'all', writePerm: 'forms:manage', blob: ['file_b64'] },
     { name: 'client_forms', enc: ['values_enc', 'notes_enc'], legacy: { notes: 'notes_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['clients', 'client_id'] },
     { name: 'client_form_files', enc: ['data_enc', 'filename_enc'], legacy: { filename: 'filename_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
-    { name: 'patient_requests', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
+    // Patient-rights requests are patient-requests:write over REST (1.13.0 said consents:write here; every role held both).
+    { name: 'patient_requests', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'patient-requests:write', parent: ['clients', 'client_id'] },
     // Clinical documentation (CalAIM): the problem list and its history, the care plan, ASAM assessments and
     // outcome measures. readPerm: a device whose role cannot read them (an ASAM rating on a navigator's
     // phone) is never sent them, the same minimum-necessary rule clinical notes follow.
@@ -247,7 +248,8 @@ function purgeClient(d, clientId, depth = 0) {
  * The rows of a client-or-null table (calls, visits, overdose events, to-dos, time, expenditures) a user may
  * see, as SQL on `alias`: a row with a client when `cf` (the caller's auth.caseloadFilter on that client)
  * admits it; a row with no client only when the user owns it (the table's `unlinked.owners`) or holds its
- * `unlinked.all`. One rule for REST (crud.js reads `unlinked` from here), devices (routes/sync.js) and
+ * `unlinked.all`. One rule for REST (crud.js reads `unlinked` from here), devices (routes/sync.js pull; server/rules/push.js through
+ * mayReachUnlinked below) and
  * exports (exports.js), so none can show what another refuses. `hasPerm` is auth.hasPerm, passed in so this
  * file stays free of the auth module (the browser kernel loads it too).
  */
@@ -261,6 +263,18 @@ function clientOrNullScope(tableName, user, alias, cf, hasPerm) {
   return { sql: `((${col} IS NULL AND (${own})) OR (${col} IS NOT NULL AND ${cf.sql}))`, params: [...u.owners.map(() => user.id), ...cf.params] };
 }
 module.exports.clientOrNullScope = clientOrNullScope;
+/**
+ * The same owner rule for one stored row (clientOrNullScope is its SQL form): may `user` reach this row of a
+ * client-or-null table? A row with a client is caseload scoping's to decide, so this answers only for a row with
+ * none: its owners' (`unlinked.owners`), or a holder of `unlinked.all`'s. sync push (server/rules/push.js) asks it
+ * before a device changes or deletes such a row.
+ */
+function mayReachUnlinked(tableName, user, row, hasPerm) {
+  const t = module.exports.tables.find(x => x.name === tableName);
+  if (!t || !t.unlinked || row[t.clientCol || 'client_id']) return true;
+  return hasPerm(user, t.unlinked.all) || t.unlinked.owners.some(c => row[c] === user.id);
+}
+module.exports.mayReachUnlinked = mayReachUnlinked;
 
 /** Whether a push rejection reason is one a retry can never fix (see permanent_reasons). */
 module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some(p => String(reason || '').startsWith(p));

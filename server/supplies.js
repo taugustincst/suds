@@ -1,7 +1,7 @@
 'use strict';
 // The supply model (docs/SUPPLIES.md): items kept at sites in lots, an append-only stock ledger whose sum is
 // what is on hand, and the items a visit hands out. The routes (server/routes/supplies.js), the visit route
-// (server/routes/interventions.js), sync (server/routes/sync.js) and the reports all go through here, and so
+// (server/routes/interventions.js), sync (server/rules/: interventions, intervention_supplies, supply_ledger) and the reports all go through here, and so
 // does the browser kernel, which runs this same file.
 //
 // Who draws stock down for a visit. A visit's items (intervention_supplies) are the record of what was handed
@@ -299,7 +299,8 @@ function alerts({ date = today() } = {}) {
   };
 }
 
-// ---- sync: what a device may push (server/routes/sync.js calls these, as it calls the other table checks) ----
+// ---- sync: what a device may push (the tables' rules call these: server/rules/supply_ledger.js,
+// intervention_supplies.js, and interventions.js, whose finish() settles each visit once the whole push has landed) ----
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * Why a stock ledger row pushed by a device cannot be accepted, or null. A device records stock received, moved,

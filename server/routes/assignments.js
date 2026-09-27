@@ -2,15 +2,17 @@
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
-const { badRequest, notFound } = require('../http');
+const { notFound } = require('../http');
 const { validate } = require('../validate');
 const { uuid, encrypt } = require('../crypto');
+const rules = require('../rules');
 
 module.exports = (r) => {
   r.post('/api/clients/:id/assignments', auth.requireAuth, auth.requirePerm('assignments:manage'), (ctx) => {
     const c = db.one(`SELECT id FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id); if (!c) throw notFound();
-    const v = validate(ctx.body, { user_id: { type: 'string', required: true }, role_on_case: { type: 'string', enum: ['primary', 'secondary', 'clinician', 'peer', 'supervisor'] }, start_date: { type: 'date' }, notes: { type: 'string', maxLen: 500 } });
-    const u = db.one(`SELECT id,is_active FROM users WHERE id=?`, v.user_id); if (!u || !u.is_active) throw badRequest('Unknown or inactive worker');
+    // The fields and the rule that the worker is active: server/rules/assignments.js, as sync push applies them.
+    const v = validate(ctx.body, rules.forTable('assignments').shape());
+    rules.assertWrite('assignments', { client_id: c.id, ...rules.toColumns('assignments', v) }, ctx);
     const id = uuid();
     db.transaction(() => {
       if ((v.role_on_case || 'primary') === 'primary') db.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, db.now(), c.id);

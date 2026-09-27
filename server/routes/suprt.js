@@ -100,12 +100,11 @@ function recordManagement(c, type, date) {
   return { A_client_id: c.client_code, ...(grant ? { A_grant_id: grant } : {}), ...(site ? { A_site_id: site } : {}), A_assessment_type: type, A_assessment_date: date };
 }
 
-const shape = {
-  assessment_type: { type: 'string', enum: S.TYPES, required: true },
-  assessment_date: { type: 'date', required: true },
-  status: { type: 'string', enum: ['draft', 'complete'] },
-  answers: { type: 'object' },
-};
+// The fields of an assessment, and what a new or changed one must satisfy (not dated in the future, answers the
+// instrument asks, complete only with every required answer and in the order of a cycle, never deleted once in a
+// SPARS file): the table's rules, server/rules/suprt_assessments.js, which sync push applies to a device's too.
+const rules = require('../rules');
+const shape = rules.forTable('suprt_assessments').fields;
 
 /** Which saved answers are the client record's own (they equal what SUDS would pre-fill today). */
 function derivedKeys(clientId, type, date, answers, exceptId) {
@@ -150,17 +149,12 @@ module.exports = (r) => {
   r.post('/api/clients/:id/suprt', auth.requireAuth, auth.requirePerm('clients:write'), requireModule('suprt'), (ctx) => {
     const c = clientFor(ctx, ctx.params.id);
     const v = validate(ctx.body || {}, shape);
-    if (v.assessment_date > S.today()) throw fieldError('assessment_date', 'cannot be in the future');
     const status = v.status || 'draft';
+    rules.assertWrite('suprt_assessments', { client_id: c.id, assessment_type: v.assessment_type, assessment_date: v.assessment_date, status, answers_enc: v.answers || {} }, ctx);
     const clean = S.cleanAnswers(v.assessment_type, v.answers || {});
-    if (Object.keys(clean.errors).length) throw badRequest('Validation failed', { fields: Object.fromEntries(Object.entries(clean.errors).map(([k, m]) => [`answers.${k}`, m])) });
     // The assessment's own type and date are what the record says, whatever the form sent.
     const answers = { ...clean.answers, ...recordManagement(c, v.assessment_type, v.assessment_date) };
     const missing = S.cleanAnswers(v.assessment_type, answers).missing;
-    if (status === 'complete') {
-      if (missing.length) throw badRequest(`Answer ${missing.map(k => S.ITEM[k].label).join('; ')} before marking it complete, or save it as a draft.`, { fields: Object.fromEntries(missing.map(k => [`answers.${k}`, 'is required'])) });
-      checkOrder(c.id, v.assessment_type, v.assessment_date);
-    }
     const id = uuid(); const now = db.now();
     db.run(`INSERT INTO suprt_assessments(id,client_id,assessment_type,assessment_date,status,answers_enc,derived_keys,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
       id, c.id, v.assessment_type, v.assessment_date, status, encrypt(JSON.stringify(answers)), derivedKeys(c.id, v.assessment_type, v.assessment_date, answers, id), ctx.user.id, ctx.user.id, now, now);
@@ -175,16 +169,10 @@ module.exports = (r) => {
     const c = clientFor(ctx, row.client_id);
     const v = validate(ctx.body || {}, { assessment_date: { type: 'date' }, status: { type: 'string', enum: ['draft', 'complete'] }, answers: { type: 'object' } });
     const date = v.assessment_date || row.assessment_date;
-    if (date > S.today()) throw fieldError('assessment_date', 'cannot be in the future');
     const status = v.status || row.status;
+    rules.assertWrite('suprt_assessments', { id: row.id, assessment_date: date, status, answers_enc: v.answers === undefined ? answersOf(row) : v.answers }, ctx, { existing: row });
     const clean = S.cleanAnswers(row.assessment_type, v.answers === undefined ? answersOf(row) : v.answers);
-    if (Object.keys(clean.errors).length) throw badRequest('Validation failed', { fields: Object.fromEntries(Object.entries(clean.errors).map(([k, m]) => [`answers.${k}`, m])) });
     const answers = { ...clean.answers, ...recordManagement(c, row.assessment_type, date) };
-    const missing = S.cleanAnswers(row.assessment_type, answers).missing;
-    if (status === 'complete') {
-      if (missing.length) throw badRequest(`Answer ${missing.map(k => S.ITEM[k].label).join('; ')} before marking it complete, or save it as a draft.`, { fields: Object.fromEntries(missing.map(k => [`answers.${k}`, 'is required'])) });
-      checkOrder(c.id, row.assessment_type, date, row.id);
-    }
     db.run(`UPDATE suprt_assessments SET assessment_date=?, status=?, answers_enc=?, derived_keys=?, updated_by=?, updated_at=? WHERE id=?`,
       date, status, encrypt(JSON.stringify(answers)), derivedKeys(c.id, row.assessment_type, date, answers, row.id), ctx.user.id, db.now(), row.id);
     audit.log({ user: ctx.user, action: 'suprt.update', entity: 'suprt_assessment', entityId: row.id, clientId: c.id, ip: ctx.ip, details: { type: row.assessment_type, status, was_exported: row.exported_at ? true : undefined } });
@@ -195,8 +183,8 @@ module.exports = (r) => {
     const row = db.one(`SELECT * FROM suprt_assessments WHERE id=?`, ctx.params.id);
     if (!row) throw notFound('Assessment not found');
     clientFor(ctx, row.client_id);
-    // One already put in a SPARS entry file stays: the accounting of disclosures points at it.
-    if (row.exported_at) throw new HttpError(409, 'This assessment was put in a SPARS entry file and cannot be deleted; correct it instead.');
+    // One already put in a SPARS entry file stays: the accounting of disclosures points at it (the table's rules).
+    rules.assertEditable('suprt_assessments', ctx, row, { deleting: true });
     db.run(`DELETE FROM suprt_assessments WHERE id=?`, row.id); db.tombstone('suprt_assessments', row.id);
     audit.log({ user: ctx.user, action: 'suprt.delete', entity: 'suprt_assessment', entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { type: row.assessment_type, status: row.status } });
     return { ok: true };
@@ -308,3 +296,6 @@ module.exports = (r) => {
   });
 };
 module.exports.cycleOf = cycleOf;
+module.exports.checkOrder = checkOrder;
+module.exports.recordManagement = recordManagement;
+module.exports.derivedKeys = derivedKeys;

@@ -37,6 +37,9 @@ function calomsPart(raw, type) {
   return { provider_id: raw.provider_id ? String(raw.provider_id).trim() : null, record_date: typeof raw.record_date === 'string' ? raw.record_date : null, answers: raw.answers };
 }
 
+// The fields of an episode and the rules they must satisfy: server/rules/episodes.js.
+const rules = require('../rules');
+
 module.exports = (r) => {
   r.get('/api/clients/:id/episodes', auth.requireAuth, auth.requirePerm('episodes:read', 'episodes:write'), (ctx) => {
     auth.assertClientAccess(ctx, ctx.params.id);
@@ -50,11 +53,10 @@ module.exports = (r) => {
   r.post('/api/clients/:id/episodes', auth.requireAuth, auth.requirePerm('episodes:write'), (ctx) => {
     if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound('Client not found');
     auth.assertClientAccess(ctx, ctx.params.id);
-    const v = validate(ctx.body, {
-      opened_at: { type: 'date' }, funding_source_id: { type: 'string' }, referral_source: { type: 'string', maxLen: 120 },
-      presenting_problem: { type: 'string', maxLen: 4000 }, caloms: { type: 'object' },
-    });
-    if (db.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, ctx.params.id)) throw badRequest('This client already has an open episode. Close it before opening another.');
+    const F = rules.forTable('episodes').fields;
+    const v = validate(ctx.body, { opened_at: F.opened_at, funding_source_id: F.funding_source_id, referral_source: F.referral_source, presenting_problem: F.presenting_problem, caloms: { type: 'object' } });
+    // One open episode per client: the table's rules (server/rules/episodes.js), as sync push applies them.
+    rules.assertWrite('episodes', { client_id: ctx.params.id, status: 'open', ...rules.toColumns('episodes', v) }, ctx);
     const cal = calomsPart(v.caloms, 'admission');
     const id = uuid();
     let calRec = null;
@@ -82,16 +84,16 @@ module.exports = (r) => {
     if (!e) throw notFound('Episode not found');
     auth.assertClientAccess(ctx, e.client_id);
     if (e.status === 'closed') throw badRequest('This episode is already closed');
+    const F = rules.forTable('episodes').fields;
     const v = validate(ctx.body, {
-      discharge_reason: { type: 'string', required: true, list: 'DISCHARGE_REASONS' },
-      discharge_disposition: { type: 'string', maxLen: 200 }, discharge_summary: { type: 'string', maxLen: 8000 },
-      closed_at: { type: 'date' }, keep_client_active: { type: 'boolean' }, caloms: { type: 'object' },
+      discharge_reason: { ...F.discharge_reason, required: true },
+      discharge_disposition: F.discharge_disposition, discharge_summary: F.discharge_summary,
+      closed_at: F.closed_at, keep_client_active: { type: 'boolean' }, caloms: { type: 'object' },
     });
     const cal = calomsPart(v.caloms, 'discharge');
     const when = v.closed_at || new Date().toISOString().slice(0, 10);
-    // An episode cannot end before it began: reports count every episode opened in a period as closed in
-    // it or open at its end (server/publication-release.js relies on that).
-    if (e.opened_at && when < String(e.opened_at).slice(0, 10)) throw badRequest(`The discharge date cannot be before the episode was opened (${String(e.opened_at).slice(0, 10)})`);
+    // An episode cannot end before it began (the table's rules). Discharging is anyone's on the care team.
+    rules.assertWrite('episodes', { id: e.id, status: 'closed', closed_at: when, discharge_reason: v.discharge_reason }, ctx, { existing: e, editable: false });
     const openNotes = db.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND status='draft' AND deleted_at IS NULL`, e.client_id).n;
     let endedAssignments = 0; let cancelledTasks = 0; let openReferrals = 0; let calRec = null;
     db.transaction(() => {

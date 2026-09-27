@@ -27,6 +27,7 @@ its record in the same change.
  vanilla ES modules) ──HTTPS──>   └─> route modules (server/routes/*.js, the one list in app.js)                                  │
                          │          ├─ RBAC matrix + caseload scoping ........ server/auth.js                                     │
                          │          ├─ generic client-scoped CRUD ............ server/crud.js                                     │
+                         │          ├─ per-table rules, REST and sync push ... server/rules/ (+ push.js)                          │
                          │          ├─ encryption / blind indexes ............ server/crypto.js            (ADR-0005)             │
                          │          ├─ audit log, anchors .................... server/audit.js, audit-anchor.js (ADR-0006)       │
                          │          ├─ disclosure gate + accounting .......... server/disclosure.js        (ADR-0004)             │
@@ -93,33 +94,103 @@ assertion message on purpose (change a permission in `server/auth.js`, watch whi
 
 ## Where the knowledge is thinnest
 
-Honest list, for whoever reviews or takes over: the push-side rules in `server/routes/sync.js` duplicate
-REST-route rules by hand (a new REST check needs its sync twin; plan below); `server/disclosure.js`'s legal
+Honest list, for whoever reviews or takes over: the rules a table's rows must satisfy are now declared once
+and enforced at both doors (below), but a few REST routes still keep an action-shaped check of their own beside
+them (CalOMS answer validation, completing a client form, re-opening an episode); `server/disclosure.js`'s legal
 characterisations are the maintainer's reading and are flagged for counsel; the browser lock and fence in
 `local/shims/sqlite.js` are tested only in a real browser (`scripts/ui/multitab.mjs`) — the kernel's request
 path and the sql.js layer are now also run in Node (`test/kernel-parity.test.js`), but with one window and an
 in-memory IndexedDB, so not its locking.
 
-### Plan: one validator per table for REST and sync push
+### Per-table rules: one declaration for REST and sync push (1.14.0)
 
-Not done in the 1.12.4 engineering review: `server/routes/sync.js` was being changed at the same time (sync
-scopes), and moving every push rule at once is the kind of change that ships a hole. The plan, in steps that
-each leave both paths tested:
+Up to 1.13.0 `push()` in `server/routes/sync.js` (327 lines, 85 branches) re-implemented each REST route's checks
+by hand, and a check added to a route had to be remembered in sync too; the 1.12.4 review found the two had
+drifted. Now every synchronised table has **one rules declaration**, `server/rules/<table>.js`, read by both
+doors:
 
-1. **Inventory.** For each table in `server/sync-tables.js`, list the checks its REST route makes (validation
-   shape, ownership — `OWNER` in sync.js mirrors `crud.js restrictOwner` —, consent elements, court-order
-   fields, programme-module gating, server-owned columns) and the ones `push()` makes. A test fails for any
-   table whose REST checks have no push counterpart, starting from today's known list.
-2. **Extract, one table at a time**, into `server/validators/<table>.js` exporting
-   `check(row, { user, existing, via: 'rest'|'sync' })` → `null` or a reason. The REST route and `push()`
-   both call it; the reason text keeps sync's permanent-rejection phrasing (`sync-tables.js`). Consents and
-   court orders first (their push checks, `consentPushProblem` and `courtOrderPushProblem`, are already
-   separate functions), then the owner-scoped tables, then the rest.
-3. **Pin it:** for each extracted table, a table-driven test sends the same bad row through REST and through
-   `/api/sync/push` and requires both to refuse it (`test/sync.test.js` has the push half for several).
-4. When every table has a validator, `sync-tables.js` declares it and the inventory test becomes "every synced
-   table has one".
+```
+                 REST routes                                        sync push (a device's rows)
+  server/crud.js (8 tables) + hand-written routes          server/rules/push.js: prepare → authorise → validate
+        │ shape = R.fields  canEdit = R.editableBy                  → resolve (last write wins) → normalise → apply
+        │ restrictOwner = R.owner  rules.assertWrite()                        │
+        └──────────────────────────► server/rules/<table>.js ◄──────────────────┘
+                   fields · owner · editableBy/deletableBy · check · module · immutable · tombstone
+```
 
-Each step is a patch-sized change with no migration, permission or route, so it can ship in fix releases. No person other than
-the owner has yet reviewed the code end to end; an independent code review and penetration test are open items
+A declaration (`server/rules/core.js` documents every key) holds the table's **fields** as the REST API names
+them (a `validate.js` shape; `x` is the column `x_enc` when that is encrypted), **owner** (who did the work, and
+the permission that may name someone else), **editableBy / deletableBy** (the REST edit and delete rule),
+**check** (whether the values hang together: Part 2 consent elements, a budget line's room, one open episode),
+**module** (the programme module that gates new work), **immutable** / **allowChange** (the legal record) and
+push-only hooks (**normalise** for the columns the office keeps for itself, **afterApply** for side effects such
+as the supply draw-down). `crud.build` takes its shape, canEdit and owner rule from it and runs its check on every
+create and update; the hand-written routes call `rules.assertWrite(table, row, ctx, { existing })` and
+`rules.assertEditable(...)` where they used to check inline. `push()` is now `new PushSession(user, payload).run()`:
+a loop over tables and rows, each row in its own savepoint, through the stages above.
+
+A refusal is **fatal** (the row is rejected for good, as REST refuses it) or **flagged**: a rule that depends on
+the office's configuration or clock (a Settings → Lists value, a length limit, a module switch, a fund's period or
+status, a second open episode, a disclosure basis the office cannot confirm). A flagged row still lands — it was
+done offline under what the device had — and the device is told (`warnings[].flagged`) and the audit trail
+records `sync.conflict` with `kept: 'device'`. Over REST every refusal is an error.
+
+**Adding a table** (a supply ledger, a new instrument): declare it in `server/sync-tables.js` as before, write
+`server/rules/<table>.js` with `define({ table, fields, ... })`, and add one line to `DECLARED` in
+`server/rules/index.js` (static, because the browser kernel is bundled). Use `crud.build` for its REST routes, or
+call `rules.assertWrite` from hand-written ones. `test/sync-rules-fixes.test.js` fails for a synced table with no
+rules; add the table to `test/sync-rules.test.js` (`T`, plus its expected outcomes in
+`test/fixtures/sync-rules-expect.js`, which `SUDS_CHARACTERISE=1` prints).
+
+**Pinned by** `test/sync-rules.test.js`: for 28 tables, the same rows (valid, each invalid field, a client off the
+caseload, another worker's record with and without a client, a role without the permission, the module off, a
+tombstone, a device clock two hours fast, a lost update) through push and through REST, compared with
+`test/fixtures/sync-rules-expect.js` — recorded against 1.13.0 first, so the refactor ran under it, with every
+changed entry marked "was:". `test/sync-rules-fixes.test.js` checks what each decision below stores.
+`test/thorough/sync-push-perf.test.js` times a 10,000-row push. Measured A/B in one process against the 1.13.0
+`push()` (alternating, ten rounds, CPU time): 1.13.0 a median of 1,473 ms, 1.14.0 1,000 ms. The field checks
+cost about 5%; asking each client's purge, merge and caseload questions once per push instead of once per row
+(`PushSession.memo`) and reading each Settings → Lists list once per push (`options.cached`) more than repay it.
+
+#### Where REST and sync disagreed, and what was decided
+
+The rule: the stricter door wins, unless refusing would throw away work done offline, in which case the row lands
+flagged. Each is an entry in the expectations file.
+
+| Table | 1.13.0 push | 1.14.0 (both doors) |
+| --- | --- | --- |
+| every table | none of the REST shape checked (a 5,000-minute visit, a negative fund total, an unknown ASAM level landed) | the REST shape's types, fixed sets, ranges and required fields refuse; a Settings → Lists value or a length limit is flagged |
+| interventions, calls, overdose, time, referrals, tasks, expenditures, patient requests, notes (drafts), ASAM, outcome measures, imports | another worker's record on a shared client could be edited and deleted by sync | the REST edit/delete rule (its worker, its author or a manager) refuses; the side effects of someone's own work still land (a discharge cancelling the client's to-dos, a referral's outcome, a consent revocation flagging referrals, an approver's ruling) |
+| interventions, calls, overdose, time, tasks, expenditures | another worker's record with no client could be deleted by a tombstone | refused, as over REST |
+| care plan, assessments, CalOMS | a module switched off at the office took pushes silently | flagged (REST refuses new work) |
+| clients | an edit winning last-write-wins could lift a legal hold, set `deleted_at` or `merged_into` | those columns are the office's unless the user holds clients:legal-hold / clients:all / clients:merge; impossible contact details and closing a client with an episode open are flagged |
+| assignments | a deactivated worker could be assigned; a discharge's end of the care team was refused without assignments:manage | the first refuses; the second lands, as POST /api/episodes/:id/close does it |
+| episodes | a second open episode, a discharge before admission, deleting an episode | flagged; refused; ignored (no route deletes one) |
+| interventions | a clientless case-management visit, a cost with no line or a line of another fund | refused (a cost outside its fund's period is flagged) |
+| overdose events | `reported_by` could name anyone | attribution rule as for visits |
+| expenditures | an approved item's amount could be changed by its submitter; an inactive fund or a line of another fund | refused; flagged; refused |
+| referrals | could cite another client's consent | refused |
+| notes | a signed note's title, format, date and links, and a clinical note's kind, could be changed; a note could arrive signed by someone else | kept as signed; kind fixed; refused |
+| note addenda | an addendum made offline left the signed note "signed" | the note is marked amended, as over REST |
+| disclosures | a manual disclosure recorded on a device was never checked | checked against the same gate; kept and flagged when unconfirmed (it records something that happened) |
+| court orders, §2.22 notices | could be rewritten by sync (no REST route edits them) | immutable; an order can still be vacated |
+| budget lines, funds | over-allocation, a line its own parent, a period that ends before it starts | refused |
+| problems, goals, steps | bad ICD-10/Z codes, a goal on another client's problem, deleting others' goals and steps, deleting a problem | refused; ignored for problems and their history |
+| client forms, attachments | a completed form edited or deleted without forms:manage; completed with required answers missing; more than 10 files | refused; flagged; flagged |
+| patient requests | needed consents:write by sync, patient-requests:write over REST | patient-requests:write (crud.js now refuses to start if the two ever differ) |
+| supply ledger (new in 1.14.0) | push checked kind, item, site, quantity, date, reason and permission (`ledgerPushProblem`) | also: a lot number's characters and damaged/expired/lost only taken off (refused), a fund only on a purchase and only a real one (refused), an item or site the office has retired (flagged: the delivery arrived); a lot taken below zero stays a flagged shortfall (`settlePushedEntry`) where REST refuses up front |
+| visits' supply lines (new in 1.14.0) | checked as their visit (`linePushProblem`) | unchanged, now the table's authorise; the draw-down still runs once the whole push has landed (the interventions rules' `finish`), and a deleted visit or line puts back what it drew (`afterDelete`) |
+| visits (supplies) | the supply site a pushed visit names was not checked | an unknown site is refused; one retired at the office is flagged (REST refuses a new one) |
+| SUPRT-A assessments (new in 1.14.0) | nothing but clients:write and caseload | the REST checks, shared: fields and the answers the instrument asks refuse; the module, a future date, completeness and the order of a cycle are flagged (they depend on the office, or another device's baseline); the type is fixed once recorded, `exported_at` and the record-management answers are the office's, and one in a SPARS file is never deleted by sync |
+
+The unlinked-row owner rule has one source, `server/sync-tables.js` (`clientOrNullScope` for SQL — pull, exports,
+REST lists — and `mayReachUnlinked` for one row, which push asks before a device changes or deletes such a row).
+The supply routes (`server/routes/supplies.js`) keep their action-shaped checks (a receipt, a transfer, an
+adjustment); the ledger's push rules mirror them rather than share code, because the route builds the row.
+
+Kept as they were, deliberately: a creator column (`created_by`) arrives as the device recorded it (a shared phone
+carries several workers' work); a tombstone for shared reference data (resources, templates) still needs
+clients:all, where REST soft-deletes; CalOMS answers are validated by `server/caloms.js` over REST only.
+
+No person other than the owner has yet reviewed the code end to end; an independent code review and penetration test are open items
 in [docs/market/EVALUATION-RESPONSE.md](../market/EVALUATION-RESPONSE.md).

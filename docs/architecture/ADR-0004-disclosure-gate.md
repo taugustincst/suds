@@ -17,7 +17,8 @@ the only writer of the accounting of disclosures (`disclosures` table). Every ou
 | Path | Route / file | Gate call | Accounting `source` |
 | --- | --- | --- | --- |
 | Referral that shares information (REST) | `server/routes/referrals.js` | `requireBasis` | referral |
-| Referral pushed from a device | `server/routes/sync.js` → `referrals.pushDisclosure` | `requireBasis` | referral |
+| Referral pushed from a device | `server/rules/referrals.js` → `referrals.pushDisclosure` | `requireBasis` | referral |
+| Other disclosure recorded on a device | `server/rules/disclosures.js` (check) | `requireBasis` | kept, flagged to the office when the basis is not confirmed |
 | Manual disclosure recorded by staff | `server/routes/consents.js` | `requireBasis` | manual |
 | Identified export (Excel/CSV) | `server/routes/reports.js` | `requireExportBasis` | export |
 | County EHR hand-off file | `server/routes/handoff.js` | `requireExportBasis` / per-client consent | ehr_handoff |

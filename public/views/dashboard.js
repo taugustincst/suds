@@ -143,7 +143,10 @@ route('dashboard', async () => {
       // The supply cupboard: visits take naloxone kits and test strips off it only once it has those items, so
       // a new program's first distributions were counted nowhere. One click adds the two standard items.
       if (supplies && !(supplies.rows || []).length) {
-        const standard = Object.values(supplies.drawdown || {});
+        // The items a visit's counts draw from, by name; an empty cupboard has none yet (drawdown's names are
+        // null until the items exist), so the standard names are what gets added.
+        const STANDARD = { naloxone_kits: 'Naloxone kit', fentanyl_strips: 'Fentanyl test strips' };
+        const standard = Object.entries({ ...STANDARD, ...(supplies.drawdown || {}) }).map(([k, name]) => name || STANDARD[k]);
         steps.push(['Add your supplies', `Naloxone kits and fentanyl test strips handed out on a visit are taken off the supply count only once the cupboard has them. Add them now, then record what is on the shelf under Supplies.`, 'Add naloxone kits and test strips',
           async (e) => {
             const btn = e.currentTarget; btn.disabled = true;

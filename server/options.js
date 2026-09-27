@@ -96,7 +96,17 @@ function overrideRows(key) {
  * Every choice in a list, built-in and the programme's own, in the order the administrator set, with
  * hidden ones included (flagged). { code, label, default_label, hidden, custom, protected }.
  */
+// While `cached` runs (a sync push applying thousands of rows, each checked against its lists), a list is read
+// once; the lists only change through Settings, never in the middle of one request.
+let memo = null;
+function cached(fn) { const prev = memo; memo = new Map(); try { return fn(); } finally { memo = prev; } }
 function entries(key) {
+  if (memo && memo.has(key)) return memo.get(key);
+  const out = entriesUncached(key);
+  if (memo) memo.set(key, out);
+  return out;
+}
+function entriesUncached(key) {
   const l = def(key);
   const rows = new Map(overrideRows(key).map(r => [r.code, r]));
   const out = l.codes.map((code, i) => {
@@ -169,4 +179,4 @@ function slug(label, taken) {
   return code;
 }
 
-module.exports = { LISTS, EXCLUDED, MAX_LABEL, has, def, entries, visible, known, accepts, codeFor, labelMap, labelOf, meta, describe, slug, humanize };
+module.exports = { LISTS, EXCLUDED, MAX_LABEL, has, def, entries, cached, visible, known, accepts, codeFor, labelMap, labelOf, meta, describe, slug, humanize };

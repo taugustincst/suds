@@ -17,7 +17,7 @@ const M = require('../clients-model');
 const PART2_TYPES = C.PART2_CONSENT_TYPES;
 // A consent's recipient (stored encrypted, of any length): a TPO consent may list the programme's usual
 // referral partners after its class wording, which 300 characters did not hold.
-const RECIPIENT_MAX = 2000;
+const RECIPIENT_MAX = require('../rules/consents').RECIPIENT_MAX;
 function requirePart2Elements(v) {
   const missing = disclosure.missingPart2Elements(v);
   if (missing.length) throw badRequest(`A 42 CFR Part 2 consent must record ${missing.join('; ')}`, { missing });
@@ -91,11 +91,8 @@ module.exports = (r) => {
   r.post('/api/clients/:id/consents', auth.requireAuth, auth.requirePerm('consents:write'), (ctx) => {
     if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
     auth.assertClientAccess(ctx, ctx.params.id);
-    const v = validate(ctx.body, { type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: RECIPIENT_MAX }, purpose: { type: 'string', maxLen: 500 }, scope: { type: 'string', maxLen: 1000 },
-      signed_at: { type: 'date', required: true }, expires_at: { type: 'date' }, expires_event: { type: 'string', maxLen: 200 }, document_ref: { type: 'string', maxLen: 300 }, witness: { type: 'string', maxLen: 120 },
-      signed_on_paper: { type: 'boolean' }, redisclosure_notice_given: { type: 'boolean' },
-      discloser: { type: 'string', maxLen: 200 }, signer_relationship: { type: 'string', enum: C.CONSENT_SIGNERS }, signer_name: { type: 'string', maxLen: 200 },
-      revocation_right_given: { type: 'boolean' }, refusal_consequences_given: { type: 'boolean' } });
+    // The consent form's fields are the table's rules (server/rules/consents.js), which sync push applies too.
+    const v = validate(ctx.body, require('../rules').forTable('consents').shape());
     // The categories of information it covers, as codes (C.CONSENT_INFO_CATEGORIES): what an automated
     // disclosure (the FHIR API) honours. A list or comma-separated text; an unknown code is refused rather
     // than dropped, since dropping it would narrow the consent without anyone noticing. None is allowed —
@@ -115,6 +112,8 @@ module.exports = (r) => {
       requirePart2Elements(v);
       if (v.expires_at && v.expires_at < v.signed_at) throw badRequest('A consent cannot expire before it was signed');
     }
+    // The table's rules (server/rules/consents.js): what a device's consent must carry, checked here as well.
+    require('../rules').assertWrite('consents', { ...require('../rules').toColumns('consents', v), rule_version: part2 ? '2024' : null, info_categories: infoCategories }, ctx);
     const id = uuid();
     db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,expires_event,document_ref_enc,witness_enc,signed_on_paper,redisclosure_notice_given,
         discloser,signer_relationship,signer_name_enc,revocation_right_given,refusal_consequences_given,rule_version,created_by,info_categories) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
