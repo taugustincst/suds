@@ -12539,6 +12539,7 @@ var require_clients = __commonJS({
     }
     var canReadmit = (user) => auth3.hasPerm(user, "clients:write") && auth3.hasPerm(user, "episodes:write");
     var OFFER_MESSAGE = "An earlier record exists for this person. A supervisor will be asked to review it.";
+    var READMIT_REASON_MIN = 8;
     function readmitOffers(ctx, hidden) {
       if (!canReadmit(ctx.user)) return [];
       return hidden.filter((m) => m.reasons.includes(SURNAME_DOB) && isDischarged(m.id)).map((m) => {
@@ -12721,7 +12722,8 @@ var require_clients = __commonJS({
           reason: { type: "string", required: true, maxLen: 300 },
           referral_source: { type: "string", maxLen: 120 }
         });
-        if (v.reason.length < 15) throw badRequest("Say why you are re-admitting this person (at least 15 characters) \u2014 a supervisor reviews every re-admission", { fields: { reason: "must be at least 15 characters" } });
+        const why = v.reason.trim();
+        if (why.length < READMIT_REASON_MIN) throw badRequest(`Say why you are re-admitting this person (at least ${READMIT_REASON_MIN} characters, for example "walked in") \u2014 a supervisor reviews every re-admission`, { fields: { reason: `must be at least ${READMIT_REASON_MIN} characters` } });
         const row = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL AND merged_into IS NULL`, ctx.params.id);
         if (!row) throw notFound("Client not found");
         const match = possibleDuplicates(v).find((m) => m.id === row.id);
@@ -14004,7 +14006,10 @@ var require_interventions = __commonJS({
         supply_site_id: { type: "string" },
         syringes_returned: { type: "number", integer: true, min: 0, max: 1e5 },
         returns_estimated: { type: "boolean" },
-        sharps_returned_litres: { type: "number", min: 0, max: 1e3 }
+        sharps_returned_litres: { type: "number", min: 0, max: 1e3 },
+        // Request-only (1.14.0): a note written with the visit ({ kind, format, title, content, part2_protected, ... }),
+        // created with it in one step and linked to it (routes/interventions.js; the note's own rules apply).
+        note: { type: "object", sync: false }
       },
       owner: { col: "user_id", all: "clients:all" },
       editableBy: ownedBy(["user_id"], "clients:all"),
@@ -21615,7 +21620,10 @@ var require_time = __commonJS({
         // (time:all) -- sync-tables.js `unlinked`, which crud.js applies to these routes.
         joins: "JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id",
         select: `time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${NAME_COLS}`,
-        afterLoad: (ctx, x) => withheldFor(ctx.user, presentTime(withClientName(ctx, x))),
+        // source (1.14.0): where the entry came from — 'visit' (logged with a visit: "Also log this as a time
+        // entry"), 'call' (logged with a call) or 'manual' — so a list can mark the generated ones and the time
+        // form can warn before the same work is logged twice.
+        afterLoad: (ctx, x) => ({ ...withheldFor(ctx.user, presentTime(withClientName(ctx, x))), source: x.intervention_id ? "visit" : x.call_id ? "call" : "manual" }),
         // shape, owner (time:all), canEdit and the fund-period check: server/rules/time_entries.js.
         filters: (ctx, where, params) => {
           if (!auth3.hasPerm(ctx.user, "time:all")) {
@@ -21627,6 +21635,15 @@ var require_time = __commonJS({
             where.push("time_entries.category=?");
             params.push(cat);
           }
+          const uid = ctx.query.get("user_id");
+          if (uid) {
+            where.push("time_entries.user_id=?");
+            params.push(uid);
+          }
+          const src = ctx.query.get("source");
+          if (src === "visit") where.push("time_entries.intervention_id IS NOT NULL");
+          else if (src === "call") where.push("time_entries.call_id IS NOT NULL");
+          else if (src === "manual") where.push("time_entries.intervention_id IS NULL AND time_entries.call_id IS NULL");
         },
         // Reassigning whose hours these are is a time:all action (see public/views/time.js, which only shows the
         // Worker picker when can('time:all')): the rules' owner, which crud.js applies on insert and update alike.
@@ -31370,7 +31387,10 @@ var require_supplies2 = __commonJS({
         site_id: S.siteForUser(ctx.user.id),
         syringes_per_litre: S.syringesPerLitre(),
         categories: N.CATEGORIES,
-        products: N.NALOXONE_PRODUCTS
+        products: N.NALOXONE_PRODUCTS,
+        // Whether this caller can add an item here (supplies:manage, on a copy that owns its configuration): the
+        // visit form offers "Add naloxone kits and test strips" when the programme keeps neither, else says who can.
+        can_configure: auth3.hasPerm(ctx.user, "supplies:manage") && configurable()
       }));
       r.get("/api/supplies/alerts", ...read, () => S.alerts());
       r.get("/api/supplies/ledger", ...read, (ctx) => {
@@ -31651,6 +31671,386 @@ var require_supplies2 = __commonJS({
   }
 });
 
+// server/routes/notes.js
+var require_notes2 = __commonJS({
+  "server/routes/notes.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { badRequest, notFound, forbidden } = require_http();
+    var { validate, paging } = require_validate();
+    var { encrypt: encrypt3, decrypt: decrypt3, sha256: sha2562, uuid: uuid2 } = require_crypto();
+    var rules = require_rules();
+    var shape = rules.forTable("notes").fields;
+    function problemIds(ids, clientId) {
+      if (ids === void 0) return void 0;
+      if (ids === null || !ids.length) return null;
+      const uniq = [...new Set(ids)];
+      for (const id of uniq) {
+        const p = db3.one(`SELECT client_id FROM problems WHERE id=?`, id);
+        if (!p || p.client_id !== clientId) throw badRequest("Validation failed", { fields: { problem_ids: "names a problem that is not on this client's problem list" } });
+      }
+      return JSON.stringify(uniq);
+    }
+    function linkedProblems(ctx, n) {
+      let ids = [];
+      try {
+        ids = n.problem_ids ? JSON.parse(n.problem_ids) : [];
+      } catch {
+        ids = [];
+      }
+      if (!Array.isArray(ids) || !ids.length) return [];
+      if (!auth3.hasPerm(ctx.user, "careplan:read")) return ids.map((id) => ({ id }));
+      return ids.map((id) => {
+        const p = db3.one(`SELECT id, problem_enc, status FROM problems WHERE id=?`, id);
+        return p ? { id: p.id, problem: decrypt3(p.problem_enc), status: p.status } : { id };
+      });
+    }
+    function kindPerm(kind, rw) {
+      return `notes:${kind}:${rw}`;
+    }
+    function verifyIdentity(ctx) {
+      const body = validate(ctx.body || {}, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" } }, { partial: true });
+      return auth3.verifySigner(ctx, body);
+    }
+    var BREAK_GLASS_MIN = 15;
+    function breakGlassReason(ctx) {
+      const raw = ctx.headers["x-break-glass-reason"];
+      if (raw === void 0 || raw === null || raw === "") return null;
+      const reason = String(raw).trim();
+      if (reason.length < BREAK_GLASS_MIN) throw badRequest(`A break-glass reason must be at least ${BREAK_GLASS_MIN} characters and say why emergency access is needed`);
+      return reason.slice(0, 300);
+    }
+    function recordBreakGlass(ctx, { clientId, noteId = null, reason }) {
+      const id = uuid2();
+      db3.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at) VALUES(?,?,?,?,?,?)`, id, ctx.user.id, clientId || null, noteId, encrypt3(reason), db3.now());
+      return id;
+    }
+    function canRead(ctx, note) {
+      if (auth3.hasPerm(ctx.user, kindPerm(note.kind, "read")) || auth3.hasPerm(ctx.user, kindPerm(note.kind, "write"))) return true;
+      if (note.kind === "clinical" && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && breakGlassReason(ctx)) return "breakglass";
+      return false;
+    }
+    function present(row, { withContent = true } = {}) {
+      const out2 = { ...row };
+      delete out2.content_enc;
+      delete out2.structured_enc;
+      delete out2.title_enc;
+      out2.title = row.title_enc ? decrypt3(row.title_enc) : null;
+      if ("cosign_note_enc" in row) {
+        out2.cosign_note = row.cosign_note_enc ? decrypt3(row.cosign_note_enc) : null;
+        delete out2.cosign_note_enc;
+      }
+      if (withContent) {
+        out2.content = decrypt3(row.content_enc);
+        out2.structured = row.structured_enc ? JSON.parse(decrypt3(row.structured_enc)) : null;
+      }
+      return out2;
+    }
+    function signatureState(n) {
+      const wanted = !!n.cosign_required || !!n.cosign_requested;
+      return { signed: n.status !== "draft", cosign_required: !!n.cosign_required, cosign_requested: !!n.cosign_requested, cosigned: !!n.cosigned_at, awaiting_cosign: wanted && n.status !== "draft" && !n.cosigned_at };
+    }
+    function load(ctx, id) {
+      const n = db3.one(`SELECT n.*, u.display_name AS author, s.display_name AS signer, cs.display_name AS cosigner
+    FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users s ON s.id=n.signed_by LEFT JOIN users cs ON cs.id=n.cosigned_by
+    WHERE n.id=? AND n.deleted_at IS NULL`, id);
+      if (!n) throw notFound("Note not found");
+      auth3.assertClientAccess(ctx, n.client_id);
+      return n;
+    }
+    function checkNewNote(ctx, v) {
+      if (!auth3.hasPerm(ctx.user, kindPerm(v.kind, "write"))) throw forbidden(`You cannot author ${v.kind} notes`);
+      if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
+      auth3.assertClientAccess(ctx, v.client_id);
+      rules.assertWrite("notes", rules.toColumns("notes", v), ctx);
+    }
+    function insertNote(ctx, v) {
+      const id = uuid2();
+      const linked = problemIds(v.problem_ids, v.client_id) ?? null;
+      const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
+      db3.run(
+        `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids,counseling_note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        id,
+        v.client_id,
+        ctx.user.id,
+        v.kind,
+        v.format || "narrative",
+        v.title ? encrypt3(v.title) : null,
+        encrypt3(v.content),
+        v.structured ? encrypt3(JSON.stringify(v.structured)) : null,
+        v.occurred_at,
+        v.intervention_id || null,
+        v.call_id || null,
+        v.part2_protected ?? 1,
+        v.source || "manual",
+        v.source_ref || null,
+        author?.requires_cosign ? 1 : 0,
+        v.cosign_requested ? 1 : 0,
+        linked,
+        v.counseling_note ? 1 : 0
+      );
+      audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0, counseling_note: v.counseling_note ? true : void 0, with_visit: v._with_visit ? true : void 0 } });
+      return id;
+    }
+    module.exports = (r) => {
+      r.get("/api/notes", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:clinical:read", "notes:admin:write", "notes:clinical:write"), (ctx) => {
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
+        const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, kindPerm(k, "read")) || auth3.hasPerm(ctx.user, kindPerm(k, "write")));
+        const glassReason = !kinds.includes("clinical") && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && ctx.query.get("client_id") && ctx.query.get("kind") === "clinical" ? breakGlassReason(ctx) : null;
+        if (glassReason) {
+          kinds.push("clinical");
+          const event = recordBreakGlass(ctx, { clientId: ctx.query.get("client_id"), reason: glassReason });
+          audit3.log({ user: ctx.user, action: "note.list.breakglass", clientId: ctx.query.get("client_id"), ip: ctx.ip, details: { reason_recorded: true, breakglass_event: event } });
+        }
+        const where = ["n.deleted_at IS NULL", `n.kind IN (${kinds.map(() => "?").join(",") || "''"})`];
+        const params = [...kinds];
+        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
+        where.push(cf.sql);
+        params.push(...cf.params);
+        for (const [q, col] of [["client_id", "n.client_id"], ["kind", "n.kind"], ["status", "n.status"], ["author_id", "n.author_id"], ["source", "n.source"]]) {
+          const v = ctx.query.get(q);
+          if (v) {
+            where.push(`${col}=?`);
+            params.push(v);
+          }
+        }
+        if (ctx.query.get("mine") === "1") {
+          where.push("n.author_id=?");
+          params.push(ctx.user.id);
+        }
+        if (ctx.query.get("unsigned") === "1") where.push("n.status='draft'");
+        if (ctx.query.get("awaiting_cosign") === "1") {
+          where.push("(n.cosign_required=1 OR n.cosign_requested=1) AND n.status<>'draft' AND n.cosigned_at IS NULL");
+          if (!auth3.hasPerm(ctx.user, "notes:cosign")) {
+            where.push("1=0");
+          }
+        }
+        if (ctx.query.get("from")) {
+          where.push("n.occurred_at >= ?");
+          params.push(ctx.query.get("from"));
+        }
+        if (ctx.query.get("to")) {
+          where.push("n.occurred_at <= ?");
+          params.push(ctx.query.get("to") + "T23:59:59.999Z");
+        }
+        const w = "WHERE " + where.join(" AND ");
+        const pageIds = db3.all(`SELECT n.rowid AS rid FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset).map((x) => x.rid);
+        const byId = new Map(db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
+      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
+      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda, n.rowid AS rid
+      FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id WHERE n.rowid IN (SELECT value FROM json_each(?))`, JSON.stringify(pageIds)).map(({ rid, ...x }) => [rid, x]));
+        const rows = pageIds.map((id) => byId.get(id));
+        const out2 = rows.map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0, ...signatureState(x) }));
+        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: out2.length, kinds, filter: ctx.query.get("awaiting_cosign") === "1" ? "awaiting_cosign" : void 0 } });
+        return { rows: out2, total: db3.one(`SELECT COUNT(*) n FROM notes n ${w}`, ...params).n };
+      });
+      r.post("/api/notes", auth3.requireAuth, (ctx) => {
+        const v = validate(ctx.body, shape);
+        checkNewNote(ctx, v);
+        const id = insertNote(ctx, v);
+        ctx.status = 201;
+        return { id, updated_at: db3.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at };
+      });
+      r.get("/api/notes/:id", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        const access = canRead(ctx, n);
+        if (!access) {
+          audit3.log({ user: ctx.user, action: "note.view.denied", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, success: false });
+          throw forbidden("You do not have access to this note");
+        }
+        const addenda = db3.all(`SELECT a.id,a.reason_enc,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map((a) => ({ ...a, content: decrypt3(a.content_enc), reason: a.reason_enc ? decrypt3(a.reason_enc) : null, content_enc: void 0, reason_enc: void 0 }));
+        const event = access === "breakglass" ? recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) }) : null;
+        audit3.log({ user: ctx.user, action: access === "breakglass" ? "note.view.breakglass" : "note.view", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === "breakglass" ? { reason_recorded: true, breakglass_event: event } : { kind: n.kind } });
+        return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
+      });
+      r.put("/api/notes/:id", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
+        rules.assertEditable("notes", ctx, n);
+        require_crud().assertFresh(ctx, n, "note");
+        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids }, { partial: true, existing: n });
+        rules.assertWrite("notes", { id: n.id, ...rules.toColumns("notes", v) }, ctx, { existing: n });
+        const sets = [];
+        const params = [];
+        for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected", "counseling_note", "cosign_requested"]) if (v[k] !== void 0) {
+          sets.push(`${k}=?`);
+          params.push(v[k]);
+        }
+        if (v.title !== void 0) {
+          sets.push("title_enc=?");
+          params.push(v.title ? encrypt3(v.title) : null);
+        }
+        if (v.content !== void 0) {
+          sets.push("content_enc=?");
+          params.push(encrypt3(v.content));
+        }
+        const linked = problemIds(v.problem_ids, n.client_id);
+        if (linked !== void 0) {
+          sets.push("problem_ids=?");
+          params.push(linked);
+        }
+        if (v.structured !== void 0) {
+          sets.push("structured_enc=?");
+          params.push(v.structured ? encrypt3(JSON.stringify(v.structured)) : null);
+        }
+        const stamp2 = sets.length ? db3.now() : n.updated_at;
+        if (sets.length) db3.run(`UPDATE notes SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, n.id);
+        audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
+        return { ok: true, updated_at: stamp2 };
+      });
+      r.post("/api/notes/:id/request-cosign", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can ask for a review of their note");
+        if (n.cosigned_at) throw badRequest("This note has already been countersigned");
+        const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: "boolean" } });
+        const flag = cosign_requested === false ? 0 : 1;
+        db3.run(`UPDATE notes SET cosign_requested=?, updated_at=? WHERE id=?`, flag, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: flag ? "note.cosign.requested" : "note.cosign.request_withdrawn", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+        return { ok: true, cosign_requested: !!flag, awaiting_cosign: !!flag && n.status !== "draft" };
+      });
+      r.get("/api/notes/handoffs", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:admin:write"), (ctx) => {
+        const hours = Math.min(24 * 7, Math.max(1, Number(ctx.query.get("hours") || 24)));
+        const since = new Date(Date.now() - hours * 36e5).toISOString();
+        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
+        const { withClientName, SELECT: NAME_COLS } = require_client_name();
+        const rows = db3.all(`SELECT n.id, n.client_id, n.occurred_at, n.status, n.title_enc, n.content_enc, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS}
+      FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
+      WHERE n.deleted_at IS NULL AND n.kind='admin' AND n.format='handoff' AND n.occurred_at >= ? AND ${cf.sql} ORDER BY n.occurred_at DESC LIMIT 50`, since, ...cf.params);
+        const out2 = rows.map((x) => {
+          const o = withClientName(ctx, x);
+          let content = "";
+          try {
+            content = decrypt3(x.content_enc);
+          } catch {
+            content = "";
+          }
+          return { ...o, title: x.title_enc ? decrypt3(x.title_enc) : null, excerpt: content.slice(0, 240), title_enc: void 0, content_enc: void 0 };
+        });
+        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, details: { count: out2.length, kinds: ["admin"], filter: "handoffs", hours } });
+        return { rows: out2, hours };
+      });
+      r.post("/api/notes/:id/sign", auth3.requireAuth, async (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.status !== "draft") throw badRequest("Note is already signed");
+        if (n.author_id !== ctx.user.id) throw forbidden("Only the author can sign a note. Supervisors countersign instead.");
+        const identity = await verifyIdentity(ctx);
+        const hash2 = sha2562(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ""}`);
+        db3.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db3.now(), ctx.user.id, hash2, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required, identity } });
+        return { ok: true, signature_hash: hash2, awaiting_cosign: !!n.cosign_required };
+      });
+      function cosignRefusal(ctx, n) {
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "read")) && !auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) return `You cannot read ${n.kind} notes`;
+        if (n.status === "draft") return "The author has not signed this note yet";
+        if (n.author_id === ctx.user.id) return "A note cannot be countersigned by its own author";
+        if (n.cosigned_at) return "This note has already been countersigned";
+        return null;
+      }
+      function applyCosign(ctx, n, note, identity, batch) {
+        const hash2 = sha2562(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ""}`);
+        db3.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), hash2, note ? encrypt3(note) : null, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.cosign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash: hash2, note_recorded: note ? true : void 0, identity, batch: batch || void 0 } });
+        return hash2;
+      }
+      r.post("/api/notes/:id/cosign", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        const why = cosignRefusal(ctx, n);
+        if (why) {
+          if (/cannot read/.test(why)) throw forbidden(why);
+          throw badRequest(why);
+        }
+        const { note } = validate(ctx.body, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, note: { type: "string", maxLen: 1e3 } });
+        const identity = await verifyIdentity(ctx);
+        return { ok: true, cosignature_hash: applyCosign(ctx, n, note, identity, false) };
+      });
+      r.post("/api/notes/cosign-batch", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
+        const v = validate(ctx.body, { ids: { type: "array", required: true, maxLen: 100, of: "string" }, password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, note: { type: "string", maxLen: 1e3 }, comments: { type: "object" } });
+        if (!v.ids.length) throw badRequest("Choose at least one note to countersign");
+        const ids = [...new Set(v.ids)];
+        const comments = {};
+        if (v.comments !== void 0 && v.comments !== null) {
+          if (Array.isArray(v.comments)) throw badRequest("Validation failed", { fields: { comments: "must be an object of note id to comment" } });
+          for (const [id, text] of Object.entries(v.comments)) {
+            if (!ids.includes(id)) throw badRequest("Validation failed", { fields: { comments: "a comment is for a note that is not in this batch" } });
+            if (typeof text !== "string" || text.length > 1e3) throw badRequest("Validation failed", { fields: { comments: "each comment must be text of at most 1000 characters" } });
+            if (text.trim()) comments[id] = text.trim();
+          }
+        }
+        if (v.note && v.note.trim()) {
+          if (Object.keys(comments).length) throw badRequest("Give each note its own comment, not a shared one as well");
+          const clients = new Set(ids.map((id) => (db3.one(`SELECT client_id FROM notes WHERE id=? AND deleted_at IS NULL`, id) || {}).client_id).filter(Boolean));
+          if (clients.size > 1) throw badRequest("One comment cannot be applied to notes about different clients. Give each note its own comment, or countersign it on its own.", { fields: { note: "one comment for several clients" } });
+        }
+        const identity = await verifyIdentity(ctx);
+        const cosigned = [];
+        const skipped = [];
+        for (const id of ids) {
+          const n = db3.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id);
+          if (!n) {
+            skipped.push({ id, reason: "Note not found" });
+            continue;
+          }
+          if (!auth3.canAccessClient(ctx.user, n.client_id)) {
+            skipped.push({ id, reason: "This client is not on your caseload" });
+            continue;
+          }
+          const why = cosignRefusal(ctx, n);
+          if (why) {
+            skipped.push({ id, reason: why });
+            continue;
+          }
+          applyCosign(ctx, n, comments[id] || v.note && v.note.trim() || void 0, identity, true);
+          cosigned.push(id);
+        }
+        return { ok: true, cosigned, skipped };
+      });
+      r.post("/api/notes/:id/addenda", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        const { content, reason } = validate(ctx.body, require_rules().forTable("note_addenda").shape());
+        const id = uuid2();
+        db3.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason_enc) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt3(content), reason ? encrypt3(reason) : null);
+        if (n.status === "signed") db3.run(`UPDATE notes SET status='amended', updated_at=? WHERE id=?`, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.addendum", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reason ? { reason_recorded: true } : void 0 });
+        ctx.status = 201;
+        return { id };
+      });
+      r.delete("/api/notes/:id", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.status !== "draft") throw badRequest("Signed notes are part of the legal record and cannot be deleted");
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/notes/:id/verify", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!canRead(ctx, n)) throw forbidden();
+        if (!n.signature_hash) return { signed: false, ...signatureState(n) };
+        const hash2 = sha2562(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ""}`);
+        const out2 = { signed: true, intact: hash2 === n.signature_hash, signed_at: n.signed_at, signer: n.signer, ...signatureState(n) };
+        if (n.cosignature_hash) {
+          out2.cosigner = n.cosigner;
+          out2.cosigned_at = n.cosigned_at;
+          out2.cosignature_intact = sha2562(`${n.id}|${n.cosigned_by}|cosign|${n.content_enc}|${n.structured_enc || ""}`) === n.cosignature_hash;
+        }
+        return out2;
+      });
+    };
+    module.exports.checkNewNote = checkNewNote;
+    module.exports.insertNote = insertNote;
+    module.exports.noteShape = shape;
+  }
+});
+
 // server/routes/interventions.js
 var require_interventions2 = __commonJS({
   "server/routes/interventions.js"(exports, module) {
@@ -31662,6 +32062,7 @@ var require_interventions2 = __commonJS({
     var C = require_constants();
     var O = require_options();
     var { badRequest, forbidden } = require_http();
+    var { validate } = require_validate();
     var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     var supplies = require_supplies2();
     var S = require_supplies();
@@ -31743,6 +32144,28 @@ var require_interventions2 = __commonJS({
       }
       return { ...row, summary, summary_enc: void 0 };
     }
+    var notes = require_notes2();
+    var NOTE_KEYS = ["kind", "format", "title", "content", "structured", "part2_protected", "counseling_note", "cosign_requested"];
+    function planNote(ctx, v) {
+      const raw = v.note;
+      delete v.note;
+      if (raw === void 0 || raw === null) return;
+      if (typeof raw !== "object" || Array.isArray(raw)) throw badRequest("Validation failed", { fields: { note: "must be an object" } });
+      if (!v.client_id) throw badRequest("A note is about a client: choose the client this visit was with, or save the visit without the note.", { fields: { client_id: "is required to add a note" } });
+      const body = { client_id: v.client_id, occurred_at: v.occurred_at, source: "manual" };
+      for (const k of NOTE_KEYS) if (raw[k] !== void 0) body[k] = raw[k];
+      let nv;
+      try {
+        nv = validate(body, notes.noteShape);
+      } catch (e) {
+        const f = e.extra && e.extra.fields;
+        if (f) e.extra.fields = Object.fromEntries(Object.entries(f).map(([k, m]) => [`note_${k}`, m]));
+        throw e;
+      }
+      notes.checkNewNote(ctx, nv);
+      nv._with_visit = true;
+      v._note = nv;
+    }
     var COUNT_COLS = Object.keys(SN.COUNTED);
     function planSupplies(ctx, v, row = null) {
       const desired = v.supplies !== void 0 && v.supplies !== null ? v.supplies : null;
@@ -31791,6 +32214,7 @@ var require_interventions2 = __commonJS({
         },
         afterLoad: (ctx, row) => withLines(decodeSummary(row)),
         beforeInsert: (ctx, v) => {
+          planNote(ctx, v);
           v._log_time = v.log_time;
           delete v.log_time;
           v._time_category = v.time_category;
@@ -31807,6 +32231,8 @@ var require_interventions2 = __commonJS({
           planSupplies(ctx, v);
         },
         beforeUpdate: (ctx, v, row) => {
+          if (v.note !== void 0 && v.note !== null) throw badRequest("A note is added to a visit when it is recorded. To write one about an existing visit, use + Note on the client record.");
+          delete v.note;
           delete v.log_time;
           delete v.time_category;
           v._service_date = v.service_date || null;
@@ -31844,6 +32270,7 @@ var require_interventions2 = __commonJS({
           );
           syncExpenditure(row);
           applySupplies(ctx, row, row._supply_plan);
+          if (row._note) row._note.id = notes.insertNote(ctx, { ...row._note, intervention_id: row.id });
         },
         afterUpdate: (ctx, row, prev) => {
           syncExpenditure(row);
@@ -31856,7 +32283,7 @@ var require_interventions2 = __commonJS({
         insertResult: (ctx, row) => {
           const lines = S.visitLines(row.id);
           const u = Object.entries(SN.COUNTED).filter(([col, cat]) => Number(row[col] || 0) > 0 && !lines.some((l) => l.category === cat)).map(([col]) => ({ item: UNTRACKED_NAMES[col], quantity: Number(row[col]) }));
-          return u.length ? { supplies_untracked: u } : {};
+          return { ...u.length ? { supplies_untracked: u } : {}, ...row._note && row._note.id ? { note_id: row._note.id } : {} };
         },
         // The FKs from expenditures.intervention_id and time_entries.intervention_id are ON DELETE SET NULL, so
         // this has to run before the delete — after it, there is no longer any way to find the records this
@@ -32049,376 +32476,6 @@ var require_me = __commonJS({
         const lastSeenElsewhere = db3.one(`SELECT last_seen_at, user_agent FROM sessions WHERE user_id=? AND revoked_at IS NULL AND id<>? ORDER BY last_seen_at DESC LIMIT 1`, uid, ctx.session.id);
         require_audit().log({ user: ctx.user, action: "me.continue", ip: ctx.ip, details: { recent: recent.length, drafts: drafts.length, due_today: dueToday.length } });
         return { recent, drafts, staged_imports: staged, due_today: dueToday, other_device: lastSeenElsewhere ? { last_seen_at: lastSeenElsewhere.last_seen_at, mobile: /Mobi|Android|iPhone|iPad/i.test(lastSeenElsewhere.user_agent || "") } : null };
-      });
-    };
-  }
-});
-
-// server/routes/notes.js
-var require_notes2 = __commonJS({
-  "server/routes/notes.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth2();
-    var audit3 = require_audit();
-    var C = require_constants();
-    var { badRequest, notFound, forbidden } = require_http();
-    var { validate, paging } = require_validate();
-    var { encrypt: encrypt3, decrypt: decrypt3, sha256: sha2562, uuid: uuid2 } = require_crypto();
-    var rules = require_rules();
-    var shape = rules.forTable("notes").fields;
-    function problemIds(ids, clientId) {
-      if (ids === void 0) return void 0;
-      if (ids === null || !ids.length) return null;
-      const uniq = [...new Set(ids)];
-      for (const id of uniq) {
-        const p = db3.one(`SELECT client_id FROM problems WHERE id=?`, id);
-        if (!p || p.client_id !== clientId) throw badRequest("Validation failed", { fields: { problem_ids: "names a problem that is not on this client's problem list" } });
-      }
-      return JSON.stringify(uniq);
-    }
-    function linkedProblems(ctx, n) {
-      let ids = [];
-      try {
-        ids = n.problem_ids ? JSON.parse(n.problem_ids) : [];
-      } catch {
-        ids = [];
-      }
-      if (!Array.isArray(ids) || !ids.length) return [];
-      if (!auth3.hasPerm(ctx.user, "careplan:read")) return ids.map((id) => ({ id }));
-      return ids.map((id) => {
-        const p = db3.one(`SELECT id, problem_enc, status FROM problems WHERE id=?`, id);
-        return p ? { id: p.id, problem: decrypt3(p.problem_enc), status: p.status } : { id };
-      });
-    }
-    function kindPerm(kind, rw) {
-      return `notes:${kind}:${rw}`;
-    }
-    function verifyIdentity(ctx) {
-      const body = validate(ctx.body || {}, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" } }, { partial: true });
-      return auth3.verifySigner(ctx, body);
-    }
-    var BREAK_GLASS_MIN = 15;
-    function breakGlassReason(ctx) {
-      const raw = ctx.headers["x-break-glass-reason"];
-      if (raw === void 0 || raw === null || raw === "") return null;
-      const reason = String(raw).trim();
-      if (reason.length < BREAK_GLASS_MIN) throw badRequest(`A break-glass reason must be at least ${BREAK_GLASS_MIN} characters and say why emergency access is needed`);
-      return reason.slice(0, 300);
-    }
-    function recordBreakGlass(ctx, { clientId, noteId = null, reason }) {
-      const id = uuid2();
-      db3.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at) VALUES(?,?,?,?,?,?)`, id, ctx.user.id, clientId || null, noteId, encrypt3(reason), db3.now());
-      return id;
-    }
-    function canRead(ctx, note) {
-      if (auth3.hasPerm(ctx.user, kindPerm(note.kind, "read")) || auth3.hasPerm(ctx.user, kindPerm(note.kind, "write"))) return true;
-      if (note.kind === "clinical" && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && breakGlassReason(ctx)) return "breakglass";
-      return false;
-    }
-    function present(row, { withContent = true } = {}) {
-      const out2 = { ...row };
-      delete out2.content_enc;
-      delete out2.structured_enc;
-      delete out2.title_enc;
-      out2.title = row.title_enc ? decrypt3(row.title_enc) : null;
-      if ("cosign_note_enc" in row) {
-        out2.cosign_note = row.cosign_note_enc ? decrypt3(row.cosign_note_enc) : null;
-        delete out2.cosign_note_enc;
-      }
-      if (withContent) {
-        out2.content = decrypt3(row.content_enc);
-        out2.structured = row.structured_enc ? JSON.parse(decrypt3(row.structured_enc)) : null;
-      }
-      return out2;
-    }
-    function signatureState(n) {
-      const wanted = !!n.cosign_required || !!n.cosign_requested;
-      return { signed: n.status !== "draft", cosign_required: !!n.cosign_required, cosign_requested: !!n.cosign_requested, cosigned: !!n.cosigned_at, awaiting_cosign: wanted && n.status !== "draft" && !n.cosigned_at };
-    }
-    function load(ctx, id) {
-      const n = db3.one(`SELECT n.*, u.display_name AS author, s.display_name AS signer, cs.display_name AS cosigner
-    FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users s ON s.id=n.signed_by LEFT JOIN users cs ON cs.id=n.cosigned_by
-    WHERE n.id=? AND n.deleted_at IS NULL`, id);
-      if (!n) throw notFound("Note not found");
-      auth3.assertClientAccess(ctx, n.client_id);
-      return n;
-    }
-    module.exports = (r) => {
-      r.get("/api/notes", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:clinical:read", "notes:admin:write", "notes:clinical:write"), (ctx) => {
-        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
-        const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, kindPerm(k, "read")) || auth3.hasPerm(ctx.user, kindPerm(k, "write")));
-        const glassReason = !kinds.includes("clinical") && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && ctx.query.get("client_id") && ctx.query.get("kind") === "clinical" ? breakGlassReason(ctx) : null;
-        if (glassReason) {
-          kinds.push("clinical");
-          const event = recordBreakGlass(ctx, { clientId: ctx.query.get("client_id"), reason: glassReason });
-          audit3.log({ user: ctx.user, action: "note.list.breakglass", clientId: ctx.query.get("client_id"), ip: ctx.ip, details: { reason_recorded: true, breakglass_event: event } });
-        }
-        const where = ["n.deleted_at IS NULL", `n.kind IN (${kinds.map(() => "?").join(",") || "''"})`];
-        const params = [...kinds];
-        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
-        where.push(cf.sql);
-        params.push(...cf.params);
-        for (const [q, col] of [["client_id", "n.client_id"], ["kind", "n.kind"], ["status", "n.status"], ["author_id", "n.author_id"], ["source", "n.source"]]) {
-          const v = ctx.query.get(q);
-          if (v) {
-            where.push(`${col}=?`);
-            params.push(v);
-          }
-        }
-        if (ctx.query.get("mine") === "1") {
-          where.push("n.author_id=?");
-          params.push(ctx.user.id);
-        }
-        if (ctx.query.get("unsigned") === "1") where.push("n.status='draft'");
-        if (ctx.query.get("awaiting_cosign") === "1") {
-          where.push("(n.cosign_required=1 OR n.cosign_requested=1) AND n.status<>'draft' AND n.cosigned_at IS NULL");
-          if (!auth3.hasPerm(ctx.user, "notes:cosign")) {
-            where.push("1=0");
-          }
-        }
-        if (ctx.query.get("from")) {
-          where.push("n.occurred_at >= ?");
-          params.push(ctx.query.get("from"));
-        }
-        if (ctx.query.get("to")) {
-          where.push("n.occurred_at <= ?");
-          params.push(ctx.query.get("to") + "T23:59:59.999Z");
-        }
-        const w = "WHERE " + where.join(" AND ");
-        const pageIds = db3.all(`SELECT n.rowid AS rid FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset).map((x) => x.rid);
-        const byId = new Map(db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
-      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
-      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda, n.rowid AS rid
-      FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id WHERE n.rowid IN (SELECT value FROM json_each(?))`, JSON.stringify(pageIds)).map(({ rid, ...x }) => [rid, x]));
-        const rows = pageIds.map((id) => byId.get(id));
-        const out2 = rows.map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0, ...signatureState(x) }));
-        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: out2.length, kinds, filter: ctx.query.get("awaiting_cosign") === "1" ? "awaiting_cosign" : void 0 } });
-        return { rows: out2, total: db3.one(`SELECT COUNT(*) n FROM notes n ${w}`, ...params).n };
-      });
-      r.post("/api/notes", auth3.requireAuth, (ctx) => {
-        const v = validate(ctx.body, shape);
-        if (!auth3.hasPerm(ctx.user, kindPerm(v.kind, "write"))) throw forbidden(`You cannot author ${v.kind} notes`);
-        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
-        auth3.assertClientAccess(ctx, v.client_id);
-        rules.assertWrite("notes", rules.toColumns("notes", v), ctx);
-        const id = uuid2();
-        const linked = problemIds(v.problem_ids, v.client_id) ?? null;
-        const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
-        db3.run(
-          `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids,counseling_note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          id,
-          v.client_id,
-          ctx.user.id,
-          v.kind,
-          v.format || "narrative",
-          v.title ? encrypt3(v.title) : null,
-          encrypt3(v.content),
-          v.structured ? encrypt3(JSON.stringify(v.structured)) : null,
-          v.occurred_at,
-          v.intervention_id || null,
-          v.call_id || null,
-          v.part2_protected ?? 1,
-          v.source || "manual",
-          v.source_ref || null,
-          author?.requires_cosign ? 1 : 0,
-          v.cosign_requested ? 1 : 0,
-          linked,
-          v.counseling_note ? 1 : 0
-        );
-        audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0, counseling_note: v.counseling_note ? true : void 0 } });
-        ctx.status = 201;
-        return { id, updated_at: db3.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at };
-      });
-      r.get("/api/notes/:id", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        const access = canRead(ctx, n);
-        if (!access) {
-          audit3.log({ user: ctx.user, action: "note.view.denied", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, success: false });
-          throw forbidden("You do not have access to this note");
-        }
-        const addenda = db3.all(`SELECT a.id,a.reason_enc,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map((a) => ({ ...a, content: decrypt3(a.content_enc), reason: a.reason_enc ? decrypt3(a.reason_enc) : null, content_enc: void 0, reason_enc: void 0 }));
-        const event = access === "breakglass" ? recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) }) : null;
-        audit3.log({ user: ctx.user, action: access === "breakglass" ? "note.view.breakglass" : "note.view", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === "breakglass" ? { reason_recorded: true, breakglass_event: event } : { kind: n.kind } });
-        return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
-      });
-      r.put("/api/notes/:id", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
-        rules.assertEditable("notes", ctx, n);
-        require_crud().assertFresh(ctx, n, "note");
-        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids }, { partial: true, existing: n });
-        rules.assertWrite("notes", { id: n.id, ...rules.toColumns("notes", v) }, ctx, { existing: n });
-        const sets = [];
-        const params = [];
-        for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected", "counseling_note", "cosign_requested"]) if (v[k] !== void 0) {
-          sets.push(`${k}=?`);
-          params.push(v[k]);
-        }
-        if (v.title !== void 0) {
-          sets.push("title_enc=?");
-          params.push(v.title ? encrypt3(v.title) : null);
-        }
-        if (v.content !== void 0) {
-          sets.push("content_enc=?");
-          params.push(encrypt3(v.content));
-        }
-        const linked = problemIds(v.problem_ids, n.client_id);
-        if (linked !== void 0) {
-          sets.push("problem_ids=?");
-          params.push(linked);
-        }
-        if (v.structured !== void 0) {
-          sets.push("structured_enc=?");
-          params.push(v.structured ? encrypt3(JSON.stringify(v.structured)) : null);
-        }
-        const stamp2 = sets.length ? db3.now() : n.updated_at;
-        if (sets.length) db3.run(`UPDATE notes SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, n.id);
-        audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
-        return { ok: true, updated_at: stamp2 };
-      });
-      r.post("/api/notes/:id/request-cosign", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can ask for a review of their note");
-        if (n.cosigned_at) throw badRequest("This note has already been countersigned");
-        const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: "boolean" } });
-        const flag = cosign_requested === false ? 0 : 1;
-        db3.run(`UPDATE notes SET cosign_requested=?, updated_at=? WHERE id=?`, flag, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: flag ? "note.cosign.requested" : "note.cosign.request_withdrawn", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
-        return { ok: true, cosign_requested: !!flag, awaiting_cosign: !!flag && n.status !== "draft" };
-      });
-      r.get("/api/notes/handoffs", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:admin:write"), (ctx) => {
-        const hours = Math.min(24 * 7, Math.max(1, Number(ctx.query.get("hours") || 24)));
-        const since = new Date(Date.now() - hours * 36e5).toISOString();
-        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
-        const { withClientName, SELECT: NAME_COLS } = require_client_name();
-        const rows = db3.all(`SELECT n.id, n.client_id, n.occurred_at, n.status, n.title_enc, n.content_enc, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS}
-      FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
-      WHERE n.deleted_at IS NULL AND n.kind='admin' AND n.format='handoff' AND n.occurred_at >= ? AND ${cf.sql} ORDER BY n.occurred_at DESC LIMIT 50`, since, ...cf.params);
-        const out2 = rows.map((x) => {
-          const o = withClientName(ctx, x);
-          let content = "";
-          try {
-            content = decrypt3(x.content_enc);
-          } catch {
-            content = "";
-          }
-          return { ...o, title: x.title_enc ? decrypt3(x.title_enc) : null, excerpt: content.slice(0, 240), title_enc: void 0, content_enc: void 0 };
-        });
-        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, details: { count: out2.length, kinds: ["admin"], filter: "handoffs", hours } });
-        return { rows: out2, hours };
-      });
-      r.post("/api/notes/:id/sign", auth3.requireAuth, async (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.status !== "draft") throw badRequest("Note is already signed");
-        if (n.author_id !== ctx.user.id) throw forbidden("Only the author can sign a note. Supervisors countersign instead.");
-        const identity = await verifyIdentity(ctx);
-        const hash2 = sha2562(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ""}`);
-        db3.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db3.now(), ctx.user.id, hash2, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required, identity } });
-        return { ok: true, signature_hash: hash2, awaiting_cosign: !!n.cosign_required };
-      });
-      function cosignRefusal(ctx, n) {
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "read")) && !auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) return `You cannot read ${n.kind} notes`;
-        if (n.status === "draft") return "The author has not signed this note yet";
-        if (n.author_id === ctx.user.id) return "A note cannot be countersigned by its own author";
-        if (n.cosigned_at) return "This note has already been countersigned";
-        return null;
-      }
-      function applyCosign(ctx, n, note, identity, batch) {
-        const hash2 = sha2562(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ""}`);
-        db3.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), hash2, note ? encrypt3(note) : null, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.cosign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash: hash2, note_recorded: note ? true : void 0, identity, batch: batch || void 0 } });
-        return hash2;
-      }
-      r.post("/api/notes/:id/cosign", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        const why = cosignRefusal(ctx, n);
-        if (why) {
-          if (/cannot read/.test(why)) throw forbidden(why);
-          throw badRequest(why);
-        }
-        const { note } = validate(ctx.body, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, note: { type: "string", maxLen: 1e3 } });
-        const identity = await verifyIdentity(ctx);
-        return { ok: true, cosignature_hash: applyCosign(ctx, n, note, identity, false) };
-      });
-      r.post("/api/notes/cosign-batch", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
-        const v = validate(ctx.body, { ids: { type: "array", required: true, maxLen: 100, of: "string" }, password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, note: { type: "string", maxLen: 1e3 }, comments: { type: "object" } });
-        if (!v.ids.length) throw badRequest("Choose at least one note to countersign");
-        const ids = [...new Set(v.ids)];
-        const comments = {};
-        if (v.comments !== void 0 && v.comments !== null) {
-          if (Array.isArray(v.comments)) throw badRequest("Validation failed", { fields: { comments: "must be an object of note id to comment" } });
-          for (const [id, text] of Object.entries(v.comments)) {
-            if (!ids.includes(id)) throw badRequest("Validation failed", { fields: { comments: "a comment is for a note that is not in this batch" } });
-            if (typeof text !== "string" || text.length > 1e3) throw badRequest("Validation failed", { fields: { comments: "each comment must be text of at most 1000 characters" } });
-            if (text.trim()) comments[id] = text.trim();
-          }
-        }
-        if (v.note && v.note.trim()) {
-          if (Object.keys(comments).length) throw badRequest("Give each note its own comment, not a shared one as well");
-          const clients = new Set(ids.map((id) => (db3.one(`SELECT client_id FROM notes WHERE id=? AND deleted_at IS NULL`, id) || {}).client_id).filter(Boolean));
-          if (clients.size > 1) throw badRequest("One comment cannot be applied to notes about different clients. Give each note its own comment, or countersign it on its own.", { fields: { note: "one comment for several clients" } });
-        }
-        const identity = await verifyIdentity(ctx);
-        const cosigned = [];
-        const skipped = [];
-        for (const id of ids) {
-          const n = db3.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id);
-          if (!n) {
-            skipped.push({ id, reason: "Note not found" });
-            continue;
-          }
-          if (!auth3.canAccessClient(ctx.user, n.client_id)) {
-            skipped.push({ id, reason: "This client is not on your caseload" });
-            continue;
-          }
-          const why = cosignRefusal(ctx, n);
-          if (why) {
-            skipped.push({ id, reason: why });
-            continue;
-          }
-          applyCosign(ctx, n, comments[id] || v.note && v.note.trim() || void 0, identity, true);
-          cosigned.push(id);
-        }
-        return { ok: true, cosigned, skipped };
-      });
-      r.post("/api/notes/:id/addenda", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        const { content, reason } = validate(ctx.body, require_rules().forTable("note_addenda").shape());
-        const id = uuid2();
-        db3.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason_enc) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt3(content), reason ? encrypt3(reason) : null);
-        if (n.status === "signed") db3.run(`UPDATE notes SET status='amended', updated_at=? WHERE id=?`, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.addendum", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reason ? { reason_recorded: true } : void 0 });
-        ctx.status = 201;
-        return { id };
-      });
-      r.delete("/api/notes/:id", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.status !== "draft") throw badRequest("Signed notes are part of the legal record and cannot be deleted");
-        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
-        db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
-        return { ok: true };
-      });
-      r.get("/api/notes/:id/verify", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!canRead(ctx, n)) throw forbidden();
-        if (!n.signature_hash) return { signed: false, ...signatureState(n) };
-        const hash2 = sha2562(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ""}`);
-        const out2 = { signed: true, intact: hash2 === n.signature_hash, signed_at: n.signed_at, signer: n.signer, ...signatureState(n) };
-        if (n.cosignature_hash) {
-          out2.cosigner = n.cosigner;
-          out2.cosigned_at = n.cosigned_at;
-          out2.cosignature_intact = sha2562(`${n.id}|${n.cosigned_by}|cosign|${n.content_enc}|${n.structured_enc || ""}`) === n.cosignature_hash;
-        }
-        return out2;
       });
     };
   }
