@@ -104,8 +104,11 @@ string), so they are revalidated rather than kept for a year.
 
 **Pages load when opened.** `public/main.js` imports the sign-in page and Home; every other page's module is
 fetched the first time it is opened (`app.js` `lazyRoute`), and the sign-in page's module no longer pulls in
-Administration. `index.html` preloads the five modules the first screen needs, so they arrive together rather
-than one import level at a time. Signing in renders Home once (it rendered twice, and fetched everything twice),
+Administration. (`index.html` briefly preloaded the first screen's modules with `<link rel="modulepreload">`;
+that was dropped before release: WebKit served the preloaded `app.js` from its HTTP cache without asking the
+service worker, so on a host that sends `max-age` (GitHub Pages) a phone could keep running the previous build
+after an update. The first-load figures above were measured with it; without it the modules arrive one import
+level at a time, a few round trips more on a slow connection.) Signing in renders Home once (it rendered twice, and fetched everything twice),
 and Home asks for everything at once where it used to wait for each answer before asking the next question.
 
 **Sync pull in two passes.** A device's pull used to read each table's first 2,000 rows whole, and then throw

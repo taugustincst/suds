@@ -86,7 +86,11 @@ ok(await page.$('.layout'), 'the administrator signs in over HTTPS at the new ad
 {
   const me = await page.evaluate(() => fetch('/api/auth/me', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()));
   eq(me.programme && me.programme.profile, 'harm_reduction', 'the new install is a harm-reduction programme');
-  eq(Object.values((me.programme && me.programme.modules) || { x: true }).some(Boolean), false, 'with every clinical module switched off');
+  // The clinical modules; SUPRT-A and publication releases (1.14.0) are programme modules too, but not clinical:
+  // publication releases are on by default, SUPRT-A only with a SOR grant fund.
+  const mods = (me.programme && me.programme.modules) || { careplan: true };
+  eq(['careplan', 'assessments', 'caloms', 'fhir', 'handoff'].some(k => mods[k]), false, 'with every clinical module switched off');
+  eq(mods.publication, true, 'and publication releases on, as a new install starts');
   const funds = await page.evaluate(() => fetch('/api/budget/funds', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()));
   const main = (funds.funds || []).find(f => f.name === 'County opioid settlement allocation');
   ok(main, 'the main funding source named in the wizard exists', JSON.stringify(funds).slice(0, 200));

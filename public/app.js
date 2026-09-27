@@ -1109,7 +1109,11 @@ export function tabStrip(tabs, active, onPick, { label = 'Sections', core = null
     const b = buttons[i];
     return h('button', { role: 'menuitem', type: 'button', class: b.classList.contains('active') ? 'active' : '', 'aria-current': b.classList.contains('active') ? 'page' : null, onClick: () => { setOpen(false); onPick(tabs[i][0]); } }, tabs[i][1]);
   }
-  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => layout()).observe(strip);
+  // Laid out on the next frame, not inside the observer's callback: hiding tabs there resizes the strip it
+  // observes, which browsers report as a "ResizeObserver loop" error (WebKit as a page error).
+  let queued = false;
+  const layoutSoon = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; layout(); }); };
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(layoutSoon).observe(strip);
   else requestAnimationFrame(layout);
   strip.relayout = layout;
   return strip;
@@ -1132,7 +1136,7 @@ export function pageTabs(items, active, onPick, { label = 'Sections' } = {}) {
     wrap.classList.toggle('more-left', over && strip.scrollLeft > 2);
   };
   strip.addEventListener('scroll', sync, { passive: true });
-  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(sync).observe(strip); else requestAnimationFrame(sync);
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => requestAnimationFrame(sync)).observe(strip); else requestAnimationFrame(sync);
   // The current tab starts in view, not scrolled off the right-hand edge.
   requestAnimationFrame(() => { const a = strip.querySelector('button.active'); if (a && a.offsetLeft + a.offsetWidth > strip.clientWidth) strip.scrollLeft = a.offsetLeft - 16; sync(); });
   return wrap;
