@@ -89,7 +89,7 @@ eq(prov.status, 201, 'a provider');
   ok(/Save a usual consent naming your referral partners/.test(await text(page)), 'Home asks an administrator to save a usual consent naming the referral partners');
   await page.click('.main button:has-text("Set up the usual consent")');
   await until(() => page.$('.modal [data-consent-template-form]'));
-  // 1.13.1: the partners are ticked from the directory, none for you (it used to pre-fill the first six
+  // 1.14.0: the partners are ticked from the directory, none for you (it used to pre-fill the first six
   // entries, 211 and a crisis line among them, into a recipient too long to save).
   const recipient = await page.inputValue('.modal textarea[name=recipient]');
   ok(!/including /.test(recipient), 'the recipient wording names no partner until one is ticked', recipient.slice(0, 120));

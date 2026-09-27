@@ -173,7 +173,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   const offer = await until(() => page.$('.modal [data-readmit-offer]'));
   ok(offer, 'the intake form says an earlier record exists');
   const offerText = offer ? await offer.textContent() : '';
-  // 1.13.1: nothing from the stored record -- not its code, nor when or why the person was discharged.
+  // 1.14.0: nothing from the stored record -- not its code, nor when or why the person was discharged.
   ok(/earlier record exists/i.test(offerText) && /supervisor/i.test(offerText), 'it says a supervisor will review it', offerText);
   ok(!/discharged|lost contact|2021/i.test(offerText) && !/[A-Z]\d{2}-\d{4}/.test(offerText) && !offerText.includes(who.phone), 'and shows nothing from the stored record', offerText);
   await page.click('.modal button[data-readmit]');

@@ -200,7 +200,7 @@ test('the database is snapshotted before the migration runs', () => {
   const files = fs.readdirSync(snapDir);
   assert.equal(files.length, 1, 'one snapshot for the one upgrade');
   assert.match(files[0], /^suds\.db\.v4\./, 'named for the version it was taken at');
-  // 1.13.1: once the upgrade has succeeded the snapshot is sealed with the backup key (it held every value a
+  // 1.14.0: once the upgrade has succeeded the snapshot is sealed with the backup key (it held every value a
   // later migration encrypted, in the clear): test/plaintext-remnants.test.js. It opens like a backup.
   assert.match(files[0], /\.db\.enc$/, 'sealed');
   const plainFile = path.join(os.tmpdir(), `suds-snap-${process.pid}.db`);

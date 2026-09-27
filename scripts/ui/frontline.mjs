@@ -2,7 +2,7 @@
 // confirmation soon after signing in (and the password once the window has passed), the supervision queue
 // with client names, rows that open the note or referral from the keyboard, countersigning several notes
 // in one step, the referral form choosing the one consent that names the provider, and the warning for a
-// consent that is already on file. And (1.13.1, the third UX review) anonymous outreach counted on Home and Reports as
+// consent that is already on file. And (1.14.0, the third UX review) anonymous outreach counted on Home and Reports as
 // in the funder report, overdose doses said as stored, "+ Log → Overdose or reversal", the supply cupboard step
 // and the visit that says its kits were not taken off, "Select all" when countersigning, per-role Home
 // headings, and a forced password change that asks the server for nothing it will refuse.
@@ -171,7 +171,7 @@ await nav.close();
   await page.keyboard.press('Enter');
   ok(await until(() => page.$('.modal .kv')), 'Enter on a queue row opens that note');
   await closeModals(page);
-  // Several at once. "Select all" (1.13.1) ticks every note in the queue, and clears them again.
+  // Several at once. "Select all" (1.14.0) ticks every note in the queue, and clears them again.
   const rowsInQueue = (await page.$$('[data-cosign-pick]')).length;
   const all = await page.$('[data-cosign-select-all]');
   ok(all, 'the queue has a "Select all" checkbox');
@@ -231,7 +231,7 @@ await nav.close();
   await api('PUT', `/api/clients/${client.id}`, { flags: before || '' });
 }
 
-// ---- 7. the third UX review (1.13.1) ----
+// ---- 7. the third UX review (1.14.0) ----
 const statValue = (page, label) => page.evaluate((l) => { const s = [...document.querySelectorAll('.main .stat')].find(x => x.querySelector('.l')?.textContent.trim() === l); return s ? Number(s.querySelector('.v').textContent.replace(/[^\d]/g, '')) : null; }, label);
 const pageText = (page) => page.evaluate(() => (document.querySelector('.main')?.innerText || '').replace(/\s+/g, ' '));
 const cupboard = (await admin.api('GET', '/api/supplies')).data.rows;

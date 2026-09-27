@@ -274,7 +274,7 @@ module.exports = (r) => {
   });
   // The keys open every backup, so a session alone (a cookie on a workstation left unlocked) is not enough:
   // the administrator gives the password or authenticator code again with every download. There is no
-  // window after signing in or signing a note, as there is for a signature (1.13.1, security review of
+  // window after signing in or signing a note, as there is for a signature (1.14.0, security review of
   // 1.13.0, design weakness 6). An account linked to single sign-on may instead confirm with the identity
   // provider, and that confirmation covers one download in the next five minutes (auth.verifySigner
   // `fresh`). A POST, so no link, prefetch or image tag can fetch it. Every attempt is audited.

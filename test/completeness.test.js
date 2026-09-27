@@ -203,7 +203,7 @@ test('episodes, overdose events, client forms and disclosures export as single t
 });
 
 // ---- routes that had no API test ----
-// 1.13.1 (security review of 1.13.0, finding 5): the password alone no longer turns it off; a current
+// 1.14.0 (security review of 1.13.0, finding 5): the password alone no longer turns it off; a current
 // authenticator code is needed too, and failures count toward the lockout (test/in-session-guessing.test.js).
 test('POST /api/auth/mfa/disable needs the password and a current code, is refused where the role requires MFA, and is audited', async () => {
   const u = H.makeUser('cmpmfa', 'navigator');
@@ -344,7 +344,7 @@ test('POST /api/admin/keys-backup downloads keys.json only after the administrat
     assert.ok(H.db.getSetting('keys_backup_at', null), 'the dashboard can stop asking');
     const a = H.db.one(`SELECT * FROM audit_log WHERE action='keys.download' ORDER BY id DESC LIMIT 1`);
     assert.equal(JSON.parse(a.details).method, 'password', 'the audit entry says how the administrator proved it');
-    // 1.13.1 (security review of 1.13.0, design weakness 6): key custody has no window. A confirmation a
+    // 1.14.0 (security review of 1.13.0, design weakness 6): key custody has no window. A confirmation a
     // moment after the password, or right after signing in, is refused: the password again, every time.
     const again = await admin.post('/api/admin/keys-backup', { confirm: true });
     assert.equal(again.status, 403); assert.equal(again.data.reauthRequired, true); assert.equal(again.data.fresh, true);

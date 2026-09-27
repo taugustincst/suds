@@ -48,7 +48,7 @@ test('the duplicate check at intake says a discharged record exists and offers t
   assert.equal(chk.data.readmit.length, 1, 'but the earlier, discharged record is offered for re-admission');
   const r = chk.data.readmit[0];
   assert.equal(r.id, oldId);
-  // 1.13.1 (security review of 1.13.0, finding 1): the offer no longer carries the record's code or its
+  // 1.14.0 (security review of 1.13.0, finding 1): the offer no longer carries the record's code or its
   // discharge date and reason -- test/readmit-oracle.test.js.
   assert.ok(!('client_code' in r) && !('discharge_date' in r) && !('discharge_reason' in r), 'nothing about the discharge');
   assert.match(r.message, /supervisor/);

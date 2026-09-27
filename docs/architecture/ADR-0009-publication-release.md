@@ -98,7 +98,7 @@ idle); the main thread reads the figures, then awaits the audit. The tests' API 
 server does (`test/helpers.js` does not set `SUDS_AUDIT_INLINE`; `test/publication-release.test.js` checks the
 audit ran there); the pure tests call `protectFigures` directly, and `SUDS_AUDIT_INLINE=1` forces the inline path
 (the performance test compares the two). An audit that does not answer within the backstop is refused on its
-own and its worker stopped; the audits queued behind it on that worker start again on a new one (1.13.1; in
+own and its worker stopped; the audits queued behind it on that worker start again on a new one (1.14.0; in
 1.13.0 they were failed with it, `test/release-worker-timeout.test.js`). A refusal by the backstop is not kept
 with the release (it says how busy the machine was, not what the figures are): asking again audits again.
 The browser kernel has no worker threads (`node:worker_threads` is shimmed empty) and no second connection to

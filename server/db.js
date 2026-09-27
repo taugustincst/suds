@@ -679,10 +679,10 @@ function initialise(d, schemaText, dbPath) {
   } else {
     encryptedColumns = 0;
     migrate(d, dbPath);
-    // An upgrade that encrypted a column, and (once) any database from before 1.13.1 — a 1.13.0 install at
+    // An upgrade that encrypted a column, and (once) any database from before 1.14.0 — a 1.13.0 install at
     // schema 43 already carries the plaintext its upgrades left in free pages — is vacuumed. Data hygiene,
     // not schema: a setting records it, like reindexNameParts below; no migration.
-    if (encryptedColumns || !d.prepare(`SELECT 1 FROM settings WHERE key='${SCRUBBED}'`).get()) scrubFreePages(d, encryptedColumns ? 'column encrypted' : 'once, after upgrading to 1.13.1');
+    if (encryptedColumns || !d.prepare(`SELECT 1 FROM settings WHERE key='${SCRUBBED}'`).get()) scrubFreePages(d, encryptedColumns ? 'column encrypted' : 'once, after upgrading to 1.14.0');
     // A database from before programme profiles: decided once from what it holds, so an upgrade never hides
     // a module the programme was using (server/programme.js defaultForExisting). Data, not schema.
     if (!d.prepare(`SELECT 1 FROM settings WHERE key='programme_profile'`).get()) {
