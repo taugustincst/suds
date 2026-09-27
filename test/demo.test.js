@@ -38,6 +38,16 @@ test('sample data: admin loads it, staff see it, it is removed cleanly with tomb
       assert.ok(D.consentNamesRecipient({ type: k.type, recipient: require('../server/crypto').decrypt(k.recipient_enc) }, [ref.name]), `the consent names ${ref.name}`);
     }
   }
+  // Every sample client is found as any client is: its blind indexes are the ones clients-model computes (the
+  // preferred name's was not written until 1.14.0; the 1.13.0 upgrade fixture found it).
+  const M = require('../server/clients-model'); const { decrypt } = require('../server/crypto');
+  let prefs = 0;
+  for (const c of db.all(`SELECT * FROM clients`)) {
+    const plain = { first_name: decrypt(c.first_name_enc), last_name: decrypt(c.last_name_enc), preferred_name: c.preferred_name_enc ? decrypt(c.preferred_name_enc) : null, dob: c.dob_enc ? decrypt(c.dob_enc) : null, phone: c.phone_enc ? decrypt(c.phone_enc) : null };
+    if (plain.preferred_name) prefs++;
+    for (const [col, v] of Object.entries(M.clientIndexes(plain))) assert.equal(c[col], v, `${c.client_code}: ${col}`);
+  }
+  assert.ok(prefs > 0, 'some sample clients have a preferred name');
   // remove
   const rm = await admin.del('/api/admin/demo'); assert.equal(rm.status, 200); assert.ok(rm.data.removed > 300, `removed ${rm.data.removed}`);
   assert.equal((await sup.get('/api/clients')).data.clients.length, 0);

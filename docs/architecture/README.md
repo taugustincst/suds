@@ -8,7 +8,9 @@ and data flows, is [docs/security/ARCHITECTURE.md](../security/ARCHITECTURE.md).
 
 Most of SUDS was written with an AI coding assistant: of the 286 commits up to 1.12.4, 255 are authored by
 Claude and 31 by the owner, over eleven days, with 41 schema migrations and 26 releases (1.12.0–1.12.4 in one
-day, against the release policy — [docs/RELEASE.md](../RELEASE.md) records why and what now enforces it).
+day, against the release policy — [docs/RELEASE.md](../RELEASE.md) records why and what now enforces it). Up
+to 1.13.0: 337 commits (306 and 31), 43 migrations, 27 releases; 1.13.0 itself came within a day of 1.12.0,
+which the release check now refuses for a feature release without a recorded exception.
 The owner set the direction, the rules in `CLAUDE.md` and the tests the work had to pass, and reviewed and
 merged it. Automated gates carry much of the weight: several hundred API tests, a browser suite with
 accessibility checks, CI drift checks and the release gate.
@@ -16,7 +18,7 @@ accessibility checks, CI drift checks and the release gate.
 That pace creates a bus-factor risk: the reasoning behind the hardest parts (sync, the disclosure gate, the
 audit chain) lived in code comments and commit messages. These decision records write it down, each with the
 files to read and the tests that would fail if it were broken. This page and the records describe the code
-as it is after 1.12.4 (*Since 1.11.0*, below, lists what changed). If you change one of these areas, update
+as it is in 1.14.0 (*Since 1.11.0*, below, lists what changed). If you change one of these areas, update
 its record in the same change.
 
 ## System map
@@ -68,14 +70,17 @@ one, and link it here. Supersede rather than delete.
 | **Backup lock** | One in-process FIFO lock for everything that copies or replaces the whole database (scheduled backup, snapshot, recovery drill, restore); timers skip their turn while a restore waits; a restore's post-swap steps complete or it is rolled back. | `server/backup-lock.js`, `server/backup.js` (`restoreWhenIdle`) | `test/backup-restore-race.test.js` |
 | **Instance lock** | The lock file records host, container identity (root-mount digest, pid namespace, machine id), boot id and start time, and is heartbeated; another host's or container's lock is judged by its heartbeat alone, this host's by process facts. | ADR-0001; `server/instance-lock.js` (header) | `test/instance-lock.test.js` |
 | **Programme profile** | A harm-reduction programme by default; the clinical modules (care plan, assessments, CalOMS, FHIR, EHR hand-off) are switched on per programme. Presentation and new-work gating, not permissions. | `server/programme.js` | `test/programme.test.js`, `test/programme-default.test.js` |
-| **Publication release** | The funder, NDP and settlement reports for an ended period are one release, audited as a whole for what a reader of all three could work out (`server/sdc.js`), in a worker thread, on a budget of solver work; a table the check cannot show protected is withheld. A supervisor's default run is the submission to the funder (exact); anything but a release needs `reports:internal`. | ADR-0009; `server/publication-release.js`, `server/release-audit.js`, `server/sdc.js`, `server/small-cells.js` | `test/publication-release*.test.js` (full sweeps in the `thorough` CI job) |
+| **Publication release** | The funder, NDP and settlement reports for an ended period are one release, audited as a whole for what a reader of all three could work out (`server/sdc.js`), in a worker thread, on a budget of solver work; a table the check cannot show protected is withheld. Its figures are read from one snapshot (a read transaction on a second connection) with the event loop let go between phases, and the release is kept under the data's version; funds with fewer people than the threshold are combined in one row (1.14.0). A supervisor's default run is the submission to the funder (exact); anything but a release needs `reports:internal`. | ADR-0009; `server/publication-release.js`, `server/release-audit.js`, `server/sdc.js`, `server/small-cells.js`, `server/db.js` (`readSnapshot`) | `test/publication-release*.test.js` (full sweeps in the `thorough` CI job), `test/report-snapshot.test.js` |
 | **Health probes** | `/api/health/live` (liveness) and `/api/health/ready` (readiness) are separate from `/api/health` (operational status for alerting), so a platform does not restart-loop SUDS over a warning. | `server/routes/app.js`; DEPLOYMENT.md 4b | `test/health-probes.test.js` |
-| **Release governance** | The release gate also refuses a patch release that adds a migration, permission or route, unless overridden (`allow_patch_changes`, printed in the notes). | `scripts/release-gate.js`, `scripts/release-policy.js`; RELEASE.md | `test/release-gate.test.js`, `test/release-policy.test.js` |
+| **Release governance** | The release gate also refuses a patch release that adds a migration, permission or route, and (1.14.0) a feature release within 28 days of the previous one, unless a policy exception is given (`policy_exception`, formerly `allow_patch_changes`, printed at the top of the notes). CI and the release run on an exact, checksummed Node 22 and Node 24. | `scripts/release-gate.js`, `scripts/release-policy.js`; RELEASE.md | `test/release-gate.test.js`, `test/release-policy.test.js` |
 
 Test layers added with them: `test/kernel-parity.test.js` bundles the kernel from the current sources and runs
-one flow through it under sql.js in Node against the office server's answers; `test/migrations.test.js`
-upgrades databases written by 1.6.1, 1.9.4 and 1.11.0; performance checks live in `test/thorough/` and run in
-the `thorough` CI job (`npm run test:thorough`), not in `npm test`.
+one flow through it under sql.js in Node against the office server's answers (the records, the funder report,
+the dashboard and a publication release, id for id), and `test/kernel-sync-parity.test.js` syncs such a
+kernel with the office both ways and requires the same records and reports on each side; `test/migrations.test.js`
+upgrades databases written by 1.6.1, 1.9.4, 1.11.0 and 1.13.0 (the last two with several rows in every table
+that has an encrypted column, each value checked after the upgrade); performance checks live in
+`test/thorough/` and run in the `thorough` CI job (`npm run test:thorough`), not in `npm test`.
 
 ## Read these first (a new maintainer's first two days)
 

@@ -1,7 +1,8 @@
 'use strict';
 // Upgrading a real county database is the one operation that cannot be retried, so it gets its own test.
-// test/fixtures/schema-v4.sql is the schema exactly as SUDS 1.6.1 left it; release-v1.9.4.sql and release-v1.11.0.sql are
-// databases those releases wrote themselves (test/fixtures/make-release-fixture.js), upgraded at the end of this file.
+// test/fixtures/schema-v4.sql is the schema exactly as SUDS 1.6.1 left it; release-v1.9.4.sql, release-v1.11.0.sql and
+// release-v1.13.0.sql are databases those releases wrote themselves (test/fixtures/make-release-fixture.js; the
+// last two with rows in every table that has an encrypted column), upgraded at the end of this file.
 process.env.SUDS_ENV = 'test';
 process.env.SUDS_ENCRYPTION_KEY = '0'.repeat(64);
 process.env.SUDS_INDEX_KEY = '1'.repeat(64);
@@ -253,12 +254,42 @@ test('migration 35: a free-text scope covers nothing automated unless it plainly
   assert.ok(db().one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='caloms_submissions'`));
 });
 
+test('migration 46: a preferred name with no search index gets one; a written index, an empty name and a second run are left alone', () => {
+  const d = require('../server/db');
+  const { encrypt } = require('../server/crypto');
+  const M = require('../server/clients-model');
+  const ids = { missing: 'm46-missing', written: 'm46-written', none: 'm46-none', unreadable: 'm46-unreadable' };
+  const add = (id, pref, idx) => db().run(`INSERT INTO clients(id,client_code,first_name_enc,last_name_enc,preferred_name_enc,preferred_name_idx) VALUES(?,?,?,?,?,?)`, id, id, encrypt('Ana'), encrypt('Lopez'), pref, idx);
+  add(ids.missing, encrypt('Annie'), null);
+  add(ids.written, encrypt('Nita'), 'kept-as-written');
+  add(ids.none, null, null);
+  add(ids.unreadable, 'not-ciphertext', null);
+  // Run migration 46 again, as an upgrade from 45 would.
+  db().setSetting('schema_version', String(d.LATEST_SCHEMA_VERSION - 1));
+  d.close(); d.open(dbPath);
+  const idx = (id) => db().one(`SELECT preferred_name_idx i FROM clients WHERE id=?`, id).i;
+  assert.equal(idx(ids.missing), M.preferredNameIndex('Annie'), 'filled in from the decrypted name');
+  assert.equal(idx(ids.written), 'kept-as-written', 'an index already written is left alone');
+  assert.equal(idx(ids.none), null, 'no name, no index');
+  assert.equal(idx(ids.unreadable), null, 'a row that cannot be decrypted keeps what it had');
+  assert.equal(db().getSetting('schema_version'), String(d.LATEST_SCHEMA_VERSION));
+  // A second run changes nothing.
+  db().setSetting('schema_version', String(d.LATEST_SCHEMA_VERSION - 1));
+  d.close(); d.open(dbPath);
+  assert.equal(idx(ids.missing), M.preferredNameIndex('Annie')); assert.equal(idx(ids.written), 'kept-as-written');
+  for (const id of Object.values(ids)) db().run(`DELETE FROM clients WHERE id=?`, id);
+});
+
 // ---- Databases written by later releases ----
 // 1.6.1 is not the only starting point a county has: each fixture below is a database a released SUDS created
 // and wrote through its own API (test/fixtures/make-release-fixture.js: schema, the rows, indexes, triggers;
 // fictional data, the test keys above). Each is upgraded to the current schema and must end structurally
 // identical to a fresh install, with its records present and its ciphertext still readable.
-for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql']) {
+// The --rich fixtures (1.11.0, and 1.13.0: schema 43, the last release before 1.14.0's migrations 44 to 46, so
+// it is the starting point they are tested from) hold several rows in every table with an encrypted
+// column, NULLs and text in other scripts among them: every value must still decrypt, to what it was, and every
+// blind index must still match, after the upgrade.
+for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql']) {
   const sql = fs.readFileSync(path.join(__dirname, 'fixtures', fixture), 'utf8');
   const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
   test(`a SUDS ${expect.version} database (schema ${expect.schema_version}) upgrades to the current schema with its records intact`, () => {
@@ -270,6 +301,24 @@ for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql']) {
     assert.equal(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get().value, String(expect.schema_version));
     const rowsBefore = Object.fromEntries(d.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`).all()
       .map(({ name }) => [name, d.prepare(`SELECT COUNT(*) n FROM "${name}"`).get().n]));
+    // Every encrypted value the release wrote, decrypted before the upgrade: table -> column -> id -> plaintext.
+    const plainBefore = {};
+    for (const { name } of d.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`).all()) {
+      const cols = d.prepare(`PRAGMA table_info("${name}")`).all().map((x) => x.name);
+      if (!cols.includes('id')) continue;
+      for (const col of cols.filter((x) => x.endsWith('_enc'))) {
+        plainBefore[name] = plainBefore[name] || {};
+        plainBefore[name][col] = Object.fromEntries(d.prepare(`SELECT id, "${col}" v FROM "${name}"`).all().map((r) => [r.id, r.v === null || r.v === '' ? r.v : decrypt(r.v)]));
+      }
+      // A plaintext column a later migration encrypts (court_orders.document_ref in 43, say): its values too.
+      for (const col of cols.filter((x) => !x.endsWith('_enc') && !x.endsWith('_idx'))) {
+        const rows = d.prepare(`SELECT id, "${col}" v FROM "${name}" WHERE typeof("${col}")='text'`).all();
+        if (rows.length) { plainBefore[name] = plainBefore[name] || {}; plainBefore[name][`${col}_enc`] = plainBefore[name][`${col}_enc`] || Object.fromEntries(rows.map((r) => [r.id, r.v])); }
+      }
+    }
+    const before = Object.fromEntries(Object.entries(plainBefore).map(([t, cols]) => [t, Object.fromEntries(Object.keys(cols).filter((c) => d.prepare(`PRAGMA table_info("${t}")`).all().some((x) => x.name === c)).map((c) => [c, true]))]));
+    // And every blind index it wrote.
+    const idxBefore = Object.fromEntries(d.prepare(`SELECT * FROM clients`).all().map((c) => [c.id, Object.fromEntries(Object.entries(c).filter(([k]) => k.endsWith('_idx')))]));
     d.close();
 
     require('../server/db').close();
@@ -309,6 +358,63 @@ for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql']) {
         }
       }
       assert.ok(checked >= 6, `${checked} encrypted values checked`);
+      // ... to exactly what it was, and every NULL is still NULL (a migration that re-encrypts a column must not
+      // lose a value or invent one).
+      let same = 0; let migrated = 0;
+      for (const [t, cols] of Object.entries(plainBefore)) {
+        if (!db().one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, t)) continue;
+        const now = new Set(db().all(`PRAGMA table_info("${t}")`).map((x) => x.name));
+        for (const [col, byId] of Object.entries(cols)) {
+          if (!now.has(col)) continue; // a column a migration moved or folded
+          // A plaintext column's values are compared only where a migration encrypted the column (it is gone).
+          if (!Object.prototype.hasOwnProperty.call(before[t] || {}, col) && now.has(col.slice(0, -4))) continue;
+          for (const [id, v] of Object.entries(byId)) {
+            const r = db().one(`SELECT "${col}" v FROM "${t}" WHERE id=?`, id);
+            if (!r) continue;
+            assert.equal(r.v === null || r.v === '' ? r.v : decrypt(r.v), v, `${t}.${col} of ${id} after the upgrade`); same++;
+            if (!Object.prototype.hasOwnProperty.call(before[t] || {}, col) && v) migrated++;
+          }
+        }
+      }
+      assert.ok(same >= checked, `${same} values compared with the release's own`);
+      // Migration 43 encrypted the document references a 1.11.0 database holds in plaintext: they arrive intact.
+      if (expect.rich && expect.schema_version < 43) assert.ok(migrated >= 2, `${migrated} plaintext values a migration encrypted, compared`);
+      // Every blind index matches the value it indexes after the upgrade - as the release wrote it, or as a
+      // migration recomputed it (the name indexes of names in other scripts were, between 1.11.0 and 1.13.0) - or
+      // a search would stop finding a client. 1.13.0's sample data wrote no preferred-name index (server/demo.js,
+      // fixed in 1.14.0): migration 46 fills it in, and it is checked like the rest.
+      const M = require('../server/clients-model');
+      let indexed = 0; let backfilled = 0;
+      for (const c of db().all(`SELECT * FROM clients`)) {
+        const plain = { first_name: c.first_name_enc && decrypt(c.first_name_enc), last_name: c.last_name_enc && decrypt(c.last_name_enc), preferred_name: c.preferred_name_enc ? decrypt(c.preferred_name_enc) : null, dob: c.dob_enc ? decrypt(c.dob_enc) : null, phone: c.phone_enc ? decrypt(c.phone_enc) : null };
+        const was = idxBefore[c.id] || {};
+        for (const [col, v] of Object.entries(M.clientIndexes(plain))) {
+          if (!(col in c)) continue;
+          if (col === 'preferred_name_idx' && v !== null && was[col] === null) backfilled++;
+          assert.equal(c[col], v, `clients.${col} of ${c.client_code} matches its value after the upgrade`); indexed++;
+        }
+      }
+      assert.ok(indexed >= 9, `${indexed} blind indexes checked`);
+      if (expect.version === '1.13.0') assert.ok(backfilled > 0, `migration 46 wrote the preferred-name index the sample data left out (${backfilled})`);
+      if (expect.rich) {
+        // Several rows in every table the release had with an encrypted column, each column holding a value in
+        // some row; text in other scripts among them.
+        for (const [t, n] of Object.entries(expect.rich.encTables)) {
+          assert.ok(n >= 3, `the fixture has ${n} rows in ${t}`);
+          if (!db().one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, t)) continue;
+          for (const col of db().all(`PRAGMA table_info("${t}")`).map((x) => x.name).filter((x) => x.endsWith('_enc') && plainBefore[t] && x in plainBefore[t])) {
+            assert.ok(Object.values(plainBefore[t][col]).some((v) => v !== null && v !== ''), `${t}.${col} holds a value in some row`);
+          }
+        }
+        assert.ok(Object.values(plainBefore).some((cols) => Object.values(cols).some((byId) => Object.values(byId).some((v) => v === null))), 'and NULLs');
+        for (const u of expect.rich.unicodeClients) {
+          const c = db().one(`SELECT * FROM clients WHERE id=?`, u.id);
+          assert.equal(decrypt(c.first_name_enc), u.first_name); assert.equal(decrypt(c.last_name_enc), u.last_name);
+          // Found by name after the upgrade, as a search would.
+          assert.equal(c.last_name_idx, M.clientIndexes({ last_name: u.last_name }).last_name_idx);
+        }
+        assert.ok(expect.rich.unicodeClients.some((u) => /[^\x00-\x7f]/.test(u.first_name + u.last_name)));
+      }
       // The audit chain that release wrote still verifies after the upgrade.
       assert.equal(require('../server/audit').verifyChain().ok, true, 'the audit chain verifies');
     } finally {

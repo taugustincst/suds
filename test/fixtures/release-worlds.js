@@ -12,9 +12,11 @@ const lastDay = (month) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(m
  * visits: { fundId|null: services } }]; anon: { fundId|null: services with no client }; events: [{ month,
  * reversed, fatal, community, by, doses }]; discharges: [reason] (episodes opened before the period, closed
  * in it); episodes: [{ opened: 'before'|'in', state: 'closed'|'open', reason }]; funds: [{ id, use (null: not
- * settlement), active }]; period: the months of the period (the release lists every one).
+ * settlement), active }]; period: the months of the period (the release lists every one). fold: { T, keep }
+ * to combine the small funds of the fund table beyond the first `keep` as a publication release does
+ * (server/funder-report.js foldFunds; the server keeps FOLD_KEEP, the tests fewer so that small families fold).
  */
-function figuresOf({ people, anon = {}, events = [], discharges = [], episodes = [], funds, period = QUARTER }) {
+function figuresOf({ people, anon = {}, events = [], discharges = [], episodes = [], funds, period = QUARTER, fold = null }) {
   const eps = [...discharges.map(reason => ({ opened: 'before', state: 'closed', reason })), ...episodes];
   const closed = eps.filter(e => e.state === 'closed');
   const doses = (e) => (e.doses !== undefined ? e.doses : e.reversed ? 1 : 0);
@@ -45,7 +47,20 @@ function figuresOf({ people, anon = {}, events = [], discharges = [], episodes =
   const settlement = { services_by_use, fundKeys: funds.filter(f => f.use).map(f => ({ id: f.id, key: f.use, active: f.active })) };
   const inactiveFunds = Object.fromEntries(funds.filter(f => !f.active).map(f => [f.id, { people: perFund.get(f.id)?.clients_served || 0, services: perFund.get(f.id)?.services || 0 }]));
   const domains = { months: period, administered_by: C.ADMINISTERED_BY, discharge_reasons: C.DISCHARGE_REASONS };
-  return { inputs: { funder: raw, perFund, settlement, domains }, inactiveFunds, funds, range: { from: `${period[0]}-01`, to: lastDay(period[period.length - 1]) } };
+  // Every fund's true people and services (the combined ones are not in the fund table).
+  const fundTruth = Object.fromEntries(funds.map(f => [f.id, { people: perFund.get(f.id)?.clients_served || 0, services: perFund.get(f.id)?.services || 0 }]));
+  let combined = [];
+  if (fold) {
+    const FR = require('../../server/funder-report');
+    const rows = raw.by_funding_source.filter(f => f.id !== null).map(f => ({ ...f, group: funds.find(x => x.id === f.id).use || null }));
+    const unionOf = (ids) => people.filter(p => ids.some(id => p.visits[id])).length;
+    const folded = FR.foldFunds(rows, fold.T, unionOf, { keep: fold.keep });
+    if (folded) {
+      raw.by_funding_source = [...folded.rows.map(({ group, ...f }) => f), raw.by_funding_source.find(f => f.id === null)];
+      raw.fund_fold = folded.fold; combined = folded.fold.members;
+    }
+  }
+  return { inputs: { funder: raw, perFund, settlement, domains }, inactiveFunds, fundTruth, combined, funds, range: { from: `${period[0]}-01`, to: lastDay(period[period.length - 1]) } };
 }
 
 const person = (over = {}) => ({ gender: 'm', language: 'en', housing: 'u', insurance: 'a', ethnicity: 'u', race: [], visits: { C: 1 }, ...over });
@@ -104,6 +119,25 @@ const pattern = {
       out.push([`a=${a} b=${b} ab=${ab} none=${u}`, { people: [...many(a, () => plain({ race: ['a'] })), ...many(b, () => plain({ race: ['b'] })), ...many(ab, () => plain({ race: ['a', 'b'] })), ...many(u, () => plain())] }, a + b + ab + u]);
     }
     return worldsOf(out, inner);
+  },
+  // Two funds that a release combines when they are small (fold: nothing kept, so both are combined when both
+  // are under T, one alone when only it is): people under A only, B only, both, and neither. uses: the
+  // settlement allowable use of each fund (null: not a settlement fund), whose people and services the
+  // settlement report prints. Services are not one per person: a reader does not know how many visits each
+  // person had, so a family where every person had one would tell its attacker the people from the services
+  // printed for a use. extra: [inner, outer] services beyond one a person, charged to A with no client (as
+  // community distribution is), so that the services printed do not count the people: 0 to outer in the
+  // family, 0 to inner in the worlds whose printouts are checked.
+  combinedFunds: (inner, outer, T, uses = [null, null], keep = 0, extra = [0, 0]) => {
+    const out = [];
+    const funds = [{ id: 'A', use: uses[0], active: true }, { id: 'B', use: uses[1], active: true }];
+    for (let a = 0; a <= outer; a++) for (let b = 0; a + b <= outer; b++) for (let ab = 0; a + b + ab <= outer; ab++) for (let c = 0; a + b + ab + c <= outer; c++) for (let e = 0; e <= extra[1]; e++) {
+      if (!(a + b + ab + c)) continue;
+      const spec = { funds, fold: { T, keep }, anon: e ? { A: e } : {}, people: [...many(a, () => plain({ visits: { A: 1 } })), ...many(b, () => plain({ visits: { B: 1 } })), ...many(ab, () => plain({ visits: { A: 1, B: 1 } })), ...many(c, () => plain())] };
+      const prog = figuresOf(spec);
+      out.push({ label: `A=${a} B=${b} AB=${ab} none=${c} extra=${e}`, inner: a + b + ab + c <= inner && e <= extra[0], inputs: prog.inputs, fundTruth: prog.fundTruth, combined: prog.combined });
+    }
+    return out;
   },
   // Two funds: people under A only, B only, both, and neither.
   funds: (inner, outer) => {

@@ -18,9 +18,9 @@ const SDC = require('../server/sdc');
 
 const YEAR = 'from=2025-07-01&to=2026-06-30';
 const PUB = '&purpose=publication';
-let admin;
+let admin; let base;
 before(async () => {
-  await H.start();
+  base = await H.start();
   const fx = scale.seed(H.db, { clients: 5000, visits: 25000, calls: 5000, notes: 0, seedValue: 23 });
   // A settlement fund; a second one no longer active with four people; a few small groups.
   H.db.run(`UPDATE funding_sources SET source_type='opioid_settlement', settlement_use='treatment' WHERE id=?`, fx.funds[0]);
@@ -122,4 +122,70 @@ test('800 small free-text languages and 400 small race codes: the release is aud
   for (const x of [f, n, s]) { assert.equal(x.status, 200); assert.equal(x.data.release.id, f.data.release.id); }
   if (THOROUGH) assert.ok(allMs < 8000, `three reports took ${allMs.toFixed(0)} ms`);
   if (process.env.SUDS_PERF_VERBOSE) console.log(`[perf] 800 small languages, 400 small race codes: audit ${auditMs.toFixed(0)} ms, ${p.audit.steps} units of work; three reports ${allMs.toFixed(0)} ms`);
+});
+
+test('a year with 60 funds (120 in the thorough run), most of them small: the small ones are combined and the release publishes its headline within a small part of its budget', async () => {
+  // 1.13.0 refused the year's release with 60, 80 or 120 small funds: every fund under the threshold was a cell
+  // of the audit, with the counts worked out from it, and the audit reached its budget (an engineering review's
+  // benchmark: 40 funds took 45% of it). A release now combines every fund with 1 to T-1 people in one row that
+  // prints no people or services (server/funder-report.js foldFunds).
+  const { range } = require('../server/routes/reports');
+  const FR = require('../server/funder-report');
+  const PR = require('../server/publication-release');
+  const COUNT = THOROUGH ? 117 : 57; // with the three large funds, 120 or 60
+  const uses = ['core_a', 'core_b', 'core_c', 'core_d', 'approved_a', 'approved_b', 'approved_c'];
+  const visits = H.db.all(`SELECT id FROM interventions WHERE client_id IS NOT NULL AND occurred_at >= '2025-07-02' AND occurred_at < '2026-06-29' ORDER BY id`);
+  let vi = 0;
+  H.db.transaction(() => {
+    for (let i = 0; i < COUNT; i++) {
+      // 2 to 14 people each (most under 11); half of them settlement funds over seven allowable uses.
+      const id = uuid(); const settle = i % 2 === 0;
+      H.db.run(`INSERT INTO funding_sources(id,name,source_type,settlement_use,fiscal_year_start,fiscal_year_end,total_amount) VALUES(?,?,?,?,?,?,?)`, id, `Small fund ${String(i).padStart(3, '0')}`, settle ? 'opioid_settlement' : 'other', settle ? uses[i % uses.length] : null, '2025-07-01', '2026-06-30', 5000);
+      for (let k = 0; k < 2 + (i * 7) % 13; k++) H.db.run(`UPDATE interventions SET funding_source_id=? WHERE id=?`, id, visits[vi++ % visits.length].id);
+    }
+  });
+  const user = H.db.one(`SELECT * FROM users WHERE username='admin'`);
+  // A request on a connection of its own (node:http, no agent): the audit below holds this process - client and
+  // server both - for seconds, past the server's keep-alive timeout, and a pooled connection the server closes
+  // meanwhile is reset under the next request (a harness effect, not the server's).
+  const once = (method, p, body, cookie) => new Promise((resolve, reject) => {
+    const r = require('node:http').request(base + p, { method, agent: false, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds', ...(cookie ? { Cookie: cookie } : {}) } }, (res) => {
+      let b = ''; res.setEncoding('utf8'); res.on('data', (c) => { b += c; }); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, data: b ? JSON.parse(b) : null }));
+    });
+    r.on('error', reject); r.end(body === undefined ? undefined : JSON.stringify(body));
+  });
+  const login = await once('POST', '/api/auth/login', { username: 'admin', password: 'AdminPassw0rd!x' });
+  const cookie = String(login.headers['set-cookie']).split(';')[0];
+  const fresh = (p) => once('GET', p, undefined, cookie);
+  for (const q of THOROUGH ? [YEAR, 'from=2026-01-01&to=2026-03-31'] : [YEAR]) {
+    const ctx = { user, query: new URLSearchParams(q + PUB) };
+    const r = range(ctx); const counting = FR.countingMode(ctx, r); const T = counting.threshold;
+    const inputs = inputsOf(ctx, r, counting);
+    const active = new Set(H.db.all(`SELECT id FROM funding_sources WHERE is_active=1`).map(x => x.id));
+    const smallFunds = [...inputs.perFund].filter(([id, x]) => active.has(id) && x.clients_served > 0 && x.clients_served < T).length;
+    const t = process.hrtime.bigint();
+    const p = PR.protectFigures(inputs, T);
+    const ms = Number(process.hrtime.bigint() - t) / 1e6;
+    assert.ok(!p.refused, `${q}: ${JSON.stringify(p.refused)}`);
+    // The headline is published; nothing is withheld but, at most, the fund tables.
+    assert.equal(typeof p.funder.unduplicated.served, 'number');
+    assert.ok(p.withheld_tables.every(x => ['by_funding_source', 'settlement.services_by_use'].includes(x)), `${q}: withheld ${p.withheld_tables}`);
+    // Every small fund is in the combined row, which prints no count of people or services.
+    const row = p.funder.by_funding_source.find(f => f.combined);
+    assert.ok(smallFunds > 10 && row && row.funds_combined === smallFunds, `${q}: ${smallFunds} small funds, combined ${row && row.funds_combined}`);
+    assert.equal(row.clients_served, 'withheld'); assert.equal(row.services, 'withheld');
+    assert.ok(!p.funder.by_funding_source.some(f => !f.combined && f.clients_served === `<${T}`), 'no small fund is listed on its own');
+    // The data also hold the 800 languages and 400 race codes of the test before (combined): within half the budget.
+    assert.ok(p.audit.steps < SDC.STEP_LIMIT / 2, `${q}: the audit took ${p.audit.steps} of ${SDC.STEP_LIMIT} units of work`);
+    if (THOROUGH) assert.ok(ms < 10000, `${q}: the audit took ${ms.toFixed(0)} ms (${p.audit.steps} units of work)`);
+    // Through the API, all three reports: one release (each on a connection of its own, above).
+    PR.clearCache();
+    const [f, n, s] = await Promise.all(['funder', 'naloxone-ndp', 'opioid-settlement'].map(x => fresh(`/api/reports/${x}?${q}${PUB}`)));
+    for (const x of [f, n, s]) { assert.equal(x.status, 200, JSON.stringify(x.data).slice(0, 300)); assert.equal(x.data.release.id, f.data.release.id); }
+    assert.equal(f.data.release.id, p.id);
+    // The page and the files say so, and the row is on the page.
+    assert.match(f.data.counting_statement, /listed together in one row, "Other funds"/);
+    assert.equal(f.data.by_funding_source.find(x => x.combined).funds_combined, smallFunds);
+    if (process.env.SUDS_PERF_VERBOSE) console.log(`[perf] ${COUNT + 3} funds (${smallFunds} small, combined), ${q}: audit ${ms.toFixed(0)} ms, ${p.audit.steps} units of work, withheld ${JSON.stringify(p.withheld_tables)}`);
+  }
 });

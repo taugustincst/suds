@@ -1,14 +1,15 @@
 'use strict';
 // The audit of a publication release as a pure function of its figures (server/publication-release.js reads the
-// figures and serves the result; there it runs in a worker thread, inline in the browser kernel and the tests).
+// figures and serves the result; there it runs in a worker thread, as it does for the tests' API calls, and
+// inline in the browser kernel and in the tests that call it directly).
 // docs/HIPAA.md "Small cells in aggregate reports"; docs/architecture/ADR-0009-publication-release.md.
 //
 // One publication release per standard period that has ended, for the whole programme (docs/HIPAA.md "Small
 // cells in aggregate reports"; docs/compliance/HARM-REDUCTION-REPORTING.md).
 //
 // The funder report, the NDP log (by month) and the opioid settlement report for such a period are three
-// views of one release. They are computed together, from one read of the data (nothing else runs while the
-// figures are read), and every count of people any of them prints goes into one model of what a reader of
+// views of one release. They are computed together, from one snapshot of the data (server/db.js readSnapshot),
+// and every count of people any of them prints goes into one model of what a reader of
 // all three learns (server/sdc.js): the true count behind every cell, every relationship between them, and
 // what each cell shows. The audit hides cells until every sensitive count is protected, and each report then
 // prints its part of the same result. Whichever report is asked for, and however often, the same data give
@@ -23,7 +24,9 @@
 //     none reported);
 //   * people per fund (each at most N, and at most that fund's services: a person is served at least once),
 //     the fund's services (hidden with its people); a settlement fund no longer active, which the funder
-//     report does not list, as an unprinted count tied to the settlement report;
+//     report does not list, as an unprinted count tied to the settlement report; the funds a release combines
+//     (every fund under the threshold, in "Other funds (n combined)", which prints no people or services) as one
+//     unprinted count standing for any one of them, and per settlement use their people and services (below);
 //   * people per settlement allowable use: at most N, at most its services, at least the people of each fund
 //     with that use and at most their sum; its services are exactly the sum of those funds' services;
 //   * the overdose events E: by month (adding up to E); reversals R by month and by who gave the naloxone
@@ -108,10 +111,10 @@ function prepare(raw, domains = {}) {
   };
 }
 
-/** The model of one release. inputs: { funder: the funder report's figures as prepare() lists them, perFund: Map id -> { services, clients_served }, settlement: { services_by_use, fundKeys } }. */
-function buildModel({ funder: raw, perFund, settlement }) {
+/** The model of one release. inputs: { funder: the funder report's figures as prepare() lists them, perFund: Map id -> { services, clients_served }, settlement: { services_by_use, fundKeys } }; T: the threshold (the funds a release combines are each 1 to T-1). */
+function buildModel({ funder: raw, perFund, settlement }, T) {
   const vars = []; const cons = []; const derived = []; const mirror = [];
-  const v = (id, value, o = {}) => { vars.push({ id, value, people: o.people !== false, total: !!o.total, table: o.table || id, published: o.published !== false }); return vars.length - 1; };
+  const v = (id, value, o = {}) => { vars.push({ id, value, people: o.people !== false, total: !!o.total, table: o.table || id, published: o.published !== false, ...(o.aux ? { aux: true } : {}) }); return vars.length - 1; };
   const rel = (terms, op, rhs = 0) => cons.push({ terms, op, rhs });
   // Holds for everything recorded through SUDS, not for every row an import could write: left out when the
   // figures break it (server/sdc.js).
@@ -137,18 +140,72 @@ function buildModel({ funder: raw, perFund, settlement }) {
   const unknown = race.findIndex(x => x.k === 'unknown');
   if (unknown >= 0) h.race.forEach((i, j) => { if (j !== unknown) rel([[i, 1], [h.race[unknown], 1], [N, -1]], '<='); });
 
-  // Funds.
+  // Funds. The row that combines small funds (server/funder-report.js foldFunds) prints no count of people or
+  // services, so it has no cells: what is known about its funds is modelled below.
   const fundVars = new Map();
   h.funds = raw.by_funding_source.map(f => {
+    if (f.combined) return null;
     const p = subset(`fund.${f.id}.people`, f.clients_served, 'by_funding_source');
     const s = v(`fund.${f.id}.services`, f.services, { people: false, table: 'by_funding_source' });
     rel([[p, 1], [s, -1]], '<='); mirror.push([p, s]); fundVars.set(f.id, { p, s });
     return { p, s };
   });
+  // The funds the combined row holds (server/funder-report.js foldFunds). Which funds they are follows from the
+  // release (each would have printed "<T"), so a reader knows that each of them served 1 to T-1 people and had
+  // at least one service; the row prints nothing else about them that counts people. A settlement fund is
+  // still counted in the settlement report's people and services for its allowable use, so the combined funds
+  // of one use are a group whose people (distinct) and services are counts printed nowhere, q and t, tied to
+  // that use exactly as a fund of it is. What the release says about one fund of a group of k is then modelled
+  // by one unprinted count x, the people under any one of them: 1 <= x <= T-1, x <= q, q <= x + (k-1)(T-1) (the
+  // others serve at most T-1 each), and t >= x + k-1 (each other fund at least one service). Those are exactly
+  // the values one fund's people can take beside its group's people and services, whatever the others are
+  // (they can be chosen to fit, overlapping where they must); nothing the release prints tells one fund of a
+  // group from another, so x stands for each of them. (With k = 1, x is q.) The combined funds that are not
+  // settlement funds are tied to nothing printed but the people served: x <= N. Each x is a sensitive count
+  // like a fund no longer active: it must be able to be 1 and T-1, against the printout and against the
+  // method; the people left when it is taken from the total, or from its use, are counts printed nowhere.
+  const partOf = new Map(); // a combined settlement fund's id -> its group's { p: q, s: t }
+  h.folds = [];
+  const watch = {}; // q -> the fund count it stands for (server/sdc.js run, covers)
+  const fold = raw.fund_fold;
+  if (fold) {
+    for (const g of fold.groups) {
+      const k = g.members.length; const tag = `fund.${fold.id}/${g.key === null ? '-' : g.key}`; const table = `unpublished.fund.${fold.id}`;
+      let x;
+      if (g.key === null) {
+        x = v(`${tag}.one`, perFund.get(g.members[0])?.clients_served || 1, { table, published: false });
+        rel([[x, 1], [N, -1]], '<=');
+      } else {
+        const q = v(`${tag}.people`, g.people, { table, published: false, aux: k > 1 });
+        const t = v(`${tag}.services`, g.services, { people: false, table, published: false });
+        rel([[q, 1], [t, -1]], '<='); rel([[q, 1], [N, -1]], '<=');
+        const part = { p: q, s: t, aux: k > 1 }; for (const id of g.members) partOf.set(id, part);
+        if (k === 1) x = q;
+        else {
+          x = v(`${tag}.one`, perFund.get(g.members[0])?.clients_served || 1, { table, published: false });
+          rel([[x, 1], [q, -1]], '<='); rel([[q, 1], [x, -1]], '<=', (k - 1) * (T - 1));
+        }
+        watch[q] = [x];
+        rel([[x, 1], [t, -1]], '<=', -(k - 1));
+      }
+      rel([[x, 1]], '>=', 1); rel([[x, 1]], '<=', T - 1);
+      derived.push({ id: `${vars[x].id}:rest`, terms: [[N, 1], [x, -1]] });
+      h.folds.push({ key: g.key, x });
+    }
+  }
   // Settlement uses.
   const byUseKey = new Map();
+  const listed = new Set();
   for (const f of settlement.fundKeys) {
     const act = perFund.get(f.id); if (!act || !act.services) continue; // no work in the period: 0, and known to be
+    if (partOf.has(f.id)) {
+      // A combined fund is tied to its use through its group, once: the group's people are at most the use's,
+      // the use's at most the listed funds' plus the group's, and the use's services are theirs.
+      const part = partOf.get(f.id); if (listed.has(part)) continue; listed.add(part);
+      if (!byUseKey.has(f.key)) byUseKey.set(f.key, []);
+      byUseKey.get(f.key).push(part);
+      continue;
+    }
     if (!fundVars.has(f.id)) {
       // A settlement fund the funder report does not list (no longer active): printed nowhere, tied to its use.
       const p = subset(`fund.${f.id}.people`, act.clients_served, `unpublished.fund.${f.id}`, { published: false });
@@ -166,7 +223,8 @@ function buildModel({ funder: raw, perFund, settlement }) {
     if (fs.length) {
       rel([[s, 1], ...fs.map(f => [f.s, -1])], '=');
       rel([[p, 1], ...fs.map(f => [f.p, -1])], '<=');
-      for (const f of fs) { rel([[p, 1], [f.p, -1]], '>='); derived.push({ id: `use.${x.use_code}-${vars[f.p].id}`, terms: [[p, 1], [f.p, -1]] }); }
+      for (const f of fs) { rel([[p, 1], [f.p, -1]], '>='); if (!f.aux) derived.push({ id: `use.${x.use_code}-${vars[f.p].id}`, terms: [[p, 1], [f.p, -1]] }); }
+      for (const fo of h.folds) if (fo.key === x.use_code && !fs.some(f => f.p === fo.x)) derived.push({ id: `use.${x.use_code}-${vars[fo.x].id}`, terms: [[p, 1], [fo.x, -1]] });
     }
     return { p, s };
   });
@@ -210,7 +268,7 @@ function buildModel({ funder: raw, perFund, settlement }) {
   soft([[Dall, 1], [Dr, -1]], '>='); soft([[Dall, 1], [E, -DOSES_MAX]], '<='); soft([[Dall, 1], [Dr, -1], [E, -DOSES_MAX], [R, DOSES_MAX]], '<=');
   mirror.push([R, Dr], [R, Dall], [E, Dall]);
   // The headline, and the counts a reader takes as bounding it, hidden whenever it is (server/sdc.js run).
-  return { model: { vars, cons, derived, mirror, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] }, h };
+  return { model: { vars, cons, derived, mirror, watch, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] }, h };
 }
 
 // FNV-1a (64-bit, as two 32-bit halves): a digest that runs the same in Node and in the browser kernel.
@@ -269,7 +327,7 @@ function refusalMessage(r) {
  */
 function protectFigures(inputs, T, { strict = false, budget, stepLimit, timeLimitMs = AUDIT_BACKSTOP_MS, degrade = true } = {}) {
   const raw = prepare(inputs.funder, inputs.domains);
-  const { model, h } = buildModel({ ...inputs, funder: raw });
+  const { model, h } = buildModel({ ...inputs, funder: raw }, T);
   model.strict = strict;
   const audit = SDC.protect(model, T, { ...(budget === undefined ? {} : { budget }), ...(stepLimit === undefined ? {} : { stepLimit }), timeLimitMs, degrade });
   const { status, withheldTables } = audit;
@@ -294,7 +352,7 @@ function protectFigures(inputs, T, { strict = false, budget, stepLimit, timeLimi
   if (byGone) withheld.push('by_administered_by');
   if (monthsGone) withheld.push('by_month');
   const smallGroup = ep.discharges > 0 && ep.discharges < T;
-  const byFund = raw.by_funding_source.map((f, i) => ({ ...SC.withCell(f, 'clients_served', show(h.funds[i].p)), services: show(h.funds[i].s) }));
+  const byFund = raw.by_funding_source.map((f, i) => (h.funds[i] ? { ...SC.withCell(f, 'clients_served', show(h.funds[i].p)), services: show(h.funds[i].s) } : f));
   const none = byFund.find(f => f.id === null);
   const funder = {
     unduplicated: { served: show(h.N), new_admissions: show(h.newAdm), with_a_referral: show(h.ref), admitted_after_referral: show(h.adm), on_mat: show(h.mat) },

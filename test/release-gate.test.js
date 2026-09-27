@@ -76,3 +76,27 @@ test('the Node 24 job installs an exact, pinned version and checks it against a 
   assert.ok(!/SHASUMS256\.txt"/.test(node24.split('steps:')[1] || ''), 'the checksum is not fetched at run time');
   assert.match(node24, /sha256sum -c -/, 'and the check is still made');
 });
+
+test('every Node 22 job, and the release, runs an exact pinned Node 22 checked against a pinned SHA-256', () => {
+  // Until 1.14.0 they ran whatever Node 22 the runner image carried, checked by major only: a Node change
+  // between two pushes that nobody committed. Now the release ci.yml pins, the same in release.yml.
+  const wf = (f) => fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', f), 'utf8');
+  const ci = wf('ci.yml'); const rel = wf('release.yml');
+  const pinOf = (y) => ({ v: (/\nenv:\n {2}NODE22_VERSION: (v22\.\d+\.\d+)\n/.exec(y) || [])[1], h: (/\n {2}NODE22_SHA256: ([0-9a-f]{64})\n/.exec(y) || [])[1] });
+  const a = pinOf(ci); const b = pinOf(rel);
+  assert.ok(a.v && a.h, 'ci.yml pins an exact v22.x.y and a full SHA-256');
+  assert.deepEqual(b, a, 'release.yml pins the same release and checksum');
+  const nvmrc = fs.readFileSync(path.join(__dirname, '..', '.nvmrc'), 'utf8').trim();
+  assert.equal(a.v.split('.')[0], `v${nvmrc}`, 'of the major .nvmrc names');
+  const job = (y, name, next) => y.slice(y.indexOf(`\n  ${name}:`), next ? y.indexOf(`\n  ${next}:`) : undefined);
+  const jobs = [['test', job(ci, 'test', 'thorough')], ['thorough', job(ci, 'thorough', 'browser')], ['browser', job(ci, 'browser', 'node24')], ['dr-drill', job(ci, 'dr-drill', 'webkit')], ['release', job(rel, 'release')]];
+  for (const [name, text] of jobs) {
+    assert.match(text, /curl -fsSLO "https:\/\/nodejs\.org\/dist\/\$\{NODE22_VERSION\}\/\$\{file\}"/, `${name}: downloads the pinned release`);
+    assert.match(text, /echo "\$\{NODE22_SHA256\}  \$\{file\}" \| sha256sum -c -/, `${name}: checks it against the pinned checksum`);
+    assert.match(text, /\[ "\$\(node --version\)" = "\$NODE22_VERSION" \]/, `${name}: and runs on it`);
+    const first = text.search(/\n\s+run: (npm|node|scripts)\b/);
+    assert.ok(first > 0 && text.indexOf('Install Node 22') < first, `${name}: before anything is installed or run`);
+    assert.ok(!/SHASUMS256\.txt"/.test(text.split('steps:')[1] || ''), `${name}: the checksum is not fetched at run time`);
+  }
+  assert.ok(!/latest-v22/.test(ci + rel), 'never the moving latest-v22.x directory');
+});

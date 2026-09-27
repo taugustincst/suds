@@ -23,6 +23,7 @@ function open(dbPath = config.dbPath) {
     throw e;
   }
   if (dbPath !== ':memory:') for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) { try { fs.chmodSync(f, 0o600); } catch {} }
+  openedPath = dbPath;
   return db;
 }
 
@@ -32,6 +33,7 @@ function open(dbPath = config.dbPath) {
 // would later save that stale copy over them (1.9.2: taking a window back did exactly that).
 function openWith(bytes) {
   if (db) { try { db.close(); } catch {} db = undefined; }
+  openedPath = null;
   db = bytes ? new DatabaseSync(':memory:', bytes) : new DatabaseSync(':memory:');
   try { db.exec('PRAGMA busy_timeout = 5000'); } catch {}
   try { db.exec(SECURE_DELETE); } catch {}
@@ -602,6 +604,22 @@ const migrations = [
   //     (intervention_supplies), the site it drew from, and the syringes and sharps brought back.
   //     Self-contained and idempotent: every step checks what is already there.
   (d) => migrateSupplies(d, safeSchema()),
+  // 46: the sample data (server/demo.js) wrote a client's preferred name but not its search index until 1.14.0,
+  //     so a sample client could not be found by the name it goes by. Every client with a preferred name and no
+  //     index gets the index its name derives (clients-model preferredNameIndex, as a save writes it). Only
+  //     those rows: an index already written is left alone, and a second run finds nothing to do. A row that
+  //     cannot be decrypted keeps what it had (as migration 26). updated_at is not touched: the index is
+  //     derived, never synchronised, and each device's own copy of this migration fills in its own.
+  (d) => {
+    const { decrypt } = require('./crypto');
+    const M = require('./clients-model');
+    const upd = d.prepare(`UPDATE clients SET preferred_name_idx=? WHERE id=? AND preferred_name_idx IS NULL`);
+    for (const c of d.prepare(`SELECT id, preferred_name_enc FROM clients WHERE preferred_name_enc IS NOT NULL AND preferred_name_idx IS NULL`).all()) {
+      let name; try { name = decrypt(c.preferred_name_enc); } catch { continue; }
+      const idx = M.preferredNameIndex(name);
+      if (idx) upd.run(idx, c.id);
+    }
+  },
 ];
 
 // The site every install starts with: created with this fixed id on a fresh database and by migration 45, so
@@ -883,8 +901,42 @@ function migrate(d, dbPath) {
   }
 }
 
-function get() { if (!db) open(); return db; }
-function close() { if (db) { db.close(); db = undefined; } }
+// A read that lets the event loop go between its phases must still read one state of the data. The server
+// has one connection, so a transaction on it would take in every other request's writes (and a rollback would
+// undo them). readSnapshot(fn) opens a second, read-only connection to the same file instead, begins a read
+// transaction on it - in WAL mode that is a snapshot: writers on the main connection carry on, and this reader
+// sees none of their commits until it ends - and runs fn with every db call made in fn's own asynchronous
+// context (AsyncLocalStorage) answered from it; other requests, interleaved while fn waits, use the main
+// connection as before. fn(true) may yield. Where there is no second connection to open - an in-memory
+// database (the tests), the browser kernel (no node:async_hooks), or a caller inside a transaction on the main
+// connection, whose uncommitted rows a snapshot would not see - fn(false) runs on the main connection and must
+// not yield: nothing else runs in between, so it reads one state too (server/publication-release.js).
+let snapshotStore = null;
+try { const { AsyncLocalStorage } = require('node:async_hooks'); if (typeof AsyncLocalStorage === 'function') snapshotStore = new AsyncLocalStorage(); } catch { snapshotStore = null; }
+let openedPath = null;
+async function readSnapshot(fn) {
+  const file = db && openedPath && openedPath !== ':memory:' ? openedPath : null;
+  if (!snapshotStore || !file || txDepth > 0 || snapshotStore.getStore()) return fn(false);
+  let conn;
+  try {
+    conn = new DatabaseSync(file, { readOnly: true });
+    conn.exec('PRAGMA busy_timeout = 5000');
+    conn.exec('BEGIN');
+    // A deferred transaction takes its snapshot at its first read: take it now, before fn yields.
+    conn.prepare('SELECT count(*) FROM sqlite_master').get();
+  } catch (e) {
+    try { if (conn) conn.close(); } catch {}
+    console.warn('[suds] a read snapshot could not be opened; reading without letting the event loop go:', e && e.message);
+    return fn(false);
+  }
+  try { return await snapshotStore.run(conn, () => fn(true)); }
+  finally { try { conn.exec('COMMIT'); } catch {} try { conn.close(); } catch {} }
+}
+/** Is the code running now inside readSnapshot's snapshot (so its reads come from the second connection)? */
+const inSnapshot = () => !!(snapshotStore && snapshotStore.getStore());
+
+function get() { const s = snapshotStore && snapshotStore.getStore(); if (s) return s; if (!db) open(); return db; }
+function close() { if (db) { db.close(); db = undefined; openedPath = null; } }
 /** Is a database handle open now? Does not open one (unlike get()) — /api/health/ready asks this. */
 function isOpen() { return !!db; }
 
@@ -937,4 +989,4 @@ function setSetting(key, value) {
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, isOpen, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
+module.exports = { open, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
