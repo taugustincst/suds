@@ -5,7 +5,7 @@
 // first time it is opened (app.js lazyRoute). All of them used to be downloaded and compiled before the first
 // screen: 890 kB of JavaScript, when a phone that opens SUDS to record a visit needs a third of it. The
 // service worker still keeps every page for offline use (public/sw.js).
-import { boot, lazyRoute } from './app.js';
+import { boot, lazyRoute, loadingFor } from './app.js';
 import './views/login.js';
 import './views/dashboard.js';
 
@@ -17,4 +17,11 @@ const views = {
   overdose: ['overdose'], funder: ['funder'], caloms: ['caloms'], supplies: ['supplies'], compliance: ['compliance'], suprt: ['suprt'],
 };
 for (const [file, names] of Object.entries(views)) lazyRoute(names, () => import(`./views/${file}.js`));
+// What the slower pages say while they work, from the first opening (before their module has arrived; the
+// module may register a more exact text, e.g. the funder report's for a publication release).
+loadingFor('reports', () => 'Counting visits, clients, calls and referrals for the period…');
+loadingFor('budget', () => 'Adding up funds, budget lines and spending…');
+loadingFor('funder', (r) => (r.query.get('purpose') === 'publication' ? 'Checking small counts before the release is shown…' : 'Working out the funder report for the period…'));
+loadingFor('caloms', () => 'Checking the CalOMS records for the period…');
+loadingFor('suprt', () => 'Counting SUPRT-A records due and done…');
 boot();
