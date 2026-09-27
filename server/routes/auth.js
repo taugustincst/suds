@@ -104,7 +104,9 @@ module.exports = (r) => {
     auth.requireAuth(ctx);
     const { current_password, new_password } = validate(ctx.body, { current_password: { type: 'string', required: true, maxLen: 500 }, new_password: { type: 'string', required: true, maxLen: 500 } });
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-    if (!(await verifyPasswordAsync(current_password, u.password_hash))) { audit.log({ user: u, action: 'auth.password.change.failed', ip: ctx.ip, success: false }); throw unauthorized('Current password is incorrect'); }
+    // The sign-in's protections (limit, failure count, lockout, audit): auth.confirmPassword.
+    await auth.confirmPassword(ctx, current_password, { action: 'auth.password.change.failed', message: 'Current password is incorrect' });
+    auth.clearFailures(u.id);
     const errs = auth.passwordPolicy(new_password);
     if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));
     if (await verifyPasswordAsync(new_password, u.password_hash)) throw badRequest('New password must differ from the current password');
@@ -158,12 +160,20 @@ module.exports = (r) => {
     audit.log({ user: u, action: 'auth.mfa.enabled', ip: ctx.ip });
     return { ok: true };
   });
+  // Turning two-step verification off takes both factors: the password and a current authenticator code, so
+  // a password learned (or guessed) alone cannot remove the second factor. Every failure counts toward the
+  // account lockout and is audited (auth.mfa.disable.failed), as at sign-in (security review of 1.13.0, 5).
+  // Someone who has lost their authenticator asks an administrator to reset it (Settings → Users).
   r.post('/api/auth/mfa/disable', async (ctx) => {
     auth.requireAuth(ctx);
-    const { password } = validate(ctx.body, { password: { type: 'string', required: true, maxLen: 500 } });
+    const v = validate(ctx.body, { password: { type: 'string', required: true, maxLen: 500 }, code: { type: 'string', maxLen: 10 } });
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-    if (!(await verifyPasswordAsync(password, u.password_hash))) throw unauthorized('Password is incorrect');
+    if (!u.mfa_enabled) throw badRequest('Two-step verification is not on for your account');
     if (auth.policy().mfaRequiredRoles.includes(u.role)) throw badRequest('MFA is required for your role');
+    if (!v.code || !String(v.code).trim()) throw badRequest('Enter the current code from your authenticator app as well as your password', { fields: { code: 'required' } });
+    await auth.confirmPassword(ctx, v.password, { action: 'auth.mfa.disable.failed' });
+    auth.confirmCode(ctx, v.code, { action: 'auth.mfa.disable.failed' });
+    auth.clearFailures(u.id);
     db.run(`UPDATE users SET mfa_enabled=0, mfa_secret_enc=NULL, updated_at=? WHERE id=?`, db.now(), u.id);
     audit.log({ user: u, action: 'auth.mfa.disabled', ip: ctx.ip });
     return { ok: true };

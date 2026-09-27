@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## 1.13.0 — 2026-09-27
+## 1.13.0 — 2026-09-26
 
 - A request that reaches the on-device database after it has locked (sign-out, idle, or a report still running) is answered as signed out and sends the person to sign-in, instead of logging an error.
 

@@ -1,9 +1,10 @@
 'use strict';
 // What the Home page and the Reports dashboard show a role that runs publication releases only.
 //
-// The funder report, the NDP log and the settlement report give finance and read-only accounts publication
-// releases only (server/routes/reports.js requireReportRun, auth.reportRunAllowed): a count of people from 1
-// to T-1 is printed as "<T". The dashboard (GET /api/reports/dashboard) and the monthly trends
+// The funder report, the NDP log and the settlement report give read-only accounts publication releases
+// only, and finance those and the programme's own submission (reports:funder, 1.14.0: aggregate counts for its
+// funder, not an insider view of the people; server/routes/reports.js requireReportRun). Neither holds
+// reportRunAllowed, so both keep the masked screens below: a count of people from 1 to T-1 is printed as "<T". The dashboard (GET /api/reports/dashboard) and the monthly trends
 // (GET /api/reports/monthly) used to print the same people exactly, for any date range, on the next page
 // along ("Opioids Heroin 1"). Those accounts are insiders (docs/HIPAA.md "Whom suppression protects
 // against"), so this is display-level consistency, not a disclosure control: the screens must not

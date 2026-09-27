@@ -21,10 +21,16 @@ function presentTime(t) {
   return o;
 }
 
-// Hours charged to a grant must fall in its period, and never in the future (see budget.js's assertInPeriod).
-function checkPeriod(v) {
-  const fund = v.funding_source_id ? db.one(`SELECT * FROM funding_sources WHERE id=?`, v.funding_source_id) : null;
-  require('./budget').assertInPeriod(fund, v.work_date, 'Work date');
+/**
+ * What a reader may see of an entry's description. A role without clients:read (finance: time:all, to approve
+ * hours) sees another worker's time as category, fund and hours only (security review of 1.13.0, 7): the
+ * description is free text about the work and can name the client. Its own entries keep their description.
+ * exports.js applies the same rule (mayReadDescription); a role without clients:read cannot sync at all.
+ */
+const mayReadDescription = (user, entry) => auth.hasPerm(user, 'clients:read') || entry.user_id === user.id;
+function withheldFor(user, t) {
+  if (!t || mayReadDescription(user, t)) return t;
+  return { ...t, description: null, description_withheld: !!(t.description || t.description_enc) };
 }
 
 module.exports = (r) => {
@@ -34,23 +40,17 @@ module.exports = (r) => {
     // (time:all) -- sync-tables.js `unlinked`, which crud.js applies to these routes.
     joins: 'JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id',
     select: `time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${NAME_COLS}`,
-    afterLoad: (ctx, x) => presentTime(withClientName(ctx, x)),
-    shape: {
-      client_id: { type: 'string' }, user_id: { type: 'string' }, work_date: { type: 'date', required: true }, minutes: { type: 'number', required: true, integer: true, min: 1, max: 1440 },
-      category: { type: 'string', list: 'TIME_CATEGORIES' }, billable: { type: 'boolean' }, funding_source_id: { type: 'string' }, description: { type: 'string', maxLen: 500 },
-      intervention_id: { type: 'string' }, call_id: { type: 'string' },
-    },
+    afterLoad: (ctx, x) => withheldFor(ctx.user, presentTime(withClientName(ctx, x))),
+    // shape, owner (time:all), canEdit and the fund-period check: server/rules/time_entries.js.
     filters: (ctx, where, params) => {
       // non-managers see only their own time
       if (!auth.hasPerm(ctx.user, 'time:all')) { where.push('time_entries.user_id=?'); params.push(ctx.user.id); }
       const cat = ctx.query.get('category'); if (cat) { where.push('time_entries.category=?'); params.push(cat); }
     },
-    beforeInsert: (ctx, v) => { if (v.user_id && v.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) v.user_id = ctx.user.id; checkPeriod(v); encDescription(v); },
     // Reassigning whose hours these are is a time:all action (see public/views/time.js, which only shows the
-    // Worker picker when can('time:all')) -- without this, a worker who owns the row (canEdit below) could
-    // still smuggle a different user_id through an update even though they could never set it on insert.
-    beforeUpdate: (ctx, v, row) => { if (v.user_id && v.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) delete v.user_id; if ('work_date' in v || 'funding_source_id' in v) checkPeriod({ work_date: row.work_date, funding_source_id: row.funding_source_id, ...v }); encDescription(v); },
-    canEdit: (ctx, row) => row.user_id === ctx.user.id || auth.hasPerm(ctx.user, 'time:all'),
+    // Worker picker when can('time:all')): the rules' owner, which crud.js applies on insert and update alike.
+    beforeInsert: (ctx, v) => { encDescription(v); },
+    beforeUpdate: (ctx, v) => { encDescription(v); },
   });
 
   r.get('/api/time/summary', auth.requireAuth, auth.requirePerm('time:read', 'time:write'), (ctx) => {
@@ -68,3 +68,4 @@ module.exports = (r) => {
   });
 };
 module.exports.presentTime = presentTime;
+module.exports.mayReadDescription = mayReadDescription;

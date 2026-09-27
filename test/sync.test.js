@@ -390,7 +390,10 @@ test('a sync push cannot attach a cost/fund/line to an intervention without budg
 
   // An unrelated edit to a row that already, legitimately, carries budget data (set earlier by someone
   // with budget:write) must not suddenly need that permission just because the full row still carries it.
-  const existing = await admin.post('/api/interventions', { client_id: clinClientId, type: 'case_management', occurred_at: iso(Date.now()), funding_source_id: fund.data.id, budget_line_id: line.data.id, cost: 30 });
+  // The clinician's own visit, costed by an administrator: since 1.14.0 a visit is its worker's (or a manager's)
+  // to change by sync as over REST (server/rules/interventions.js editableBy), so it is recorded as clin's.
+  const clinUserId = H.db.one(`SELECT id FROM users WHERE username='sclin'`).id;
+  const existing = await admin.post('/api/interventions', { client_id: clinClientId, user_id: clinUserId, type: 'case_management', occurred_at: iso(Date.now()), funding_source_id: fund.data.id, budget_line_id: line.data.id, cost: 30 });
   const r2 = await push(clin, { tables: { interventions: [{
     id: existing.data.id, client_id: clinClientId, type: 'case_management', occurred_at: iso(Date.now()),
     funding_source_id: fund.data.id, budget_line_id: line.data.id, cost: 30, summary: 'Follow-up note',
@@ -601,7 +604,7 @@ test('the intake duplicate check never names a client outside the caller\'s case
   // Regression (PHI leak): POST /api/clients threw with the full display name and date of birth of every
   // match, including clients the caller could not otherwise see, and before any audit row was written.
   const theirs = (await nav2.post('/api/clients', { first_name: 'Hidden', last_name: 'Match', dob: '1980-02-02' })).data.id;
-  // Since 1.12.5 a match outside the caseload is not even counted to the caller (that said the person is a
+  // Since 1.13.0 a match outside the caseload is not even counted to the caller (that said the person is a
   // client here): the intake goes ahead and a supervisor is asked to compare (test/duplicate-review.test.js).
   const r = await nav.post('/api/clients', { first_name: 'Hidden', last_name: 'Match', dob: '1980-02-02' });
   assert.equal(r.status, 201);
@@ -653,25 +656,30 @@ test('rejections carry a permanent flag so a device stops resending what will ne
   assert.equal(t.data.rejected[0].permanent, true, 'a role limit is final');
 });
 
-test('supply counts are pull-only, and a pushed visit draws the office shelf down once', async () => {
+test('supply items are pull-only, and a pushed visit draws the office stock down once', async () => {
+  // 1.14 (docs/SUPPLIES.md): stock is a ledger by item and site; a pushed visit is drawn down at the office
+  // by difference, once. test/supplies.test.js covers the rest of what a device may push.
   const stock = (await admin.post('/api/supplies', { item: 'Naloxone kit', quantity: 20 })).data;
-  const qty = () => H.db.one(`SELECT quantity FROM supply_stock WHERE id=?`, stock.id).quantity;
+  const qty = () => H.db.one(`SELECT COALESCE(SUM(quantity),0) n FROM supply_ledger WHERE item_id=?`, stock.id).n;
+  const before = qty();
   // Two devices each record a visit that handed out kits.
   const a = randomUUID(); const b = randomUUID();
   const r1 = await push(nav, { tables: { interventions: [{ id: a, client_id: clientId, user_id: navId, type: 'naloxone_distribution', occurred_at: iso(Date.now()), naloxone_kits: 2, fentanyl_strips: 0, created_at: iso(Date.now()), updated_at: iso(Date.now()) }] } });
   const r2 = await push(nav2, { tables: { interventions: [{ id: b, client_id: otherClientId, user_id: nav2Id, type: 'naloxone_distribution', occurred_at: iso(Date.now()), naloxone_kits: 3, fentanyl_strips: 0, created_at: iso(Date.now()), updated_at: iso(Date.now()) }] } });
   assert.deepEqual(r1.data.rejected, []); assert.deepEqual(r2.data.rejected, []);
-  assert.equal(qty(), 15, 'the office stock fell by the sum of both visits');
+  assert.equal(qty(), before - 5, 'the office stock fell by the sum of both visits');
   // The same row again (a re-sync) draws nothing more; an edit draws the difference.
   await push(nav, { tables: { interventions: [{ id: a, client_id: clientId, user_id: navId, type: 'naloxone_distribution', occurred_at: iso(Date.now()), naloxone_kits: 2, fentanyl_strips: 0, updated_at: iso(Date.now() + 1000) }] } });
-  assert.equal(qty(), 15);
+  assert.equal(qty(), before - 5);
   await push(nav, { tables: { interventions: [{ id: a, client_id: clientId, user_id: navId, type: 'naloxone_distribution', occurred_at: iso(Date.now()), naloxone_kits: 4, fentanyl_strips: 0, updated_at: iso(Date.now() + 2000) }] } });
-  assert.equal(qty(), 13, 'editing the count draws down the difference');
+  assert.equal(qty(), before - 7, 'editing the count draws down the difference');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='supply.drawdown' AND ip='device'`), 'audited like the REST route');
-  // A device's own absolute count is never the truth.
-  const r3 = await push(nav, { tables: { supply_stock: [{ id: stock.id, item: 'Naloxone kit', quantity: 999, updated_by: navId, updated_at: iso(Date.now() + 9000) }] }, tombstones: [{ table_name: 'supply_stock', id: stock.id, deleted_at: iso(Date.now() + 9000) }] });
+  // A device's own copy of an item is never the truth.
+  const item = H.db.one(`SELECT * FROM supply_items WHERE id=?`, stock.id);
+  const r3 = await push(nav, { tables: { supply_items: [{ ...item, name: 'Renamed on a phone', updated_at: iso(Date.now() + 9000) }] }, tombstones: [{ table_name: 'supply_items', id: stock.id, deleted_at: iso(Date.now() + 9000) }] });
   assert.equal(r3.data.rejected.filter(x => x.id === stock.id && x.reason === 'server-owned' && x.permanent).length, 2, 'both the row and the tombstone are refused');
-  assert.equal(qty(), 13);
+  assert.equal(H.db.one(`SELECT name FROM supply_items WHERE id=?`, stock.id).name, 'Naloxone kit');
+  assert.equal(qty(), before - 7);
 });
 
 test('a device may name another worker only when its user could over REST', async () => {

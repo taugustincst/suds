@@ -7,8 +7,7 @@ const auth = require('../auth');
 const crud = require('../crud');
 const { encrypt, decrypt } = require('../crypto');
 
-const KINDS = ['access', 'amendment', 'restriction', 'accounting'];
-const STATUSES = ['open', 'fulfilled', 'denied'];
+const { KINDS, STATUSES } = require('../rules/patient_requests');
 const DAYS_TO_RESPOND = 30;
 
 function encNotes(v) { if (v.notes !== undefined) { v.notes_enc = v.notes ? encrypt(v.notes) : null; delete v.notes; } }
@@ -21,11 +20,7 @@ module.exports = (r) => {
     order: `CASE patient_requests.status WHEN 'open' THEN 0 ELSE 1 END, patient_requests.due_at ASC`,
     joins: 'JOIN clients c ON c.id=patient_requests.client_id LEFT JOIN users u ON u.id=patient_requests.handled_by',
     select: 'patient_requests.*, c.client_code, u.display_name AS handler',
-    shape: {
-      client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: KINDS },
-      received_at: { type: 'date', required: true }, due_at: { type: 'date' }, status: { type: 'string', enum: STATUSES },
-      notes: { type: 'string', maxLen: 4000 }, handled_by: { type: 'string' }, closed_at: { type: 'datetime' },
-    },
+    // shape and canEdit: server/rules/patient_requests.js (crud.js reads them from there).
     filters: (ctx, where, params) => {
       const s = ctx.query.get('status'); if (s && s !== 'all') { where.push('patient_requests.status=?'); params.push(s); }
       if (ctx.query.get('overdue') === '1') { where.push(`patient_requests.status='open' AND patient_requests.due_at < ?`); params.push(new Date().toISOString().slice(0, 10)); }
@@ -43,7 +38,6 @@ module.exports = (r) => {
       encNotes(v);
     },
     afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt(row.notes_enc) : null, notes_enc: undefined, overdue: row.status === 'open' && row.due_at < new Date().toISOString().slice(0, 10) }),
-    canEdit: (ctx, row) => row.handled_by === ctx.user.id || row.created_by === ctx.user.id || auth.hasPerm(ctx.user, 'clients:all'),
   });
   r.get('/api/meta/patient-request-options', auth.requireAuth, () => ({ kinds: KINDS, statuses: STATUSES, days_to_respond: DAYS_TO_RESPOND }));
 };

@@ -7,7 +7,7 @@ export function openExpenditureForm(values, { clientId, clientDisplay, onDone } 
     { name: 'funding_source_id', label: 'Funding source', type: 'fund', required: true }, { name: 'budget_line_id', label: 'Budget line', type: 'select', options: [] },
     { name: 'spent_at', label: 'Date', type: 'date', required: true, value: values?.spent_at || fmt.today() }, { name: 'amount', label: 'Amount ($)', type: 'number', min: 0.01, step: 0.01, required: true },
     { name: 'category', label: 'Category', type: 'select', options: C.BUDGET_CATEGORIES, required: true }, { name: 'client_id', label: 'Client (for client assistance)', type: 'client', value: clientId || values?.client_id, display: clientDisplay },
-    { name: 'vendor', label: 'Vendor / payee' }, { name: 'receipt_ref', label: 'Receipt / invoice #' }, { name: 'description', label: 'Description', type: 'textarea', span: true, rows: 2 },
+    { name: 'vendor', label: 'Vendor / payee' }, { name: 'receipt_ref', label: 'Receipt / invoice #' }, { name: 'description', label: 'Description', type: 'textarea', span: true, rows: 2, help: 'What was bought. Do not write the client\'s name here: finance reads this to approve the spending. Choose the client above instead.' },
     // Only when this item's opioid settlement category differs from its fund's; blank takes the fund's.
     ...settlementFields('if different from the fund\'s'),
   ], { values: values || {}, submitText: isNew ? 'Submit expenditure' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {

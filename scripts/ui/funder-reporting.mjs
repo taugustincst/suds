@@ -38,7 +38,7 @@ await sup.keyboard.press('Escape'); await settle(sup);
 eq((await api(sup, 'POST', '/api/interventions', { type: 'outreach', occurred_at: new Date().toISOString(), funding_source_id: null })).status, 201, 'a visit charged to no fund');
 const today = new Date().toISOString().slice(0, 10); const yearStart = `${today.slice(0, 4)}-01-01`;
 await sup.goto(`${base}/#/funder?from=${yearStart}&to=${today}`); await settle(sup);
-// A supervisor's first view is the programme's own submission to its funder, with exact counts (1.12.5).
+// A supervisor's first view is the programme's own submission to its funder, with exact counts (1.13.0).
 eq(await sup.$eval('[data-counting-mode]', e => e.dataset.purpose), 'submission', 'a supervisor\'s funder report opens as the submission to the funder');
 eq(await sup.$eval('[data-counting-mode]', e => e.dataset.countingMode), 'exact', 'with exact counts');
 eq(await sup.$eval('[data-run-kind] .run-kind-title', e => e.textContent), 'Submission to your funder — not for publication', 'and says prominently what kind of run it is');
@@ -94,7 +94,9 @@ eq(await sup.$eval('select[data-hr-kind] option[value=publication]', o => o.disa
 const [nd] = await Promise.all([sup.waitForEvent('download'), sup.click('[data-ndp-export=xlsx]')]);
 const nwb = readWorkbook(fs.readFileSync(await nd.path()));
 ok(/naloxone-ndp-log.*exact-counts/.test(nd.suggestedFilename()), 'the NDP log downloads, the programme\'s own submission', nd.suggestedFilename());
-eq((nwb[0].rows[0] || []).slice(0, 5).join(','), 'Date,Entry,Site type,Recipient type,Kits distributed', 'with the NDP-style columns');
+// 1.14: the day log (the programme's submission) also says which naloxone product went out (docs/SUPPLIES.md).
+eq((nwb[0].rows[0] || []).slice(0, 6).join(','), 'Date,Entry,Site type,Recipient type,Naloxone product,Kits distributed', 'with the NDP-style columns, the naloxone product among them');
+ok(await sup.$('[data-ssp-row] [data-ssp-export=xlsx]'), 'and the syringe services summary is offered beside them');
 ok(nwb.some(s => s.name === 'About' && s.rows.some(r => /not the official NDP template/.test(r.join(' ')))), 'labelled as not the official NDP template');
 const [sd] = await Promise.all([sup.waitForEvent('download'), sup.click('[data-settlement-export=xlsx]')]);
 const swb = readWorkbook(fs.readFileSync(await sd.path()));
@@ -113,9 +115,10 @@ await sup.keyboard.press('Escape'); await settle(sup);
 const ro = await signIn('rreader', 'Navigator2026!!');
 await ro.goto(base + '/#/reports'); await settle(ro);
 ok(!(await ro.$('[data-harm-reduction-reports]')), 'a read-only account is not offered the exports');
-// Read-only and finance run publication releases only (server/auth.js reportRunAllowed): the funder report
-// opens on the last quarter that has ended, with no custom range, fund or counts choice to make.
-for (const [page, who] of [[ro, 'read-only'], [await signIn('afinance', 'Navigator2026!!'), 'finance']]) {
+// Read-only runs publication releases only (server/auth.js reportRunAllowed): the funder report opens on the
+// last quarter that has ended, with no custom range, fund or counts choice to make.
+{
+  const page = ro; const who = 'read-only';
   await page.goto(`${base}/#/funder`); await settle(page);
   eq(await page.$eval('[data-purpose]', e => e.dataset.purpose).catch(() => null), 'publication', `${who}: the funder report opens on a publication release`);
   ok(!(await page.$('[data-custom-range]')), `${who}: no custom range or fund filter`);
@@ -125,13 +128,68 @@ for (const [page, who] of [[ro, 'read-only'], [await signIn('afinance', 'Navigat
   await page.goto(`${base}/#/funder?from=${yearStart}&to=${today}`); await settle(page);
   ok(/publication release/i.test(await page.textContent('[data-funder-refused]').catch(() => '')), `${who}: an internal run is refused with a clear message`);
   ok(await page.$('[data-publishable-periods] [data-period=quarter]'), `${who}: and offered the periods it can run`);
-  if (who === 'finance') {
-    await page.goto(`${base}/#/reports?from=${yearStart}&to=${today}`); await settle(page);
-    ok(await page.$('[data-hr-publication-only]'), 'finance: for a range that is not a publication period, the harm-reduction exports say why they are not offered');
-    ok(!(await page.$('[data-ndp-export]')), 'finance: and the NDP buttons are not offered');
-  }
-  await page.context().close();
 }
+// Finance writes the funder report (reports:funder, 1.14.0): the programme's own submission, exact aggregate
+// counts, for any range and any fund, without opening a client record.
+const finp = await signIn('afinance', 'Navigator2026!!');
+await finp.goto(`${base}/#/funder`); await settle(finp);
+eq(await finp.$eval('[data-counting-mode]', e => e.dataset.purpose).catch(() => null), 'submission', 'finance: the funder report opens as the submission to the funder');
+eq(await finp.$eval('[data-counting-mode]', e => e.dataset.countingMode).catch(() => null), 'exact', 'finance: with exact counts');
+ok(await finp.$('[data-custom-range]'), 'finance: a custom range and fund filter');
+ok(await finp.$('[data-counts]'), 'finance: and the counts choice');
+ok(!(await finp.$('[data-publication-only]')), 'finance: not told it runs publication releases only');
+await finp.selectOption('[data-custom-range] select[aria-label="Funding source"]', fund.id);
+await finp.fill('[data-custom-range] input[aria-label=From]', yearStart); await finp.fill('[data-custom-range] input[aria-label=To]', today);
+await finp.click('[data-custom-range] button.primary'); await settle(finp);
+ok(await until(() => finp.url().includes(`funding_source_id=${fund.id}`)), 'finance: one fund, a custom range', finp.url());
+eq(await finp.$eval('[data-counting-mode]', e => e.dataset.purpose).catch(() => null), 'submission', 'finance: a single fund\'s run is the submission, not refused');
+const [ffx] = await Promise.all([finp.waitForEvent('download'), finp.click('[data-funder-export=xlsx]')]);
+ok(/exact-counts\.xlsx$/.test(ffx.suggestedFilename()), 'finance: the fund\'s submission exports with exact counts', ffx.suggestedFilename());
+const fabout = readWorkbook(fs.readFileSync(await ffx.path())).find(x => x.name === 'About');
+ok(fabout && fabout.rows.some(r => /no names, client codes or dates of service/.test(r.join(' '))), 'finance: and the file is aggregate counts only');
+const someClient = (await api(admin, 'GET', '/api/clients?limit=1')).data.clients[0];
+eq((await api(finp, 'GET', `/api/clients/${someClient.id}`)).status, 403, 'finance: still no client record to open');
+await finp.goto(`${base}/#/reports?from=${yearStart}&to=${today}`); await settle(finp);
+ok(await finp.$('[data-ndp-export=xlsx]'), 'finance: the NDP log is offered for any range');
+ok(await finp.$('select[data-hr-kind]'), 'finance: as the submission, with the kind of file to choose');
+ok(!(await finp.$('[data-hr-publication-only]')), 'finance: no "publication release only" note');
+// The DHCS settlement expenditure layout, and a county's own template set up without code.
+const [dl] = await Promise.all([finp.waitForEvent('download'), finp.click('[data-settlement-layout=dhcs]')]);
+ok(/dhcs-layout/.test(dl.suggestedFilename()), 'finance: the DHCS settlement expenditure layout downloads', dl.suggestedFilename());
+const dwb = readWorkbook(fs.readFileSync(await dl.path()));
+ok((dwb[0].rows[0] || []).includes('Exhibit E category (opioid remediation use)'), 'with the DHCS fields as its columns', (dwb[0].rows[0] || []).join(' | '));
+ok(dwb.some(x => x.name === 'About' && x.rows.some(r => /For the program to write/.test(r.join(' ')))), 'and its About sheet says what the program must still write');
+await finp.click('[data-county-template]'); await finp.waitForSelector('[data-county-template-form]');
+await finp.fill('#county-template-name', 'Harbor County quarterly report');
+await finp.fill('#county-col-0', 'Strategy');
+await finp.click('text=+ Add a column');
+await finp.fill('#county-col-1', 'Dollars'); await finp.selectOption('#county-src-1', 'approved_amount');
+await finp.click('text=+ Add a column');
+await finp.fill('#county-col-2', 'Narrative');
+await finp.click('[data-county-template-save]'); await settle(finp);
+ok(!(await finp.$('[data-county-template-form]')), 'finance: the county template is saved');
+const [cl] = await Promise.all([finp.waitForEvent('download'), finp.click('[data-settlement-layout=county]')]);
+ok(/county-template/.test(cl.suggestedFilename()), 'finance: the county template downloads', cl.suggestedFilename());
+eq((readWorkbook(fs.readFileSync(await cl.path()))[0].rows[0] || []).join(','), 'Strategy,Dollars,Narrative', 'in the county\'s own columns');
+await finp.context().close();
+
+// ---- publication releases switched off (Settings › Program › Modules) ----
+eq((await api(admin, 'PUT', '/api/admin/settings', { module_publication: '0' })).status, 200, 'an administrator switches publication releases off');
+{
+  const sp = await signIn('jwalker', 'Navigator2026!!');
+  await sp.goto(`${base}/#/funder?from=${yearStart}&to=${today}`); await settle(sp);
+  eq(await sp.$eval('[data-counting-mode]', e => e.dataset.purpose).catch(() => null), 'submission', 'publication off: the supervisor\'s submission is unaffected');
+  ok(!(await sp.$('[data-prepare-publication]')), 'publication off: no "Prepare a publication release"');
+  ok(await sp.$('[data-publication-off]'), 'publication off: the page says so');
+  await sp.goto(`${base}/#/reports?from=${yearStart}&to=${today}`); await settle(sp);
+  ok(/switched off/.test(await sp.$eval('select[data-hr-kind] option[value=publication]', o => o.textContent).catch(() => '')), 'publication off: the harm-reduction files offer no publication release');
+  const rp = await signIn('rreader', 'Navigator2026!!');
+  await rp.goto(`${base}/#/funder`); await settle(rp);
+  ok(/Publication releases are switched off/.test(await rp.textContent('[data-funder-refused]').catch(() => '')), 'publication off: read-only is told why there is nothing to run');
+  ok(!(await rp.$('[data-publishable-periods]')), 'publication off: and offered no periods');
+  await sp.context().close(); await rp.context().close();
+}
+eq((await api(admin, 'PUT', '/api/admin/settings', { module_publication: null })).status, 200, 'publication releases back on');
 await api(admin, 'PUT', '/api/admin/settings', { default_fund_id: null });
 
 // ---- no programme default fund: the warning says where to set one ----

@@ -12,7 +12,9 @@ function open(dbPath = config.dbPath) {
   db = new DatabaseSync(dbPath);
   try {
     db.exec('PRAGMA busy_timeout = 5000');
+    db.exec(SECURE_DELETE);
     initialise(db, fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'), dbPath);
+    sealSnapshots(dbPath);
   } catch (e) {
     // A file this build refuses (a newer schema, a failed migration) must not be left as the open handle:
     // every later db.get() would then serve the rejected database as if the open had succeeded.
@@ -34,6 +36,7 @@ function openWith(bytes) {
   openedPath = null;
   db = bytes ? new DatabaseSync(':memory:', bytes) : new DatabaseSync(':memory:');
   try { db.exec('PRAGMA busy_timeout = 5000'); } catch {}
+  try { db.exec(SECURE_DELETE); } catch {}
   initialise(db, safeSchema());
   return db;
 }
@@ -49,12 +52,24 @@ const addColumn = (d, table, col, def) => { const cols = d.prepare(`PRAGMA table
 const tableCols = (d, table) => d.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
 const tableExists = (d, table) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(table);
 
+// Deleted and overwritten content is zeroed, not left in the file's free pages and freelist, where anyone with
+// the database file could read it back without the key: a plaintext column dropped by encryptColumn, a row
+// the retention purge removed, the previous value of an edited field. Security review of 1.13.0, finding 3
+// (all 50 file names of a 1.12 install were still readable in suds.db after migration 42 encrypted them).
+// Measured on a SUDS-like write mix (20,000 ~600-byte rows inserted one transaction each, half updated, a
+// quarter deleted, WAL mode): within the run-to-run noise of about 7% either way, so it is on for every
+// connection, not only around migrations (docs/security/ENCRYPTION-AND-KEYS.md).
+const SECURE_DELETE = 'PRAGMA secure_delete = ON';
+// Set by encryptColumn when it moved a column: the upgrade then ends with a VACUUM (scrubFreePages).
+let encryptedColumns = 0;
+
 // Move a plaintext column's contents into an encrypted column and drop the plaintext one.
 // No-op on a database where schema.sql already created the encrypted form (a fresh install).
 function encryptColumn(d, table, oldCol, newCol) {
   if (!tableExists(d, table)) return;
   const cols = tableCols(d, table);
   if (!cols.includes(oldCol)) return;
+  encryptedColumns++;
   const { encrypt } = require('./crypto');
   addColumn(d, table, newCol, 'TEXT');
   const rows = d.prepare(`SELECT id, ${oldCol} AS v FROM ${table} WHERE ${oldCol} IS NOT NULL AND ${oldCol} <> ''`).all();
@@ -570,7 +585,66 @@ const migrations = [
     encryptColumn(d, 'court_orders', 'document_ref', 'document_ref_enc');
     encryptColumn(d, 'disclosure_agreements', 'document_ref', 'document_ref_enc');
   },
+  // 44: SUPRT-A records for a State Opioid Response grant (server/suprt.js). A new table; nothing to backfill.
+  //     Self-contained and idempotent, so it can be renumbered when merged beside other 1.14.0 migrations.
+  (d) => {
+    d.exec(`CREATE TABLE IF NOT EXISTS suprt_assessments (id TEXT PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      assessment_type TEXT NOT NULL CHECK (assessment_type IN ('baseline','reassessment','annual','closeout')), assessment_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','complete')), answers_enc TEXT, derived_keys TEXT, exported_at TEXT,
+      created_by TEXT REFERENCES users(id), updated_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_suprt_assessments_client ON suprt_assessments(client_id, assessment_date)`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_suprt_assessments_date ON suprt_assessments(assessment_date)`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_suprt_assessments_updated ON suprt_assessments(updated_at)`);
+  },
+  // 45: supplies by item, site and lot (docs/SUPPLIES.md). The single-number cupboard (supply_stock) becomes
+  //     items (supply_items), sites (supply_sites; one, "Main office", to start with) and an append-only stock
+  //     ledger (supply_ledger) whose sum is what is on hand; each old count is carried in as an opening
+  //     balance at the main office, and each old item keeps its id. A visit records any item it hands out
+  //     (intervention_supplies), the site it drew from, and the syringes and sharps brought back.
+  //     Self-contained and idempotent: every step checks what is already there.
+  (d) => migrateSupplies(d, safeSchema()),
 ];
+
+// The site every install starts with: created with this fixed id on a fresh database and by migration 45, so
+// an office and every device that syncs with it hold the same row (a device never creates sites of its own).
+const MAIN_SITE_ID = 'site-main';
+function ensureMainSite(d) {
+  d.prepare(`INSERT OR IGNORE INTO supply_sites(id,name,kind,sort_order) VALUES(?,?,?,0)`).run(MAIN_SITE_ID, 'Main office', 'office');
+}
+function migrateSupplies(d, schemaText) {
+  for (const t of ['supply_sites', 'supply_items', 'intervention_supplies', 'supply_ledger']) {
+    const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+    if (!m) throw new Error(`migration 45: no definition for ${t} in schema`);
+    d.exec(m[0]);
+  }
+  for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_(supply_sites|supply_items|intervention_supplies|supply_ledger)_/.test(line.trim())) d.exec(line.trim());
+  addColumn(d, 'users', 'default_site_id', 'TEXT');
+  addColumn(d, 'interventions', 'supply_site_id', 'TEXT');
+  addColumn(d, 'interventions', 'syringes_returned', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'interventions', 'returns_estimated', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'interventions', 'sharps_returned_litres', 'REAL');
+  ensureMainSite(d);
+  if (!tableExists(d, 'supply_stock')) return;
+  // The old cupboard: one row per item with a count. The item keeps its id (a device that still shows the
+  // old row by id finds the item), its category is read from its name, and a count above zero becomes an
+  // opening balance at the main office, dated the day it was last changed and recorded by who changed it.
+  const { categoryFromName, unitFor } = require('./supply-names');
+  const anyone = d.prepare(`SELECT id FROM users ORDER BY CASE role WHEN 'admin' THEN 0 WHEN 'supervisor' THEN 1 ELSE 2 END, created_at LIMIT 1`).get();
+  const known = new Set(d.prepare(`SELECT id FROM users`).all().map((u) => u.id));
+  const addItem = d.prepare(`INSERT OR IGNORE INTO supply_items(id,name,category,unit,quick,sort_order,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`);
+  const addEntry = d.prepare(`INSERT OR IGNORE INTO supply_ledger(id,item_id,site_id,kind,quantity,lot_number,expires_on,occurred_on,reason,user_id,created_at,updated_at) VALUES(?,?,?,'opening',?,'',NULL,?,?,?,?,?)`);
+  const now = new Date().toISOString();
+  let order = 0;
+  for (const s of d.prepare(`SELECT * FROM supply_stock ORDER BY item COLLATE NOCASE`).all()) {
+    const category = categoryFromName(s.item);
+    const by = s.updated_by && known.has(s.updated_by) ? s.updated_by : (anyone ? anyone.id : null);
+    addItem.run(s.id, String(s.item).trim(), category, unitFor(category, s.item), ['naloxone', 'fentanyl_test_strips'].includes(category) ? 1 : 0, order++, by, s.created_at || now, now);
+    if (Number(s.quantity) > 0) addEntry.run(`opening-${s.id}`, s.id, MAIN_SITE_ID, Math.trunc(Number(s.quantity)), String(s.updated_at || now).slice(0, 10), 'carried over from the single-number supply count', by, now, now);
+  }
+  d.exec(`DROP TABLE supply_stock`);
+  d.exec(`DELETE FROM tombstones WHERE table_name='supply_stock'`);
+}
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's
 // tables would try to index columns that do not exist yet. test/migrations.test.js asserts the two
@@ -580,11 +654,19 @@ function initialise(d, schemaText, dbPath) {
   if (fresh) {
     d.exec(schemaText);
     d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
+    // Nothing was ever deleted from a new database, so there is nothing in its free pages to scrub.
+    d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('${SCRUBBED}',?)`).run(new Date().toISOString());
     // A new install is a harm-reduction & outreach programme until someone says otherwise (the setup
     // wizard asks; Settings › Programme changes it). server/programme.js.
     d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('programme_profile',?)`).run(require('./programme').DEFAULT_PROFILE);
+    ensureMainSite(d);
   } else {
+    encryptedColumns = 0;
     migrate(d, dbPath);
+    // An upgrade that encrypted a column, and (once) any database from before 1.13.1 — a 1.13.0 install at
+    // schema 43 already carries the plaintext its upgrades left in free pages — is vacuumed. Data hygiene,
+    // not schema: a setting records it, like reindexNameParts below; no migration.
+    if (encryptedColumns || !d.prepare(`SELECT 1 FROM settings WHERE key='${SCRUBBED}'`).get()) scrubFreePages(d, encryptedColumns ? 'column encrypted' : 'once, after upgrading to 1.13.1');
     // A database from before programme profiles: decided once from what it holds, so an upgrade never hides
     // a module the programme was using (server/programme.js defaultForExisting). Data, not schema.
     if (!d.prepare(`SELECT 1 FROM settings WHERE key='programme_profile'`).get()) {
@@ -593,6 +675,24 @@ function initialise(d, schemaText, dbPath) {
   }
   reindexNameParts(d);
   ensureIndexes(d, schemaText);
+}
+
+// Rebuild the file so nothing deleted survives in it: VACUUM writes every live page afresh and drops the free
+// ones (secure_delete zeroes what is deleted from now on, but not what earlier versions left behind), then the
+// WAL is checkpointed and truncated so the old pages are not kept there either. A failure (no disk space for
+// the copy VACUUM needs) is logged and leaves the setting unset, to be tried at the next start.
+const SCRUBBED = 'free_pages_scrubbed_at';
+function scrubFreePages(d, reason) {
+  const t0 = Date.now();
+  try {
+    d.exec('VACUUM');
+    try { d.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {}
+    d.prepare(`INSERT INTO settings(key,value) VALUES('${SCRUBBED}',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(new Date().toISOString());
+    try { d.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {}
+    console.log(`[suds] ${JSON.stringify({ event: 'db.free_pages_scrubbed', reason, ms: Date.now() - t0 })}`);
+  } catch (e) {
+    console.warn(`[suds] ${JSON.stringify({ event: 'db.free_pages_scrub_failed', reason, error: String(e && e.message || e).slice(0, 200) })}`);
+  }
 }
 
 // Once per database: a compound surname ("Quintero-Vasquez") is found by either part, because its
@@ -670,6 +770,67 @@ function snapshotBeforeMigration(d, dbPath, fromVersion) {
     for (const f of old.slice(0, Math.max(0, old.length - SNAPSHOTS_KEPT))) fs.unlinkSync(path.join(dir, f));
   } catch {}
   return file;
+}
+
+// After a successful open (every migration applied and checked), the snapshots are sealed: each plaintext
+// one is encrypted with the backup key into `<name>.enc`, the frame every SUDS backup uses (it is restored
+// like one: `node scripts/backup.js --restore <file>.enc`), and the plaintext is overwritten and removed. A
+// sealed snapshot is kept SNAPSHOT_KEEP_DAYS, then deleted; off-host backups are the long-term copies. So a
+// plaintext snapshot exists only from the start of an upgrade until the upgrade has succeeded; if one fails,
+// it stays as it is for the operator (docs/INSTALL.md), and is sealed at the next successful start. Up to
+// 1.13.0 they stayed in plaintext, five at a time, forever: every value a later migration encrypted was
+// readable in them (security review of 1.13.0, finding 3). Best effort: a failure is logged, never fatal.
+const SNAPSHOT_KEEP_DAYS = 14;
+function sealSnapshots(dbPath) {
+  if (!dbPath || dbPath === ':memory:') return;
+  const backup = require('./backup');
+  sealRestoreAsides(dbPath, backup);
+  const dir = path.join(path.dirname(dbPath), 'pre-migration');
+  let files; try { files = fs.readdirSync(dir); } catch { return; }
+  const base = path.basename(dbPath) + '.v';
+  for (const f of files.filter(n => n.startsWith(base) && n.endsWith('.db'))) {
+    const plain = path.join(dir, f); const sealed = `${plain}.enc`;
+    try {
+      try { fs.unlinkSync(sealed); } catch {}
+      backup.encryptFileSync(plain, sealed);
+      backup.secureUnlink(plain);
+      console.log(`[suds] ${JSON.stringify({ event: 'db.snapshot_sealed', file: path.basename(sealed) })}`);
+    } catch (e) {
+      console.warn(`[suds] ${JSON.stringify({ event: 'db.snapshot_seal_failed', file: f, error: String(e && e.message || e).slice(0, 200) })}`);
+    }
+  }
+  const cutoff = Date.now() - SNAPSHOT_KEEP_DAYS * 86400000;
+  for (const f of files.filter(n => n.startsWith(base) && n.endsWith('.db.enc'))) {
+    const p = path.join(dir, f);
+    try { if (fs.statSync(p).mtimeMs < cutoff) { fs.unlinkSync(p); console.log(`[suds] ${JSON.stringify({ event: 'db.snapshot_expired', file: f, days: SNAPSHOT_KEEP_DAYS })}`); } } catch {}
+  }
+}
+
+// The databases a browser restore set aside (`suds.db.before-restore-<time>`, server/backup.js restoreHeld):
+// sealed there as soon as the restore has taken; any still plain (set aside by 1.13.0 or earlier, or a seal
+// that failed) are sealed here, and sealed ones are deleted after SNAPSHOT_KEEP_DAYS like the snapshots.
+function sealRestoreAsides(dbPath, backup) {
+  // Not while a restore is running: it reopens the database it just wrote, and its rollback needs the copy it
+  // set aside in plaintext until it has finished; it seals that copy itself.
+  if (require('./backup-lock').current()?.name === 'restore') return;
+  const dir = path.dirname(dbPath); const base = path.basename(dbPath) + '.before-restore-';
+  let files; try { files = fs.readdirSync(dir).filter(n => n.startsWith(base)); } catch { return; }
+  const cutoff = Date.now() - SNAPSHOT_KEEP_DAYS * 86400000;
+  for (const f of files) {
+    const p = path.join(dir, f);
+    try {
+      if (f.endsWith('.enc')) {
+        if (fs.statSync(p).mtimeMs < cutoff) { fs.unlinkSync(p); console.log(`[suds] ${JSON.stringify({ event: 'db.restore_aside_expired', file: f, days: SNAPSHOT_KEEP_DAYS })}`); }
+        continue;
+      }
+      const sealed = `${p}.enc`;
+      try { fs.unlinkSync(sealed); } catch {}
+      backup.encryptFileSync(p, sealed); backup.secureUnlink(p);
+      console.log(`[suds] ${JSON.stringify({ event: 'db.restore_aside_sealed', file: path.basename(sealed) })}`);
+    } catch (e) {
+      console.warn(`[suds] ${JSON.stringify({ event: 'db.restore_aside_seal_failed', file: f, error: String(e && e.message || e).slice(0, 200) })}`);
+    }
+  }
 }
 
 // A stable identity for one foreign_key_check violation, so the same pre-existing orphan can be recognised
@@ -812,4 +973,4 @@ function setSetting(key, value) {
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
+module.exports = { open, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };

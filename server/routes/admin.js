@@ -23,6 +23,9 @@ const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'progra
   // Reporting (server/routes/reports.js, server/harm-reduction-reports.js): the programme's default fund, the
   // funder report's small-cell threshold, and how many naloxone doses one distributed kit holds.
   'default_fund_id', 'small_cell_threshold', 'naloxone_doses_per_kit',
+  // SUPRT-A (server/suprt.js): the SOR grant and site IDs every record carries, and whether the reassessment
+  // is due at 3 or 6 months.
+  'suprt_grant_id', 'suprt_site_id', 'suprt_reassessment_months',
   // The programme profile and its module switches (server/programme.js): presentation, not permissions.
   ...require('../programme').SETTING_KEYS];
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
@@ -88,6 +91,8 @@ module.exports = (r) => {
         if (k === 'default_fund_id' && v !== '' && !db.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v)) throw badRequest('default_fund_id must be an active funding source');
         // Under 2 would suppress nothing at all; over 50 would suppress nearly every breakdown a small programme has.
         if (k === 'small_cell_threshold' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 2 && Number(v) <= 50)) throw badRequest('small_cell_threshold must be a whole number from 2 to 50');
+        if (k === 'suprt_reassessment_months' && v !== '' && !['3', '6'].includes(v)) throw badRequest('suprt_reassessment_months must be 3 or 6');
+        if (['suprt_grant_id', 'suprt_site_id'].includes(k) && v !== '' && !/^[A-Za-z0-9._ -]{1,50}$/.test(v)) throw badRequest(`${k} must be 1 to 50 letters, digits, spaces, dots, dashes or underscores`);
         if (k === 'naloxone_doses_per_kit' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 20)) throw badRequest('naloxone_doses_per_kit must be a whole number from 1 to 20');
         // Blank means "back to the default", so the row goes rather than an empty string being stored:
         // policy() read '' in mfa_required_roles as "no role needs MFA". Nothing here ever stores ''.
@@ -268,12 +273,14 @@ module.exports = (r) => {
     return { ok: true, ...out, note: 'Everyone will need to sign in again. Devices should sync after this.' };
   });
   // The keys open every backup, so a session alone (a cookie on a workstation left unlocked) is not enough:
-  // the administrator gives the password or authenticator code again, or confirms within the few minutes after
-  // the last time they did (auth.verifySigner, the rule for signing a note; SSO-only accounts confirm with the
-  // identity provider). A POST, so no link, prefetch or image tag can fetch it. Every attempt is audited.
+  // the administrator gives the password or authenticator code again with every download. There is no
+  // window after signing in or signing a note, as there is for a signature (1.13.1, security review of
+  // 1.13.0, design weakness 6). An account linked to single sign-on may instead confirm with the identity
+  // provider, and that confirmation covers one download in the next five minutes (auth.verifySigner
+  // `fresh`). A POST, so no link, prefetch or image tag can fetch it. Every attempt is audited.
   r.post('/api/admin/keys-backup', auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
     if (config.keySource !== 'file') throw badRequest('Keys are provided by the environment on this server');
-    const method = await auth.verifySigner(ctx, ctx.body || {}, { action: 'keys.download.failed', purpose: 'download the key backup' });
+    const method = await auth.verifySigner(ctx, ctx.body || {}, { action: 'keys.download.failed', purpose: 'download the key backup', fresh: true });
     audit.log({ user: ctx.user, action: 'keys.download', ip: ctx.ip, details: { method } });
     // Remembered so the dashboard can stop asking — and so an admin can see when it was last done.
     db.setSetting('keys_backup_at', db.now());
@@ -282,7 +289,9 @@ module.exports = (r) => {
 
   // Fictional sample data (safe in production: only when the database has no real clients yet, removable in one click)
   const demo = require('../demo');
-  r.get('/api/admin/demo', auth.requireAuth, auth.requirePerm('settings:manage'), () => demo.offer());
+  // home_offer: whether Home puts a "Load sample data" banner in front of the administrator. Not on a production
+  // server: its Home is where the programme's real work starts, and the offer stays under Settings.
+  r.get('/api/admin/demo', auth.requireAuth, auth.requirePerm('settings:manage'), () => ({ ...demo.offer(), home_offer: !config.isProd }));
   r.post('/api/admin/demo', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
     const refused = demo.loadRefusal(demo.status());
     if (refused) throw badRequest(refused);

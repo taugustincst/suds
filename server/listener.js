@@ -11,6 +11,7 @@ const mdns = require('./mdns');
 const SUDS_NAME = 'suds';
 
 let server = null; let current = null;
+const KEEP_ALIVE_MS = 65_000;
 
 function lanAddresses() {
   const out = [];
@@ -23,6 +24,10 @@ function make(handler, { host, port, certPath, keyPath }) {
   if (certPath && keyPath) s = https.createServer({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath), minVersion: 'TLSv1.2' }, handler);
   else s = http.createServer(handler);
   s.headersTimeout = 30_000; s.requestTimeout = 60_000;
+  // An idle keep-alive connection is kept longer than a reverse proxy or load balancer keeps its own (60 s is
+  // the usual default). With Node's 5 s the server could close a connection at the moment the proxy reused it
+  // for the next request, which the proxy reports as a 502 (and a fetch() client as "fetch failed").
+  s.keepAliveTimeout = KEEP_ALIVE_MS;
   return new Promise((resolve, reject) => {
     s.once('error', reject);
     s.listen(port, host, () => { s.removeListener('error', reject); resolve(s); });
@@ -109,4 +114,4 @@ function stop(cb) {
   try { server.closeAllConnections?.(); } catch {}
 }
 
-module.exports = { start, relisten, describe, stop, lanAddresses };
+module.exports = { KEEP_ALIVE_MS, start, relisten, describe, stop, lanAddresses };

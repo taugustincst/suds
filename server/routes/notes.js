@@ -7,13 +7,10 @@ const { badRequest, notFound, forbidden } = require('../http');
 const { validate, paging } = require('../validate');
 const { encrypt, decrypt, sha256, uuid } = require('../crypto');
 
-const shape = {
-  client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: ['clinical', 'admin'] }, format: { type: 'string', list: 'NOTE_FORMATS' },
-  title: { type: 'string', maxLen: 200 }, content: { type: 'string', required: true, maxLen: 50000 }, structured: { type: 'object' }, occurred_at: { type: 'datetime', required: true },
-  intervention_id: { type: 'string' }, call_id: { type: 'string' }, part2_protected: { type: 'boolean' }, counseling_note: { type: 'boolean' }, cosign_requested: { type: 'boolean' }, source: { type: 'string', enum: ['manual', 'pocket_ai', 'onenote', 'import', 'api'] }, source_ref: { type: 'string', maxLen: 300 },
-  // The problem-list entries this note addresses (CalAIM: a progress note ties the service to the problem list).
-  problem_ids: { type: 'array', maxLen: 30, of: 'string' },
-};
+// A note's fields, and what they must satisfy (a counseling note is clinical; linked problems are this client's;
+// a draft is its author's to change): the table's rules, server/rules/notes.js, which sync push applies too.
+const rules = require('../rules');
+const shape = rules.forTable('notes').fields;
 
 // Problem ids must be on this client's problem list; stored as a JSON array (ids only), or null for none.
 function problemIds(ids, clientId) {
@@ -32,10 +29,6 @@ function linkedProblems(ctx, n) {
 }
 
 function kindPerm(kind, rw) { return `notes:${kind}:${rw}`; }
-// A SUD counseling note (42 CFR §2.11) is a clinician's own analysis of a counselling session: it can only
-// be a clinical note, and is disclosed only under a consent given for counseling notes alone (disclosure.js).
-function checkCounseling(kind, counseling) { if (counseling && kind !== 'clinical') throw badRequest('Only a clinical note can be a SUD counseling note'); }
-
 // The electronic-signature act: the signer's confirmation of the attestation, with their identity proved
 // by the password (or authenticator code) given now or within the last few minutes (auth.verifySigner).
 // Checked the same way for a signature and a countersignature; returns how identity was established.
@@ -134,7 +127,7 @@ module.exports = (r) => {
     if (!auth.hasPerm(ctx.user, kindPerm(v.kind, 'write'))) throw forbidden(`You cannot author ${v.kind} notes`);
     if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound('Client not found');
     auth.assertClientAccess(ctx, v.client_id);
-    checkCounseling(v.kind, v.counseling_note);
+    rules.assertWrite('notes', rules.toColumns('notes', v), ctx);
     const id = uuid();
     const linked = problemIds(v.problem_ids, v.client_id) ?? null;
     const author = db.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
@@ -161,10 +154,10 @@ module.exports = (r) => {
     const n = load(ctx, ctx.params.id);
     if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
     if (n.status !== 'draft') throw badRequest('Signed notes cannot be edited; add an addendum instead');
-    if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden('Only the author can edit a draft');
+    rules.assertEditable('notes', ctx, n); // a draft is its author's, or a manager's
     require('../crud').assertFresh(ctx, n, 'note');
     const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids }, { partial: true, existing: n });
-    checkCounseling(n.kind, v.counseling_note);
+    rules.assertWrite('notes', { id: n.id, ...rules.toColumns('notes', v) }, ctx, { existing: n });
     const sets = []; const params = [];
     for (const k of ['format', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'cosign_requested']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
     if (v.title !== undefined) { sets.push('title_enc=?'); params.push(v.title ? encrypt(v.title) : null); }
@@ -288,7 +281,7 @@ module.exports = (r) => {
   r.post('/api/notes/:id/addenda', auth.requireAuth, (ctx) => {
     const n = load(ctx, ctx.params.id);
     if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
-    const { content, reason } = validate(ctx.body, { content: { type: 'string', required: true, maxLen: 20000 }, reason: { type: 'string', maxLen: 300 } });
+    const { content, reason } = validate(ctx.body, require('../rules').forTable('note_addenda').shape());
     const id = uuid();
     db.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason_enc) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt(content), reason ? encrypt(reason) : null);
     if (n.status === 'signed') db.run(`UPDATE notes SET status='amended', updated_at=? WHERE id=?`, db.now(), n.id);

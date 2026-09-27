@@ -96,12 +96,10 @@ function assertAgreementsEditable() {
 // a consent and stops the Part 2 labelling: a decision counsel makes, recorded with its reason.
 const MIN_OFF_REASON = 20;
 
-const ORDER_SHAPE = {
-  order_type: { type: 'string', required: true, enum: C.COURT_ORDER_TYPES }, court: { type: 'string', required: true, maxLen: 200 }, case_ref: { type: 'string', maxLen: 120 },
-  issued_at: { type: 'date', required: true }, expires_at: { type: 'date' }, recipient: { type: 'string', maxLen: 300 }, purpose: { type: 'string', required: true, maxLen: 500 },
-  scope: { type: 'string', required: true, maxLen: 1000 }, findings_recorded: { type: 'boolean' }, notice_requirement_met: { type: 'boolean' }, covers_counseling_notes: { type: 'boolean' },
-  document_ref: { type: 'string', maxLen: 300 },
-};
+// A court order's fields, and a notice's, and what they must satisfy: the tables' rules (server/rules/court_orders.js,
+// part2_notices.js), which sync push applies to a device's rows as well.
+const rules = require('../rules');
+const ORDER_SHAPE = rules.forTable('court_orders').fields;
 
 module.exports = (r) => {
   // ---- programme settings and the §2.22 notice text ----
@@ -155,9 +153,8 @@ module.exports = (r) => {
   r.post('/api/clients/:id/part2-notices', auth.requireAuth, auth.requirePerm('consents:write'), (ctx) => {
     if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
     auth.assertClientAccess(ctx, ctx.params.id);
-    const v = validate(ctx.body, { given_at: { type: 'date', required: true }, method: { type: 'string', required: true, enum: C.PART2_NOTICE_METHODS }, acknowledged: { type: 'boolean' }, ack_refused: { type: 'boolean' }, notes: { type: 'string', maxLen: 2000 } });
-    if (v.given_at > new Date().toISOString().slice(0, 10)) throw badRequest('The notice cannot have been given in the future');
-    if (v.acknowledged && v.ack_refused) throw badRequest('Either the client signed the acknowledgement or declined to; not both');
+    const v = validate(ctx.body, rules.forTable('part2_notices').shape());
+    rules.assertWrite('part2_notices', rules.toColumns('part2_notices', v), ctx);
     const id = uuid();
     db.run(`INSERT INTO part2_notices(id,client_id,given_at,method,notice_version,acknowledged,ack_refused,notes_enc,given_by) VALUES(?,?,?,?,?,?,?,?,?)`,
       id, ctx.params.id, v.given_at, v.method, db.getSetting('part2_notice_version', '1'), v.acknowledged ? 1 : 0, v.ack_refused ? 1 : 0, v.notes ? encrypt(v.notes) : null, ctx.user.id);
@@ -186,7 +183,7 @@ module.exports = (r) => {
     if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
     auth.assertClientAccess(ctx, ctx.params.id);
     const v = validate(ctx.body, ORDER_SHAPE);
-    if (v.expires_at && v.expires_at < v.issued_at) throw badRequest('An order cannot expire before it was issued');
+    rules.assertWrite('court_orders', rules.toColumns('court_orders', v), ctx);
     const id = uuid();
     db.run(`INSERT INTO court_orders(id,client_id,order_type,court_enc,case_ref_enc,issued_at,expires_at,recipient_enc,purpose_enc,scope_enc,findings_recorded,notice_requirement_met,covers_counseling_notes,document_ref_enc,recorded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, ctx.params.id, v.order_type, encrypt(v.court), v.case_ref ? encrypt(v.case_ref) : null, v.issued_at, v.expires_at || null, v.recipient ? encrypt(v.recipient) : null, encrypt(v.purpose), encrypt(v.scope),

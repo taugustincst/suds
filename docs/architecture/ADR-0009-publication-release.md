@@ -1,7 +1,7 @@
 # ADR-0009: One audited publication release per ended period
 
 - **Status:** accepted (independent statistical review pending; see *Known limits*)
-- **Date recorded:** 2026-09-26 (the release object in 1.12.2, the check against the method in 1.12.4, the defaults, degrade step, work budget and worker thread in 1.12.5; written down retrospectively. 1.13.1: small funds combined, the read from a snapshot, the release kept by the data's version, the budget measured and reset)
+- **Date recorded:** 2026-09-26 (the release object in 1.12.2, the check against the method in 1.12.4, the defaults, degrade step, work budget and worker thread in 1.13.0; written down retrospectively. 1.14.0: small funds combined, the read from a snapshot, the release kept by the data's version, the budget measured and reset, a timed-out audit refused on its own)
 
 ## Context
 
@@ -26,7 +26,7 @@ request. The page and every file say which kind of run it is (`suppression.label
 their figures are read together, audited once, and each report prints its part; `release.id` is a digest of
 everything the release prints. The read is one snapshot (`server/db.js` `readSnapshot`): a read transaction on
 a second, read-only connection to the database file, which in WAL mode sees none of the commits writers make on
-the main connection meanwhile, so the read lets the event loop go between its phases (until 1.13.1 it ran in
+the main connection meanwhile, so the read lets the event loop go between its phases (until 1.14.0 it ran in
 one synchronous pass, 0.6 to 1.5 s at 20,000 clients); the database calls made in the read's own asynchronous
 context go to that connection (AsyncLocalStorage), everyone else's to the main one. Where there is no second
 connection (an in-memory database, the browser kernel, a caller inside a transaction) the read runs straight
@@ -43,7 +43,7 @@ codes cover it, a month's reversals are at most its events, doses bound reversal
 true figures (a relationship an import breaks is left out for that period), and what each cell shows: a number,
 `<T` (1 to T−1), `suppressed` (at least T), `withheld`. Rows are listed from fixed domains in a fixed order.
 
-**Small funds combined** (`server/funder-report.js` `foldFunds`, `server/release-audit.js` `buildModel`; 1.13.1).
+**Small funds combined** (`server/funder-report.js` `foldFunds`, `server/release-audit.js` `buildModel`; 1.14.0).
 Every fund with 1 to T−1 people is combined in one row, *Other funds (n combined)*: how many funds and their staff
 hours, its people and services `withheld`. Which funds are combined follows from their symbols (each was `<T`),
 so the combining says what the listing said; the row prints no count that 1.13.0 did not already hide. The
@@ -83,10 +83,10 @@ suppression and check are run, once per printout), withheld cells of T or more m
 counts worked out from the withheld tables' cells are held to the rule against the method. The release is refused
 (422) when a table to withhold is the headline, when the degraded release fails, or when the budget runs out.
 
-**Determinism.** The audit's budget is counted in solver work (tableau cells touched, and since 1.13.1 the
+**Determinism.** The audit's budget is counted in solver work (tableau cells touched, and since 1.14.0 the
 constraint terms scanned to find each problem, which with many funds took as long as the solving; `STEP_LIMIT` =
 400 million per release, the degrade step its own share), so what is published depends on the figures alone.
-Measured in 1.13.1 (4-core cloud container, Node 22, one core, warmed up): 60 to 200 million units a second
+Measured in 1.14.0 (4-core cloud container, Node 22, one core, warmed up): 60 to 200 million units a second
 across the tests' releases and a 20,000-client benchmark, so the budget is about 2 to 7 seconds; 1.13.0's 200
 million, counting the solving only, was 0.6 to 1.2 seconds rather than the "few seconds" its comment claimed. A
 withheld, unprinted or derived count that the printout does not let be small is answered before its targets
@@ -97,13 +97,19 @@ wall-clock backstop remains only to protect the server; a release it stops is re
 idle); the main thread reads the figures, then awaits the audit. The tests' API calls use the worker too, as the
 server does (`test/helpers.js` does not set `SUDS_AUDIT_INLINE`; `test/publication-release.test.js` checks the
 audit ran there); the pure tests call `protectFigures` directly, and `SUDS_AUDIT_INLINE=1` forces the inline path
-(the performance test compares the two). The browser kernel has no worker threads (`node:worker_threads` is
-shimmed empty) and no second connection to snapshot from, and serves requests as they come, so there the read
-runs straight through and the audit runs inline on the page's thread, after letting the page paint once. A Web
-Worker for the kernel's audit needs a second bundle, served, cached by the service worker and allowed by the
-CSP's worker policy: deferred to a feature release. What bounds it meanwhile: a device holds one browser's
-records, and with small funds combined even a 120-fund year audits in tens of millions of units (well under a
-second); the budget's worst case, a few seconds of a busy page, is the limit.
+(the performance test compares the two). An audit that does not answer within the backstop is refused on its
+own and its worker stopped; the audits queued behind it on that worker start again on a new one (1.13.1; in
+1.13.0 they were failed with it, `test/release-worker-timeout.test.js`). A refusal by the backstop is not kept
+with the release (it says how busy the machine was, not what the figures are): asking again audits again.
+The browser kernel has no worker threads (`node:worker_threads` is shimmed empty) and no second connection to
+snapshot from, and serves requests as they come, so there the read runs straight through and the audit runs
+inline on the page's thread, after letting the page paint once. A Web Worker for the kernel's audit needs a
+second generated bundle (built, committed and served beside `public/local/kernel.js`), precached by the service
+worker under the kernel's version, and a fallback when it cannot start: considered for 1.14.0 and deferred,
+because the release's generated files are rebuilt outside the change that would add it and an unbuilt bundle
+would fail only on devices. What bounds it meanwhile: a device holds one browser's records, and with small
+funds combined even a 120-fund year audits in tens of millions of units (well under a second); the budget's
+worst case, a few seconds of a busy page, is the limit.
 
 ## Consequences
 
@@ -111,7 +117,7 @@ second); the budget's worst case, a few seconds of a busy page, is the limit.
 - In the reviewer's simulation (8 seeds per size, quarter and month) no release of 40 to 200 people is refused
   (1.12.4: 7 of 8 at 60, 6 of 8 at 80 per quarter); the random "realistic" property programmes refuse about 1 in 70.
 - A year for 5,000 people costs about 17 million units of work (4% of the budget; the release 0.6 to 0.9 s); while
-  it runs the event loop is held only for the read's phases (0.1 to 0.2 s at 20,000 clients, 1.13.1; 0.6 to 1.5 s
+  it runs the event loop is held only for the read's phases (0.1 to 0.2 s at 20,000 clients, 1.14.0; 0.6 to 1.5 s
   before, the whole read at once).
 - A year of 120 funds, 80 of them small, publishes (1.13.0 refused 60 and more): 12 to 14 million units at 20,000
   clients, about 140 million with 800 one-person languages and 400 race codes beside them.
@@ -133,6 +139,34 @@ second); the budget's worst case, a few seconds of a busy page, is the limit.
 - It is a conservative automated screen, **not a statistical expert determination** (45 CFR 164.514(b)(1)). An
   independent statistical disclosure-control review of the rule, the model and the check is pending; until then
   every publication release's export asks the person to confirm they reviewed it.
+
+## Addendum (1.14.0): publication releases can be switched off
+
+**Context.** The engineering reviewer asked for "the option to switch publication releases off" while
+`server/sdc.js` awaits the independent statistical review named under *Known limits*: a programme whose
+governance will not publish from an unreviewed method must be able to say so in the product, not just in a
+policy, and must not be one careless click from a release.
+
+**Decision.** Publication releases are a programme module (`server/programme.js`, key `publication`, setting
+`module_publication`), on by default so nothing changes for a programme that does nothing. An administrator
+switches it off in Settings › Program › Modules. While it is off:
+
+* every publication run of the funder report, the NDP log and the settlement report, and every file of one, is
+  refused (403, `module: 'publication'`) in `FR.countingMode`, the one place every publication path goes
+  through, with a message saying releases are switched off and what the role can run instead;
+* supervisors, administrators and finance (`reports:funder`) still run the programme's own **submission** to
+  its funder, which never was a release; their first click is the submission already, so nothing moves;
+* a read-only account, which runs publication releases only, is refused with a message that says it has
+  nothing to run until releases are switched back on (`server/routes/reports.js` `requireReportRun`), and its
+  screens offer no periods to publish;
+* the screens drop "Prepare a publication release" and the publication choice, and say releases are off.
+
+**Consequences.** Switching releases off removes the only aggregate report read-only accounts could run;
+that is the intended trade-off while the method is unreviewed. It changes no audit, threshold or release
+shape: switching back on restores exactly the behaviour above. The switch is audited as a programme settings
+change (`settings.programme`) and synchronised to device copies with the other module switches.
+`test/report-access.test.js` ("publication releases switched off") and `scripts/ui/funder-reporting.mjs`
+cover it.
 
 ## Read
 

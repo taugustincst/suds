@@ -13,7 +13,7 @@ const audit = require('./audit');
 // staff-time bookkeeping (time_entries, expenditures) keep their rows with the client link removed:
 // the money was spent and the hours were worked whether or not the person's record still exists.
 // A disclosure cites the court order it relied on, so disclosures go before court_orders.
-const DELETE_TABLES = ['care_plan_steps', 'care_plan_goals', 'problem_history', 'problems', 'asam_assessments', 'outcome_measures', 'client_form_files', 'client_forms', 'disclosures', 'court_orders', 'part2_notices', 'consents', 'patient_requests', 'referrals', 'tasks', 'calls', 'overdose_events', 'interventions', 'caloms_records', 'episodes', 'assignments', 'breakglass_events'];
+const DELETE_TABLES = ['care_plan_steps', 'care_plan_goals', 'problem_history', 'problems', 'asam_assessments', 'outcome_measures', 'client_form_files', 'client_forms', 'disclosures', 'court_orders', 'part2_notices', 'consents', 'patient_requests', 'referrals', 'tasks', 'calls', 'overdose_events', 'intervention_supplies', 'interventions', 'caloms_records', 'suprt_assessments', 'episodes', 'assignments', 'breakglass_events'];
 // A complaint is the programme's record of how it answered one, and stays (unlinked) when the person's
 // record goes. So does an incident's link to the person: breach documentation is kept six years (45 CFR
 // §164.530(j)), longer than a record may be, so the link keeps the snapshot taken when the client was
@@ -37,6 +37,7 @@ const ACTIVITY = {
   clients: ['intake_date', 'discharge_date'],
   episodes: ['opened_at', 'closed_at'],
   caloms_records: ['record_date'],
+  suprt_assessments: ['assessment_date'],
   interventions: ['occurred_at'],
   calls: ['started_at'],
   notes: ['occurred_at', 'signed_at', 'cosigned_at'],
@@ -61,8 +62,10 @@ const ACTIVITY = {
   expenditures: ['spent_at'],
 };
 // Client-linked tables that are not activity on the record: who was assigned, and emergency reads of it.
-// A privacy complaint or an incident that touched the record is not care given to the person either.
-const NOT_ACTIVITY = ['assignments', 'breakglass_events', 'complaints', 'privacy_incident_clients'];
+// A privacy complaint or an incident that touched the record is not care given to the person either. A
+// visit's supplies (intervention_supplies) are dated by their visit, which is already counted. (The stock
+// ledger's rows for a purged visit stay: they hold no client, only what left the shelf and when.)
+const NOT_ACTIVITY = ['assignments', 'breakglass_events', 'complaints', 'privacy_incident_clients', 'intervention_supplies'];
 
 function lastActivitySql() {
   const parts = [];

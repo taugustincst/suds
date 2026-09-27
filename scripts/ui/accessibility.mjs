@@ -218,6 +218,12 @@ async function pagesFor(page) {
     out.push('profile');
     if (out.includes('calls')) out.push('calls?method=text');
     if (out.includes('budget')) out.push('budget?tab=expenditures', 'budget?tab=analysis');
+    // Supplies: its lots, its history, the items and sites (whoever runs the cupboard) and the SSP summary.
+    if (out.includes('supplies')) {
+      out.push('supplies?tab=lots', 'supplies?tab=history');
+      if (a.can('supplies:manage')) out.push('supplies?tab=setup');
+      if (a.can('reports:read') && (a.can('reports:internal') || a.can('clients:read'))) out.push('supplies?tab=ssp');
+    }
     if (out.includes('supervision') && a.can('audit:read')) out.push('supervision?tab=breakglass');
     if (a.state.local) out.push('sync');
     // State reporting (CalOMS Tx and the county EHR hand-off) is reached from Reports, not the navigation.
@@ -376,6 +382,7 @@ const BUTTON_DIALOGS = [
   ['client/:client/team', '+ Assign worker'], ['client/:client/budget', '+ Record client assistance'],
   ['admin?tab=users', '+ New user'], ['admin?tab=apikeys', '+ New API key'], ['budget', '+ Funding source'], ['budget', '+ Line'],
   ['forms', '+ Add a county form'], ['forms', '+ Fill out a form'], ['documents', '+ Upload'], ['supplies', '+ Add item'],
+  ['supplies', 'Receive stock'], ['supplies', 'Move'], ['supplies', 'Adjust'], ['supplies?tab=lots', 'Dispose'], ['supplies?tab=setup', '+ Add site'], ['supplies?tab=setup', 'Edit'],
   ['overdose', '+ Record an event'], ['resources', '+ Add resource'],
   // Clinical depth: the problem list, the care plan, ASAM and each outcome measure.
   ['client/:client/problems', '+ Problem'], ['client/:client/problems', 'Edit'], ['client/:client/problems', 'History'],

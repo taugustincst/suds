@@ -19,7 +19,7 @@ const routeLoaders = {
   assignments: () => import('../server/routes/assignments.js'), episodes: () => import('../server/routes/episodes.js'), interventions: () => import('../server/routes/interventions.js'),
   overdose: () => import('../server/routes/overdose.js'), calls: () => import('../server/routes/calls.js'), time: () => import('../server/routes/time.js'), supervision: () => import('../server/routes/supervision.js'),
   resources: () => import('../server/routes/resources.js'), referrals: () => import('../server/routes/referrals.js'), tasks: () => import('../server/routes/tasks.js'), budget: () => import('../server/routes/budget.js'),
-  notes: () => import('../server/routes/notes.js'), consents: () => import('../server/routes/consents.js'), 'patient-requests': () => import('../server/routes/patient-requests.js'), part2: () => import('../server/routes/part2.js'), compliance: () => import('../server/routes/compliance.js'), careplan: () => import('../server/routes/careplan.js'), assessments: () => import('../server/routes/assessments.js'), forms: () => import('../server/routes/forms.js'), documents: () => import('../server/routes/documents.js'), regions: () => import('../server/routes/regions.js'), imports: () => import('../server/routes/imports.js'), dataimport: () => import('../server/routes/dataimport.js'), reports: () => import('../server/routes/reports.js'), admin: () => import('../server/routes/admin.js'), options: () => import('../server/routes/options.js'), caloms: () => import('../server/routes/caloms.js'), handoff: () => import('../server/routes/handoff.js')
+  notes: () => import('../server/routes/notes.js'), consents: () => import('../server/routes/consents.js'), 'patient-requests': () => import('../server/routes/patient-requests.js'), part2: () => import('../server/routes/part2.js'), compliance: () => import('../server/routes/compliance.js'), careplan: () => import('../server/routes/careplan.js'), assessments: () => import('../server/routes/assessments.js'), suprt: () => import('../server/routes/suprt.js'), forms: () => import('../server/routes/forms.js'), documents: () => import('../server/routes/documents.js'), regions: () => import('../server/routes/regions.js'), imports: () => import('../server/routes/imports.js'), dataimport: () => import('../server/routes/dataimport.js'), reports: () => import('../server/routes/reports.js'), admin: () => import('../server/routes/admin.js'), options: () => import('../server/routes/options.js'), caloms: () => import('../server/routes/caloms.js'), handoff: () => import('../server/routes/handoff.js')
 };
 
 // The session token lives in this page's memory only: a reload signs out (and locks the device).
@@ -623,13 +623,9 @@ async function handle(method, path, body, headers = {}) {
     // Another window took the database over (see local/shims/sqlite.js): this page must not write, and a
     // read here could show what that window has since changed. The page shows its own explanation.
     if (sqlite.isFrozen()) throw new HttpError(409, 'SUDS is now open in another window on this device. Use that window, or take it back here.', { frozen: true });
-    // Harm-reduction supply counts on a device that syncs with an office are the office's shelf count
-    // (server/sync-tables.js serverOwned): a change made here would never be sent and would be silently
-    // overwritten at the next sync, so it is refused up front instead of looking saved (the Supplies page
-    // disables its buttons there and says why). Visits recorded here still draw the office shelf down
-    // when they sync. SUDS on this device (the static build) has no office: its cupboard is its own, and
-    // refusing it there left "Add a supply item" failing on every save.
-    if (method !== 'GET' && !sync.isStaticHost() && /^\/api\/supplies(\/|$)/.test(url.pathname)) throw new HttpError(403, 'Supply counts are kept at the office and cannot be changed on this device. Visits you record here draw the office count down when you sync.', { serverOwned: true });
+    // Supplies on a device that syncs with an office: its items, sites and supply settings are the office's
+    // (server/sync-tables.js serverOwned) and server/routes/supplies.js refuses to change them here; stock
+    // received, moved, counted or disposed of here is recorded and pushed to the office, which checks it.
     if (!ctx.headers['x-background']) lastActivity = Date.now();
     // Locked (after a reload, a sign-out or idle): the database is not open, and only a sign-in (or a sign-up
     // someone vouches for) can open it. See the encryption-at-rest section at the top of this file.

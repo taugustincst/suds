@@ -98,7 +98,7 @@ does not hold.
    Field-level AES-256-GCM encryption of client identifiers and free text (coded fields on the
    encrypted disk); TLS 1.2+; MFA required for every role; OIDC SSO;
    role-based access with caseload scoping; tamper-evident hash-chained audit log, append-only in the
-   database, anchored every 6 hours (write-once when AUDIT_ANCHOR_DIR points at WORM storage).
+   database, anchored every hour (write-once when AUDIT_ANCHOR_DIR points at WORM storage).
    Evidence: docs/HIPAA.md, docs/security/. Attestation: none. SOC 2: readiness self-assessment only
    [audit planned for ___ / not planned]; independent penetration test [not yet commissioned / planned for
    ___]. Security questionnaire: docs/security/QUESTIONNAIRE.md.

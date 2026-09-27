@@ -203,19 +203,23 @@ test('episodes, overdose events, client forms and disclosures export as single t
 });
 
 // ---- routes that had no API test ----
-test('POST /api/auth/mfa/disable needs the password, is refused where the role requires MFA, and is audited', async () => {
+// 1.13.1 (security review of 1.13.0, finding 5): the password alone no longer turns it off; a current
+// authenticator code is needed too, and failures count toward the lockout (test/in-session-guessing.test.js).
+test('POST /api/auth/mfa/disable needs the password and a current code, is refused where the role requires MFA, and is audited', async () => {
   const u = H.makeUser('cmpmfa', 'navigator');
   const c = H.client(); await c.login(u.username, u.password);
   const setup = await c.post('/api/auth/mfa/setup', {});
-  assert.equal((await c.post('/api/auth/mfa/' + 'enable', { code: require('../server/crypto').totp(setup.data.secret) })).status, 200);
+  const { totp } = require('../server/crypto');
+  assert.equal((await c.post('/api/auth/mfa/' + 'enable', { code: totp(setup.data.secret) })).status, 200);
   assert.equal((await H.client().post('/api/auth/mfa/disable', { password: u.password })).status, 401, 'not signed in');
-  assert.equal((await c.post('/api/auth/mfa/disable', { password: 'wrong-password-123' })).status, 401);
+  assert.equal((await c.post('/api/auth/mfa/disable', { password: 'wrong-password-123', code: '000000' })).status, 401);
   assert.equal((await c.post('/api/auth/mfa/disable', {})).status, 400, 'the password is required');
+  assert.equal((await c.post('/api/auth/mfa/disable', { password: u.password })).status, 400, 'and so is a code');
   H.db.setSetting('mfa_required_roles', 'navigator');
-  try { assert.equal((await c.post('/api/auth/mfa/disable', { password: u.password })).status, 400, 'a role that requires MFA cannot turn it off'); }
+  try { assert.equal((await c.post('/api/auth/mfa/disable', { password: u.password, code: '000000' })).status, 400, 'a role that requires MFA cannot turn it off'); }
   finally { H.db.run(`DELETE FROM settings WHERE key='mfa_required_roles'`); }
   assert.equal(H.db.one(`SELECT mfa_enabled FROM users WHERE id=?`, u.id).mfa_enabled, 1);
-  assert.equal((await c.post('/api/auth/mfa/disable', { password: u.password })).status, 200);
+  assert.equal((await c.post('/api/auth/mfa/disable', { password: u.password, code: totp(setup.data.secret, Date.now() + 30000) })).status, 200);
   assert.deepEqual({ ...H.db.one(`SELECT mfa_enabled, mfa_secret_enc FROM users WHERE id=?`, u.id) }, { mfa_enabled: 0, mfa_secret_enc: null });
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='auth.mfa.disabled' AND user_id=?`, u.id));
 });
@@ -340,7 +344,13 @@ test('POST /api/admin/keys-backup downloads keys.json only after the administrat
     assert.ok(H.db.getSetting('keys_backup_at', null), 'the dashboard can stop asking');
     const a = H.db.one(`SELECT * FROM audit_log WHERE action='keys.download' ORDER BY id DESC LIMIT 1`);
     assert.equal(JSON.parse(a.details).method, 'password', 'the audit entry says how the administrator proved it');
-    // Within the few minutes after the password, a confirmation is enough (the same rule as signing).
-    assert.equal((await admin.post('/api/admin/keys-backup', { confirm: true })).status, 200);
+    // 1.13.1 (security review of 1.13.0, design weakness 6): key custody has no window. A confirmation a
+    // moment after the password, or right after signing in, is refused: the password again, every time.
+    const again = await admin.post('/api/admin/keys-backup', { confirm: true });
+    assert.equal(again.status, 403); assert.equal(again.data.reauthRequired, true); assert.equal(again.data.fresh, true);
+    H.db.run(`UPDATE sessions SET reauth_at=? WHERE user_id=?`, new Date().toISOString(), adminId);
+    assert.equal((await admin.post('/api/admin/keys-backup', { confirm: true })).status, 403, 'a sign-in just now is not enough either');
+    assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='keys.download.failed' AND user_id=? AND details LIKE '%fresh proof%'`, adminId), 'audited');
+    assert.equal((await admin.post('/api/admin/keys-backup', { password: 'AdminPassw0rd!x' })).status, 200, 'the password again works');
   } finally { config.keySource = was; fs.rmSync(config.keysJsonPath, { force: true }); }
 });

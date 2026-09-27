@@ -19,6 +19,7 @@ route('setup', async () => {
   // the server refusing everything from this computer (429) for a minute. scripts/ui/setup-same-origin.mjs.
   if (!status.needed) { state.setupNeeded = false; nav('login'); return h('div'); }
   const done = h('div', { class: 'hidden' });
+  const fundOpts = status.fund_options || null;
   const f = form([
     { type: 'section', label: 'Your program' },
     { name: 'org_name', label: 'Program name', required: true, placeholder: 'e.g. Clark County SUD Navigation Program', span: true },
@@ -32,6 +33,14 @@ route('setup', async () => {
     // default for new visits, so they are not all "No funding source" until someone finds Settings.
     { name: 'main_fund_name', label: 'Main funding source (optional)', placeholder: 'e.g. County opioid settlement allocation', span: true, maxLen: 200,
       help: 'New visits are charged to it unless the worker chooses another. Add its amount, grant number and dates, and any other funds, under Budget; change the default in Settings › Program › Reporting.' },
+    // What kind of money it is: opioid settlement money is what the settlement report lists, by the allowable
+    // use the fund pays for (the same questions Funding & spending asks). A fund the wizard created used to be
+    // "other" whatever its name said, and the settlement report had nothing in it.
+    fundOpts ? { name: 'main_fund_type', label: 'What kind of funding is it?', type: 'select', placeholder: '— choose —', options: fundOpts.types, span: true,
+      help: 'Opioid settlement money is listed in the opioid settlement report by what it pays for.' } : null,
+    fundOpts ? { name: 'main_fund_settlement_use', label: 'Opioid settlement allowable use (Exhibit E)', type: 'select', placeholder: '— choose later under Funding & spending —', options: fundOpts.settlement_uses, span: true } : null,
+    fundOpts ? { name: 'main_fund_settlement_hiaa', label: 'California High Impact Abatement Activity', type: 'select', placeholder: '— not recorded —', options: fundOpts.settlement_hiaa, span: true,
+      help: 'Check the category against the agreement that governs the fund. Both can be changed later under Funding & spending.' } : null,
     { type: 'section', label: 'Administrator account (you)' },
     { name: 'admin_display_name', label: 'Your name', required: true }, { name: 'admin_username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', value: 'guest', help: 'The first administrator is called guest unless you choose another name. You set its password below.' },
     { name: 'admin_password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: '12+ characters with upper and lower case, a number and a symbol.' }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
@@ -57,6 +66,10 @@ route('setup', async () => {
     if (d.network === 'lan' && !d.https) throw new Error('HTTPS is required when other devices can connect');
     delete d.confirm;
     if ('local_mode' in d) d.local_mode = d.local_mode === 'yes';
+    // The fund's type and settlement category go only with a fund, and the category only with settlement money.
+    if (!d.main_fund_name) { delete d.main_fund_type; delete d.main_fund_settlement_use; delete d.main_fund_settlement_hiaa; }
+    else if (d.main_fund_type !== 'opioid_settlement') { delete d.main_fund_settlement_use; delete d.main_fund_settlement_hiaa; }
+    for (const k of ['main_fund_type', 'main_fund_settlement_use', 'main_fund_settlement_hiaa']) if (d[k] === '') delete d[k];
     const r = await post('/api/setup/complete', d);
     state.setupNeeded = false; // "Go to sign-in" may be the same page with only a new #hash
     f.classList.add('hidden'); done.classList.remove('hidden');
@@ -91,6 +104,17 @@ route('setup', async () => {
     });
   }
   if (offlineSel) offlineSel.dataset.recommended = OFFLINE.harm_reduction.value;
+  // The settlement questions show only for opioid settlement money. A fund named as settlement money
+  // ("County opioid settlement allocation") is taken to be that, until someone chooses the type themselves.
+  const fundName = f.querySelector('input[name=main_fund_name]'); const fundType = f.querySelector('select[name=main_fund_type]');
+  if (fundName && fundType) {
+    let typeTouched = false;
+    const settlementFields = ['main_fund_settlement_use', 'main_fund_settlement_hiaa'].map(n => f.querySelector(`[name=${n}]`)?.closest('.field')).filter(Boolean);
+    const sync = () => { const on = fundType.value === 'opioid_settlement'; for (const el of settlementFields) el.classList.toggle('hidden', !on); };
+    fundType.addEventListener('change', () => { typeTouched = true; sync(); });
+    fundName.addEventListener('input', () => { if (!typeTouched && /settlement/i.test(fundName.value)) { fundType.value = 'opioid_settlement'; sync(); } });
+    sync();
+  }
   return h('main', { class: 'login-wrap', id: 'main', tabindex: '-1' }, h('div', { class: 'card', style: { maxWidth: '760px', width: '100%' } },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('h1', { class: 'brand-title' }, 'Welcome to SUDS'), h('small', {}, 'First-run setup — about 2 minutes'))),
     h('p', { class: 'muted' }, `A few quick questions and SUDS is ready on this computer and on staff phones. (Running on ${status.hostname}; setup can only be completed from this computer.)`),

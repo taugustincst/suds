@@ -38,8 +38,11 @@ test('a referral sent twice with the same key is made once: one disclosure recor
 });
 
 test('a visit resent with the same key does not double the naloxone kits or the time entry', async () => {
-  db.run(`INSERT OR IGNORE INTO supply_stock(id,item,quantity) VALUES('s-nal','Naloxone kit',50)`);
-  const before = db.one(`SELECT quantity FROM supply_stock WHERE item='Naloxone kit'`)?.quantity;
+  // The cupboard is a ledger (docs/SUPPLIES.md): a naloxone item with 50 on hand at the main office.
+  db.run(`INSERT OR IGNORE INTO supply_items(id,name,category,unit,quick) VALUES('s-nal','Naloxone kit','naloxone','kit',1)`);
+  db.run(`INSERT OR IGNORE INTO supply_ledger(id,item_id,site_id,kind,quantity,occurred_on) VALUES('s-nal-open','s-nal',?,'opening',50,'2026-09-01')`, db.MAIN_SITE_ID);
+  const onHand = () => db.one(`SELECT SUM(quantity) n FROM supply_ledger WHERE item_id='s-nal'`).n;
+  const before = onHand();
   const body = { client_id: clientId, type: 'naloxone_distribution', occurred_at: '2026-09-04T10:00:00Z', duration_minutes: 30, naloxone_kits: 2, log_time: true };
   const key = { 'Idempotency-Key': 'visit-submit-1' };
   const a = await nav.post('/api/interventions', body, key);
@@ -49,7 +52,7 @@ test('a visit resent with the same key does not double the naloxone kits or the 
   assert.equal(count(`SELECT COUNT(*) n FROM interventions WHERE client_id=? AND type='naloxone_distribution'`, clientId), 1);
   assert.equal(db.one(`SELECT SUM(naloxone_kits) n FROM interventions WHERE client_id=?`, clientId).n, 2, 'kits counted once');
   assert.equal(count(`SELECT COUNT(*) n FROM time_entries WHERE intervention_id=?`, a.data.id), 1, 'one time entry');
-  assert.equal(db.one(`SELECT quantity FROM supply_stock WHERE item='Naloxone kit'`).quantity, before - 2, 'the shelf drawn down once');
+  assert.equal(onHand(), before - 2, 'the shelf drawn down once');
 });
 
 test('two identical requests in flight at the same moment still run once', async () => {

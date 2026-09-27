@@ -170,7 +170,12 @@ test('restoring replaces the live database and keeps the previous one aside', ()
   assert.equal(decrypt(db.one(`SELECT data_enc FROM client_form_files WHERE id=?`, ids.file).data_enc), 'JVBERi0xLjQK');
   // Restoring the wrong file must be recoverable, so the database it replaced is kept.
   assert.ok(fs.existsSync(out.previous_database_kept_at), 'the replaced database was kept');
-  assert.equal(fs.readFileSync(out.previous_database_kept_at).subarray(0, 15).toString(), 'SQLite format 3');
+  // ...sealed like a backup, not left beside the live database in plaintext (security review of 1.13.0).
+  assert.match(out.previous_database_kept_at, /\.before-restore-[^/]+\.enc$/);
+  const kept = fs.readFileSync(out.previous_database_kept_at);
+  assert.notEqual(kept.subarray(0, 15).toString(), 'SQLite format 3', 'the kept copy is not a plaintext database');
+  assert.equal(backup.decrypt(kept).subarray(0, 15).toString(), 'SQLite format 3', 'and opens as a backup does');
+  assert.deepEqual(fs.readdirSync(dir).filter(f => f.includes('.before-restore-') && !f.endsWith('.enc')), [], 'no plaintext copy is left');
   // The server is still usable straight afterwards.
   assert.equal(db.one(`SELECT 1 AS ok`).ok, 1);
 });
@@ -191,4 +196,18 @@ test('a restore is anchored, so the audit anchors written since the backup are n
   assert.ok(v.other_generation >= 1, 'the anchor written after the backup is counted, not failed');
   assert.ok(v.matched >= 2, 'the anchor inside the restored chain still matches, and so does the restore anchor');
   assert.ok(anchor.list().some((f) => f.anchor.reason === 'restore'));
+});
+
+test('a database set aside in plaintext by an earlier restore is sealed on the next start, and expires like the snapshots', () => {
+  const dbPath = process.env.SUDS_DB_PATH;
+  const plainAside = `${dbPath}.before-restore-2026-01-01T00-00-00-000Z`;
+  fs.copyFileSync(dbPath, plainAside);
+  const oldSealed = `${dbPath}.before-restore-2025-01-01T00-00-00-000Z.enc`;
+  fs.writeFileSync(oldSealed, backup.create());
+  const old = new Date(Date.now() - 30 * 86400000); fs.utimesSync(oldSealed, old, old);
+  db.close(); db.open();
+  assert.ok(!fs.existsSync(plainAside), 'the plaintext copy is gone');
+  assert.equal(backup.decrypt(fs.readFileSync(`${plainAside}.enc`)).subarray(0, 15).toString(), 'SQLite format 3', 'sealed beside it');
+  assert.ok(!fs.existsSync(oldSealed), 'a sealed copy older than the retention is deleted');
+  fs.unlinkSync(`${plainAside}.enc`);
 });

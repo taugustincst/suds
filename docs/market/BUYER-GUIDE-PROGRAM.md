@@ -24,7 +24,7 @@ grey cases (Part 2 records, CalOMS, DMC).
 | **Approvals** | Expenditure approval (pending → approved/rejected → reimbursed) and time approval, with separation of duties: nobody approves their own. |
 | **Caseload** | For people you do follow: each worker sees their own clients, sorted by risk and last contact; Home shows overdue follow-ups, no contact in 30 days, consents expiring. Caseload transfer when someone leaves. |
 | **Referrals and resources** | A community resource directory with verification dates (older than six months is flagged); referrals from pending to admitted/completed, warm hand-off, barriers, days-to-admit, automatic follow-up — and a consent check before a client is named to an outside agency. |
-| **Consent and privacy** | Part 2-grade consents with every required element, releases of information, revocations, and an accounting of disclosures you can print for the participant ([docs/HIPAA.md](../HIPAA.md), [docs/compliance/PART2.md](../compliance/PART2.md)). |
+| **Consent and privacy** | Consents built to the 42 CFR Part 2 standard, with every element the rule requires, releases of information, revocations, and an accounting of disclosures you can print for the participant ([docs/HIPAA.md](../HIPAA.md), [docs/compliance/PART2.md](../compliance/PART2.md)). |
 | **Getting data in** | Import clients, resources, visits, calls, time, to-dos and expenditures from your Excel or CSV files, with automatic column matching and row-by-row checks ([docs/IMPORTS.md](../IMPORTS.md)). |
 
 **Optional modules, for programmes that need them.** A *programme profile* setting chooses **Harm reduction &

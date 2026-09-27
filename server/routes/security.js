@@ -34,10 +34,18 @@ module.exports = (r) => {
   r.get('/api/admin/security/alerts', auth.requireAuth, auth.requirePerm('settings:manage'), () => {
     const sc = require('../startup-checks');
     const out = [];
+    // Each says, in words an administrator who is not IT can act on, what is wrong and who fixes it
+    // (`explain`), how serious it is (`severity`: the Home banner's colour) and where to read more (`link`).
     const anchorProblem = require('../audit-anchor').placementProblem();
-    if (anchorProblem) out.push({ key: 'audit_anchor_dir', label: 'Audit anchors are on the database disk', detail: anchorProblem });
+    if (anchorProblem) {
+      // A finding, not an alarm, until a check has actually failed: then it is red.
+      const failing = !!db.getSetting('audit_verify_failed_at', null) || /^FAILED/.test(db.getSetting('audit_anchor_verify_status', '') || '');
+      out.push({ key: 'audit_anchor_dir', severity: failing ? 'danger' : 'warn', label: 'The audit log\'s safety copies are on the same disk as the records', detail: anchorProblem, link: '#/admin?tab=security', doc: 'docs/security/LOGGING-AND-AUDIT.md',
+        explain: `SUDS keeps sealed copies ("anchors") of the audit log outside the database, so that a changed or deleted entry can be detected. On this server they are kept on the same disk as the database, where someone able to change the records could change them too. Ask your IT support to store them on write-once storage elsewhere (the AUDIT_ANCHOR_DIR setting); the steps are in docs/security/LOGGING-AND-AUDIT.md.${failing ? ' An audit log check has also failed: see Security status first.' : ''}` });
+    }
     const backupProblem = sc.backupProblem();
-    if (backupProblem) out.push({ key: 'backups_off', label: 'Scheduled backups are off', detail: backupProblem });
+    if (backupProblem) out.push({ key: 'backups_off', severity: 'danger', label: 'Scheduled backups are off', detail: backupProblem, link: '#/admin?tab=settings', doc: 'docs/security/BACKUP-AND-DR.md',
+      explain: 'Nothing is backing this database up automatically. Turn scheduled backups on under Settings (every 4 hours is the production default).' });
     return { alerts: out };
   });
 

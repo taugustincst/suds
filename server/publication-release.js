@@ -36,18 +36,31 @@ function setAuditOptions(o = {}) { auditOptions = { ...o }; clearCache(); }
 let WorkerCtor = null;
 try { WorkerCtor = require('node:worker_threads').Worker; } catch { WorkerCtor = null; }
 const inline = () => typeof WorkerCtor !== 'function' || process.env.SUDS_AUDIT_INLINE === '1' || !!require('./config').local;
+// One worker at a time, handling audits in the order they were sent. Each pending audit remembers the worker
+// it was posted to, so when a worker has to go only that worker's audits are affected: an audit that stops
+// answering is refused on its own, and the audits queued behind it on the same worker are sent to a new one
+// rather than failed with it (1.13.0 failed every pending audit when one timed out).
 let worker = null; let seq = 0; const pending = new Map();
-function failAll(err) { for (const [, p] of pending) { clearTimeout(p.timer); p.reject(err); } pending.clear(); }
+let workerScript = require('node:path').join(__dirname, 'release-audit-worker.js');
+let backstopMs = RA.AUDIT_BACKSTOP_MS + 15000;
+/** Tests only: a stand-in worker script and a shorter backstop (test/release-worker-timeout.test.js). */
+function _setWorkerForTests({ script, backstop } = {}) {
+  if (worker) { const w = worker; worker = null; w.terminate().catch(() => {}); }
+  workerScript = script || require('node:path').join(__dirname, 'release-audit-worker.js');
+  backstopMs = backstop || RA.AUDIT_BACKSTOP_MS + 15000;
+}
+/** Fail the audits still waiting on worker `w` (it failed or exited on its own). */
+function failWorker(w, err) { for (const [id, p] of pending) if (p.w === w) { clearTimeout(p.timer); pending.delete(id); p.reject(err); } }
 function auditWorker() {
   if (worker) return worker;
-  const w = new WorkerCtor(require('node:path').join(__dirname, 'release-audit-worker.js'));
+  const w = new WorkerCtor(workerScript);
   w.on('message', ({ id, result, error }) => {
-    const p = pending.get(id); if (!p) return;
+    const p = pending.get(id); if (!p || p.w !== w) return;
     pending.delete(id); clearTimeout(p.timer);
     if (error) p.reject(new Error(error)); else p.resolve(result);
   });
-  w.on('error', (e) => { if (worker === w) worker = null; failAll(e); });
-  w.on('exit', () => { if (worker === w) worker = null; failAll(new Error('the publication audit worker stopped')); });
+  w.on('error', (e) => { if (worker === w) worker = null; failWorker(w, e); });
+  w.on('exit', () => { if (worker === w) worker = null; failWorker(w, new Error('the publication audit worker stopped')); });
   // Unreferenced after its listeners are attached (attaching one references it again): an idle audit worker
   // never keeps the process alive.
   w.unref();
@@ -56,6 +69,28 @@ function auditWorker() {
 }
 // How many audits ran where (the tests check that theirs ran in the worker, as the server's do).
 const auditStats = { worker: 0, inline: 0 };
+/** Send pending audit `id` to the current worker, with its own backstop. */
+function dispatch(id) {
+  const p = pending.get(id); if (!p) return;
+  clearTimeout(p.timer);
+  p.w = auditWorker();
+  p.timer = setTimeout(() => timedOut(id), backstopMs);
+  if (p.timer.unref) p.timer.unref();
+  p.w.postMessage(p.msg);
+}
+// Beyond the audit's own backstop: an audit whose worker does not answer is refused, the worker is stopped,
+// and whatever else was queued on it starts again on a new one (each with a fresh backstop: it had not begun).
+function timedOut(id) {
+  const p = pending.get(id); if (!p) return;
+  pending.delete(id);
+  const w = p.w;
+  if (worker === w) worker = null;
+  const queued = [...pending].filter(([, q]) => q.w === w).map(([qid]) => qid);
+  for (const qid of queued) dispatch(qid);
+  w.terminate().catch(() => {});
+  console.warn(`[suds] a publication release audit did not answer within ${Math.round(backstopMs / 1000)} s; its worker was stopped and the release refused${queued.length ? ` (${queued.length} other audit(s) moved to a new worker)` : ''}`);
+  p.resolve({ refused: { out_of_budget: true, backstop: true, message: RA.refusalMessage({ backstop: true }) } });
+}
 /** The audit of one release's figures, off the main thread where there is one. */
 function runAudit(inputs, T) {
   const opts = { ...auditOptions };
@@ -64,16 +99,9 @@ function runAudit(inputs, T) {
   if (inline()) { auditStats.inline++; return new Promise((resolve) => require('./spreadsheet').defer(resolve)).then(() => RA.protectFigures(inputs, T, opts)); }
   auditStats.worker++;
   return new Promise((resolve, reject) => {
-    const id = ++seq; const w = auditWorker();
-    // Beyond the audit's own backstop: a worker that does not answer is stopped (and a new one started next time).
-    const timer = setTimeout(() => {
-      console.warn(`[suds] a publication release audit did not answer within ${Math.round((RA.AUDIT_BACKSTOP_MS + 15000) / 1000)} s; its worker was stopped and the release refused`);
-      pending.delete(id); w.terminate().catch(() => {}); if (worker === w) worker = null;
-      resolve({ refused: { out_of_budget: true, backstop: true, message: RA.refusalMessage({ backstop: true }) } });
-    }, RA.AUDIT_BACKSTOP_MS + 15000);
-    if (timer.unref) timer.unref();
-    pending.set(id, { resolve, reject, timer });
-    w.postMessage({ id, inputs, T, opts });
+    const id = ++seq;
+    pending.set(id, { resolve, reject, timer: null, w: null, msg: { id, inputs, T, opts } });
+    dispatch(id);
   });
 }
 
@@ -90,7 +118,8 @@ function audited(inputs, T) {
     if (r.refused && r.refused.backstop) console.warn(`[suds] a publication release (${inputs.domains.months[0] || ''} to ${inputs.domains.months[inputs.domains.months.length - 1] || ''}) was refused: its audit ran past the wall-clock backstop`);
     return r;
   });
-  p.catch(() => cache.delete(key));
+  // A refusal by the wall-clock backstop says how busy the machine was, not what the figures are: not kept.
+  p.then((r) => { if (r.refused && r.refused.backstop) cache.delete(key); }, () => cache.delete(key));
   cache.delete(key); cache.set(key, { p, at: Date.now() });
   while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
   return p;
@@ -103,7 +132,9 @@ function clearCache() { cache.clear(); released.clear(); }
 // server time; a hard delete leaves a tombstone). Asked inside the release's snapshot, so it is the version of
 // exactly the data read. The same version, period and threshold give the same release, so the release is kept
 // under that key and served again without reading anything (1.13.0 read everything again to find its cached
-// audit: 0.6 to 1.4 s of held event loop at 20,000 clients for a release it already had).
+// audit: 0.6 to 1.4 s of held event loop at 20,000 clients for a release it already had). A table the release
+// comes to read must be listed here (test/report-snapshot.test.js checks that every table a release reads is);
+// the supplies tables are not read: the published NDP log is by month, without the naloxone product.
 const VERSION_TABLES = ['clients', 'interventions', 'calls', 'referrals', 'episodes', 'overdose_events', 'funding_sources', 'time_entries', 'expenditures', 'settings', 'option_overrides'];
 function dataVersion() {
   const out = VERSION_TABLES.map((t) => {
@@ -128,8 +159,9 @@ async function release(ctx, range, counting) {
     // Claimed before the read, so the other reports of the release, asked for at the same time, wait for this
     // one rather than reading the same data again.
     let settle; const p = new Promise((resolve, reject) => { settle = { resolve, reject }; });
-    // A refusal (422) is a property of the data too, and kept like a release; anything else is not kept.
-    p.catch((e) => { if (!(e && e.status === 422)) released.delete(key); });
+    // A refusal (422) is a property of the data too, and kept like a release; anything else is not kept, nor
+    // is a refusal by the wall-clock backstop (a busy machine, not the figures).
+    p.catch((e) => { if (!(e && e.status === 422) || (e.extra && e.extra.backstop)) released.delete(key); });
     released.set(key, { at: Date.now(), p });
     while (released.size > CACHE_MAX) released.delete(released.keys().next().value);
     // With no snapshot to read from, the phases run straight through: nothing else runs in between.
@@ -161,7 +193,7 @@ async function assemble({ raw, perFund, settle, dist, domains, ndpSettings }, ra
   const HR = require('./harm-reduction-reports');
   const T = counting.threshold;
   const p = await audited({ funder: raw, perFund, settlement: settle, domains }, T);
-  if (p.refused) throw new HttpError(422, p.refused.message, { code: 'publication_refused' });
+  if (p.refused) throw new HttpError(422, p.refused.message, { code: 'publication_refused', ...(p.refused.backstop ? { backstop: true } : {}) });
   const rel = { ...counting.release, id: p.id, reports: ['funder', 'naloxone-ndp', 'opioid-settlement'], withheld: p.withheld_tables, withheld_reasons: p.withheld_reasons };
   const withRelease = (d) => ({ ...d, release: rel });
   const { fundKeys, ...s } = settle;
@@ -174,4 +206,4 @@ async function assemble({ raw, perFund, settle, dist, domains, ndpSettings }, ra
   };
 }
 
-module.exports = { release, runAudit, auditStats, dataVersion, setAuditOptions, clearCache, protectFigures: RA.protectFigures, buildModel: RA.buildModel, prepare: RA.prepare, digest: RA.digest, monthsOf: RA.monthsOf, AUDIT_BACKSTOP_MS: RA.AUDIT_BACKSTOP_MS };
+module.exports = { release, runAudit, auditStats, dataVersion, VERSION_TABLES, setAuditOptions, clearCache, _setWorkerForTests, protectFigures: RA.protectFigures, buildModel: RA.buildModel, prepare: RA.prepare, digest: RA.digest, monthsOf: RA.monthsOf, AUDIT_BACKSTOP_MS: RA.AUDIT_BACKSTOP_MS };

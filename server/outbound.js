@@ -13,7 +13,7 @@
 // And the connection itself is made to an address that passed the same check (connectLookup: node:https's
 // lookup hook resolves, checks and hands over the address in one step; the Host header and the TLS name
 // stay the site's). A name that answers "public" to the check and "127.0.0.1" a moment later (DNS
-// rebinding) is refused when it connects. Before 1.12.5 fetch() resolved the name again, unchecked.
+// rebinding) is refused when it connects. Before 1.13.0 fetch() resolved the name again, unchecked.
 //
 // Behind a proxy (HTTPS_PROXY *and* NODE_USE_ENV_PROXY=1, the only case in which Node sends requests through
 // it) the proxy resolves and connects, so SUDS cannot pin the address: the name is still checked here when

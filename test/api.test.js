@@ -369,13 +369,15 @@ test('the organisation time zone setting overrides ORG_TIMEZONE, is validated, a
 });
 
 test('deleting a visit puts the kits and strips it drew down back on the shelf', async () => {
-  const kit = await nav.post('/api/supplies', { item: 'Naloxone kit', quantity: 10 });
+  // 1.14: the cupboard is a ledger by item and site (docs/SUPPLIES.md); the older single-number route still
+  // sets a count, now as a supervisor's or administrator's (supplies:manage).
+  const kit = await admin.post('/api/supplies', { item: 'Naloxone kit', quantity: 10 });
   assert.ok([200, 201].includes(kit.status));
-  const strips = await nav.post('/api/supplies', { item: 'Fentanyl test strips', quantity: 40 });
+  const strips = await admin.post('/api/supplies', { item: 'Fentanyl test strips', quantity: 40 });
   assert.ok([200, 201].includes(strips.status));
   const iv = await nav.post('/api/interventions', { client_id: clientId, type: 'naloxone_distribution', occurred_at: '2026-09-06T10:00:00Z', naloxone_kits: 3, fentanyl_strips: 5 });
   assert.equal(iv.status, 201);
-  const qty = () => Object.fromEntries((H.db.all(`SELECT item, quantity FROM supply_stock`)).map(r => [r.item.toLowerCase(), r.quantity]));
+  const qty = () => Object.fromEntries((H.db.all(`SELECT i.name item, COALESCE(SUM(l.quantity),0) quantity FROM supply_items i LEFT JOIN supply_ledger l ON l.item_id=i.id GROUP BY i.id`)).map(r => [r.item.toLowerCase(), r.quantity]));
   assert.equal(qty()['naloxone kit'], 7); assert.equal(qty()['fentanyl test strips'], 35);
   assert.equal((await nav.del(`/api/interventions/${iv.data.id}`)).status, 200);
   assert.equal(qty()['naloxone kit'], 10, 'kits restored'); assert.equal(qty()['fentanyl test strips'], 40, 'strips restored');

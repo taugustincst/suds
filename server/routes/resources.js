@@ -7,14 +7,8 @@ const { validate, paging } = require('../validate');
 const { uuid } = require('../crypto');
 const C = require('../constants');
 
-const shape = {
-  name: { type: 'string', required: true, maxLen: 200 }, category: { type: 'string', required: true, enum: C.RESOURCE_CATEGORIES }, organization: { type: 'string', maxLen: 200 },
-  phone: { type: 'string', maxLen: 40 }, fax: { type: 'string', maxLen: 40 }, email: { type: 'string', maxLen: 200 }, website: { type: 'string', maxLen: 300 }, address: { type: 'string', maxLen: 300 },
-  city: { type: 'string', maxLen: 100 }, zip: { type: 'string', maxLen: 12 }, hours: { type: 'string', maxLen: 200 }, eligibility: { type: 'string', maxLen: 1000 }, services: { type: 'string', maxLen: 1000 },
-  languages: { type: 'string', maxLen: 200 }, accepts_medicaid: { type: 'boolean' }, accepts_uninsured: { type: 'boolean' }, mat_offered: { type: 'string', maxLen: 200 }, capacity_notes: { type: 'string', maxLen: 1000 },
-  contact_person: { type: 'string', maxLen: 200 }, is_active: { type: 'boolean' }, last_verified_at: { type: 'date' }, notes: { type: 'string', maxLen: 2000 },
-  summary: { type: 'string', maxLen: 3000 }, service_tags: { type: 'string', maxLen: 1000 }, levels_of_care: { type: 'string', maxLen: 200 }, populations: { type: 'string', maxLen: 500 }, intake_process: { type: 'string', maxLen: 2000 }, cost_notes: { type: 'string', maxLen: 1000 },
-};
+// A resource's fields: the table's rules (server/rules/resources.js), which sync push applies to a device's rows.
+const shape = require('../rules').forTable('resources').fields;
 const MAX_PHOTOS = 12, MAX_PHOTO_BYTES = 2 * 1024 * 1024, MAX_THUMB_BYTES = 96 * 1024;
 const { badRequest, HttpError } = require('../http');
 const pictures = require('../region-pictures');

@@ -9,8 +9,8 @@ const M = require('./clients-model');
 const audit = require('./audit');
 
 const DEMO_PREFIX = 'DEMO-';
-const TABLES = ['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'episodes', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_stock'];
-const SYNCED = new Set(['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'episodes', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_stock']);
+const TABLES = ['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'episodes', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_ledger', 'supply_items'];
+const SYNCED = new Set(['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'episodes', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_ledger', 'supply_items']);
 
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
@@ -273,9 +273,24 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
     // Program-level expenditures
     for (const [cat, vendor, desc, amt] of [['naloxone_supplies', 'Harm Reduction Coalition', 'Naloxone kits (50)', 1500], ['outreach_materials', 'PrintPro', 'Outreach flyers and cards', 220], ['training', 'State Peer Academy', 'Peer certification course', 650]]) db.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,user_id,spent_at,amount,category,vendor,description_enc,status,approved_by,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, track('expenditures', uuid()), fund, lineIds[cat], workers[0], day(20 + Math.floor(rand() * 60)), amt, cat, vendor, encrypt(desc), 'approved', supervisor, d(15));
 
-    // Supply cupboard, so the Supplies page has something to draw down.
-    for (const [item, qty] of [['Naloxone kit', 42], ['Fentanyl test strips', 180], ['Xylazine test strips', 60], ['Wound care kit', 25]]) {
-      if (!db.one(`SELECT 1 FROM supply_stock WHERE item=? COLLATE NOCASE`, item)) db.run(`INSERT INTO supply_stock(id,item,quantity,updated_by) VALUES(?,?,?,?)`, track('supply_stock', uuid()), item, qty, workers[0]);
+    // Supplies at the main office, so the Supplies page has stock, lots and an expiry to show and visits have
+    // something to draw down: [name, category, product, unit, quick, [[quantity, lot, expires in days, source]]].
+    const site = db.MAIN_SITE_ID;
+    for (const [name, category, product, unit, quick, receipts] of [
+      ['Naloxone kit', 'naloxone', 'nasal_4mg', 'kit', 1, [[24, 'NX24A117', 400, 'ndp'], [18, 'NX23K052', 40, 'ndp']]],
+      ['Fentanyl test strips', 'fentanyl_test_strips', null, 'strip', 1, [[180, 'FT2406', 700, 'cdph_clearinghouse']]],
+      ['Xylazine test strips', 'xylazine_test_strips', null, 'strip', 0, [[60, 'XY2402', 500, 'cdph_clearinghouse']]],
+      ['Syringes 1 mL 29G', 'syringes', null, 'syringe', 1, [[500, 'SY1029-88', 900, 'cdph_clearinghouse']]],
+      ['Sharps container 1 qt', 'sharps_container', null, 'container', 0, [[30, '', null, 'cdph_clearinghouse']]],
+      ['Wound care kit', 'wound_care', null, 'kit', 0, [[25, 'WC-311', 250, 'donation']]],
+    ]) {
+      if (db.one(`SELECT 1 FROM supply_items WHERE name=? COLLATE NOCASE`, name) || !db.one(`SELECT 1 FROM supply_sites WHERE id=?`, site)) continue;
+      const itemId = track('supply_items', uuid());
+      db.run(`INSERT INTO supply_items(id,name,category,product,unit,quick,updated_by) VALUES(?,?,?,?,?,?,?)`, itemId, name, category, product, unit, quick, workers[0]);
+      for (const [qty, lot, days, source] of receipts) {
+        db.run(`INSERT INTO supply_ledger(id,item_id,site_id,kind,quantity,lot_number,expires_on,occurred_on,source,reference,user_id) VALUES(?,?,?,'received',?,?,?,?,?,?,?)`,
+          track('supply_ledger', uuid()), itemId, site, qty, lot, days === null ? null : new Date(Date.now() + days * 86400000).toISOString().slice(0, 10), day(30), source, 'Sample delivery', workers[0]);
+      }
     }
     db.setSetting('demo_ids', JSON.stringify(ids)); db.setSetting('demo_loaded_at', nowIso);
     audit.log({ user: actor ? { id: actor, username: 'sample-data' } : { id: null, username: 'seed' }, action: 'demo.load', details: { clients: cids.length, ...counts } });
@@ -290,6 +305,8 @@ function remove({ actor, tombstones = true } = {}) {
   db.transaction(() => {
     for (const t of TABLES) {
       for (const id of ids[t] || []) {
+        // A sample supply item that real visits or stock movements have used since stays (with its history).
+        if (t === 'supply_items' && (db.one(`SELECT 1 FROM supply_ledger WHERE item_id=?`, id) || db.one(`SELECT 1 FROM intervention_supplies WHERE item_id=?`, id))) continue;
         const r = db.run(`DELETE FROM ${t} WHERE id=?`, id);
         if (r && r.changes) removed += r.changes;
         if (tombstones && SYNCED.has(t)) db.tombstone(t, id);

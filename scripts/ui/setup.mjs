@@ -58,7 +58,17 @@ eq((await offlineField())?.value, 'no', 'a hand-picked answer is not overwritten
 eq(await page.$eval('select[name=programme_profile]', e => e.value).catch(() => null), 'harm_reduction', 'the wizard asks what kind of programme this is and defaults to harm reduction & outreach');
 // The programme's main fund (optional) becomes the default for new visits.
 ok(await page.$('input[name=main_fund_name]'), 'the wizard asks for the programme\'s main funding source');
-await page.fill('input[name=main_fund_name]', 'County SUD Navigation Grant');
+// 1.13.1: what kind of funding it is. The placeholder's example is settlement money, and a fund named as
+// settlement money is taken to be that (it used to be created as "other", and never reached the settlement
+// report); settlement money is also asked its allowable use.
+ok(await page.$('select[name=main_fund_type]'), 'the wizard asks what kind of funding it is');
+ok(await page.$eval('[data-field=main_fund_settlement_use]', e => e.classList.contains('hidden')).catch(() => false), 'the settlement category is not asked of a fund that is not settlement money');
+await page.fill('input[name=main_fund_name]', 'County opioid settlement allocation');
+eq(await page.inputValue('select[name=main_fund_type]'), 'opioid_settlement', 'a fund named as settlement money is taken to be opioid settlement');
+ok(await page.$eval('[data-field=main_fund_settlement_use]', e => !e.classList.contains('hidden')).catch(() => false), 'and asks its allowable use, as Funding & spending does');
+const fundTypes = await page.$$eval('select[name=main_fund_type] option', o => o.map(x => x.textContent));
+ok(fundTypes.includes('SOR grant') && fundTypes.includes('SAMHSA') && !fundTypes.some(t => /Sor Grant|Samhsa/.test(t)), 'the funding types in words', fundTypes);
+await page.selectOption('select[name=main_fund_settlement_use]', 'approved_h');
 await page.click('button[type=submit]');
 ok(await until(() => page.textContent('#app').then(t => /Setup complete/.test(t)), { timeout: 20000 }), 'the wizard completes');
 const done = (await page.textContent('#app')).replace(/\s+/g, ' ');
@@ -78,9 +88,13 @@ ok(await page.$('.layout'), 'the administrator signs in over HTTPS at the new ad
   eq(me.programme && me.programme.profile, 'harm_reduction', 'the new install is a harm-reduction programme');
   eq(Object.values((me.programme && me.programme.modules) || { x: true }).some(Boolean), false, 'with every clinical module switched off');
   const funds = await page.evaluate(() => fetch('/api/budget/funds', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()));
-  const main = (funds.funds || []).find(f => f.name === 'County SUD Navigation Grant');
+  const main = (funds.funds || []).find(f => f.name === 'County opioid settlement allocation');
   ok(main, 'the main funding source named in the wizard exists', JSON.stringify(funds).slice(0, 200));
   eq(me.default_fund_id, main && main.id, 'and is the default fund for new visits');
+  eq(main && main.source_type, 'opioid_settlement', 'as opioid settlement money');
+  eq(main && main.settlement_use, 'approved_h', 'with the allowable use chosen in the wizard');
+  const settle1 = await page.evaluate(() => fetch('/api/reports/opioid-settlement?purpose=internal&counts=exact', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()));
+  ok((settle1.funds || []).some(f => f.name === 'County opioid settlement allocation'), 'so it reaches the settlement report', settle1.funds);
 }
 // The wizard's No is honoured straight away: the server serves the explanation, not the kernel.
 {
@@ -93,14 +107,28 @@ await page.keyboard.press('Escape');
 // Nothing to protect yet, so the setup card must lead with the one step that cannot wait: the key backup.
 await page.goto(after + '/#/dashboard'); await settle(page);
 ok(/Save a copy of your encryption keys/.test(await page.textContent('#app')), 'Home asks for the key backup first');
+// A production Home: no "Load sample data" in front of the administrator (it stays under Settings), and the
+// audit-anchor finding as a plain sentence with a link, amber rather than a red pill.
+ok(!(await page.$('[data-sample-banner]')), 'a production server\'s Home does not offer sample data');
+const anchorNote = await page.$('[data-security-alert=audit_anchor_dir]');
+ok(anchorNote, 'Home says the audit log\'s safety copies are on the database disk');
+eq(anchorNote && await anchorNote.getAttribute('data-severity'), 'warn', 'amber: a finding, not an alarm');
+ok(anchorNote && await anchorNote.evaluate(e => e.classList.contains('warn') && !e.classList.contains('danger')), 'and drawn amber');
+const anchorText = anchorNote ? (await anchorNote.textContent()).replace(/\s+/g, ' ') : '';
+ok(/Ask your IT support/.test(anchorText) && /LOGGING-AND-AUDIT\.md/.test(anchorText), 'in words that say who fixes it and where the steps are', anchorText);
+eq(anchorNote && await anchorNote.$eval('a', a => a.getAttribute('href')), '#/admin?tab=security', 'with a link to Security status');
+ok(!/Set the opioid-settlement category/.test(await page.textContent('#app')), 'the wizard\'s settlement fund already has its category, so Home does not ask for it');
 await page.goto(after + '/#/admin?tab=system'); await settle(page);
 const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.click('text=Download encrypted backup')]);
 ok(/\.enc$|\.db/.test(dl.suggestedFilename()), 'the first encrypted backup downloads', dl.suggestedFilename());
-// The key backup asks the administrator to prove it is them (a confirmation this soon after signing in; the
-// password or authenticator code later): the server refuses a session alone (POST /api/admin/keys-backup).
+// The key backup asks the administrator to prove it is them with every download (1.13.1: the password or
+// authenticator code, even this soon after signing in): the server refuses a session alone.
 await page.click('text=Download key backup');
 const keyDialog = page.getByRole('dialog', { name: 'Download the key backup' });
 ok(await keyDialog.waitFor({ timeout: 5000 }).then(() => true, () => false), 'the key backup opens a dialog that asks the administrator to confirm it is them');
+const keyPw = keyDialog.getByLabel(/Re-enter your password/);
+ok(await keyPw.isVisible().catch(() => false), 'it asks for the password even straight after signing in');
+await keyPw.fill('SetupPassw0rd!x');
 const [kdl] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), keyDialog.getByRole('button', { name: 'Download the key backup' }).click()]);
 ok(/KEEP-SECRET/.test(kdl.suggestedFilename()), 'and so does the key backup, named so nobody files it casually', kdl.suggestedFilename());
 const again = await page.evaluate(() => fetch('/api/setup/status').then(r => r.json()));

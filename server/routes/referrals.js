@@ -8,7 +8,6 @@ const audit = require('../audit');
 const C = require('../constants');
 const disclosure = require('../disclosure');
 const CN = require('../client-name');
-const { badRequest } = require('../http');
 const { uuid, encrypt, decrypt } = require('../crypto');
 
 // A referral at these statuses means the agency has been contacted about this person by name.
@@ -134,16 +133,13 @@ function pushDisclosure(user, raw, existing, deviceRows = []) {
 
 module.exports = (r) => {
   crud.build(r, {
-    table: 'referrals', entity: 'referral', perm: 'referrals', dateCol: 'referred_at', restrictOwner: true,
+    table: 'referrals', entity: 'referral', perm: 'referrals', dateCol: 'referred_at',
     joins: 'JOIN users u ON u.id=referrals.user_id JOIN clients c ON c.id=referrals.client_id JOIN resources res ON res.id=referrals.resource_id',
     // The client's name for a role that can open the client (client-name.js); the code for any other.
     select: `referrals.*, u.display_name AS worker, c.client_code, ${CN.SELECT}, res.name AS resource_name, res.category AS resource_category, res.phone AS resource_phone`,
-    shape: {
-      client_id: { type: 'string', required: true }, resource_id: { type: 'string', required: true }, user_id: { type: 'string' }, referred_at: { type: 'datetime', required: true },
-      status: { type: 'string', list: 'REFERRAL_STATUSES' }, urgency: { type: 'string', enum: ['routine', 'urgent', 'emergent'] }, appointment_at: { type: 'datetime' }, admitted_at: { type: 'datetime' },
-      closed_at: { type: 'datetime' }, outcome: { type: 'string', maxLen: 500 }, barrier: { type: 'string', maxLen: 300 }, warm_handoff: { type: 'boolean' }, consent_id: { type: 'string' },
-      follow_up_due: { type: 'date' }, notes: { type: 'string', maxLen: 2000 }, episode_id: { type: 'string' },
-      // Not columns: how this disclosure is justified, and what was actually sent.
+    // The stored fields, owner, canEdit and the resource/consent checks: server/rules/referrals.js. Not columns:
+    // how this disclosure is justified, and what was actually sent.
+    extraShape: {
       _disclosure_basis: { type: 'string', enum: BASES }, _disclosure_what: { type: 'string', maxLen: 1000 }, _disclosure_justification: { type: 'string', maxLen: 2000 },
       _court_order_id: { type: 'string' }, _restriction_reviewed: { type: 'boolean' }, _recipient_override: { type: 'boolean' },
     },
@@ -156,8 +152,6 @@ module.exports = (r) => {
     },
     afterLoad: (ctx, row) => present(withConsentOnFile(ctx, CN.withClientName(ctx, row))),
     beforeInsert: (ctx, v) => {
-      if (!db.one(`SELECT 1 FROM resources WHERE id=?`, v.resource_id)) throw badRequest('Unknown resource');
-      if (v.consent_id && !db.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, v.client_id)) throw badRequest('That consent belongs to a different client');
       // Nothing identifiable goes out without a basis. A "pending" referral with no warm handoff is just a
       // phone number handed to the client, so it needs none.
       if (sharesInformation(v)) disclosure.requireBasis(v.client_id, gate(ctx, v));
@@ -170,13 +164,11 @@ module.exports = (r) => {
       encFields(v);
     },
     beforeUpdate: (ctx, v, row) => {
-      if (v.consent_id && !db.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest('That consent belongs to a different client');
       // A referral that was only "pending" and is now being progressed starts sharing information now. One
       // that already shares and is re-pointed at another agency tells that agency who this person is: the
       // basis is checked against the new recipient (as creating the referral there would be) and the new
       // disclosure is accounted — the old row still stands for the agency that was told first.
       const recipientChanged = !!v.resource_id && v.resource_id !== row.resource_id;
-      if (recipientChanged && !db.one(`SELECT 1 FROM resources WHERE id=?`, v.resource_id)) throw badRequest('Unknown resource');
       if (sharesInformation(v, row) && (recipientChanged || !existingDisclosure(row.id))) recordDisclosure(ctx, row, v);
       if (v.status && CLOSED_STATUSES.includes(v.status) && !v.closed_at && !row.closed_at) v.closed_at = db.now();
       if (v.status === 'admitted' && !v.admitted_at && !row.admitted_at) v.admitted_at = db.now();
@@ -189,7 +181,6 @@ module.exports = (r) => {
       db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`,
         uuid(), row.client_id, row.user_id, ctx.user.id, encrypt(`Follow up on referral to ${resourceName(row.resource_id)}`), row.follow_up_due, row.urgency === 'emergent' ? 'urgent' : 'normal', row.id);
     },
-    canEdit: crud.ownerOrManager(),
   });
 
   // Close the loop explicitly: what happened, and was the client admitted?
@@ -204,7 +195,9 @@ module.exports = (r) => {
       consent_id: { type: 'string' }, _disclosure_basis: { type: 'string', enum: BASES }, _disclosure_what: { type: 'string', maxLen: 1000 }, _disclosure_justification: { type: 'string', maxLen: 2000 },
       _court_order_id: { type: 'string' }, _restriction_reviewed: { type: 'boolean' }, _recipient_override: { type: 'boolean' },
     }, { existing: row });
-    if (v.consent_id && !db.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest('That consent belongs to a different client');
+    // The table's rules (server/rules/referrals.js): the consent it cites is this client's. Recording an outcome is
+    // anyone's on the caseload, not only the referral's maker (editable: false), as it is by sync.
+    require('../rules').assertWrite('referrals', { id: row.id, status: v.status, consent_id: v.consent_id }, ctx, { existing: row, editable: false });
     const admitted = v.status === 'admitted' || !!v.admitted_at;
     db.transaction(() => {
       // Recording "admitted" or "scheduled" on a referral that was only ever pending is the moment the agency

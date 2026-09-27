@@ -9,23 +9,10 @@ const M = require('../clients-model');
 const F = require('../client-filters');
 const O = require('../options');
 
-// discharge_reason is a code from the DISCHARGE_REASONS list, like an episode's. A reason typed in before
-// it became a list stays on the record and does not block editing it (validate's `existing`); only a new
-// value is checked. A de-identified export writes anything outside the list as "other" (server/exports.js).
-const shape = {
-  first_name: { type: 'string', required: true, maxLen: 100 }, last_name: { type: 'string', required: true, maxLen: 100 },
-  preferred_name: { type: 'string', maxLen: 100 }, dob: { type: 'date' }, phone: { type: 'string', maxLen: 40 }, alt_phone: { type: 'string', maxLen: 40 },
-  email: { type: 'string', maxLen: 200 }, address: { type: 'string', maxLen: 300 }, city: { type: 'string', maxLen: 100 }, zip: { type: 'string', maxLen: 12 },
-  gender: { type: 'string', maxLen: 40 }, pronouns: { type: 'string', maxLen: 40 }, race_ethnicity: { type: 'string', maxLen: 100 }, preferred_language: { type: 'string', maxLen: 60 },
-  veteran: { type: 'boolean' }, housing_status: { type: 'string', maxLen: 60 }, insurance: { type: 'string', maxLen: 100 }, medicaid_id: { type: 'string', maxLen: 40 },
-  emergency_contact: { type: 'string', maxLen: 300 },
-  status: { type: 'string', enum: ['waitlist', 'active', 'inactive', 'closed', 'deceased'] }, intake_date: { type: 'date' }, discharge_date: { type: 'date' }, discharge_reason: { type: 'string', maxLen: 200, list: 'DISCHARGE_REASONS' },
-  referral_source: { type: 'string', maxLen: 120 }, referral_date: { type: 'date' }, engagement_date: { type: 'date' }, primary_substance: { type: 'string', maxLen: 60, list: 'SUBSTANCES' }, secondary_substances: { type: 'string', maxLen: 200 }, route_of_use: { type: 'string', maxLen: 60 },
-  asam_level: { type: 'string', maxLen: 20 }, mat_status: { type: 'string', enum: ['none', 'interested', 'referred', 'active', 'discontinued', 'unknown'] }, mat_medication: { type: 'string', maxLen: 60 },
-  overdose_history: { type: 'boolean' }, last_overdose_date: { type: 'date' }, naloxone_provided: { type: 'boolean' }, naloxone_last_date: { type: 'date' },
-  risk_level: { type: 'string', enum: ['low', 'moderate', 'high', 'critical'] }, justice_involved: { type: 'boolean' }, pregnant_or_parenting: { type: 'boolean' }, co_occurring_mh: { type: 'boolean' },
-  goals: { type: 'string', maxLen: 2000 }, flags: { type: 'string', maxLen: 300 }, race_codes: { type: 'string', maxLen: 200 }, contact_preferences: { type: 'string', maxLen: 300 }, ok_to_text: { type: 'boolean' }, ok_to_voicemail: { type: 'boolean' },
-};
+// A client's fields, and what they must satisfy (contact details that can be right; a record closed only by a
+// discharge), are the table's rules: server/rules/clients.js, which sync push applies to a device's rows too.
+const rules = require('../rules');
+const shape = rules.forTable('clients').fields;
 
 function loadClient(ctx, id) {
   const row = db.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, id);
@@ -38,21 +25,6 @@ function loadClient(ctx, id) {
   }
   auth.assertClientAccess(ctx, id);
   return row;
-}
-
-// Contact details that cannot be right are worse than none: a birth date in the future, "notanemail", a
-// phone number with no digits. The form checks the same things, so a worker sees it before saving.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-function checkContactFields(v) {
-  const fields = {};
-  if (v.dob) {
-    const today = require('./budget').localDate();
-    if (v.dob > today) fields.dob = 'cannot be in the future';
-    else if (v.dob < '1900-01-01') fields.dob = 'must be after 1900';
-  }
-  if (v.email && !EMAIL_RE.test(v.email)) fields.email = 'is not a valid email address';
-  for (const f of ['phone', 'alt_phone']) if (v[f] && String(v[f]).replace(/\D/g, '').length < 7) fields[f] = 'must contain at least 7 digits';
-  if (Object.keys(fields).length) throw badRequest('Validation failed', { fields });
 }
 
 /**
@@ -90,6 +62,11 @@ function possibleDuplicates(v, excludeId = null) {
 
 /** Matched on something only the person (or their paperwork) supplies, not on a name alone. */
 const strongMatch = (m) => m.reasons.includes('same surname and date of birth') || m.reasons.includes('same phone number');
+// Surname and date of birth together: what the person at the desk says about themselves. A phone number alone
+// does not tell a worker that a record they cannot open exists (security review of 1.13.0, finding 1: a
+// navigator typed numbers into the check and was told who had been discharged, when, and why). A number is
+// shared, recycled and easy to guess. It still counts as a match for a record the caller can already open.
+const SURNAME_DOB = 'same surname and date of birth';
 /** Discharged and nobody's: closed or inactive, no open episode, no active assignment. */
 function isDischarged(id) {
   return !!db.one(`SELECT 1 FROM clients c WHERE c.id=? AND c.deleted_at IS NULL AND c.merged_into IS NULL AND c.status IN ('closed','inactive')
@@ -97,12 +74,22 @@ function isDischarged(id) {
     AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.client_id=c.id AND ${auth.activeAssignment('a.')})`, id);
 }
 const canReadmit = (user) => auth.hasPerm(user, 'clients:write') && auth.hasPerm(user, 'episodes:write');
-/** Hidden matches this worker may re-admit, described without anything from the stored record's PHI. */
+// What a worker who cannot open the record is told: an earlier record exists, and a supervisor will look at
+// it. Not its client code, status, discharge date or reason: those come from the stored record, and a
+// discharge reason ("incarcerated", "deceased") is itself sensitive.
+const OFFER_MESSAGE = 'An earlier record exists for this person. A supervisor will be asked to review it.';
+/**
+ * Hidden matches this worker may re-admit: on surname and date of birth only, never on a phone number alone,
+ * and described by nothing from the stored record (its id, to re-admit it by, and a fixed sentence). Each
+ * offer puts a review task on the record for a supervisor (reviewTask, as a hidden duplicate at intake does).
+ * A caller holding clients:all can open every record, so nothing is hidden from them and this does not apply:
+ * they see the record itself, with its code and status, among the matches.
+ */
 function readmitOffers(ctx, hidden) {
   if (!canReadmit(ctx.user)) return [];
-  return hidden.filter(m => strongMatch(m) && isDischarged(m.id)).map(m => {
-    const c = db.one(`SELECT client_code, status, discharge_date, discharge_reason FROM clients WHERE id=?`, m.id);
-    return { id: m.id, client_code: c.client_code, status: c.status, discharge_date: c.discharge_date, discharge_reason: c.discharge_reason, reasons: m.reasons };
+  return hidden.filter(m => m.reasons.includes(SURNAME_DOB) && isDischarged(m.id)).map(m => {
+    reviewTask(ctx.user, m.id, `Earlier record offered for re-admission at intake: review ${m.client_code}`);
+    return { id: m.id, reasons: [SURNAME_DOB], message: OFFER_MESSAGE };
   });
 }
 
@@ -110,6 +97,16 @@ function readmitOffers(ctx, hidden) {
 // records for one person is a safety problem), but it must not become a way to ask "is this person a client
 // here?": the caller's answer is the same as for no match at all, and a supervisor gets a review task instead.
 const mayOpen = (user, id) => auth.canAccessClient(user, id) || auth.hasPerm(user, 'clients:all');
+/**
+ * One high-priority, unassigned to-do on a record, for a supervisor. Put on a record the creator cannot open,
+ * it is on a supervisor's list and not on the creator's. The live duplicate check runs while the worker types,
+ * so an open task with the same title, record and creator is not added again.
+ */
+function reviewTask(user, clientId, title) {
+  const open = db.all(`SELECT title_enc FROM tasks WHERE client_id=? AND created_by=? AND assigned_to IS NULL AND priority='high' AND status IN ('open','in_progress')`, clientId, user.id);
+  if (open.some(t => { try { return decrypt(t.title_enc) === title; } catch { return false; } })) return;
+  db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,priority) VALUES(?,?,?,?,?,?)`, uuid(), clientId, null, user.id, encrypt(title), 'high');
+}
 /**
  * Record possible duplicates of a new client for a supervisor: audited by code and reason (never names), and
  * one high-priority task to compare them. The task goes on a matching record the creator cannot open when
@@ -119,9 +116,11 @@ function flagForReview(user, { id, client_code, matches, source, ip }) {
   if (!matches.length) return;
   audit.log({ user, action: 'client.possible_duplicate', entity: 'client', entityId: id, clientId: id, ip, details: { client_code, matches: matches.map(m => ({ id: m.id, client_code: m.client_code, reasons: m.reasons })), source } });
   const hidden = matches.find(m => !mayOpen(user, m.id));
-  db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,priority) VALUES(?,?,?,?,?,?)`, uuid(), hidden ? hidden.id : id, null, user.id,
-    encrypt(`Possible duplicate record: compare ${client_code} with ${matches.map(m => m.client_code).join(', ')}`), 'high');
+  reviewTask(user, hidden ? hidden.id : id, `Possible duplicate record: compare ${client_code} with ${matches.map(m => m.client_code).join(', ')}`);
 }
+// The live check reads other people's records on every call, so it is limited per worker (not per address: an
+// office shares one). Plenty for a busy intake desk; too few to walk a list of names and birth dates.
+const DUPLICATE_CHECKS = 60; const DUPLICATE_CHECK_WINDOW_MS = 15 * 60_000;
 
 module.exports = (r) => {
   r.get('/api/clients', auth.requireAuth, auth.requirePerm('clients:read', 'clients:list-deidentified'), (ctx) => {
@@ -191,19 +190,24 @@ module.exports = (r) => {
 
   // Check before entering, so the worker sees the match while they are still typing.
   r.post('/api/clients/check-duplicates', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
+    if (!require('../app').rateLimit(`duplicate-check:${ctx.user.id}`, DUPLICATE_CHECKS, DUPLICATE_CHECK_WINDOW_MS)) {
+      audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, success: false, details: { reason: 'rate limited' } });
+      throw new HttpError(429, 'Too many duplicate checks. Wait a few minutes; the check is made again when the client is saved.');
+    }
     const v = validate(ctx.body, { first_name: { type: 'string', maxLen: 100 }, last_name: { type: 'string', maxLen: 100 }, dob: { type: 'date' }, phone: { type: 'string', maxLen: 40 }, exclude_id: { type: 'string' } });
     const all = possibleDuplicates(v, v.exclude_id || null);
     const matches = all.filter(m => mayOpen(ctx.user, m.id));
     const hidden = all.filter(m => !mayOpen(ctx.user, m.id));
     const readmit = readmitOffers(ctx, hidden);
-    if (all.length) audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { matches: all.length, hidden: hidden.length, shown: matches.map(m => m.client_code), readmit_offered: readmit.map(m => m.client_code) } });
+    // Every check is audited, found or not: which details were given (never their values) and what matched.
+    audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { asked: ['first_name', 'last_name', 'dob', 'phone'].filter(k => v[k]), matches: all.length, hidden: hidden.length, shown: matches.map(m => m.client_code), readmit_offered: readmit.length ? readmit.map(m => hidden.find(x => x.id === m.id).client_code) : undefined } });
     // No count of the matches the caller cannot open: that answered "is this person a client here?".
     return { matches, readmit };
   });
 
   r.post('/api/clients', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
     const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: 'boolean' }, no_episode: { type: 'boolean' } });
-    checkContactFields(v);
+    rules.assertWrite('clients', rules.toColumns('clients', v), ctx);
     // Refuse a likely duplicate unless the worker has looked at the match and said it is a different person.
     if (!v.confirm_duplicate) {
       // Exactly the filter /check-duplicates applies: a match the caller can open is shown; one they cannot is
@@ -212,7 +216,7 @@ module.exports = (r) => {
       const all = possibleDuplicates(v);
       const visible = all.filter(m => mayOpen(ctx.user, m.id));
       const readmit = readmitOffers(ctx, all.filter(m => !visible.includes(m)));
-      if (all.length) audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { matches: all.length, hidden: all.length - visible.length, shown: visible.map(m => m.client_code), readmit_offered: readmit.length ? readmit.map(m => m.client_code) : undefined } });
+      if (all.length) audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { matches: all.length, hidden: all.length - visible.length, shown: visible.map(m => m.client_code), readmit_offered: readmit.length ? readmit.map(m => all.find(x => x.id === m.id).client_code) : undefined } });
       if (visible.length) throw badRequest('A client with these details may already exist', { duplicates: visible, readmit, confirm_field: 'confirm_duplicate' });
       if (readmit.length) throw badRequest('An earlier record exists for this person and they were discharged. Re-admit it to carry on their record rather than starting a new one.', { readmit, confirm_field: 'confirm_duplicate' });
     }
@@ -250,7 +254,7 @@ module.exports = (r) => {
 
   // Re-admit a discharged client found by the intake duplicate check (see the comment above readmitOffers).
   // The caller proves they are dealing with this person by sending the details that matched (surname and
-  // date of birth, or phone number), not just an id, and says why; the record must be discharged and on
+  // date of birth; a phone number only for a record they can already open), not just an id, and says why; the record must be discharged and on
   // nobody's caseload. Everything else about access is unchanged: this is the only door, and it is logged
   // and reviewed.
   r.post('/api/clients/:id/readmit', auth.requireAuth, auth.requirePerm('clients:write'), auth.requirePerm('episodes:write'), (ctx) => {
@@ -260,9 +264,12 @@ module.exports = (r) => {
     const row = db.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL AND merged_into IS NULL`, ctx.params.id);
     if (!row) throw notFound('Client not found');
     const match = possibleDuplicates(v).find(m => m.id === row.id);
-    if (!match || !strongMatch(match)) {
+    // Someone who cannot open the record proves they are dealing with this person by surname and date of
+    // birth, as the offer was made (readmitOffers); a phone number is enough only for a record they can open.
+    const proven = match && (mayOpen(ctx.user, row.id) ? strongMatch(match) : match.reasons.includes(SURNAME_DOB));
+    if (!proven) {
       audit.log({ user: ctx.user, action: 'authz.denied', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, success: false, details: { reason: 'readmit: details do not match the record' } });
-      throw forbidden('Those details do not match that record. Enter the surname and date of birth, or the phone number, as the person gives them.');
+      throw forbidden('Those details do not match that record. Enter the surname and date of birth as the person gives them.');
     }
     if (!isDischarged(row.id)) {
       audit.log({ user: ctx.user, action: 'client.readmit.refused', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, success: false, details: { status: row.status } });
@@ -409,13 +416,8 @@ module.exports = (r) => {
     const row = loadClient(ctx, ctx.params.id);
     require('../crud').assertFresh(ctx, row, 'client');
     const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true, existing: row });
-    checkContactFields(v);
-    // Closing a client is a discharge, and a discharge is what closes the episode, ends the care team and
-    // clears the open to-dos. Setting the status by hand while an episode is open would leave all of that
-    // running against a "closed" person, so it has to go through the Episodes tab.
-    if ((v.status === 'closed' || v.status === 'deceased') && v.status !== row.status && db.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id)) {
-      throw badRequest(`This client has an open episode of care. To ${v.status === 'deceased' ? 'record a death' : 'close the record'}, discharge them on the Episodes tab — that closes the episode and sets the status.`, { fields: { status: 'discharge on the Episodes tab instead' }, open_episode: true });
-    }
+    // Contact details, and closing a client only by a discharge (the Episodes tab): the table's rules.
+    rules.assertWrite('clients', { id: row.id, ...rules.toColumns('clients', v) }, ctx, { existing: row });
     const enc = M.encryptFields(v);
     if (v.first_name !== undefined || v.last_name !== undefined) {
       const cur = M.decryptRow(row);

@@ -58,30 +58,46 @@ function release(ctx, { from, to }, { fund = null } = {}) {
   return { publishable: !why.length, period, not_publishable: why };
 }
 
+/** Are publication releases switched on for this programme? (server/programme.js module 'publication'). */
+function publicationOn() { return require('./programme').moduleOn('publication'); }
+/** Why a publication run is refused while releases are switched off, and what this role can run instead. */
+function publicationOffMessage(user) {
+  const other = auth.hasPerm(user, 'reports:internal') || auth.hasPerm(user, 'reports:funder')
+    ? 'Run the program\'s own submission to its funder instead: it is not for publication.'
+    : 'Your role runs publication releases only, so it has nothing to run here until they are switched back on; the program\'s submission to its funder is run by a supervisor, an administrator or finance.';
+  return `Publication releases are switched off for this program (an administrator can switch them back on in Settings \u203a Program \u203a Modules). ${other}`;
+}
 /**
  * How this run counts, and what it is for. Unless the request says (purpose=), a role that may run reports
- * that are not for publication (reports:internal: supervisor, administrator) gets the programme's own
- * submission to its funder - what a funder asks for - and any other role a publication release when the run
- * could be one (release above), else an internal run. Publication is something a supervisor asks for
- * (purpose=publication: "Prepare a publication release"), with its review before sharing. A submission counts
- * exactly for a role that holds reports:exact unless counts=suppressed is asked; any other run is suppressed
- * unless counts=exact (reports:exact; never for publication). Asking for a publication release that a run
- * cannot be is refused.
+ * that are not for publication (reports:internal: supervisor, administrator) or that writes the funder report
+ * (reports:funder: finance too) gets the programme's own submission to its funder - what a funder asks for -
+ * and any other role a publication release when the run could be one (release above), else an internal run.
+ * Publication is something a supervisor asks for (purpose=publication: "Prepare a publication release"), with
+ * its review before sharing, and only while publication releases are switched on (module 'publication'). A
+ * submission counts exactly for a role that holds reports:exact, or reports:funder, unless counts=suppressed is
+ * asked; any other run is suppressed unless counts=exact (reports:exact; never for publication). Asking for a
+ * publication release that a run cannot be is refused.
  */
 function countingMode(ctx, period = { from: '', to: '' }, opts = {}) {
   const rel = release(ctx, period, opts);
   const asked = ctx.query.get('purpose');
   const internalOk = auth.hasPerm(ctx.user, 'reports:internal');
-  const purpose = asked || (internalOk ? 'submission' : rel.publishable ? 'publication' : 'internal');
+  const funderOk = auth.hasPerm(ctx.user, 'reports:funder');
+  const purpose = asked || (internalOk || funderOk ? 'submission' : rel.publishable ? 'publication' : 'internal');
   if (!PURPOSES.includes(purpose)) throw badRequest('purpose must be publication (a release to publish or share), submission (the program\'s own report to its funder) or internal');
-  const mode = ctx.query.get('counts') || (purpose === 'submission' && auth.hasPerm(ctx.user, 'reports:exact') ? 'exact' : 'suppressed');
+  // Exact counts: reports:exact for any run that is not for publication; reports:funder for a submission.
+  const exactOk = auth.hasPerm(ctx.user, 'reports:exact') || (funderOk && purpose === 'submission');
+  const mode = ctx.query.get('counts') || (purpose === 'submission' && exactOk ? 'exact' : 'suppressed');
   if (!['suppressed', 'exact'].includes(mode)) throw badRequest('counts must be suppressed or exact');
   if (mode === 'exact') {
     if (purpose === 'publication') throw badRequest('Exact counts are only for the program\'s own submission to its funder (purpose=submission) or internal use. A report to publish or share keeps small cells suppressed.');
-    if (!auth.hasPerm(ctx.user, 'reports:exact')) throw forbidden('Only a supervisor or an administrator can run the funder report with exact counts');
+    if (!exactOk) throw forbidden(funderOk ? 'Your role runs exact counts for the program\'s own submission to its funder only (purpose=submission).' : 'Only a supervisor or an administrator can run the funder report with exact counts');
+  }
+  if (purpose === 'publication' && !publicationOn()) {
+    throw new HttpError(403, publicationOffMessage(ctx.user), { module: 'publication', module_off: true });
   }
   if (purpose === 'publication' && !rel.publishable) {
-    throw badRequest(`Only a report on the whole program for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be prepared as a publication release; this one cannot, because ${rel.not_publishable.join(' and ')}. Run it without purpose=publication: it is then ${internalOk ? 'the program\'s own submission to its funder' : 'marked internal'}, not for publication.`);
+    throw badRequest(`Only a report on the whole program for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended can be prepared as a publication release; this one cannot, because ${rel.not_publishable.join(' and ')}. Run it without purpose=publication: it is then ${internalOk || funderOk ? 'the program\'s own submission to its funder' : 'marked internal'}, not for publication.`);
   }
   const threshold = Number(db.getSetting('small_cell_threshold', '')) || SMALL_CELL_DEFAULT;
   return { mode, threshold, purpose, release: rel };
@@ -542,4 +558,4 @@ function sheets(d, ctx, fundName) {
   };
 }
 
-module.exports = { RUN_LABEL, build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, foldFunds, settlementKeyOf, FUND_FOLD_ID, FUND_FOLD_KEEP, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };
+module.exports = { RUN_LABEL, publicationOn, publicationOffMessage, build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, foldFunds, settlementKeyOf, FUND_FOLD_ID, FUND_FOLD_KEEP, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };

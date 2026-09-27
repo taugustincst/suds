@@ -107,6 +107,24 @@ test('a publication release is kept by the data\'s version: asked again it reads
   } finally { FR.figures = figures; }
 });
 
+test('every table a publication release reads is part of the data\'s version it is kept under', async () => {
+  // A table read but not in the version could change without the release being read afresh: a stale release.
+  const PR = require('../server/publication-release');
+  const { DatabaseSync } = require('node:sqlite');
+  PR.clearCache();
+  const read = new Set(); const prepare = DatabaseSync.prototype.prepare;
+  DatabaseSync.prototype.prepare = function (sql) { for (const m of String(sql).matchAll(/\b(?:FROM|JOIN)\s+([a-z_]+)/gi)) read.add(m[1].toLowerCase()); return prepare.call(this, sql); };
+  try {
+    const r = await req('GET', '/api/reports/naloxone-ndp?from=2025-07-01&to=2025-09-30&purpose=publication');
+    assert.equal(r.status, 200, JSON.stringify(r.data).slice(0, 300));
+  } finally { DatabaseSync.prototype.prepare = prepare; }
+  // What else the request reads (its session and user, the audit log it writes) is not the release's data.
+  const notData = new Set(['sqlite_master', 'temp', 'tombstones', 'json_each', 'sessions', 'users', 'audit_log', 'served']);
+  const missing = [...read].filter(t => !notData.has(t) && !PR.VERSION_TABLES.includes(t));
+  assert.ok(read.has('interventions') && read.has('funding_sources'), `the release was read: ${[...read]}`);
+  assert.deepEqual(missing, [], `tables read by the request and not in the version: ${missing.join(', ')} (read: ${[...read].join(', ')})`);
+});
+
 test('the monthly report reads a month at a time and answers exactly what one pass over the visits did', async () => {
   const r = await req('GET', '/api/reports/monthly?months=24');
   assert.equal(r.status, 200);

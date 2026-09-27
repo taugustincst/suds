@@ -2,7 +2,10 @@
 // confirmation soon after signing in (and the password once the window has passed), the supervision queue
 // with client names, rows that open the note or referral from the keyboard, countersigning several notes
 // in one step, the referral form choosing the one consent that names the provider, and the warning for a
-// consent that is already on file.
+// consent that is already on file. And (1.13.1, the third UX review) anonymous outreach counted on Home and Reports as
+// in the funder report, overdose doses said as stored, "+ Log → Overdose or reversal", the supply cupboard step
+// and the visit that says its kits were not taken off, "Select all" when countersigning, per-role Home
+// headings, and a forced password change that asks the server for nothing it will refuse.
 import { chromium } from 'playwright';
 import { makeChecks, until, settle } from './assert.mjs';
 
@@ -168,8 +171,20 @@ await nav.close();
   await page.keyboard.press('Enter');
   ok(await until(() => page.$('.modal .kv')), 'Enter on a queue row opens that note');
   await closeModals(page);
-  // Several at once.
+  // Several at once. "Select all" (1.13.1) ticks every note in the queue, and clears them again.
+  const rowsInQueue = (await page.$$('[data-cosign-pick]')).length;
+  const all = await page.$('[data-cosign-select-all]');
+  ok(all, 'the queue has a "Select all" checkbox');
+  ok(all && await all.evaluate(el => !!(el.labels && el.labels[0] && /Select all \d+ notes/.test(el.labels[0].textContent))), 'with a visible label');
+  if (all) {
+    await all.check();
+    eq(await page.getAttribute('[data-cosign-picked]', 'data-cosign-picked'), String(rowsInQueue), 'it selects every note in the queue');
+    eq((await page.$$('[data-cosign-pick]:checked')).length, rowsInQueue, 'and ticks each box');
+    await all.uncheck();
+    eq(await page.getAttribute('[data-cosign-picked]', 'data-cosign-picked'), '0', 'and clears them again');
+  }
   for (const id of ids) await page.check(`[data-cosign-pick="${id}"]`);
+  if (rowsInQueue > 2) ok(await page.$eval('[data-cosign-select-all]', el => el.indeterminate), 'with only some ticked, "Select all" shows as partly ticked');
   eq(await page.getAttribute('[data-cosign-picked]', 'data-cosign-picked'), '2', 'two notes selected');
   await page.click('[data-cosign-selected]');
   const list = await until(() => page.$('.modal [data-cosign-list]'));
@@ -214,6 +229,118 @@ await nav.close();
   ok(badgeText && badgeText.includes('No home visits alone') && badgeText.includes('allergy: naltrexone'), 'the header shows the label from the Safety flags list and the typed flag as typed', badgeText);
   ok(badgeText && !/no_home_visits/.test(badgeText), 'never the raw code', badgeText);
   await api('PUT', `/api/clients/${client.id}`, { flags: before || '' });
+}
+
+// ---- 7. the third UX review (1.13.1) ----
+const statValue = (page, label) => page.evaluate((l) => { const s = [...document.querySelectorAll('.main .stat')].find(x => x.querySelector('.l')?.textContent.trim() === l); return s ? Number(s.querySelector('.v').textContent.replace(/[^\d]/g, '')) : null; }, label);
+const pageText = (page) => page.evaluate(() => (document.querySelector('.main')?.innerText || '').replace(/\s+/g, ' '));
+const cupboard = (await admin.api('GET', '/api/supplies')).data.rows;
+for (const x of cupboard) await admin.api('DELETE', `/api/supplies/${x.id}`);
+eq((await admin.api('GET', '/api/supplies')).data.rows.length, 0, 'the supply cupboard is empty (a new program)');
+{
+  const phone = await session('mrivera', PW, { width: 390, height: 844 });
+  const { page, api } = phone;
+  // What the overdose list says of each event's naloxone, counted before and after (rows recorded in the same
+  // minute sort in either order).
+  const rowsSaying = async (re) => { await go(page, 'overdose'); return page.$$eval('.main table tbody tr', (trs, src) => trs.filter(tr => new RegExp(src).test(tr.innerText)).length, re.source); };
+  const notRecordedBefore = await rowsSaying(/given, doses not recorded/); const twoBefore = await rowsSaying(/\b2 doses\b/);
+  const newest = async () => (await api('GET', '/api/overdose-events?limit=200')).data.rows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+  // + Log offers an overdose or reversal; it opens the overdose form, charged to the default fund.
+  await go(page, 'dashboard');
+  const fab = await page.$('.fab button');
+  if (fab && await fab.isVisible()) await fab.click(); else await page.click('.appbar .quick');
+  await page.waitForSelector('.modal .quick-list');
+  const quick = await page.$$eval('.modal .quick-list button', b => b.map(x => x.textContent.trim()));
+  ok(quick.some(t => /Overdose or reversal/.test(t)), '+ Log offers "Overdose or reversal"', quick);
+  await page.click('.modal .quick-list button:has-text("Overdose or reversal")');
+  ok(await until(() => page.$('.modal select[name=kind]')), 'which opens the overdose form');
+  const fund = (await api('GET', '/api/auth/me')).data.default_fund_id;
+  if (fund && await page.$('.modal select[name=funding_source_id]')) eq(await page.inputValue('.modal select[name=funding_source_id]'), fund, 'charged to the default fund, as a visit is');
+  // Doses left empty: stored as 0, and said as "doses not recorded" (the list said "1 dose", the reports 0).
+  await page.selectOption('.modal select[name=kind]', 'reversal');
+  eq(await page.inputValue('.modal input[name=naloxone_doses]'), '', 'Doses given is left empty');
+  await page.click('.modal button[type=submit]');
+  const t1 = await until(() => page.$('#toasts .toast:has-text("Event recorded")'), { timeout: 5000 });
+  ok(t1 && /naloxone given \(doses not recorded\)/.test(await t1.textContent()), 'the toast mentions the naloxone and that no doses were recorded', t1 && await t1.textContent());
+  await until(async () => !(await page.$('.modal-bg')));
+  const ev1 = await newest();
+  eq(ev1 && ev1.naloxone_doses, 0, 'stored as 0 doses');
+  eq(await rowsSaying(/given, doses not recorded/), notRecordedBefore + 1, 'the list says "given, doses not recorded" (not "1 dose")');
+  await page.click('.main button:has-text("+ Record an event")'); await page.waitForSelector('.modal select[name=kind]');
+  await page.selectOption('.modal select[name=kind]', 'reversal'); await page.fill('.modal input[name=naloxone_doses]', '2');
+  await page.click('.modal button[type=submit]');
+  const t2 = await until(() => page.$('#toasts .toast:has-text("2 doses")'), { timeout: 5000 });
+  ok(t2, 'with doses given, the toast says how many', t2 && await t2.textContent());
+  await until(async () => !(await page.$('.modal-bg')));
+  eq((await newest()).naloxone_doses, 2, 'stored as 2');
+  eq(await rowsSaying(/\b2 doses\b/), twoBefore + 1, 'and the list shows what was stored');
+  // Supplies: the cupboard is empty, so Supplies offers the two standard items, and a visit handing out kits says
+  // they were not taken off.
+  await go(page, 'supplies');
+  ok(await page.$('[data-supplies-missing]'), 'Supplies says visits take kits off only once the items exist');
+  // Adding items is for supervisors and administrators (supplies:manage, 1.14.0): a navigator is told so; the
+  // administrator's one click is checked below.
+  ok(!(await page.$('[data-add-standard-supplies]')) && /A supervisor or administrator adds items/.test(await page.textContent('[data-supplies-missing]')), 'and says who adds them');
+  await go(page, 'interventions');
+  await page.evaluate(async () => (await import('./views/interventions.js')).openInterventionForm(null, {}));
+  await page.waitForSelector('.modal select[name=type]');
+  await page.selectOption('.modal select[name=type]', 'naloxone_distribution');
+  await page.fill('.modal input[name=naloxone_kits]', '10');
+  await page.click('.modal button[type=submit]');
+  const t3 = await until(() => page.$('#toasts .toast:has-text("not taken off Supplies")'), { timeout: 5000 });
+  ok(t3 && /10 × Naloxone kit/.test(await t3.textContent()), 'an anonymous distribution of 10 kits with no supply item says the kits were not taken off', t3 && await t3.textContent());
+  await until(async () => !(await page.$('.modal-bg')));
+  await go(page, 'dashboard');
+  eq(await page.textContent('[data-activity-heading]'), 'What you have been doing (90 days)', 'a navigator\'s Home activity card is theirs');
+  await phone.close();
+}
+{
+  // Home and Reports count that anonymous distribution: the supervisor's figures are the funder report's.
+  const sup = await session('jwalker', PW);
+  const { page, api } = sup;
+  const d = (await api('GET', '/api/reports/dashboard')).data;
+  const f = (await api('GET', `/api/reports/funder?from=${d.from}&to=${d.to}&purpose=submission&counts=exact`)).data;
+  await go(page, 'dashboard');
+  const homeKits = await statValue(page, 'Naloxone kits given');
+  eq(homeKits, f.naloxone_distribution.kits, 'Home\'s "Naloxone kits given" is the funder report\'s kits for the same 90 days, anonymous distribution included');
+  ok(f.naloxone_distribution.community_kits >= 10, 'which has the anonymous kits in it', f.naloxone_distribution);
+  eq(await statValue(page, 'Visits (90 days)'), f.by_funding_source.reduce((s, x) => s + x.services, 0), 'Home\'s visits are the funder report\'s services');
+  eq(await page.textContent('[data-activity-heading]'), 'What the team has been doing (90 days)', 'a supervisor\'s activity card is the team\'s');
+  await go(page, `reports?from=${d.from}&to=${d.to}`);
+  eq(await statValue(page, 'Naloxone kits'), f.naloxone_distribution.kits, 'Reports\' naloxone kits agree too');
+  eq(await statValue(page, 'Fentanyl strips'), f.naloxone_distribution.strips, 'and the test strips');
+  eq(await statValue(page, 'Visits'), f.by_funding_source.reduce((s, x) => s + x.services, 0), 'and the visits');
+  await sup.close();
+}
+{
+  const fin = await session('afinance', PW);
+  await go(fin.page, 'dashboard');
+  eq(await fin.page.textContent('[data-activity-heading]'), 'The program\'s visits (90 days)', 'finance\'s Home is not headed "What you have been doing"');
+  await fin.close();
+}
+{
+  // The Home checklist: "Add your supplies" while the cupboard is empty, done in one click.
+  const { page, api } = admin;
+  await go(page, 'dashboard');
+  ok(/Add your supplies/.test(await pageText(page)), 'Home asks an administrator to add the supplies');
+  await page.click('.main button:has-text("Add naloxone kits and test strips")');
+  await until(() => /#\/supplies/.test(page.url())); await settle(page);
+  const rows = (await api('GET', '/api/supplies')).data.rows.map(x => x.item).sort();
+  eq(rows.join('|'), 'Fentanyl test strips|Naloxone kit', 'one click adds the two standard items');
+  ok(!(await page.$('[data-supplies-missing]')), 'and Supplies no longer says they are missing');
+  await go(page, 'dashboard');
+  ok(!/Add your supplies/.test(await pageText(page)), 'the step is done');
+  for (const x of cupboard) await api('POST', '/api/supplies', { item: x.item, quantity: x.quantity });
+  // A forced password change does not fire requests the server will refuse (users, funds, to-dos).
+  const temp = 'TempPassw0rd!2026';
+  eq((await api('POST', '/api/users', { username: 'uxforced', display_name: 'Forced Change', role: 'navigator', password: temp })).status, 201, 'a new account that must change its password');
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } }); const p = await ctx.newPage();
+  const refused = []; p.on('response', r => { if (r.status() === 403) refused.push(new URL(r.url()).pathname); });
+  await p.goto(base + '/#/login'); await p.fill('input[name=username]', 'uxforced'); await p.fill('input[name=password]', temp); await p.click('button[type=submit]');
+  ok(await until(() => p.$('input[name=new_password]'), { timeout: 10000 }), 'it lands on the password change');
+  await settle(p);
+  eq(refused.join(', '), '', 'and nothing it loads is refused (403)');
+  await ctx.close();
 }
 
 await admin.api('PUT', `/api/users/${navUser.id}`, { requires_cosign: 0 });

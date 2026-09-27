@@ -76,7 +76,7 @@ function pkcePair() {
 
 // The state/nonce/PKCE-verifier travelling between /start and /callback has nowhere server-side to live
 // (a bare Authorization Code flow has no session yet) — it rides in a short-lived, HMAC-signed cookie
-// instead, keyed with its own subkey of the index key (crypto.subkey('oidc-state'), HKDF; before 1.12.5 the
+// instead, keyed with its own subkey of the index key (crypto.subkey('oidc-state'), HKDF; before 1.13.0 the
 // index key itself, shared with the blind indexes and the audit chain), so it cannot be forged or replayed
 // past its own expiry.
 const COOKIE = 'suds_oidc';

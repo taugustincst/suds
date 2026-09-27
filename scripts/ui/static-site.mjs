@@ -24,7 +24,7 @@ page.on('pageerror', e => errors.push('PAGEERROR ' + e.message));
 // the kernel learns there are none (checked below).
 // The web-address check below asks for the office server's health check from this origin, which it refuses (no CORS).
 const probe = (u) => /\/app$|no-such-view|region-pictures\/|\/api\/health$/.test(u);
-// Since 1.12.5 this build's Content-Security-Policy (connect-src 'self') refuses that request before CORS is reached.
+// Since 1.13.0 this build's Content-Security-Policy (connect-src 'self') refuses that request before CORS is reached.
 page.on('console', m => { if (m.type() === 'error' && !probe(m.location()?.url || '') && !/404/.test(m.text()) && !/\/api\/health' from origin .* has been blocked by CORS/.test(m.text()) && !/Refused to connect to '[^']*\/api\/health'|\/api\/health\. Refused to connect because it violates the document's Content Security Policy/.test(m.text())) errors.push('CONSOLE ' + m.text().slice(0, 250)); });
 page.on('response', r => { if (r.status() >= 400 && !probe(r.url())) errors.push(`HTTP ${r.status()} ${r.url()}`); });
 
