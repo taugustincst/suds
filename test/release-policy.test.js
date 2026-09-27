@@ -84,7 +84,7 @@ test('the override passes the release and puts the reason and every exception in
   assert.match(out.notes, /new permission reports:internal/);
 });
 
-// ---- feature releases (1.13.1): at most one every 28 days ----
+// ---- feature releases (1.14.0): at most one every 28 days ----
 // 1.12.0 was tagged 2026-09-26T00:21Z and 1.13.0 the same day at 20:52Z: a feature release within a day of the
 // previous one, which the check did not look at (it checked patch releases only).
 const V1120 = { tag: 'v1.12.0', date: '2026-09-26T00:21:01+00:00' };
@@ -176,7 +176,7 @@ test('release.yml runs the policy in the gate and takes the exception only as an
   assert.match(rel, /ALLOW_PATCH_CHANGES: \$\{\{ github\.event\.inputs\.allow_patch_changes \}\}/, 'passed through the environment, never pasted into a script');
   assert.ok(!/run:.*\$\{\{ github\.event\.inputs\.allow_patch_changes/.test(rel), 'no script injection through the reason');
   assert.match(rel, /--notes-out/, 'the release job writes the override into the release notes');
-  // 1.13.1: the exception's own name, for both rules; the earlier name still works.
+  // 1.14.0: the exception's own name, for both rules; the earlier name still works.
   assert.match(rel, /policy_exception:\n\s+description:/);
   assert.equal((rel.match(/RELEASE_POLICY_EXCEPTION: \$\{\{ github\.event\.inputs\.policy_exception \}\}/g) || []).length, 2, 'passed through the environment to the gate and to the notes');
   assert.ok(!/run:.*\$\{\{ github\.event\.inputs\.policy_exception/.test(rel), 'no script injection through the reason');

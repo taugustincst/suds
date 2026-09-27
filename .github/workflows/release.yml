@@ -19,7 +19,7 @@ on:
         description: "Only to release against the release policy (a PATCH release adding a migration, permission or route, or a feature release within 28 days of the last): the reason (printed at the top of the release notes)"
         required: false
         default: ''
-      # The same, under its name before 1.13.1 (patch releases only then); kept so a saved dispatch still works.
+      # The same, under its name before 1.14.0 (patch releases only then); kept so a saved dispatch still works.
       allow_patch_changes:
         description: "Earlier name of policy_exception (the same effect)"
         required: false

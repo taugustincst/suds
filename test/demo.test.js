@@ -39,7 +39,7 @@ test('sample data: admin loads it, staff see it, it is removed cleanly with tomb
     }
   }
   // Every sample client is found as any client is: its blind indexes are the ones clients-model computes (the
-  // preferred name's was not written until 1.13.1; the 1.13.0 upgrade fixture found it).
+  // preferred name's was not written until 1.14.0; the 1.13.0 upgrade fixture found it).
   const M = require('../server/clients-model'); const { decrypt } = require('../server/crypto');
   let prefs = 0;
   for (const c of db.all(`SELECT * FROM clients`)) {

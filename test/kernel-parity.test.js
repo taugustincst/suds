@@ -8,7 +8,7 @@
 // loads the bundle in Node with sql.js and the few browser APIs it needs (test/fixtures/kernel-harness.js),
 // and drives one representative flow through SUDS_LOCAL.handle — sign up (SUDS on this device), sign in, a
 // client, a visit, a note, a consent, a referral that discloses under it, the funder report for internal use,
-// the dashboard (Home and Reports), and a publication release of the month (1.13.1) — then runs the same flow
+// the dashboard (Home and Reports), and a publication release of the month (1.14.0) — then runs the same flow
 // against the office server's API and requires the same answers: the same release, id for id. A device that
 // syncs with an office, and what the two hold after a round trip, is test/kernel-sync-parity.test.js.
 const { test, before, after } = require('node:test');
@@ -126,7 +126,7 @@ test('a save during the funder report does not drop its working table (sql.js ex
   finally { globalThis.setImmediate = realSetImmediate; }
   assert.ok(turns > 0, 'the report yielded (and a save was asked for) at least once');
   assert.equal(r.status, 200, `the report survived ${turns} save attempts: ${JSON.stringify(r.json)}`);
-  assert.equal(r.json.unduplicated.served, 25, 'the 25 people of the flow (1.13.1 added 24 for the publication release)');
+  assert.equal(r.json.unduplicated.served, 25, 'the 25 people of the flow (1.14.0 added 24 for the publication release)');
   await L.flush({ force: true });
   assert.equal(L.isDirty(), false, 'and the deferred save still happens once the report is done');
 });

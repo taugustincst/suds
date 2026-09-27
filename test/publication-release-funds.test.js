@@ -1,5 +1,5 @@
 'use strict';
-// Small funds combined in "Other funds (n combined)" (1.13.1), against the algorithm-aware attacker
+// Small funds combined in "Other funds (n combined)" (1.14.0), against the algorithm-aware attacker
 // (test/fixtures/pattern-attacker.js): every world of a family of two small funds, through the real release,
 // grouped by printout. A file of its own so that its families, the largest of which takes minutes in the
 // thorough run, run beside test/publication-release.test.js rather than after it. SUDS_THOROUGH=1 runs every

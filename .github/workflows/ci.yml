@@ -3,7 +3,7 @@ name: CI
 on: [push, pull_request]
 # The Node 22 every job but node24 and webkit runs on: an exact release, downloaded and checked against a
 # SHA-256 pinned HERE (as node24's is), not whatever Node 22 the runner image carries that week, which only
-# the major was checked against until 1.13.1 - so no push is tested on a different Node from the one before
+# the major was checked against until 1.14.0 - so no push is tested on a different Node from the one before
 # it without a commit saying so. release.yml pins the same release. To bump it (docs/RELEASE.md, "Bumping the
 # pinned Node versions"): the version, and the linux-x64 .tar.xz line of https://nodejs.org/dist/<version>/
 # SHASUMS256.txt after checking its signature; change both lines here and in release.yml in one commit.

@@ -6,7 +6,7 @@
 //
 //   node scripts/release-policy.js [--version 1.12.5] [--previous v1.12.4 [--previous-ref <commit>]] [--next-ref <commit>] [--now <ISO date>] [--notes-out file]
 //   RELEASE_POLICY_EXCEPTION="<reason>" node scripts/release-policy.js ...   # an explicit, recorded policy exception
-//   ALLOW_PATCH_CHANGES="<reason>" ...                                      # the same (its name before 1.13.1)
+//   ALLOW_PATCH_CHANGES="<reason>" ...                                      # the same (its name before 1.14.0)
 //
 // It compares the tree being released (the working directory) with the previous release tag (the highest
 // vX.Y.Z tag below the version in package.json, unless --previous names one), both loaded the same way:

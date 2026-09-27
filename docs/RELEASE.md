@@ -50,14 +50,14 @@ A minor or major bump may add all of these; it is held to the cadence instead (b
 genuinely has to break the policy (a security fix that needs a route, say), run it from the Actions tab
 (*Run workflow*) with **`policy_exception`** set to the reason. The gate then passes with a warning, and the
 release job puts the reason and the list of exceptions at the top of the GitHub Release notes, where a county
-reviewing the release reads it. A tag push cannot carry an exception; an empty input is none. Until 1.13.1 the
+reviewing the release reads it. A tag push cannot carry an exception; an empty input is none. Until 1.14.0 the
 input was called `allow_patch_changes` and covered patch releases only; that name still works, with the same
 effect. Dry run before tagging: `node scripts/release-policy.js` (compares the working tree with the latest
 tag; `--now <date>` to ask as of another day). The logic is tested in `test/release-policy.test.js`.
 
 ### Feature releases are checked too
 
-The table above allows one feature release a month, and until 1.13.1 nothing checked it: 1.13.0 was tagged
+The table above allows one feature release a month, and until 1.14.0 nothing checked it: 1.13.0 was tagged
 about 21 hours after 1.12.0. Now, **for a minor or major bump**, the same `gate` step finds the previous
 feature release — the newest `vX.Y.0` tag below the version — and fails if its tag is less than **28 days**
 old (`FEATURE_INTERVAL_DAYS` in `scripts/release-policy.js`; the tag's own date for an annotated tag, its
@@ -79,7 +79,15 @@ refuses it as a feature release 21 hours after 1.12.0.
 **Record: 1.13.0 broke the monthly limit too.** It was a feature release (migrations 42 and 43, the
 `graph:import` permission) about a day after 1.12.0, made a minor release so that the patch check above did
 not have to be overridden. The limit itself was not checked by anything; see *Feature releases are checked
-too* below.
+too* above.
+
+**Record: 1.14.0 ships under a policy exception.** It is a feature release (migrations 44, 45 and 46, the
+`reports:funder` permission, the supplies and SUPRT-A routes) one day after 1.13.0, which the check above
+refuses on its own (`node scripts/release-policy.js --version 1.14.0`: "feature release 1.14.0 … after the
+previous one (v1.13.0)"). The owner approved it as a recorded exception, for the round-3 review fixes
+(security, frontline and engineering) and the market gaps (finance submissions, SUPRT-A, the DHCS and county
+settlement layouts, supplies by item, site and lot with syringe services): it is dispatched with
+`policy_exception` set to that reason, which the release notes print at the top.
 
 ## Cutting a release
 ```bash
@@ -135,9 +143,9 @@ The remaining kernel libraries (`@noble/*`, `fflate`, `buffer`) come as one grou
 ## Bumping the pinned Node versions
 Every CI job installs an exact Node release checked against a SHA-256 written in the workflow, not whatever
 `latest-v24.x` is that day, nor whatever Node 22 the runner image carries: the `node24` job
-(`NODE24_VERSION`, `NODE24_SHA256` in `ci.yml`), and since 1.13.1 every Node 22 job — `test`, `thorough`,
+(`NODE24_VERSION`, `NODE24_SHA256` in `ci.yml`), and since 1.14.0 every Node 22 job — `test`, `thorough`,
 `browser`, `dr-drill`, and the release job that tests and packages a release (`NODE22_VERSION`,
-`NODE22_SHA256` at the top of `ci.yml` and of `release.yml`, the same in both). Until 1.13.1 the Node 22 jobs
+`NODE22_SHA256` at the top of `ci.yml` and of `release.yml`, the same in both). Until 1.14.0 the Node 22 jobs
 checked only the major against `.nvmrc`, so the Node a push was tested on could change without a commit.
 Dependabot cannot see a version in a workflow's `env`, so bump them by hand — monthly with the grouped
 Dependabot PR, and at once for a Node security release (nodejs.org/en/blog/vulnerability):
@@ -151,7 +159,7 @@ grep ' node-'$v'-linux-x64.tar.xz$' SHASUMS256.txt.asc        # the hash for NOD
 
 Change the two lines in one commit ("CI: Node 24 → $v"; for Node 22 in `ci.yml` and `release.yml` together);
 `test/release-gate.test.js` checks their shape, that the two workflows agree, and that Node 22's major is
-`.nvmrc`'s. 1.13.1 pinned v22.23.3 (released 2026-09-23; its `SHASUMS256.txt.asc` verified against the
+`.nvmrc`'s. 1.14.0 pinned v22.23.3 (released 2026-09-23; its `SHASUMS256.txt.asc` verified against the
 releaser's key from github.com/nodejs/release-keys).
 
 ## Upgrading an existing install

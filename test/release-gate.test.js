@@ -78,7 +78,7 @@ test('the Node 24 job installs an exact, pinned version and checks it against a 
 });
 
 test('every Node 22 job, and the release, runs an exact pinned Node 22 checked against a pinned SHA-256', () => {
-  // Until 1.13.1 they ran whatever Node 22 the runner image carried, checked by major only: a Node change
+  // Until 1.14.0 they ran whatever Node 22 the runner image carried, checked by major only: a Node change
   // between two pushes that nobody committed. Now the release ci.yml pins, the same in release.yml.
   const wf = (f) => fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', f), 'utf8');
   const ci = wf('ci.yml'); const rel = wf('release.yml');

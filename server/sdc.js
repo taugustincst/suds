@@ -753,7 +753,7 @@ function auditor(model, T, { budget, meter = newMeter() }) {
 
 // The audit's budget for one release, in solver work: the tableau cells its linear programs touch and the
 // constraint terms it scans to find each problem (answers from the cache are free). A count, so what is
-// published depends on the figures alone. What it costs in time was measured (1.13.1, a 4-core cloud container,
+// published depends on the figures alone. What it costs in time was measured (1.14.0, a 4-core cloud container,
 // Node 22, warmed up, one core): 60 to 200 million units a second across the tests' releases and a
 // 20,000-client benchmark, about 110 million typically - so this budget is about 2 to 7 seconds of one core in
 // the server's worker thread (1.13.0's 200 million, counting the solving only, was 0.6 to 1.2 seconds, not
