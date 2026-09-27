@@ -115,6 +115,9 @@ module.exports = (r) => {
       const t = ctx.query.get('type'); if (t) { where.push('interventions.type=?'); params.push(t); }
       // The funder report's "No funding source" warning links here, to the visits that need one.
       if (ctx.query.get('funding') === 'none') where.push('interventions.funding_source_id IS NULL');
+      // Home's "Naloxone kits given" links here: the visits that handed out a kit, whatever their type (a
+      // kit given on an outreach contact or a follow-up counts the same as one on a distribution visit).
+      if (ctx.query.get('naloxone') === '1') where.push('interventions.naloxone_kits > 0');
     },
     afterLoad: (ctx, row) => withLines(decodeSummary(row)),
     beforeInsert: (ctx, v) => { v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); checkCostPermission(ctx, v);

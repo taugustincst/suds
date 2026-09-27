@@ -1075,16 +1075,20 @@ export function tabStrip(tabs, active, onPick, { label = 'Sections', core = null
     for (const b of buttons) { b.hidden = false; strip.insertBefore(b, wrap); }
     clear(menu); wrap.hidden = false; moreText(buttons.length); // measured at its widest
     const avail = strip.clientWidth; if (!avail) return;
-    // A phone with everyday sections named: those (and the current one) stay, in order, wrapping onto a
-    // second row rather than being measured out; everything else is under More.
-    const phoneCore = core && matchMedia('(max-width: 600px)').matches ? new Set(core) : null;
-    strip.classList.toggle('core-wrap', !!phoneCore);
-    if (phoneCore) {
-      const overflow = buttons.map((_, i) => i).filter(i => !phoneCore.has(tabs[i][0]) && tabs[i][0] !== active);
+    // Everyday sections named (`core`): those (and the current one) stay, in order, on every width;
+    // everything else is under More. On a phone they wrap onto a second row rather than being measured out;
+    // on a wider screen that is somehow too narrow for them, the measuring below still applies.
+    const phone = matchMedia('(max-width: 600px)').matches;
+    strip.classList.toggle('core-wrap', !!core && phone);
+    if (core) {
+      const keep = new Set(core);
+      const overflow = buttons.map((_, i) => i).filter(i => !keep.has(tabs[i][0]) && tabs[i][0] !== active);
       if (!overflow.length) { wrap.hidden = true; setOpen(false); return; }
       for (const i of overflow) { buttons[i].hidden = true; menu.append(menuItem(i)); }
       moreText(overflow.length);
-      return;
+      const shown = buttons.filter(b => !b.hidden);
+      if (phone || shown.reduce((a, b) => a + b.offsetWidth + 4, 0) <= avail - (wrap.offsetWidth + 8)) return;
+      for (const b of buttons) b.hidden = false; clear(menu);
     }
     const widths = buttons.map(b => b.offsetWidth + 4);
     if (widths.reduce((a, b) => a + b, 0) <= avail) { wrap.hidden = true; setOpen(false); return; }
@@ -1113,7 +1117,23 @@ export function tabStrip(tabs, active, onPick, { label = 'Sections', core = null
  * items: [[key, label, extraAttrs?]]; the current one is aria-current="page", not only a colour.
  */
 export function pageTabs(items, active, onPick, { label = 'Sections' } = {}) {
-  return h('nav', { class: 'tabs', 'aria-label': label }, items.filter(Boolean).map(([k, text, attrs]) => h('button', { ...(attrs || {}), type: 'button', class: k === active ? 'active' : '', 'aria-current': k === active ? 'page' : null, 'data-tab': k, onClick: () => onPick(k) }, text)));
+  const strip = h('nav', { class: 'tabs', 'aria-label': label }, items.filter(Boolean).map(([k, text, attrs]) => h('button', { ...(attrs || {}), type: 'button', class: k === active ? 'active' : '', 'aria-current': k === active ? 'page' : null, 'data-tab': k, onClick: () => onPick(k) }, text)));
+  // A strip wider than the screen scrolls sideways. The faded edge alone did not say so: "Syringe se…" read
+  // as a cut-off label, not as more tabs. A chevron shows on the side that has more, and a tap on it scrolls
+  // that way (pointer only: Tab already scrolls each tab into view, so it is hidden from assistive tech).
+  const cue = (dir) => h('span', { class: `tabs-cue ${dir}`, 'aria-hidden': 'true', 'data-tabs-cue': dir, onClick: () => strip.scrollBy({ left: (dir === 'right' ? 1 : -1) * strip.clientWidth * 0.7, behavior: 'smooth' }) }, dir === 'right' ? '›' : '‹');
+  const right = cue('right'); const left = cue('left');
+  const wrap = h('div', { class: 'tabs-scroll' }, left, strip, right);
+  const sync = () => {
+    const over = strip.scrollWidth - strip.clientWidth > 2;
+    wrap.classList.toggle('more-right', over && strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 2);
+    wrap.classList.toggle('more-left', over && strip.scrollLeft > 2);
+  };
+  strip.addEventListener('scroll', sync, { passive: true });
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(sync).observe(strip); else requestAnimationFrame(sync);
+  // The current tab starts in view, not scrolled off the right-hand edge.
+  requestAnimationFrame(() => { const a = strip.querySelector('button.active'); if (a && a.offsetLeft + a.offsetWidth > strip.clientWidth) strip.scrollLeft = a.offsetLeft - 16; sync(); });
+  return wrap;
 }
 export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.num, link = null, list = null } = {}) {
   // A value can be a string such as "<11" (a suppressed small cell in the funder report): it draws no bar and
@@ -1178,19 +1198,22 @@ export function emptyState(title, text, action, { level = 0 } = {}) { return h('
 
 // "+ Log" quick action: the one button non-technical users need most
 export function quickActions() {
+  // One verb per action, the same words as the buttons on the pages ("Log a visit", "Make a referral").
   const items = [
-    can('interventions:write') ? ['✚', 'Visit', async () => (await import('./views/interventions.js')).openInterventionForm(null, { onDone: render })] : null,
+    can('interventions:write') ? ['✚', 'Log a visit', async () => (await import('./views/interventions.js')).openInterventionForm(null, { onDone: render })] : null,
     // An overdose or a naloxone reversal is logged in the field as often as a visit is.
     can('overdose:write') ? ['⛑', 'Overdose or reversal', async () => (await import('./views/overdose.js')).openOverdoseForm(null, { onDone: render })] : null,
     can('calls:write') ? ['☎', 'Phone call', async () => (await import('./views/calls.js')).openCallForm(null, { onDone: render })] : null,
     can('calls:write') ? ['💬', 'Text message', async () => (await import('./views/calls.js')).openCallForm(null, { method: 'text', onDone: render })] : null,
     (can('notes:admin:write') || can('notes:clinical:write')) ? ['✎', 'Note', async () => (await import('./views/notes.js')).openNoteForm(null, { onDone: render })] : null,
     can('tasks:write') ? ['☑', 'To-do', async () => (await import('./views/tasks.js')).openTaskForm(null, { onDone: render })] : null,
+    // A referral is as much a part of a field contact as the visit itself; the form asks for the client.
+    can('referrals:write') ? ['⇢', 'Make a referral', async () => (await import('./views/referrals.js')).openReferralForm(null, { onDone: render })] : null,
     can('time:write') ? ['◷', 'Time (meeting, travel, paperwork…)', async () => (await import('./views/time.js')).openTimeForm(null, { onDone: render })] : null,
     can('clients:write') ? ['👤', 'New client', async () => (await import('./views/clients.js')).openClientForm(null)] : null,
   ].filter(Boolean);
   if (!items.length) return null;
-  return h('button', { class: 'btn primary quick', onClick: () => { const m = modal('What would you like to record?', h('div', { class: 'quick-list' }, items.map(([ico, label, fn]) => h('button', { class: 'btn', onClick: () => { m.close(); fn(); } }, h('span', { class: 'ico' }, ico), label)))); } }, '+ Log');
+  return h('button', { class: 'btn primary quick', onClick: () => { const m = modal('What would you like to record?', h('div', { class: 'quick-list' }, items.map(([ico, label, fn]) => h('button', { class: 'btn', onClick: () => { m.close(); fn(); } }, h('span', { class: 'ico', 'aria-hidden': 'true' }, ico), label)))); } }, '+ Log');
 }
 // Global client search (top bar / mobile bar)
 export function globalSearch() {
@@ -1260,32 +1283,42 @@ function maybeNotify(rows) {
     } catch { /* the browser refused; the badge still shows it */ }
   }
 }
-// Welcome tour shown once per user (stored in synced preferences)
-let tourOpen = false;
-export function maybeTour() {
-  if (paused || prefs.get('tour_done') || tourOpen || document.querySelector('.modal-bg')) return;
-  tourOpen = true;
-  const steps = [
-    ['Welcome to SUDS', `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS keeps your program's outreach, visits, naloxone and supplies, referrals and follow-ups in one place, with the privacy substance-use records need. ${window.SUDS_STATIC_HOST
+// The welcome, shown once per person (tour_done, a synced preference) as a card at the top of Home. It was a
+// five-step dialog over the whole of Home on first sign-in, which stood between a new worker and logging
+// their first visit; now it is one card that sits beside everything else, put away with "Got it", and
+// shown again from Help at the foot of the menu (#/dashboard?welcome=1).
+export function welcomeSteps() {
+  return [
+    ['Start with Home', 'Home shows what needs attention today: to-dos due, clients you have not contacted in a while, and drafts you started on another device.'],
+    ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) logs a visit, call, note, to-do, referral or time in a few taps. Visits and calls also fill in your time sheet.'],
+    ['Find anyone fast', 'Use the search box at the top with a last name, phone number or client code. Open a client to see their story: the Overview ends with their recent activity, and the tabs hold their visits, notes, to-dos, consents and referrals.'],
+    ['Look for the ? marks', 'Every page has a ? that explains it in plain language. You cannot break anything: records are never truly deleted and every change is logged.'],
+  ];
+}
+export function welcomeIntro() {
+  return `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS keeps your program's outreach, visits, naloxone and supplies, referrals and follow-ups in one place, with the privacy substance-use records need. ${window.SUDS_STATIC_HOST
       // The on-device app never syncs with anything (local/sync.js): promising "shows up on the other right
       // away" there sent people looking for their entries on a second device.
       ? 'Everything you record stays in this browser on this device, encrypted. Download a backup regularly from This device so a cleared browser or a lost phone does not take your records with it.'
       : state.local ? 'This copy keeps your work on this device; it reaches the office SUDS when you sync.'
-      : 'It works the same on your phone and your computer. Anything you add on one shows up on the other right away.'}`],
-    ['Start with Home', 'Home shows what needs attention today: to-dos due, clients you have not contacted in a while, and drafts you started on another device.'],
-    ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) records a visit, call, note, to-do or time in a few taps. Visits and calls also fill in your time sheet.'],
-    ['Find anyone fast', 'Use the search box at the top with a last name, phone number or client code. Open a client to see their story: visits, calls, notes, referrals and to-dos on one timeline.'],
-    ['Look for the ? marks', 'Every page has a ? that explains it in plain language. You cannot break anything: records are never truly deleted and every change is logged.'],
-  ];
-  let i = 0; const body = h('div', {}); const dots = h('div', { class: 'muted small center' });
-  let nextBtn;
-  // The last step's button ends the tour, so it says so rather than promising a step that is not there.
-  const draw = () => { clear(body).append(h('h2', {}, steps[i][0]), h('p', { style: { fontSize: '1.05rem' } }, steps[i][1])); dots.textContent = `${i + 1} of ${steps.length}`; if (nextBtn) nextBtn.textContent = i === steps.length - 1 ? 'Done' : 'Next'; };
-  // Closing the dialog any other way (backdrop, Escape, the corner button) counts as "skip" too -- it must
-  // not come back on every page load, and it must never sit blocking the app on a phone in the field.
-  const finish = () => { prefs.set('tour_done', true); tourOpen = false; m.close(); };
-  const m = modal('', h('div', {}, body, h('div', { class: 'btn-row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('button', { class: 'btn ghost', onClick: finish }, 'Skip'), dots, nextBtn = h('button', { class: 'btn primary', onClick: () => { if (i < steps.length - 1) { i++; draw(); } else finish(); } }, 'Next'))), { onClose: () => { prefs.set('tour_done', true); tourOpen = false; } });
-  m.el.querySelector('.card-head').remove(); draw();
+      : 'It works the same on your phone and your computer. Anything you add on one shows up on the other right away.'}`;
+}
+/** Home's welcome card, or null once put away (unless asked for again from Help). */
+export function welcomeCard({ force = false } = {}) {
+  if (paused || (!force && prefs.get('tour_done'))) return null;
+  const card = h('section', { class: 'card mb welcome-card', 'data-welcome': '1', 'aria-labelledby': 'welcome-title' },
+    h('div', { class: 'card-head' }, h('h2', { id: 'welcome-title' }, 'Welcome to SUDS')),
+    h('p', { 'data-welcome-intro': '1' }, welcomeIntro()),
+    h('ul', { class: 'welcome-steps' }, welcomeSteps().map(([t, text]) => h('li', {}, h('b', {}, t), ' — ', text))),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn primary', type: 'button', 'data-welcome-done': '1', onClick: () => {
+        prefs.set('tour_done', true);
+        // Focus goes to the page's heading, not to nothing, when the card it was in goes away.
+        const h1 = document.querySelector('.main h1'); card.remove();
+        if (h1) { if (!h1.hasAttribute('tabindex')) h1.setAttribute('tabindex', '-1'); try { h1.focus({ preventScroll: true }); } catch {} }
+      } }, 'Got it'),
+      h('span', { class: 'small muted' }, 'You can open this again from Help at the foot of the menu.')));
+  return card;
 }
 export async function downloadCsv(path) {
   if (state.local && window.SUDS_LOCAL) { const r = await window.SUDS_LOCAL.handle('GET', path, undefined, {}); if (r.status >= 400) { toast('Download failed', 'error'); return; } const name = (/filename="([^"]+)"/.exec(r.headers['content-disposition'] || '') || [])[1] || 'download'; 
@@ -1303,6 +1336,9 @@ window.addEventListener('unhandledrejection', (e) => {
 
 // ---------- routing ----------
 const routes = {};
+// `loading`: what the page says while it is being worked out, for the pages that take a moment (the reports):
+// a sentence saying what is happening, not a bare "Loading…".
+const loadingText = {};
 export function route(name, loader) { routes[name] = loader; }
 /**
  * Pages whose module is loaded the first time one of them is opened (main.js). Until then each name has a
@@ -1314,12 +1350,17 @@ export function lazyRoute(names, load) {
     if (routes[name]) continue;
     const stub = async (r) => {
       await load();
+      // The page's own progress text (loadingFor) is registered by the module just loaded: show it now, so
+      // the first opening says what it is working out too, not only later ones.
+      const boot = loadingText[name] && document.querySelector('#main > .boot');
+      if (boot) { let t = null; try { t = loadingText[name](r); } catch {} if (t) { boot.textContent = t; boot.setAttribute('role', 'status'); boot.dataset.loading = '1'; } }
       if (routes[name] === stub) throw new Error(`The ${name} page is missing from this version of SUDS.`);
       return routes[name](r);
     };
     routes[name] = stub;
   }
 }
+export function loadingFor(name, text) { loadingText[name] = text; }
 // "Dr. Kiran Patel" is Kiran, not Dr.
 // The name is used exactly as the person typed it (a single word, all capitals, a hyphenated first
 // name — none of it is re-cased or cut), and a blank display name falls back to the username so a
@@ -1364,12 +1405,17 @@ export function navAndRender(to) {
 //                      the "Programme" section, shown to the roles that run the programme. A front-line worker
 //                      who may still open one (a navigator may record spending) reaches it from the page that
 //                      needs it, or its address; Import, which Home links to for imported notes, sits in More.
+//                      Marked both (the funder report, state reporting, SUPRT-A): in More for a front-line worker,
+//                      who runs them for their own caseload (the API allows it), in the Program section for others.
+//   show()           — shown only when this returns true (a reporting module switched on for the programme).
+// The order within each section is by how often the page is used: a navigator's day is Home, Clients, the
+// waitlist and to-dos, then recording visits, calls and notes; reports come monthly.
 // Nothing here changes a permission: the server decides what each role may do (server/auth.js PERMS).
 export const NAV = [
   { sec: 'My day' },
   { name: 'dashboard', label: 'Home', ico: '⌂', help: 'What needs attention today, and where you left off on any device.' },
-  { name: 'clients', label: 'My clients', ico: '👤', perm: 'clients:read', help: 'Everyone you serve. Open a client to see their whole story in one place.' },
-  { name: 'waitlist', label: 'Waitlist', ico: '⧗', perm: 'clients:read', more: true, help: 'People waiting for a place, longest and highest risk first.' },
+  { name: 'clients', label: 'Clients', ico: '👤', perm: 'clients:read', help: 'Everyone you serve. Open a client to see their whole story in one place.' },
+  { name: 'waitlist', label: 'Waitlist', ico: '⧗', perm: 'clients:read', help: 'People waiting for a place, longest and highest risk first.' },
   { name: 'tasks', label: 'To-dos', ico: '☑', perm: 'tasks:read', help: 'Your to-dos: follow-ups and reminders. Check a box when it is done.' },
   { name: 'supervision', label: 'Supervision', ico: '✍', perm: ['notes:cosign', 'time:approve', 'assignments:manage'], help: 'Notes waiting for your countersignature, drafts your team has not finished, staff time to approve, and referrals with no outcome recorded.' },
   { sec: 'Record work' },
@@ -1385,7 +1431,11 @@ export const NAV = [
   { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Syringe services, drop-ins, shelters, MAT and treatment programs, legal aid and the other partners you refer people to.' },
   { sec: 'Program' },
   { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', more: true, help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
-  { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', programme: true, help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
+  { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', programme: true, more: true, help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
+  // The two state and federal reporting modules, for a programme that uses them (Settings › Program › Modules):
+  // the same test the Reports page's cards use, so the entry and the card come and go together.
+  { name: 'caloms', label: 'State reporting', ico: '⚑', perm: ['episodes:read', 'episodes:write', 'export:identified'], more: true, show: () => ((can('episodes:read') || can('episodes:write')) && moduleOn('caloms')) || (can('export:identified') && (moduleOn('caloms') || moduleOn('handoff'))), help: 'CalOMS Tx admission, discharge and annual update records for DHCS, their validation report and the extract, and the county EHR hand-off.' },
+  { name: 'suprt', label: 'SUPRT-A', ico: '◎', perm: 'clients:read', more: true, show: () => moduleOn('suprt'), help: 'SAMHSA SUPRT-A records for clients served with State Opioid Response money: completion, the follow-ups due, and the file for SPARS.' },
   { name: 'budget', label: 'Funding & spending', ico: '$', perm: 'budget:read', programme: true, help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
   { name: 'documents', label: 'Policies & contracts', ico: '📋', perm: 'documents:read', programme: true, help: 'County policies, procedures and signed contracts, searchable by title and category.' },
   { name: 'compliance', label: 'Privacy & Part 2', ico: '⚖', perm: ['consents:read', 'complaints:read', 'incidents:read', 'settings:manage'], more: true, help: '42 CFR Part 2: the patient notice and who has not been given it, the privacy complaint log, and the incident and breach register with its 60-day notification clock.' },
@@ -1403,7 +1453,7 @@ export function frontline() {
 }
 /** Where a NAV entry goes in this person's sidebar: 'main', 'more' (folded away), or null (not shown). */
 export function navPlacement(n) {
-  if (!n.name || (n.perm && !canAny(n.perm))) return null;
+  if (!n.name || (n.perm && !canAny(n.perm)) || (n.show && !n.show())) return null;
   if (!frontline()) return 'main';
   if (n.more) return 'more';
   return n.programme ? null : 'main';
@@ -1482,7 +1532,8 @@ async function renderPage() {
   // quietly showing Home under the wrong address.
   const loader = navItem?.perm && !canAny(navItem.perm) ? (async () => emptyState('Not available for your role', `Your account does not have access to ${navItem.label}. Ask your supervisor or administrator if you need it.`, h('button', { class: 'btn', onClick: () => nav('dashboard') }, 'Back to home'), { level: 1 }))
     : routes[r.name] || (async () => h('div', { 'data-not-found': '1' }, emptyState('Page not found', `There is no page at "#/${r.name}". The link may be out of date.`, h('a', { class: 'btn primary', href: '#/dashboard' }, 'Go to Home'), { level: 1 })));
-  const main = h('main', { class: 'main', id: 'main', tabindex: '-1' }, h('div', { class: 'boot' }, 'Loading…'));
+  const waiting = loadingText[r.name] ? (() => { try { return loadingText[r.name](r); } catch { return null; } })() : null;
+  const main = h('main', { class: 'main', id: 'main', tabindex: '-1' }, h('div', { class: 'boot', role: waiting ? 'status' : null, 'data-loading': waiting ? '1' : null }, waiting || 'Loading…'));
   const side = sidebar(r);
   const qa = quickActions();
   const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), dueBell(), mfaLink(), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
@@ -1492,7 +1543,6 @@ async function renderPage() {
   // A hash change keeps the old scroll position, so leaving a long list for another page landed the
   // reader part-way down it, with the new page's header and alerts scrolled off the top.
   if (!current || current.name !== r.name || current.id !== r.id) window.scrollTo(0, 0);
-  if (r.name === 'dashboard') { busy(1); setTimeout(() => { try { if (parseHash().name === 'dashboard') maybeTour(); } finally { busy(-1); } }, 400); }
   const lost = () => !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
   try { const view = await loader(r); clear(main).append(view); if (state.local && r.name === 'sync') main.append(deviceErrorsCard()); }
   catch (e) { clear(main).append(h('h1', {}, 'This page could not be shown'), h('div', { class: 'banner danger', role: 'alert' }, e.message)); }
@@ -1555,7 +1605,7 @@ function sidebar(r) {
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, state.org))),
     h('nav', { class: 'nav', 'aria-label': 'Main' }, groups.filter(g => g.items.length).flatMap(g => [h('div', { class: 'sec' }, g.sec), ...g.items]), moreGroup),
     h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, window.SUDS_STATIC_HOST ? '📱 On this device · Backup' : '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
-      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'), h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility')),
+      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#/dashboard?welcome=1', 'data-help-link': '1', title: 'Getting started with SUDS' }, 'Help'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'), h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility')),
       h('div', { class: 'small muted', 'data-build-stamp': '1', style: { marginTop: '.4rem' } }, `SUDS ${SUDS_VERSION}`)));
 }
 function mobileBar(r, side) {
@@ -1577,7 +1627,7 @@ function mobileBar(r, side) {
   mobileBar.onChange = syncInert; phone.addEventListener('change', syncInert);
   syncInert();
   // The build stamp sits under the page title on a phone: the sidebar foot is below the fold with the menu open.
-  return h('div', { class: 'mobilebar' }, menuBtn, h('div', { class: 'mobilebar-title' }, h('b', {}, item.label), h('span', { class: 'mobilebar-stamp', 'data-build-stamp': '1' }, `SUDS ${SUDS_VERSION}`)), h('a', { href: '#/clients', class: 'btn ghost', 'aria-label': 'Clients' }, '👤'));
+  return h('div', { class: 'mobilebar' }, menuBtn, h('div', { class: 'mobilebar-title' }, h('b', {}, item.label), h('span', { class: 'mobilebar-stamp', 'data-build-stamp': '1' }, `SUDS ${SUDS_VERSION}`)), can('clients:read') ? h('a', { href: '#/clients', class: 'btn ghost mobilebar-clients', 'data-mobile-clients': '1' }, h('span', { 'aria-hidden': 'true' }, '👤'), 'Clients') : h('span', { class: 'mobilebar-spacer', 'aria-hidden': 'true' }));
 }
 function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; prefs.set('theme', next); applyTheme(); }
 try { const cached = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); if (cached.theme) document.documentElement.dataset.theme = cached.theme; } catch {}

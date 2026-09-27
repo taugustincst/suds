@@ -40,7 +40,8 @@ route('supplies', async (r) => {
   const tabs = [['stock', 'Stock'], ['lots', `Lots & expiry${d.alerts.counts.expired + d.alerts.counts.expiring ? ` (${d.alerts.counts.expired + d.alerts.counts.expiring})` : ''}`], ['history', 'History']];
   if (can2.manage) tabs.push(['setup', 'Items & sites']);
   const sspOk = can('reports:read') && mayRunInternalReports({ caseloadScoped: true });
-  if (sspOk) tabs.push(['ssp', 'Syringe services report']);
+  // Short enough to fit a phone's tab strip; the full name is in its accessible name and on the tab's page.
+  if (sspOk) tabs.push(['ssp', h('span', {}, 'SSP report', h('span', { class: 'sr-only' }, ' (syringe services program)')), { title: 'Syringe services program report', 'data-tab-ssp': '1' }]);
   const tab = tabs.some(t => t[0] === r.query.get('tab')) ? r.query.get('tab') : 'stock';
   const siteId = d.sites.some(s => s.id === r.query.get('site')) ? r.query.get('site') : '';
   const items = new Map(d.items.map(i => [i.id, i])); const sites = new Map(d.sites.map(s => [s.id, s]));
@@ -160,9 +161,21 @@ route('supplies', async (r) => {
     const m = modal(s ? `Edit ${s.name}` : 'Add a site', f);
   };
 
+  // Hand out: supplies given to someone on the street, with or without a name. It is a visit (the visit form,
+  // preset to a naloxone distribution, or outreach for other supplies: both may be anonymous), so the stock,
+  // the NDP log and the funder report all count it the way they count any other visit.
+  const mayHandOut = can('interventions:write');
+  const handOut = async (item = null) => {
+    const { openInterventionForm } = await import('./interventions.js');
+    const preset = { type: !item || item.category === 'naloxone' ? 'naloxone_distribution' : 'outreach' };
+    if (item) preset.supplies = [{ item_id: item.id, item: item.name, unit: item.unit, category: item.category, quantity: 1 }];
+    if (siteId) preset.supply_site_id = siteId;
+    openInterventionForm(null, { preset, onDone: () => refresh(qs()) });
+  };
   // ---- the page ----
   const actions = [
-    can2.receive ? h('button', { class: 'btn primary', 'data-supply-receive': '1', onClick: () => openReceive() }, 'Receive stock') : null,
+    mayHandOut ? h('button', { class: 'btn primary', 'data-supply-hand-out': '1', onClick: () => handOut() }, 'Hand out') : null,
+    can2.receive ? h('button', { class: mayHandOut ? 'btn' : 'btn primary', 'data-supply-receive': '1', onClick: () => openReceive() }, 'Receive stock') : null,
     can2.configure ? h('button', { class: 'btn', 'data-supply-add-item': '1', onClick: () => openItem() }, '+ Add item')
       // On a device that syncs with an office the button is there, switched off, with the reason beside it.
       : officeCopy && (can2.manage || can('interventions:write')) ? h('button', { class: 'btn', disabled: true, 'aria-describedby': 'supplies-office-note', title: 'Items are kept at the office' }, '+ Add item') : null,
@@ -201,6 +214,7 @@ route('supplies', async (r) => {
     });
     const onHandCell = (x) => flag(h('b', { 'data-qty': x.name }, fmt.num(x.on_hand)), x.low.length > 0, x.on_hand <= 0 ? 'none on hand' : `running low${x.low.length && siteId ? '' : ` at ${x.low.map(l => siteName(l.site_id)).join(', ')}`}`, x.on_hand <= 0 ? 'danger' : 'warn');
     const btns = (x) => h('div', { class: 'row nowrap' },
+      mayHandOut && x.is_active ? h('button', { class: 'btn sm primary', 'aria-label': `Hand out ${x.name}`, 'data-hand-out-item': x.id, onClick: (e) => { e.stopPropagation(); handOut(x); } }, 'Hand out') : null,
       can2.receive ? h('button', { class: 'btn sm', 'aria-label': `Receive ${x.name}`, onClick: (e) => { e.stopPropagation(); openReceive({ item_id: x.id, site_id: siteId }); } }, 'Receive') : null,
       can2.manage && activeSites.length > 1 ? h('button', { class: 'btn sm ghost', 'aria-label': `Move ${x.name}`, onClick: (e) => { e.stopPropagation(); openTransfer({ item_id: x.id, site_id: siteId }); } }, 'Move') : null,
       can2.manage ? h('button', { class: 'btn sm ghost', 'aria-label': `Adjust ${x.name}`, onClick: (e) => { e.stopPropagation(); openAdjust({ item_id: x.id, site_id: siteId }); } }, 'Adjust') : null);
@@ -275,6 +289,7 @@ route('supplies', async (r) => {
     const monthCols = [{ label: 'Contacts', key: 'contacts', num: true }, { label: 'Anonymous', key: 'anonymous_contacts', num: true }, { label: 'Syringes out', key: 'syringes_distributed', num: true }, { label: 'Returned', key: 'syringes_returned', num: true }, { label: 'Returned per syringe', num: true, render: x => ratio(x.return_ratio) }, { label: 'Naloxone kits', key: 'naloxone_kits', num: true }];
     const file = (fmtX) => downloadCsv(`/api/reports/ssp/export?from=${from}&to=${to}${fmtX ? '&format=xlsx' : ''}`);
     body = h('div', { 'data-ssp-report': '1' },
+      h('h2', {}, 'Syringe services program report'),
       h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI),
         h('button', { class: 'btn', onClick: () => nav(`supplies?tab=ssp&from=${fromI.value}&to=${toI.value}`) }, 'Apply'),
         can('export:read') ? [h('button', { class: 'btn', 'data-ssp-export': 'xlsx', onClick: () => file(true) }, 'Excel'), h('button', { class: 'btn ghost', 'data-ssp-export': 'csv', onClick: () => file(false) }, 'CSV')] : null),

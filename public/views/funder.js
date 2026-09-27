@@ -1,6 +1,6 @@
 // The report a funder actually asks for. Every count here is unduplicated — people, not services — which
 // the platform previously could not produce: it could say "1,400 services" but not "310 people".
-import { h, route, get, state, fmt, can, pageHead, bars, stat, table, downloadCsv, nav, emptyState, moduleOn } from '../app.js';
+import { h, route, get, state, fmt, can, pageHead, bars, stat, table, downloadCsv, nav, emptyState, moduleOn, loadingFor } from '../app.js';
 
 // A suppressed small cell arrives as a string ("<11", or "suppressed" when it is hidden only so that another
 // cannot be worked out from a total) and is shown as sent.
@@ -107,6 +107,8 @@ export function withheldTables(d) {
       : h('p', { class: 'small' }, h('strong', {}, 'Nothing was withheld: '), 'every table of this release is shown, with small counts screened.'));
 }
 
+// A publication release checks every small count before anything is shown; say so while it does.
+loadingFor('funder', (r) => (r.query.get('purpose') === 'publication' || !(maySubmit() || mayRunInternalReports()) ? 'Checking small counts before the release is shown…' : 'Counting people served, not services…'));
 route('funder', async (r) => {
   // A supervisor, an administrator or finance (reports:funder) opens the programme's own submission to its
   // funder, for any range or fund; publication is a step they choose ("Prepare a publication release"), while

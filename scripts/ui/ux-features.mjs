@@ -9,9 +9,11 @@ const errors = []; page.on('pageerror', e => errors.push('PAGEERROR ' + e.messag
 await page.goto(base + '/#/login'); await page.fill('input[name=username]', 'mrivera'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.click('button[type=submit]'); await page.waitForSelector('.layout');
 await page.evaluate(() => fetch('/api/me/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ tour_done: null, theme: null }) })); await page.reload(); await page.waitForSelector('.layout');
 await settle(page); await page.screenshot({ path: '/tmp/suds-shots/ux_tour.png' });
-ok(!!(await page.$('.modal')), 'tour shown');
-for (let i = 0; i < 5; i++) { await page.click('.modal button.primary'); await settle(page); }
-ok(!(await page.$('.modal')), 'the tour closes and stays closed');
+ok(!!(await page.$('[data-welcome]')), 'the welcome shows, as a card on Home');
+ok(!(await page.$('.modal')), 'not as a dialog over the page');
+await page.click('[data-welcome-done]'); await settle(page);
+await page.reload(); await page.waitForSelector('.layout'); await settle(page);
+ok(!(await page.$('[data-welcome]')), 'the welcome goes with Got it and stays away');
 await settle(page); await page.screenshot({ path: '/tmp/suds-shots/ux_dashboard.png' });
 // global search
 await page.fill('.gsearch input', 'nguyen'); await page.waitForSelector('.search-results a', { timeout: 5000 }).catch(() => {});
@@ -53,7 +55,7 @@ await page.click('text=Light/dark'); await settle(page);
 // mobile
 const m = await (await browser.newContext({ ...devices['iPhone 13'] })).newPage(); m.on('pageerror', e => errors.push('M PAGEERROR ' + e.message));
 await m.goto(base + '/#/login'); await m.fill('input[name=username]', 'mrivera'); await m.fill('input[name=password]', 'Navigator2026!!'); await m.click('button[type=submit]'); await m.waitForSelector('.layout'); await settle(m);
-ok(!(await m.$('.modal')), 'the tour does not run again on a second device — it is per person, not per browser');
+ok(!(await m.$('[data-welcome]')) && !(await m.$('.modal')), 'the welcome does not come back on a second device — it is per person, not per browser');
 await m.screenshot({ path: '/tmp/suds-shots/ux_m_home.png' });
 await m.click('.fab button'); await m.waitForSelector('.quick-list', { timeout: 5000 }).catch(() => {}); await m.screenshot({ path: '/tmp/suds-shots/ux_m_quick.png' }); ok(!!(await m.$('.quick-list')), 'fab opens quick list');
 // ---- keyboard and screen reader ----

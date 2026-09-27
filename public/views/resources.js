@@ -345,7 +345,7 @@ route('resource', async (r) => {
   const barTitle = document.querySelector('.mobilebar-title > b'); if (barTitle) { barTitle.textContent = x.name; barTitle.title = x.name; }
   return h('div', {},
     pageHead(x.name, h('a', { class: 'btn', href: '#/resources' }, '← Directory'),
-      can('referrals:write') ? h('button', { class: 'btn', onClick: async () => (await import('./referrals.js')).openReferralForm(null, { resourceId: x.id, onDone: refresh }) }, '+ Refer a client') : null,
+      can('referrals:write') ? h('button', { class: 'btn', onClick: async () => (await import('./referrals.js')).openReferralForm(null, { resourceId: x.id, onDone: refresh }) }, '+ Make a referral') : null,
       can('resources:write') ? h('button', { class: 'btn', onClick: async () => { await put(`/api/resources/${x.id}`, { last_verified_at: fmt.today() }); toast('Marked verified today', 'ok'); refresh(); } }, 'Verified today') : null,
       can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(x, refresh) }, 'Edit') : null),
     head,

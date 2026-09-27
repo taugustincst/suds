@@ -61,12 +61,13 @@ try {
   const nav = await session('mrivera', PW);
   {
     const sb = await sidebar(nav.page);
-    ok(sb.main.length <= 10, `a navigator's sidebar shows ${sb.main.length} pages, not 19`, sb.main);
-    for (const want of ['Home', 'My clients', 'To-dos', 'Visits', 'Calls & texts', 'Supplies', 'Resource directory']) ok(sb.main.includes(want), `the navigator's sidebar has ${want}`, sb.main);
-    for (const not of ['Funding & spending', 'Policies & contracts', 'Funder report', 'Settings']) ok(!sb.main.includes(not) && !(sb.more || []).includes(not), `${not} is not in a navigator's sidebar`, sb);
+    ok(sb.main.length <= 11, `a navigator's sidebar shows ${sb.main.length} pages, not 19`, sb.main);
+    for (const want of ['Home', 'Clients', 'Waitlist', 'To-dos', 'Visits', 'Calls & texts', 'Supplies', 'Resource directory']) ok(sb.main.includes(want), `the navigator's sidebar has ${want}`, sb.main);
+    // The funder report is under More (1.14.0): a navigator runs it for their own caseload.
+    for (const not of ['Funding & spending', 'Policies & contracts', 'Settings']) ok(!sb.main.includes(not) && !(sb.more || []).includes(not), `${not} is not in a navigator's sidebar`, sb);
     ok(!sb.main.includes('Import'), 'Import is not in the everyday list', sb.main);
     ok(!sb.sections.includes('Program'), 'a navigator has no Program section', sb.sections);
-    ok(sb.more && sb.more.includes('Reports') && sb.more.includes('My time') && sb.more.includes('Import'), 'the rest of what a navigator may open is folded under More', sb.more);
+    ok(sb.more && sb.more.includes('Reports') && sb.more.includes('Funder report') && sb.more.includes('My time') && sb.more.includes('Import'), 'the rest of what a navigator may open is folded under More', sb.more);
     eq(sb.moreOpen, false, 'and More starts closed');
     // More is a native disclosure: the keyboard opens it.
     await nav.page.focus('.sidebar details.nav-more > summary'); await nav.page.keyboard.press('Enter');
@@ -80,7 +81,7 @@ try {
     // + Log speaks the same words as the rest of the app.
     await nav.page.click('.appbar .quick'); await nav.page.waitForSelector('.modal .quick-list');
     const quick = await nav.page.$$eval('.modal .quick-list button', b => b.map(x => x.textContent.trim()));
-    ok(quick.some(t => /^✚\s*Visit$/.test(t)) && quick.some(t => /^☑\s*To-do$/.test(t)), '+ Log offers "Visit" and "To-do"', quick);
+    ok(quick.some(t => /^✚\s*Log a visit$/.test(t)) && quick.some(t => /^☑\s*To-do$/.test(t)), '+ Log offers "Log a visit" and "To-do"', quick);
     ok(!quick.some(t => /service|Reminder/.test(t)), 'not "Visit or service" or "Reminder / to-do"', quick);
     await nav.page.keyboard.press('Escape');
     await nav.go('interventions'); eq((await nav.page.textContent('.main h1')).trim(), 'Visits', 'the Visits page is called Visits');
@@ -114,7 +115,7 @@ try {
     ok(labels.some(t => /^Visits \(\d+\)$/.test(t)) && labels.some(t => /^To-dos \(\d+\)$/.test(t)), 'its tabs say "Visits" and "To-dos"', labels);
     await phone.page.click('[data-client-add]');
     const items = await phone.page.$$eval('.client-actions.narrow .add-list button', b => b.map(x => x.textContent.trim()));
-    ok(['Visit', 'Call', 'Text message', 'Note', 'To-do'].every(x => items.includes(x)), 'Add… lists Visit, Call, Text message, Note and To-do', items);
+    ok(['Log a visit', 'Call', 'Text message', 'Note', 'To-do', 'Make a referral'].every(x => items.includes(x)), 'Add… lists Log a visit, Call, Text message, Note, To-do and Make a referral', items);
     eq(await phone.page.$eval('[data-client-add]', b => b.getAttribute('aria-expanded')), 'true', 'Add… says it is expanded');
     eq(await phone.page.evaluate(() => document.activeElement?.textContent.trim()), items[0], 'focus moves to the first thing to add');
     await axe(phone.page, 'client record on a phone, Add… open');
@@ -126,7 +127,8 @@ try {
     // Past the everyday tabs: More still reaches every section.
     await phone.page.click('.main nav.tabs .tabs-more');
     const more = await phone.page.$$eval('.main nav.tabs .tabs-menu button', b => b.map(x => x.textContent.trim()));
-    ok(more.includes('Timeline') && more.some(t => /^Calls/.test(t)), 'the other sections are under More', more);
+    // Timeline is the Overview's recent activity since 1.14.0, not a tab.
+    ok(more.includes('Care team') && more.some(t => /^Calls/.test(t)), 'the other sections are under More', more);
     await phone.page.keyboard.press('Escape');
     // A dismissed two-step banner comes back as a small link in the header, not a bar.
     if (m.banner && await phone.page.$('#banners [data-banner="mfa-required"] button[aria-label=Dismiss]')) {

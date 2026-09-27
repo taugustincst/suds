@@ -4,7 +4,7 @@
 // client's Episodes tab carry the CalOMS questions, each episode shows which CalOMS records it has and
 // needs, and this page lists every edit-check problem by client code and field, previews the file, and
 // produces the submission for DHCS (the disclosure; the file downloaded is the one accounted). The county EHR hand-off is the billing boundary: SUDS does not bill, it hands encounters over.
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, downloadCsv, stat, kv, moduleOn } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, downloadCsv, stat, kv, moduleOn, loadingFor } from '../app.js';
 import { withRestrictionCheck } from './part2.js';
 import { fetchDownload, downloadedMessage } from './reports.js';
 
@@ -116,6 +116,7 @@ export async function calomsEpisodeDialog(episode, { onChange } = {}) {
 }
 
 // ---- the page ----
+loadingFor('caloms', () => 'Checking the CalOMS records for the period…');
 route('caloms', async (r) => {
   const today = fmt.today();
   const from = r.query.get('from') || `${today.slice(0, 7)}-01`; const to = r.query.get('to') || today;

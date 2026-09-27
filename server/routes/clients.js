@@ -407,6 +407,12 @@ module.exports = (r) => {
       minutes: db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
       spent: db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n,
       episodes: db.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n,
+      // For the record's module tabs, which show only when the module is on and has something on this record
+      // or the reader may add to it (public/views/client.js): counts only, for a role that may read them.
+      problems: auth.hasPerm(ctx.user, 'careplan:read') ? db.one(`SELECT COUNT(*) n FROM problems WHERE client_id=?`, row.id).n : null,
+      goals: auth.hasPerm(ctx.user, 'careplan:read') ? db.one(`SELECT COUNT(*) n FROM care_plan_goals WHERE client_id=?`, row.id).n : null,
+      assessments: auth.hasPerm(ctx.user, 'assessments:read') ? db.one(`SELECT (SELECT COUNT(*) FROM asam_assessments WHERE client_id=?) + (SELECT COUNT(*) FROM outcome_measures WHERE client_id=?) n`, row.id, row.id).n : null,
+      suprt: db.one(`SELECT COUNT(*) n FROM suprt_assessments WHERE client_id=?`, row.id).n,
     };
     client.open_episode = !!db.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id);
     // The most recent signed safety plan this person may read, so the overview can say one is on file

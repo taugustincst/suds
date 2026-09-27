@@ -59,21 +59,22 @@ function supplyPicker(cat, { lines = [], counts = {}, siteId = null, isNew = tru
 // `template`: an earlier intervention for this same client to prefill from (type, location, modality,
 // supplies, funding…) when the worker is logging the same kind of visit again — the date/time, duration
 // and free-text summary are never carried over, since those are specific to today.
-export async function openInterventionForm(values, { clientId, clientDisplay, onDone, template } = {}) {
+// `preset`: fields a new visit starts with (Supplies' Hand out: a distribution with the item already on it).
+export async function openInterventionForm(values, { clientId, clientDisplay, onDone, template, preset } = {}) {
   const C = state.constants; const isNew = !values;
   // The items this program hands out (none: the two counts as number fields, as before items existed).
   const cat = can('interventions:write') ? await supplyCatalog() : null;
   const kept = new Set((cat ? cat.items : []).map(i => i.category));
-  const src = values || template || {};
+  const src = values || template || preset || {};
   const picker = cat && cat.items.length ? supplyPicker(cat, { lines: src.supplies || [], counts: src, siteId: src.supply_site_id, isNew }) : null;
   const ssp = cat && (kept.has('syringes') || kept.has('sharps_container')) || Number(src.syringes_returned || 0) > 0;
   // `values` (the `form()` helper's lookup for a field's starting value) wins over a field's own `value`
   // default, so the parts of the template we do NOT want carried over — when it happened, how long it
   // took, what was written up — have to be scrubbed from the seed itself, not overridden per-field below.
-  const seed = values || (template ? { ...template, occurred_at: new Date().toISOString(), duration_minutes: 30, summary: '', follow_up_due: '', user_id: undefined, syringes_returned: null, returns_estimated: 0, sharps_returned_litres: null } : {});
+  const seed = values || (template ? { ...template, occurred_at: new Date().toISOString(), duration_minutes: 30, summary: '', follow_up_due: '', user_id: undefined, syringes_returned: null, returns_estimated: 0, sharps_returned_litres: null } : preset ? { ...preset } : {});
   // A new visit is charged to the worker's default fund (or the programme's) unless they choose another, so it
   // is not left out of the funder report's "By funding source"; a repeated visit keeps the fund it had.
-  if (!values && !template && state.defaultFundId && state.funds?.some(x => x.id === state.defaultFundId)) seed.funding_source_id = state.defaultFundId;
+  if (!values && !template && !(preset && preset.funding_source_id) && state.defaultFundId && state.funds?.some(x => x.id === state.defaultFundId)) seed.funding_source_id = state.defaultFundId;
   // Outreach and community naloxone distribution can be recorded with no client (a kit handed to someone who
   // gives no name); every other service needs one. The server enforces the same list.
   const clientless = (type) => (C.CLIENTLESS_INTERVENTION_TYPES || ['outreach', 'naloxone_distribution']).includes(type);
@@ -141,7 +142,7 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
     const est = () => { const l = Number(f.inputs.sharps_returned_litres.value); if (f.inputs.returns_estimated.checked && l > 0) f.inputs.syringes_returned.value = String(Math.round(l * (cat ? cat.syringes_per_litre : 100))); };
     f.inputs.sharps_returned_litres.addEventListener('input', est); f.inputs.returns_estimated.addEventListener('change', est);
   }
-  const m = modal(isNew ? (template ? 'Repeat a visit' : 'Record a visit') : 'Edit visit', f, { wide: true });
+  const m = modal(isNew ? (template ? 'Repeat a visit' : 'Log a visit') : 'Edit visit', f, { wide: true });
 }
 // Opens the form prefilled from the client's most recent intervention, or falls back to a blank one if
 // they have none yet — so the button on a client's page never has to know in advance whether history exists.
@@ -162,25 +163,28 @@ export function interventionTable(rows, { showClient = true, onChange } = {}) {
       : [r.naloxone_kits ? badge(`${r.naloxone_kits} naloxone`, 'ok') : null, r.fentanyl_strips ? [' ', badge(`${r.fentanyl_strips} FTS`, 'info')] : null]).concat(r.syringes_returned ? [' ', badge(`${r.syringes_returned} returned${r.returns_estimated ? ' (est.)' : ''}`, '')] : []) },
     { label: 'Worker', key: 'worker' }, { label: 'Summary', render: r => h('span', { class: 'small' }, (r.summary || '').slice(0, 120)) },
     { label: '', render: r => (r.user_id === state.user.id || can('clients:all')) && can('interventions:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: (e) => { e.stopPropagation(); openInterventionForm(r, { onDone: onChange }); } }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this visit', onClick: async (e) => { e.stopPropagation(); if (await confirmDialog('Delete visit', 'Delete this visit? This is logged.', { danger: true, okText: 'Delete' })) { await del(`/api/interventions/${r.id}`); toast('Deleted'); onChange && onChange(); } } }, '✕')) : null },
-  ].filter(Boolean), rows, { empty: 'Nothing recorded yet. Use + Log to record a visit, screening, warm handoff or other service.' });
+  ].filter(Boolean), rows, { empty: 'Nothing recorded yet. Use + Log › Log a visit for a visit, screening, warm handoff or other service.' });
 }
 
 route('interventions', async (r) => {
   const type = r.query.get('type') || ''; const from = r.query.get('from') || ''; const to = r.query.get('to') || ''; const mine = r.query.get('mine') === '1';
   // funding=none: the visits with no funding source (the funder report's warning links here).
   const noFund = r.query.get('funding') === 'none';
-  const qs = `${type ? '&type=' + type : ''}${from ? '&from=' + from : ''}${to ? '&to=' + to : ''}${mine ? '&mine=1' : ''}${noFund ? '&funding=none' : ''}`.replace(/^&/, '');
+  // naloxone=1: the visits that handed out naloxone kits, of any type (Home's kit count links here).
+  const kits = r.query.get('naloxone') === '1';
+  const qs = `${type ? '&type=' + type : ''}${from ? '&from=' + from : ''}${to ? '&to=' + to : ''}${mine ? '&mine=1' : ''}${noFund ? '&funding=none' : ''}${kits ? '&naloxone=1' : ''}`.replace(/^&/, '');
   const PAGE = 200;
   const data = await get(`/api/interventions?limit=${PAGE}${qs ? '&' + qs : ''}`);
   const refresh = () => nav(`interventions?${qs}&_=${Date.now()}`);
   const C = state.constants;
-  const typeSel = h('select', { onChange: () => nav(`interventions?type=${typeSel.value}&from=${from}&to=${to}${mine ? '&mine=1' : ''}${noFund ? '&funding=none' : ''}`) }, h('option', { value: '' }, 'All types'), listFilterOptions('INTERVENTION_TYPES').map(o => h('option', { value: o.value, selected: o.value === type }, o.label)));
+  const typeSel = h('select', { onChange: () => nav(`interventions?type=${typeSel.value}&from=${from}&to=${to}${mine ? '&mine=1' : ''}${noFund ? '&funding=none' : ''}${kits ? '&naloxone=1' : ''}`) }, h('option', { value: '' }, 'All types'), listFilterOptions('INTERVENTION_TYPES').map(o => h('option', { value: o.value, selected: o.value === type }, o.label)));
   const fromI = h('input', { type: 'date', value: from }), toI = h('input', { type: 'date', value: to });
   const mineI = h('input', { type: 'checkbox', checked: mine });
-  const apply = () => nav(`interventions?type=${type}&from=${fromI.value}&to=${toI.value}${mineI.checked ? '&mine=1' : ''}${noFund ? '&funding=none' : ''}`);
+  const apply = () => nav(`interventions?type=${type}&from=${fromI.value}&to=${toI.value}${mineI.checked ? '&mine=1' : ''}${noFund ? '&funding=none' : ''}${kits ? '&naloxone=1' : ''}`);
   return h('div', {},
     pageHead('Visits', can('interventions:write') ? h('button', { class: 'btn primary', onClick: () => openInterventionForm(null, { onDone: refresh }) }, '+ Log a visit') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/interventions?from=${from || '2000-01-01'}&to=${to || fmt.today()}&format=xlsx`) }, 'Export to Excel') : null),
     noFund ? h('div', { class: 'banner warn small', 'data-no-fund-filter': '1' }, 'Showing only visits with no funding source. Edit each one to choose the fund it was charged to. ', h('a', { href: `#/interventions?type=${type}&from=${from}&to=${to}${mine ? '&mine=1' : ''}` }, 'Show all visits')) : null,
+    kits ? h('div', { class: 'banner info small', 'data-naloxone-filter': '1' }, 'Showing only visits that handed out naloxone kits, of any type. ', h('a', { href: `#/interventions?type=${type}&from=${from}&to=${to}${mine ? '&mine=1' : ''}` }, 'Show all visits')) : null,
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Type'), typeSel), h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('label', { class: 'check', style: { marginTop: 0 } }, mineI, 'Mine only'), h('button', { class: 'btn', onClick: apply }, 'Apply')),
     pagedList({ first: data, url: `/api/interventions${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => interventionTable(rows, { onChange: refresh }),
       summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} visit${total === 1 ? '' : 's'} · ${fmt.mins(rows.reduce((s, x) => s + (x.duration_minutes || 0), 0))} shown`) }));

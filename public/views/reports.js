@@ -1,4 +1,4 @@
-import { h, route, get, put, state, fmt, can, pageHead, bars, stat, table, downloadCsv, nav, sparkline, form, modal, toast, moduleOn } from '../app.js';
+import { h, route, get, put, state, fmt, can, pageHead, bars, stat, table, downloadCsv, nav, sparkline, form, modal, toast, moduleOn, loadingFor } from '../app.js';
 import { withRestrictionCheck } from './part2.js';
 import { isPublishablePeriod, mayRunInternalReports, maySubmit, publicationGuidance, publicationReview } from './funder.js';
 
@@ -45,6 +45,7 @@ function openIdentifiedExport(from, to) {
   const m = modal('Identified export', h('div', {}, h('div', { class: 'banner warn small' }, 'This export includes client names, dates of birth and contact details. It is a disclosure: it is recorded in the audit log and in the accounting of disclosures of every client it contains, and it needs a lawful basis under 42 CFR Part 2.'), f));
 }
 
+loadingFor('reports', () => 'Counting visits, clients, calls and referrals for the period…');
 route('reports', async (r) => {
   const to = r.query.get('to') || fmt.today(); const from = r.query.get('from') || new Date(Date.parse(to) - 89 * 86400000).toISOString().slice(0, 10);
   const months = Number(r.query.get('months') || 12);

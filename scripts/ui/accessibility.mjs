@@ -642,7 +642,7 @@ async function keyboardRun() {
   await go(page, office, 'dashboard');
   ok(await tabTo(page, '.appbar .quick'), `${K}: Tab reaches "+ Log"`);
   await page.keyboard.press('Enter'); await page.waitForSelector('.modal .quick-list');
-  ok(await tabTo(page, '.modal .quick-list button', { text: 'Visit' }), `${K}: Tab reaches "Visit"`);
+  ok(await tabTo(page, '.modal .quick-list button', { text: 'Log a visit' }), `${K}: Tab reaches "Log a visit"`);
   await page.keyboard.press('Enter'); await page.waitForSelector('.modal [name=type]');
   ok((await active(page))?.inModal, `${K}: the visit form opens with focus inside it`);
   ok(await chooseClient(page, `Board${stamp}`) === clientId, `${K}: the client is chosen from the search with arrow keys and Enter`);
@@ -673,7 +673,7 @@ async function keyboardRun() {
   const cons = await api(page, 'GET', `/api/clients/${clientId}/consents`);
   eq((cons.data?.consents || []).length, 1, `${K}: the consent is recorded`, cons.data);
   await go(page, office, `client/${clientId}/referrals`);
-  ok(await tabTo(page, 'button', { text: '+ Referral' }), `${K}: Tab reaches "+ Referral"`);
+  ok(await tabTo(page, 'button', { text: '+ Make a referral' }), `${K}: Tab reaches "+ Make a referral"`);
   await page.keyboard.press('Enter'); await page.waitForSelector('.modal [name=resource_id]');
   await tabTo(page, '.modal select[name=resource_id]'); await page.keyboard.press('ArrowDown');
   await tabTo(page, '.modal select[name=consent_id]'); await page.keyboard.press('ArrowDown');
