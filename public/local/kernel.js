@@ -12832,7 +12832,13 @@ var require_clients = __commonJS({
           open_tasks: db3.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, row.id).n,
           minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
           spent: db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n,
-          episodes: db3.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n
+          episodes: db3.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n,
+          // For the record's module tabs, which show only when the module is on and has something on this record
+          // or the reader may add to it (public/views/client.js): counts only, for a role that may read them.
+          problems: auth3.hasPerm(ctx.user, "careplan:read") ? db3.one(`SELECT COUNT(*) n FROM problems WHERE client_id=?`, row.id).n : null,
+          goals: auth3.hasPerm(ctx.user, "careplan:read") ? db3.one(`SELECT COUNT(*) n FROM care_plan_goals WHERE client_id=?`, row.id).n : null,
+          assessments: auth3.hasPerm(ctx.user, "assessments:read") ? db3.one(`SELECT (SELECT COUNT(*) FROM asam_assessments WHERE client_id=?) + (SELECT COUNT(*) FROM outcome_measures WHERE client_id=?) n`, row.id, row.id).n : null,
+          suprt: db3.one(`SELECT COUNT(*) n FROM suprt_assessments WHERE client_id=?`, row.id).n
         };
         client.open_episode = !!db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id);
         const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, `notes:${k}:read`) || auth3.hasPerm(ctx.user, `notes:${k}:write`));
@@ -29774,7 +29780,7 @@ var require_funder_report = __commonJS({
       const fund = ctx.query.get("funding_source_id") || null;
       const counting = countingMode(ctx, { from, to }, { fund });
       if (counting.purpose === "publication") return (await require_publication_release().release(ctx, range, counting)).funder;
-      const { raw } = await runAsync(figures(ctx, range, fund));
+      const { raw } = await db3.readSnapshot(async () => runAsync(figures(ctx, range, fund)));
       const sc = { threshold: counting.threshold, exact: counting.mode === "exact" };
       return { ...header(counting, from, to, fund), caseload_scope_note: raw.caseload_scope_note, ...suppress(raw, sc) };
     }
@@ -31781,6 +31787,7 @@ var require_interventions2 = __commonJS({
             params.push(t);
           }
           if (ctx.query.get("funding") === "none") where.push("interventions.funding_source_id IS NULL");
+          if (ctx.query.get("naloxone") === "1") where.push("interventions.naloxone_kits > 0");
         },
         afterLoad: (ctx, row) => withLines(decodeSummary(row)),
         beforeInsert: (ctx, v) => {
