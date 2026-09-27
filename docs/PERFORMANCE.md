@@ -37,7 +37,50 @@ The machine was shared with other work while these ran (load average 3–5 on 4 
 
 ## Results (1.13 + the 1.14.0 streams, before and after this work)
 
-RESULTS_TABLE
+Server, at 20,000 clients (`scripts/bench/run.js`; wall time / longest event-loop hold, in ms; the two runs
+back to back on the same machine):
+
+| What | Before | After |
+|---|---|---|
+| Home dashboard, fiscal year, administrator | 1,556 / 356 | 389 / 153 |
+| Home dashboard, fiscal year, navigator (2,000 clients) | 680 / 144 | 221 / 59 |
+| Home dashboard, last 90 days, administrator | 543 / 327 | 191 / 49 |
+| Supplies page (`GET /api/supplies`) | 306 / 293; 485 kB | 37 / 25; 23 kB on the wire |
+| Supplies alerts (Home, for whoever runs the cupboard) | 183 / 178 | 26 / 18 |
+| Client list, administrator, page 100 | 114 / 109 | 39 / 30 |
+| Client list, administrator, sorted by last contact | 188 / 183 | 193 / 186 (unchanged: see below) |
+| Client list and search, navigator | 18–35 | 18–31 |
+| Client timeline, 5,000 events, page 5 | 65 / 60 | 12 / 6 |
+| Visits list, administrator, page 1 | 99 / 93 | 23 / 16 |
+| Visits list, administrator, a fiscal year | 344 / 338 | 28 / 20 |
+| Visits list, navigator | 101 / 95 | 71 / 64 |
+| Notes list, navigator | 145 / 139 | 28 / 21 |
+| Saving a visit that hands out 3 items (first-expiry-first-out draw-down), average | 12 | 6 |
+| First sync of a 2,000-client caseload: 30 pages, 104,000 rows | 19.1 s; worst page 4,159; 79.5 MB | 5.5 s; worst page 237; 5.1 MB on the wire (79.7 MB of JSON) |
+| First sync, administrator, 5 pages | 1,377; worst page 336; 25 MB | 1,025; worst page 322; 1.8 MB |
+| Sync with nothing new | 161 / 156 | 23 / 9 |
+| An audit entry (hash-chained, committed) | 292 µs | 262 µs |
+| Server start-up to `/api/health/live`; memory | 201 ms; 81 MB | 202 ms; 81 MB |
+| 50 navigators at once for 20 s (client list, a client, their timeline, save a visit) | 167 requests/s; p50/p95 ms: list 433/571, client 355/553, timeline 175/229, save 250/312; 187 MB | 248 requests/s; list 250/456, client 182/319, timeline 157/353, save 143/346; 159 MB |
+
+The first sync's worst page was 4 seconds because a caseload that arrives inside a page's window is backfilled,
+and the query that finds the newly assigned clients (a `NOT EXISTS` over the worker's own assignments) ran once
+for each of 45 tables, at 0.3 s each; it now runs once per page, from `idx_assign_caseload`, in 3 ms. With
+SQLite's planner statistics (`--analyze`) the old worst page was 0.5 s, the rest much the same.
+
+A phone's first load (`scripts/bench/frontend.mjs`: 390 px, slow 4G, CPU slowed four times; 2,000 clients):
+
+| What | Before | After |
+|---|---|---|
+| Sign-in page, first visit: Largest Contentful Paint; usable; downloaded | 5.8 s; 5.8 s; 954 kB in 45 requests | 1.5 s; 1.5 s; 85 kB in 13 requests |
+| Sign-in page, return visit | 5.8 s; 5.8 s; 954 kB | 1.1 s; 1.1 s; 8 kB |
+| Signing in to Home (administrator), until it shows | 9.2 s; 1,396 kB in 43 requests | 2.2 s; 80 kB in 26 requests |
+| Opening Supplies the first time | 3.0 s; 555 kB | 0.4 s; 26 kB |
+| Opening Clients the first time | 1.1 s; 115 kB | 0.8 s; 23 kB |
+
+Under 50 navigators at once the server is bounded by committing: every audited request commits its audit entry
+on its own, and a saved visit commits the visit, its draw-down and their audit entries separately (22% of the
+server's time under that load). That is deliberate; see "Decided against".
 
 ## What changed, and why
 
@@ -71,7 +114,8 @@ first sync read every row of the caseload again on each of its 30 pages. The fir
 timestamps, from indexes that carry the client and the owner with `updated_at` (`idx_*_sync`), to find where the
 page ends; the second reads whole rows only for what it sends. A table with nothing newer than the device's
 cursor (one index lookup) is skipped, so an incremental sync reads almost nothing. Pages, cursors and rows are
-exactly those of the one-pass version (`test/perf-sync.test.js` walks both).
+exactly those of the one-pass version (`test/perf-sync.test.js` walks both). A backfill page (the rows of
+clients newly assigned to the worker) works out which clients arrived once, not once per table.
 
 **Home.** The dashboard read the clients eight times, the period's visits four times (each whole row) and its
 calls six times. It now reads each once, grouped by everything the figures break down by, and adds up the
@@ -94,10 +138,13 @@ it fetched rather than the page it shows. A list's total no longer makes lookups
 addenda are counted from an index (`idx_note_addenda_note`; there was none).
 
 **Every request.** Prepared statements are kept and reused (`server/db.js`), the time zone's date formatters are
-made once (`server/routes/budget.js`), and a timeline reads each list's labels once.
+made once (`server/routes/budget.js`), a timeline reads each list's labels once, a client list decrypts the six
+fields a row shows rather than all sixteen, and a caseload is read from one index (`idx_assign_caseload`, which
+replaces `idx_assign_user`).
 
-Migration 46 creates the new indexes and drops the three they replace; on the 20,000-client database it takes
-about three seconds, once, after the usual pre-migration snapshot.
+Migration 46 creates the new indexes and drops the four they replace. On the 20,000-client database (710 MB)
+the first start after the upgrade takes 9 seconds, most of it the pre-migration snapshot every migration takes
+(`server/db.js`); later starts are unchanged.
 
 ## Decided against
 
@@ -114,5 +161,11 @@ about three seconds, once, after the usual pre-migration snapshot.
   on the wire, and a new format would need every device's kernel to understand it.
 - **Yielding inside a sync page.** A page reads every table at one instant; yielding between tables would let
   writes land between them. The page's work is now small enough not to need it.
+- **Sorting 20,000 clients by last contact.** The administrator's client list sorted by last contact (or by risk,
+  or filtered to "not contacted in 30 days") works out every client's last visit and call: 9 µs a client, 190 ms
+  for 20,000. A grouped join would be faster for the whole programme and slower for a caseload; the page is now
+  found first, so only the sort key is worked out for every client, and the other columns for the 50 shown.
+- **Deep offsets.** The visits list at offset 50,000 still walks 50,000 rows (220 ms). The screens page by 100
+  and nobody pages that far; keyset paging would change the API.
 - **Versioned URLs for the app's modules.** It needs a build step to rewrite imports (or an import map, which
   the Content-Security-Policy would have to allow inline); revalidation gets most of the benefit.
