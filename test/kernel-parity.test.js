@@ -5,115 +5,31 @@
 // server module that reached for something the browser does not have, was found by the browser suite at best.
 //
 // This bundles the CURRENT sources exactly as scripts/build-local.js does (scripts/kernel-build-options.js),
-// loads the bundle in Node with sql.js and the few browser APIs it needs (WebCrypto and fetch are Node's own;
-// IndexedDB and Web Storage are small in-memory stand-ins below), and drives one representative flow through
-// SUDS_LOCAL.handle — sign up (SUDS on this device), sign in, a client, a visit, a note, a consent, a referral
-// that discloses under it, the funder report for internal use — then runs the same flow against the office
-// server's API and requires the same answers.
+// loads the bundle in Node with sql.js and the few browser APIs it needs (test/fixtures/kernel-harness.js),
+// and drives one representative flow through SUDS_LOCAL.handle — sign up (SUDS on this device), sign in, a
+// client, a visit, a note, a consent, a referral that discloses under it, the funder report for internal use,
+// the dashboard (Home and Reports), and a publication release of the month (1.13.1) — then runs the same flow
+// against the office server's API and requires the same answers: the same release, id for id. A device that
+// syncs with an office, and what the two hold after a round trip, is test/kernel-sync-parity.test.js.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { pathToFileURL } = require('node:url');
 const H = require('./helpers');
+const { loadKernel, kernelCaller, strip } = require('./fixtures/kernel-harness');
 
-const root = path.join(__dirname, '..');
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-kernel-parity-'));
-const WASM_URL = 'https://suds.invalid/local/sql-wasm.wasm';
-
-// ---- the browser APIs the kernel touches that Node lacks ----
-function storage() {
-  const m = new Map();
-  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); }, clear: () => m.clear(), key: (i) => [...m.keys()][i] ?? null, get length() { return m.size; } };
-}
-// IndexedDB, as much of it as local/shims/sqlite.js uses: one database, object stores of key -> structured
-// clone, requests with onsuccess, transactions that run one after another, complete when their last request's
-// callback has run, and roll back on abort().
-function fakeIndexedDB() {
-  const dbs = new Map();
-  let chain = Promise.resolve();
-  const cmp = (a, b) => (typeof a === typeof b ? (a < b ? -1 : a > b ? 1 : 0) : typeof a === 'number' ? -1 : 1);
-  const inRange = (range) => (k) => !range || ((range.lower === undefined || cmp(k, range.lower) >= 0) && (range.upper === undefined || cmp(k, range.upper) <= 0));
-  function database(name) {
-    const stores = dbs.get(name);
-    return {
-      objectStoreNames: { contains: (s) => stores.has(s) },
-      createObjectStore(s) { stores.set(s, new Map()); return {}; },
-      close() {},
-      transaction(storeName) {
-        const tx = { oncomplete: null, onerror: null, onabort: null, error: null, aborted: false, queue: [] };
-        const data = new Map(stores.get(storeName));
-        const request = (op) => { const r = { result: undefined, error: null, onsuccess: null, onerror: null }; tx.queue.push(() => { r.result = op(); if (r.onsuccess) r.onsuccess({ target: r }); }); return r; };
-        const store = {
-          get: (k) => request(() => structuredClone(data.get(k))),
-          put: (v, k) => request(() => { data.set(k, structuredClone(v)); return k; }),
-          delete: (k) => request(() => { data.delete(k); }),
-          clear: () => request(() => { data.clear(); }),
-          getAll: () => request(() => [...data.keys()].sort(cmp).map((k) => structuredClone(data.get(k)))),
-          getAllKeys: (range) => request(() => [...data.keys()].sort(cmp).filter(inRange(range))),
-        };
-        tx.objectStore = () => store;
-        tx.commit = () => {};
-        tx.abort = () => { tx.aborted = true; tx.error = new Error('AbortError'); };
-        chain = chain.then(() => new Promise((resolve) => setTimeout(() => {
-          while (tx.queue.length && !tx.aborted) tx.queue.shift()();
-          if (tx.aborted) { if (tx.onabort) tx.onabort({ target: tx }); } else { stores.set(storeName, data); if (tx.oncomplete) tx.oncomplete({ target: tx }); }
-          resolve();
-        }, 0)));
-        return tx;
-      },
-    };
-  }
-  return {
-    open(name) {
-      const r = { result: null, error: null, onsuccess: null, onerror: null, onupgradeneeded: null };
-      setTimeout(() => {
-        const fresh = !dbs.has(name);
-        if (fresh) dbs.set(name, new Map());
-        r.result = database(name);
-        if (fresh && r.onupgradeneeded) r.onupgradeneeded({ target: r });
-        if (r.onsuccess) r.onsuccess({ target: r });
-      }, 0);
-      return r;
-    },
-  };
-}
-
-let L;
+let L; let cleanup;
 before(async () => {
   // Bundle the current sources (not the committed public/local/kernel.js, which may lag them until
-  // `npm run build:local`) the way the build script does.
-  const outfile = path.join(tmp, 'kernel.mjs');
-  await require('esbuild').build(require('../scripts/kernel-build-options').kernelBuildOptions(outfile));
-
-  const wasm = fs.readFileSync(path.join(root, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'));
-  const realFetch = globalThis.fetch;
-  Object.assign(globalThis, {
-    window: globalThis, localStorage: storage(), sessionStorage: storage(), indexedDB: fakeIndexedDB(),
-    IDBKeyRange: { bound: (lower, upper) => ({ lower, upper }) },
-    // No BroadcastChannel: the kernel then skips the cross-window hand-over (one "window" here), and no
-    // channel holds the test process open.
-    BroadcastChannel: undefined,
-    SUDS_STATIC_HOST: true, // SUDS on this device (the published web app): Sign up creates the account
-    fetch: (url, opts) => (String(url) === WASM_URL ? Promise.resolve(new Response(wasm, { headers: { 'Content-Type': 'application/wasm' } })) : realFetch(url, opts)),
-  });
-  // The kernel's timers (heartbeat, idle lock) are for a page that lives on; here they must not keep the
-  // process alive after the last test.
-  const realSetInterval = globalThis.setInterval;
-  globalThis.setInterval = (...a) => { const t = realSetInterval(...a); if (t && t.unref) t.unref(); return t; };
-
-  const kernel = await import(pathToFileURL(outfile).href);
-  L = await kernel.start({ wasmUrl: WASM_URL });
-
+  // `npm run build:local`) the way the build script does. SUDS on this device (the published web app): Sign
+  // up creates the account.
+  ({ L, cleanup } = await loadKernel({ staticHost: true }));
   await H.start();
   // A new device database is a harm-reduction programme (server/programme.js DEFAULT_PROFILE); the office
   // server is given the same profile so the two answer under the same module switches.
   H.db.setSetting('programme_profile', require('../server/programme').DEFAULT_PROFILE);
 });
-after(async () => { await H.stop(); fs.rmSync(tmp, { recursive: true, force: true }); });
+after(async () => { await H.stop(); cleanup(); });
 
-const kernelCall = async (method, p, body) => { const r = await L.handle(method, p, body); return { status: r.status, data: r.json !== undefined ? r.json : r.body }; };
+const kernelCall = (...a) => kernelCaller(L)(...a);
 
 // One flow, written once, run against both. Returns what the two must agree on.
 async function flow(call) {
@@ -141,20 +57,22 @@ async function flow(call) {
   out.funder = strip(report);
   // And with exact counts (the programme's own submission): with one client every internal count is "<11".
   out.funderExact = strip(expectStatus(await call('GET', '/api/reports/funder?from=2026-08-01&to=2026-08-31&purpose=submission&counts=exact'), 200, 'funder report (exact)'));
+  // The dashboard's totals (Home and Reports) over the month.
+  out.dashboard = strip(expectStatus(await call('GET', '/api/reports/dashboard?from=2026-08-01&to=2026-08-31'), 200, 'dashboard'));
+  // Visits by worker are by the worker's name, and the device's account and the office's are different people.
+  if (out.dashboard.interventions && out.dashboard.interventions.by_worker) out.dashboard.interventions.by_worker = out.dashboard.interventions.by_worker.map(({ k, ...x }) => x);
+  // Enough people for a publication release of August to print its headline; both sides must print the same
+  // release (the audit runs in the office's worker thread, and inline in the kernel).
+  for (let i = 0; i < 24; i++) {
+    const c = expectStatus(await call('POST', '/api/clients', { first_name: `Pub${i}`, last_name: 'Parity', gender: i % 3 ? 'male' : 'female', status: 'active', intake_date: '2026-08-01', confirm_duplicate: true }), 201, 'client');
+    expectStatus(await call('POST', '/api/interventions', { client_id: c.id, type: 'outreach', occurred_at: `2026-08-${String(3 + (i % 20)).padStart(2, '0')}T15:00:00.000Z`, duration_minutes: 15 }), 201, 'visit');
+  }
+  const PUB = 'from=2026-08-01&to=2026-08-31&purpose=publication';
+  const pub = await call('GET', `/api/reports/funder?${PUB}`);
+  const ndp = await call('GET', `/api/reports/naloxone-ndp?${PUB}`);
+  out.publication = { status: pub.status, release: pub.data.release && pub.data.release.id, ndpRelease: ndp.data.release && ndp.data.release.id, funder: strip(pub.data), ndp: strip(ndp.data) };
   return out;
 }
-// Ids, timestamps and the like differ between any two runs; the counts, labels and suppression decisions must not.
-function strip(x) {
-  if (Array.isArray(x)) return x.map(strip);
-  if (!x || typeof x !== 'object') return x;
-  const o = {};
-  for (const [k, v] of Object.entries(x)) {
-    if (/(^|_)(id|at|generated|generated_at|run_id|ref)$/.test(k) || ['version', 'timezone', 'org_name', 'programme', 'program'].includes(k)) continue;
-    o[k] = strip(v);
-  }
-  return o;
-}
-
 test('the browser kernel (sql.js and the shims) answers a representative flow exactly as the office server does', async () => {
   // SUDS on this device: the first Sign up creates the device's account, then it signs in.
   const signup = await kernelCall('POST', '/api/local/signup', { display_name: 'Parity Admin', username: 'parity', password: 'ParityPassw0rd!x', role: 'admin', storage_ack: true });
@@ -166,7 +84,8 @@ test('the browser kernel (sql.js and the shims) answers a representative flow ex
   const admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   const office = await flow((m, p, b) => admin.req(m, p, b));
 
-  if (process.env.PARITY_DEBUG) console.log(JSON.stringify({ device, office }, null, 1));
+  // PARITY_DEBUG=1 prints both answers; PARITY_DEBUG=<file.json> writes them there.
+  if (process.env.PARITY_DEBUG) { if (/[\/]/.test(process.env.PARITY_DEBUG)) require('node:fs').writeFileSync(process.env.PARITY_DEBUG, JSON.stringify({ device, office })); else console.log(JSON.stringify({ device, office }, null, 1)); }
   assert.equal(device.refusedWithoutConsent, 400, 'a warm hand-off without consent is refused on the device too');
   assert.deepEqual(device.client, office.client, 'the client reads back the same');
   assert.deepEqual(device.visit, office.visit);
@@ -175,6 +94,14 @@ test('the browser kernel (sql.js and the shims) answers a representative flow ex
   assert.ok(device.accounting.length >= 1 && device.accounting[0].consent);
   assert.deepEqual(device.funder, office.funder, 'the funder report (internal, suppressed) counts the same');
   assert.deepEqual(device.funderExact, office.funderExact, 'and with exact counts');
+  assert.deepEqual(device.dashboard, office.dashboard, 'the dashboard counts the same');
+  assert.equal(device.dashboard.interventions.total, 1); assert.equal(device.dashboard.interventions.naloxone_kits, 2); assert.equal(device.dashboard.clients.new_in_range, 1);
+  assert.equal(device.publication.status, 200, JSON.stringify(device.publication.funder).slice(0, 300));
+  assert.equal(device.publication.release, office.publication.release, 'the same publication release, by its id');
+  assert.equal(device.publication.ndpRelease, device.publication.release, 'the NDP log is part of it');
+  assert.deepEqual(device.publication.funder, office.publication.funder, 'printed the same');
+  assert.deepEqual(device.publication.ndp, office.publication.ndp);
+  assert.equal(device.publication.funder.unduplicated.served, 25, 'and it prints its headline');
   // Not two identical empty answers: the flow's own records are in them.
   assert.equal(device.client.first_name, 'Parity'); assert.equal(device.client.dob, '1985-03-02');
   assert.equal(device.note.content, 'Asked about MAT; prefers texts.');
@@ -199,7 +126,7 @@ test('a save during the funder report does not drop its working table (sql.js ex
   finally { globalThis.setImmediate = realSetImmediate; }
   assert.ok(turns > 0, 'the report yielded (and a save was asked for) at least once');
   assert.equal(r.status, 200, `the report survived ${turns} save attempts: ${JSON.stringify(r.json)}`);
-  assert.equal(r.json.unduplicated.served, 1);
+  assert.equal(r.json.unduplicated.served, 25, 'the 25 people of the flow (1.13.1 added 24 for the publication release)');
   await L.flush({ force: true });
   assert.equal(L.isDirty(), false, 'and the deferred save still happens once the report is done');
 });
