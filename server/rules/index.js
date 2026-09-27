@@ -42,7 +42,11 @@ const DECLARED = {
   care_plan_steps: () => require('./care_plan_steps'),
   asam_assessments: () => require('./asam_assessments'),
   outcome_measures: () => require('./outcome_measures'),
-  supply_stock: () => require('./supply_stock'),
+  suprt_assessments: () => require('./suprt_assessments'),
+  supply_sites: () => require('./supply_sites'),
+  supply_items: () => require('./supply_items'),
+  intervention_supplies: () => require('./intervention_supplies'),
+  supply_ledger: () => require('./supply_ledger'),
   option_overrides: () => require('./option_overrides'),
   disclosure_agreements: () => require('./disclosure_agreements'),
 };

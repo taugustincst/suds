@@ -68,7 +68,10 @@ test('the NDP log exports to CSV and Excel, labelled as not the official templat
   const csv = await nav.get('/api/reports/naloxone-ndp/export?from=2026-05-01&to=2026-05-31&format=csv');
   assert.equal(csv.status, 200);
   const lines = String(csv.data).split('\r\n');
-  assert.match(lines[0], /^Date,Entry,Site type,Recipient type,Kits distributed,Naloxone doses distributed,Reversals reported,Doses used in reversals,Naloxone given by/);
+  // 1.14: the day log also says which naloxone product went out, where the visit recorded it (docs/SUPPLIES.md);
+  // these visits recorded counts alone, so it is "Not recorded".
+  assert.match(lines[0], /^Date,Entry,Site type,Recipient type,Naloxone product,Kits distributed,Naloxone doses distributed,Reversals reported,Doses used in reversals,Naloxone given by/);
+  assert.ok(lines.slice(1).filter(l => /,Distribution,/.test(l)).every(l => /,Not recorded,/.test(l)));
   assert.match(csv.headers.get('x-suds-export'), /not the official NDP template/i);
   const xl = await fetch(`${await H.start()}/api/reports/naloxone-ndp/export?from=2026-05-01&to=2026-05-31&format=xlsx`, { headers: { Authorization: `Bearer ${(await H.client().post('/api/auth/login', { username: 'hrnav', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' })).data.token}` } });
   assert.equal(xl.status, 200);
@@ -155,7 +158,11 @@ test('the opioid settlement report groups settlement spending by allowable use a
   assert.equal(r.data.totals.hiaa_share, 60);
   assert.match(r.data.source_note, /verif/i);
   assert.equal((await nav.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'a navigator holds budget:read, but an internal run of a whole-programme report needs reports:internal');
-  assert.equal((await fin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'so does finance');
+  // Finance writes the funder report (reports:funder, 1.14.0): its run is the programme's own submission.
+  const f = await fin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31');
+  assert.equal(f.status, 200, 'finance runs the submission');
+  assert.equal(f.data.suppression.purpose, 'submission');
+  assert.equal((await fin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31&purpose=internal')).status, 403, 'but never an internal run');
   assert.equal((await clin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'a clinician holds no budget permission');
   assert.equal((await ro.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403);
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='report.opioid_settlement'`));

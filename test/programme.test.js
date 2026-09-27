@@ -24,7 +24,9 @@ const setProfile = (body) => admin.put('/api/admin/settings', body);
 test('the suite runs treatment-adjacent; /api/auth/me says so with every module on', async () => {
   const me = (await nav.get('/api/auth/me')).data;
   assert.equal(me.programme.profile, 'treatment');
-  assert.deepEqual(me.programme.modules, { careplan: true, assessments: true, caloms: true, fhir: true, handoff: true });
+  // SUPRT-A and publication releases do not follow the profile (server/programme.js): publication is on by
+  // default, SUPRT-A only for a programme with a SOR grant fund.
+  assert.deepEqual(me.programme.modules, { careplan: true, assessments: true, caloms: true, fhir: true, handoff: true, suprt: false, publication: true });
 });
 
 test('a record made while a module is on stays readable after it is switched off', async () => {
@@ -39,10 +41,13 @@ test('a record made while a module is on stays readable after it is switched off
 test('harm reduction: every clinical module is off, and /api/auth/me says so', async () => {
   const me = (await nav.get('/api/auth/me')).data;
   assert.equal(me.programme.profile, 'harm_reduction');
-  assert.ok(Object.values(me.programme.modules).every(v => v === false), JSON.stringify(me.programme.modules));
+  const clinical = ['careplan', 'assessments', 'caloms', 'fhir', 'handoff'];
+  assert.ok(clinical.every(k => me.programme.modules[k] === false), JSON.stringify(me.programme.modules));
+  assert.equal(me.programme.modules.publication, true, 'publication releases do not follow the profile');
   const s = (await admin.get('/api/admin/settings')).data;
   assert.equal(s.programme.profile, 'harm_reduction');
-  assert.deepEqual(s.programme.module_list.map(m => m.key), ['careplan', 'assessments', 'caloms', 'fhir', 'handoff']);
+  assert.deepEqual(s.programme.module_list.map(m => m.key), [...clinical, 'suprt', 'publication']);
+  assert.deepEqual(s.programme.module_list.filter(m => !m.clinical).map(m => [m.key, m.default_on]), [['suprt', false], ['publication', true]]);
 });
 
 test('a switched-off module refuses new records with a message that says where to switch it on', async () => {
@@ -128,5 +133,5 @@ test('a change of profile or module is audited on its own', async () => {
 
 test('device copies follow the office: the profile and module switches synchronise', () => {
   const SYNC = require('../server/sync-tables');
-  for (const k of ['programme_profile', 'module_careplan', 'module_assessments', 'module_caloms', 'module_fhir', 'module_handoff']) assert.ok(SYNC.settings_keys.includes(k), k);
+  for (const k of ['programme_profile', 'module_careplan', 'module_assessments', 'module_caloms', 'module_fhir', 'module_handoff', 'module_suprt', 'module_publication']) assert.ok(SYNC.settings_keys.includes(k), k);
 });

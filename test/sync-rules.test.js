@@ -43,6 +43,12 @@ before(async () => {
   X.fund = randomUUID(); H.db.run(`INSERT INTO funding_sources(id,name,fiscal_year_start,fiscal_year_end,total_amount) VALUES(?,?,?,?,?)`, X.fund, 'Rules fund', day(-200), day(200), 100000);
   X.line = randomUUID(); H.db.run(`INSERT INTO budget_lines(id,funding_source_id,category,allocated_amount) VALUES(?,?,?,?)`, X.line, X.fund, 'supplies', 50000);
   X.oldFund = randomUUID(); H.db.run(`INSERT INTO funding_sources(id,name,fiscal_year_start,fiscal_year_end,total_amount,is_active) VALUES(?,?,?,?,?,0)`, X.oldFund, 'Closed fund', day(-900), day(-500), 1000);
+  // Supplies (docs/SUPPLIES.md): an item and a site in use, and ones the office has retired.
+  X.item = randomUUID(); H.db.run(`INSERT INTO supply_items(id,name,category) VALUES(?,?,?)`, X.item, 'Rules kit', 'naloxone');
+  X.oldItem = randomUUID(); H.db.run(`INSERT INTO supply_items(id,name,category,is_active) VALUES(?,?,?,0)`, X.oldItem, 'Retired kit', 'naloxone');
+  X.site = randomUUID(); H.db.run(`INSERT INTO supply_sites(id,name) VALUES(?,?)`, X.site, 'Rules van');
+  // SUPRT-A is a module of its own, off unless the programme switches it on (server/programme.js).
+  H.db.setSetting('module_suprt', '1');
   X.template = randomUUID(); H.db.run(`INSERT INTO form_templates(id,name,category,fields_json) VALUES(?,?,?,?)`, X.template, 'Rules form', 'other', JSON.stringify([{ key: 'a', label: 'A', type: 'text', required: true }]));
 });
 after(async () => { await H.stop(); });
@@ -166,7 +172,7 @@ const T = {
     as: 'nav', noPerm: 'fin',
     row: (x) => ({ id: randomUUID(), client_id: x.client, type: 'roi', recipient_enc: 'County OTP', purpose_enc: 'Care coordination', signed_at: day(0), created_by: U.nav, ...ts() }),
     create: (c, r) => c.post(`/api/clients/${r.client_id}/consents`, api(r)),
-    invalid: [['type unknown', { type: 'pinky_swear' }], ['a Part 2 consent missing its elements', { type: 'part2_disclosure' }], ['recipient too long', { recipient_enc: 'x'.repeat(301) }]],
+    invalid: [['type unknown', { type: 'pinky_swear' }], ['a Part 2 consent missing its elements', { type: 'part2_disclosure' }], ['recipient too long', { recipient_enc: 'x'.repeat(2001) }]],
     edit: { purpose_enc: 'Something else' },
   },
   court_orders: {
@@ -261,6 +267,25 @@ const T = {
       ['completed with a required field empty', { status: 'completed', values_enc: '{}' }, async (c, r) => { const f = await c.post(`/api/clients/${r.client_id}/forms`, { template_id: r.template_id }); return c.put(`/api/forms/${f.data.id}`, { status: 'completed' }); }]],
     edit: { notes_enc: 'Signed copy to follow' },
   },
+  suprt_assessments: {
+    as: 'nav', noPerm: 'fin', module: 'suprt',
+    row: (x) => ({ id: randomUUID(), client_id: x.client, assessment_type: 'baseline', assessment_date: day(0), status: 'draft', answers_enc: '{}', created_by: U.nav, updated_by: U.nav, ...ts() }),
+    create: (c, r) => c.post(`/api/clients/${r.client_id}/suprt`, { assessment_type: r.assessment_type, assessment_date: r.assessment_date, status: r.status, answers: JSON.parse(r.answers_enc || '{}') }),
+    update: (c, r, p) => c.put(`/api/suprt/${r.id}`, p), del: (c, r) => c.del(`/api/suprt/${r.id}`),
+    invalid: [['type unknown', { assessment_type: 'midterm' }], ['dated in the future', { assessment_date: day(30) }], ['an answer the instrument does not ask', { answers_enc: '{"no_such_item":"1"}' }],
+      ['complete with required answers missing', { status: 'complete' }]],
+    edit: { assessment_date: day(-1) },
+  },
+  supply_ledger: {
+    // No noPerm case: every role that may sync (clients:write) holds supplies:receive; supplies:manage for the other
+    // kinds is ledgerPushProblem's (test/supplies.test.js).
+    as: 'sup', restNote: 'stock is received over REST by POST /api/supplies/receipts (another shape: the ledger row is the office\'s)',
+    row: () => ({ id: randomUUID(), item_id: X.item, site_id: X.site, kind: 'received', quantity: 10, occurred_on: day(0), source: 'ndp', user_id: U.sup, ...ts() }),
+    create: (c, r) => c.post('/api/supplies/receipts', { item_id: r.item_id, site_id: r.site_id, quantity: r.quantity, received_on: r.occurred_on, source: r.source, funding_source_id: r.funding_source_id }),
+    invalid: [['a visit\'s draw-down', { kind: 'distributed', quantity: -1 }, () => null], ['a negative delivery', { quantity: -5 }], ['an item the office has retired', { item_id: '$oldItem' }],
+      ['a fund on a delivery that was not a purchase', { funding_source_id: '$fund' }]],
+    edit: { quantity: 11 },
+  },
   imports: {
     as: 'nav', noPerm: 'fin', restNote: 'an import is created by uploading a file (POST /api/imports/upload)',
     row: () => ({ id: randomUUID(), source: 'generic', filename_enc: 'notes.txt', imported_by: U.nav, item_count: 0, status: 'staged', ...ts() }),
@@ -299,6 +324,8 @@ async function prepare(name, spec, x) {
 
 /** Every case for one table: [caseName, { push, rest }]. */
 async function runTable(name, spec) {
+  // Each table's cases are a few dozen requests; the office's per-address API limit is not what is under test.
+  require('../server/app').rateLimitReset('api:127.0.0.1');
   const out = {};
   const as = spec.as || 'nav';
   const x = {};
@@ -316,6 +343,7 @@ async function runTable(name, spec) {
     const r = mutate(spec.row(px), m, px); const res = await push(as, { tables: { [name]: [r] } });
     const rx = { ...x, client: fresh() }; if (m._setup) m._setup(rx);
     out[`invalid: ${label}`] = { push: outcome(res, name, r.id), rest: restFn ? st(await restFn(C[as], mutate(spec.row(rx), m, rx), rx)) : await rest(spec.create, C[as], mutate(spec.row(rx), m, rx), x) };
+    if (restFn && out[`invalid: ${label}`].rest === undefined) out[`invalid: ${label}`].rest = null;
   }
   // a client off the caseload (nav2's only)
   if (clientCol && as === 'nav') {
@@ -348,11 +376,12 @@ async function runTable(name, spec) {
   }
   // the programme module switched off
   if (spec.module) {
+    const was = H.db.getSetting(`module_${spec.module}`, null);
     H.db.setSetting(`module_${spec.module}`, '0');
     try {
       const r = spec.row({ ...x, client: fresh() }); const res = await push(as, { tables: { [name]: [r] } });
       out['module switched off'] = { push: outcome(res, name, r.id), rest: await rest(spec.create, C[as], spec.row({ ...x, client: fresh() }), x) };
-    } finally { H.db.run(`DELETE FROM settings WHERE key=?`, `module_${spec.module}`); }
+    } finally { if (was === null) H.db.run(`DELETE FROM settings WHERE key=?`, `module_${spec.module}`); else H.db.setSetting(`module_${spec.module}`, was); }
   }
   // own record: tombstone
   {
@@ -405,7 +434,10 @@ test('every synchronised table a device may write is covered here', () => {
   const writable = SYNC.tables.filter(t => !t.serverOwned && t.name !== 'users').map(t => t.name);
   // Tables a device writes only as a by-product of another table's route (or with a file), covered by their
   // own tests: sync.test.js, sync-scope.test.js, clinical-depth.test.js, documents.test.js.
-  const byProduct = ['resource_photos', 'caloms_records', 'note_addenda', 'disclosures', 'import_items', 'client_form_files', 'problem_history', 'care_plan_steps'];
+  const byProduct = ['resource_photos', 'caloms_records', 'note_addenda', 'disclosures', 'import_items', 'client_form_files', 'problem_history', 'care_plan_steps',
+    // A visit's supply lines: written with the visit (routes/interventions.js planSupplies), pushed with it:
+    // test/supplies.test.js and test/sync-rules-fixes.test.js.
+    'intervention_supplies'];
   const missing = writable.filter(n => !T[n] && !byProduct.includes(n));
   assert.deepEqual(missing, [], 'add these tables to the harness (or name the test that covers them)');
 });

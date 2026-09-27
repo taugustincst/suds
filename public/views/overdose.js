@@ -10,6 +10,11 @@ const where = (v) => (v && listEntries('LOCATIONS').some(e => e.code === v) ? fm
 // come from the office's setup with the rest of the lists (GET /api/meta/constants; the same lists are on
 // GET /api/meta/overdose-options for other callers).
 
+// The doses as stored, which is what the funder report and the NDP log add up: "Doses given" left empty is
+// saved as 0 and shown as not recorded. The list used to show it as "1 dose" while the reports counted 0.
+export function dosesText(n) { const d = Number(n) || 0; return d > 0 ? `${d} dose${d === 1 ? '' : 's'}` : 'doses not recorded'; }
+export function naloxoneText(r) { return !(r.naloxone_used || r.kind === 'reversal' || Number(r.naloxone_doses) > 0) ? 'none' : Number(r.naloxone_doses) > 0 ? dosesText(r.naloxone_doses) : `given, ${dosesText(0)}`; }
+
 const remote = () => (state.constants || {}).REMOTE_LOCATIONS || ['phone', 'telehealth'];
 /** A new event starts where the program's visits do (server/programme.js defaultLocation), never at a phone. */
 const defaultWhere = () => { const d = (state.constants || {}).DEFAULT_LOCATION; return d && !remote().includes(d) && listEntries('LOCATIONS').some(e => e.code === d && !e.hidden) ? d : ''; };
@@ -37,7 +42,8 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
     { name: 'funding_source_id', label: 'Funding source', type: 'fund' },
     { name: 'notes', label: 'Notes', type: 'textarea', span: true, help: 'Stored encrypted.' },
   ], {
-    values: row || { client_id: clientId || '', occurred_at: new Date().toISOString(), survived: 1, location_type: defaultWhere() },
+    // A new event is charged to the worker's default fund (or the program's), as a new visit is.
+    values: row || { client_id: clientId || '', occurred_at: new Date().toISOString(), survived: 1, location_type: defaultWhere(), funding_source_id: state.defaultFundId && (state.funds || []).some(x => x.id === state.defaultFundId) ? state.defaultFundId : '' },
     submitText: row ? 'Save' : 'Record event',
     draftKey: row ? `overdose:${row.id}` : 'overdose:new',
     onSubmit: async (d) => {
@@ -55,7 +61,9 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
       }
       if (row) await put(`/api/overdose-events/${row.id}`, { ...d, if_updated_at: row.updated_at }); else await post('/api/overdose-events', d);
       // Said in words, and long enough to read after the list redraws under it.
-      toast(row ? 'Event updated' : `Event recorded: ${fmt.label(d.kind, 'OVERDOSE_KINDS')}${d.client_id ? '' : ' (community report)'}`, 'ok'); m.close(); onDone && onDone();
+      // With the naloxone, in the words the list uses: "2 doses", or "doses not recorded" when none were entered.
+      const given = d.naloxone_used || d.kind === 'reversal' || Number(d.naloxone_doses) > 0;
+      toast(row ? 'Event updated' : `Event recorded: ${fmt.label(d.kind, 'OVERDOSE_KINDS')}${d.client_id ? '' : ' (community report)'}${given ? `, naloxone given (${dosesText(d.naloxone_doses)})` : ''}`, 'ok'); m.close(); onDone && onDone();
     },
   });
   const kindI = f.inputs.kind; const naloxoneI = f.inputs.naloxone_used;
@@ -90,7 +98,7 @@ route('overdose', async () => {
       { label: 'When', render: r => fmt.dt(r.occurred_at) },
       { label: 'Who', render: r => r.client_code || h('span', { class: 'muted' }, 'community report') },
       { label: 'What', render: r => badge(fmt.label(r.kind, 'OVERDOSE_KINDS'), r.kind === 'fatal' || !r.survived ? 'danger' : r.kind === 'reversal' ? 'ok' : 'warn') },
-      { label: 'Naloxone', render: r => (r.naloxone_used ? `${r.naloxone_doses || 1} dose${(r.naloxone_doses || 1) === 1 ? '' : 's'}` : 'none') },
+      { label: 'Naloxone', render: r => naloxoneText(r) },
       { label: 'Given by', render: r => (r.administered_by ? fmt.label(r.administered_by, 'ADMINISTERED_BY') : '—') },
       { label: 'EMS', render: r => (r.ems_called ? 'yes' : 'no') },
       { label: 'Where', render: r => [where(r.location_type), r.city].filter(Boolean).join(', ') || '—' },

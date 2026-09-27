@@ -33,7 +33,7 @@ Point the county's monitoring at `/api/health` and ship `<data>/logs` to the SIE
 
 1. Download an audit export (`GET /api/admin/audit/export`) immediately and verify it (`npm run verify-audit-export`); store it with the incident record.
 2. Copy the anchor files and the log files (`<data>/logs`) for the period.
-3. Take a backup (Settings → *Run a backup now*) before any restore, so the state at discovery is preserved (a browser restore also keeps the replaced database as `suds.db.before-restore-<time>`).
+3. Take a backup (Settings → *Run a backup now*) before any restore, so the state at discovery is preserved (a browser restore also keeps the replaced database for 14 days, encrypted, as `suds.db.before-restore-<time>.enc`).
 4. Record who did what in the incident register; every action taken in SUDS is itself audited.
 
 ## Assessing a breach

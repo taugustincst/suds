@@ -171,6 +171,9 @@ class PushSession {
       }
       const deleting = new Set((this.payload.tombstones || []).map(ts => ts && `${ts.table_name}:${ts.id}`));
       for (const ts of this.payload.tombstones || []) this.tombstone(ts, deleting);
+      // What a table does once the whole batch (rows and deletions) has landed: the office's supply draw-down
+      // for the visits this push touched weighs a visit and its items together (server/rules/interventions.js).
+      for (const t of SYNC.tables) { const R = rules.forTable(t.name); if (R.finish) R.finish(this); }
       this.deviceAudit(this.payload.audit);
     }));
     return { applied: this.applied, rejected: this.rejected, conflicts: this.conflicts, warnings: this.warnings, server_now: db.now(), clock_offset_ms: this.offsetMs, audit_accepted: this.applied._audit || 0 };
@@ -330,8 +333,9 @@ class PushSession {
     // deidentified: as over REST (crud.js), finance may file an expenditure against a client it knows by code.
     if ((t.scope === 'client' || t.scope === 'client-or-null') && raw[t.clientCol] && t.name !== 'clients' && !(R.outsideCaseload && R.outsideCaseload(raw, c)) && !this.canAccess(raw[t.clientCol], true)) return { reason: 'not on caseload' };
     if (t.name === 'clients' && existing && !this.canAccess(raw.id, false)) return { reason: 'not on caseload' };
-    // Another worker's record with no client is not this device's to change (sync-tables.js `unlinked`, as over REST).
-    if (existing && t.unlinked && !existing[t.clientCol] && !auth.hasPerm(user, t.unlinked.all) && !t.unlinked.owners.some(col => existing[col] === user.id)) return { reason: 'not permitted' };
+    // Another worker's record with no client is not this device's to change: the owner rule REST, pull and exports
+    // share (sync-tables.js clientOrNullScope, and mayReachUnlinked for one row).
+    if (existing && !SYNC.mayReachUnlinked(t.name, user, existing, auth.hasPerm)) return { reason: 'not permitted' };
     // Another worker's record the REST routes would not let this user edit (crud.js canEdit, the same rule),
     // unless the change is one their own work makes as a side effect (a discharge cancelling the client's to-dos).
     if (existing && R.editableBy) {
@@ -406,12 +410,13 @@ class PushSession {
     if (clientId && !auth.canAccessClient(user, clientId)) { this.reject(t.name, ts.id, 'not on caseload'); return; }
     if (t.scope === 'all' && !auth.hasPerm(user, 'clients:all')) return; // shared reference data is not deleted from devices
     // Whose record it is: the REST DELETE route's rule, and a record with no client is its owners'.
-    if (t.unlinked && !existing[t.clientCol] && !auth.hasPerm(user, t.unlinked.all) && !t.unlinked.owners.some(col => existing[col] === user.id)) { this.reject(t.name, ts.id, 'not permitted'); return; }
+    if (!SYNC.mayReachUnlinked(t.name, user, existing, auth.hasPerm)) { this.reject(t.name, ts.id, 'not permitted'); return; }
     const no = R.deletableBy ? R.deletableBy(user, existing, { deleting }) : R.editableBy ? R.editableBy(user, existing) : null;
     if (no === 'skip') return;
     if (no) { this.reject(t.name, ts.id, no.reason, no.permanent); return; }
     if ((existing.updated_at || existing.created_at || NEVER) < ts.deleted_at) {
       db.savepoint(() => { db.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id); db.tombstone(t.name, ts.id); }, (err) => this.reject(t.name, ts.id, describeError(err)));
+      if (R.afterDelete) R.afterDelete(existing, this);
     }
   }
 

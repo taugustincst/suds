@@ -10,7 +10,7 @@ SOR / the Naloxone Distribution Project, SABG prevention funds and similar grant
 
 | | What | Who it is for |
 | --- | --- | --- |
-| **Core** | Outreach encounters, calls and texts; anonymous community distribution; overdose and reversal events; the supply cupboard; referrals and the resource directory; consents, the accounting of disclosures and the audit log; funding sources, budget lines, expenditures and staff time with approvals; the funder report and funder-style logs (a naloxone distribution log in the style of the DHCS Naloxone Distribution Project, an opioid-settlement expenditure report by allowable-use category — each to be checked against the funder's current template) | Every programme |
+| **Core** | Outreach encounters, calls and texts; anonymous community distribution; overdose and reversal events; supplies by item, site and lot with a receiving log, transfers, adjustments, disposal of expired stock and first-expiry-first-out draw-down by visits, and syringe services (syringes and sharps returned, a syringe services summary; [SUPPLIES.md](SUPPLIES.md)); referrals and the resource directory; consents, the accounting of disclosures and the audit log; funding sources, budget lines, expenditures and staff time with approvals; the funder report and funder-style logs (a naloxone distribution log in the style of the DHCS Naloxone Distribution Project, an opioid-settlement expenditure report by allowable-use category — each to be checked against the funder's current template) | Every programme |
 | **Optional (clinical)** | Care plan, problem list, six-dimension assessment, outcome measures, structured clinical notes with signature and countersignature, episodes of care, CalOMS Tx, the FHIR R4 API and the county EHR encounter hand-off below | Treatment-adjacent programmes that need them |
 
 The **programme profile** setting chooses which set a programme sees: **Harm reduction & outreach** (the default;
@@ -58,12 +58,37 @@ of record for the claim, and SUDS hands encounters over to it:
 Named here so nobody assumes them. Each is a candidate for the next feature release once a pilot programme
 confirms it owes the report and provides the current template.
 
-- **SAMHSA SUPRT** (the Unified Performance Reporting Tools that replaced GPRA in 2025; SPARS) for State Opioid
-  Response-funded client services. SUDS captures much of the underlying data but has no SUPRT-A/C export.
+Since 1.14.0 SUDS does produce, with the limits each document states:
+
+- **SUPRT-A** (SAMHSA's Unified Performance Reporting Tool, administrative part, which replaced GPRA for State
+  Opioid Response client-level data on 1 October 2025): baseline, reassessment, annual and closeout records, the
+  follow-ups due, completion rates, and a CSV for entry into SPARS (docs/compliance/SUPRT.md). Its items, answer
+  codes and variable names are SUDS's reading of SAMHSA's and California's public descriptions, **not** SAMHSA's
+  codebook or the SPARS batch upload template, which could not be read when it was built: check the file against
+  the current SUPRT handbook and codebook before entering it. SUDS does not reproduce **SUPRT-C**, the client
+  questionnaire; it records only whether it was completed.
+- **The DHCS settlement expenditure layout** of the opioid settlement report (one row per activity, the fields
+  of DHCS's Opioid Settlement Expenditure Reporting Form as SUDS understands them, the narrative left for the
+  programme), and **one county template** matched by a column mapping set without code
+  (docs/compliance/HARM-REDUCTION-REPORTING.md). Neither is the official form itself.
+
+Still not produced:
+
+- **SUPRT-C** (the client questionnaire) and SPARS's own batch upload file.
 - **HMIS** (HUD homeless management information system) export, for outreach funded through housing and
   homelessness grants.
-- **County subrecipient templates.** Counties that pass opioid-settlement or SABG money to CBOs often use their
-  own report forms; SUDS's funder report, naloxone log and settlement report are generic and must be checked
-  against (and may need mapping to) each county's form.
-- The naloxone log and the opioid-settlement report follow the published reporting fields as understood, not
-  the official templates themselves (docs/compliance/HARM-REDUCTION-REPORTING.md).
+- **Other county templates** as they stand: a county report whose columns are not the settlement report's
+  fields (SABG subrecipient reports, a county's own outcome measures) cannot be matched by the column mapping;
+  the mapping covers only what the settlement report holds, and each county's form must still be checked.
+- The naloxone log follows the published reporting fields as understood, not the official NDP template
+  (docs/compliance/HARM-REDUCTION-REPORTING.md).
+
+## Supplies: what it is, and is not
+
+SUDS keeps a harm-reduction programme's stock: items by category (naloxone by product, test strips, syringes by
+size, sharps containers and the rest), at the sites the programme sets up, in lots with expiry dates, as an
+append-only ledger of what was received, moved, adjusted, disposed of and handed out ([SUPPLIES.md](SUPPLIES.md)).
+It is not a purchasing or accounts-payable system: a purchase is recorded against a fund on Funding & spending,
+and the delivery it paid for is received on Supplies. It does not order from the Naloxone Distribution Project
+or the CDPH supply clearinghouse, and its syringe services summary and NDP-style log are layouts to check
+against the current official templates, not the templates themselves.

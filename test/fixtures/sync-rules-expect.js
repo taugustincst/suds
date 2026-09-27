@@ -190,8 +190,8 @@ module.exports = {
     "valid": { push: "applied", rest: 201 },
     "invalid: type unknown": { push: "rejected: has a value the office does not accept (consent type \"pinky_swear\")", rest: 400 },
     "invalid: a Part 2 consent missing its elements": { push: "rejected: is missing a required field: a 42 CFR Part 2 consent must record what information is covered (scope); an expiration date or event; evidence it was signed (a document reference, a witness, or \"signed on paper\"); the 2024 elements (it was signed on or after 2026-02-16, when the 2024 rule's element list became mandatory)", rest: 400 },
-    // was: push "applied", rest 400 -- REST refuses this; push flags it rather than throw away work done offline under the lists and limits the device had
-    "invalid: recipient too long": { push: "flagged: was accepted, but its recipient is longer than the office allows (300 characters); the office will review it", rest: 400 },
+    // was: push "applied", rest 400 -- the recipient limit is 2,000 characters since 1.14.0 (a TPO consent lists its partner agencies); the case sends 2,001
+    "invalid: recipient too long": { push: "flagged: was accepted, but its recipient is longer than the office allows (2000 characters); the office will review it", rest: 400 },
     "client off the caseload": { push: "rejected: not on caseload", rest: 403 },
     "another worker's record on a shared client": { push: "rejected: immutable", rest: null },
     "another worker's record on a shared client: tombstone": { push: "kept", rest: null },
@@ -402,6 +402,33 @@ module.exports = {
     "tombstone": { push: "deleted", rest: 200 },
     "device clock two hours fast": { push: "applied (office time)", rest: null },
     "an older device edit": { push: "conflict", rest: 409 },
+  },
+  suprt_assessments: {
+    // A table new in 1.14.0 (SUPRT-A), recorded when its rules were declared: push flags what depends on the office (the module, the date, completeness, the order of a cycle) and refuses answers the instrument does not ask.
+    "valid": { push: "applied", rest: 201 },
+    "invalid: type unknown": { push: "rejected: has a value the office does not accept (assessment_type: not one of the values it accepts)", rest: 400 },
+    "invalid: dated in the future": { push: "flagged: was accepted, but it is dated in the future; the office will review it", rest: 400 },
+    "invalid: an answer the instrument does not ask": { push: "rejected: has a value the office does not accept (answers: no_such_item)", rest: 400 },
+    "invalid: complete with required answers missing": { push: "flagged: was accepted as complete, but it is missing required answers (2); the office will review it", rest: 400 },
+    "client off the caseload": { push: "rejected: not on caseload", rest: 403 },
+    "another worker's record on a shared client": { push: "applied", rest: 200 },
+    "another worker's record on a shared client: tombstone": { push: "deleted", rest: 200 },
+    "role without permission (fin)": { push: "http 403", rest: 403 },
+    "module switched off": { push: "flagged: was accepted, but SUPRT-A (SOR client-level reporting) is switched off at the office; an administrator can switch it on in Settings › Program › Modules", rest: 403 },
+    "tombstone": { push: "deleted", rest: 200 },
+    "device clock two hours fast": { push: "applied (office time)", rest: null },
+    "an older device edit": { push: "conflict", rest: 200 },
+  },
+  supply_ledger: {
+    // A table new in 1.14.0 (supplies), recorded when its rules were declared: REST receives stock by POST /api/supplies/receipts; a visit's draw-down is the office's; an item or site retired at the office is flagged.
+    "valid": { push: "applied", rest: 201 },
+    "invalid: a visit's draw-down": { push: "rejected: drawn down at the office from the visit it belongs to", rest: null },
+    "invalid: a negative delivery": { push: "rejected: has a value the office does not accept (stock received or moved in cannot be negative)", rest: 400 },
+    "invalid: an item the office has retired": { push: "flagged: was accepted, but Retired kit is no longer offered at the office; the office will review it", rest: 400 },
+    "invalid: a fund on a delivery that was not a purchase": { push: "rejected: has a value the office does not accept (a funding source is recorded for a purchase only)", rest: 400 },
+    "tombstone": { push: "kept", rest: null },
+    "device clock two hours fast": { push: "applied (office time)", rest: null },
+    "an older device edit": { push: "rejected: immutable", rest: null },
   },
   imports: {
     "valid": { push: "applied", rest: null },

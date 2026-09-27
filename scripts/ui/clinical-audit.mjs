@@ -120,9 +120,9 @@ const nav = await session('mrivera', 'Navigator2026!!');
   const prCard = await page.$('[data-patient-requests]');
   ok(prCard, 'Home has an open patient requests card');
   ok(prCard && /overdue/.test(await prCard.textContent()), 'which says one is overdue', prCard && (await prCard.textContent()).trim());
-  ok(await page.$('a.badge:has-text("patient request")'), 'and an alert badge links to the list');
+  ok(await page.$('a.badge:has-text("client rights request")'), 'and an alert badge links to the list ("client", not "patient")');
   await go(page, 'clients?status=all&patient_requests=1');
-  ok(/open patient request/.test(await page.textContent('.main')), 'the badge leads to the clients with an open request');
+  ok(/open client rights request/.test(await page.textContent('.main')), 'the badge leads to the clients with an open request');
   ok((await page.textContent('.main')).includes('Gone' + stamp), 'including this one');
 
   // L9. an address that goes nowhere

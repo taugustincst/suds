@@ -51,7 +51,7 @@ function foldText(value) {
 }
 
 // A purpose-separated key derived from the index key (HKDF-SHA256, RFC 5869): a MAC made for one purpose is
-// then never a valid MAC for another. For every use of the index key added from 1.12.5 on (the OIDC state
+// then never a valid MAC for another. For every use of the index key added from 1.13.0 on (the OIDC state
 // cookie first). The blind indexes, the audit chain and the anchors keep the index key itself, because
 // changing their key would change every stored index and break verification of every existing audit entry
 // (docs/security/ENCRYPTION-AND-KEYS.md). Rotating the index key rotates every subkey with it.

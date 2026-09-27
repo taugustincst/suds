@@ -142,7 +142,7 @@ call `rules.assertWrite` from hand-written ones. `test/sync-rules-fixes.test.js`
 rules; add the table to `test/sync-rules.test.js` (`T`, plus its expected outcomes in
 `test/fixtures/sync-rules-expect.js`, which `SUDS_CHARACTERISE=1` prints).
 
-**Pinned by** `test/sync-rules.test.js`: for 26 tables, the same rows (valid, each invalid field, a client off the
+**Pinned by** `test/sync-rules.test.js`: for 28 tables, the same rows (valid, each invalid field, a client off the
 caseload, another worker's record with and without a client, a role without the permission, the module off, a
 tombstone, a device clock two hours fast, a lost update) through push and through REST, compared with
 `test/fixtures/sync-rules-expect.js` — recorded against 1.13.0 first, so the refactor ran under it, with every
@@ -178,6 +178,15 @@ flagged. Each is an entry in the expectations file.
 | problems, goals, steps | bad ICD-10/Z codes, a goal on another client's problem, deleting others' goals and steps, deleting a problem | refused; ignored for problems and their history |
 | client forms, attachments | a completed form edited or deleted without forms:manage; completed with required answers missing; more than 10 files | refused; flagged; flagged |
 | patient requests | needed consents:write by sync, patient-requests:write over REST | patient-requests:write (crud.js now refuses to start if the two ever differ) |
+| supply ledger (new in 1.14.0) | push checked kind, item, site, quantity, date, reason and permission (`ledgerPushProblem`) | also: a lot number's characters and damaged/expired/lost only taken off (refused), a fund only on a purchase and only a real one (refused), an item or site the office has retired (flagged: the delivery arrived); a lot taken below zero stays a flagged shortfall (`settlePushedEntry`) where REST refuses up front |
+| visits' supply lines (new in 1.14.0) | checked as their visit (`linePushProblem`) | unchanged, now the table's authorise; the draw-down still runs once the whole push has landed (the interventions rules' `finish`), and a deleted visit or line puts back what it drew (`afterDelete`) |
+| visits (supplies) | the supply site a pushed visit names was not checked | an unknown site is refused; one retired at the office is flagged (REST refuses a new one) |
+| SUPRT-A assessments (new in 1.14.0) | nothing but clients:write and caseload | the REST checks, shared: fields and the answers the instrument asks refuse; the module, a future date, completeness and the order of a cycle are flagged (they depend on the office, or another device's baseline); the type is fixed once recorded, `exported_at` and the record-management answers are the office's, and one in a SPARS file is never deleted by sync |
+
+The unlinked-row owner rule has one source, `server/sync-tables.js` (`clientOrNullScope` for SQL — pull, exports,
+REST lists — and `mayReachUnlinked` for one row, which push asks before a device changes or deletes such a row).
+The supply routes (`server/routes/supplies.js`) keep their action-shaped checks (a receipt, a transfer, an
+adjustment); the ledger's push rules mirror them rather than share code, because the route builds the row.
 
 Kept as they were, deliberately: a creator column (`created_by`) arrives as the device recorded it (a shared phone
 carries several workers' work); a tombstone for shared reference data (resources, templates) still needs

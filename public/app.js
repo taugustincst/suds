@@ -83,6 +83,40 @@ function isBackground(opts) { return opts.background === true || opts.quiet === 
 const activity = { pending: 0, rendered: null, at: Date.now() };
 try { window.__sudsActivity = activity; } catch {}
 const busy = (n) => { activity.pending += n; activity.at = Date.now(); };
+// ---- validation messages ----
+// The server's validator (server/validate.js) answers "Validation failed" with a terse note per field
+// ("max length 300", "min 1", "must be YYYY-MM-DD"). Shown as they were, a person read "Validation failed:
+// To whom — name your usual referral partners max length 300". fieldProblem() says each in plain words,
+// with the field's label; a message that is already a sentence is left as it is.
+const VALIDATION_FAILED = 'Validation failed';
+const CHECK_ANSWERS = 'Some answers need changing';
+export function fieldProblem(label, msg) {
+  const m = String(msg ?? '').trim(); const L = String(label || 'This field').replace(/\s*\*$/, '');
+  let x;
+  if (!m || m === 'required') return `${L} is required`;
+  if ((x = /^max length (\d+)$/.exec(m))) return `${L} is too long: keep it under ${Number(x[1]).toLocaleString()} characters`;
+  if ((x = /^min (-?[\d.]+)$/.exec(m))) return `${L} must be at least ${x[1]}`;
+  if ((x = /^max (-?[\d.]+)$/.exec(m))) return `${L} must be ${x[1]} or less`;
+  if ((x = /^must have at most (\d+) items$/.exec(m))) return `${L}: choose at most ${x[1]}`;
+  if (m === 'must be a number') return `${L} must be a number`;
+  if (m === 'must be an integer') return `${L} must be a whole number`;
+  if (m === 'must be YYYY-MM-DD') return `${L} must be a date`;
+  if (m === 'must be an ISO datetime') return `${L} must be a date and time`;
+  if (m === 'must be a string' || m === 'must be an object' || m === 'must be an array' || m === 'must be a list of identifiers') return `${L} is not in a form SUDS can read`;
+  if (m === 'invalid format') return `${L} is not in the expected format`;
+  if (/^must be one of /.test(m)) return `Choose one of the options offered for ${L}`;
+  if (/^(is|must|should|has)\b/.test(m)) return `${L} ${m}`;
+  return m;
+}
+/** A column name as a person would say it, for a field message with no form label: "client_id" → "Client". */
+const fieldName = (k) => { const s = String(k).replace(/_(id|enc)$/, '').replace(/_/g, ' '); return s.charAt(0).toUpperCase() + s.slice(1); };
+function apiError(status, data) {
+  let msg = (data && data.error) || `Request failed (${status})`;
+  // A bare "Validation failed" in a toast said nothing a person could act on: name what needs changing.
+  if (msg === VALIDATION_FAILED && data && data.fields && typeof data.fields === 'object') msg = `${CHECK_ANSWERS}: ${Object.entries(data.fields).map(([k, m]) => fieldProblem(fieldName(k), m)).join('; ')}`;
+  const err = new Error(msg); err.status = status; err.data = data; return err;
+}
+
 export async function api(method, path, body, opts = {}) {
   busy(1);
   try { return await apiCall(method, path, body, opts); } finally { busy(-1); }
@@ -132,7 +166,7 @@ async function apiCall(method, path, body, opts) {
     // The enrolment deadline passed (possibly mid-session): go to enrolment, rather than failing every page.
     if (r.status === 403 && data && data.mfaSetupRequired && !location.hash.startsWith('#/profile')) location.hash = '#/profile?mfa=1';
     if (r.status === 409 && data && data.frozen) showPausedScreen();
-    if (r.status >= 400) { const err = new Error((data && data.error) || `Request failed (${r.status})`); err.status = r.status; err.data = data; throw err; }
+    if (r.status >= 400) throw apiError(r.status, data);
     return data;
   }
   let payload;
@@ -154,7 +188,7 @@ async function apiCall(method, path, body, opts) {
   if (res.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) { location.hash = '#/mfa'; } else { state.user = null; render(); toast('Session expired. Please sign in again.', 'error'); } }
   if (res.status === 403 && data && data.passwordChangeRequired) { location.hash = '#/profile?force=1'; }
   if (res.status === 403 && data && data.mfaSetupRequired && !location.hash.startsWith('#/profile')) { location.hash = '#/profile?mfa=1'; }
-  if (!res.ok) { const err = new Error((data && data.error) || `Request failed (${res.status})`); err.status = res.status; err.data = data; throw err; }
+  if (!res.ok) throw apiError(res.status, data);
   return data;
 }
 export const get = (p, o) => api('GET', p, undefined, o), post = (p, b, o) => api('POST', p, b, o), put = (p, b, o) => api('PUT', p, b, o), del = (p, b, o) => api('DELETE', p, b, o);
@@ -211,11 +245,12 @@ function append(el, children) { for (const c of children.flat(Infinity)) { if (c
 export function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
 export function frag(...children) { const f = document.createDocumentFragment(); append(f, children); return f; }
 
-export function toast(msg, kind = '') {
+export function toast(msg, kind = '', { ms } = {}) {
   const t = h('div', { class: `toast ${kind}`, role: kind === 'error' ? 'alert' : 'status' }, msg);
   document.getElementById('toasts').append(t);
   announce(msg);
-  setTimeout(() => t.remove(), kind === 'error' ? 6000 : 3500);
+  // ms: a longer message (a visit saved, with what it did not do) stays long enough to read.
+  setTimeout(() => t.remove(), ms || (kind === 'error' ? 6000 : 3500));
 }
 
 // A single polite live region. Screen readers announce anything written here, which is how a toast, a
@@ -734,13 +769,13 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
         for (let d = w.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
         // Under the field, say which field: "Client is required", not a bare "is required" (a server
         // message in that shape gets the label put in front of it too).
-        const slot = w.querySelector('.err'); if (slot) slot.textContent = /^(is|must|should)\b/.test(String(msg)) ? `${labelOf(k)} ${msg}` : msg;
+        const slot = w.querySelector('.err'); if (slot) slot.textContent = fieldProblem(labelOf(k), msg);
         const control = w.querySelector('input,select,textarea');
         if (control) { control.setAttribute('aria-invalid', 'true'); if (!firstBad) firstBad = control; }
       }
       // Field errors are already shown inline under each field; the banner names them the way the form
       // does ("Client"), never by column ("client_id").
-      const text = err.labelled ? err.message : err.message + (fieldsErr ? ': ' + Object.entries(fieldsErr).map(([k, m]) => `${labelOf(k)} ${m}`).join('; ') : '');
+      const text = err.labelled ? err.message : fieldsErr ? `${err.message === VALIDATION_FAILED || err.message.startsWith(`${CHECK_ANSWERS}:`) ? CHECK_ANSWERS : err.message}: ${Object.entries(fieldsErr).map(([k, m]) => fieldProblem(labelOf(k), m)).join('; ')}` : err.message;
       errBox.textContent = text; errBox.classList.remove('hidden');
       // Someone else saved this record after it was opened (409 from if_updated_at). Saving again would
       // overwrite their changes, so the way forward is to reload and see them. The draft goes too: restoring
@@ -1145,6 +1180,8 @@ export function emptyState(title, text, action, { level = 0 } = {}) { return h('
 export function quickActions() {
   const items = [
     can('interventions:write') ? ['✚', 'Visit', async () => (await import('./views/interventions.js')).openInterventionForm(null, { onDone: render })] : null,
+    // An overdose or a naloxone reversal is logged in the field as often as a visit is.
+    can('overdose:write') ? ['⛑', 'Overdose or reversal', async () => (await import('./views/overdose.js')).openOverdoseForm(null, { onDone: render })] : null,
     can('calls:write') ? ['☎', 'Phone call', async () => (await import('./views/calls.js')).openCallForm(null, { onDone: render })] : null,
     can('calls:write') ? ['💬', 'Text message', async () => (await import('./views/calls.js')).openCallForm(null, { method: 'text', onDone: render })] : null,
     (can('notes:admin:write') || can('notes:clinical:write')) ? ['✎', 'Note', async () => (await import('./views/notes.js')).openNoteForm(null, { onDone: render })] : null,
@@ -1188,7 +1225,7 @@ export function mfaLink() {
     h('span', { 'aria-hidden': 'true' }, '🔐 '), '2-step', h('span', { class: 'sr-only' }, ` verification: set it up ${state.mfaDue.when}`));
 }
 export function dueBell() {
-  if (!can('tasks:read')) return null;
+  if (!can('tasks:read') || (state.user && state.user.must_change_password)) return null;
   const count = h('span', { class: 'bell-count hidden', 'aria-hidden': 'true' });
   const btn = h('a', { class: 'btn ghost bell', href: '#/tasks?overdue=1', 'data-due-bell': '1', 'aria-label': 'To-dos due', title: 'To-dos due within the hour, or overdue' }, h('span', { 'aria-hidden': 'true' }, '🔔'), count);
   const paint = (r) => {
@@ -1314,7 +1351,7 @@ export const NAV = [
   { name: 'interventions', label: 'Visits', ico: '✚', perm: 'interventions:read', help: 'Every visit: the face-to-face or phone services you provide — outreach, screenings, warm handoffs, naloxone, transport and more.' },
   { name: 'calls', label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
   { name: 'notes', label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
-  { name: 'supplies', label: 'Supplies', ico: '📦', perm: 'interventions:read', help: 'Naloxone kits, test strips and other harm-reduction stock on hand. A visit that hands out kits or strips takes them off this count automatically.' },
+  { name: 'supplies', label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires first first.' },
   { name: 'overdose', label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
   { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', more: true, help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
   { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
@@ -1588,6 +1625,9 @@ export async function loadRefData() {
   // Not fatal: an account that must change its password first is refused nearly everything, and the one
   // page it may use has to render regardless.
   if (!state.constants) { try { state.constants = await get('/api/meta/constants', { quiet: true }); } catch { state.constants = state.constants || {}; } }
+  // Until the password is changed the server refuses everything else (403): not asked for, so the forced
+  // change page does not fire a string of refusals. loadSession() calls this again once it is changed.
+  if (state.user && state.user.must_change_password) { state.users = []; state.funds = []; state.allFunds = []; return; }
   try { state.users = (await get('/api/users', { quiet: true })).users; } catch { state.users = []; }
   // Every funding source, inactive ones too (allFunds), so a record charged to one that has since been
   // deactivated still shows it; state.funds is what new records are offered.

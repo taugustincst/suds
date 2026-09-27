@@ -1,7 +1,7 @@
 # SUDS positioning
 
 > **The operations system for harm-reduction and prevention programmes — outreach encounters, naloxone and
-> supply distribution, and grant/funder reporting — with Part 2-grade privacy.**
+> supply distribution, and grant/funder reporting — with privacy controls built to the 42 CFR Part 2 standard.**
 
 ## Category
 
@@ -18,7 +18,7 @@ these programmes do every day and that no EHR does well:
 
 It does this with privacy controls built to the **42 CFR Part 2** standard (consent that names the recipient,
 a disclosure gate and accounting, field-level encryption of identifiers and notes, an append-only audit log),
-so a programme whose records *are* Part 2 records has the controls the rule calls for, and one whose records are not gets the same care. Whether a programme's own records and workflows meet Part 2 is for its counsel to confirm; the control matrix (docs/compliance/PART2.md) has not had an independent legal review.
+so a programme whose records *are* Part 2 records has software support for the controls the rule calls for (its own policies, training, agreements and counsel's review are the rest), and one whose records are not gets the same care. Whether a programme's own records and workflows meet Part 2 is for its counsel to confirm; the control matrix (docs/compliance/PART2.md) has not had an independent legal review.
 
 ## Who it is for, in order
 
@@ -89,8 +89,8 @@ no EHR at all; for them SUDS is the programme record.
 2. *Identifiers and free text encrypted field by field* (AES-256-GCM) on top of disk encryption; blind-index search.
    Coded reporting fields (status, substance, risk) rely on disk encryption ([docs/HIPAA.md](../HIPAA.md)).
 3. *Tamper-evident audit* of PHI reads and writes, sign-ins, exports, disclosures and configuration changes:
-   hash-chained, append-only in the database, anchored outside it every 6 hours.
-4. *42 CFR Part 2 enforced in the software*: consent elements, recipient-named consent, one disclosure gate,
+   hash-chained, append-only in the database, anchored outside it every hour.
+4. *42 CFR Part 2 controls built into the software*: consent elements, recipient-named consent, one disclosure gate,
    accounting ([docs/architecture/ADR-0004](../architecture/ADR-0004-disclosure-gate.md)).
 5. *Your identity provider* via OIDC; MFA required for every role by default.
 6. *You run it; we help.* One server or container per programme; encrypted scheduled backups; a recovery drill

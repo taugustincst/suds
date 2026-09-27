@@ -4,6 +4,7 @@ const auth = require('../auth');
 const audit = require('../audit');
 const crud = require('../crud');
 const config = require('../config');
+const C = require('../constants');
 const { badRequest, notFound, HttpError } = require('../http');
 const { validate } = require('../validate');
 const { uuid, encrypt, decrypt } = require('../crypto');
@@ -315,13 +316,21 @@ module.exports.defaultFundFor = defaultFundFor;
  * year (July to June) that `today` falls in, with no amount yet, and made the programme default unless one
  * is already set, so a new install's visits are charged to it rather than to "No funding source". Its dates,
  * amount and type are changed under Budget. Returns the new fund's id, or null for a blank name.
+ * type: its source type (C.FUNDING_TYPES; 'other' when not given). An opioid settlement fund also takes its
+ * allowable use and California HIAA (settlement_use, settlement_hiaa) as Funding & spending sets them: the
+ * wizard used to create every fund as 'other', so a county's settlement allocation never reached the
+ * settlement report.
  */
-function createProgrammeFund(name, { today = localDate() } = {}) {
+function createProgrammeFund(name, { today = localDate(), type = 'other', settlement_use = null, settlement_hiaa = null } = {}) {
   const n = String(name || '').trim().slice(0, 200);
   if (!n) return null;
   const y = Number(today.slice(0, 4)); const start = Number(today.slice(5, 7)) >= 7 ? y : y - 1;
   const id = uuid();
-  db.run(`INSERT INTO funding_sources(id,name,source_type,fiscal_year_start,fiscal_year_end,total_amount) VALUES(?,?,?,?,?,0)`, id, n, 'other', `${start}-07-01`, `${start + 1}-06-30`);
+  const t = C.FUNDING_TYPES.includes(type) ? type : 'other';
+  const settlement = t === 'opioid_settlement';
+  const use = settlement && C.SETTLEMENT_USES.some(x => x.code === settlement_use) ? settlement_use : null;
+  const hiaa = settlement && (settlement_hiaa === 'none' || C.SETTLEMENT_HIAA.some(x => x.code === settlement_hiaa)) ? settlement_hiaa : null;
+  db.run(`INSERT INTO funding_sources(id,name,source_type,fiscal_year_start,fiscal_year_end,total_amount,settlement_use,settlement_hiaa) VALUES(?,?,?,?,?,0,?,?)`, id, n, t, `${start}-07-01`, `${start + 1}-06-30`, use, hiaa);
   if (!defaultFundFor(null)) db.setSetting('default_fund_id', id);
   return id;
 }

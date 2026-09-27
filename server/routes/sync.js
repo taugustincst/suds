@@ -45,11 +45,8 @@ function scopeSql(t, user, alias) {
   if (t.scope === 'via-note') { const nf = auth.caseloadFilter(user, 'n.client_id'); return { sql: `${alias}.note_id IN (SELECT n.id FROM notes n WHERE ${nf.sql})`, params: nf.params }; }
   if (t.scope === 'client-or-null') {
     // A row with no client is its owners' unless the role holds the table's `all` permission (crud.js applies
-    // the same rule to the REST routes).
-    const u = t.unlinked && !auth.hasPerm(user, t.unlinked.all) ? t.unlinked : null;
-    if (!u) return { sql: `(${alias}.${t.clientCol} IS NULL OR ${cf.sql})`, params: cf.params };
-    const own = u.owners.map(c => `${alias}.${c}=?`).join(' OR ');
-    return { sql: `((${alias}.${t.clientCol} IS NULL AND (${own})) OR (${alias}.${t.clientCol} IS NOT NULL AND ${cf.sql}))`, params: [...u.owners.map(() => user.id), ...cf.params] };
+    // the same rule to the REST routes, exports.js to exports).
+    return SYNC.clientOrNullScope(t.name, user, alias, cf, auth.hasPerm);
   }
   return cf;
 }

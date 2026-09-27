@@ -132,14 +132,30 @@ export function openConsentForm(clientId, { onDone, discloser, preset = null } =
  * referral takes its information, categories and expiry from. A TPO consent that names the program's
  * usual referral partners lets a referral to any of them rely on it. Supervisors and administrators.
  */
-export async function openConsentTemplateForm({ partners = [], onDone } = {}) {
+export async function openConsentTemplateForm({ onDone } = {}) {
   let template = null; try { template = (await get('/api/consent-template', { quiet: true })).template; } catch { template = null; }
+  // The partners are chosen from the resource directory one by one, and nothing is ticked to begin with:
+  // pre-filling the first six directory entries named 211, a food bank and 988 in a consent to share
+  // records, and the result was too long to save. Crisis lines are not offered: a hotline is a number a
+  // client is given, not an organisation the program sends a client's records to.
+  let directory = [];
+  try { directory = ((await get('/api/resources?limit=1000', { quiet: true })).rows || []).filter(x => x.category !== 'crisis_line').map(x => x.name).filter(Boolean); } catch { directory = []; }
+  directory = [...new Set(directory)].sort((a, b) => a.localeCompare(b));
+  const saved = template && Array.isArray(template.partners) ? template.partners : [];
+  // A partner saved earlier and since removed from the directory stays listed (ticked), so re-saving keeps it.
+  const partnerNames = [...directory, ...saved.filter(n => !directory.includes(n))];
   const types = ['part2_tpo', 'part2_disclosure'].map(v => ({ value: v, label: TYPE_LABELS[v] || fmt.label(v) }));
-  const t = template || { type: 'part2_tpo', recipient: partners.length ? `${TPO.recipient}, including ${partners.join(', ')}` : TPO.recipient, purpose: TPO.purpose, info_categories: ['demographics', 'encounters', 'referrals'] };
+  const t = template || { type: 'part2_tpo', recipient: TPO.recipient, purpose: TPO.purpose, info_categories: ['demographics', 'encounters', 'referrals'] };
+  // The wording without the partners it was saved with ("…, including A, B"): those are the ticks below.
+  const suffix = saved.length ? `, including ${saved.join(', ')}` : '';
+  const wording = suffix && String(t.recipient || '').endsWith(suffix) ? t.recipient.slice(0, -suffix.length) : (t.recipient || '');
   const f = form([
     { name: 'type', label: 'Consent type', type: 'select', options: types, required: true, noBlank: true, value: t.type },
-    { name: 'recipient', label: 'To whom — name your usual referral partners', type: 'textarea', rows: 3, required: true, span: true, value: t.recipient || '',
-      help: 'A referral can rely on a consent only when it names the provider. Name each partner as it is in the resource directory.' },
+    { name: 'recipient', label: 'To whom (a class of recipients, or other names)', type: 'textarea', rows: 3, required: true, span: true, value: wording,
+      help: partnerNames.length ? 'The partners you tick below are added after this wording ("…, including …"). A referral can rely on a consent only when it names the provider.'
+        : 'The resource directory has no referral partners yet: add them there and come back to tick them, or name them here. A referral can rely on a consent only when it names the provider.' },
+    ...(partnerNames.length ? [{ type: 'section', label: 'Referral partners it names' }, ...partnerNames.map((name, i) => ({ name: `partner_${i}`, label: name, type: 'checkbox', value: saved.includes(name) }))] : []),
+    { type: 'section', label: 'Purpose, information and expiry' },
     { name: 'purpose', label: 'Purpose of the disclosure', span: true, value: t.purpose || '' },
     { name: 'scope', label: 'Information covered', type: 'textarea', rows: 2, span: true, value: t.scope || '' },
     { name: 'expires_days', label: 'Expires after (days)', type: 'number', min: 1, max: 3660, step: 1, value: t.expires_days || 365 },
@@ -147,7 +163,10 @@ export async function openConsentTemplateForm({ partners = [], onDone } = {}) {
     { type: 'section', label: 'Information it covers' },
     ...INFO_CATEGORIES().map(code => ({ name: `cat_${code}`, label: CATEGORY_LABELS()[code] || fmt.label(code), type: 'checkbox', span: true, value: (t.info_categories || []).includes(code) })),
   ], { submitText: 'Save the usual consent', onCancel: () => m.close(), onSubmit: async (v) => {
-    const body = { type: v.type, recipient: v.recipient || undefined, purpose: v.purpose || undefined, scope: v.scope || undefined, expires_event: v.expires_event || undefined,
+    const partners = partnerNames.filter((_, i) => v[`partner_${i}`]);
+    const base = String(v.recipient || '').trim();
+    const recipient = partners.length ? `${base || TPO.recipient}, including ${partners.join(', ')}` : base;
+    const body = { type: v.type, recipient: recipient || undefined, partners, purpose: v.purpose || undefined, scope: v.scope || undefined, expires_event: v.expires_event || undefined,
       expires_days: v.expires_days ? Number(v.expires_days) : undefined, info_categories: INFO_CATEGORIES().filter(code => v[`cat_${code}`]) };
     await put('/api/consent-template', body); toast('Saved as the program\'s usual consent', 'ok'); m.close(); onDone && onDone();
   } });

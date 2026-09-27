@@ -73,9 +73,9 @@ function client(cookie) {
   };
   return { cookie, get: (p) => req('GET', p), post: (p, b) => req('POST', p, b) };
 }
-function makeSsoUser(username, sub, { password = null } = {}) {
+function makeSsoUser(username, sub, { password = null, role = 'navigator' } = {}) {
   const id = uuid();
-  db.run(`INSERT INTO users(id,username,password_hash,display_name,role,oidc_subject,password_changed_at) VALUES(?,?,?,?,?,?,?)`, id, username, password ? hashPassword(password) : '!scim-provisioned-no-password', username, 'navigator', sub, db.now());
+  db.run(`INSERT INTO users(id,username,password_hash,display_name,role,oidc_subject,password_changed_at) VALUES(?,?,?,?,?,?,?)`, id, username, password ? hashPassword(password) : '!scim-provisioned-no-password', username, role, sub, db.now());
   return id;
 }
 const makeStale = (userId) => db.run(`UPDATE sessions SET reauth_at=? WHERE user_id=?`, new Date(Date.now() - 3600_000).toISOString(), userId);
@@ -193,4 +193,33 @@ test('an SSO-linked account that also has a SUDS password can use either', async
   makeStale(id);
   const { cb } = await reauthRoundTrip(c, '#/notes', () => ({ sub: 'sub-both' }));
   assert.equal(cb.headers.get('location'), '/#/notes?sso_reauth=ok');
+});
+
+// Security review of 1.13.0, design weakness 6: the key backup took a confirmation within the signing window
+// that a sign-in opens. Key custody now needs fresh proof with every download: for an SSO-only administrator,
+// a provider round-trip completed in the last few minutes, used once. A sign-in (which also stamps the
+// session as re-authenticated) does not count.
+test('an SSO-only administrator downloads the key backup only straight after a provider round-trip, once per round-trip', async () => {
+  const fs = require('node:fs');
+  const id = makeSsoUser('ssokeys', 'sub-keys', { role: 'admin' });
+  const c = await ssoSignIn('sub-keys');
+  const was = config.keySource; const wasPath = config.keysJsonPath;
+  // A throwaway keys file: this test's database is in memory, and config's data folder is the checkout's own.
+  const dir = fs.mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'suds-keys-'));
+  config.keySource = 'file'; config.keysJsonPath = require('node:path').join(dir, 'keys.json');
+  fs.writeFileSync(config.keysJsonPath, JSON.stringify({ SUDS_ENCRYPTION_KEY: 'c'.repeat(64) }));
+  try {
+    assert.equal((await c.get('/api/auth/reauth')).data.recent, true, 'just signed in');
+    const fresh = await c.post('/api/admin/keys-backup', { confirm: true });
+    assert.equal(fresh.status, 403, 'a sign-in is not a fresh proof for key custody');
+    assert.equal(fresh.data.fresh, true); assert.equal(fresh.data.method, 'sso');
+    assert.equal((await c.get('/api/auth/reauth')).data.sso_fresh, false);
+    const { cb } = await reauthRoundTrip(c, '#/admin', () => ({ sub: 'sub-keys', auth_time: now() }));
+    assert.equal(cb.headers.get('location'), '/#/admin?sso_reauth=ok');
+    assert.equal((await c.get('/api/auth/reauth')).data.sso_fresh, true);
+    const r = await c.post('/api/admin/keys-backup', { confirm: true });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal(JSON.parse(db.one(`SELECT details FROM audit_log WHERE action='keys.download' AND user_id=? ORDER BY id DESC LIMIT 1`, id).details).method, 'sso');
+    assert.equal((await c.post('/api/admin/keys-backup', { confirm: true })).status, 403, 'the round-trip covered one download');
+  } finally { config.keySource = was; config.keysJsonPath = wasPath; fs.rmSync(dir, { recursive: true, force: true }); }
 });

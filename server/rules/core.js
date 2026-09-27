@@ -25,7 +25,9 @@
 //   normalise(row, c)   push only: columns the office keeps for itself (approvals, signatures), or derives.
 //   Push-only hooks, in the order push.js calls them: prepare(session, rows) once per push, order(rows, session),
 //   permitsWithoutWritePerm(row, session), outsideCaseload(row, c), beforeWrite(row, c), beforeStore(row, c),
-//   storeRow(stored, row, c), afterApply(row, stored, c); pushable: false for a table a device never writes.
+//   storeRow(stored, row, c), afterApply(row, stored, c), afterDelete(storedRow, session) after a tombstone lands,
+//   finish(session) once every row and tombstone of the push has landed; pushable: false for a table a device never
+//   writes.
 const { validate } = require('../validate');
 const { HttpError } = require('../http');
 

@@ -1288,9 +1288,9 @@
  },
  "dashboard": {
   "interventions": {
-   "total": 14373,
-   "minutes": 431190,
-   "naloxone_kits": 5968
+   "total": 15000,
+   "minutes": 450000,
+   "naloxone_kits": 6192
   },
   "calls": {
    "total": 3000

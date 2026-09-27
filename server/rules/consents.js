@@ -4,6 +4,9 @@
 // for a Part 2 consent, 2024 or the pre-2024 list for a legacy row signed before the 2024 rule's compliance
 // date); disclosure.requireBasis re-checks the elements whenever one is relied on, however it arrived.
 const C = require('../constants');
+
+// A recipient may be a list of named partner agencies (the consent form's directory picker), so up to 2,000.
+const RECIPIENT_MAX = 2000;
 const { define, refuse } = require('./core');
 
 /** Why a new consents row (encrypted columns in plain text) cannot be accepted, or null. */
@@ -27,7 +30,7 @@ function consentProblem(row) {
 module.exports = define({
   table: 'consents',
   fields: {
-    type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: 300 }, purpose: { type: 'string', maxLen: 500 }, scope: { type: 'string', maxLen: 1000 },
+    type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: RECIPIENT_MAX }, purpose: { type: 'string', maxLen: 500 }, scope: { type: 'string', maxLen: 1000 },
     signed_at: { type: 'date', required: true }, expires_at: { type: 'date' }, expires_event: { type: 'string', maxLen: 200 }, document_ref: { type: 'string', maxLen: 300 }, witness: { type: 'string', maxLen: 120 },
     signed_on_paper: { type: 'boolean' }, redisclosure_notice_given: { type: 'boolean' },
     discloser: { type: 'string', maxLen: 200 }, signer_relationship: { type: 'string', enum: C.CONSENT_SIGNERS }, signer_name: { type: 'string', maxLen: 200 },
@@ -43,3 +46,4 @@ module.exports = define({
   check(row, c) { return c.existing ? null : consentProblem(row); },
 });
 module.exports.consentProblem = consentProblem;
+module.exports.RECIPIENT_MAX = RECIPIENT_MAX;

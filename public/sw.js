@@ -6,7 +6,7 @@ const VERSION = 'suds-shell-1.13.0';
 const KERNEL_VERSION = VERSION.replace(/^suds-shell-/, '');
 const SHELL = ['./', 'index.html', 'styles.css', 'main.js', 'app.js', 'qr.js', 'get-app.html', 'get-app.js', 'accessibility.html', 'accessibility.js', 'favicon.svg', 'manifest.webmanifest', 'manifest-local.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   `local/kernel.js?v=${KERNEL_VERSION}`, `local/sql-wasm.wasm?v=${KERNEL_VERSION}`,
-  ...['login', 'dashboard', 'clients', 'client', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'imports', 'reports', 'admin', 'profile', 'setup', 'forms', 'documents', 'dataimport', 'local', 'supervision', 'episodes', 'overdose', 'funder', 'supplies', 'lists', 'caloms', 'clinical', 'security', 'compliance', 'part2'].map(v => `views/${v}.js`)];
+  ...['login', 'dashboard', 'clients', 'client', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'imports', 'reports', 'admin', 'profile', 'setup', 'forms', 'documents', 'dataimport', 'local', 'supervision', 'episodes', 'overdose', 'funder', 'supplies', 'lists', 'caloms', 'clinical', 'security', 'compliance', 'part2', 'suprt'].map(v => `views/${v}.js`)];
 // Each shell file is fetched on its own: addAll() fails the whole install if one file is missing (a server
 // with local mode switched off answers 404 for local/*), which used to leave nothing cached at all.
 // `cache: 'reload'` fills the shell from the network, never from the browser's HTTP cache: a static host
@@ -19,9 +19,16 @@ const precache = (c, u) => c.add(new Request(u, { cache: 'reload' }))
   .catch(() => fetch(u, { cache: 'no-cache' }).then(r => (r.ok ? c.put(u, r) : undefined)))
   .catch(() => {});
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then(c => Promise.all(SHELL.map(u => precache(c, u)))).then(() => self.skipWaiting())); });
-// A new VERSION drops every older cache and takes over the open pages at once; app.js reloads them once it
-// sees the controller change, so nobody keeps running a build the server no longer serves.
-self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
+// Cache Storage belongs to the whole origin, and on a shared host (<owner>.github.io/<repo>/, where every
+// Pages site of that owner is one origin) other sites' caches sit beside this one. So this worker reads only
+// its own cache (VERSION), for addresses inside its own scope, and deletes only its own older shell caches
+// (suds-shell-*), never another site's. docs/WEB_APP.md recommends a dedicated origin for SUDS on this device.
+const OWN_CACHE = /^suds-shell-/;
+const SCOPE = (self.registration && self.registration.scope) || (self.location && self.location.href ? new URL('./', self.location.href).href : '');
+const inScope = (url) => !SCOPE || url.href.startsWith(SCOPE);
+// A new VERSION drops every older SUDS shell cache and takes over the open pages at once; app.js reloads them
+// once it sees the controller change, so nobody keeps running a build the server no longer serves.
+self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION && OWN_CACHE.test(k)).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   // Network only, never cached: anything but a GET; every data route (the app's API, and FHIR and SCIM,
@@ -29,6 +36,8 @@ self.addEventListener('fetch', (e) => {
   // site a page links to. The shell is this origin's own files. (test/sw-phi.test.js)
   if (e.request.method !== 'GET' || /\/(api|fhir|scim)\//.test(url.pathname)) return;
   if (self.location && url.origin !== self.location.origin) return;
+  // Another site on the same origin (outside this worker's scope) is never answered from here.
+  if (!inScope(url)) return;
   // version.json is how an open page learns a release is out (app.js checkVersion): never from a cache.
   if (/\/version\.json$/.test(url.pathname)) return;
   const versioned = /^\/local\//.test(url.pathname) && url.searchParams.has('v');
@@ -58,9 +67,12 @@ self.addEventListener('fetch', (e) => {
   let netReq = e.request;
   if (!versioned) { try { netReq = new Request(e.request, { cache: 'no-cache' }); } catch { netReq = e.request; } }
   // ignoreVary: the shell is one copy per URL; a Vary on the stored response must not make it unfindable offline.
-  const fromCache = () => caches.match(e.request, { ignoreSearch: true, ignoreVary: true })
-    .then(r => r || caches.match(e.request.url, { ignoreSearch: true, ignoreVary: true }))
-    .then(r => r || (e.request.mode === 'navigate' ? caches.match('index.html', { ignoreVary: true }) : Response.error()));
+  // Only this worker's own cache is read (never caches.match, which searches every cache on the origin: on a
+  // shared host another site could have put a response there for this address).
+  const fromCache = () => caches.open(VERSION).then(c => c.match(e.request, { ignoreSearch: true, ignoreVary: true })
+    .then(r => r || c.match(e.request.url, { ignoreSearch: true, ignoreVary: true }))
+    .then(r => r || (e.request.mode === 'navigate' ? c.match(SCOPE ? new URL('index.html', SCOPE).href : 'index.html', { ignoreVary: true }) : undefined))
+    .then(r => r || Response.error()));
   e.respondWith(fetch(netReq).then(res => { if (res.ok) { const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); } return fresh(res); })
     .catch(fromCache));
 });

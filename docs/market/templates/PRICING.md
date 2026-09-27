@@ -35,7 +35,7 @@ implementation plus support. There is no "county-hosted discount" because there 
 | | |
 | --- | --- |
 | Pilot | 90 days ([PILOT-KIT.md](../PILOT-KIT.md)), self-hosted by the programme's IT partner or hosted by a sponsoring county |
-| Price | Implementation at the low end of the range (or waived for the first 3 pilots in exchange for measured results and case-study permission); support included for the pilot |
+| Price | A small fixed implementation fee at the low end of the range, paid from an administrative or settlement line, never waived: an unpaid pilot tests nothing about willingness to pay. Measured results and case-study permission are asked for, not traded for the fee. Support included for the pilot |
 | Conversion | The pilot's implementation fee is credited against the first year's support subscription if the programme signs within 60 days |
 
 ## Where the money comes from (to check with each programme)

@@ -102,6 +102,9 @@ module.exports = (r) => {
       if (v.substances !== undefined) { v.substances_enc = v.substances ? encrypt(v.substances) : null; delete v.substances; }
       if (v.kind === 'fatal') v.survived = 0;
       if (v.naloxone_doses > 0) v.naloxone_used = 1;
+      // Nobody chose a fund (the field was not on the form, or an API client left it out): the worker's default
+      // fund, else the programme's, as for a visit (server/routes/interventions.js). An explicit none stays none.
+      if (!('funding_source_id' in v)) { const f = require('./budget').defaultFundFor(ctx.user.id); if (f) v.funding_source_id = f; }
       normalise(v);
     },
     beforeUpdate: (ctx, v, row) => {

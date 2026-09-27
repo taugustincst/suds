@@ -31,7 +31,7 @@ For anything other staff depend on, run SUDS as a service instead so it survives
 The wizard asks for:
 1. **Program name**, county and privacy officer contact.
    **What kind of program is this?** *Harm reduction & outreach* (the default: outreach, visits, supplies, referrals and grant reporting) or *Treatment-adjacent* (adds care plans, assessments, CalOMS Tx, the FHIR API and the county EHR hand-off). It changes only what the screens show; an administrator can change it, or switch single modules on, under **Settings → Programme** (docs/USER_GUIDE.md, *Programme profile and modules*).
-   **Main funding source** (optional) — the fund most of the work is charged to. It is created for the current July–June fiscal year and becomes the default for new visits, so they are not charged to *No funding source*; add its amount, grant number and any other funds under **Budget**, and change the default under **Settings → Programme → Reporting**.
+   **Main funding source** (optional) — the fund most of the work is charged to, and **what kind of funding it is** (opioid settlement, SOR grant, SAMHSA, …; a name with "settlement" in it is taken to be opioid settlement money until you choose). Opioid settlement money also asks the settlement report's category (Exhibit E allowable use and California High Impact Abatement Activity), or leaves it for Home's checklist to ask later. It is created for the current July–June fiscal year and becomes the default for new visits, so they are not charged to *No funding source*; add its amount, grant number and any other funds under **Budget**, and change the default under **Settings → Programme → Reporting**.
 2. **Your administrator account** — username and a strong password (12+ characters with upper and lower case, a number and a symbol).
 3. **Who can reach SUDS**:
    * *Only this computer* — safest; staff use SUDS on this machine only.
@@ -48,7 +48,7 @@ Staff can also ask for an account themselves: the sign-in page has two options, 
 
 **Filling the resource directory.** Under **Resource directory** you can add the Sacramento region starter directory: 81 real programs across eight counties, with summaries, service tags and contact details. They arrive marked "needs verification" because they were compiled from public web sources rather than confirmed with the providers, so call each one, correct anything wrong and press "Verified today". "Download provider pictures" fetches each program's picture from its own website if this computer has outbound internet access (behind a proxy, see DEPLOYMENT.md, "Outbound internet"), makes the directory card show it, and says how many it got and why any are missing.
 
-**Want to look around first?** On the home screen (or under **Settings → Programme → Sample data**) choose **Load sample data**. SUDS adds fictional clients, visits, notes, referrals, reminders and funding so every screen has something on it. It is only offered while you have no clients yet, and **Remove sample data** clears all of it in one click before you enter real people.
+**Want to look around first?** Under **Settings → Programme → Sample data** choose **Load sample data** (a server not running in production mode also offers it on the home screen; a production server keeps it under Settings, so it is not the first thing on an administrator's Home). SUDS adds fictional clients, visits, notes, referrals, reminders and funding so every screen has something on it. It is only offered while you have no clients yet, and **Remove sample data** clears all of it in one click before you enter real people.
 
 ## Using SUDS on a phone, tablet or another computer
 Nothing to install or configure on the device: SUDS is used in the browser, and the `/app` page on the server (for example `https://suds.local/app`) walks staff through these steps. Everything a person does on their phone is immediately on their computer and vice versa, because both talk to the same SUDS.
@@ -85,7 +85,7 @@ If the computer is replaced, the database is damaged, or something was deleted t
 3. Choose the backup file and press **Check this backup**. SUDS tells you what is inside it — how many clients, when it was taken, which version — and changes nothing yet.
 4. If it is the right file, press **Replace everything with this backup**, type `REPLACE`, and enter your password.
 
-Everything recorded after that backup was taken will be gone, so check the summary first. The database being replaced is kept on the server as `suds.db.before-restore-…`, so a restore of the wrong file can be undone by whoever looks after the machine. Everyone is signed out afterwards, and any local-mode devices should sync once.
+Everything recorded after that backup was taken will be gone, so check the summary first. The database being replaced is kept on the server for 14 days, encrypted like a backup, as `suds.db.before-restore-….enc`, so a restore of the wrong file can be undone by whoever looks after the machine (`node scripts/backup.js --restore <that file>`). Everyone is signed out afterwards, and any local-mode devices should sync once.
 
 A backup from an older version of SUDS is brought up to date automatically when it is restored.
 
@@ -93,7 +93,7 @@ Restoring through the browser handles databases up to about 450 MB. A bigger one
 
 ## Stopping, restarting, updating
 * **Stop / restart:** stop or restart the service (or close and reopen the terminal window if you started it by hand).
-* **Update:** take a backup first (above), then replace the SUDS folder with the new version but keep your `data` folder. Then start as usual — the database is brought up to date the first time the new version starts. Before it does, SUDS keeps a copy of the database in `data/pre-migration/`; if the update stops with an error, the database is left as it was at the last completed step and that copy (or your backup) is the way back — put the old SUDS folder back, restore, and call IT rather than retrying. SUDS will not open a `data` folder written by a *newer* version than the one you are running, so if you ever need to go back, restore the backup that matches.
+* **Update:** take a backup first (above), then replace the SUDS folder with the new version but keep your `data` folder. Then start as usual — the database is brought up to date the first time the new version starts. Before it does, SUDS keeps a copy of the database in `data/pre-migration/`; if the update stops with an error, the database is left as it was at the last completed step and that copy (or your backup) is the way back (once the update has succeeded, the copy is encrypted like a backup and kept for 14 days) — put the old SUDS folder back, restore, and call IT rather than retrying. SUDS will not open a `data` folder written by a *newer* version than the one you are running, so if you ever need to go back, restore the backup that matches.
 
 ## Getting help from IT
 If IT wants to run SUDS as a proper service with a real certificate and domain name, point them to `docs/DEPLOYMENT.md`. Everything the wizard did can also be configured with environment variables.

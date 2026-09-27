@@ -194,3 +194,33 @@ test('every synchronised table has its rules, and every rules file is for a sync
   const R = rules.forTable('calls');
   assert.equal(R.shape().direction, R.fields.direction);
 });
+
+test('SUPRT-A: a device cannot delete an assessment already in a SPARS file, and the record-management answers are the office\'s', async () => {
+  H.db.setSetting('module_suprt', '1');
+  const cid = client('nav');
+  const code = H.db.one(`SELECT client_code FROM clients WHERE id=?`, cid).client_code;
+  const a = randomUUID();
+  const r = await push('nav', { tables: { suprt_assessments: [{ id: a, client_id: cid, assessment_type: 'baseline', assessment_date: day(0), status: 'draft', answers_enc: JSON.stringify({ A_client_id: 'SOMEONE-ELSE' }), exported_at: iso(), ...later() }] } });
+  assert.deepEqual(r.rejected, []);
+  const row = H.db.one(`SELECT * FROM suprt_assessments WHERE id=?`, a);
+  assert.equal(JSON.parse(dec(row.answers_enc)).A_client_id, code, 'the client ID in the answers is the record\'s own');
+  assert.equal(row.exported_at, null, 'a SPARS export is the office\'s act, not a device\'s');
+  H.db.run(`UPDATE suprt_assessments SET exported_at=?, updated_at=? WHERE id=?`, iso(), iso(Date.now() - 60000), a);
+  const t = await push('nav', { tombstones: [{ table_name: 'suprt_assessments', id: a, deleted_at: iso(Date.now() + 60000) }] });
+  assert.match(t.rejected.find(x => x.id === a).reason, /^not permitted: it was put in a SPARS entry file/);
+  assert.ok(H.db.one(`SELECT 1 FROM suprt_assessments WHERE id=?`, a), 'kept');
+});
+
+test('supplies: a device\'s stock movement is held to what the supply routes require', async () => {
+  const item = randomUUID(); H.db.run(`INSERT INTO supply_items(id,name,category) VALUES(?,?,?)`, item, 'Fix kit', 'naloxone');
+  const site = randomUUID(); H.db.run(`INSERT INTO supply_sites(id,name) VALUES(?,?)`, site, 'Fix van');
+  const base = { item_id: item, site_id: site, occurred_on: day(0), user_id: U.sup };
+  const damagedUp = { id: randomUUID(), ...base, kind: 'adjustment', reason: 'damaged', quantity: 5, ...later() };
+  const r = await push('sup', { tables: { supply_ledger: [damagedUp] } });
+  assert.match(r.rejected.find(x => x.id === damagedUp.id).reason, /damaged, expired or lost is taken off/);
+  H.db.run(`UPDATE supply_sites SET is_active=0 WHERE id=?`, site);
+  const received = { id: randomUUID(), ...base, kind: 'received', quantity: 5, source: 'ndp', ...later() };
+  const r2 = await push('sup', { tables: { supply_ledger: [received] } });
+  assert.deepEqual(r2.rejected, [], 'a delivery to a site retired while the phone was out still happened');
+  assert.match(r2.warnings.find(x => x.id === received.id).reason, /no longer in use at the office/);
+});

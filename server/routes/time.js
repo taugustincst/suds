@@ -21,6 +21,18 @@ function presentTime(t) {
   return o;
 }
 
+/**
+ * What a reader may see of an entry's description. A role without clients:read (finance: time:all, to approve
+ * hours) sees another worker's time as category, fund and hours only (security review of 1.13.0, 7): the
+ * description is free text about the work and can name the client. Its own entries keep their description.
+ * exports.js applies the same rule (mayReadDescription); a role without clients:read cannot sync at all.
+ */
+const mayReadDescription = (user, entry) => auth.hasPerm(user, 'clients:read') || entry.user_id === user.id;
+function withheldFor(user, t) {
+  if (!t || mayReadDescription(user, t)) return t;
+  return { ...t, description: null, description_withheld: !!(t.description || t.description_enc) };
+}
+
 module.exports = (r) => {
   crud.build(r, {
     table: 'time_entries', entity: 'time_entry', base: '/api/time', perm: 'time', dateCol: 'work_date', clientRequired: false,
@@ -28,7 +40,7 @@ module.exports = (r) => {
     // (time:all) -- sync-tables.js `unlinked`, which crud.js applies to these routes.
     joins: 'JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id',
     select: `time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${NAME_COLS}`,
-    afterLoad: (ctx, x) => presentTime(withClientName(ctx, x)),
+    afterLoad: (ctx, x) => withheldFor(ctx.user, presentTime(withClientName(ctx, x))),
     // shape, owner (time:all), canEdit and the fund-period check: server/rules/time_entries.js.
     filters: (ctx, where, params) => {
       // non-managers see only their own time
@@ -56,3 +68,4 @@ module.exports = (r) => {
   });
 };
 module.exports.presentTime = presentTime;
+module.exports.mayReadDescription = mayReadDescription;

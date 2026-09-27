@@ -1,7 +1,7 @@
 # SUDS — SUD Navigator Services Tracker
 
 **The operations system for harm-reduction and prevention programmes — outreach encounters, naloxone and supply
-distribution, and grant/funder reporting — with Part 2-grade privacy.**
+distribution, and grant/funder reporting — with privacy controls built to the 42 CFR Part 2 standard.**
 
 SUDS is for community-based organisations and county programmes doing outreach, harm reduction, naloxone and
 test-strip distribution and prevention, usually on opioid-settlement, SOR / Naloxone Distribution Project or
@@ -91,9 +91,9 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 | Area | Details |
 | --- | --- |
 | Outreach & visits | Anonymous or named encounters in the field on a phone, naloxone kits and fentanyl test strips given, referrals made, follow-ups; works offline on an encrypted device copy |
-| Supplies | Supply cupboard with the quantity on hand of each item (naloxone kits, test strips…), drawn down automatically as visits record kits and strips given |
+| Supplies | Any harm-reduction or syringe-services item (naloxone by product, fentanyl and xylazine test strips, syringes by size, sharps containers, safer-use, wound-care and hygiene supplies) kept at sites you set up (office, van, drop-in, partner site) in lots with an expiry date; a receiving log (NDP, CDPH clearinghouse, purchase with a fund, donation), transfers between sites, adjustments with a reason and disposal of expired stock, as an append-only ledger; visits and anonymous contacts draw stock down first-expiry-first-out, a shortfall is flagged rather than going below zero, and expiring or expired lots are on Home for supervisors; syringes and sharps returned (counted or estimated from the container), and a syringe services (SSP) summary with CSV/Excel export ([docs/SUPPLIES.md](docs/SUPPLIES.md)) |
 | Overdoses & reversals | Overdose and reversal reports (who gave naloxone, doses, where), linked to a client or anonymous |
-| Grant reporting | Funder report (unduplicated people, services, hours, spending by fund; exact counts for your own submission, small-cell screened for publication), a Naloxone Distribution Project-style log and opioid-settlement spending by allowable use — each layout to be checked against the current official template |
+| Grant reporting | Funder report (unduplicated people, services, hours, spending by fund; exact counts for your own submission, small-cell screened for publication), a Naloxone Distribution Project-style log (with the naloxone product where the visit recorded it), a syringe services summary and opioid-settlement spending by allowable use — each layout to be checked against the current official template |
 | Clients | Encrypted demographics and contact info, substance use profile, ASAM level, MAT status, overdose / naloxone history, risk level, housing, insurance, safety flags, program status and intake/discharge |
 | Visits | 25 SUD-navigation visit (intervention) types, duration, location/modality, outcome, stage of change, naloxone kits and fentanyl test strips, funding source, cost, follow-up to-do creation, automatic time entry |
 | Calls | Direction, contact type, duration, outcome, crisis flag, encrypted summary, follow-up scheduling |
@@ -103,10 +103,10 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 | Resources & referrals | Community resource directory (detox, residential, OTP/OBOT, housing, harm reduction, legal, …) with treatment center profiles: services-offered tags, plain-language summary, levels of care, how to refer, cost and a picture gallery; verification dates; referrals with status pipeline, urgency, warm handoff, consent linkage, barriers, days-to-admit |
 | To-dos & timelines | To-dos with priorities, due dates, milestones; unified per-client timeline of every event |
 | Budget | Funding sources (opioid settlement, SOR, SAMHSA, county…), budget lines, expenditures with approval workflow and separation of duties, burn-rate vs. period elapsed, staff-cost allocation |
-| Notes | Clinical vs. administrative notes with role-based visibility, SOAP / DAP / BIRP / GIRP structured formats, electronic signature with tamper-evident hash, addenda, break-glass access for administrators |
+| Notes | Administrative and clinical notes (the structured clinical formats matter to treatment-adjacent programmes; outreach staff mostly write short administrative notes) with role-based visibility, SOAP / DAP / BIRP / GIRP structured formats, electronic signature with tamper-evident hash, addenda, break-glass access for administrators |
 | Consents | 42 CFR Part 2 disclosure consents, releases of information, expirations/revocations, and an accounting of disclosures |
 | Imports | Pocket AI JSON/Markdown/text exports, OneNote MHT/HTML/DOCX/text exports, Microsoft Graph OneNote sync, pasted text, and an API-key intake endpoint — all staged for review and client matching before becoming notes |
-| EHR integration | Read-only FHIR R4 API (Patient, EpisodeOfCare, Encounter, Consent, ServiceRequest, Task, Observation, DocumentReference, the resource directory, Bulk Data `$export`) for the county EHR or an HIE, with OAuth2 client-credentials clients and scopes; a client's records are shared only under a live 42 CFR Part 2 consent naming the recipient, labelled and recorded in the accounting of disclosures (docs/integration/FHIR.md) |
+| EHR integration | *Treatment-adjacent module, off by default (Settings › Program › Modules).* Read-only FHIR R4 API (Patient, EpisodeOfCare, Encounter, Consent, ServiceRequest, Task, Observation, DocumentReference, the resource directory, Bulk Data `$export`) for the county EHR or an HIE, with OAuth2 client-credentials clients and scopes; a client's records are shared only under a live 42 CFR Part 2 consent naming the recipient, labelled and recorded in the accounting of disclosures (docs/integration/FHIR.md) |
 | Reports | Dashboard, program summary, monthly trends, Excel / CSV exports of every table or one workbook (de-identified by default) |
 | Spreadsheets | Import clients, resources, visits, calls, time, to-dos and expenditures from Excel or CSV with templates, automatic column matching and row validation |
 | Administration | Users and roles, MFA enforcement, settings, tamper-evident audit log viewer, API keys |
@@ -115,11 +115,11 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 
 | Role | Sees | Can |
 | --- | --- | --- |
-| navigator | Assigned caseload | Clients, visits, calls, time, referrals, to-dos, admin notes, consents, imports, de-identified exports of their own caseload; records expenditures (grant structure itself is `budget:manage`: supervisor, finance, admin) |
-| clinician | Assigned caseload | Clients, visits, calls, time, referrals, to-dos, admin and **clinical notes**, consents, imports, de-identified exports of their own caseload; reads the resource directory (no budget entry) |
+| navigator | Assigned caseload | Clients, visits, calls, time, referrals, to-dos, admin notes, consents, imports, de-identified exports of their own caseload; records expenditures (grant structure itself is `budget:manage`: supervisor, finance, admin); sees the supply stock and records deliveries received (items, sites, transfers, adjustments and disposal are `supplies:manage`: supervisor, admin) |
+| clinician | Assigned caseload | Clients, visits, calls, time, referrals, to-dos, admin and **clinical notes**, consents, imports, de-identified exports of their own caseload; reads the resource directory (no budget entry); sees the supply stock and records deliveries received |
 | supervisor | All clients | Everything, plus assignments, approvals, audit log, break-glass review, de-identified and identified exports, consent overrides |
-| finance | De-identified list | Funding, budget lines, expenditure approval, staff time approval (every submitted entry, on the Supervision page), time summaries, de-identified exports |
-| readonly | De-identified list | Reports and summaries, resource directory; no client records, no notes, no exports |
+| finance | De-identified list | Funding, budget lines, expenditure approval, staff time approval (every submitted entry, on the Supervision page), time summaries, de-identified exports; writes the funder report (`reports:funder`): the program's own submission of the funder report, NDP log and settlement report (also in the DHCS and county settlement layouts) — exact aggregate counts, by fund and any range, no client-level data — and publication releases |
+| readonly | De-identified list | Reports and summaries (funder, NDP and settlement reports as publication releases only), resource directory; no client records, no notes, no exports |
 | admin | System | Users, settings, API keys, audit, legal holds; clinical notes only via audited break-glass |
 
 Nobody approves their own expenditure or their own time, administrators included; another approver must review it. Exports need `export:read` (every role but readonly) and are de-identified to the HIPAA Safe Harbor standard — dates reduced to the year, ages over 89 as `90+`, ZIP codes to three digits (`000` for sparsely populated areas), client codes replaced by a record id drawn at random for each export, and each dataset limited to an allow-listed set of columns with free text, names, references and locations left out — unless the user also holds `export:identified` (supervisor, admin) and names the recipient and purpose, which is then written to each client's accounting of disclosures (once per client per file). CSV cells that would be read as formulas are neutralised, and every export response carries its classification in an `X-SUDS-Export` header and its filename. Multi-factor authentication is required of every role by default.

@@ -33,7 +33,7 @@ function assertFresh(ctx, row, entity) {
 /**
  * opts: { table, entity, perm, shape (default: the table's rules' fields, plus extraShape), clientRequired, dateCol, ownerCol, unlinked, joins, select, filters(ctx,where,params),
  *   beforeInsert(ctx,v), afterInsert(ctx,row), beforeUpdate(ctx,v,row), afterUpdate(ctx,mergedRow,prevRow),
- *   beforeDelete(ctx,row), afterLoad(ctx,row), canEdit(ctx,row), canDelete(ctx,row) }
+ *   beforeDelete(ctx,row), afterLoad(ctx,row), canEdit(ctx,row), canDelete(ctx,row), insertResult(ctx,row) }
  */
 function build(r, opts) {
   const { table, entity, perm, dateCol = 'created_at', ownerCol = 'user_id', joins = '', select = `${table}.*`, clientRequired = true } = opts;
@@ -123,7 +123,9 @@ function build(r, opts) {
       if (opts.afterInsert) opts.afterInsert(ctx, { id, ...cols });
     });
     audit.log({ user: ctx.user, action: `${entity}.create`, entity, entityId: id, clientId: v.client_id || null, ip: ctx.ip });
-    ctx.status = 201; return { id };
+    // opts.insertResult: anything the saving form should be told beside the id (a visit's kits that no
+    // supply item was there to draw down).
+    ctx.status = 201; return { id, ...(opts.insertResult ? opts.insertResult(ctx, { id, ...cols }) : {}) };
   });
 
   r.put(`${base}/:id`, auth.requireAuth, auth.requirePerm(writePerm), (ctx) => {

@@ -78,6 +78,10 @@ test('the funder report gives the same answers as the implementation it replaced
   if (process.env.SUDS_WRITE_GOLDEN === '1') { fs.writeFileSync(GOLDEN, JSON.stringify(now, null, 1) + '\n'); return; }
   const golden = JSON.parse(fs.readFileSync(GOLDEN, 'utf8'));
   for (const k of Object.keys(golden)) assert.deepStrictEqual(now[k], golden[k], `${k} differs from the golden report`);
+  // 1.13.1 changed the golden dashboard deliberately: it joined visits to clients, so the fixture's anonymous
+  // community distribution (one visit in twenty-five) was missing from Home and Reports. Its kits are now
+  // the funder report's for the same fiscal year.
+  assert.equal(now.dashboard.interventions.naloxone_kits, now['fiscal year'].naloxone_distribution.kits, 'Home/Reports kits = the funder report\'s');
 });
 
 test('the report period predicate is sargable: it reads the date index, not the whole table', () => {
@@ -95,7 +99,7 @@ test('the default run: a supervisor\'s is the submission to the funder, exact; s
   const SUB = 'Submission to your funder — not for publication';
   const r = await sup.get('/api/reports/funder?from=2026-02-14&to=2026-02-14');
   assert.equal(r.status, 200);
-  // A supervisor's first click is the programme's own submission to its funder, with exact counts (1.12.5).
+  // A supervisor's first click is the programme's own submission to its funder, with exact counts (1.13.0).
   assert.deepEqual(r.data.suppression, { mode: 'exact', threshold: 11, purpose: 'submission', label: SUB });
   assert.equal(r.data.release.publishable, false);
   const s = await sup.get('/api/reports/funder?from=2026-02-14&to=2026-02-14&counts=suppressed');
@@ -112,9 +116,12 @@ test('the default run: a supervisor\'s is the submission to the funder, exact; s
 
 test('exact counts: only for the programme\'s own submission, and only supervisor or administrator', async () => {
   const q = '/api/reports/funder?from=2026-02-14&to=2026-02-14&purpose=submission&counts=exact';
-  // Finance runs publication releases only (test/report-access.test.js): its money and hours are exact there.
-  for (const c of [nav, ro, fin]) assert.equal((await c.get(q)).status, 403, 'a navigator, finance or read-only account cannot switch suppression off');
-  for (const c of [sup, admin]) {
+  // Finance writes the funder report (reports:funder, 1.14.0): the programme's own submission, exact, and
+  // nothing client-level (test/report-access.test.js). A navigator or a read-only account cannot switch
+  // suppression off.
+  for (const c of [nav, ro]) assert.equal((await c.get(q)).status, 403, 'a navigator or read-only account cannot switch suppression off');
+  assert.equal((await fin.get(q.replace('purpose=submission', 'purpose=internal'))).status, 403, 'finance: never an internal run');
+  for (const c of [sup, admin, fin]) {
     const r = await c.get(q);
     assert.equal(r.status, 200, JSON.stringify(r.data));
     assert.deepEqual(r.data.suppression, { mode: 'exact', threshold: 11, purpose: 'submission', label: 'Submission to your funder — not for publication' });

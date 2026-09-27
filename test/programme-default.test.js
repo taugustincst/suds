@@ -31,7 +31,9 @@ function reopenWithoutProfile(file, prepare = () => {}) {
 test('a new database is a harm-reduction programme with every clinical module off', () => {
   db.open(path.join(dir, 'fresh.db'));
   assert.equal(db.getSetting('programme_profile'), 'harm_reduction');
-  assert.ok(Object.values(P.modules()).every(v => v === false));
+  // The clinical modules follow the profile; publication releases are on and SUPRT-A off (no SOR fund) by default.
+  assert.ok(P.CLINICAL_KEYS.every(k => P.modules()[k] === false));
+  assert.equal(P.modules().publication, true); assert.equal(P.modules().suprt, false);
 });
 
 test('an upgraded database with no clinical records is harm reduction', () => {
@@ -42,7 +44,7 @@ test('an upgraded database with no clinical records is harm reduction', () => {
 test('an upgraded database that reports CalOMS is treatment-adjacent, so nothing disappears', () => {
   reopenWithoutProfile(path.join(dir, 'fresh.db'), (d) => d.exec(`INSERT INTO settings(key,value) VALUES('caloms_enabled','1')`));
   assert.equal(db.getSetting('programme_profile'), 'treatment');
-  assert.ok(Object.values(P.modules()).every(v => v === true));
+  assert.ok(P.CLINICAL_KEYS.every(k => P.modules()[k] === true));
 });
 
 test('the decision is made once: a stored profile is never recomputed', () => {

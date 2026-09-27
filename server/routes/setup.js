@@ -12,6 +12,7 @@ const { badRequest, HttpError } = require('../http');
 const { validate } = require('../validate');
 const { hashPasswordAsync, uuid } = require('../crypto');
 const selfsigned = require('../selfsigned');
+const C = require('../constants');
 
 // The wizard is only needed for self-managed installs. Deployments configured by environment variables
 // (keys from env, or SUDS_SKIP_SETUP=1) use the bootstrap admin printed at first start instead.
@@ -34,6 +35,14 @@ function applyProductionDefaults({ isProd = config.isProd } = {}) {
   return set;
 }
 
+/** The funding types and settlement categories the wizard offers, with their words. */
+function fundOptions() {
+  const kind = (code) => (code.startsWith('core_') ? 'Core strategy ' : code.startsWith('approved_') ? 'Approved use ' : '');
+  return { types: C.FUNDING_TYPES.map(code => ({ value: code, label: require('../options').humanize(code) })),
+    settlement_uses: C.SETTLEMENT_USES.map(x => ({ value: x.code, label: `${kind(x.code)}${x.label}` })),
+    settlement_hiaa: [...C.SETTLEMENT_HIAA.map(x => ({ value: x.code, label: x.label })), { value: 'none', label: 'Not a High Impact Abatement Activity' }] };
+}
+
 /** Is the first-run wizard still the way in? The same answer /api/setup/status gives, for the startup banner. */
 function isNeeded() { return setupNeeded() && onlyBootstrapAdmin(); }
 
@@ -47,7 +56,10 @@ module.exports = (r) => {
     // port_env: the port is fixed by the PORT environment variable, so the wizard does not offer to change it
     // (Settings → Network & devices says the same once setup is done).
     // local_mode_env: LOCAL_MODE_ENABLED decides the offline-copy question, so the wizard shows the answer instead of asking.
-    return { needed, setupComplete: !needed, listener: listener.describe(), hostname: require('node:os').hostname(), keySource: config.keySource, env: config.env, version: config.version, port_env: !!process.env.PORT, local_mode_env: config.localModeFromEnv, local_mode: config.localModeEnabled };
+    // fund_options: the wizard's "What kind of funding is it?" and, for opioid settlement money, its allowable
+    // use (the page has no session to read /api/meta/constants with).
+    return { needed, setupComplete: !needed, listener: listener.describe(), hostname: require('node:os').hostname(), keySource: config.keySource, env: config.env, version: config.version, port_env: !!process.env.PORT, local_mode_env: config.localModeFromEnv, local_mode: config.localModeEnabled,
+      ...(needed ? { fund_options: fundOptions() } : {}) };
   });
 
   r.post('/api/setup/complete', async (ctx) => {
@@ -67,6 +79,10 @@ module.exports = (r) => {
       programme_profile: { type: 'string', enum: Object.keys(require('../programme').PROFILES) },
       // The programme's main fund (optional): created and made the default fund for new visits.
       main_fund_name: { type: 'string', maxLen: 200 },
+      // What kind of money it is (C.FUNDING_TYPES), and for opioid settlement money the settlement report's
+      // category (Exhibit E allowable use, California HIAA), as Funding & spending asks.
+      main_fund_type: { type: 'string', enum: C.FUNDING_TYPES }, main_fund_settlement_use: { type: 'string', enum: C.SETTLEMENT_USES.map(x => x.code) },
+      main_fund_settlement_hiaa: { type: 'string', enum: [...C.SETTLEMENT_HIAA.map(x => x.code), 'none'] },
       // port omitted → 'auto' (standard port with fallback)
     });
     const errs = auth.passwordPolicy(v.admin_password);
@@ -90,7 +106,7 @@ module.exports = (r) => {
       db.setSetting('org_name', v.org_name); if (v.county_name) db.setSetting('county_name', v.county_name); if (v.program_contact) db.setSetting('program_contact', v.program_contact);
       db.setSetting('caseload_restriction', '1');
       db.setSetting('programme_profile', v.programme_profile || require('../programme').DEFAULT_PROFILE);
-      mainFund = require('./budget').createProgrammeFund(v.main_fund_name);
+      mainFund = require('./budget').createProgrammeFund(v.main_fund_name, { type: v.main_fund_type || 'other', settlement_use: v.main_fund_settlement_use || null, settlement_hiaa: v.main_fund_settlement_hiaa || null });
     });
     const defaults = applyProductionDefaults();
     // 3. network + TLS
@@ -128,4 +144,5 @@ module.exports = (r) => {
   });
 };
 module.exports.isNeeded = isNeeded;
+module.exports.fundOptions = fundOptions;
 module.exports.applyProductionDefaults = applyProductionDefaults;

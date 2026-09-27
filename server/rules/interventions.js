@@ -6,7 +6,7 @@
 const db = require('../db');
 const auth = require('../auth');
 const C = require('../constants');
-const { define, refuse } = require('./core');
+const { define, refuse, flag } = require('./core');
 const { periodProblem, ownedBy } = require('./shared');
 
 // The date a service "happened on", for the grant it is charged to: the calendar date in the organisation's
@@ -26,6 +26,10 @@ module.exports = define({
     // Request-only: whether to log a time entry with the visit, its category, and the calendar date the service
     // belongs to when it is not the org-timezone date of occurred_at.
     log_time: { type: 'boolean', sync: false }, time_category: { type: 'string', list: 'TIME_CATEGORIES', sync: false }, service_date: { type: 'date', sync: false },
+    // The items handed out ([{ item_id, quantity }]: request-only, they travel by sync as intervention_supplies rows),
+    // the site they came from, and syringe services returns (docs/SUPPLIES.md).
+    supplies: { type: 'array', maxLen: 50, sync: false }, supply_site_id: { type: 'string' },
+    syringes_returned: { type: 'number', integer: true, min: 0, max: 100000 }, returns_estimated: { type: 'boolean' }, sharps_returned_litres: { type: 'number', min: 0, max: 1000 },
   },
   owner: { col: 'user_id', all: 'clients:all' },
   editableBy: ownedBy(['user_id'], 'clients:all'),
@@ -44,6 +48,13 @@ module.exports = define({
     const val = (k) => (row[k] !== undefined ? row[k] : e[k]);
     const touched = (...ks) => !c.existing || ks.some(k => row[k] !== undefined && String(row[k] ?? '') !== String(e[k] ?? ''));
     const out = [];
+    // The site the stock came from is one of the programme's, in use (an earlier visit keeps a site since retired).
+    // A site retired at the office while the device was out is flagged, not refused: the kits were handed out.
+    if (row.supply_site_id && touched('supply_site_id')) {
+      const site = require('../supplies').site(row.supply_site_id);
+      if (!site) out.push(refuse('refers to a record the office server does not have (the supply site)', { message: 'Validation failed', fields: { supply_site_id: 'is not one of this program\'s supply sites in use' } }));
+      else if (!site.is_active) out.push(flag('was accepted, but the supply site it names is no longer in use at the office; the office will review it', { message: 'Validation failed', fields: { supply_site_id: 'is not one of this program\'s supply sites in use' }, code: 'site_inactive' }));
+    }
     // Anything else logged with no client is a visit nobody can find again on anyone's record.
     if (touched('type', 'client_id') && !val('client_id') && !C.CLIENTLESS_INTERVENTION_TYPES.includes(val('type'))) {
       out.push(refuse('is missing a required field (a client: only outreach and community naloxone distribution can be recorded without one)',
@@ -62,11 +73,32 @@ module.exports = define({
     }
     return out;
   },
-  // By the difference from what the office already had, so a re-sent row counts once.
+  // A visit that handed supplies out draws the office stock down once the whole batch has landed (finish), by the
+  // difference from what the office already drew for it, so a re-sent row counts once.
   afterApply(row, o, c) {
-    const supplies = require('../routes/supplies');
-    const counts = { id: row.id };
-    for (const col of Object.keys(supplies.DRAWDOWN)) counts[col] = o[col] !== undefined ? o[col] : (c.existing ? c.existing[col] : 0);
-    supplies.drawDown({ user: c.user, ip: 'device' }, counts, c.existing);
+    const SUP = require('../supplies');
+    const e = c.existing;
+    const countsPushed = Object.keys(SUP.N.COUNTED).some(col => o[col] !== undefined && (!e || Number(o[col] || 0) !== Number(e[col] || 0)));
+    const visits = supplyVisits(c.session);
+    touchVisit(c.session, row.id, visits.has(row.id) ? { countsPushed: countsPushed || visits.get(row.id).countsPushed } : { prev: e || null, countsPushed });
+  },
+  // A deleted visit puts back what it drew.
+  afterDelete(row, s) { touchVisit(s, row.id, { linesPushed: true }); },
+  // The office's draw-down for every visit this push touched, after the rows, the items (intervention_supplies) and
+  // the deletions have all landed, so a device's visit and its items are weighed together. One visit's failure is
+  // its own: the device is told, and the rest of the push stands.
+  finish(s) {
+    const SUP = require('../supplies');
+    for (const [id, how] of supplyVisits(s)) {
+      db.savepoint(() => SUP.settlePushedVisit(s.user, id, how), (err) => s.warnings.push({ table: 'interventions', id, reason: `supplies not drawn down: ${String(err && err.message || err).slice(0, 160)}` }));
+    }
   },
 });
+/** The visits whose supplies this push touched: id -> { prev, countsPushed, linesPushed } (settlePushedVisit). */
+function supplyVisits(s) { return s.state.supplyVisits || (s.state.supplyVisits = new Map()); }
+function touchVisit(s, id, patch) {
+  if (typeof id !== 'string') return;
+  const m = supplyVisits(s);
+  m.set(id, { prev: null, countsPushed: false, linesPushed: false, ...(m.get(id) || {}), ...patch });
+}
+module.exports.touchVisit = touchVisit;

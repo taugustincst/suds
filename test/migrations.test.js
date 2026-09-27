@@ -199,13 +199,18 @@ test('the database is snapshotted before the migration runs', () => {
   const files = fs.readdirSync(snapDir);
   assert.equal(files.length, 1, 'one snapshot for the one upgrade');
   assert.match(files[0], /^suds\.db\.v4\./, 'named for the version it was taken at');
+  // 1.13.1: once the upgrade has succeeded the snapshot is sealed with the backup key (it held every value a
+  // later migration encrypted, in the clear): test/plaintext-remnants.test.js. It opens like a backup.
+  assert.match(files[0], /\.db\.enc$/, 'sealed');
+  const plainFile = path.join(os.tmpdir(), `suds-snap-${process.pid}.db`);
+  fs.writeFileSync(plainFile, require('../server/backup').decrypt(fs.readFileSync(path.join(snapDir, files[0]))));
   // It is a real database, still holding the pre-migration shape.
-  const snap = new DatabaseSync(path.join(snapDir, files[0]), { readOnly: true });
+  const snap = new DatabaseSync(plainFile, { readOnly: true });
   try {
     assert.equal(snap.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get().value, '4');
     const cols = snap.prepare('PRAGMA table_info(clients)').all().map(c => c.name);
     assert.ok(cols.includes('goals'), 'the snapshot predates the goals -> goals_enc move');
-  } finally { snap.close(); }
+  } finally { snap.close(); fs.rmSync(plainFile, { force: true }); }
 });
 
 test('a pre-existing orphaned row (unrelated to this upgrade) does not brick every future boot', () => {
