@@ -85,6 +85,11 @@ const OFFER_MESSAGE = 'An earlier record exists for this person. A supervisor wi
  * A caller holding clients:all can open every record, so nothing is hidden from them and this does not apply:
  * they see the record itself, with its code and status, among the matches.
  */
+// The re-admission reason is for the supervisor who reviews it (the review task and the review queue), so it
+// has to say something ("walked in", "released from jail") -- not "x". It was 15 characters, the break-glass
+// minimum, which is a different act (opening notes outside a role, docs/HIPAA.md); no rule or document asks 15
+// of a re-admission, and a worker with the person in front of them wrote padding to reach it (1.14.0).
+const READMIT_REASON_MIN = 8;
 function readmitOffers(ctx, hidden) {
   if (!canReadmit(ctx.user)) return [];
   return hidden.filter(m => m.reasons.includes(SURNAME_DOB) && isDischarged(m.id)).map(m => {
@@ -260,7 +265,8 @@ module.exports = (r) => {
   r.post('/api/clients/:id/readmit', auth.requireAuth, auth.requirePerm('clients:write'), auth.requirePerm('episodes:write'), (ctx) => {
     const v = validate(ctx.body, { first_name: { type: 'string', maxLen: 100 }, last_name: { type: 'string', maxLen: 100 }, dob: { type: 'date' }, phone: { type: 'string', maxLen: 40 },
       reason: { type: 'string', required: true, maxLen: 300 }, referral_source: { type: 'string', maxLen: 120 } });
-    if (v.reason.length < 15) throw badRequest('Say why you are re-admitting this person (at least 15 characters) — a supervisor reviews every re-admission', { fields: { reason: 'must be at least 15 characters' } });
+    const why = v.reason.trim();
+    if (why.length < READMIT_REASON_MIN) throw badRequest(`Say why you are re-admitting this person (at least ${READMIT_REASON_MIN} characters, for example "walked in") — a supervisor reviews every re-admission`, { fields: { reason: `must be at least ${READMIT_REASON_MIN} characters` } });
     const row = db.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL AND merged_into IS NULL`, ctx.params.id);
     if (!row) throw notFound('Client not found');
     const match = possibleDuplicates(v).find(m => m.id === row.id);

@@ -110,6 +110,9 @@ try {
   await phone.selectOption('.modal select[data-supply-add]', sharps.id); await phone.click('.modal button[data-supply-add-button]');
   ok(await phone.$(`.modal [data-supply-row="${sharps.id}"]`), 'another item is added from the list');
   eq(await phone.$eval('.modal select[data-supply-site]', s => s.options[s.selectedIndex].textContent), 'Outreach van', 'the supplies come from the worker\'s site');
+  // 1.14.0: syringe returns are in the visit's "Syringe services" section, folded until opened.
+  ok(!(await phone.isVisible('.modal input[name=syringes_returned]')), 'syringe returns are folded into their own section');
+  await phone.click('.modal details[data-section-key="syringes"] > summary');
   await phone.fill('.modal input[name=syringes_returned]', '15');
   ok(await noSideScroll(phone), 'the visit form fits the phone');
   const vanBefore = await onHand(phone, nal.name, van.id);

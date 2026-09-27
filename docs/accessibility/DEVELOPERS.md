@@ -69,7 +69,13 @@ by rule.
     build a real tab widget (arrow keys, `tabpanel`), as the sign-in page's Log in / Sign up does.
 11. **Dialogs only through `modal()`.** It names the dialog by its title, moves focus in, keeps Tab inside,
     closes on Escape and Back, makes the page behind it `inert`, and returns focus to what opened it. Put the
-    most useful first field first: that is where focus lands.
+    most useful first field first: that is where focus lands. Never open a dialog over a dialog to ask for more:
+    ask inside it (the re-admission reason under the offer), or turn it to a step with its own `h3` heading
+    that takes the focus and goes back on Escape (the referral's consent and provider steps). A dialog's last
+    button row (a `form()`'s, or a `confirmDialog()`'s) sticks to the bottom of the screen while the dialog is
+    taller than it (styles.css): keep it the form's last element, so the Tab and reading order stay as written.
+    Fold what most records do not need into `form()` sections (`{ type: 'section', collapsible: true, heading:
+    true, key }`): a `<details>` whose `summary` holds the heading, which `form()` opens for a field error.
 12. **Say what happened.** Saved/done messages go through `toast()` (a polite live region; errors are
     alerts). A form's errors come from `form()`: thrown field errors (`err.data.fields`) are shown under each
     field, announced, and focus goes to the first. A message that must stay (a device that stopped saving)

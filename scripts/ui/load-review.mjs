@@ -177,10 +177,12 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   ok(/earlier record exists/i.test(offerText) && /supervisor/i.test(offerText), 'it says a supervisor will review it', offerText);
   ok(!/discharged|lost contact|2021/i.test(offerText) && !/[A-Z]\d{2}-\d{4}/.test(offerText) && !offerText.includes(who.phone), 'and shows nothing from the stored record', offerText);
   await page.click('.modal button[data-readmit]');
-  const reasonInput = await until(() => page.$('.modal-bg:last-child .modal input'));
+  // 1.14.0: the reason is asked for under the offer, in the same dialog (no confirmation stacked on top).
+  const reasonInput = await until(() => page.$('.modal [data-readmit-panel] input[data-readmit-reason]'));
   ok(reasonInput, 'a reason is asked for');
+  eq((await page.$$('#modal-root > .modal-bg')).length, 1, 'in the intake dialog itself');
   await reasonInput.fill('Walked in this evening asking to restart');
-  await page.click('.modal-bg:last-child .modal button:has-text("Re-admit")');
+  await page.click('.modal button[data-readmit-confirm]');
   await page.waitForFunction((id) => location.hash.startsWith(`#/client/${id}`), made.data.id, { timeout: 10000 }).catch(() => {});
   ok(page.url().includes(`#/client/${made.data.id}`), 're-admitting opens the client record', page.url());
   await settle(page);

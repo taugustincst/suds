@@ -667,14 +667,16 @@ function dateTimePair(f, v) {
 }
 
 export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCancel, cancelText = 'Cancel', extra, draftKey } = {}) {
-  const inputs = {};
+  const inputs = {}; const sections = {};
   const grid = h('div', { class: 'form-grid' });
   let target = grid;
   for (const f of fields) {
     if (f.type === 'section') {
       // heading: the summary carries an h3, so a long form's sections are in the page's outline (a screen
       // reader's heading list) as well as being folded away.
-      if (f.collapsible) { const inner = h('div', { class: 'form-grid' }); grid.append(h('details', { class: 'section', open: !!f.open, 'data-section': f.heading ? f.label : null }, h('summary', {}, f.heading ? h('h3', { class: 'summary-heading' }, f.label) : f.label, f.hint ? h('span', { class: 'muted small' }, ` — ${f.hint}`) : null), inner)); target = inner; }
+      // key: the section's name for the view that built it (el.sections[key]), e.g. to open it or to say in
+      // its summary what it holds while folded ([data-section-hint]).
+      if (f.collapsible) { const inner = h('div', { class: 'form-grid' }); const d = h('details', { class: 'section', open: !!f.open, 'data-section': f.heading ? f.label : null, 'data-section-key': f.key || null }, h('summary', {}, f.heading ? h('h3', { class: 'summary-heading' }, f.label) : f.label, f.hint || f.key ? h('span', { class: 'muted small', 'data-section-hint': '1' }, f.hint ? ` — ${f.hint}` : '') : null), inner); grid.append(d); if (f.key) sections[f.key] = d; target = inner; }
       else { target = grid; grid.append(h('div', { class: 'span' }, h('h3', { class: 'eyebrow' }, f.label))); }
       continue;
     }
@@ -852,7 +854,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     }
     return data;
   }
-  el.read = read; el.inputs = inputs;
+  el.read = read; el.inputs = inputs; el.sections = sections;
   // Names of the fields whose control differs from what the form opened with.
   el.changedKeys = () => fields.filter(f => f.type !== 'section' && inputs[f.name] && rawValue(f) !== initial[f.name]).map(f => f.name);
   return el;

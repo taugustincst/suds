@@ -55,9 +55,12 @@ route('client', async (r) => {
       can('tasks:write') ? ['+ To-do', 'To-do', () => openTaskForm(null, ctxOpts)] : null,
     ].filter(Boolean);
     const edit = can('clients:write') ? () => openClientForm(c, refresh) : null;
+    // A record just made with Quick add (clients.js, state.quickAdded) also offers "Add details": the rest of the
+    // intake, in the same sections as the full form, whenever the worker has it — until it is saved once.
+    const details = () => (edit && state.quickAdded === id ? h('button', { class: 'btn', 'data-client-add-details': '1', onClick: () => openClientForm(c, () => { state.quickAdded = null; refresh(); }) }, 'Add details') : null);
     const wide = h('div', { class: 'row client-actions wide' },
       acts.map(([text, , fn, o = {}]) => h('button', { class: `btn${o.primary ? ' primary' : ''}`, title: o.title || null, onClick: fn }, text)),
-      edit ? h('button', { class: 'btn', onClick: edit }, 'Edit') : null);
+      details(), edit ? h('button', { class: 'btn', onClick: edit }, 'Edit') : null);
     if (!acts.length) return wide;
     // The phone's version: a disclosure (not an ARIA menu), so it is a button and a list of buttons to a
     // screen reader and Tab walks through it. Escape or a click elsewhere closes it.
@@ -71,7 +74,7 @@ route('client', async (r) => {
       if (open) list.querySelector('button')?.focus();
     };
     addBtn.addEventListener('click', () => setOpen(list.classList.contains('hidden')));
-    const narrow = h('div', { class: 'client-actions narrow' }, h('div', { class: 'row' }, addBtn, edit ? h('button', { class: 'btn', onClick: edit }, 'Edit') : null), list);
+    const narrow = h('div', { class: 'client-actions narrow' }, h('div', { class: 'row' }, addBtn, details(), edit ? h('button', { class: 'btn', onClick: edit }, 'Edit') : null), list);
     narrow.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !list.classList.contains('hidden')) { e.stopPropagation(); setOpen(false); addBtn.focus(); } });
     const onDoc = (e) => { if (!narrow.isConnected) { document.removeEventListener('click', onDoc); return; } if (!narrow.contains(e.target)) setOpen(false); };
     document.addEventListener('click', onDoc);

@@ -1,11 +1,11 @@
 import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv } from '../app.js';
 import { problemPicker } from './clinical.js';
 
-const SECTIONS = { SOAP: [['S', 'Subjective'], ['O', 'Objective'], ['A', 'Assessment'], ['P', 'Plan']], DAP: [['D', 'Data'], ['A', 'Assessment'], ['P', 'Plan']], BIRP: [['B', 'Behavior'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']], GIRP: [['G', 'Goal'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']],
+export const SECTIONS = { SOAP: [['S', 'Subjective'], ['O', 'Objective'], ['A', 'Assessment'], ['P', 'Plan']], DAP: [['D', 'Data'], ['A', 'Assessment'], ['P', 'Plan']], BIRP: [['B', 'Behavior'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']], GIRP: [['G', 'Goal'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']],
   // Stanley-Brown style safety plan, as a structured note so it prints and reads the same for everyone.
   safety_plan: [['warning_signs', 'Warning signs (thoughts, moods, situations)'], ['coping', 'Coping strategies I can use on my own'], ['distraction', 'People and places that take my mind off things'], ['people_to_ask', 'People I can ask for help'], ['professionals', 'Professionals / agencies I can contact, with phone numbers'], ['environment', 'Making the environment safe (naloxone on hand, not using alone…)'], ['reasons_for_living', 'Reasons for living']] };
 // Formats and their wording are a documentation list (Settings → Lists; server/options.js has the built-in wording).
-const sectionLabel = (format, key) => (SECTIONS[format] || []).find(([k]) => k === key)?.[1] || key;
+export const sectionLabel = (format, key) => (SECTIONS[format] || []).find(([k]) => k === key)?.[1] || key;
 
 export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, prefill } = {}) {
   const C = state.constants; const isNew = !values;

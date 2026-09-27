@@ -3,7 +3,7 @@ import { h, route, get, pagedList, post, put, del, state, form, modal, toast, ta
 // so it is not one of the bases offered here. A referral may rest only on the client's consent (which must
 // name the provider), a medical emergency, a court order or a supervisor's justified override — never a
 // QSOA, research, audit or a report to the authorities (server/disclosure.js REFERRAL_BASES).
-import { withRestrictionCheck, consentTypeLabel, openConsentForm } from './part2.js';
+import { withRestrictionCheck, consentTypeLabel, consentFormPanel } from './part2.js';
 
 /** The lawful bases other than consent a referral form offers this user. */
 function referralBases() {
@@ -17,6 +17,10 @@ const recipientOverrideField = (name) => (can('disclosures:override') ? [{ name,
 // live consent does, that one as suggested_consent_id (server/routes/consents.js).
 const consentsUrl = (clientId, resourceId) => `/api/clients/${clientId}/consents${resourceId && !String(resourceId).startsWith('__') ? `?resource_id=${encodeURIComponent(resourceId)}` : ''}`;
 
+// Statuses that mean the referral is still under way: the outcome and barrier are recorded when it closes
+// (openOutcomeForm), so a new referral in one of these does not ask for them (1.14.0).
+const UNDER_WAY = ['pending', 'contacted', 'accepted', 'scheduled'];
+
 export async function openReferralForm(values, { clientId, clientDisplay, resourceId, onDone } = {}) {
   const C = state.constants; const isNew = !values;
   const theClientId = clientId || values?.client_id;
@@ -29,7 +33,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   ]);
   const res = resResult.rows;
   // A phone that has not synced yet has an empty directory, and a provider nobody has entered is not a
-  // reason to abandon the referral: the picker can add one without leaving this form.
+  // reason to abandon the referral: the picker can add one without leaving this dialog.
   const canAdd = can('resources:write');
   const resourceLabel = (x) => `${x.name}${x.city ? ` — ${x.city}` : ''} (${fmt.label(x.category)})`;
   const ADD = '__add_resource__';
@@ -47,14 +51,13 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     return { clientId, all, valid, expiredOnly: !!(clientId && !valid.length && all.length), suggested: (list && list.suggested_consent_id) || null };
   };
   // The provider chosen, for "Record a consent naming <provider>": a referral can rest on a consent only when
-  // it names the provider, and a worker used to have to leave the referral, start a consent from scratch on
-  // the Consents tab (it opened on the TPO wording) and come back.
+  // it names the provider. The consent is recorded in a step of this same dialog (never a dialog on top of it).
   let providerId = resourceId || values?.resource_id || '';
   const addedNames = {};
   const providerName = () => { const x = res.find(r => r.id === providerId); return x ? x.name : (addedNames[providerId] || ''); };
   const namesProvider = (st) => st.valid.some(c => c.names_resource);
   const recordNaming = (st) => (st.clientId && providerId && !String(providerId).startsWith('__') && can('consents:write') && providerName() && !namesProvider(st)
-    ? h('button', { type: 'button', class: 'btn sm', 'data-record-consent-naming': '1', onClick: () => recordConsentFor(st.clientId) }, `Record a consent naming ${providerName()}`) : null);
+    ? h('button', { type: 'button', class: 'btn sm', 'data-record-consent-naming': '1', onClick: (e) => recordConsentFor(st.clientId, e.currentTarget) }, `Record a consent naming ${providerName()}`) : null);
   const consentOption = (c) => ({ value: c.id, label: `${consentTypeLabel(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)}${c.expires_at ? `, expires ${fmt.date(c.expires_at)}` : ''})` });
   const consentHelpContent = (st) => {
     const { clientId, all, valid, expiredOnly } = st; const button = recordNaming(st);
@@ -84,9 +87,14 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     ...recipientOverrideField('_recipient_override'),
     { name: '_disclosure_justification', label: 'Why sharing without consent is lawful', type: 'textarea', rows: 2, span: true, help: 'Required (at least 20 characters) for a medical emergency, for "other" and for a supervisor override. Kept, encrypted, with the disclosure record.' },
     { name: '_disclosure_what', label: 'What is being shared', placeholder: 'Referral information (name, contact details and presenting need)', span: true },
-    { name: 'follow_up_due', label: 'Follow-up due', type: 'date', help: 'A follow-up to-do is created either way; leave this empty and one is set for you based on urgency.' }, { name: 'barrier', label: 'Barrier (if any)', type: 'select', list: 'REFERRAL_BARRIERS' },
+    { name: 'follow_up_due', label: 'Follow-up due', type: 'date', help: 'A follow-up to-do is created either way; leave this empty and one is set for you based on urgency.' },
+    // What came of it belongs to the outcome (Record outcome); asked here only for a referral that is already
+    // over when it is entered, or one that already has an answer.
+    { name: 'barrier', label: 'Barrier (if any)', type: 'select', list: 'REFERRAL_BARRIERS' },
     { name: 'outcome', label: 'Outcome', span: true }, { name: 'notes', label: 'Notes', type: 'textarea', span: true },
   ], { values: values || {}, submitText: isNew ? 'Create referral' : 'Save', draftKey: isNew ? 'referral:new' : `referral:${values.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
+    // A barrier or outcome hidden with its status is not sent (a status changed back to "pending" drops it).
+    if (!outcomeShown()) { if (isNew || !values.barrier) delete d.barrier; if (isNew || !values.outcome) delete d.outcome; }
     try {
       // An agreed restriction on the client's record is checked with the worker before anything is sent.
       await withRestrictionCheck((extra) => (isNew ? post('/api/referrals', { ...d, ...extra }) : put(`/api/referrals/${values.id}`, { ...d, ...extra, if_updated_at: values.updated_at })), '_restriction_reviewed');
@@ -104,24 +112,47 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     }
     toast('Referral saved', 'ok'); m.close(); onDone && onDone();
   } });
+  const statusSel = f.inputs.status;
+  const outcomeShown = () => !UNDER_WAY.includes(statusSel.value) || (!isNew && !!(values.barrier || values.outcome));
+  const syncOutcome = () => { const show = outcomeShown(); for (const n of ['barrier', 'outcome']) { const w = f.querySelector(`[data-field="${n}"]`); if (w) w.hidden = !show; } };
+  statusSel.addEventListener('change', syncOutcome); syncOutcome();
+
+  // ---- steps inside this one dialog: a consent naming the provider, or a provider not listed ----
+  // The referral is set aside (hidden, kept as typed), the step takes its place, and saving or cancelling the
+  // step brings the referral back with the new consent or provider chosen. Escape inside a step goes back
+  // to the referral rather than closing everything.
+  const stepHost = h('div', { 'data-referral-steps': '1' });
+  const openStep = (key, title, intro, content, { back } = {}) => {
+    const hid = `referral-step-${key}-${Math.random().toString(36).slice(2, 7)}`;
+    const heading = h('h3', { id: hid, tabindex: '-1', class: 'step-heading' }, title);
+    const step = h('section', { 'data-referral-step': key, 'aria-labelledby': hid }, heading, h('p', { class: 'small muted' }, intro), content);
+    const done = (focusEl) => { step.remove(); f.hidden = false; const t = focusEl && focusEl.isConnected ? focusEl : null; (t || f.querySelector('select,input')).focus(); };
+    step.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); done(back && back()); } });
+    f.hidden = true; stepHost.replaceChildren(step); heading.focus();
+    return done;
+  };
   // "Add a provider" is an option in the list rather than a button, because on a phone the list is where
-  // someone looks when the provider they want is not there.
+  // someone looks when the provider they want is not there. The step asks only what a referral needs; the
+  // provider's full profile is finished in Resources.
   const sel = f.inputs.resource_id;
   let last = sel.value;
-  sel.addEventListener('change', async () => {
+  sel.addEventListener('change', () => {
     if (sel.value !== ADD) { last = sel.value; return; }
     sel.value = last;
-    const { openResourceForm } = await import('./resources.js');
-    openResourceForm(null, async (id) => {
-      try {
-        const added = (await get(`/api/resources/${id}`)).row; addedNames[id] = added.name;
-        sel.insertBefore(h('option', { value: id }, resourceLabel(added)), sel.querySelector(`option[value="${ADD}"]`));
-      } catch { sel.insertBefore(h('option', { value: id }, 'New provider'), sel.querySelector(`option[value="${ADD}"]`)); }
+    let done;
+    const pf = form([
+      { name: 'name', label: 'Program / service name', required: true, span: true },
+      { name: 'category', label: 'Category', type: 'select', options: C.RESOURCE_CATEGORIES, required: true },
+      { name: 'phone', label: 'Phone', type: 'tel' }, { name: 'city', label: 'City' },
+    ], { submitText: 'Add provider', cancelText: 'Back to the referral', onCancel: () => done(sel), onSubmit: async (d) => {
+      const id = (await post('/api/resources', d)).id; addedNames[id] = d.name;
+      sel.insertBefore(h('option', { value: id }, resourceLabel({ ...d })), sel.querySelector(`option[value="${ADD}"]`));
       sel.value = id; last = id;
       sel.dispatchEvent(new Event('input', { bubbles: true }));
-      reloadConsents();
-      toast('Provider added — carry on with the referral', 'ok');
-    });
+      done(sel); reloadConsents();
+      toast('Provider added — carry on with the referral. Its full profile can be finished under Resources.', 'ok');
+    } });
+    done = openStep('provider', 'Add a provider that is not listed', 'Added to the resource directory for everyone; the referral waits here as you left it.', pf, { back: () => sel });
   });
   // Picking (or changing) the client, or the provider, reloads that client's consents into the list and its
   // help text. When exactly one live consent names the provider it is chosen, and the form says which
@@ -167,16 +198,25 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     } catch (e) { if (mine === seq) rebuildConsents(consentStateFor(id, [])); toast(e.message || 'Could not load this client\'s consents', 'error'); }
   };
   f.inputs.client_id.addEventListener('change', reloadConsents);
-  // The consent form opens over this one, filled in for this provider; once recorded, the referral relies on it.
-  const recordConsentFor = (clientId) => openConsentForm(clientId, {
-    preset: { type: 'part2_disclosure', recipient: providerName(), purpose: 'Referral and care coordination' },
-    onDone: async (newId) => {
-      await reloadConsents();
-      if (newId && consentState.valid.some(c => c.id === newId)) { consentSel.value = newId; autoPicked = false; consentSel.dispatchEvent(new Event('input', { bubbles: true })); showUsed(); }
-      toast('Consent recorded — carry on with the referral', 'ok');
-    } });
+  // The consent form as a step of this dialog, filled in for this provider; once recorded, the referral relies
+  // on it. The consent rules are the consent form's own (part2.js consentFormPanel, server/disclosure.js).
+  const recordConsentFor = (clientId, opener) => {
+    const name = providerName();
+    let done;
+    const panel = consentFormPanel(clientId, {
+      preset: { type: 'part2_disclosure', recipient: name, purpose: 'Referral and care coordination' }, inline: true,
+      onCancel: () => done(opener), close: () => {},
+      onDone: async (newId) => {
+        done(consentSel);
+        await reloadConsents();
+        if (newId && consentState.valid.some(c => c.id === newId)) { consentSel.value = newId; autoPicked = false; consentSel.dispatchEvent(new Event('input', { bubbles: true })); showUsed(); }
+        toast('Consent recorded — carry on with the referral', 'ok');
+      } });
+    panel.form.querySelector('.btn-row button[type=button]').textContent = 'Back to the referral';
+    done = openStep('consent', `Record a consent naming ${name}`, 'The referral waits here as you left it. Once the consent is recorded, the referral relies on it.', panel, { back: () => opener });
+  };
   sel.addEventListener('change', () => { if (sel.value !== ADD) reloadConsents(); });
-  const m = modal(isNew ? 'New referral' : 'Edit referral', f, { wide: true });
+  const m = modal(isNew ? 'New referral to another provider' : 'Edit referral', h('div', { 'data-referral-dialog': '1' }, f, stepHost), { wide: true });
 }
 /** Close the loop: what happened, and were they admitted? This is what makes referrals reportable. */
 export async function openOutcomeForm(r, onDone) {
@@ -228,7 +268,9 @@ route('referrals', async (r) => {
   const refresh = () => nav(`referrals?status=${status}&_=${Date.now()}`);
   const sel = h('select', { onChange: () => nav(`referrals?status=${sel.value}`) }, [['open', 'Open (pending → scheduled)'], ['all', 'All'], ...listFilterOptions('REFERRAL_STATUSES').map(o => [o.value, o.label])].map(([v, l]) => h('option', { value: v, selected: v === status }, l)));
   return h('div', {},
-    pageHead('Referrals', can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, { onDone: refresh }) }, '+ Referral') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/referrals?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
+    // "Referrals we make": this program sending a client on to another provider (outbound). Who referred a
+    // client to this program is on the client's intake ("Who referred them to us").
+    pageHead('Referrals we make', can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, { onDone: refresh }) }, '+ Referral') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/referrals?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel)),
     pagedList({ first: data, url: `/api/referrals${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => referralTable(rows, { onChange: refresh }), summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} referrals`) }));
 });

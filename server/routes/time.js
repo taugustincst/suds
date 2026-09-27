@@ -40,12 +40,22 @@ module.exports = (r) => {
     // (time:all) -- sync-tables.js `unlinked`, which crud.js applies to these routes.
     joins: 'JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id',
     select: `time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${NAME_COLS}`,
-    afterLoad: (ctx, x) => withheldFor(ctx.user, presentTime(withClientName(ctx, x))),
+    // source (1.14.0): where the entry came from — 'visit' (logged with a visit: "Also log this as a time
+    // entry"), 'call' (logged with a call) or 'manual' — so a list can mark the generated ones and the time
+    // form can warn before the same work is logged twice.
+    afterLoad: (ctx, x) => ({ ...withheldFor(ctx.user, presentTime(withClientName(ctx, x))), source: x.intervention_id ? 'visit' : x.call_id ? 'call' : 'manual' }),
     // shape, owner (time:all), canEdit and the fund-period check: server/rules/time_entries.js.
     filters: (ctx, where, params) => {
       // non-managers see only their own time
       if (!auth.hasPerm(ctx.user, 'time:all')) { where.push('time_entries.user_id=?'); params.push(ctx.user.id); }
       const cat = ctx.query.get('category'); if (cat) { where.push('time_entries.category=?'); params.push(cat); }
+      // A manager's own view of one worker's time (the time form's overlap check for a worker they log for).
+      const uid = ctx.query.get('user_id'); if (uid) { where.push('time_entries.user_id=?'); params.push(uid); }
+      // source=visit|call|manual: the entries a visit or a call logged, or the ones entered by hand.
+      const src = ctx.query.get('source');
+      if (src === 'visit') where.push('time_entries.intervention_id IS NOT NULL');
+      else if (src === 'call') where.push('time_entries.call_id IS NOT NULL');
+      else if (src === 'manual') where.push('time_entries.intervention_id IS NULL AND time_entries.call_id IS NULL');
     },
     // Reassigning whose hours these are is a time:all action (see public/views/time.js, which only shows the
     // Worker picker when can('time:all')): the rules' owner, which crud.js applies on insert and update alike.

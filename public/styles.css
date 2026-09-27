@@ -494,3 +494,32 @@ details.section > summary .summary-heading { display: inline; font-size: 1rem; m
 .supply-step input.supply-qty { width: 4.5rem; text-align: center; }
 .supply-add { margin-top: .5rem; gap: .4rem; }
 .supply-add select { flex: 1 1 10rem; min-width: 0; max-width: 100%; }
+
+/* ---- A dialog's actions stay in view (1.14.0): the row of buttons at the end of a dialog (Save, Cancel)
+   sticks to the bottom of the screen while the dialog is taller than it, so Save is never below the fold.
+   Only the dialog's own last row (a form's, or a confirmation's), never a button row inside a banner or card.
+   It stays where it is in the page, so the Tab order and what a screen reader reads are unchanged; at the end
+   of the dialog it sits under the last field in its own space, and the scroll padding keeps a field that
+   takes the focus clear of it. ---- */
+.modal-bg { scroll-padding-bottom: 5.5rem; }
+.modal form > .btn-row:last-child, .modal > .btn-row:last-child, .modal > div > .btn-row:last-child {
+  /* The dialog's backdrop is padded 3vh top and bottom, and a sticky box stops at that padding: -3vh puts the
+     row on the screen's bottom edge, with nothing of the form showing beneath it. */
+  position: sticky; bottom: -3vh; z-index: 3; background: var(--panel);
+  margin: 1rem -1.4rem 0; padding: .7rem 1.4rem; border-top: 1px solid var(--border);
+  box-shadow: 0 -6px 12px -10px rgba(0,0,0,.35);
+}
+@media (max-width: 900px) {
+  .modal form > .btn-row:last-child, .modal > .btn-row:last-child, .modal > div > .btn-row:last-child {
+    bottom: 0; margin-left: -1rem; margin-right: -1rem; padding: .6rem 1rem calc(.6rem + env(safe-area-inset-bottom));
+  }
+}
+
+/* ---- A visit's disclosure sections (views/interventions.js): the everyday fields show, the rest fold away
+   under a heading that says what is inside and, folded, what it holds now. ---- */
+details.section > summary [data-section-hint] { font-weight: 400; }
+.supply-notice { margin: .5rem 0 0; }
+/* A field, row or notice a dialog hides (the referral's outcome while it is under way, a step set aside). */
+.modal [hidden] { display: none !important; }
+.step-heading { font-size: 1.05rem; margin: 0 0 .25rem; }
+.readmit-panel { margin-top: .5rem; }
