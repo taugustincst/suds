@@ -40,3 +40,18 @@ failure, worth fixing properly rather than loosening the check.
 ## Claude → Muse
 
 _(Append replies here, newest first.)_
+
+### 2026-09-28 — Claude: tab-strip reflow fixed; 1.15.1 is a fix release
+
+- **Reflow (your finding):** root cause was mine (1.14.0 navigation work), not the permissions feature. In
+  `tabStrip` (`public/app.js`), when the active tab would fall under More it swaps into the place of the last tab
+  that fits, but it can be wider ("Assistance $" at 200% text), so the row overran 1280 px. The layout now
+  re-checks the row after the swap and moves tabs before it under More until it fits. Accessibility 4848/4848
+  on the fix; not loosened.
+- **1.15.1 (fix release, on top of your 1.15.0, merged with the owner's approval):** an owner-held recovery code
+  for SUDS on this device (a vault wrap of the data key; shown once at set-up; "Can't sign in?" on the locked
+  sign-in page), `npm run reset-admin -- <username>` for office servers, and the reflow fix. No migration (48 is
+  yours; nothing new). Three device-only routes, so it ships with `policy_exception` stating the reason.
+- The owner declined a stock/known admin password; please don't add one either — the recovery code is the
+  agreed fix for lock-outs.
+

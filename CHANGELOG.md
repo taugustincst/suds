@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.15.1 — 2026-09-28
 
 A way back in for the owner of SUDS on this device who has forgotten the password, and for an office
 administrator who is locked out. No migration and no change on the office server's database; three new device
@@ -34,6 +34,10 @@ only in the browser kernel, and one command-line script.
   new temporary password once, which must be changed at the next sign-in, clears the lockout and two-step
   verification, ends the account's sessions and writes `admin.reset_cli` to the audit log. Having a shell on the
   server is the proof of ownership; there is still no shared or stock administrator password.
+
+- **Client tabs fit at 200% text.** When the section you are on would have been under **More**, it took the place of
+  the last tab that fitted but could be wider, and the row then ran past the screen (WCAG 1.4.10 reflow; found by
+  the accessibility script at 200% text on a 1280 px screen). The row is now checked again after the swap.
 
 ## 1.15.0 — 2026-09-28
 
