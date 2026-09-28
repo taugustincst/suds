@@ -2,6 +2,55 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+Fixes from a UI evaluation of all six roles (about 120 pages). No migration, no new permission, no change to
+which roles hold a permission, and no new route: a reminder is an ordinary to-do (`POST /api/tasks`).
+
+- **Supervision: act on the unsigned notes, not just see them.** Each draft under *Unsigned notes across your
+  team* has **Open note** (the note opens over the queue, as countersigning does) and **Remind author**, which
+  gives the author a to-do on that client's record, due today (high priority when overdue), asking them to finish
+  and sign it. The to-do names the kind of note and the day it was started, nothing from the note; its title and
+  details are encrypted like every to-do's, and creating it is audited (`task.create`). **Remind all overdue
+  authors** confirms first and sends one reminder per overdue note, skipping any note whose author already has an
+  open reminder for it (whoever sent it); a row with an open reminder shows *Sent* and its date instead of the
+  button. You are never offered a reminder for your own draft. The queue's unsigned notes now carry `author_id`.
+- **Individual permissions have their own place.** Settings → Users & permissions has a **Permissions** button on
+  every row and a badge (*1 override*, *2 overrides*) on rows with individual overrides (`GET /api/users` counts
+  them, for user managers only). It opens a Permissions dialog with exactly what the Edit dialog used to hold at
+  its bottom: the role baseline, effective permissions with their provenance, the overrides and their reasons, and
+  the grant/deny form with its risk flags and 10-character reason; deny still wins and every change is audited as
+  before. The Edit dialog points to it (**Permissions…**).
+- **Overrides in one trip.** Creating a user no longer ends with "Save the user first to manage individual
+  permissions": once the temporary password has been noted, the new user's Permissions dialog opens, ready to
+  grant or deny.
+- **A supervisor's sidebar is their job.** Home, then **Supervision**, then Clients, Waitlist, To-dos, Visits,
+  Calls & texts, Notes, Referrals and Settings (moving a caseload, the audit log): 10 entries instead of 23. The
+  rest — Reports, the Funder report, Funding & spending, Policies & contracts, Supplies, Overdose & reversals,
+  Forms, My time, the Resource directory, Privacy & Part 2, Import, State reporting and SUPRT-A — is under
+  **More**, one click away; nothing is hidden. Decided from permissions (`supervising()` in `public/app.js`:
+  countersigns and moves caseloads, but does not manage users or settings), not the role name. Administrators'
+  and front-line sidebars are unchanged.
+- **A read-only Home that does not talk to an actor.** An account that holds nothing but reading, reports and
+  exports (decided with the deny-aware `can()`, not the role name) gets **Your reports** first — the Funder
+  report, Reports and the Resource directory — above the figures it may see, and no *To-dos for today* or
+  *Continue where you left off* card. Those two cards now follow `tasks:read` and client or note access, so a
+  finance account no longer sees them either.
+- **Client tabs by role.** Beside the six everyday tabs, a clinician's strip shows **Care plan** and
+  **Assessments**, a supervisor's **Episodes** and **Care team** (when the modules are on); the rest stay under
+  More. The tab strip still measures the row after promoting and folds what does not fit at 200% text (the
+  1.15.1 reflow fix is untouched).
+- **Funder report: which file do I send?** The three downloads are grouped under that heading, each with a line
+  saying what it is for: **This report (Excel)** is the submission workbook for the funder (for a publication
+  release, the file to publish once reviewed), **CSV** the same figures for a funder portal or data system, and
+  **Export everything to Excel** every program sheet for your own checking, not for sending. The buttons and the
+  publication review's gating are unchanged.
+- Tests: `test/ui-eval.test.js` (the reminder through `POST /api/tasks`: assignee, creator, client, encrypted
+  title and details, audit, found again by its reference, gone once done; the override count on the users list
+  for user managers only). Browser: new `scripts/ui/ui-eval.mjs` (106 checks, with axe on each changed page),
+  registered in `run-all.sh` (38 scripts); `ux-nav`, `programme` and `permissions-admin` follow the deliberate
+  sidebar and Permissions-button changes.
+
 ## 1.15.1 — 2026-09-28
 
 A way back in for the owner of SUDS on this device who has forgotten the password, and for an office

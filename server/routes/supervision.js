@@ -57,7 +57,8 @@ module.exports = (r) => {
         WHERE n.deleted_at IS NULL AND n.status<>'draft' AND n.cosigned_at IS NULL AND n.author_id<>? AND ((n.cosign_required=1 AND ${sf.sql}) OR n.cosign_requested=1)
         ORDER BY n.signed_at LIMIT 100`, ctx.user.id, ...sf.params))
         .map(x => ({ ...x, title: x.title_enc ? decrypt(x.title_enc) : null, title_enc: undefined }));
-      out.unsigned_notes = named(ctx, db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, u.display_name AS author, c.client_code, ${NAME_COLS},
+      // author_id: who a "Remind author" to-do goes to (views/supervision.js, POST /api/tasks).
+      out.unsigned_notes = named(ctx, db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS},
           (n.created_at < ?) AS overdue
         FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
         WHERE n.deleted_at IS NULL AND n.status='draft' AND ${sf.sql}

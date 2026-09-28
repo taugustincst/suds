@@ -1423,26 +1423,29 @@ export function navAndRender(to) {
 //                      Marked both (the funder report, state reporting, SUPRT-A): in More for a front-line worker,
 //                      who runs them for their own caseload (the API allows it), in the Program section for others.
 //   show()           — shown only when this returns true (a reporting module switched on for the programme).
+//   team: true       — for someone who supervises a team (supervising() below) it stays in the main list, and
+//                      everything else folds into "More": their day is the supervision queue, the caseloads and
+//                      the team's daily pages, not the programme's every page. Supervision leads their list.
 // The order within each section is by how often the page is used: a navigator's day is Home, Clients, the
 // waitlist and to-dos, then recording visits, calls and notes; reports come monthly.
 // Nothing here changes a permission: the server decides what each role may do (server/auth.js PERMS).
 export const NAV = [
   { sec: 'My day' },
-  { name: 'dashboard', label: 'Home', ico: '⌂', help: 'What needs attention today, and where you left off on any device.' },
-  { name: 'clients', label: 'Clients', ico: '👤', perm: 'clients:read', help: 'Everyone you serve. Open a client to see their whole story in one place.' },
-  { name: 'waitlist', label: 'Waitlist', ico: '⧗', perm: 'clients:read', help: 'People waiting for a place, longest and highest risk first.' },
-  { name: 'tasks', label: 'To-dos', ico: '☑', perm: 'tasks:read', help: 'Your to-dos: follow-ups and reminders. Check a box when it is done.' },
-  { name: 'supervision', label: 'Supervision', ico: '✍', perm: ['notes:cosign', 'time:approve', 'assignments:manage'], help: 'Notes waiting for your countersignature, drafts your team has not finished, staff time to approve, and referrals with no outcome recorded.' },
+  { name: 'dashboard', team: true, label: 'Home', ico: '⌂', help: 'What needs attention today, and where you left off on any device.' },
+  { name: 'clients', team: true, label: 'Clients', ico: '👤', perm: 'clients:read', help: 'Everyone you serve. Open a client to see their whole story in one place.' },
+  { name: 'waitlist', team: true, label: 'Waitlist', ico: '⧗', perm: 'clients:read', help: 'People waiting for a place, longest and highest risk first.' },
+  { name: 'tasks', team: true, label: 'To-dos', ico: '☑', perm: 'tasks:read', help: 'Your to-dos: follow-ups and reminders. Check a box when it is done.' },
+  { name: 'supervision', team: true, label: 'Supervision', ico: '✍', perm: ['notes:cosign', 'time:approve', 'assignments:manage'], help: 'Notes waiting for your countersignature, drafts your team has not finished, staff time to approve, and referrals with no outcome recorded.' },
   { sec: 'Record work' },
-  { name: 'interventions', label: 'Visits', ico: '✚', perm: 'interventions:read', help: 'Every visit: the face-to-face or phone services you provide — outreach, screenings, warm handoffs, naloxone, transport and more.' },
-  { name: 'calls', label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
-  { name: 'notes', label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
+  { name: 'interventions', team: true, label: 'Visits', ico: '✚', perm: 'interventions:read', help: 'Every visit: the face-to-face or phone services you provide — outreach, screenings, warm handoffs, naloxone, transport and more.' },
+  { name: 'calls', team: true, label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
+  { name: 'notes', team: true, label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
   { name: 'supplies', label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires first first.' },
   { name: 'overdose', label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
   { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', more: true, help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
   { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
   { sec: 'Connect clients' },
-  { name: 'referrals', label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
+  { name: 'referrals', team: true, label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
   { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Syringe services, drop-ins, shelters, MAT and treatment programs, legal aid and the other partners you refer people to.' },
   { sec: 'Program' },
   { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', more: true, help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
@@ -1457,7 +1460,7 @@ export const NAV = [
   { name: 'imports', label: 'Import', ico: '⇩', perm: 'imports:write', programme: true, more: true, help: 'Bring in spreadsheets (Excel / CSV) of clients, visits, calls, resources and more, or notes from Pocket AI and OneNote. Everything is checked before it is saved.' },
   // A supervisor holds assignments:manage (moving a caseload when someone leaves lives on this page) but not
   // users:manage; gating the whole page on the latter locked them out of a feature built for them.
-  { name: 'admin', label: 'Settings', ico: '⚙', perm: ['users:manage', 'assignments:manage'], programme: true, help: 'Staff accounts, security, connecting devices and backups — or, for a supervisor, moving a caseload and the audit log.' },
+  { name: 'admin', team: true, label: 'Settings', ico: '⚙', perm: ['users:manage', 'assignments:manage'], programme: true, help: 'Staff accounts, security, connecting devices and backups — or, for a supervisor, moving a caseload and the audit log.' },
 ];
 /**
  * A front-line worker (navigator, clinician): records work with clients and does not run the programme's
@@ -1466,9 +1469,18 @@ export const NAV = [
 export function frontline() {
   return can('interventions:write') && !can('budget:approve') && !can('assignments:manage') && !can('users:manage') && !can('settings:manage');
 }
+/**
+ * Someone who supervises a team (a supervisor): countersigns notes and moves caseloads, but does not run the
+ * programme's accounts or settings. Presentation only, from permissions (deny-aware can()), not the role name:
+ * a sidebar led by Supervision with the rest under More, and the client record's Episodes and Care team tabs.
+ */
+export function supervising() {
+  return can('notes:cosign') && can('assignments:manage') && !can('users:manage') && !can('settings:manage');
+}
 /** Where a NAV entry goes in this person's sidebar: 'main', 'more' (folded away), or null (not shown). */
 export function navPlacement(n) {
   if (!n.name || (n.perm && !canAny(n.perm)) || (n.show && !n.show())) return null;
+  if (supervising()) return n.team ? 'main' : 'more';
   if (!frontline()) return 'main';
   if (n.more) return 'more';
   return n.programme ? null : 'main';
@@ -1613,7 +1625,9 @@ function sidebar(r) {
     const where = navPlacement(n);
     if (where === 'main') cur.items.push(link(n)); else if (where === 'more') more.push({ n, a: link(n) });
   }
-  // A front-line worker's less-used pages, folded into one closed group (open while one of them is showing).
+  // A supervisor's list starts with the queue of work waiting on them, straight after Home.
+  if (supervising()) { const day = groups[0].items; const i = day.findIndex(a => a.getAttribute('href') === '#/supervision'); if (i > 1) day.splice(1, 0, ...day.splice(i, 1)); }
+  // A front-line worker's (or a supervisor's) less-used pages, folded into one closed group (open while one of them is showing).
   const moreGroup = more.length ? h('details', { class: 'nav-more', 'data-nav-more': '1', open: more.some(x => x.n.name === r.name) ? true : null },
     h('summary', {}, 'More'), ...more.map(x => x.a)) : null;
   return h('aside', { class: 'sidebar' },

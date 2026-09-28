@@ -214,6 +214,19 @@ async function drawHome(r) {
   // caseload and outreach; everyone's for a supervisor or administrator; the program's for finance and
   // read-only, who log no visits (their Home was headed "What you have been doing").
   const activityHeading = can('clients:all') ? 'What the team has been doing (90 days)' : can('clients:list-deidentified') && !can('clients:read') ? 'The program\'s visits (90 days)' : 'What you have been doing (90 days)';
+  // Someone who may look but not act (a read-only oversight account) — decided by permissions, deny-aware, not
+  // the role name: they hold nothing but reading, reports and exports. Their Home leads with the reports they
+  // came for, and has no to-do or "continue" card (they keep no to-dos and open no client records).
+  const onlyReads = !(state.user.permissions || []).some(p => can(p) && !/:read$|:list-deidentified$|^reports:|^export:/.test(p));
+  const showTodos = can('tasks:read');
+  const showContinue = can('clients:read') || can('notes:admin:read') || can('notes:clinical:read');
+  const reportsLead = onlyReads && can('reports:read') ? h('section', { class: 'card mb', 'data-home-reports': '1' },
+    h('h2', {}, 'Your reports'),
+    h('p', { class: 'small muted' }, 'The figures your account may see: counts of people and services, never who they are. The numbers below are the program\'s at a glance.'),
+    h('ul', { class: 'download-list' },
+      h('li', {}, h('a', { class: 'btn primary', href: '#/funder', 'data-home-funder': '1' }, 'Funder report'), h('span', { class: 'small' }, 'People served, admissions, discharges and demographics for a month, quarter or fiscal year that has ended.')),
+      h('li', {}, h('a', { class: 'btn', href: '#/reports', 'data-home-reports-link': '1' }, 'Reports'), h('span', { class: 'small' }, 'Program summaries and monthly trends for any date range.')),
+      can('resources:read') ? h('li', {}, h('a', { class: 'btn', href: '#/resources' }, 'Resource directory'), h('span', { class: 'small' }, 'The services and partners the program refers people to.')) : null)) : null;
   const done = async (t, box) => {
     if (box) box.disabled = true;
     try { await put(`/api/tasks/${t.id}`, { status: 'done' }); toast('Done ✓', 'ok'); nav('dashboard?_=' + Date.now()); }
@@ -231,14 +244,15 @@ async function drawHome(r) {
     // computer … stays in sync" was wrong there.
     cont.other_device && !state.local ? h('div', { class: 'muted small mb' }, `Also signed in on ${cont.other_device.mobile ? 'your phone' : 'another computer'} (${fmt.ago(cont.other_device.last_seen_at) === 'today' ? 'active today' : fmt.ago(cont.other_device.last_seen_at)}). Everything stays in sync.`) : null,
     d.small_cells ? h('p', { class: 'small muted mb', 'data-small-cells': '1' }, `Counts of people from 1 to ${d.small_cells.threshold - 1} are shown as "<${d.small_cells.threshold}" for your role, as they are in the funder report.`) : null,
+    reportsLead,
     alerts.length ? h('div', { class: 'row mb' }, alerts.map(([k, t, href]) => h('a', { href, class: `badge ${k}`, style: { fontSize: '.9rem', padding: '.4rem .8rem' } }, t))) : null,
-    h('div', { class: 'grid cols-2 mb' },
-      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'To-dos for today'), can('tasks:read') ? h('a', { href: '#/tasks' }, 'All to-dos') : null),
+    showTodos || showContinue ? h('div', { class: 'grid cols-2 mb' },
+      !showTodos ? null : h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'To-dos for today'), can('tasks:read') ? h('a', { href: '#/tasks' }, 'All to-dos') : null),
         cont.due_today.length ? cont.due_today.map(t => h('div', { class: 'today-item', 'data-overdue': isOverdue(t) ? '1' : '0' }, h('label', { class: 'check', style: { marginTop: 0 } }, h('span', { class: 'tap-target' }, h('input', { type: 'checkbox', 'aria-label': `Mark "${t.title}" done`, onChange: (e) => done(t, e.target) })), h('span', {}, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null)), h('span', { class: 'small today-due', style: isOverdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, isOverdue(t) ? [badge('Overdue', 'danger'), ' '] : null, h('span', { class: 'nowrap' }, fmt.dt(t.due_at))))) : emptyState('Nothing due today', 'Reminders you set for today will appear here.', can('tasks:write') ? h('button', { class: 'btn sm', onClick: async () => (await import('./tasks.js')).openTaskForm(null, { onDone: () => nav('dashboard?_=' + Date.now()) }) }, '+ Add a reminder') : null)),
-      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Continue where you left off'), h('span', { class: 'muted small' }, 'from any device')),
+      !showContinue ? null : h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Continue where you left off'), h('span', { class: 'muted small' }, 'from any device')),
         cont.drafts.length ? h('div', { class: 'mb' }, h('h3', { class: 'eyebrow' }, 'Unfinished notes'), cont.drafts.slice(0, 4).map(n => h('div', { class: 'today-item' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, n.title || `${fmt.label(n.format, 'NOTE_FORMATS')} note`, h('span', { class: 'muted small' }, ` · ${n.client_name}`)), h('span', { class: 'muted small' }, fmt.ago(n.updated_at))))) : null,
         cont.recent.length ? h('div', {}, h('h3', { class: 'eyebrow' }, 'Recent clients'), h('div', { class: 'row' }, cont.recent.slice(0, 8).map(x => h('a', { class: 'chip', href: `#/client/${x.id}` }, x.display_name)))) : null,
-        !cont.drafts.length && !cont.recent.length ? emptyState('You are all caught up', 'Clients and notes you open show here, ready to pick up on your phone or computer.') : null)),
+        !cont.drafts.length && !cont.recent.length ? emptyState('You are all caught up', 'Clients and notes you open show here, ready to pick up on your phone or computer.') : null)) : null,
     handoffs && handoffs.rows.length ? h('div', { class: 'card mb', 'data-handoffs': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Hand-offs from the last 24h'), h('span', { class: 'muted small' }, 'for the whole team')),
       handoffs.rows.map(n => h('div', { class: 'hand-off' }, h('div', {}, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, h('b', {}, n.title || 'Hand-off')), ' ', h('span', { class: 'muted small' }, `· ${n.client_name || n.client_code} · ${n.author} · ${fmt.dt(n.occurred_at)}`)), h('div', { class: 'small excerpt' }, n.excerpt)))) : null,
     h('div', { class: 'grid cols-4 mb' },

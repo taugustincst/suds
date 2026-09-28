@@ -36,7 +36,10 @@ module.exports = (r) => {
   r.get('/api/users', auth.requireAuth, auth.requirePerm('users:read', 'users:manage'), (ctx) => {
     const full = auth.hasPerm(ctx.user, 'users:manage');
     const rows = db.all(full
-      ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id,access_status,default_fund_id FROM users WHERE access_status<>'pending' ORDER BY display_name`
+      // override_count: how many individual permission overrides the person has, for the badge on their row in
+      // Users & permissions (the overrides themselves are GET /api/users/:id/permissions).
+      ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id,access_status,default_fund_id,
+          (SELECT COUNT(*) FROM user_permission_overrides o WHERE o.user_id=users.id) AS override_count FROM users WHERE access_status<>'pending' ORDER BY display_name`
       : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
     return { users: rows };
   });

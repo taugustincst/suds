@@ -49,18 +49,25 @@ async function openUserForm(values, onDone) {
   ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Create user' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
     if (isNew) {
       const r = await post('/api/users', d); m.close(); await loadRefData();
+      // Straight on to the new person's individual permissions (for someone who may manage them), so an override
+      // is not a second trip: create, find the row again, open it again.
+      const created = { id: r.id, display_name: d.display_name, role: d.role };
+      const next = can('users:manage') ? () => openPermissionsDialog(created, onDone, { justCreated: true }) : onDone;
       // The list refresh below re-renders the page, and render() clears every open modal with it -- so the
       // one-time password used to flash up and vanish before anyone could read it. It now stays until
       // the administrator dismisses it, and only then does the page move on.
       if (r.temporary_password) {
+        let shared = false;
         const pw = modal('User created', h('div', {},
           h('p', {}, 'Share this temporary password securely (not by email). The user must change it at first login.'),
           h('div', { class: 'qr', 'data-temp-password': '1' }, r.temporary_password),
           h('p', { class: 'small muted' }, 'It is not stored and cannot be shown again. If it is lost, edit the user and set a new one.'),
-          h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: () => pw.close() }, 'I have shared it'))), { onClose: onDone });
+          h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: () => { shared = true; pw.close(); } }, can('users:manage') ? 'I have shared it — next, their permissions' : 'I have shared it'))),
+        { onClose: () => (shared ? next() : onDone()) });
         return;
       }
       toast('User created', 'ok');
+      next(); return;
     }
     else {
       // Turning an account off is confirmed: it ends every session and, with the box above ticked, tells
@@ -85,14 +92,27 @@ async function openUserForm(values, onDone) {
     }
     onDone();
   } });
-  const m = modal(isNew ? 'New user' : `Edit ${values.display_name}`, f, { wide: true });
-  // Admin-managed per-user permission overrides, below the account fields. Additive: the role select above
-  // stays as-is. Only someone with users:manage gets here (the Users & permissions tab is theirs alone).
-  if (can('users:manage')) {
-    const permBox = h('div', { id: 'user-perm-section', 'data-perm-section': '1' });
-    m.el.append(permBox);
-    renderPermissionsSection(permBox, isNew ? null : values.id);
-  }
+  // Individual permissions have a dialog of their own (the row's Permissions button); they used to sit below
+  // a dozen account fields here. The editor says where they are and opens them in one step.
+  const permLink = !isNew && can('users:manage') ? h('p', { class: 'small muted', 'data-perm-link': '1' },
+    'The role gives this person\'s permissions. ', values.override_count ? `${values.override_count} individual override${values.override_count === 1 ? '' : 's'}. ` : '',
+    h('button', { type: 'button', class: 'btn sm', 'data-open-permissions': values.id, onClick: () => { m.close(); openPermissionsDialog(values, onDone); } }, 'Permissions…'))
+    : isNew && can('users:manage') ? h('p', { class: 'small muted' }, 'Once the account is created you can grant or deny individual permissions straight away.') : null;
+  const m = modal(isNew ? 'New user' : `Edit ${values.display_name}`, permLink ? h('div', {}, permLink, f) : f, { wide: true });
+}
+
+/**
+ * A person's individual permissions, in a dialog of their own: opened from the Permissions button on their
+ * row in Users & permissions, from their Edit dialog, and straight after their account is created. Its
+ * content and rules are renderPermissionsSection's, unchanged. onDone runs when it closes (the list's badges).
+ */
+function openPermissionsDialog(user, onDone, { justCreated = false } = {}) {
+  const box = h('div', { id: 'user-perm-section', 'data-perm-section': '1' });
+  const intro = justCreated ? h('div', { class: 'banner ok small mb', 'data-perm-just-created': '1' }, `${user.display_name} has been created with the ${fmt.label(user.role)} role's permissions. Grant or deny individual permissions below, or close this to finish.`) : null;
+  const dlg = modal(`Permissions — ${user.display_name}`, h('div', { 'data-perm-dialog': user.id }, intro, box,
+    h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', 'data-perm-done': '1', onClick: () => dlg.close() }, 'Done'))),
+  { wide: true, onClose: onDone });
+  renderPermissionsSection(box, user.id);
 }
 
 // ---- Admin-managed per-user permission overrides ----
@@ -115,11 +135,7 @@ function permProvBadge(prov) {
   return h('span', { 'data-perm-badge': prov }, badge(prov, prov === 'granted' ? 'ok' : prov === 'denied' ? 'danger' : ''));
 }
 async function renderPermissionsSection(box, userId) {
-  box.replaceChildren(h('h3', {}, 'Permissions'));
-  if (!userId) {
-    box.append(h('p', { class: 'muted' }, 'Save the user first to manage individual permissions.'));
-    return;
-  }
+  box.replaceChildren();
   if (state.user && userId === state.user.id) {
     box.append(h('p', { class: 'muted' }, 'You cannot change your own permissions.'));
     return;
@@ -138,7 +154,7 @@ async function renderPermissionsSection(box, userId) {
   const refresh = () => renderPermissionsSection(box, userId);
 
   // The role baseline: what this person's role gives them, grouped by namespace.
-  box.append(h('h4', {}, `Role baseline — ${fmt.label(data.role)}`),
+  box.append(h('h3', {}, `Role baseline — ${fmt.label(data.role)}`),
     h('div', { 'data-perm-baseline': '1' }, permNamespaceGroups(data.role_permissions || []).map(([ns, names]) =>
       h('details', {}, h('summary', {}, `${ns} (${names.length})`),
         h('ul', {}, names.map((n) => h('li', {}, label(n), h('code', { class: 'small muted' }, ` ${n}`))))))));
@@ -148,13 +164,13 @@ async function renderPermissionsSection(box, userId) {
   const denySet = new Set(data.denied || []);
   const provOf = (n) => denySet.has(n) ? 'denied' : grantSet.has(n) ? 'granted' : 'role';
   const shown = [...new Set([...(data.effective || []), ...(data.denied || [])])];
-  box.append(h('h4', {}, 'Effective permissions'),
+  box.append(h('h3', {}, 'Effective permissions'),
     h('div', { 'data-perm-effective': '1' }, permNamespaceGroups(shown).map(([ns, names]) =>
       h('details', { open: true }, h('summary', {}, `${ns} (${names.length})`),
         h('ul', {}, names.map((n) => h('li', {}, label(n), ' ', permProvBadge(provOf(n)))))))));
 
   // The individual overrides: label, mode, reason, who granted it and when, with Revoke.
-  box.append(h('h4', {}, 'Individual overrides'),
+  box.append(h('h3', {}, 'Individual overrides'),
     h('div', { 'data-perm-overrides': '1' }, (data.overrides || []).length
       ? data.overrides.map((o) => h('div', { class: 'card flat perm-override' },
           h('div', {}, h('b', {}, label(o.permission)), ' ', permProvBadge(o.mode === 'grant' ? 'granted' : 'denied'), h('code', { class: 'small muted' }, ` ${o.permission}`)),
@@ -178,7 +194,7 @@ async function renderPermissionsSection(box, userId) {
   const denyRadio = h('input', { type: 'radio', name: 'perm-mode', value: 'deny', 'data-perm-mode': 'deny' });
   const reason = h('textarea', { 'data-perm-reason': '1', rows: 2, placeholder: 'Why this person needs it — recorded in the audit log (at least 10 characters)' });
   box.append(h('div', { 'data-perm-grant-form': '1' },
-    h('h4', {}, 'Grant or deny a permission'),
+    h('h3', {}, 'Grant or deny a permission'),
     h('div', { class: 'field' }, h('label', {}, 'Permission'), sel,
       h('div', { class: 'small muted' }, '⚠ sensitive and ⚠ privileged permissions need a real reason. Privileged ones can only go to administrators.')),
     h('div', { class: 'field' }, h('label', {}, 'Mode'),
@@ -334,7 +350,11 @@ route('admin', async (r) => {
     async users() {
       const { users } = await get('/api/users');
       return h('div', {}, state.local ? null : await accessRequestsCard(refresh), h('div', { class: 'row mb' }, h('button', { class: 'btn primary', onClick: () => openUserForm(null, refresh) }, '+ New user')),
-        table([{ label: 'Name', render: u => h('div', {}, h('b', {}, u.display_name), h('div', { class: 'small muted' }, u.username, u.title ? ` · ${u.title}` : '')) }, { label: 'Role', render: u => badge(fmt.label(u.role), u.role === 'admin' ? 'purple' : 'info') }, { label: 'Email', key: 'email' }, { label: 'MFA', render: u => u.mfa_enabled ? badge('On', 'ok') : badge('Off', 'warn') }, { label: 'Status', render: u => [u.is_active ? badge('Active', 'ok') : u.access_status === 'declined' ? badge('Request declined') : badge('Inactive'), u.locked_until && Date.parse(u.locked_until) > Date.now() ? [' ', badge('Locked', 'danger')] : null] }, { label: 'Last login', render: u => u.last_login_at ? fmt.dt(u.last_login_at) : 'never' }, { label: '', render: u => h('button', { class: 'btn sm', onClick: () => openUserForm(u, refresh) }, 'Edit') }], users));
+        table([{ label: 'Name', render: u => h('div', {}, h('b', {}, u.display_name), h('div', { class: 'small muted' }, u.username, u.title ? ` · ${u.title}` : '')) }, { label: 'Role', render: u => badge(fmt.label(u.role), u.role === 'admin' ? 'purple' : 'info') }, { label: 'Email', key: 'email' }, { label: 'MFA', render: u => u.mfa_enabled ? badge('On', 'ok') : badge('Off', 'warn') }, { label: 'Status', render: u => [u.is_active ? badge('Active', 'ok') : u.access_status === 'declined' ? badge('Request declined') : badge('Inactive'), u.locked_until && Date.parse(u.locked_until) > Date.now() ? [' ', badge('Locked', 'danger')] : null] }, { label: 'Last login', render: u => u.last_login_at ? fmt.dt(u.last_login_at) : 'never' },
+          // Individual permissions: their own button (and a badge when the person has any overrides).
+          { label: 'Permissions', render: u => u.override_count ? h('span', { 'data-perm-count': String(u.override_count) }, badge(`${u.override_count} override${u.override_count === 1 ? '' : 's'}`, 'warn')) : h('span', { class: 'small muted' }, 'Role only') },
+          { label: '', render: u => h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openUserForm(u, refresh) }, 'Edit'),
+            h('button', { class: 'btn sm', 'data-user-permissions': u.username, 'aria-label': `Permissions for ${u.display_name}`, onClick: () => openPermissionsDialog(u, refresh) }, 'Permissions')) }], users));
     },
     async settings() {
       const s = await get('/api/admin/settings');

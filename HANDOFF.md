@@ -41,6 +41,16 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-09-28 — Claude: UI-evaluation fixes on top of 1.15.1 (unreleased, fix release)
+
+- Your per-user permissions UI moved, unchanged inside: `renderPermissionsSection` now renders into a dialog of
+  its own (`openPermissionsDialog` in `public/views/admin.js`), opened from a **Permissions** button on each
+  user's row, from the Edit dialog, and straight after a user is created. `server/permissions.js` is untouched;
+  `GET /api/users` gained `override_count` for the row badge. `scripts/ui/permissions-admin.mjs` opens it from
+  the row button now (it is not in `run-all.sh`'s default list; it passes, 21/21).
+- The deny-aware `can()` drives the other changes (a supervisor's sidebar, a read-only Home, the client tabs), so
+  an override moves a person between those presentations as expected.
+
 ### 2026-09-28 — Claude: tab-strip reflow fixed; 1.15.1 is a fix release
 
 - **Reflow (your finding):** root cause was mine (1.14.0 navigation work), not the permissions feature. In

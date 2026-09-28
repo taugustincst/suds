@@ -550,3 +550,7 @@ details.section > summary [data-section-hint] { font-weight: 400; }
 .cant-sign-in { border-top: 1px solid var(--border); padding-top: .75rem; }
 .cant-sign-in ul { margin: .25rem 0 0; padding-left: 1.1rem; }
 .cant-sign-in li { margin-bottom: .4rem; }
+/* The funder report's downloads: each file's button with a line saying what it is for. */
+.download-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+.download-list li { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.download-list li span { flex: 1 1 16rem; min-width: 0; }

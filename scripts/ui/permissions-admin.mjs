@@ -1,4 +1,4 @@
-// Admin-managed permissions UI: an administrator edits a user, sees a Permissions section with the
+// Admin-managed permissions UI: an administrator opens a user's Permissions dialog, sees a Permissions section with the
 // role baseline, grants audit:read with a reason (a "granted" badge appears), revokes it (the badge
 // is gone), and is told they cannot change their own permissions.
 import { chromium } from 'playwright';
@@ -37,7 +37,8 @@ eq(created.status, 201, 'a navigator is created for the permissions UI test');
 const openEditor = async (who) => {
   await go(page, 'admin?tab=users');
   await page.waitForSelector('.main table');
-  await page.locator('table tr', { hasText: who }).locator('button', { hasText: 'Edit' }).click();
+  // 1.15.2: individual permissions have their own dialog, opened from the row's Permissions button.
+  await page.click(`[data-user-permissions="${who}"]`);
   await page.waitForSelector('.modal', { timeout: 10000 }); await settle(page);
 };
 const closeEditor = async () => { await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal-bg')), { timeout: 5000 }); };
