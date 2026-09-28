@@ -44,6 +44,9 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   await settle(page);
   ok(await page.$('[data-temp-password]'), 'it is still on screen a moment later (the list refresh no longer wipes it)');
   await page.click('text=I have shared it');
+  // 1.15.2: the new person's Permissions dialog opens next (overrides in one trip); Done closes it.
+  ok(await until(() => page.$('[data-perm-just-created]')), 'the new user\'s Permissions dialog opens next');
+  await page.click('[data-perm-done]');
   await until(async () => (await page.textContent('.main')).includes(uname));
   ok((await page.textContent('.main')).includes(uname), 'dismissing it refreshes the user list with the new person on it');
 
