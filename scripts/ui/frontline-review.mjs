@@ -219,7 +219,8 @@ eq((await admin.api('PUT', '/api/admin/settings', { programme_profile: 'harm_red
   eq((await api('GET', '/api/meta/constants')).data.DEFAULT_LOCATION, 'street', 'its default location is the street');
   await go(page, 'interventions');
   await page.evaluate(async () => (await import('./views/interventions.js')).openInterventionForm(null, {}));
-  await page.waitForSelector('.modal select[name=location]');
+  // Folded under "Where & how" on a new visit since 1.15.3 (its heading says what it holds).
+  await page.waitForSelector('.modal select[name=location]', { state: 'attached' });
   eq(await page.inputValue('.modal select[name=location]'), 'street', 'a new visit starts on Street / Outdoor');
   // The client picker: nothing listed until something is typed, either part of a double surname found,
   // closed once someone is chosen.
@@ -233,7 +234,7 @@ eq((await admin.api('PUT', '/api/admin/settings', { programme_profile: 'harm_red
   ok(!(await page.$('.modal [role=listbox]:not(.hidden)')), 'choosing closes the list');
   eq(await page.getAttribute('.modal input[role=combobox]', 'aria-expanded'), 'false', 'and says so');
   await page.fill('.modal input[role=combobox]', 'Quin'); await until(() => page.$('.modal [role=listbox]:not(.hidden)'));
-  await page.click('.modal select[name=location]'); await settle(page);
+  await page.click('.modal select[name=type]'); await settle(page);
   ok(!(await page.$('.modal [role=listbox]:not(.hidden)')), 'moving on to the next field closes it');
   await closeModals(page);
   // Overdose: where it happened, never at a phone; a toast when it is recorded.

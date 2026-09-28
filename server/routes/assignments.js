@@ -2,7 +2,7 @@
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
-const { notFound } = require('../http');
+const { notFound, badRequest } = require('../http');
 const { validate } = require('../validate');
 const { uuid, encrypt } = require('../crypto');
 const rules = require('../rules');
@@ -13,12 +13,17 @@ module.exports = (r) => {
     // The fields and the rule that the worker is active: server/rules/assignments.js, as sync push applies them.
     const v = validate(ctx.body, rules.forTable('assignments').shape());
     rules.assertWrite('assignments', { client_id: c.id, ...rules.toColumns('assignments', v) }, ctx);
+    // ?restores=<id>: the Undo after ending an assignment. The same worker and role go back on the case from
+    // now (a new assignment; the ended one stays in the history), and the audit entry says which one it undoes.
+    const restores = ctx.query.get('restores');
+    const undone = restores ? db.one(`SELECT id FROM assignments WHERE id=? AND client_id=? AND user_id=? AND role_on_case=? AND end_date IS NOT NULL`, restores, c.id, v.user_id, v.role_on_case || 'primary') : null;
+    if (restores && !undone) throw badRequest('The assignment to restore was not found, or it has not ended.');
     const id = uuid();
     db.transaction(() => {
       if ((v.role_on_case || 'primary') === 'primary') db.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, db.now(), c.id);
       db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || 'primary', v.start_date || new Date().toISOString().slice(0, 10), v.notes ? encrypt(v.notes) : null, ctx.user.id);
     });
-    audit.log({ user: ctx.user, action: 'assignment.create', entity: 'assignment', entityId: id, clientId: c.id, ip: ctx.ip, details: { user_id: v.user_id, role: v.role_on_case } });
+    audit.log({ user: ctx.user, action: undone ? 'assignment.restore' : 'assignment.create', entity: 'assignment', entityId: id, clientId: c.id, ip: ctx.ip, details: { user_id: v.user_id, role: v.role_on_case, ...(undone ? { restores: undone.id } : {}) } });
     ctx.status = 201; return { id };
   });
   r.post('/api/assignments/:id/end', auth.requireAuth, auth.requirePerm('assignments:manage'), (ctx) => {

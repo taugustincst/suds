@@ -106,7 +106,7 @@ route('overdose', async () => {
     ], rows, {
       onRow: can('overdose:write') ? (r) => openOverdoseForm(r, { onDone: refresh }) : null,
       rowLabel: (r) => `${fmt.label(r.kind, 'OVERDOSE_KINDS')} on ${fmt.date(r.occurred_at)}${r.client_code ? ` for ${r.client_code}` : ''}`,
-    }) : emptyState('No events recorded', 'Record an overdose or a naloxone reversal here — including ones involving people who are not clients.',
-      can('overdose:write') ? h('button', { class: 'btn primary', onClick: () => openOverdoseForm(null, { onDone: refresh }) }, 'Record an event') : null),
+    }) : emptyState('No events recorded', can('overdose:write') ? 'Record an overdose or a naloxone reversal here — including ones involving people who are not clients.' : 'Navigators, clinicians, supervisors and administrators record overdoses and naloxone reversals here — including ones involving people who are not clients.',
+      can('overdose:write') ? h('button', { class: 'btn primary', 'data-empty-action': 'overdose', onClick: () => openOverdoseForm(null, { onDone: refresh }) }, 'Record an event') : null),
     total > rows.length ? h('p', { class: 'small muted' }, `Showing ${rows.length} of ${total}.`) : null);
 });

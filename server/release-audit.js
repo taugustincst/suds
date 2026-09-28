@@ -312,7 +312,7 @@ function refusalMessage(r) {
     : r.outOfBudget ? 'the check of this period\'s figures reached its limit before it could finish'
     : r.headline ? 'the number of people served could not be shown without giving someone away'
     : 'the check could not confirm that every small count in it is protected';
-  return `This period cannot be published: ${why}, so no publication release was made. Publish a longer standard period (a quarter or a year). The programme's own submission to its funder, which is not for publication, is unaffected.`;
+  return `This period cannot be published: ${why}, so no publication release was made. Publish a longer standard period (a quarter or a year). The program's own submission to its funder, which is not for publication, is unaffected.`;
 }
 
 /**

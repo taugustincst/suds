@@ -6702,7 +6702,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.15.2" : "local",
+      version: true ? "1.15.3" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -10444,12 +10444,12 @@ var require_permissions = __commonJS({
     var DEFS = [
       ["users:manage", "Manage users & permissions", "Create/edit/deactivate accounts, change roles, grant or revoke individual permissions."],
       ["users:read", "See the staff directory", "Minimal staff list for assignment dropdowns."],
-      ["settings:manage", "Manage programme settings", "Programme profile, modules, MFA policy, SCIM mapping, caseload restriction."],
+      ["settings:manage", "Manage program settings", "Program profile, modules, MFA policy, SCIM mapping, caseload restriction."],
       ["audit:read", "Read the audit log", "Tamper-evident audit trail and the break-glass review queue."],
       ["apikeys:manage", "Manage API keys", "Intake API keys and FHIR client registrations."],
       ["clients:read", "Open client records", "Identified client data for clients on the caseload (or all, with clients:all)."],
       ["clients:write", "Edit client records", "Create and edit identified client records."],
-      ["clients:all", "See every client", "Bypasses caseload scoping; required for whole-programme internal reports."],
+      ["clients:all", "See every client", "Bypasses caseload scoping; required for whole-program internal reports."],
       ["clients:list-deidentified", "List de-identified clients", "Client codes only, never names or identifiers."],
       ["clients:merge", "Merge duplicate clients", "Combine two client records, audited."],
       ["clients:legal-hold", "Place a legal hold", "Prevent deletion/merge of a client record under hold."],
@@ -10477,9 +10477,9 @@ var require_permissions = __commonJS({
       ["imports:*", "Data imports (all)", "Run and review bulk imports."],
       ["graph:import", "Import from OneNote", "Fetch the shared OneNote notebook."],
       ["reports:read", "Read reports", "Run aggregate reports."],
-      ["reports:internal", "Run internal reports", "Identified/caseload reports for programme use (never publication)."],
+      ["reports:internal", "Run internal reports", "Identified/caseload reports for program use (never publication)."],
       ["reports:exact", "Exact counts", "Unsuppressed counts for internal runs."],
-      ["reports:funder", "File the funder submission", "The programme's own submission runs of the funder report, NDP log and settlement report: exact aggregates, no client-level data."],
+      ["reports:funder", "File the funder submission", "The program's own submission runs of the funder report, NDP log and settlement report: exact aggregates, no client-level data."],
       ["assignments:manage", "Manage caseloads", "Assign workers to clients and move caseloads between workers."],
       ["export:read", "Export data", "De-identified (Safe Harbor) exports, caseload-scoped."],
       ["export:identified", "Export identified data", "Exports with names, dates of birth, addresses. Never held with a de-identified role."],
@@ -10488,8 +10488,8 @@ var require_permissions = __commonJS({
       ["forms:write", "Manage form templates", "Upload and edit form templates."],
       ["episodes:*", "Episodes (all)", "Open, edit and close treatment episodes."],
       ["overdose:*", "Overdose events (all)", "Record overdose and reversal events."],
-      ["documents:read", "Read documents", "Programme documents."],
-      ["documents:write", "Manage documents", "Upload and organise programme documents."],
+      ["documents:read", "Read documents", "Program documents."],
+      ["documents:write", "Manage documents", "Upload and organize program documents."],
       ["disclosures:override", "Override disclosure basis", "Record a disclosure on supervisor-override or other non-consent bases."],
       ["patient-requests:*", "Client rights requests (all)", "Handle access/amendment/accounting requests."],
       ["careplan:*", "Care plans (all)", "Problem list and care coordination plans."],
@@ -11726,6 +11726,7 @@ var require_client_filters = __commonJS({
     var DAY = 864e5;
     function risk(level) {
       if (level === "high") return { sql: `c.risk_level IN ('high','critical')`, params: [] };
+      if (level === "not_assessed") return { sql: `COALESCE(c.risk_level,'')=''`, params: [] };
       return { sql: "c.risk_level=?", params: [level] };
     }
     function noContactSince(since = new Date(Date.now() - 30 * DAY).toISOString()) {
@@ -12683,6 +12684,7 @@ var require_clients = __commonJS({
           params.push(status);
         }
         const q = (ctx.query.get("q") || "").trim();
+        let nameTier = null;
         if (q) {
           if (/^[A-Z]+\d*-\d+(-D)?$/i.test(q)) {
             where.push("c.client_code=?");
@@ -12719,6 +12721,23 @@ var require_clients = __commonJS({
               }
             }
             where.push(`(${clauses.join(" OR ")})`);
+            const exactParts = parts.flatMap((p) => M.searchPartTokens(p, { exact: true }));
+            const prefixes = parts.flatMap((p) => [M.namePrefixIndex(p)]).filter(Boolean);
+            const inList = (n) => Array(n).fill("?").join(",");
+            nameTier = {
+              sql: `(CASE WHEN c.full_name_idx IN (?,?) THEN 0
+            WHEN c.last_name_idx IN (${inList(idxs.length)}) OR c.first_name_idx IN (${inList(parts.length)}) OR c.preferred_name_idx IN (${inList(parts.length)})${exactParts.map(() => " OR instr(c.name_phonetic_idx, ?) > 0").join("")} THEN 1
+            ${prefixes.length ? `WHEN c.name_prefix_idx IN (${inList(prefixes.length)}) OR c.first_name_prefix_idx IN (${inList(prefixes.length)})${prefixes.map(() => " OR instr(c.name_phonetic_idx, ?) > 0").join("")} THEN 2` : ""}
+            ELSE 3 END)`,
+              params: [blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")), ...idxs, ...parts.map((p) => blindIndex2(p.toLowerCase())), ...parts.map((p) => M.preferredNameIndex(p)), ...exactParts, ...prefixes, ...prefixes, ...prefixes]
+            };
+            if (ctx.query.get("rank") === "1") {
+              const best = db3.one(`SELECT MIN(${nameTier.sql}) t FROM clients c WHERE ${where.join(" AND ")}`, ...nameTier.params, ...params);
+              if (best && best.t !== null && best.t < 3) {
+                where.push(`${nameTier.sql} < 3`);
+                params.push(...nameTier.params);
+              }
+            }
           }
         }
         const assigned = ctx.query.get("assigned_to");
@@ -12733,7 +12752,7 @@ var require_clients = __commonJS({
           filters.push(name);
         };
         const risk = ctx.query.get("risk");
-        if (risk && ["high", "low", "moderate", "critical"].includes(risk)) addFilter("risk", F.risk(risk));
+        if (risk && ["high", "low", "moderate", "critical", "not_assessed"].includes(risk)) addFilter("risk", F.risk(risk));
         if (ctx.query.get("stale") === "1") addFilter("stale", F.noContactSince());
         const substance = (ctx.query.get("substance") || "").slice(0, 60);
         if (substance) addFilter("substance", F.substance(substance));
@@ -12752,8 +12771,14 @@ var require_clients = __commonJS({
         const now2 = db3.now();
         const LAST_CONTACT = `(SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied')))`;
         const OVERDUE = `(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END))`;
-        const sortCols = sort === "overdue" ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [now2] } : sort === "last_contact" || sort === "risk" ? { sql: `, ${LAST_CONTACT} AS last_contact`, params: [] } : { sql: "", params: [] };
-        const pageIds = db3.all(`SELECT c.id ${sortCols.sql} FROM clients c ${w} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`, ...sortCols.params, ...params, limit2, offset).map((x) => x.id);
+        let sortCols = sort === "overdue" ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [now2] } : sort === "last_contact" || sort === "risk" ? { sql: `, ${LAST_CONTACT} AS last_contact`, params: [] } : { sql: "", params: [] };
+        let pageOrder = order;
+        if (nameTier && !sort) {
+          const recent = db3.all(`SELECT client_id FROM audit_log WHERE user_id=? AND client_id IS NOT NULL AND action IN ('client.view','client.create','client.update','intervention.create','call.create','note.create','note.update') GROUP BY client_id ORDER BY MAX(at) DESC LIMIT 20`, ctx.user.id).map((x) => x.client_id);
+          sortCols = { sql: `, ${nameTier.sql} AS match_tier, (c.id IN (SELECT value FROM json_each(?))) AS is_recent`, params: [...nameTier.params, JSON.stringify(recent)] };
+          pageOrder = "CASE WHEN match_tier <= 1 THEN 0 WHEN is_recent THEN 1 ELSE 2 END, match_tier, is_recent DESC, c.updated_at DESC";
+        }
+        const pageIds = db3.all(`SELECT c.id ${sortCols.sql} FROM clients c ${w} ORDER BY ${pageOrder}, c.id LIMIT ? OFFSET ?`, ...sortCols.params, ...params, limit2, offset).map((x) => x.id);
         const byId = new Map(db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth3.activeAssignment("a.")}) AS assigned_workers,
       ${LAST_CONTACT} AS last_contact, ${OVERDUE} AS overdue_tasks
       ${consentWindow ? `, (SELECT MIN(co.expires_at) FROM consents co WHERE co.client_id=c.id AND co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ?) AS consent_expires_at` : ""}
@@ -12796,6 +12821,7 @@ var require_clients = __commonJS({
         const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id };
         for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
         if (!cols2.intake_date) cols2.intake_date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        if (cols2.risk_level === void 0) cols2.risk_level = null;
         const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
         let episodeId = null;
         db3.transaction(() => {
@@ -14275,8 +14301,10 @@ var require_time_entries = __commonJS({
     init_globals_inject();
     var db3 = require_db();
     var auth3 = require_auth2();
-    var { define: define2 } = require_core();
+    var { define: define2, refuse } = require_core();
     var { periodProblem, ownedBy } = require_shared();
+    var APPROVED = "This time entry has been approved and is part of a signed-off time sheet, so it cannot be changed or deleted. Ask a supervisor to reopen it (return it for correction) first.";
+    var owned = ownedBy(["user_id"], "time:all");
     module.exports = define2({
       table: "time_entries",
       fields: {
@@ -14292,7 +14320,8 @@ var require_time_entries = __commonJS({
         call_id: { type: "string" }
       },
       owner: { col: "user_id", all: "time:all" },
-      editableBy: ownedBy(["user_id"], "time:all"),
+      // 'not permitted …' is one of sync-tables.js's permanent reasons: the device stops resending the edit.
+      editableBy: (user, row) => row.status === "approved" ? refuse("not permitted (the time entry is approved; a supervisor must reopen it)", { status: 409, message: APPROVED }) : owned(user, row),
       check(row, c) {
         const e = c.existing || {};
         if (c.existing && !["work_date", "funding_source_id"].some((k) => row[k] !== void 0 && String(row[k] ?? "") !== String(e[k] ?? ""))) return null;
@@ -15134,7 +15163,7 @@ var require_form_starters = __commonJS({
           area("justification", "How this supports their recovery plan", { required: true }),
           text("amount", "Amount requested", { required: true }),
           text("vendor", "Vendor or provider"),
-          check("alternatives", "Other sources were checked first (Medicaid, CalFresh, housing programmes)"),
+          check("alternatives", "Other sources were checked first (Medicaid, CalFresh, housing programs)"),
           text("requested_by", "Requested by", { required: true }),
           date("requested_on", "Date", { required: true }),
           section("sec_approval", "Approval"),
@@ -17232,6 +17261,13 @@ var require_crud = __commonJS({
       const R = rules.forTable(table, { optional: true });
       const shape = opts.shape || R.shape(opts.extraShape);
       const canEdit = opts.canEdit || (R.editableBy ? (ctx, row) => !R.editableBy(ctx.user, row) : null);
+      function assertMayChange(ctx, row, what) {
+        if (!opts.canEdit && R.editableBy) {
+          const no = R.editableBy(ctx.user, row);
+          if (no && no.status !== 403 && no.toHttp) throw no.toHttp();
+        }
+        if (canEdit && !canEdit(ctx, row)) throw forbidden(`You cannot ${what} this record`);
+      }
       const ownerAll = R.owner && R.owner.col === ownerCol ? R.owner.all : "clients:all";
       const restrictOwner = opts.restrictOwner !== void 0 ? opts.restrictOwner : !!(R.owner && R.owner.col === ownerCol);
       const base = opts.base || `/api/${entity}s`;
@@ -17332,7 +17368,7 @@ var require_crud = __commonJS({
         if (!row) throw notFound();
         if (row.client_id) auth3.assertClientAccess(ctx, row.client_id, DEID);
         else assertUnlinkedOwner(ctx, row);
-        if (canEdit && !canEdit(ctx, row)) throw forbidden("You cannot edit this record");
+        assertMayChange(ctx, row, "edit");
         if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
         const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true, existing: row });
         if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
@@ -17351,7 +17387,7 @@ var require_crud = __commonJS({
         if (!row) throw notFound();
         if (row.client_id) auth3.assertClientAccess(ctx, row.client_id, DEID);
         else assertUnlinkedOwner(ctx, row);
-        if (canEdit && !canEdit(ctx, row)) throw forbidden("You cannot delete this record");
+        assertMayChange(ctx, row, "delete");
         if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden("You cannot delete this record");
         if (opts.beforeDelete) opts.beforeDelete(ctx, row);
         db3.run(`DELETE FROM ${table} WHERE id=?`, row.id);
@@ -21127,7 +21163,7 @@ var require_admin = __commonJS({
             if (k === "sso_deprovision_days" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 3650)) throw badRequest("sso_deprovision_days must be 0 (off) or a whole number of days");
             if (k === "scim_default_role" && v !== "" && !ROLES.includes(v)) throw badRequest(`scim_default_role must be one of ${ROLES.join(", ")}`);
             if (k === "scim_group_roles" && v !== "") v = require_scim().normaliseGroupRoles(v);
-            if (k === "programme_profile" && !require_programme().PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require_programme().PROFILES).join(", ")}`, { fields: { programme_profile: "choose a programme profile" } });
+            if (k === "programme_profile" && !require_programme().PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require_programme().PROFILES).join(", ")}`, { fields: { programme_profile: "choose a program profile" } });
             if (k.startsWith("module_") && v !== "" && !["0", "1"].includes(v)) throw badRequest(`${k} must be 1 (on), 0 (off) or blank (as the profile has it)`);
             if (k === "default_fund_id" && v !== "" && !db3.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v)) throw badRequest("default_fund_id must be an active funding source");
             if (k === "small_cell_threshold" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 2 && Number(v) <= 50)) throw badRequest("small_cell_threshold must be a whole number from 2 to 50");
@@ -22505,7 +22541,7 @@ var require_assignments2 = __commonJS({
     var db3 = require_db();
     var auth3 = require_auth2();
     var audit3 = require_audit();
-    var { notFound } = require_http();
+    var { notFound, badRequest } = require_http();
     var { validate } = require_validate();
     var { uuid: uuid2, encrypt: encrypt3 } = require_crypto();
     var rules = require_rules();
@@ -22515,12 +22551,15 @@ var require_assignments2 = __commonJS({
         if (!c) throw notFound();
         const v = validate(ctx.body, rules.forTable("assignments").shape());
         rules.assertWrite("assignments", { client_id: c.id, ...rules.toColumns("assignments", v) }, ctx);
+        const restores = ctx.query.get("restores");
+        const undone = restores ? db3.one(`SELECT id FROM assignments WHERE id=? AND client_id=? AND user_id=? AND role_on_case=? AND end_date IS NOT NULL`, restores, c.id, v.user_id, v.role_on_case || "primary") : null;
+        if (restores && !undone) throw badRequest("The assignment to restore was not found, or it has not ended.");
         const id = uuid2();
         db3.transaction(() => {
           if ((v.role_on_case || "primary") === "primary") db3.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, db3.now(), c.id);
           db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || "primary", v.start_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), v.notes ? encrypt3(v.notes) : null, ctx.user.id);
         });
-        audit3.log({ user: ctx.user, action: "assignment.create", entity: "assignment", entityId: id, clientId: c.id, ip: ctx.ip, details: { user_id: v.user_id, role: v.role_on_case } });
+        audit3.log({ user: ctx.user, action: undone ? "assignment.restore" : "assignment.create", entity: "assignment", entityId: id, clientId: c.id, ip: ctx.ip, details: { user_id: v.user_id, role: v.role_on_case, ...undone ? { restores: undone.id } : {} } });
         ctx.status = 201;
         return { id };
       });
@@ -24691,6 +24730,7 @@ var require_dataimport2 = __commonJS({
                   enc2.full_name_idx = blindIndex2((rec.last_name || "") + (rec.first_name || ""));
                   const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id, intake_date: rec.intake_date || now2.slice(0, 10) };
                   for (const f of M.PLAIN_FIELDS) if (rec[f] !== void 0 && rec[f] !== null) cols2[f] = rec[f];
+                  if (cols2.risk_level === void 0) cols2.risk_level = null;
                   const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
                   db3.run(`INSERT INTO clients(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
                   if (auth3.caseloadRestricted(ctx.user) || ["navigator", "clinician"].includes(ctx.user.role)) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid2(), id, ctx.user.id, "primary", cols2.intake_date, ctx.user.id);
@@ -25023,7 +25063,7 @@ var require_documents = __commonJS({
         return { id };
       });
       r.put("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
-        const d = db3.one(`SELECT id, updated_at FROM policy_documents WHERE id=?`, ctx.params.id);
+        const d = db3.one(`SELECT id, updated_at, is_active FROM policy_documents WHERE id=?`, ctx.params.id);
         if (!d) throw notFound();
         require_crud().assertFresh(ctx, d, "document");
         const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
@@ -25042,7 +25082,8 @@ var require_documents = __commonJS({
         if (!sets.length) return { ok: true, updated_at: d.updated_at };
         const stamp2 = db3.now();
         db3.run(`UPDATE policy_documents SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, d.id);
-        audit3.log({ user: ctx.user, action: "document.update", entity: "policy_document", entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)) } });
+        const reactivated = !!v2.is_active && !d.is_active;
+        audit3.log({ user: ctx.user, action: reactivated ? "document.reactivate" : "document.update", entity: "policy_document", entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)) } });
         return { ok: true, updated_at: stamp2 };
       });
       r.delete("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
@@ -28766,7 +28807,7 @@ var require_release_audit = __commonJS({
     }
     function refusalMessage(r) {
       const why = r.backstop ? "the check of this period's figures ran past the server's time limit" : r.outOfBudget ? "the check of this period's figures reached its limit before it could finish" : r.headline ? "the number of people served could not be shown without giving someone away" : "the check could not confirm that every small count in it is protected";
-      return `This period cannot be published: ${why}, so no publication release was made. Publish a longer standard period (a quarter or a year). The programme's own submission to its funder, which is not for publication, is unaffected.`;
+      return `This period cannot be published: ${why}, so no publication release was made. Publish a longer standard period (a quarter or a year). The program's own submission to its funder, which is not for publication, is unaffected.`;
     }
     function protectFigures(inputs, T, { strict = false, budget, stepLimit, timeLimitMs = AUDIT_BACKSTOP_MS, degrade = true } = {}) {
       const raw = prepare(inputs.funder, inputs.domains);
@@ -37104,7 +37145,7 @@ var require_resources3 = __commonJS({
         return { id };
       });
       r.put("/api/resources/:id", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
-        const row = db3.one(`SELECT id, updated_at FROM resources WHERE id=?`, ctx.params.id);
+        const row = db3.one(`SELECT id, updated_at, is_active FROM resources WHERE id=?`, ctx.params.id);
         if (!row) throw notFound();
         require_crud().assertFresh(ctx, row, "resource");
         const v = validate(ctx.body, { ...shape, name: { ...shape.name, required: false }, category: { ...shape.category, required: false } }, { partial: true });
@@ -37114,7 +37155,8 @@ var require_resources3 = __commonJS({
         if (!keys.length) return { ok: true, updated_at: row.updated_at };
         const stamp2 = db3.now();
         db3.run(`UPDATE resources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, row.id);
-        audit3.log({ user: ctx.user, action: "resource.update", entity: "resource", entityId: row.id, ip: ctx.ip, details: { fields: keys } });
+        const reactivated = !!v.is_active && !row.is_active;
+        audit3.log({ user: ctx.user, action: reactivated ? "resource.reactivate" : "resource.update", entity: "resource", entityId: row.id, ip: ctx.ip, details: { fields: keys } });
         return { ok: true, updated_at: stamp2 };
       });
       r.delete("/api/resources/:id", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
@@ -37834,11 +37876,12 @@ var require_supervision = __commonJS({
         const t = loadEntry(ctx, ctx.params.id);
         const v = validate(ctx.body, { decision: { type: "string", required: true, enum: ["approved", "rejected"] }, note: { type: "string", maxLen: 500 } });
         if (t.user_id === ctx.user.id) throw forbidden("You cannot approve your own time");
-        if (t.status !== "submitted") throw badRequest("Only submitted time can be approved or returned");
+        const reopening = t.status === "approved" && v.decision === "rejected";
+        if (t.status !== "submitted" && !reopening) throw badRequest(t.status === "approved" ? "This time is already approved; return it with a reason to reopen it for correction" : "Only submitted time can be approved or returned");
         if (v.decision === "rejected" && !v.note) throw badRequest(NO_REASON);
         const note = v.note ? encrypt3(v.note) : null;
         db3.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db3.now(), note, db3.now(), t.id);
-        audit3.log({ user: ctx.user, action: `time.${v.decision}`, entity: "time_entry", entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes, note_recorded: v.note ? true : void 0 } });
+        audit3.log({ user: ctx.user, action: `time.${v.decision}`, entity: "time_entry", entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes, note_recorded: v.note ? true : void 0, reopened: reopening || void 0 } });
         return { ok: true };
       });
       r.post("/api/time/approve-batch", auth3.requireAuth, auth3.requirePerm("time:approve"), (ctx) => {
@@ -41879,7 +41922,7 @@ function isStaticHost() {
     return false;
   }
 }
-var STATIC_HOST_MESSAGE = 'SUDS on this device does not sync with an office server: your records stay in this browser. Keep them safe with "Download a backup" on this page. If your programme runs an office SUDS server, use SUDS at its address instead.';
+var STATIC_HOST_MESSAGE = 'SUDS on this device does not sync with an office server: your records stay in this browser. Keep them safe with "Download a backup" on this page. If your program runs an office SUDS server, use SUDS at its address instead.';
 function assertNotStaticHost() {
   if (isStaticHost()) throw new import_http.HttpError(403, STATIC_HOST_MESSAGE, { staticSyncRefused: true });
 }

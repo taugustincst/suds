@@ -9,7 +9,7 @@ import { h, get, post, put, del, state, form, modal, toast, table, badge, fmt, c
 const C = () => state.constants || {};
 // SUDS stores only the six dimension names and 0-4 ratings. The ASAM Criteria are copyrighted and "ASAM" is a
 // trademark of the American Society of Addiction Medicine; neither is included or licensed with SUDS.
-export const ASAM_NOTICE = 'SUDS records six-dimension risk ratings (0–4) and the level of care decision. It does not include the ASAM Criteria. "ASAM" is a trademark of the American Society of Addiction Medicine; this feature is not endorsed by ASAM. Your program needs its own licence from ASAM to use the Criteria.';
+export const ASAM_NOTICE = 'SUDS records six-dimension risk ratings (0–4) and the level of care decision. It does not include the ASAM Criteria. "ASAM" is a trademark of the American Society of Addiction Medicine; this feature is not endorsed by ASAM. Your program needs its own license from ASAM to use the Criteria.';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const PROBLEM_STATUS_KIND = { active: 'warn', resolved: 'ok', inactive: '' };
 const GOAL_STATUS_KIND = { active: 'info', met: 'ok', partially_met: 'warn', not_met: 'danger', discontinued: '' };
@@ -125,7 +125,8 @@ export async function problemsTab(clientId, { refresh } = {}) {
         writable ? h('button', { class: 'btn sm ghost', 'data-edit-problem': p.id, onClick: () => openProblemForm(clientId, p, { onDone: refresh }) }, 'Edit') : null,
         writable && p.status === 'active' ? h('button', { class: 'btn sm ghost', 'data-resolve-problem': p.id, onClick: async () => { await put(`/api/problems/${p.id}`, { status: 'resolved', if_updated_at: p.updated_at }); toast('Marked resolved', 'ok'); refresh && refresh(); } }, 'Resolve') : null,
         h('button', { class: 'btn sm ghost', 'data-problem-history-btn': p.id, onClick: () => showHistory(p) }, 'History')) },
-    ], rows) : emptyState('No problems recorded', 'Add what the client is working on — health, substance use, housing, legal, income. An optional ICD-10-CM code and social determinant (Z) codes can be attached.'));
+    ], rows) : emptyState('No problems recorded', writable ? 'Add what the client is working on — health, substance use, housing, legal, income. An optional ICD-10-CM code and social determinant (Z) codes can be attached.' : 'The client\'s care team (a navigator or clinician who may edit the care plan) adds what the client is working on.',
+      writable ? h('button', { class: 'btn primary', 'data-empty-action': 'problem', onClick: () => openProblemForm(clientId, null, { onDone: refresh }) }, '+ Add the first problem') : null));
 }
 
 // ---------------------------------------------------------------- Care plan
@@ -206,7 +207,8 @@ export async function carePlanTab(clientId, { refresh, clientDisplay } = {}) {
       h('div', { class: 'row nowrap' },
         h('button', { class: 'btn sm', 'data-print-careplan': '1', onClick: () => printCarePlan(clientDisplay || '', problems, goals) }, 'Print'),
         writable ? h('button', { class: 'btn sm primary', 'data-add-goal': '1', onClick: () => openGoalForm(clientId, null, active, { onDone: refresh }) }, '+ Goal') : null)),
-      !goals.length ? emptyState('No goals yet', active.length ? 'Start with what the client most wants to change, in their words.' : 'Goals usually follow from the problem list — add problems first, then a goal for the ones the client wants to work on.') : null),
+      !goals.length ? emptyState('No goals yet', !writable ? 'The client\'s care team (a navigator or clinician who may edit the care plan) sets goals with the client.' : active.length ? 'Start with what the client most wants to change, in their words.' : 'Goals usually follow from the problem list — add problems first, then a goal for the ones the client wants to work on.',
+        writable ? (active.length ? h('button', { class: 'btn primary', 'data-empty-action': 'goal', onClick: () => openGoalForm(clientId, null, active, { onDone: refresh }) }, '+ Add the first goal') : h('a', { class: 'btn primary', 'data-empty-action': 'problems', href: `#/client/${clientId}/problems` }, 'Go to the problem list')) : null) : null),
     goals.map(goalCard));
 }
 
@@ -353,7 +355,7 @@ export async function instrumentsCard(onDone) {
     await put(`/api/admin/instruments/${i.code}`, { enabled: false }); toast(`${i.name} is off`, 'ok'); onDone && onDone();
   };
   return h('div', { class: 'card', 'data-instruments': '1' }, h('h2', {}, 'Screening instruments'),
-    h('p', { class: 'small muted' }, 'PHQ-9, GAD-7, AUDIT-C and the wellbeing item are always available. The instruments below are licensed for limited uses, so each is off until you confirm this program holds the rights to use it. The six-dimension assessment is ASAM-aligned only: SUDS does not include the ASAM Criteria, and your program needs its own licence from ASAM to use them.'),
+    h('p', { class: 'small muted' }, 'PHQ-9, GAD-7, AUDIT-C and the wellbeing item are always available. The instruments below are licensed for limited uses, so each is off until you confirm this program holds the rights to use it. The six-dimension assessment is ASAM-aligned only: SUDS does not include the ASAM Criteria, and your program needs its own license from ASAM to use them.'),
     table([
       { label: 'Instrument', render: i => h('div', {}, h('b', {}, i.name), h('div', { class: 'small muted' }, i.title)) },
       { label: 'Status', render: i => i.enabled ? h('span', {}, badge('On', 'ok'), i.confirmed_by_name ? h('div', { class: 'small muted' }, `Rights confirmed by ${i.confirmed_by_name}${i.confirmed_at ? ', ' + fmt.date(i.confirmed_at) : ''}`) : null) : badge('Off') },

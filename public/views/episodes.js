@@ -78,7 +78,7 @@ export async function episodesPanel(clientId, { onChange, client = null } = {}) 
   if (!rows.length) {
     // The card-head button above already offers this when there is no open episode, so the empty state
     // itself does not repeat it — two adjacent "Start an episode" buttons doing the same thing.
-    box.append(emptyState('No episodes yet', 'This person was entered without being admitted (for example, straight onto the waitlist). Starting an episode is the admission: funders count admissions and discharges per episode, and closing one is what takes a client off the active caseload.'));
+    box.append(emptyState('No episodes yet', `This person was entered without being admitted (for example, straight onto the waitlist). Starting an episode is the admission: funders count admissions and discharges per episode, and closing one is what takes a client off the active caseload.${can('episodes:write') ? ' Use + Start an episode above.' : ' A supervisor, clinician or anyone who may edit episodes starts one.'}`));
   } else {
     box.append(table([
       { label: 'Opened', render: e => fmt.date(e.opened_at) },
@@ -116,10 +116,10 @@ route('waitlist', async () => {
       { label: 'Client', render: r => r.display_name },
       { label: 'Code', key: 'client_code' },
       { label: 'Waiting', render: r => flag(`${r.days_waiting} day${r.days_waiting === 1 ? '' : 's'}`, r.days_waiting > 30, 'waiting more than 30 days'), num: true },
-      { label: 'Risk', render: r => badge(fmt.label(r.risk_level || 'unknown'), r.risk_level === 'critical' || r.risk_level === 'high' ? 'danger' : '') },
+      { label: 'Risk', render: r => badge(r.risk_level ? fmt.label(r.risk_level) : 'Not assessed', r.risk_level === 'critical' || r.risk_level === 'high' ? 'danger' : '') },
       { label: 'Substance', render: r => fmt.label(r.primary_substance || 'unknown', 'SUBSTANCES') },
       { label: 'Level of care', render: r => r.asam_level || '—' },
       { label: 'Last contact', render: r => (r.last_contact ? fmt.date(r.last_contact) : h('span', { style: { color: 'var(--danger)' } }, 'never')) },
     ], rows, { onRow: (r) => nav(`client/${r.id}`), rowLabel: (r) => `${r.display_name}, waiting ${r.days_waiting} days` }) })
-      : emptyState('Nobody is waiting', 'Clients with the status "waitlist" appear here, ordered by how long they have waited.'));
+      : emptyState('Nobody is waiting', 'Clients with the status "waitlist" appear here, ordered by how long they have waited.', h('a', { class: 'btn', 'data-empty-action': 'clients', href: '#/clients' }, 'Open the client list')));
 });

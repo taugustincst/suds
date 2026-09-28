@@ -1,7 +1,7 @@
 {
   "name": "SUDS — SUD Navigator Services Tracker",
   "short_name": "SUDS",
-  "description": "Outreach, visits, naloxone and supplies, referrals and grant reporting for harm-reduction and prevention programmes",
+  "description": "Outreach, visits, naloxone and supplies, referrals and grant reporting for harm-reduction and prevention programs",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

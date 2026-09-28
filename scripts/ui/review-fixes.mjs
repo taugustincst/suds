@@ -364,7 +364,9 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   // The visit form offers what the office set up, with an "Edit this list" link for the administrator.
   await page.reload(); await page.waitForSelector('.layout'); await settle(page);
   await go(page, 'interventions');
-  await page.click('text=+ Log a visit'); await page.waitForSelector('.modal select[name=location]');
+  await page.click('text=+ Log a visit'); await page.waitForSelector('.modal select[name=location]', { state: 'attached' });
+  // Location is under "Where & how", folded on a new visit since 1.15.3.
+  await page.click('.modal details[data-section-key="where"] > summary');
   const locs = await page.$$eval('.modal select[name=location] option', o => o.map(x => [x.value, x.textContent]));
   ok(locs.some(([v, t]) => v === 'mobile_van' && t === 'Mobile van'), 'the new location is offered on the visit form', locs);
   ok(!locs.some(([v]) => v === 'jail'), 'the retired one is not');

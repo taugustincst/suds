@@ -90,7 +90,17 @@ by rule.
     `alt: ''`. A clickable picture is a `<button>` around the image.
 16. **Time limits.** The only one is the idle sign-out, which warns a minute ahead with a "Stay signed in"
     button (WCAG 2.2.1). Do not add others; a toast that disappears must not be the only place something is said
-    that the person has to act on.
+    that the person has to act on. The Undo toast (`undoToast()`, 1.15.3) is an extra way back, not the only one
+    (the thing undone can be put back from its own page), and it holds for as long as the pointer is over it or
+    its button has focus.
+18. **Keyboard shortcuts (WCAG 2.1.4).** Single-character shortcuts live in one handler in `public/app.js`
+    (`SHORTCUTS`): they never act while focus is in a text field, select or editable area, or while a dialog is
+    open, and `shortcutsOn()` (My profile → Keyboard shortcuts, prefs `shortcuts_off`) turns them all off. A new
+    one goes in that list (and so in the `?` dialog), never in a view's own keydown handler. A shortcut with a
+    modifier (Ctrl/⌘ + Enter) presses the form's own submit button, so it runs exactly the checks a click does.
+19. **Reflow at 200% zoom.** Check a new page at 640×400 CSS px with device scale 2 (a 1280 px window at 200%):
+    no sideways scroll, and no tab past the right-hand edge. A long tab strip is `tabStrip()` (a More menu) or
+    `pageTabs(…, { wrap: true })` (rows), not a sideways scroller that hides tabs off the edge.
 17. **Touch targets.** Controls are at least 44×44 CSS px on a touch screen (`@media (pointer: coarse)` in
     styles.css covers the shared classes); a new small control class belongs in that list.
 

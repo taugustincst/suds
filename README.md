@@ -95,7 +95,7 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 | Overdoses & reversals | Overdose and reversal reports (who gave naloxone, doses, where), linked to a client or anonymous |
 | Grant reporting | Funder report (unduplicated people, services, hours, spending by fund; exact counts for your own submission, small-cell screened for publication), a Naloxone Distribution Project-style log (with the naloxone product where the visit recorded it), a syringe services summary and opioid-settlement spending by allowable use — each layout to be checked against the current official template |
 | Clients | Encrypted demographics and contact info, substance use profile, ASAM level, MAT status, overdose / naloxone history, risk level, housing, insurance, safety flags, program status and intake/discharge |
-| Visits | 25 SUD-navigation visit (intervention) types, duration, location/modality, outcome, stage of change, naloxone kits and fentanyl test strips, funding source, cost, follow-up to-do creation, automatic time entry |
+| Visits | 25 SUD-navigation visit (intervention) types, duration, location/modality, outcome, stage of change, naloxone kits and fentanyl test strips, funding source, cost, follow-up to-do creation, time entry from the visit when ticked |
 | Calls | Direction, contact type, duration, outcome, crisis flag, encrypted summary, follow-up scheduling |
 | Time | Per-worker time entries by category and funding source, billable flag, summaries by worker / category / day / fund |
 | Starter directories | One-click load of a whole region's programs (81 across the eight Sacramento-area counties), flagged unverified until your staff confirm each one |

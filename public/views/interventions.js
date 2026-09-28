@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, listEntries, prefs } from '../app.js';
+import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, listEntries, prefs, NOT_SAVED, offerResume, render } from '../app.js';
 import { flattenLines } from './budget.js';
 import { SECTIONS as NOTE_SECTIONS, sectionLabel } from './notes.js';
 
@@ -94,7 +94,7 @@ function supplyPicker(cat, { lines = [], counts = {}, siteId = null, isNew = tru
     h('legend', {}, 'Supplies given'),
     list, addWrap, missingNotice(cat, missing, onAddStandard),
     siteSel ? h('div', { class: 'field' }, h('label', { for: siteSel.id }, 'Supplies came from'), siteSel) : null,
-    h('p', { class: 'help small muted' }, isNew ? 'Taken off the stock at that site, the batch that expires first first.' : 'A change here puts stock back or takes more, by the difference.'));
+    h('p', { class: 'help small muted' }, isNew ? 'Taken off the stock at that site, the batch that expires soonest first.' : 'A change here puts stock back or takes more, by the difference.'));
   return { el, value, untrackedValue, total: () => value().reduce((n, x) => n + x.quantity, 0) + Object.values(untrackedValue()).reduce((n, x) => n + x, 0),
     changed: () => snapshot() !== initial, site: () => (siteSel ? siteSel.value : null), siteChanged: () => !!siteSel && siteSel.value !== initialSite };
 }
@@ -108,9 +108,16 @@ function supplyPicker(cat, { lines = [], counts = {}, siteId = null, isNew = tru
 // person last left it (prefs VISIT_SECTIONS, per user). Nothing was removed; every field is still there.
 const VISIT_SECTIONS = 'visit_sections';
 // The worker's last new visit: its type, location and modality start the next one (prefs VISIT_LAST); the
-// programme's default location is used until there is one. And whether they last left "Also log this as a
-// time entry" on (prefs VISIT_LOG_TIME; on until they turn it off, as before).
-const VISIT_LAST = 'visit_last'; const VISIT_LOG_TIME = 'visit_log_time';
+// programme's default location is used until there is one.
+// "Also log this as a time entry" starts unticked on every new visit, for everyone (1.15.3): ticked by default
+// (and then remembered), a duration nobody checked went on the time sheet as hours worked. Ticking it is now an
+// explicit choice each time, and a prefilled duration nobody changed is confirmed before it is logged.
+const VISIT_LAST = 'visit_last';
+// A new visit's unsent draft (every field, the supply lines and the note's sections) is kept in memory like
+// every form's (public/app.js drafts: never in browser storage). Opening Log a visit again asks "Resume your
+// unsent visit?" rather than filling it in unasked, and after signing back in the same question is at the top.
+const VISIT_DRAFT = 'intervention:new';
+offerResume(VISIT_DRAFT, { question: 'Resume your unsent visit?', open: () => openInterventionForm(null, { onDone: render }) });
 const SECTION_FIELDS = { outcome: ['outcome', 'stage_of_change', 'follow_up_due'], syringes: ['syringes_returned', 'returns_estimated', 'sharps_returned_litres'],
   funding: ['funding_source_id', 'budget_line_id', 'cost'], time: ['duration_minutes', 'log_time', 'time_category'], recorded_by: ['user_id'], note: ['note_title', 'note_content'] };
 const NOTE_KINDS = () => ['admin', 'clinical'].filter(k => can(`notes:${k}:write`));
@@ -147,19 +154,28 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
     if (usable('LOCATIONS', last.location) && !(preset && preset.location)) seed.location = last.location;
     if (usable('MODALITIES', last.modality)) seed.modality = last.modality;
   }
-  const logTimeDefault = prefs.get(VISIT_LOG_TIME, true) !== false;
+  const logTimeDefault = false;
   // Outreach and community naloxone distribution can be recorded with no client (a kit handed to someone who
   // gives no name); every other service needs one. The server enforces the same list.
   const clientless = (type) => (C.CLIENTLESS_INTERVENTION_TYPES || ['outreach', 'naloxone_distribution']).includes(type);
   const clientField = { name: 'client_id', label: 'Client', type: 'client', required: !clientless(seed.type), value: clientId || values?.client_id, display: clientDisplay,
     help: 'Optional for outreach and community naloxone distribution (someone who gives no name); required for everything else.' };
   const noteKinds = isNew ? NOTE_KINDS() : [];
+  // The duration counts as looked at once the person changes it (or a resumed draft had one of its own).
+  let durationChecked = false;
+  const clientName = () => { const t = f.inputs.client_id && f.inputs.client_id.searchInput; return (t && t.value.trim()) || clientDisplay || 'this client'; };
   const section = (key, label, hint) => ({ type: 'section', key, label, collapsible: true, heading: true, hint });
   const f = form([
     clientField,
     { name: 'type', label: 'What did you do?', type: 'select', list: 'INTERVENTION_TYPES', required: true },
     { name: 'occurred_at', label: 'Date & time', type: 'datetime', required: true, value: new Date().toISOString() },
+    // Where and how (1.15.3): filled in from this worker's last visit, so on a new visit it is folded away with
+    // what it holds in its heading ("Where & how — Office · In person"), one tap from being changed. At 390 px a
+    // new visit of any type then shows seven fields before its sections: client, what was done, date & time,
+    // the supplies' usual items and the summary. An edit shows it open.
+    section('where', 'Where & how'),
     { name: 'location', label: 'Location', type: 'select', list: 'LOCATIONS', value: C.DEFAULT_LOCATION || 'office' }, { name: 'modality', label: 'Modality', type: 'select', list: 'MODALITIES', value: 'in_person' },
+    { type: 'section', end: true },
     // The two counts as number fields only where the program keeps no supply items at all (the picker holds
     // them otherwise, tracked or not): stock is then not tracked, and the help says so.
     !picker ? { name: 'naloxone_kits', label: 'Naloxone kits given', type: 'number', min: 0, step: 1, value: 0 } : null,
@@ -180,7 +196,7 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
       { name: 'budget_line_id', label: 'Budget line', type: 'select', options: [], help: 'Required when there is a direct cost.' },
       { name: 'cost', label: 'Direct cost ($)', type: 'number', min: 0, step: 0.01 }] : []),
     section('time', 'Time'),
-    { name: 'duration_minutes', label: 'Duration (minutes)', type: 'number', min: 0, max: 1440, step: 1, value: 30 },
+    { name: 'duration_minutes', label: 'Duration (minutes)', type: 'number', min: 0, max: 1440, step: 1, value: 30, help: isNew ? 'Filled in as 30 minutes: change it to how long the visit took.' : null },
     isNew ? { name: 'log_time', label: 'Also log this as a time entry', type: 'checkbox', value: logTimeDefault, span: true, help: ' ' } : null,
     isNew ? { name: 'time_category', label: 'Time category', type: 'select', list: 'TIME_CATEGORIES', value: 'direct_service' } : null,
     ...(isNew && can('clients:all') ? [section('recorded_by', 'Recorded by'), { name: 'user_id', label: 'Worker (defaults to you)', type: 'user' }] : []),
@@ -192,7 +208,7 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
       { name: 'note_title', label: 'Title (optional)', span: true },
       { name: 'note_content', label: 'Note', type: 'textarea', span: true, rows: 5, help: 'Saved with the visit as a draft note on the client\'s record, linked to this visit. Sign it from Notes when it is complete.' },
       { name: 'note_part2_protected', label: 'Contains 42 CFR Part 2 protected SUD information', type: 'checkbox', value: true }] : []),
-  ].filter(Boolean), { values: seed, submitText: isNew ? 'Save' : 'Save changes', draftKey: values ? `intervention:${values.id}` : 'intervention:new', onCancel: () => m.close(), onSubmit: async (d) => {
+  ].filter(Boolean), { values: seed, submitText: isNew ? 'Save' : 'Save changes', draftKey: values ? `intervention:${values.id}` : VISIT_DRAFT, resume: isNew ? 'Resume your unsent visit?' : null, onCancel: () => m.close(), onSubmit: async (d) => {
     // What the server would refuse, said under the field before the round trip — in its section, which
     // form() opens for the error: a cost is charged to a fund and a line of it.
     const bad = {};
@@ -200,6 +216,17 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
     const note = readNote(d);
     if (note && !d.client_id) bad.note_content = 'needs a client: choose the client above, or leave the note empty (outreach with no name has no record to put it on)';
     if (Object.keys(bad).length) { const e = new Error('Check the highlighted fields.'); e.data = { fields: bad }; throw e; }
+    // Time is logged only from a duration someone looked at: with the prefilled 30 minutes untouched, Save asks
+    // first, naming the minutes; "Change the duration" goes back to the field with nothing saved.
+    if (isNew && d.log_time && Number(d.duration_minutes) > 0 && !durationChecked) {
+      const mins = Number(d.duration_minutes);
+      const ok = await confirmDialog('Log this time?', `This adds ${mins} minutes of ${fmt.label(d.time_category || 'direct_service', 'TIME_CATEGORIES').toLowerCase()} to ${workerName()} time sheet. ${mins} minutes is what the form starts with: is that how long the visit took?`, { okText: `Log ${mins} minutes`, cancelText: 'Change the duration' });
+      if (!ok) { const t = f.sections.time; if (t) t.open = true; setTimeout(() => { f.inputs.duration_minutes.focus(); f.inputs.duration_minutes.select(); }, 0); return NOT_SAVED; }
+      durationChecked = true;
+    }
+    // The same client, the same day and the same kind of visit already recorded (a double tap, a visit logged
+    // on the phone and again at the desk): asked, not refused, since two visits in a day do happen.
+    if (isNew && d.client_id && d.type && !(await confirmNotDuplicateVisit(d, clientName()))) return NOT_SAVED;
     for (const k of Object.keys(d)) if (k.startsWith('note_')) delete d[k];
     if (note) d.note = note;
     if (picker) {
@@ -209,7 +236,7 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
       if (picker.site() && (isNew || picker.siteChanged())) d.supply_site_id = picker.site();
     }
     const saved = isNew ? await post('/api/interventions', d) : await put(`/api/interventions/${values.id}`, { ...d, if_updated_at: values.updated_at });
-    if (isNew) { prefs.set(VISIT_LAST, { type: d.type, location: d.location, modality: d.modality }); if (f.inputs.log_time) prefs.set(VISIT_LOG_TIME, !!d.log_time); }
+    if (isNew) prefs.set(VISIT_LAST, { type: d.type, location: d.location, modality: d.modality });
     // Kits or strips handed out that the cupboard has no item for were not taken off any stock: say so,
     // rather than leave Supplies silently wrong (the form said so before saving; this is the fallback).
     const missed = (saved && saved.supplies_untracked) || [];
@@ -295,11 +322,14 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   const differs = (n) => { const i = f.inputs[n]; if (!i) return false; return i.type === 'checkbox' ? i.checked !== !!defaults[n] : String(i.value ?? '') !== String(defaults[n] ?? ''); };
   const remembered = prefs.get(VISIT_SECTIONS, null) || {};
   for (const [key, d] of Object.entries(f.sections)) {
+    if (key === 'where') continue;
     if ((SECTION_FIELDS[key] || []).some(differs) || remembered[key] === true) d.open = true;
     // Only the person's own opening or closing is remembered (a click on the heading, or Enter or Space on it),
     // not a section opened for them because of a value or an error.
     d.querySelector('summary').addEventListener('click', () => setTimeout(() => prefs.set(VISIT_SECTIONS, { ...(prefs.get(VISIT_SECTIONS, null) || {}), [key]: d.open }), 0));
   }
+  if (f.sections.where) f.sections.where.open = !isNew;
+  f.inputs.duration_minutes.addEventListener('input', () => { durationChecked = true; });
   const workerName = () => { const id = f.inputs.user_id?.value; const u = id && state.users.find(x => x.id === id); return u && u.id !== state.user.id ? `${u.display_name}'s` : 'your'; };
   const label = (list, code) => (code ? fmt.label(code, list) : '');
   const say = (key, text) => { const s = f.sections[key]; const el = s && s.querySelector('summary [data-section-hint]'); if (el) el.textContent = text ? ` — ${text}` : ''; };
@@ -311,8 +341,9 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
     say('time', timeText);
     if (i.log_time) {
       const help = f.querySelector('[data-field="log_time"] .help');
-      if (help) help.textContent = `${i.log_time.checked && mins > 0 ? `Adds ${mins} min of ${label('TIME_CATEGORIES', i.time_category.value || 'direct_service').toLowerCase()} to ${workerName()} time (My time), as a draft to submit for approval.` : 'No time entry is made: log the time yourself under My time.'} On for everyone at first, because supervisors approve hours from these entries; SUDS keeps your last choice.`;
+      if (help) help.textContent = `${i.log_time.checked && mins > 0 ? `Adds ${mins} min of ${label('TIME_CATEGORIES', i.time_category.value || 'direct_service').toLowerCase()} to ${workerName()} time (My time), as a draft to submit for approval. Check the duration above first.` : 'No time entry is made. Tick this to put the visit on your time sheet, or log the time yourself under My time.'} It starts unticked on every visit.`;
     }
+    say('where', [label('LOCATIONS', i.location.value), label('MODALITIES', i.modality.value)].filter(Boolean).join(' · '));
     say('outcome', [label('OUTCOMES', i.outcome.value), i.follow_up_due.value ? `follow up ${fmt.date(i.follow_up_due.value)}` : ''].filter(Boolean).join(' · '));
     if (i.syringes_returned) say('syringes', Number(i.syringes_returned.value) > 0 ? `${i.syringes_returned.value} returned${i.returns_estimated.checked ? ' (estimated)' : ''}` : '');
     if (i.funding_source_id) { const fund = state.funds.find(x => x.id === i.funding_source_id.value) || (state.allFunds || []).find(x => x.id === i.funding_source_id.value); say('funding', [fund ? fund.name : 'no funding source', Number(i.cost.value) > 0 ? fmt.money(Number(i.cost.value)) : ''].filter(Boolean).join(' · ')); }
@@ -323,9 +354,41 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
       const btn = f.querySelector('.btn-row button[type=submit]'); if (btn && isNew) btn.textContent = has ? 'Save visit & note' : 'Save';
     }
   };
+  // What the draft keeps beside the fields: the supply lines and where they came from, and the note's sections.
+  if (isNew) f.draftExtras = {
+    read: () => { const x = {}; if (picker) { x.supplies = picker.value(); x.counts = picker.untrackedValue(); if (picker.site()) x.site = picker.site(); } const st = readStructured(); if (st) x.structured = st; return (x.supplies && x.supplies.length) || (x.counts && Object.values(x.counts).some(Boolean)) || x.structured ? x : null; },
+    restore: (x) => {
+      if (!x) return;
+      if (String(f.inputs.duration_minutes.value) !== '30') durationChecked = true;
+      if ((x.supplies || x.counts) && cat && cat.items.length) {
+        const next = makePicker(cat, { lines: x.supplies || [], counts: x.counts || {}, siteId: x.site || src.supply_site_id });
+        if (picker) picker.el.replaceWith(next.el); picker = next;
+      }
+      if (f.inputs.note_format) f.inputs.note_format.dispatchEvent(new Event('change'));
+      if (x.structured) structuredBox.querySelectorAll('textarea[data-sec]').forEach(t => { if (x.structured[t.dataset.sec]) t.value = x.structured[t.dataset.sec]; });
+      refreshHints();
+    },
+  };
   f.addEventListener('input', refreshHints); f.addEventListener('change', refreshHints);
   refreshHints();
   const m = modal(isNew ? (template ? 'Repeat a visit' : 'Log a visit') : 'Edit visit', f, { wide: true });
+}
+/**
+ * Before a new visit is saved: is a visit of the same kind already recorded for this client on the same day?
+ * Asked through the ordinary visits list (client, type and that local day), so it sees exactly what this person
+ * may see. Resolves true to go ahead; a failed check does not stand in the way of saving.
+ */
+async function confirmNotDuplicateVisit(d, who) {
+  const at = new Date(d.occurred_at || Date.now()); if (isNaN(at)) return true;
+  const from = new Date(at.getFullYear(), at.getMonth(), at.getDate()).toISOString();
+  const to = new Date(at.getFullYear(), at.getMonth(), at.getDate(), 23, 59, 59, 999).toISOString();
+  let rows = [];
+  try { ({ rows } = await get(`/api/interventions?client_id=${encodeURIComponent(d.client_id)}&type=${encodeURIComponent(d.type)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=5`, { quiet: true })); } catch { return true; }
+  if (!rows || !rows.length) return true;
+  const r = rows[0];
+  const day = fmt.isoLocal(at).slice(0, 10) === fmt.today() ? 'today' : `on ${fmt.date(fmt.isoLocal(at).slice(0, 10))}`;
+  const more = rows.length > 1 ? ` (${rows.length} like it that day)` : '';
+  return confirmDialog('Save another visit?', `A visit like this (${fmt.label(d.type, 'INTERVENTION_TYPES')}) is already recorded for ${who} ${day} at ${fmt.time(r.occurred_at) || 'an unrecorded time'}${r.worker ? `, by ${r.worker}` : ''}${more} — save another?`, { okText: 'Save another' });
 }
 // Opens the form prefilled from the client's most recent intervention, or falls back to a blank one if
 // they have none yet — so the button on a client's page never has to know in advance whether history exists.

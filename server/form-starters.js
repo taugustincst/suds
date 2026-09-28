@@ -94,7 +94,7 @@ const TEMPLATES = [
       { key: 'category', label: 'What is needed', type: 'select', required: true, options: ['Transport (bus pass, fuel, fare)', 'Identification documents', 'Housing deposit or rent', 'Clothing', 'Phone or phone credit', 'Medication or medical', 'Food', 'Other'] },
       area('justification', 'How this supports their recovery plan', { required: true }),
       text('amount', 'Amount requested', { required: true }), text('vendor', 'Vendor or provider'),
-      check('alternatives', 'Other sources were checked first (Medicaid, CalFresh, housing programmes)'),
+      check('alternatives', 'Other sources were checked first (Medicaid, CalFresh, housing programs)'),
       text('requested_by', 'Requested by', { required: true }), date('requested_on', 'Date', { required: true }),
       section('sec_approval', 'Approval'),
       text('approved_by', 'Approved by'), date('approved_on', 'Date'), area('approval_notes', 'Notes'),

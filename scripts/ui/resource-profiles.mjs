@@ -55,6 +55,22 @@ async function run(label, url, login) {
   eq((await page.textContent('.lightbox .muted')).trim(), 'Front door', `${label}: a caption typed in the lightbox is shown`);
   await page.click('.lightbox button:has-text("Remove")'); await page.waitForSelector('.modal-bg:last-child button.danger'); await page.click('.modal-bg:last-child button.danger'); await settle(page);
   eq(await photoCount(), before, `${label}: removing the picture puts the count back`);
+  // QA 1.15.3 (picture upload "does nothing"): a photograph saved as PNG (a screenshot, a camera or phone
+  // export) stayed a PNG when shrunk and was still several MB at 1600 px, over the office's 2 MB picture
+  // limit; the upload was refused and the card was left blank. It is now sent as a JPEG that fits.
+  const bigPng = '/tmp/suds-shots/photo-as-png.png';
+  if (!fs.existsSync(bigPng)) fs.writeFileSync(bigPng, Buffer.from(await page.evaluate(async () => {
+    const c = document.createElement('canvas'); c.width = 2000; c.height = 1500; const g = c.getContext('2d');
+    const d = g.createImageData(c.width, c.height); for (let i = 0; i < d.data.length; i++) d.data[i] = i % 4 === 3 ? 255 : (Math.random() * 255) | 0; g.putImageData(d, 0, 0);
+    const buf = new Uint8Array(await (await new Promise(r => c.toBlob(r, 'image/png'))).arrayBuffer());
+    let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000)); return btoa(s);
+  }), 'base64'));
+  ok(fs.statSync(bigPng).size > 4 * 1024 * 1024, `${label}: the test picture is a PNG far over the office's 2 MB limit`, fs.statSync(bigPng).size);
+  const nBig = await photoCount();
+  const [bigChooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('label.file-btn:has-text("+ Add pictures")')]);
+  await bigChooser.setFiles(bigPng);
+  eq(await until(async () => (await photoCount()) === nBig + 1, { timeout: 20000 }) && await photoCount(), nBig + 1, `${label}: a large photograph saved as PNG is added to the profile`);
+  ok(/1 picture added/.test(await until(() => page.textContent('[data-pictures-card]').then(t => /picture added|Not added/.test(t) && t))), `${label}: and the Pictures card says it was added`);
   // Ways in that need no operating-system file window (a testing tool cannot drive one): drop a picture on
   // the card, paste one, or give a web address.
   const n0 = await photoCount();

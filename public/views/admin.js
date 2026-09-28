@@ -525,7 +525,7 @@ route('admin', async (r) => {
   if (full && !state.local && can('apikeys:manage') && moduleOn('fhir')) { T.fhir = () => fhirClientsTab(refresh); const at = tabs.findIndex(([k]) => k === 'apikeys'); tabs.splice(at < 0 ? tabs.length : at + 1, 0, ['fhir', 'FHIR clients']); }
   const allowed = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
   body.append(await (T[allowed] || T[tabs[0][0]])());
-  return h('div', {}, pageHead(full ? 'Settings' : 'Supervision tools'), state.local ? h('div', { class: 'banner small' }, window.SUDS_STATIC_HOST ? 'This is SUDS on this device. Backups, and who may sign up here, are on the This device page.' : 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, pageTabs(tabs, allowed, (k) => nav(`admin?tab=${k}`), { label: full ? 'Settings sections' : 'Supervision tools sections' }), body);
+  return h('div', {}, pageHead(full ? 'Settings' : 'Supervision tools'), state.local ? h('div', { class: 'banner small' }, window.SUDS_STATIC_HOST ? 'This is SUDS on this device. Backups, and who may sign up here, are on the This device page.' : 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, pageTabs(tabs, allowed, (k) => nav(`admin?tab=${k}`), { label: full ? 'Settings sections' : 'Supervision tools sections', wrap: true }), body);
 });
 
 // ---------------------------------------------------------------------------
