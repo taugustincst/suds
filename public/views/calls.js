@@ -19,12 +19,19 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone, 
     { name: 'crisis', label: `Crisis ${noun}`, type: 'checkbox' }, { name: 'follow_up_needed', label: 'Follow-up needed', type: 'checkbox' }, { name: 'follow_up_due', label: isText ? 'Remind me to follow up on' : 'Remind me to call back on', type: 'date' },
     { name: 'summary', label: isText ? 'What was said (encrypted)' : 'Summary (encrypted)', type: 'textarea', span: true,
       help: isText ? 'Record what was exchanged, not a screenshot. Texting a client about treatment is a disclosure if anyone else can read their phone — keep it to arranging contact unless they have agreed otherwise.' : null },
-    isNew ? { name: 'log_time', label: 'Also log as time entry', type: 'checkbox', value: true } : null,
+    // Unticked on every new call (1.15.3), as on a visit: time goes on the time sheet only when someone chose it,
+    // and the help says how many minutes that will be.
+    isNew ? { name: 'log_time', label: 'Also log as time entry', type: 'checkbox', value: false, help: ' ' } : null,
   ].filter(Boolean), { values: values || prefill || {}, submitText: isNew ? (isText ? 'Log text' : 'Log call') : 'Save', draftKey: values ? `call:${values.id}` : `call:new:${isText ? 'text' : 'phone'}`, onCancel: () => m.close(), onSubmit: async (d) => {
     d.method = isText ? 'text' : 'phone';
     if (isNew) await post('/api/calls', d); else await put(`/api/calls/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast(isNew ? (isText ? 'Text logged' : 'Call logged') : 'Saved', 'ok'); m.close(); onDone && onDone();
   } });
+  if (f.inputs.log_time) {
+    const help = f.querySelector('[data-field="log_time"] .help');
+    const say = () => { const mins = Number(f.inputs.duration_minutes.value) || 0; if (help) help.textContent = f.inputs.log_time.checked ? (mins > 0 ? `Adds ${mins} min to your time (My time), as a draft to submit for approval. Check the ${isText ? 'time spent' : 'duration'} above first.` : `Nothing is logged while the ${isText ? 'time spent' : 'duration'} is 0.`) : 'No time entry is made. Tick this to put the call on your time sheet.'; };
+    f.addEventListener('input', say); f.addEventListener('change', say); say();
+  }
   const m = modal(isNew ? (isText ? 'Log text message' : 'Log call') : `Edit ${noun}`, f, { wide: true });
 }
 export function callTable(rows, { showClient = true, onChange } = {}) {

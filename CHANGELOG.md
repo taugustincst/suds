@@ -39,6 +39,75 @@ route.
 - The browser suite checks that a clinician's client record on a treatment-adjacent program shows **Care plan** and
   **Assessments** as tabs, not under More, at 1280 and 390 px (1.15.2's promotion; it holds).
 
+Usability fixes (1.15.3). No migration, no new permission, no change to which roles hold a permission, and no new
+route: the server changes are a query parameter on an existing route (`POST /api/clients/:id/assignments?restores=`,
+the Undo after ending an assignment), a ranking option on another (`GET /api/clients?rank=1`) and three audit action
+names for the undos.
+
+- **Time is logged from a visit or call only when asked.** *Also log this as a time entry* starts unticked on every
+  new visit (it started ticked and then remembered the last choice, so a duration nobody checked went on time
+  sheets as hours worked), and so does a call's *Also log as time entry*. Ticked, its help says how many minutes of
+  which category it adds; saving with the visit's prefilled 30 minutes untouched asks **Log this time?** (*Log 30
+  minutes* or *Change the duration*, which returns to the field with nothing saved). **Log time** by hand for a day
+  and client that a visit *or call* already logged time for now asks **Log this time as well?** on Save, as well as
+  saying so while it is filled in (it looked only at visits, and never asked). The `visit_log_time` preference is
+  no longer read. Help text and the user guide no longer say it starts on.
+- **The bell keeps up.** It polled every five minutes; it now asks once a minute, a moment after anything is saved,
+  and when the window gets focus or the tab comes back into view (`/api/tasks/due` still writes an audit entry only
+  when its answer changes). The bell is a button that opens a panel: what is due (the first eight, overdue marked),
+  **Updated just now / n min ago**, **Refresh** (announced) and *All to-dos due*.
+- **Search ranks what it finds.** A name search lists exact name matches first, then the clients the searcher worked
+  with lately (the same activity as Home's *Recent clients*), then names starting the same way, then sound-alikes.
+  The search box at the top of every page (`?rank=1`) leaves sound-alikes out when anything matched better — a
+  misspelling with no better match still finds them — also lists matching resource directory programs, and marks
+  each result *Client* or *Resource* in words (the icon is hidden from screen readers). Caseload scoping and the
+  `client.list` audit entry are exactly as before; only the order, and with `rank=1` the minimum, change.
+- **An expiring consent is at the top of the Overview.** A consent that expires within 30 days is named, with its
+  date and how many days are left, above everything else on a client's Overview, with a link to the Consents tab;
+  one that has already expired while an open referral still relies on it is named too.
+- **An unsent visit is offered back.** A new visit's draft now keeps everything — every field (a required one still
+  empty, or a date half typed, no longer stops it being kept), the supply lines and a note's sections. Opening *Log
+  a visit* again asks **Resume your unsent visit?** (*Resume* / *Discard*) instead of filling it in unasked, and after
+  signing back in the same question is at the top of the page. Drafts stay where the design has always kept them —
+  in the page's memory, never in browser storage (a reload loses them, as before) — and they are now the typist's
+  only: another person signing in on the same tab starts with none (they used to be offered the previous person's
+  drafts), and a save still queued when someone signs out cannot land in the next person's.
+- **The same visit twice asks first.** Saving a new visit for a client who already has one of the same kind that day
+  (read through the ordinary visits list, so it sees exactly what the worker may see) asks **Save another visit?**,
+  saying when and by whom; *Cancel* keeps the form open with nothing saved.
+- **A quicker visit form.** *Where & how* (location and modality, filled in from the last visit) is folded on a new
+  visit, its heading saying what it holds, so a new visit of any type shows seven fields at 390 px before its
+  sections: client, what was done, date & time, the supply picker's usual items and the summary. An edit shows it
+  open.
+- **Keyboard shortcuts.** **/** finds a client, **n** logs a visit, **?** lists the shortcuts, and **Ctrl/⌘ + Enter**
+  saves the open form (it presses the form's own Save). The single keys act only outside text fields and dialogs, and
+  **My profile → Keyboard shortcuts** turns them off for that person on every device (WCAG 2.1.4; the ACR now says
+  *Supports*).
+- **Undo instead of a question, where it can be undone.** Deactivating a resource, retiring a policy or contract and
+  ending a care-team assignment now happen at once with an **Undo** toast (10 seconds, held while pointed at or
+  focused, focus on Undo, announced through the live region). Undo reactivates the resource or document through its
+  edit route (audited `resource.reactivate` / `document.reactivate`) or puts the same worker back on the case in the
+  same role (`assignment.restore`, naming the assignment it undoes; the ended one stays in the history). Actions
+  that cannot be undone keep their confirmation dialogs unchanged.
+- **Empty lists say what to do next, or who can:** the care plan's problems and goals, incidents, documents,
+  resources, supply stock, overdose events, the caseload on Home, "all caught up", the waitlist, the funder report's
+  discharge reasons, CalOMS records, episodes, a client's forms and SUPRT-A switched off.
+- **Your first day.** The welcome card on Home holds three first steps for the person's role (navigator, clinician,
+  supervisor, finance, read-only), each with the button that does it and a tick box, counted as they are done
+  (preference `first_day`); the old tips are folded under *A few things that help*. An administrator gets none: their
+  *Finish setting up* card is that list. The role homes are otherwise unchanged.
+- **Inline help** on the Part 2 consent form (*Is this consent a valid basis for sharing?*) and on Adjust stock,
+  Dispose of and Move stock (*when to adjust, dispose or move*). The funder report's *Which file do I send?* (1.15.2)
+  already covers the third.
+- **200% zoom.** Settings' tab strip wraps onto a second row instead of scrolling tabs past the right-hand edge at
+  640 CSS px (`pageTabs(…, { wrap: true })`); the client record (supervisor and clinician), the funder report and
+  Supplies already reflowed and are now checked at 640×400 with device scale 2.
+- A confirmation closed with ✕ or Escape now answers *Cancel*, so a form waiting on it is not left with Save disabled.
+- Tests: `test/ux13.test.js` (search ranking, caseload scoping and audit, the three undos and their audit and
+  permissions, time only when asked, the lists the duplicate checks read); browser script `scripts/ui/ux13.mjs`
+  (the suite has 38 scripts); `ux-forms`, `frontline-review` and `review-fixes` follow the folded *Where & how* and
+  the unticked time box.
+
 ## 1.15.2 — 2026-09-28
 
 Fixes from a UI evaluation of all six roles (about 120 pages). No migration, no new permission, no change to

@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker, clear, contactLinks, mapLink, openHref, tabStrip, clientStatus, emptyState, downloadCsv, flag, moduleOn, supervising } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker, clear, contactLinks, mapLink, openHref, tabStrip, clientStatus, emptyState, downloadCsv, flag, moduleOn, supervising, undoToast } from '../app.js';
 import { openClientForm, riskText } from './clients.js';
 import { openInterventionForm, openRepeatInterventionForm, interventionTable } from './interventions.js';
 import { openCallForm, callTable } from './calls.js';
@@ -144,12 +144,40 @@ route('client', async (r) => {
       h('div', { class: 'card-head' }, h('h2', {}, 'Recent activity'), events.length > RECENT ? h('a', { href: `#/client/${id}/timeline`, 'data-all-activity-link': '1' }, `All activity (${events.length})`) : null),
       events.length ? timelineList(events.slice(0, RECENT)) : h('p', { class: 'muted' }, 'No activity yet.'));
   };
+  // The top of the Overview (1.15.3): a consent that runs out within 30 days, or one that has already run out
+  // while an open referral still relies on it, named with its date, with the way to the Consents tab.
+  const OPEN_REFERRAL = (r) => !r.closed_at && !['declined_by_client', 'declined_by_provider', 'no_show', 'completed', 'closed'].includes(r.status);
+  const consentAlert = async () => {
+    if (!can('consents:read') && !can('consents:write')) return null;
+    const today = fmt.today(); const soon = fmt.isoLocal(new Date(Date.now() + 30 * 86400000)).slice(0, 10);
+    const daysTo = (d) => Math.round((Date.parse(`${d}T00:00`) - Date.parse(`${today}T00:00`)) / 86400000);
+    const named = (x) => `${consentTypeLabel(x.type)} consent${x.recipient ? ` to ${x.recipient}` : ''}`;
+    const lines = (c.active_consents || []).filter(x => x.expires_at && x.expires_at >= today && x.expires_at <= soon).sort((a, b) => a.expires_at.localeCompare(b.expires_at))
+      .map(x => { const n = daysTo(x.expires_at); return `The ${named(x)} expires on ${fmt.date(x.expires_at)} (${n === 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`}).`; });
+    // Only when a referral points at a consent that is no longer in force is anything more read.
+    if (Number(c.counts.referrals) > 0 && can('referrals:read')) {
+      const live = new Set((c.active_consents || []).map(x => x.id));
+      let relying = [];
+      try { relying = (await get(`/api/referrals?client_id=${id}&limit=500`, { quiet: true })).rows.filter(r => r.consent_id && !live.has(r.consent_id) && !r.consent_revoked && OPEN_REFERRAL(r)); } catch { relying = []; }
+      if (relying.length) {
+        let all = []; try { all = (await get(`/api/clients/${id}/consents`, { quiet: true })).consents || []; } catch { all = []; }
+        for (const x of all.filter(k => !k.revoked_at && k.expires_at && k.expires_at < today)) {
+          const n = relying.filter(r => r.consent_id === x.id).length;
+          if (n) lines.push(`The ${named(x)} expired on ${fmt.date(x.expires_at)}, and ${n} open referral${n === 1 ? ' relies' : 's rely'} on it.`);
+        }
+      }
+    }
+    if (!lines.length) return null;
+    return h('div', { class: 'banner warn', 'data-consent-alert': '1', style: { gridColumn: '1 / -1', margin: 0 } },
+      h('div', {}, ...lines.map(t => h('p', { style: { margin: '0 0 .3rem' } }, t)),
+        h('p', { style: { margin: 0 } }, 'Nothing more is shared under a consent once it runs out. ', h('a', { href: `#/client/${id}/consents`, 'data-consent-alert-link': '1' }, 'Open Consents'), ' to record a renewed one.')));
+  };
   const T = {
     async overview() {
       const age = c.dob ? Math.floor((Date.now() - Date.parse(c.dob)) / (365.25 * 86400000)) : null;
       // Problem list, care plan reviews, latest ASAM and outcome trends (CalAIM), for the roles that may see them.
-      const [clinical, activity] = await Promise.all([(await import('./clinical.js')).overviewCard(id, { refresh }), recentActivity()]);
-      return h('div', { class: 'grid cols-2' }, clinical,
+      const [clinical, activity, consentWarn] = await Promise.all([(await import('./clinical.js')).overviewCard(id, { refresh }), recentActivity(), consentAlert()]);
+      return h('div', { class: 'grid cols-2' }, consentWarn, clinical,
         h('div', { class: 'card' }, h('h2', {}, 'Identity & contact'), kv([['Name', `${c.first_name} ${c.last_name}${c.preferred_name ? ` ("${c.preferred_name}")` : ''}`], ['DOB', c.dob ? `${fmt.date(c.dob)} (${age})` : null], ['Gender / pronouns', [c.gender && fmt.label(c.gender), c.pronouns].filter(Boolean).join(' · ')], ['Phone', c.phone || c.alt_phone ? h('div', { class: 'row', style: { gap: '.5rem' } }, phoneRow(c.phone), c.alt_phone ? h('span', {}, h('span', { class: 'muted small' }, 'alt: '), phoneRow(c.alt_phone)) : null) : null], ['Email', c.email ? h('a', { href: `mailto:${c.email}` }, c.email) : null], ['Address', mapLink([c.address, c.city, c.zip].filter(Boolean).join(', '))], ['Language', c.preferred_language], ['Contact rules', [c.ok_to_text ? 'OK to text' : null, c.ok_to_voicemail ? 'OK to voicemail' : null, c.contact_preferences].filter(Boolean).join(' · ') || 'Not recorded — ask before texting or leaving a voicemail'], ['Emergency contact', linkifyPhones(c.emergency_contact)], ['Housing', c.housing_status && fmt.label(c.housing_status)], ['Insurance', [c.insurance && fmt.label(c.insurance), c.medicaid_id && `ID ${c.medicaid_id}`].filter(Boolean).join(' · ')], ['Veteran', c.veteran ? 'Yes' : 'No']])),
         h('div', { class: 'card' }, h('h2', {}, 'Substance use & clinical'), kv([['Primary substance', fmt.label(c.primary_substance, 'SUBSTANCES')], ['Secondary', c.secondary_substances], ['Route', c.route_of_use && fmt.label(c.route_of_use)], ['ASAM level', c.asam_level], ['MAT', [c.mat_status && fmt.label(c.mat_status), c.mat_medication && fmt.label(c.mat_medication)].filter(Boolean).join(' — ')], ['Overdose history', c.overdose_history ? `Yes${c.last_overdose_date ? ', last ' + fmt.date(c.last_overdose_date) : ''}` : 'No'], ['Naloxone', c.naloxone_provided ? `Provided${c.naloxone_last_date ? ' ' + fmt.date(c.naloxone_last_date) : ''}` : 'Not provided'], ['Co-occurring MH', c.co_occurring_mh ? 'Yes' : 'No'], ['Justice involved', c.justice_involved ? 'Yes' : 'No'], ['Pregnant / parenting', c.pregnant_or_parenting ? 'Yes' : 'No'], ['Goals', c.goals]])),
         h('div', { class: 'card' }, h('h2', {}, 'Program'), kv([['Status', fmt.label(clientStatus(c))], ['Intake', fmt.date(c.intake_date)], ['Referral source', c.referral_source && fmt.label(c.referral_source)], ['Referral date', c.referral_date && fmt.date(c.referral_date)], ['Engagement date', c.engagement_date && fmt.date(c.engagement_date)],
@@ -260,7 +288,12 @@ ${a.notice ? `<p style="border:1px solid #000;padding:.4rem"><b>Protected by 42 
         }
         await post(`/api/clients/${id}/assignments`, v); toast('Assigned', 'ok'); m.close(); refresh(); } }); const m = modal('Assign worker', f); };
       return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Care team assignments'), can('assignments:manage') ? h('button', { class: 'btn sm primary', onClick: assign }, '+ Assign worker') : null),
-        table([{ label: 'Worker', key: 'display_name' }, { label: 'Staff role', render: a => fmt.label(a.user_role) }, { label: 'Role on case', render: a => fmt.label(a.role_on_case) }, { label: 'Start', render: a => fmt.date(a.start_date) }, { label: 'End', render: a => a.end_date ? fmt.date(a.end_date) : badge('Current', 'ok') }, { label: 'Notes', key: 'notes' }, { label: '', render: a => !a.end_date && can('assignments:manage') ? h('button', { class: 'btn sm ghost', onClick: async () => { if (await confirmDialog('End assignment', `Remove ${a.display_name} from this case?`, { okText: 'End' })) { await post(`/api/assignments/${a.id}/end`, {}); refresh(); } } }, 'End') : null }], c.assignments, { empty: 'No workers assigned.' }),
+        table([{ label: 'Worker', key: 'display_name' }, { label: 'Staff role', render: a => fmt.label(a.user_role) }, { label: 'Role on case', render: a => fmt.label(a.role_on_case) }, { label: 'Start', render: a => fmt.date(a.start_date) }, { label: 'End', render: a => a.end_date ? fmt.date(a.end_date) : badge('Current', 'ok') }, { label: 'Notes', key: 'notes' }, { label: '', render: a => !a.end_date && can('assignments:manage') ? h('button', { class: 'btn sm ghost', 'data-assignment-end': a.id, 'aria-label': `End ${a.display_name}'s assignment`, onClick: async () => {
+          // Reversible: Undo puts the same worker back on the case in the same role (a new assignment from now,
+          // the ended one kept in the history), so it is done at once rather than asked first.
+          await post(`/api/assignments/${a.id}/end`, {}); refresh();
+          undoToast(`${a.display_name} removed from this case.`, async () => { await post(`/api/clients/${id}/assignments?restores=${encodeURIComponent(a.id)}`, { user_id: a.user_id, role_on_case: a.role_on_case, start_date: fmt.today(), notes: a.notes || undefined }); refresh(); });
+        } }, 'End') : null }], c.assignments, { empty: 'No workers assigned.' }),
         can('clients:merge') ? h('div', { class: 'card mt' },
           h('h2', {}, 'Merge a duplicate into this record'),
           h('p', { class: 'small muted' }, 'If the same person was entered twice, merge the other record into this one. Everything attached to it — visits, calls, notes, referrals, forms — moves here, and anything this record is missing is filled in from the duplicate. The other record is kept, marked as merged: an old link to it sends you here. A record on legal hold cannot be merged.'),

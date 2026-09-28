@@ -2,7 +2,7 @@
 // basis, a subpart E court order, proceedings and counseling notes), the §2.22 patient notice and the court
 // orders on file. The server (server/disclosure.js, routes/consents.js, routes/part2.js) is the gate; these
 // forms say up front what it will ask for. docs/compliance/PART2.md.
-import { h, get, post, put, state, form, modal, toast, table, badge, fmt, can, confirmDialog, flag, kv } from '../app.js';
+import { h, get, post, put, state, form, modal, toast, table, badge, fmt, can, confirmDialog, flag, kv, helpTip } from '../app.js';
 
 const C = () => state.constants || {};
 const PART2_TYPES = () => C().PART2_CONSENT_TYPES || ['part2_disclosure', 'part2_tpo', 'part2_counseling_notes', 'part2_proceedings'];
@@ -148,6 +148,9 @@ export function consentFormPanel(clientId, { onDone, onCancel, close, discloser,
     } }, 'Save as the program\'s usual consent'));
   }).catch(() => {});
   const el = h('div', { 'data-consent-form': '1' },
+    // Which consent is a valid basis at all (1.15.3): the costliest mistake is recording the wrong kind.
+    h('p', { class: 'small', 'data-consent-basis': '1' }, h('b', {}, 'Is this consent a valid basis for sharing?'), ' ',
+      helpTip('A consent is a basis for sharing Part 2 records only while it is signed, in date, not revoked, and names the recipient (or a class of recipients) the information goes to, for the purpose stated. Record a TPO consent for treatment, payment and health care operations with the providers and plans it names; a single-recipient consent for anyone else (a housing program, a probation officer, a family member). SUD counseling notes, and any use in a legal proceeding, each need a separate consent that covers nothing else — and using records against the patient in a proceeding needs a court order, not a consent. A general HIPAA release, a verbal OK, or a consent that has expired or been revoked is not a basis. Some sharing needs no consent — a medical emergency, a qualified audit or evaluation under a written agreement, a court order: record those as a disclosure with that basis on the Consents tab instead.')),
     h('div', { class: 'banner small' }, '42 CFR §2.31: a Part 2 consent names the patient, who may disclose, what information, to whom (or a class), why, the right to revoke and how, when it expires (a date or an event), the signature and date, the redisclosure statement, and the consequences of refusing to sign. A general release is not enough.'),
     quick, f);
   el.form = f;

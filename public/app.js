@@ -119,7 +119,13 @@ function apiError(status, data) {
 
 export async function api(method, path, body, opts = {}) {
   busy(1);
-  try { return await apiCall(method, path, body, opts); } finally { busy(-1); }
+  try {
+    const r = await apiCall(method, path, body, opts);
+    // Something saved can change what is due (a to-do, a visit's or call's follow-up, a referral's): the bell
+    // asks again shortly, instead of waiting for its next minute (it used to lag by up to five).
+    if (method !== 'GET' && method !== 'HEAD' && !isBackground(opts) && !String(path).startsWith('/api/tasks/due')) dueSoon();
+    return r;
+  } finally { busy(-1); }
 }
 // ---- Idempotency-Key ----
 // Every POST carries a key, so the server can answer a repeat of the same request from what it already did
@@ -251,6 +257,37 @@ export function toast(msg, kind = '', { ms } = {}) {
   announce(msg);
   // ms: a longer message (a visit saved, with what it did not do) stays long enough to read.
   setTimeout(() => t.remove(), ms || (kind === 'error' ? 6000 : 3500));
+}
+
+/**
+ * A reversible action, done at once, with an Undo (1.15.3): deactivating a resource, retiring a document,
+ * ending a care-team assignment. The owner's rule stands for everything else: an action that cannot be taken
+ * back keeps its confirmation dialog. The toast stays 10 seconds, and for as long as the pointer is over it or
+ * the Undo button has focus (WCAG 2.2.1); focus moves to Undo, since the button that did the action is usually
+ * gone once the list redraws; Escape puts it away. `onUndo` makes the request that reverses it.
+ */
+export function undoToast(msg, onUndo, { ms = 10000 } = {}) {
+  const host = document.getElementById('toasts'); if (!host) return null;
+  const back = () => { const h1 = document.querySelector('.main h1'); if (h1) { if (!h1.hasAttribute('tabindex')) h1.setAttribute('tabindex', '-1'); try { h1.focus({ preventScroll: true }); } catch { /* ignore */ } } };
+  const btn = h('button', { class: 'btn sm', type: 'button', 'data-undo': '1', 'aria-label': `Undo: ${msg}` }, 'Undo');
+  const t = h('div', { class: 'toast undo-toast', 'data-undo-toast': '1' }, h('span', {}, msg), btn);
+  let left = ms, started = 0, timer = null;
+  const gone = () => { clearTimeout(timer); t.remove(); };
+  const arm = () => { clearTimeout(timer); started = Date.now(); timer = setTimeout(() => { const had = t.contains(document.activeElement); gone(); if (had) back(); }, left); };
+  const hold = () => { if (!timer) return; clearTimeout(timer); timer = null; left = Math.max(3000, left - (Date.now() - started)); };
+  t.addEventListener('mouseenter', hold); t.addEventListener('mouseleave', arm);
+  btn.addEventListener('focus', hold); btn.addEventListener('blur', () => { if (t.isConnected) arm(); });
+  t.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); gone(); back(); } });
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try { await onUndo(); gone(); back(); toast('Undone', 'ok'); }
+    catch (e) { btn.disabled = false; toast((e && e.message) || 'It could not be undone.', 'error'); }
+  });
+  host.append(t);
+  announce(`${msg} Undo is available for ${Math.round(ms / 1000)} seconds.`);
+  arm();
+  setTimeout(() => { if (t.isConnected) btn.focus({ preventScroll: true }); }, 0);
+  return t;
 }
 
 // A single polite live region. Screen readers announce anything written here, which is how a toast, a
@@ -460,19 +497,21 @@ function watchDialogs(root) {
   dialogWatch = new MutationObserver(syncInertBehindDialogs);
   dialogWatch.observe(root, { childList: true });
 }
-export function confirmDialog(title, message, { danger = false, okText = 'Confirm', requireReason = false, minLength = 0 } = {}) {
+export function confirmDialog(title, message, { danger = false, okText = 'Confirm', cancelText = 'Cancel', requireReason = false, minLength = 0 } = {}) {
   return new Promise((resolve) => {
-    let reason;
+    let reason; let answered = false;
+    // Closed with ✕ or Escape is a Cancel: whoever waits on the answer (a form's Save) is not left hanging.
+    const answer = (v) => { if (!answered) { answered = true; resolve(v); } };
     const err = h('div', { class: 'err', role: 'alert' });
     const m = modal(title, h('div', {}, h('p', {}, message), requireReason ? h('div', { class: 'field' }, h('label', {}, `Reason (recorded in audit log${minLength ? `, at least ${minLength} characters` : ''})`), reason = h('input', { required: true, minLength: minLength || null }), err) : null,
-      h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: () => { m.close(); resolve(null); } }, 'Cancel'), h('button', { class: `btn ${danger ? 'danger' : 'primary'}`, onClick: () => {
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: () => { m.close(); answer(null); } }, cancelText), h('button', { class: `btn ${danger ? 'danger' : 'primary'}`, onClick: () => {
         if (requireReason) {
           const text = reason.value.trim();
           // Say what is wrong rather than quietly refusing: a too-short reason used to look like a button that did nothing.
           if (!text || text.length < minLength) { err.textContent = !text ? 'A reason is required.' : `The reason must be at least ${minLength} characters — say why, so it can be reviewed.`; reason.closest('.field').classList.add('error'); reason.setAttribute('aria-invalid', 'true'); reason.focus(); return; }
         }
-        m.close(); resolve(requireReason ? reason.value.trim() : true);
-      } }, okText))));
+        const v = requireReason ? reason.value.trim() : true; answered = true; m.close(); resolve(v);
+      } }, okText))), { onClose: () => answer(null) });
   });
 }
 
@@ -621,10 +660,37 @@ export const can = (perm) => { const u = state.user; if (!u) return false; const
 // form is not given the record as `values`, so a retired value it has is still offered.
 // Unsaved form contents, kept in memory only. Deliberately not localStorage: a half-typed intake form is
 // PHI, and this app's whole design keeps PHI out of browser storage. Memory survives a closed dialog, a
-// route change and an idle sign-out within the same tab, which is what was actually being lost.
-const drafts = new Map();
+// route change and an idle sign-out within the same tab, which is what was actually being lost; a reload or
+// a closed tab loses it, as it always has. The drafts belong to the person who typed them: signing in as
+// anyone else in the same tab starts with none (they used to be offered to the next person at the screen).
+const draftMap = new Map(); let draftOwner = null;
+function claimDrafts() { const uid = state.user && state.user.id; if (!uid) return false; if (draftOwner !== uid) { draftMap.clear(); draftOwner = uid; } return true; }
+const drafts = {
+  get size() { return claimDrafts() ? draftMap.size : 0; },
+  has: (k) => claimDrafts() && draftMap.has(k),
+  get: (k) => (claimDrafts() ? draftMap.get(k) : undefined),
+  set(k, v) { if (claimDrafts()) draftMap.set(k, { ...v, __at: Date.now() }); },
+  delete(k) { draftMap.delete(k); document.querySelectorAll(`[data-resume-draft="${CSS.escape(k)}"]`).forEach(b => b.remove()); },
+};
 export function discardDraft(key) { drafts.delete(key); }
 export function hasDraft(key) { return drafts.has(key); }
+// Views say how to go back to a kept draft: `offerResume('intervention:new', { question, open })`. After
+// signing back in (an idle sign-out keeps the drafts in memory), a kept draft with a way back is offered at
+// the top of the page: Resume opens its form, which asks again; Discard drops it.
+const resumers = new Map();
+export function offerResume(key, how) { resumers.set(key, how); }
+function offerKeptDrafts() {
+  if (!claimDrafts()) return;
+  for (const [key, how] of resumers) {
+    const d = draftMap.get(key); if (!d) continue;
+    const el = banner(`${how.question} You started it ${d.__at ? `at ${fmt.time(new Date(d.__at).toISOString())}` : 'earlier'} and it was not saved.`, 'info', { id: `resume-${key}` });
+    if (!el) continue;
+    el.dataset.resumeDraft = key;
+    el.insertBefore(h('span', { class: 'row', style: { gap: '.4rem' } },
+      h('button', { class: 'btn sm primary', type: 'button', 'data-resume-draft-open': key, onClick: () => { el.remove(); how.open(); } }, 'Resume'),
+      h('button', { class: 'btn sm', type: 'button', 'data-resume-draft-discard': key, onClick: () => { drafts.delete(key); el.remove(); toast('Discarded', 'ok'); } }, 'Discard')), el.lastChild);
+  }
+}
 
 // A "date & time" field is a date input and a separate, optional time input rather than one
 // datetime-local control. Every browser renders those two natively and predictably (a calendar and a
@@ -666,11 +732,23 @@ function dateTimePair(f, v) {
   return wrap;
 }
 
-export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCancel, cancelText = 'Cancel', extra, draftKey } = {}) {
+/** What an onSubmit returns when it decided not to save (nothing was sent): the form stays open, draft kept. */
+export const NOT_SAVED = Symbol('not saved');
+// `resume`: a question ("Resume your unsent visit?"). A kept draft is then not put back on its own: the form
+// opens as new, with the question and Resume / Discard at the top, and nothing is autosaved over the kept
+// draft until it is answered. Without it a kept draft is restored at once, as before. A view keeps what is not
+// a field (the visit's supply lines, a note's sections) with the draft by setting
+// `el.draftExtras = { read: () => object or null, restore: (object) => {} }` right after building the form.
+export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCancel, cancelText = 'Cancel', extra, draftKey, resume = null } = {}) {
   const inputs = {}; const sections = {};
+  // Whose form this is: a save still queued when they sign out must not land in the next person's drafts.
+  const formOwner = state.user && state.user.id;
+  const mine = () => !!state.user && state.user.id === formOwner;
   const grid = h('div', { class: 'form-grid' });
   let target = grid;
   for (const f of fields) {
+    // `end`: the fields after it go back to the form's own grid, with no heading (a folded section ends).
+    if (f.type === 'section' && f.end) { target = grid; continue; }
     if (f.type === 'section') {
       // heading: the summary carries an h3, so a long form's sections are in the page's outline (a screen
       // reader's heading list) as well as being folded away.
@@ -724,8 +802,10 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   const rawValue = (f) => { const i = inputs[f.name]; if (!i) return undefined; return f.type === 'checkbox' ? !!i.checked : String(i.value ?? ''); };
   const initial = Object.fromEntries(fields.filter(f => f.type !== 'section').map(f => [f.name, rawValue(f)]));
   // A draft kept from an earlier attempt at this same form wins over the defaults.
-  const restored = draftKey && drafts.get(draftKey);
-  if (restored) for (const [k, v] of Object.entries(restored)) { const i = inputs[k]; if (!i) continue; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? ''; }
+  const kept = draftKey && drafts.get(draftKey);
+  let restored = null; let asking = !!(kept && resume);
+  const putBack = (d) => { for (const [k, v] of Object.entries(d)) { const i = inputs[k]; if (!i) continue; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? ''; } };
+  if (kept && !resume) { restored = kept; putBack(kept); }
   const errBox = h('div', { class: 'banner danger hidden', role: 'alert', tabindex: '-1' });
   const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
   let submitted = false; let saveTimer;
@@ -751,7 +831,10 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); const errSlot = x.querySelector('.err'); if (errSlot) errSlot.textContent = ''; const c = x.querySelector('input,select,textarea'); if (c) c.removeAttribute('aria-invalid'); });
       const data = read();
       submitScope = { key: submitKey, seq: new Map() };
-      try { await onSubmit(data, el); } finally { submitScope = null; }
+      let outcome; try { outcome = await onSubmit(data, el); } finally { submitScope = null; }
+      // The person chose not to save after all (a "save another?" question answered No): nothing was sent,
+      // and the form and its draft stay as they are.
+      if (outcome === NOT_SAVED) return;
       submitKey = newIdempotencyKey();
       // Saved: the draft is finished with, and no autosave still queued behind this submit may put it back
       // — the debounced savers below used to fire after the delete, so the next "+ New client" opened
@@ -793,7 +876,21 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     } finally { submitBtn.disabled = false; }
   } }, restored ? h('div', { class: 'banner', role: 'status' },
     h('span', {}, 'Restored what you had already typed.'),
-    h('button', { class: 'btn ghost sm', type: 'button', onClick: (e) => { drafts.delete(draftKey); e.target.closest('.banner').remove(); for (const f of fields) { const i = inputs[f.name]; if (!i) continue; if (i.type === 'checkbox') i.checked = false; else i.value = ''; } } }, 'Start over')) : null,
+    h('button', { class: 'btn ghost sm', type: 'button', onClick: (e) => { drafts.delete(draftKey); e.target.closest('.banner').remove(); for (const f of fields) { const i = inputs[f.name]; if (!i) continue; if (i.type === 'checkbox') i.checked = false; else i.value = ''; } } }, 'Start over'))
+    : asking ? h('div', { class: 'banner info', role: 'status', 'data-resume-question': draftKey },
+      h('span', {}, `${resume} You started it${kept.__at ? ` at ${fmt.time(new Date(kept.__at).toISOString())}` : ''} and it was not saved.`),
+      h('span', { class: 'row', style: { gap: '.4rem' } },
+        h('button', { class: 'btn sm primary', type: 'button', 'data-resume-answer': 'resume', onClick: (e) => {
+          asking = false; restored = kept; putBack(kept);
+          if (extras && extras.restore && kept.__extra) { try { extras.restore(kept.__extra); } catch { /* the fields are back; the rest is lost */ } }
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          e.target.closest('.banner').replaceWith(h('div', { class: 'banner', role: 'status' }, 'Resumed: what you had typed is back.'));
+          const first = el.querySelector('input:not([type=hidden]),select,textarea'); if (first) first.focus();
+        } }, 'Resume'),
+        h('button', { class: 'btn sm', type: 'button', 'data-resume-answer': 'discard', onClick: (e) => {
+          asking = false; drafts.delete(draftKey); e.target.closest('.banner').remove();
+          const first = el.querySelector('input:not([type=hidden]),select,textarea'); if (first) first.focus();
+        } }, 'Discard'))) : null,
     errBox, grid, extra || null, h('div', { class: 'btn-row' }, onCancel ? h('button', { class: 'btn', type: 'button', onClick: onCancel }, cancelText) : null, submitBtn));
 
   // Changed contents are a different submission, with a different Idempotency-Key.
@@ -805,15 +902,22 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     // A field mid-typing an incomplete date/time is expected while drafting — read() now rejects that
     // rather than silently mangling it, so the autosave tick here just skips this round instead of
     // erroring; the field firms up (or clears) before the next tick or before the person tries to submit.
-    const save = (onlyIfSomething) => { if (submitted) return; try { const d = read(); if (!onlyIfSomething || Object.values(d).some(v => v !== '' && v !== null && v !== undefined && v !== 0)) drafts.set(draftKey, d); } catch { /* firms up or gets fixed before submit */ } };
+    const save = (onlyIfSomething) => { if (submitted || asking || !mine()) return; try { const d = draftNow(); if (!onlyIfSomething || typedSomething(d)) drafts.set(draftKey, d); } catch { /* firms up or gets fixed before submit */ } };
     el.addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(true), 400); });
     el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(false), 400); });
   }
   // Keep what is typed right now as a draft (the paused screen closes every dialog; see showPausedScreen).
-  el.saveDraft = () => { if (draftKey && !submitted) { clearTimeout(saveTimer); try { const d = read(); if (Object.values(d).some(v => v !== '' && v !== null && v !== undefined && v !== 0)) drafts.set(draftKey, d); } catch {} } };
+  el.saveDraft = () => { if (draftKey && !submitted && !asking && mine()) { clearTimeout(saveTimer); try { const d = draftNow(); if (typedSomething(d)) drafts.set(draftKey, d); } catch {} } };
+  // A view's own parts of the draft (el.draftExtras), restored as soon as the view hands them over.
+  let extras = null;
+  Object.defineProperty(el, 'draftExtras', { get: () => extras, set: (x) => { extras = x; if (restored && restored.__extra && x && x.restore) { try { x.restore(restored.__extra); } catch { /* the fields are back; the rest is lost */ } } } });
   // For a dialog that closes this form after a save of its own (not through onSubmit): stop drafting.
   el.finished = () => { submitted = true; clearTimeout(saveTimer); if (draftKey) drafts.delete(draftKey); };
-  function read() {
+  // A draft is kept however unfinished: a required field not filled in yet, or a date half typed, is kept as
+  // it is (empty), not a reason to keep nothing — the visit form's client comes last as often as first.
+  function draftNow() { const d = read(true); const x = extras && extras.read ? extras.read() : null; if (x) d.__extra = x; return d; }
+  function typedSomething(d) { return Object.entries(d).some(([k, v]) => (k === '__extra' ? !!v : v !== '' && v !== null && v !== undefined && v !== 0)); }
+  function read(lenient = false) {
     const data = {}; const bad = []; const missing = [];
     for (const f of fields) {
       if (f.type === 'section') continue;
@@ -841,7 +945,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       else data[f.name] = i.value === '' ? null : i.value;
       if (f.required && (data[f.name] === null || data[f.name] === undefined || data[f.name] === '') && !bad.includes(f)) missing.push(f);
     }
-    if (bad.length || missing.length) {
+    if (!lenient && (bad.length || missing.length)) {
       const badMsg = (f) => { const i = inputs[f.name]; const d = i.dateInput || i;
         return d.value && dateOutOfRange(d) ? `is not a real date: the year must be four digits, between ${DATE_MIN.slice(0, 4)} and ${DATE_MAX.slice(0, 4)}` : f.type === 'datetime' ? 'enter a valid date (the time is optional), or leave both blank' : 'enter a valid date, or leave it blank'; };
       const fields = { ...Object.fromEntries(bad.map(f => [f.name, badMsg(f)])), ...Object.fromEntries(missing.map(f => [f.name, `${f.label || 'This field'} is required`])) };
@@ -880,7 +984,13 @@ export function clientPicker(name, value, f = {}) {
   const msg = h('div', { class: 'card tight hidden client-picker-list muted small', 'data-picker-message': '1', style: { marginTop: '.25rem' } });
   const wrap = h('div', { class: 'client-picker' }, text, hidden, list, msg);
   wrap.searchInput = text;
-  Object.defineProperty(wrap, 'value', { get: () => hidden.value, set: (v) => { hidden.value = v || ''; } });
+  // Set from outside (a restored draft, "Start over"): the box shows who it now is, not who it was before.
+  Object.defineProperty(wrap, 'value', { get: () => hidden.value, set: (v) => {
+    const next = v || ''; if (next === hidden.value) return; hidden.value = next;
+    if (!next) { text.value = ''; return; }
+    text.value = '';
+    get(`/api/clients/${next}`, { quiet: true }).then(r => { if (hidden.value === next) text.value = `${r.client.display_name} (${r.client.client_code})`; }).catch(() => {});
+  } });
   hidden.value = value || '';
   if (value && f.display) text.value = f.display;
   else if (value) get(`/api/clients/${value}`, { quiet: true }).then(r => { text.value = `${r.client.display_name} (${r.client.client_code})`; }).catch(() => {});
@@ -1134,8 +1244,11 @@ export function tabStrip(tabs, active, onPick, { label = 'Sections', core = null
  * A simple row of section buttons for a page whose sections are addresses (Settings, Funding, Supervision).
  * items: [[key, label, extraAttrs?]]; the current one is aria-current="page", not only a colour.
  */
-export function pageTabs(items, active, onPick, { label = 'Sections' } = {}) {
-  const strip = h('nav', { class: 'tabs', 'aria-label': label }, items.filter(Boolean).map(([k, text, attrs]) => h('button', { ...(attrs || {}), type: 'button', class: k === active ? 'active' : '', 'aria-current': k === active ? 'page' : null, 'data-tab': k, onClick: () => onPick(k) }, text)));
+export function pageTabs(items, active, onPick, { label = 'Sections', wrap: wrapRows = false } = {}) {
+  const strip = h('nav', { class: `tabs${wrapRows ? ' wrapped' : ''}`, 'aria-label': label }, items.filter(Boolean).map(([k, text, attrs]) => h('button', { ...(attrs || {}), type: 'button', class: k === active ? 'active' : '', 'aria-current': k === active ? 'page' : null, 'data-tab': k, onClick: () => onPick(k) }, text)));
+  // `wrap` (Settings, 1.15.3): a long strip wraps onto a second row instead of scrolling, so at 200% zoom
+  // (640 CSS px) no tab sits past the right-hand edge where nothing shows it is there (WCAG 1.4.10).
+  if (wrapRows) return strip;
   // A strip wider than the screen scrolls sideways. The faded edge alone did not say so: "Syringe se…" read
   // as a cut-off label, not as more tabs. A chevron shows on the side that has more, and a tap on it scrolls
   // that way (pointer only: Tab already scrolls each tab into view, so it is hidden from assistive tech).
@@ -1242,14 +1355,27 @@ export function globalSearch() {
   input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 400); });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { nav(`clients?status=all&q=${encodeURIComponent(input.value.trim())}`); list.classList.add('hidden'); } if (e.key === 'Escape') list.classList.add('hidden'); });
   document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) list.classList.add('hidden'); });
+  // Ranked (1.15.3, server ?rank=1): exact name matches first, then clients this person worked with lately,
+  // then partial and sound-alike matches, and a sound-alike is left out when anything matched better. Each
+  // result says what it is — a client, or a program in the resource directory — in words, not just an icon.
+  const kindLabel = (kind) => h('span', { class: 'result-type small muted', 'data-result-type': kind }, h('span', { 'aria-hidden': 'true' }, kind === 'client' ? '👤 ' : '🏥 '), kind === 'client' ? 'Client' : 'Resource');
+  let seq = 0;
   async function run() {
     // Every search is a PHI read that is audited, so do not issue one for a single letter.
-    const q = input.value.trim();
+    const q = input.value.trim(); const mine = ++seq;
     if (q.length < 2) { list.classList.add('hidden'); return; }
-    try { const r = await get(`/api/clients?limit=8&status=all&q=${encodeURIComponent(q)}`, { quiet: true }); clear(list);
-      if (!r.clients.length) list.append(h('div', { class: 'muted small' }, 'No match. Try just the start of the last name, the full phone number, date of birth or client code.'));
-      for (const c of r.clients) list.append(h('a', { class: 'list-item', href: `#/client/${c.id}`, style: { display: 'block' }, onClick: () => list.classList.add('hidden') }, h('b', {}, c.display_name), ' ', h('span', { class: 'muted small' }, c.client_code, ' · ', fmt.label(c.status))));
-      list.classList.remove('hidden'); } catch {}
+    const nameLike = q.length >= 3 && !/^[\d\-() .+]+$/.test(q) && !/^[A-Z]+\d*-\d+(-D)?$/i.test(q);
+    try {
+      const [r, res] = await Promise.all([get(`/api/clients?limit=8&status=all&rank=1&q=${encodeURIComponent(q)}`, { quiet: true }),
+        nameLike && can('resources:read') ? get(`/api/resources?limit=4&q=${encodeURIComponent(q)}`, { quiet: true }).catch(() => null) : null]);
+      if (mine !== seq) return;
+      clear(list);
+      const programs = (res && res.rows) || [];
+      if (!r.clients.length && !programs.length) list.append(h('div', { class: 'muted small' }, 'No match. Try just the start of the last name, the full phone number, date of birth or client code.'));
+      for (const c of r.clients) list.append(h('a', { class: 'list-item search-hit', href: `#/client/${c.id}`, 'data-search-kind': 'client', onClick: () => list.classList.add('hidden') }, kindLabel('client'), ' ', h('b', {}, c.display_name), ' ', h('span', { class: 'muted small' }, c.client_code, ' · ', fmt.label(c.status))));
+      for (const x of programs) list.append(h('a', { class: 'list-item search-hit', href: `#/resource/${x.id}`, 'data-search-kind': 'resource', onClick: () => list.classList.add('hidden') }, kindLabel('resource'), ' ', h('b', {}, x.name), x.organization && x.organization !== x.name ? h('span', { class: 'muted small' }, ` · ${x.organization}`) : null));
+      list.classList.remove('hidden');
+    } catch {}
   }
   return wrap;
 }
@@ -1257,7 +1383,12 @@ export function globalSearch() {
 // (only if the person switched it on under Profile) a system notification when one comes due.
 // Polled every five minutes while the tab is visible, and again when it comes back into view or gets
 // focus: a tab left open overnight used to ask once a minute all night for an answer nobody was looking at.
-const DUE_POLL_MS = 5 * 60000;
+// Once a minute while the page is in view (the server writes an audit entry only when the answer changes), and
+// shortly after the tab comes back into view or gets focus, or anything is saved (dueSoon). The bell's panel
+// says how old the answer is and has Refresh.
+const DUE_POLL_MS = 60000;
+let dueSoonTimer = null;
+function dueSoon() { clearTimeout(dueSoonTimer); dueSoonTimer = setTimeout(() => { if (duePoll && state.user) duePoll(true); }, 1500); }
 let dueCache = { at: 0, data: null }; const notifiedDue = new Set(); let dueTimer; let duePoll = null; let dueListening = false;
 /** The header's reminder that two-step verification is owed, once its banner has been dismissed. */
 export function mfaLink() {
@@ -1267,12 +1398,40 @@ export function mfaLink() {
 }
 export function dueBell() {
   if (!can('tasks:read') || (state.user && state.user.must_change_password)) return null;
+  // A button that opens a small panel (1.15.3): what is due, when the list was last asked for, and Refresh —
+  // the count could be five minutes old with nothing to say so. Opening the panel asks again if the answer is
+  // more than a minute old.
+  const panelId = `due-panel-${Math.random().toString(36).slice(2, 7)}`;
   const count = h('span', { class: 'bell-count hidden', 'aria-hidden': 'true' });
-  const btn = h('a', { class: 'btn ghost bell', href: '#/tasks?overdue=1', 'data-due-bell': '1', 'aria-label': 'To-dos due', title: 'To-dos due within the hour, or overdue' }, h('span', { 'aria-hidden': 'true' }, '🔔'), count);
+  const btn = h('button', { type: 'button', class: 'btn ghost bell', 'data-due-bell': '1', 'aria-label': 'To-dos due', 'aria-expanded': 'false', 'aria-controls': panelId, title: 'To-dos due within the hour, or overdue' }, h('span', { 'aria-hidden': 'true' }, '🔔'), count);
+  const list = h('div', { 'data-due-list': '1' });
+  const updated = h('span', { class: 'small muted', 'data-due-updated': '1' }, '');
+  // Not disabled while it asks: a disabled button drops the keyboard focus (and Escape with it) onto the page.
+  let refreshing = false;
+  const refreshBtn = h('button', { type: 'button', class: 'btn sm', 'data-due-refresh': '1', onClick: async () => { if (refreshing) return; refreshing = true; refreshBtn.setAttribute('aria-busy', 'true'); try { await poll(true); announce(`To-dos due: ${(dueCache.data && dueCache.data.rows.length) || 0}. Updated just now.`); } finally { refreshing = false; refreshBtn.removeAttribute('aria-busy'); } } }, 'Refresh');
+  const panel = h('div', { class: 'card tight bell-panel hidden', id: panelId, role: 'region', 'aria-label': 'To-dos due', 'data-due-panel': '1' },
+    h('h2', { class: 'eyebrow' }, 'Due within the hour, or overdue'), list,
+    h('div', { class: 'row bell-panel-foot' }, updated, refreshBtn, h('a', { href: '#/tasks?overdue=1', 'data-due-all': '1', onClick: () => setOpen(false) }, 'All to-dos due')));
+  const wrap = h('span', { class: 'bell-wrap' }, btn, panel);
+  const ago = () => { if (!dueCache.at) return 'Not updated yet'; const m = Math.floor((Date.now() - dueCache.at) / 60000); return `Updated ${m < 1 ? 'just now' : `${m} min ago`}`; };
+  let agoTimer = null;
+  const setOpen = (on) => {
+    panel.classList.toggle('hidden', !on); btn.setAttribute('aria-expanded', String(on));
+    clearInterval(agoTimer);
+    if (on) { updated.textContent = ago(); agoTimer = setInterval(() => { if (!wrap.isConnected) { clearInterval(agoTimer); return; } updated.textContent = ago(); }, 30000); poll(); }
+  };
+  btn.addEventListener('click', () => setOpen(panel.classList.contains('hidden')));
+  wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.classList.contains('hidden')) { e.stopPropagation(); setOpen(false); btn.focus(); } });
+  document.addEventListener('click', (e) => { if (wrap.isConnected && !wrap.contains(e.target) && !panel.classList.contains('hidden')) setOpen(false); });
   const paint = (r) => {
     const n = r ? r.rows.length : 0;
     count.textContent = String(n); count.classList.toggle('hidden', !n); btn.classList.toggle('has-due', !!n);
     btn.setAttribute('aria-label', n ? `${n} to-do${n === 1 ? '' : 's'} due or overdue` : 'No to-dos due');
+    updated.textContent = ago();
+    list.replaceChildren(...(n ? r.rows.slice(0, 8).map(t => h('div', { class: 'today-item' },
+      h('a', { href: `#/tasks?id=${t.id}`, onClick: () => setOpen(false) }, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null),
+      t.overdue ? badge('Overdue', 'danger') : h('span', { class: 'small muted' }, fmt.time(t.due_at) || 'today'))) : [h('p', { class: 'small muted' }, 'Nothing due in the next hour, and nothing overdue.')]),
+    n > 8 ? h('p', { class: 'small muted' }, `and ${n - 8} more`) : null);
   };
   async function poll(force = false) {
     if (!state.user) return;
@@ -1284,11 +1443,13 @@ export function dueBell() {
   duePoll = poll;
   if (!dueListening) {
     dueListening = true;
-    const wake = () => { if (document.visibilityState === 'visible' && duePoll) duePoll(); };
+    // Back to the tab (or the window gets focus): ask again at once, whatever the age of the last answer; a
+    // burst of focus events is one request (dueSoon).
+    const wake = () => { if (document.visibilityState === 'visible' && duePoll) dueSoon(); };
     document.addEventListener('visibilitychange', wake); window.addEventListener('focus', wake);
   }
   poll();
-  return btn;
+  return wrap;
 }
 function maybeNotify(rows) {
   if (!prefs.get('notify_due') || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
@@ -1308,7 +1469,7 @@ function maybeNotify(rows) {
 export function welcomeSteps() {
   return [
     ['Start with Home', 'Home shows what needs attention today: to-dos due, clients you have not contacted in a while, and drafts you started on another device.'],
-    ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) logs a visit, call, note, to-do, referral or time in a few taps. Visits and calls also fill in your time sheet.'],
+    ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) logs a visit, call, note, to-do, referral or time in a few taps. A visit goes on your time sheet when you tick "Also log this as a time entry".'],
     ['Find anyone fast', 'Use the search box at the top with a last name, phone number or client code. Open a client to see their story: the Overview ends with their recent activity, and the tabs hold their visits, notes, to-dos, consents and referrals.'],
     ['Look for the ? marks', 'Every page has a ? that explains it in plain language. You cannot break anything: records are never truly deleted and every change is logged.'],
   ];
@@ -1321,13 +1482,66 @@ export function welcomeIntro() {
       : state.local ? 'This copy keeps your work on this device; it reaches the office SUDS when you sync.'
       : 'It works the same on your phone and your computer. Anything you add on one shows up on the other right away.'}`;
 }
+// "Your first day" (1.15.3): three things to do first, for this person's role, inside the welcome card rather
+// than a second card beside it. Each has the button that does it; using the button, or ticking the box, marks
+// it done (prefs first_day, per person). The role homes themselves are unchanged. Steps the person's
+// permissions do not allow are left out. An administrator gets none: "Finish setting up" is theirs.
+const openVisit = async () => (await import('./views/interventions.js')).openInterventionForm(null, { onDone: render });
+const openNote = async () => (await import('./views/notes.js')).openNoteForm(null, { onDone: render });
+export function firstDaySteps(role = state.user && state.user.role) {
+  const S = {
+    navigator: [
+      ['visit', 'Log your first visit', 'Who you saw, what you did and what you handed out: most visits take a minute.', 'Log a visit', openVisit, 'interventions:write'],
+      ['find', 'Find a client', 'Search by last name, phone number or client code, at the top of every page (or press /).', 'Open the client list', '#/clients', 'clients:read'],
+      ['todos', 'Check your to-dos', 'Follow-ups and reminders, the overdue ones first. The bell at the top counts what is due.', 'Open To-dos', '#/tasks', 'tasks:read']],
+    clinician: [
+      ['clients', 'Open your caseload', 'The clients you are assigned to, with who needs a check-in first.', 'Open the client list', '#/clients?sort=last_contact', 'clients:read'],
+      ['note', 'Write a clinical note', 'SOAP, DAP or narrative, saved as a draft as you type; sign it when it is complete.', 'Write a note', openNote, 'notes:clinical:write'],
+      ['notes', 'Look over unsigned notes', 'Drafts you have not signed yet, and notes waiting for you.', 'Open Notes', '#/notes', 'notes:admin:read']],
+    supervisor: [
+      ['supervision', 'Open Supervision', 'Notes to countersign, drafts your team has not finished, and time to approve.', 'Open Supervision', '#/supervision', ['notes:cosign', 'time:approve', 'assignments:manage']],
+      ['clients', 'Look over the caseload', 'Every client, longest without contact first.', 'Open the client list', '#/clients?sort=last_contact', 'clients:read'],
+      ['funder', 'See the funder report', 'People served, admissions and discharges for a period, and which file to send.', 'Open the funder report', '#/funder', 'reports:read']],
+    finance: [
+      ['budget', 'Check funds and budget lines', 'Each grant, what is allocated and what has been spent against it.', 'Open Funding & spending', '#/budget', 'budget:read'],
+      ['time', 'Approve submitted time', 'Staff hours submitted for the period, to approve or return.', 'Open Supervision', '#/supervision', 'time:approve'],
+      ['funder', 'Run the funder report', 'The report for a month, quarter or fiscal year, and which file to send.', 'Open the funder report', '#/funder', 'reports:read']],
+    readonly: [
+      ['funder', 'Open the funder report', 'Counts of people and services for a period that has ended, never who they are.', 'Open the funder report', '#/funder', 'reports:read'],
+      ['reports', 'Look at the program reports', 'Summaries and monthly trends for any date range.', 'Open Reports', '#/reports', 'reports:read'],
+      ['resources', 'Browse the resource directory', 'The programs and partners clients are referred to.', 'Open the directory', '#/resources', 'resources:read']],
+  };
+  const any = (p) => (Array.isArray(p) ? p.some(x => can(x)) : can(p));
+  // An administrator already has Home's "Finish setting up" list, which is their first day; no second one.
+  if (role === 'admin') return [];
+  return (S[role] || S.navigator).filter(x => any(x[5]));
+}
+function firstDayList() {
+  const steps = firstDaySteps(); if (!steps.length) return null;
+  const done = () => prefs.get('first_day', null) || {};
+  const mark = (key, on) => prefs.set('first_day', { ...done(), [key]: !!on });
+  const count = h('span', { class: 'small muted', 'data-first-day-count': '1' });
+  const paintCount = () => { const n = steps.filter(([k]) => done()[k]).length; count.textContent = n === steps.length ? 'All done' : `${n} of ${steps.length} done`; };
+  const list = h('ol', { class: 'first-day' }, steps.map(([key, title, why, label, action]) => {
+    const id = `first-day-${key}`;
+    const box = h('input', { type: 'checkbox', id, 'data-first-day-step': key, checked: !!done()[key], onChange: (e) => { mark(key, e.target.checked); paintCount(); } });
+    const go = () => { mark(key, true); box.checked = true; paintCount(); };
+    return h('li', {}, h('div', { class: 'first-day-row' }, h('label', { class: 'check', for: id, style: { marginTop: 0 } }, box, h('b', {}, title)),
+      typeof action === 'string' ? h('a', { class: 'btn sm', href: action, 'data-first-day-go': key, onClick: go }, label) : h('button', { class: 'btn sm', type: 'button', 'data-first-day-go': key, onClick: () => { go(); action(); } }, label)),
+    h('div', { class: 'small muted' }, why));
+  }));
+  paintCount();
+  return h('div', { 'data-first-day': state.user.role }, h('div', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'baseline' } }, h('h3', {}, 'Your first day'), count), list);
+}
 /** Home's welcome card, or null once put away (unless asked for again from Help). */
 export function welcomeCard({ force = false } = {}) {
   if (paused || (!force && prefs.get('tour_done'))) return null;
   const card = h('section', { class: 'card mb welcome-card', 'data-welcome': '1', 'aria-labelledby': 'welcome-title' },
     h('div', { class: 'card-head' }, h('h2', { id: 'welcome-title' }, 'Welcome to SUDS')),
     h('p', { 'data-welcome-intro': '1' }, welcomeIntro()),
-    h('ul', { class: 'welcome-steps' }, welcomeSteps().map(([t, text]) => h('li', {}, h('b', {}, t), ' — ', text))),
+    firstDayList(),
+    h('details', { class: 'welcome-tips' }, h('summary', {}, 'A few things that help'),
+      h('ul', { class: 'welcome-steps' }, welcomeSteps().map(([t, text]) => h('li', {}, h('b', {}, t), ' — ', text)))),
     h('div', { class: 'row' },
       h('button', { class: 'btn primary', type: 'button', 'data-welcome-done': '1', onClick: () => {
         prefs.set('tour_done', true);
@@ -1446,7 +1660,7 @@ export const NAV = [
   { name: 'supplies', label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires soonest first.' },
   { name: 'overdose', label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
   { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', more: true, help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
-  { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
+  { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. A call adds its time, and a visit does when you tick "Also log this as a time entry"; log meetings, travel and paperwork here.' },
   { sec: 'Connect clients' },
   { name: 'referrals', team: true, label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
   { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Syringe services, drop-ins, shelters, MAT and treatment programs, legal aid and the other partners you refer people to.' },
@@ -1666,7 +1880,45 @@ try { const cached = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); if 
 
 export async function logout() { await prefs.flush(); try { await post('/api/auth/logout', {}); } catch {} state.user = null; state.mfaPending = false; document.querySelectorAll('#banners [data-banner="mfa-required"]').forEach(b => b.remove());
   // nav() to a new address renders through the hash change; rendering here as well drew the sign-in page twice.
+  document.querySelectorAll('#banners [data-resume-draft]').forEach(b => b.remove());
   const from = location.hash; nav('login'); if (location.hash === from) render(); }
+
+// ---------- keyboard shortcuts (1.15.3) ----------
+// "/" finds a client, "n" logs a visit, "?" lists the shortcuts, and Ctrl+Enter (⌘+Enter on a Mac) saves the
+// open form. The three single keys work only while focus is not in a text field, select or editable area and
+// no dialog is open, and anyone can switch them off under My profile (prefs `shortcuts_off`; on by default):
+// WCAG 2.1.4 Character Key Shortcuts, since speech input can send a lone letter by accident. Ctrl+Enter has a
+// modifier and is always on; it presses the open dialog's own submit button (or that of the form that has
+// focus), so it does exactly what the button would, checks included.
+export const SHORTCUTS = [['/', 'Find a client (the search box at the top)'], ['n', 'Log a visit'], ['?', 'Show these shortcuts'], ['Ctrl + Enter (⌘ + Enter on a Mac)', 'Save the form that is open']];
+export function shortcutsOn() { return prefs.get('shortcuts_off', false) !== true; }
+export function openShortcutsHelp() {
+  return modal('Keyboard shortcuts', h('div', { 'data-shortcuts-help': '1' },
+    h('table', { class: 'table' }, h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, 'Key'), h('th', { scope: 'col' }, 'What it does'))),
+      h('tbody', {}, SHORTCUTS.map(([k, what]) => h('tr', {}, h('td', {}, h('kbd', {}, k)), h('td', {}, what))))),
+    h('p', { class: 'small muted mt' }, shortcutsOn()
+      ? 'The single keys (/, n and ?) work when you are not typing in a field. Switch them off under My profile if they get in your way, for example with speech recognition.'
+      : 'The single keys (/, n and ?) are switched off for you under My profile. Ctrl + Enter always works.')));
+}
+const typingIn = (el) => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+document.addEventListener('keydown', (e) => {
+  if (!state.user || e.defaultPrevented) return;
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+    const top = [...document.querySelectorAll('#modal-root > .modal-bg')].pop();
+    const formEl = top ? top.querySelector('form') : (document.activeElement && document.activeElement.closest && document.activeElement.closest('form'));
+    const submit = formEl && [...formEl.querySelectorAll('button[type=submit]')].filter(b => !b.disabled && b.offsetParent).pop();
+    if (submit) { e.preventDefault(); submit.click(); }
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey || !shortcutsOn() || typingIn(e.target) || document.querySelector('#modal-root > .modal-bg')) return;
+  if (e.key === '/') {
+    const box = [...document.querySelectorAll('.gsearch input[type=search]')].find(i => i.offsetParent);
+    if (box) { e.preventDefault(); box.focus(); box.select(); }
+  } else if (e.key === 'n' || e.key === 'N') {
+    if (!can('interventions:write') || e.key === 'N') return;
+    e.preventDefault(); import('./views/interventions.js').then(m => m.openInterventionForm(null, { onDone: render }));
+  } else if (e.key === '?') { e.preventDefault(); openShortcutsHelp(); }
+});
 
 // ---------- session / idle ----------
 let lastActivity = Date.now(); let idleTimer;
@@ -1705,6 +1957,9 @@ export async function loadSession() {
     // The fund a new visit is pre-filled with (the worker's own default, else the programme's).
     state.defaultFundId = me.default_fund_id || null;
     await Promise.all([loadRefData(), prefs.load()]);
+    // Drafts typed by someone else in this tab are not theirs to see; this person's own kept drafts come back.
+    claimDrafts();
+    if (!state.mfaPending && !state.user.must_change_password) offerKeptDrafts();
     // Two-step verification is required of this role but not set up yet. There is a grace period, after which
     // the server refuses every request until it is done -- so say when that is, and where to do it, instead of
     // a vague "please enroll" that reads as advisory right up until the day everything stops working.
@@ -1719,7 +1974,7 @@ export async function loadSession() {
       // Once dismissed, the bar (about 50 px above every page on a phone) becomes a small "2-step" link in the
       // header, kept for this person on every device (a preference), until two-step verification is set up.
       state.mfaDue = { when, full };
-      const collapse = () => { prefs.set('mfa_banner_collapsed', true); prefs.flush(); const bar = document.querySelector('.appbar'); if (bar && !bar.querySelector('[data-mfa-link]')) bar.insertBefore(mfaLink(), bar.querySelector('.bell')?.nextSibling || null); };
+      const collapse = () => { prefs.set('mfa_banner_collapsed', true); prefs.flush(); const bar = document.querySelector('.appbar'); if (bar && !bar.querySelector('[data-mfa-link]')) bar.insertBefore(mfaLink(), bar.querySelector('.bell-wrap')?.nextSibling || null); };
       const el = prefs.get('mfa_banner_collapsed') ? null : banner(`Two-step verification required ${when}.`, 'warn', { id: 'mfa-required', compact: true, announceText: full, onDismiss: collapse });
       if (el) {
         el.firstChild.append(h('span', { class: 'sr-only' }, ' After that, SUDS will not let you in until it is done.'));

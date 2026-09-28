@@ -66,16 +66,24 @@ const [c1, c2, c3] = mine;
   ok(sections.every(s => !s.open), 'every section starts folded for a new visit', sections);
   ok(sections.every(s => s.heading), 'each section heading is a real heading inside a keyboard disclosure (summary)');
   const visible = await page.$$eval('.modal .form-grid > .field:not([hidden]), .modal [data-supply-picker]', xs => xs.filter(x => x.offsetParent && !x.closest('details')).map(x => x.dataset.field || 'supplies'));
-  for (const f of ['client_id', 'type', 'occurred_at', 'location', 'modality', 'summary', 'supplies']) ok(visible.includes(f), `the everyday field "${f}" shows without opening anything`, visible);
-  ok(visible.length <= 8, 'and little else (about six core fields and the supply picker)', visible);
-  for (const f of ['duration_minutes', 'cost', 'follow_up_due', 'outcome', 'note_content']) ok(!visible.includes(f), `"${f}" is folded into its section`, visible);
+  for (const f of ['client_id', 'type', 'occurred_at', 'summary', 'supplies']) ok(visible.includes(f), `the everyday field "${f}" shows without opening anything`, visible);
+  ok(visible.length <= 7, 'and little else (the core fields and the supply picker)', visible);
+  // 1.15.3: where and how (filled in from the last visit) is folded too, its heading saying what it holds.
+  for (const f of ['location', 'modality', 'duration_minutes', 'cost', 'follow_up_due', 'outcome', 'note_content']) ok(!visible.includes(f), `"${f}" is folded into its section`, visible);
+  ok(/— .+/.test(await hint(page, 'where')), 'the folded "Where & how" says what it holds', await hint(page, 'where'));
   ok(await saveInView(page), 'Save is on screen at 1360×900 without scrolling');
   eq(await page.inputValue('.modal select[name=location]'), C.DEFAULT_LOCATION, 'a first visit starts at the program\'s default location');
   eq(await page.inputValue('.modal select[name=modality]'), 'in_person', 'in person');
-  ok(await page.isChecked('.modal input[name=log_time]'), '"Also log this as a time entry" is on the first time');
-  ok(/adds 30 min of direct service to your time/i.test(await hint(page, 'time')), 'the folded Time section says what it will add', await hint(page, 'time'));
+  // 1.15.3: unticked on every new visit; ticking it is a choice, and the help then says what it adds.
+  ok(!(await page.isChecked('.modal input[name=log_time]')), '"Also log this as a time entry" starts unticked');
+  ok(/not added to your time/.test(await hint(page, 'time')), 'the folded Time section says no time is added', await hint(page, 'time'));
   const help = await page.textContent('.modal [data-field="log_time"] .help');
-  ok(/Adds 30 min of direct service to your time/.test(help) && /supervisors approve hours/.test(help), 'the checkbox\'s help says what it creates and why it is on', help);
+  ok(/No time entry is made/.test(help) && /starts unticked on every visit/.test(help), 'the checkbox\'s help says nothing is logged unless it is ticked', help);
+  await page.click('.modal details[data-section-key="time"] > summary');
+  await page.check('.modal input[name=log_time]');
+  ok(/adds 30 min of direct service to your time/i.test(await hint(page, 'time')), 'ticked, the Time section says what it will add', await hint(page, 'time'));
+  ok(/Adds 30 min of direct service to your time/.test(await page.textContent('.modal [data-field="log_time"] .help')), 'and so does the checkbox\'s help');
+  await page.click('.modal details[data-section-key="time"] > summary');
   // Opening a section is remembered for this person.
   await page.click('.modal details[data-section-key="time"] > summary');
   ok(await isOpen(page, 'time'), 'the Time section opens from its heading');
@@ -89,6 +97,7 @@ const [c1, c2, c3] = mine;
   const mods = await page.$$eval('.modal select[name=modality] option', os => os.map(o => o.value).filter(Boolean));
   const mod = mods.find(v => v !== 'in_person');
   await page.selectOption('.modal select[name=type]', 'case_management');
+  await page.click('.modal details[data-section-key="where"] > summary');
   await page.selectOption('.modal select[name=location]', loc); await page.selectOption('.modal select[name=modality]', mod);
   await page.fill('.modal textarea[name=summary]', 'Check-in about housing');
   // ---- 4. the note, in the same dialog and the same request ----
@@ -116,7 +125,7 @@ const [c1, c2, c3] = mine;
   eq(await page.inputValue('.modal select[name=location]'), loc, 'the next visit starts at the last visit\'s location');
   eq(await page.inputValue('.modal select[name=modality]'), mod, 'and its modality');
   eq(await page.inputValue('.modal select[name=type]'), 'case_management', 'and its type');
-  ok(!(await page.isChecked('.modal input[name=log_time]')), 'the time-entry box follows the last choice (off)');
+  ok(!(await page.isChecked('.modal input[name=log_time]')), 'the time-entry box starts unticked again');
   ok(await isOpen(page, 'time'), 'the Time section this person opened is open again');
   ok(!(await isOpen(page, 'outcome')), 'the ones they did not open stay folded');
   await page.check('.modal input[name=log_time]');

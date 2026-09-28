@@ -298,7 +298,7 @@ route('funder', async (r) => {
       withheldNote(['by_discharge_reason'], 'Discharge reasons are withheld: they could not be shown without giving someone away.'),
       d.episodes.by_discharge_reason.some(x => x.n !== 0)
         ? bars(d.episodes.by_discharge_reason, { valueKey: 'n', labelKey: 'k', list: 'DISCHARGE_REASONS' })
-        : (d.withheld || []).includes('by_discharge_reason') ? null : emptyState('Nothing to show', 'Discharge reasons appear here once episodes are closed. Close an episode from a client\'s Episodes tab.')),
+        : (d.withheld || []).includes('by_discharge_reason') ? null : emptyState('Nothing to show', 'Discharge reasons appear here once episodes are closed. Close an episode from a client\'s Episodes tab.', can('clients:read') ? h('a', { class: 'btn', 'data-empty-action': 'clients', href: '#/clients' }, 'Open the client list') : null)),
 
     h('section', { class: 'card' },
       h('h2', {}, 'By funding source'),

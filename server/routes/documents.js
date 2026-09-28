@@ -82,7 +82,7 @@ module.exports = (r) => {
     ctx.status = 201; return { id };
   });
   r.put('/api/documents/:id', auth.requireAuth, auth.requirePerm('documents:write'), (ctx) => {
-    const d = db.one(`SELECT id, updated_at FROM policy_documents WHERE id=?`, ctx.params.id); if (!d) throw notFound();
+    const d = db.one(`SELECT id, updated_at, is_active FROM policy_documents WHERE id=?`, ctx.params.id); if (!d) throw notFound();
     require('../crud').assertFresh(ctx, d, 'document');
     const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
     const v2 = validate({ is_active: ctx.body.is_active }, { is_active: { type: 'boolean' } }, { partial: true });
@@ -92,7 +92,9 @@ module.exports = (r) => {
     if (!sets.length) return { ok: true, updated_at: d.updated_at };
     const stamp = db.now();
     db.run(`UPDATE policy_documents SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, stamp, d.id);
-    audit.log({ user: ctx.user, action: 'document.update', entity: 'policy_document', entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)) } });
+    // Back in effect after being retired (the Undo after Retire) is its own entry.
+    const reactivated = !!v2.is_active && !d.is_active;
+    audit.log({ user: ctx.user, action: reactivated ? 'document.reactivate' : 'document.update', entity: 'policy_document', entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)) } });
     return { ok: true, updated_at: stamp };
   });
   // Soft delete (retire), same as the form template library — the library is a record of what has been in

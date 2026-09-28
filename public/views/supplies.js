@@ -3,7 +3,7 @@
 // visits (server/supplies.js). Field staff see the stock and record deliveries at their site; supervisors and
 // administrators run the cupboard (items, sites, transfers, adjustments, disposal) and see the expiry alerts
 // on Home. The syringe services summary for a period is here too, for those who may run it.
-import { h, route, get, post, put, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, pageTabs, stat, flag, pagedList, downloadCsv } from '../app.js';
+import { h, route, get, post, put, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, pageTabs, stat, flag, pagedList, downloadCsv, helpTip } from '../app.js';
 import { mayRunInternalReports, runKindBanner } from './funder.js';
 
 const labelIn = (list, code) => ((list || []).find(x => x.code === code) || { label: code || '' }).label;
@@ -81,6 +81,10 @@ route('supplies', async (r) => {
     } });
     const m = modal('Receive stock', f);
   };
+  // Adjust, dispose or move? (1.15.3) The three change stock differently in the report, and the wrong one
+  // leaves the books right but the story wrong, so each dialog carries the same paragraph behind its "?".
+  const whichOne = (here) => h('p', { class: 'small', 'data-supply-which': here }, h('b', {}, here === 'adjust' ? 'Adjust, or dispose or move instead?' : here === 'dispose' ? 'Dispose, or adjust or move instead?' : 'Move, or adjust or dispose instead?'), ' ',
+    helpTip('Dispose of stock you still have in your hands and are getting rid of — expired, damaged or recalled: it records which lot went and why, and the report counts it as wasted. Move stock that goes to another of your sites (a van, a drop-in): the program\'s total does not change. Adjust only when the books are wrong and there is nothing to throw away: after counting the shelf (count correction), for stock that went missing (lost or stolen), or for stock already thrown out without being recorded. Never adjust or dispose for kits handed out to people: log the visit, which takes them off stock.'));
   const openTransfer = (pre = {}) => {
     const f = form([
       { name: 'item_id', label: 'Item', type: 'select', required: true, options: itemOptions(), value: pre.item_id },
@@ -98,7 +102,7 @@ route('supplies', async (r) => {
     const sync = () => fillLots(f.inputs.lot, f.inputs.item_id.value, f.inputs.from_site_id.value, 'Earliest expiry first');
     f.inputs.item_id.addEventListener('change', sync); f.inputs.from_site_id.addEventListener('change', sync); sync();
     if (pre.lot) f.inputs.lot.value = pre.lot;
-    const m = modal('Move stock to another site', f);
+    const m = modal('Move stock to another site', h('div', {}, whichOne('transfer'), f));
   };
   const openAdjust = (pre = {}) => {
     const f = form([
@@ -118,7 +122,7 @@ route('supplies', async (r) => {
     const sync = () => fillLots(f.inputs.lot, f.inputs.item_id.value, f.inputs.site_id.value, null);
     f.inputs.item_id.addEventListener('change', sync); f.inputs.site_id.addEventListener('change', sync); sync();
     if (pre.lot) f.inputs.lot.value = pre.lot;
-    const m = modal('Adjust stock', f);
+    const m = modal('Adjust stock', h('div', {}, whichOne('adjust'), f));
   };
   const openDispose = (l) => {
     const f = form([
@@ -129,7 +133,7 @@ route('supplies', async (r) => {
       await post('/api/supplies/disposals', { ...v, item_id: l.item_id, site_id: l.site_id, lot_number: l.lot_number, expires_on: l.expires_on }).catch(onErr('The disposal could not be recorded.'));
       toast(`${itemName(l.item_id)}: ${v.quantity} disposed of`, 'ok'); m.close(); refresh(qs());
     } });
-    const m = modal(`Dispose of ${itemName(l.item_id)} (${lotLabel(l)}) at ${siteName(l.site_id)}`, f);
+    const m = modal(`Dispose of ${itemName(l.item_id)} (${lotLabel(l)}) at ${siteName(l.site_id)}`, h('div', {}, whichOne('dispose'), f));
   };
   const openItem = (it = null) => {
     const f = form([
@@ -238,7 +242,7 @@ route('supplies', async (r) => {
         { label: 'Item', render: l => h('b', {}, itemName(l.item_id)) }, { label: 'Site', render: l => siteName(l.site_id) }, { label: 'Lot', render: l => l.lot_number || h('span', { class: 'muted' }, 'No lot') },
         { label: 'Expires', render: expCell }, { label: 'On hand', num: true, render: l => fmt.num(l.quantity) }, { label: '', render: btns },
       ], rows, { compact: { primary: l => [h('span', {}, `${itemName(l.item_id)} · ${siteName(l.site_id)}`), h('b', {}, fmt.num(l.quantity))], secondary: l => [lotLabel(l), ' ', expiryBadge(l)], onTap: can2.manage ? openDispose : null } })
-        : emptyState('No stock on hand', 'Lots appear here once stock is received.'));
+        : emptyState('No stock on hand', can2.manage ? 'Lots appear here once stock is received.' : 'Lots appear here once a supervisor records the stock received.', can2.manage ? h('button', { class: 'btn primary', 'data-empty-action': 'receive', onClick: () => openReceive() }, '+ Receive stock') : null));
   } else if (tab === 'history') {
     const flagged = r.query.get('flagged') === '1'; const kind = r.query.get('kind') || '';
     const q = `${siteId ? `site_id=${siteId}&` : ''}${flagged ? 'flagged=1&' : ''}${kind ? `kind=${kind}&` : ''}`;

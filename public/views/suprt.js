@@ -120,7 +120,7 @@ function openExport(from, to, def) {
 
 loadingFor('suprt', () => 'Counting SUPRT-A records due and done…');
 route('suprt', async (r) => {
-  if (!moduleOn('suprt')) return h('div', {}, pageHead('SUPRT-A'), emptyState('SUPRT-A is switched off', 'SUPRT-A records are for programs with State Opioid Response (SOR) funding. An administrator can switch the module on in Settings › Program › Modules.', null, { level: 2 }));
+  if (!moduleOn('suprt')) return h('div', {}, pageHead('SUPRT-A'), emptyState('SUPRT-A is switched off', `SUPRT-A records are for programs with State Opioid Response (SOR) funding. ${can('settings:manage') ? 'Switch the module on in Settings › Program › Modules.' : 'An administrator can switch the module on in Settings › Program › Modules.'}`, can('settings:manage') ? h('a', { class: 'btn primary', 'data-empty-action': 'modules', href: '#/admin?tab=settings' }, 'Open Program settings') : null, { level: 2 }));
   const to = r.query.get('to') || fmt.today(); const from = r.query.get('from') || new Date(Date.parse(to) - 89 * 86400000).toISOString().slice(0, 10);
   const def = await items();
   const [c, due] = await Promise.all([can('clients:read') ? get(`/api/suprt/completion?from=${from}&to=${to}`) : null, suprtDueCard()]);

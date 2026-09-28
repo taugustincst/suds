@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, badge, fmt, can, pageHead, confirmDialog, nav, downloadCsv, emptyState } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, badge, fmt, can, pageHead, confirmDialog, nav, downloadCsv, emptyState, undoToast } from '../app.js';
 
 const readFile = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error('Could not read file')); r.readAsDataURL(file); });
 const fileIcon = (t) => !t ? '📄' : t.includes('pdf') ? '📄' : t.includes('word') || t.includes('msword') ? '📝' : t.startsWith('image/') ? '🖼' : '📄';
@@ -48,12 +48,16 @@ route('documents', async (r) => {
     h('div', { class: 'btn-row tight' },
       d.has_file ? h('button', { class: 'btn sm primary', onClick: () => downloadCsv(`/api/documents/${d.id}/file`) }, 'Download') : h('span', { class: 'small muted' }, 'No file'),
       can('documents:write') ? h('button', { class: 'btn sm', onClick: () => openDocumentForm(d, refresh) }, 'Edit') : null,
-      can('documents:write') && d.is_active ? h('button', { class: 'btn sm ghost', 'aria-label': 'Retire this document', onClick: async () => { if (await confirmDialog('Retire document', `Retire "${d.title}"? It stays in the library, marked retired.`, { danger: true, okText: 'Retire' })) { await del(`/api/documents/${d.id}`); refresh(); } } }, 'Retire') : null));
+      can('documents:write') && d.is_active ? h('button', { class: 'btn sm ghost', 'aria-label': 'Retire this document', 'data-document-retire': d.id, onClick: async () => {
+        // Reversible (it stays in the library, marked retired), so done at once with an Undo.
+        await del(`/api/documents/${d.id}`); refresh();
+        undoToast(`"${d.title}" retired. It stays in the library, marked retired.`, async () => { await put(`/api/documents/${d.id}`, { is_active: true }); refresh(); });
+      } }, 'Retire') : null));
   return h('div', {},
     pageHead('Policies & contracts', can('documents:write') ? h('button', { class: 'btn primary', onClick: () => openDocumentForm(null, refresh) }, '+ Upload') : null),
     h('p', { class: 'muted small' }, 'County policies, procedures and signed contracts. Search looks at the title, description and the text inside PDF, Word and plain-text files; a scanned image is found by its title only.'),
     h('div', { class: 'filters' }, h('div', { class: 'field grow' }, h('label', {}, 'Search'), search), h('div', { class: 'field' }, h('label', {}, 'Category'), catSel),
       h('button', { class: 'btn', onClick: () => nav(`documents?category=${cat}&q=${encodeURIComponent(search.value)}`) }, 'Search'),
       can('documents:write') ? h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: inactive, onChange: (e) => nav(`documents?category=${cat}&q=${encodeURIComponent(q)}${e.target.checked ? '&inactive=1' : ''}`) }), ' Show retired') : null),
-    rows.length ? h('div', { class: 'grid' }, rows.map(card)) : emptyState('No documents found', 'Upload a policy, procedure or contract to get started.'));
+    rows.length ? h('div', { class: 'grid' }, rows.map(card)) : emptyState('No documents found', can('documents:write') ? 'Upload a policy, procedure or contract to get started, or try another search.' : 'Try another search. An administrator or supervisor uploads the program\'s policies and contracts.', can('documents:write') ? h('button', { class: 'btn primary', 'data-empty-action': 'document', onClick: () => openDocumentForm(null, refresh) }, '+ Upload a document') : null));
 });
