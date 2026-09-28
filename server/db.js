@@ -602,6 +602,20 @@ const migrations = [
   //     (intervention_supplies), the site it drew from, and the syringes and sharps brought back.
   //     Self-contained and idempotent: every step checks what is already there.
   (d) => migrateSupplies(d, safeSchema()),
+  // 46: per-user permission overrides — grants and denies on top of the role's PERMS
+  // (server/auth.js effectivePerms). One row per (user, permission); mode says which.
+  (d) => {
+    d.exec(`CREATE TABLE IF NOT EXISTS user_permission_overrides (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      permission TEXT NOT NULL,
+      mode TEXT NOT NULL CHECK (mode IN ('grant','deny')),
+      reason TEXT NOT NULL,
+      granted_by TEXT REFERENCES users(id),
+      granted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+      PRIMARY KEY (user_id, permission)
+    )`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id)`);
+  },
 ];
 
 // The site every install starts with: created with this fixed id on a fresh database and by migration 45, so

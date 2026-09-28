@@ -63,6 +63,20 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL;
 
+-- Per-user permission overrides: grants and denies on top of the role's PERMS (server/auth.js
+-- effectivePerms). One row per (user, permission); mode says which. Migration 46 creates this table
+-- on existing databases; new databases get it here.
+CREATE TABLE IF NOT EXISTS user_permission_overrides (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  permission TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('grant','deny')),
+  reason TEXT NOT NULL,
+  granted_by TEXT REFERENCES users(id),
+  granted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (user_id, permission)
+);
+CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id);
+
 -- One row per physical phone/tablet running local mode, identified by a UUID the device itself generates
 -- once and sends on every sync call (never by the short-lived sync session, which starts and ends within a
 -- single sync run). "Wipe" here means the closest thing an offline-first app can offer to a real MDM remote
