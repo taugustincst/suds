@@ -59,6 +59,13 @@ test('permissions API: grant, deny, revoke round-trip', async () => {
   assert.equal(r.status, 200);
   r = await a.del(`/api/users/${nav.id}/permissions/audit:read`);
   assert.equal(r.status, 200);
+  // the revoke audit row carries the permission, mode, and reason of the removed override
+  const rev = H.db.one(`SELECT details FROM audit_log WHERE action='user.permission.revoke' AND entity_id=? ORDER BY at DESC LIMIT 1`, nav.id);
+  assert.ok(rev, 'revoke is audited');
+  const revDetails = JSON.parse(rev.details);
+  assert.equal(revDetails.permission, 'audit:read');
+  assert.equal(revDetails.mode, 'grant');
+  assert.equal(revDetails.reason, 'reviews the break-glass queue weekly');
   r = await a.get(`/api/users/${nav.id}/permissions`);
   assert.equal(r.status, 200);
   assert.deepEqual(r.data.overrides, [], 'no override rows remain');

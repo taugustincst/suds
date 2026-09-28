@@ -178,9 +178,10 @@ module.exports = (r) => {
     }
     const target = db.one(`SELECT id FROM users WHERE id=?`, ctx.params.id);
     if (!target) throw notFound('User not found');
-    const res = db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
-    if (!res.changes) throw notFound('No such override');
-    audit.log({ user: ctx.user, action: 'user.permission.revoke', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: ctx.params.permission } });
+    const row = db.one(`SELECT permission, mode, reason FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
+    if (!row) throw notFound('No such override');
+    db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
+    audit.log({ user: ctx.user, action: 'user.permission.revoke', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: row.permission, mode: row.mode, reason: row.reason } });
     return { ok: true };
   });
 
