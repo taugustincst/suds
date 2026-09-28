@@ -1102,6 +1102,15 @@ export function tabStrip(tabs, active, onPick, { label = 'Sections', core = null
     // after every visible tab in the strip, so the strip still reads in order. (It used to be moved before
     // More whether or not it had been swapped, so Overview, the first tab, was shown last, after Forms.)
     if (overflow.includes(activeIdx) && overflow[0] > 0) { overflow[overflow.indexOf(activeIdx)] = overflow[0] - 1; }
+    // The swapped-in tab can be wider than the one it replaced (at 200% text "Assistance $" is), so check the
+    // row again and move tabs before it under More until it fits: the strip must never run past the screen
+    // (WCAG 1.4.10 reflow).
+    const shownWidth = () => widths.reduce((a, w, i) => a + (overflow.includes(i) ? 0 : w), 0);
+    while (shownWidth() > limit) {
+      const drop = buttons.map((_, i) => i).filter(i => !overflow.includes(i) && i !== activeIdx).pop();
+      if (drop === undefined) break;
+      overflow.push(drop);
+    }
     for (const i of overflow.sort((a, b) => a - b)) { buttons[i].hidden = true; menu.append(menuItem(i)); }
     moreText(overflow.length);
   }
