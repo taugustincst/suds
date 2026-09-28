@@ -105,7 +105,7 @@ The **Resource Directory** holds treatment providers, MAT clinics, shelters, har
 Do not add pictures of clients.
 
 ## Supervision
-The **Supervision** page is the work waiting on a supervisor: notes to countersign, unsigned drafts across the team, staff time to approve, open client rights requests, and referrals with no outcome recorded.
+The **Supervision** page is the work waiting on a supervisor: notes to countersign, unsigned drafts across the team, staff time to approve, open client rights requests, and referrals with no outcome recorded. Approved time is part of a signed-off time sheet and cannot be edited or deleted, by the worker or a manager (on a device too); to correct it, a supervisor opens **My time**, presses **Reopen** on the entry and gives a reason, and the worker corrects it and submits it again.
 * **Unsigned notes across your team** — each draft has **Open note** (the note opens over the page, as for countersigning) and **Remind author**, which gives its author a to-do on that client's record, due today (high priority when the draft is overdue), asking them to finish and sign it. The to-do says which kind of note and when it was started, nothing from the note itself; like every to-do its title and details are encrypted, and it is in the audit log. Once a reminder is open the row shows **Sent** with its date instead of the button, whoever sent it; when the author closes the to-do, a new one can be sent. You are never offered a reminder for your own draft.
 * **Remind all overdue authors** sends one reminder per overdue draft after you confirm; the confirmation says how many it will send and how many are skipped because a reminder for that note is still open. Pressing it again sends nothing new.
 
