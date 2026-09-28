@@ -977,7 +977,10 @@ export function table(columns, rows, { onRow, empty = 'No records', wrap = true,
     const cells = columns.map(c => h('td', { class: c.num ? 'num' : '', 'data-label': c.label || '' }, cell(c, r)));
     if (!onRow) return h('tr', {}, cells);
     const open = (e) => { e.stopPropagation(); onRow(r); };
-    const td = cells.find(x => x.textContent.trim() && !x.querySelector(FOCUSABLE));
+    // Text a screen reader hears: a decorative initial (aria-hidden) is not a name, and a button made of it
+    // alone had none (a resource with no picture, in the directory's list view).
+    const heard = (x) => { const c = x.cloneNode(true); c.querySelectorAll('[aria-hidden="true"]').forEach(n => n.remove()); return c.textContent.trim(); };
+    const td = cells.find(x => heard(x) && !x.querySelector(FOCUSABLE));
     if (td) { const b = h('button', { type: 'button', class: 'row-open', onClick: open }); b.append(...td.childNodes); td.append(b); }
     else cells[cells.length - 1].append(h('button', { type: 'button', class: 'btn sm ghost row-open-extra', onClick: open }, 'Open'));
     return h('tr', { class: 'click', onClick: () => onRow(r) }, cells);

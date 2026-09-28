@@ -776,8 +776,49 @@ async function keyboardRun() {
   await ctx.close();
 }
 
+// ------------------------------------------------------------------------ inactive status in the tree
+// QA 1.15.3: an "Inactive" badge has to reach a screen reader as the status it is, beside the thing it
+// describes: a resource's card link and list row (the list used to put it alone in a column headed, for a
+// screen reader, "Actions"; a card did not show it at all), its profile ("Status: Inactive" in a list), a
+// deactivated user's row and an inactive client's row (under Status), at desktop and phone widths.
+async function inactiveRun() {
+  const tag = Date.now().toString(36);
+  const names = { resource: `Closed Door House ${tag}`, user: `Gone Worker ${tag}`, client: `Dormant${tag}` };
+  for (const cfg of CONFIGS.slice(0, 2)) {
+    const { ctx, page } = await newPage(cfg); watch(page, `inactive ${cfg.id}`);
+    const W = `inactive ${cfg.viewport.width}px`;
+    await signIn(page, office, 'admin', ROLES[0][1]);
+    if (cfg === CONFIGS[0]) {
+      const r = await api(page, 'POST', '/api/resources', { name: names.resource, category: 'residential' });
+      ok(r.status === 201 && (await api(page, 'DELETE', `/api/resources/${r.data.id}`)).status === 200, `${W}: a resource is deactivated`);
+      names.resourceId = r.data.id;
+      const u = await api(page, 'POST', '/api/users', { username: `gone${tag}`, display_name: names.user, role: 'navigator', password: 'GoneWorker2026!!x' });
+      ok(u.status === 201 && (await api(page, 'PUT', `/api/users/${u.data.id}`, { is_active: false })).status === 200, `${W}: a user is deactivated`, u.data);
+      const c = await api(page, 'POST', '/api/clients', { first_name: 'Ina', last_name: names.client, status: 'inactive', no_episode: true, confirm_duplicate: true });
+      ok(c.status === 201, `${W}: an inactive client exists`, c.data);
+    }
+    await go(page, office, 'resources?inactive=1&view=cards');
+    eq(await page.getByRole('link', { name: new RegExp(`${names.resource}.*Status: Inactive`) }).count(), 1, `${W}: an inactive resource's card link says "Status: Inactive"`);
+    await go(page, office, 'resources?inactive=1&view=list');
+    eq(await page.getByRole('button', { name: new RegExp(`${names.resource}.*Status: Inactive`) }).count(), 1, `${W}: its list row's open button says "Status: Inactive"`);
+    ok(!(await page.locator('td').filter({ hasText: /^Inactive$/ }).count()), `${W}: and no "Inactive" sits alone in a column with no heading`);
+    await go(page, office, `resource/${names.resourceId}`);
+    ok(/listitem: "?Status: Inactive/.test(await page.locator('.main').ariaSnapshot()), `${W}: its profile lists "Status: Inactive" as an item of its own`);
+    await go(page, office, 'admin?tab=users');
+    const userRow = page.getByRole('row', { name: new RegExp(names.user) });
+    eq(await userRow.getByRole('cell', { name: /Inactive/ }).count(), 1, `${W}: a deactivated user's row has an Inactive cell`);
+    // On a phone the table is a stack of cards with no header row: each cell carries its heading as text.
+    if (cfg.mobile) eq(await userRow.getByRole('cell', { name: /Status\s*Inactive/i }).count(), 1, `${W}: headed Status`);
+    else ok(/Status/.test(await page.getByRole('columnheader').allTextContents().then(t => t.join(' '))), `${W}: under a Status heading`);
+    await go(page, office, 'clients?status=inactive');
+    const clientRow = cfg.mobile ? page.getByRole('button', { name: new RegExp(`${names.client}.*Inactive`) }) : page.getByRole('row', { name: new RegExp(names.client) }).getByRole('cell', { name: 'Inactive' });
+    eq(await clientRow.count(), 1, `${W}: an inactive client's row carries its status as text`);
+    await ctx.close();
+  }
+}
+
 // ------------------------------------------------------------------------------------------------ run
-const roles = quick ? ROLES.filter(([u]) => u === 'jwalker') : ROLES;
+const roles =quick ? ROLES.filter(([u]) => u === 'jwalker') : ROLES;
 const configs = quick ? CONFIGS.slice(0, 1) : CONFIGS;
 const jobs = [];
 for (const cfg of configs) {
@@ -788,6 +829,7 @@ for (const cfg of configs) {
   if (!process.env.A11Y_SKIP_STATIC) jobs.push(['device ' + cfg.id, () => deviceRun(cfg)]);
 }
 jobs.push(['keyboard', () => keyboardRun()]);
+jobs.push(['inactive status', () => inactiveRun()]);
 await prepareOffice().catch(e => fail(`preparing the records for the newer views failed: ${e.message.split('\n').slice(0, 3).join(' / ')}`));
 const LIMIT = Number(process.env.A11Y_PARALLEL || 4);
 const running = new Set();

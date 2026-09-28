@@ -39,6 +39,10 @@ export function openResourceForm(values, onDone) {
   const m = modal(isNew ? 'Add resource' : 'Edit resource', f, { wide: true });
 }
 
+// An inactive (deactivated) programme says so in words where its name is: in the card's link, in the list
+// row's open button, and as "Status: Inactive" on the profile. The list used to put the badge alone in a
+// column with no heading, which a screen reader announced as "Actions", and a card did not show it at all.
+const inactiveBadge = (x) => (x.is_active ? null : [' ', h('span', { class: 'badge warn', 'data-inactive': '1' }, h('span', { class: 'sr-only' }, 'Status: '), 'Inactive')]);
 const tagBadges = (csv, kind = '') => String(csv || '').split(',').filter(Boolean).map(t => [badge(fmt.label(t), kind), ' ']);
 const stale = x => !x.last_verified_at || Date.now() - Date.parse(x.last_verified_at) > 180 * 86400000;
 const siteHref = w => w ? (w.startsWith('http') ? w : 'https://' + w) : null;
@@ -170,18 +174,18 @@ route('resources', async (r) => {
   const thumb = (x, cls = 'thumb') => x.cover_url ? img(x.cover_url, { class: cls, alt: '', loading: 'lazy' }) : h('div', { class: `${cls} placeholder`, 'aria-hidden': 'true' }, (x.name || '?').slice(0, 1).toUpperCase());
   const cards = () => rows.length ? h('div', { class: 'grid cols-3 res-cards' }, rows.map(x => h('a', { class: 'card res-card', href: `#/resource/${x.id}` },
     thumb(x, 'res-cover'),
-    h('div', { class: 'res-body' }, h('div', { class: 'row', style: { justifyContent: 'space-between' } }, h('b', {}, x.name), badge(fmt.label(x.category), 'info')), x.organization ? h('div', { class: 'small muted' }, x.organization) : null,
+    h('div', { class: 'res-body' }, h('div', { class: 'row', style: { justifyContent: 'space-between' } }, h('b', {}, x.name), h('span', {}, badge(fmt.label(x.category), 'info'), inactiveBadge(x))), x.organization ? h('div', { class: 'small muted' }, x.organization) : null,
       x.summary ? h('p', { class: 'small res-summary' }, x.summary) : x.services ? h('p', { class: 'small res-summary muted' }, x.services) : null,
       h('div', { class: 'res-tags small' }, tagBadges(String(x.service_tags || '').split(',').slice(0, 5).join(','), 'purple'), x.accepts_medicaid ? badge('Medicaid', 'ok') : null, ' ', x.accepts_uninsured ? badge('Uninsured OK', 'info') : null),
       h('div', { class: 'small muted' }, x.city || '', x.phone ? ` · ☎ ${x.phone}` : '', x.photo_count ? ` · ${x.photo_count} photo${x.photo_count > 1 ? 's' : ''}` : '', stale(x) ? h('span', { style: { color: 'var(--warn)' } }, ' · needs verification') : null)))))
     : emptyState('No resources match', 'Try another search, or add the program.', can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(null, (id) => nav(`resource/${id}`)) }, '+ Add resource') : null);
   const list = () => table([
     { label: '', render: x => thumb(x) },
-    { label: 'Resource', render: x => h('div', {}, h('b', {}, x.name), x.organization ? h('div', { class: 'small muted' }, x.organization) : null) }, { label: 'Category', render: x => fmt.label(x.category) },
+    { label: 'Resource', render: x => h('div', {}, h('b', {}, x.name), inactiveBadge(x), x.organization ? h('div', { class: 'small muted' }, x.organization) : null) }, { label: 'Category', render: x => fmt.label(x.category) },
     { label: 'Services', render: x => h('div', { class: 'small' }, tagBadges(String(x.service_tags || '').split(',').slice(0, 4).join(','), 'purple')) },
     { label: 'Contact', render: x => h('div', { class: 'small' }, x.phone ? h('div', {}, '☎ ', contactLinks(x.phone)) : null, x.city ? h('div', { class: 'muted' }, x.city) : null, x.website ? h('a', { href: siteHref(x.website), target: '_blank', rel: 'noopener', onClick: e => e.stopPropagation() }, 'website') : null) },
     { label: 'Accepts', render: x => [x.accepts_medicaid ? badge('Medicaid', 'ok') : null, ' ', x.accepts_uninsured ? badge('Uninsured', 'info') : null, x.mat_offered ? [' ', badge('MAT', 'purple')] : null] },
-    { label: 'Referrals', key: 'referral_count', num: true }, { label: 'Verified', render: x => h('span', { style: stale(x) ? { color: 'var(--warn)' } : {} }, x.last_verified_at ? fmt.date(x.last_verified_at) : 'never', stale(x) ? ' — needs verification' : '') }, { label: '', render: x => x.is_active ? null : badge('Inactive', 'warn') },
+    { label: 'Referrals', key: 'referral_count', num: true }, { label: 'Verified', render: x => h('span', { style: stale(x) ? { color: 'var(--warn)' } : {} }, x.last_verified_at ? fmt.date(x.last_verified_at) : 'never', stale(x) ? ' — needs verification' : '') },
   ], rows, { onRow: x => nav(`resource/${x.id}`), empty: 'No resources yet. Add treatment providers, MAT clinics, shelters, and other referral partners.' });
   return h('div', {},
     pageHead('Resource directory', can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(null, (id) => nav(`resource/${id}`)) }, '+ Add resource') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => window.__suds.downloadCsv('/api/reports/export/resources') }, 'Export') : null),
@@ -306,7 +310,8 @@ route('resource', async (r) => {
   const addressBtn = h('button', { class: 'btn sm', type: 'button', 'data-add-from-address': '1', onClick: openAddressDialog }, 'Add from a web address');
   const imagesIn = (list) => [...(list || [])].filter(f => f && f.type && f.type.startsWith('image/'));
   const head = h('div', { class: 'res-head' },
-    h('div', {}, h('div', { class: 'row mb', style: { gap: '.35rem' } }, badge(fmt.label(x.category), 'info'), x.is_active ? null : badge('Inactive', 'warn'), x.accepts_medicaid ? badge('Medicaid', 'ok') : null, x.accepts_uninsured ? badge('Uninsured OK', 'info') : null, x.mat_offered ? badge(`MAT: ${x.mat_offered}`, 'purple') : null, stale(x) ? badge(x.last_verified_at ? `verified ${fmt.date(x.last_verified_at)}` : 'never verified', 'warn') : badge(`verified ${fmt.date(x.last_verified_at)}`, 'ok')),
+    // A list, as on a client's record, so each badge is read on its own ("Status: Inactive"), not one run of text.
+    h('div', {}, h('ul', { class: 'row mb badge-list', style: { gap: '.35rem' }, 'aria-label': 'Category and status' }, ...[badge(fmt.label(x.category), 'info'), inactiveBadge(x), x.accepts_medicaid ? badge('Medicaid', 'ok') : null, x.accepts_uninsured ? badge('Uninsured OK', 'info') : null, x.mat_offered ? badge(`MAT: ${x.mat_offered}`, 'purple') : null, stale(x) ? badge(x.last_verified_at ? `verified ${fmt.date(x.last_verified_at)}` : 'never verified', 'warn') : badge(`verified ${fmt.date(x.last_verified_at)}`, 'ok')].filter(Boolean).map(b => h('li', {}, b))),
       x.organization ? h('div', { class: 'muted' }, x.organization) : null,
       x.summary ? h('p', { class: 'res-lead' }, x.summary) : h('p', { class: 'muted small' }, can('resources:write') ? 'No summary yet. Tap or click Edit to describe what this program offers.' : 'No summary yet.')));
   const contact = kv([['Phone', contactLinks(x.phone)], ['Fax', x.fax], ['Email', x.email ? h('a', { href: `mailto:${x.email}` }, x.email) : null], ['Website', x.website ? h('a', { href: siteHref(x.website), target: '_blank', rel: 'noopener' }, x.website) : null], ['Contact', x.contact_person],
