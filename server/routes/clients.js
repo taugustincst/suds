@@ -192,7 +192,7 @@ module.exports = (r) => {
     const filters = [];
     const addFilter = (name, f) => { where.push(f.sql); params.push(...f.params); filters.push(name); };
     const risk = ctx.query.get('risk');
-    if (risk && ['high', 'low', 'moderate', 'critical'].includes(risk)) addFilter('risk', F.risk(risk));
+    if (risk && ['high', 'low', 'moderate', 'critical', 'not_assessed'].includes(risk)) addFilter('risk', F.risk(risk));
     if (ctx.query.get('stale') === '1') addFilter('stale', F.noContactSince());
     const substance = (ctx.query.get('substance') || '').slice(0, 60);
     if (substance) addFilter('substance', F.substance(substance));
@@ -276,6 +276,9 @@ module.exports = (r) => {
     const cols = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id };
     for (const f of M.PLAIN_FIELDS) if (v[f] !== undefined) cols[f] = v[f];
     if (!cols.intake_date) cols.intake_date = new Date().toISOString().slice(0, 10);
+    // Risk is somebody's judgement, never a default (QA 1.15.3): the column's schema DEFAULT 'moderate' stored
+    // every client created without one as Moderate. Not given means not assessed (NULL, shown "Not assessed").
+    if (cols.risk_level === undefined) cols.risk_level = null;
     const keys = Object.keys(cols).filter(k => cols[k] !== undefined);
     let episodeId = null;
     db.transaction(() => {

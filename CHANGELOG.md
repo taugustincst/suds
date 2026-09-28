@@ -4,6 +4,41 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+Fixes from QA of 1.15.2. No migration, no new permission, no change to which roles hold a permission, and no new
+route.
+
+- **Approved time is locked.** `PUT /api/time/:id` on an approved entry answered 200 and changed its minutes while it
+  stayed *approved* — a signed-off time sheet could be rewritten. An approved entry can no longer be edited or
+  deleted by anyone (the worker, or a manager with `time:all`): the API answers 409 *ask a supervisor to reopen it*,
+  and a device's sync push of the same edit or deletion is refused for good (`not permitted`). The rule is in
+  `server/rules/time_entries.js`, so both doors apply it. To correct approved time, a supervisor (`time:approve`,
+  not their own time) presses **Reopen** on it in **My time** and gives a reason: the existing
+  `POST /api/time/:id/approve` now accepts `decision: "rejected"` for an approved entry (audited `time.rejected`,
+  `reopened: true`), and the worker corrects it and submits it again. Submitted time is still its worker's to
+  correct until it is ruled on. Approved expenditures were already locked at both doors (checked by a new test).
+- **Risk is "Not assessed" until someone assesses it.** A client created without a risk level was stored and shown
+  as *Moderate* (the column's default). The intake form's Risk level now starts blank (*Not assessed*); a client
+  created or imported without one has none, and badges, the client list, Home's caseload and the waitlist say
+  *Not assessed*. The client list takes `risk=not_assessed`; the high-risk count and filter are unchanged. Clients
+  already recorded as Moderate are left as they are.
+- **Resource pictures: a photograph saved as PNG uploads.** A PNG stayed a PNG when shrunk and was still several MB
+  at 1600 px, over the 2 MB picture limit, so the upload was refused and the Pictures card went blank — choosing a
+  picture seemed to do nothing, on the office server and on this device. Such a picture is now sent as a JPEG that
+  fits, and the card lists any picture that could not be added and why.
+- **"Inactive" is read out where it is shown.** A deactivated resource's *Inactive* badge sat alone in a list column
+  with no heading (a screen reader announced it under "Actions"), a directory card did not show it at all, and on
+  its profile it ran into the other badges. It now sits with the name (the card's link and the list row's button
+  say *Status: Inactive*) and the profile's badges are a list, as on a client's record. A list row's open button is
+  no longer built from decorative text alone (a resource with no picture got a button with no name), and a funding
+  source's status keeps its heading on a phone. The accessibility script checks resources, users and clients at
+  1280 and 390 px.
+- **Typos.** *the batch that expires first first* (Supplies help and the visit form) now reads *expires soonest
+  first*; screen text uses US spelling throughout: *license* in the ASAM notices, and *program* / *organize* in the
+  permission names and descriptions, a Settings field error, the publication refusal, a printed form starter, the
+  device sync notice and the page description.
+- The browser suite checks that a clinician's client record on a treatment-adjacent program shows **Care plan** and
+  **Assessments** as tabs, not under More, at 1280 and 390 px (1.15.2's promotion; it holds).
+
 Usability fixes (1.15.3). No migration, no new permission, no change to which roles hold a permission, and no new
 route: the server changes are a query parameter on an existing route (`POST /api/clients/:id/assignments?restores=`,
 the Undo after ending an assignment), a ranking option on another (`GET /api/clients?rank=1`) and three audit action

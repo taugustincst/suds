@@ -1087,7 +1087,10 @@ export function table(columns, rows, { onRow, empty = 'No records', wrap = true,
     const cells = columns.map(c => h('td', { class: c.num ? 'num' : '', 'data-label': c.label || '' }, cell(c, r)));
     if (!onRow) return h('tr', {}, cells);
     const open = (e) => { e.stopPropagation(); onRow(r); };
-    const td = cells.find(x => x.textContent.trim() && !x.querySelector(FOCUSABLE));
+    // Text a screen reader hears: a decorative initial (aria-hidden) is not a name, and a button made of it
+    // alone had none (a resource with no picture, in the directory's list view).
+    const heard = (x) => { const c = x.cloneNode(true); c.querySelectorAll('[aria-hidden="true"]').forEach(n => n.remove()); return c.textContent.trim(); };
+    const td = cells.find(x => heard(x) && !x.querySelector(FOCUSABLE));
     if (td) { const b = h('button', { type: 'button', class: 'row-open', onClick: open }); b.append(...td.childNodes); td.append(b); }
     else cells[cells.length - 1].append(h('button', { type: 'button', class: 'btn sm ghost row-open-extra', onClick: open }, 'Open'));
     return h('tr', { class: 'click', onClick: () => onRow(r) }, cells);
@@ -1654,7 +1657,7 @@ export const NAV = [
   { name: 'interventions', team: true, label: 'Visits', ico: '✚', perm: 'interventions:read', help: 'Every visit: the face-to-face or phone services you provide — outreach, screenings, warm handoffs, naloxone, transport and more.' },
   { name: 'calls', team: true, label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
   { name: 'notes', team: true, label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
-  { name: 'supplies', label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires first first.' },
+  { name: 'supplies', label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires soonest first.' },
   { name: 'overdose', label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
   { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', more: true, help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
   { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. A call adds its time, and a visit does when you tick "Also log this as a time entry"; log meetings, travel and paperwork here.' },

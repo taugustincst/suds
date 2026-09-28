@@ -52,6 +52,12 @@ function build(r, opts) {
   const R = rules.forTable(table, { optional: true });
   const shape = opts.shape || R.shape(opts.extraShape);
   const canEdit = opts.canEdit || (R.editableBy ? (ctx, row) => !R.editableBy(ctx.user, row) : null);
+  // A refusal of the rules' own that is not a plain "not yours" (approved time is 409: ask a supervisor to
+  // reopen it) is answered as itself; every other refusal keeps the route's 403.
+  function assertMayChange(ctx, row, what) {
+    if (!opts.canEdit && R.editableBy) { const no = R.editableBy(ctx.user, row); if (no && no.status !== 403 && no.toHttp) throw no.toHttp(); }
+    if (canEdit && !canEdit(ctx, row)) throw forbidden(`You cannot ${what} this record`);
+  }
   const ownerAll = R.owner && R.owner.col === ownerCol ? R.owner.all : 'clients:all';
   const restrictOwner = opts.restrictOwner !== undefined ? opts.restrictOwner : !!(R.owner && R.owner.col === ownerCol);
   const base = opts.base || `/api/${entity}s`;
@@ -140,7 +146,7 @@ function build(r, opts) {
     const row = db.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
     if (!row) throw notFound();
     if (row.client_id) auth.assertClientAccess(ctx, row.client_id, DEID); else assertUnlinkedOwner(ctx, row);
-    if (canEdit && !canEdit(ctx, row)) throw forbidden('You cannot edit this record');
+    assertMayChange(ctx, row, 'edit');
     if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
     const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true, existing: row });
     if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
@@ -161,7 +167,7 @@ function build(r, opts) {
     const row = db.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
     if (!row) throw notFound();
     if (row.client_id) auth.assertClientAccess(ctx, row.client_id, DEID); else assertUnlinkedOwner(ctx, row);
-    if (canEdit && !canEdit(ctx, row)) throw forbidden('You cannot delete this record');
+    assertMayChange(ctx, row, 'delete');
     if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden('You cannot delete this record');
     if (opts.beforeDelete) opts.beforeDelete(ctx, row);
     db.run(`DELETE FROM ${table} WHERE id=?`, row.id); db.tombstone(table, row.id);

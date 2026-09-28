@@ -12,9 +12,10 @@
 
 const DAY = 86400000;
 
-/** 'high' means high or critical (the Home tile's "High-risk clients"); any other level is exact. */
+/** 'high' means high or critical (the Home tile's "High-risk clients"); 'not_assessed' no level recorded; any other level is exact. */
 function risk(level) {
   if (level === 'high') return { sql: `c.risk_level IN ('high','critical')`, params: [] };
+  if (level === 'not_assessed') return { sql: `COALESCE(c.risk_level,'')=''`, params: [] };
   return { sql: 'c.risk_level=?', params: [level] };
 }
 

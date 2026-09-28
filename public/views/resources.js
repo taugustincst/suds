@@ -39,6 +39,10 @@ export function openResourceForm(values, onDone) {
   const m = modal(isNew ? 'Add resource' : 'Edit resource', f, { wide: true });
 }
 
+// An inactive (deactivated) programme says so in words where its name is: in the card's link, in the list
+// row's open button, and as "Status: Inactive" on the profile. The list used to put the badge alone in a
+// column with no heading, which a screen reader announced as "Actions", and a card did not show it at all.
+const inactiveBadge = (x) => (x.is_active ? null : [' ', h('span', { class: 'badge warn', 'data-inactive': '1' }, h('span', { class: 'sr-only' }, 'Status: '), 'Inactive')]);
 const tagBadges = (csv, kind = '') => String(csv || '').split(',').filter(Boolean).map(t => [badge(fmt.label(t), kind), ' ']);
 const stale = x => !x.last_verified_at || Date.now() - Date.parse(x.last_verified_at) > 180 * 86400000;
 const siteHref = w => w ? (w.startsWith('http') ? w : 'https://' + w) : null;
@@ -170,18 +174,18 @@ route('resources', async (r) => {
   const thumb = (x, cls = 'thumb') => x.cover_url ? img(x.cover_url, { class: cls, alt: '', loading: 'lazy' }) : h('div', { class: `${cls} placeholder`, 'aria-hidden': 'true' }, (x.name || '?').slice(0, 1).toUpperCase());
   const cards = () => rows.length ? h('div', { class: 'grid cols-3 res-cards' }, rows.map(x => h('a', { class: 'card res-card', href: `#/resource/${x.id}` },
     thumb(x, 'res-cover'),
-    h('div', { class: 'res-body' }, h('div', { class: 'row', style: { justifyContent: 'space-between' } }, h('b', {}, x.name), badge(fmt.label(x.category), 'info')), x.organization ? h('div', { class: 'small muted' }, x.organization) : null,
+    h('div', { class: 'res-body' }, h('div', { class: 'row', style: { justifyContent: 'space-between' } }, h('b', {}, x.name), h('span', {}, badge(fmt.label(x.category), 'info'), inactiveBadge(x))), x.organization ? h('div', { class: 'small muted' }, x.organization) : null,
       x.summary ? h('p', { class: 'small res-summary' }, x.summary) : x.services ? h('p', { class: 'small res-summary muted' }, x.services) : null,
       h('div', { class: 'res-tags small' }, tagBadges(String(x.service_tags || '').split(',').slice(0, 5).join(','), 'purple'), x.accepts_medicaid ? badge('Medicaid', 'ok') : null, ' ', x.accepts_uninsured ? badge('Uninsured OK', 'info') : null),
       h('div', { class: 'small muted' }, x.city || '', x.phone ? ` · ☎ ${x.phone}` : '', x.photo_count ? ` · ${x.photo_count} photo${x.photo_count > 1 ? 's' : ''}` : '', stale(x) ? h('span', { style: { color: 'var(--warn)' } }, ' · needs verification') : null)))))
     : emptyState('No resources match', can('resources:write') ? 'Try another search, or add the program.' : 'Try another search. A supervisor or administrator adds programs to the directory.', can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(null, (id) => nav(`resource/${id}`)) }, '+ Add resource') : null);
   const list = () => table([
     { label: '', render: x => thumb(x) },
-    { label: 'Resource', render: x => h('div', {}, h('b', {}, x.name), x.organization ? h('div', { class: 'small muted' }, x.organization) : null) }, { label: 'Category', render: x => fmt.label(x.category) },
+    { label: 'Resource', render: x => h('div', {}, h('b', {}, x.name), inactiveBadge(x), x.organization ? h('div', { class: 'small muted' }, x.organization) : null) }, { label: 'Category', render: x => fmt.label(x.category) },
     { label: 'Services', render: x => h('div', { class: 'small' }, tagBadges(String(x.service_tags || '').split(',').slice(0, 4).join(','), 'purple')) },
     { label: 'Contact', render: x => h('div', { class: 'small' }, x.phone ? h('div', {}, '☎ ', contactLinks(x.phone)) : null, x.city ? h('div', { class: 'muted' }, x.city) : null, x.website ? h('a', { href: siteHref(x.website), target: '_blank', rel: 'noopener', onClick: e => e.stopPropagation() }, 'website') : null) },
     { label: 'Accepts', render: x => [x.accepts_medicaid ? badge('Medicaid', 'ok') : null, ' ', x.accepts_uninsured ? badge('Uninsured', 'info') : null, x.mat_offered ? [' ', badge('MAT', 'purple')] : null] },
-    { label: 'Referrals', key: 'referral_count', num: true }, { label: 'Verified', render: x => h('span', { style: stale(x) ? { color: 'var(--warn)' } : {} }, x.last_verified_at ? fmt.date(x.last_verified_at) : 'never', stale(x) ? ' — needs verification' : '') }, { label: '', render: x => x.is_active ? null : badge('Inactive', 'warn') },
+    { label: 'Referrals', key: 'referral_count', num: true }, { label: 'Verified', render: x => h('span', { style: stale(x) ? { color: 'var(--warn)' } : {} }, x.last_verified_at ? fmt.date(x.last_verified_at) : 'never', stale(x) ? ' — needs verification' : '') },
   ], rows, { onRow: x => nav(`resource/${x.id}`), empty: 'No resources yet. Add treatment providers, MAT clinics, shelters, and other referral partners.' });
   return h('div', {},
     pageHead('Resource directory', can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(null, (id) => nav(`resource/${id}`)) }, '+ Add resource') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => window.__suds.downloadCsv('/api/reports/export/resources') }, 'Export') : null),
@@ -237,7 +241,7 @@ route('resource', async (r) => {
   // One upload path for every way a picture arrives: the file window, a drop onto the card, a paste, or a
   // picture this page fetched from a web address on a device. Shrunk here, sent as an ordinary upload.
   const uploadBlob = async (blob, name, caption = '') => {
-    const pic = await shrinkImage(blob, 1600, 0.85); const th = await shrinkImage(blob, 240, 0.7, true);
+    const pic = await fitPicture(blob); const th = await shrinkImage(blob, 240, 0.7, true);
     status.textContent = `Uploading ${name}…`;
     const r = await post(`/api/resources/${x.id}/photos`, { data_url: pic.dataUrl, thumb_url: th.dataUrl, width: pic.width, height: pic.height, caption });
     photos.push({ ...r.photo, data_url: pic.dataUrl, thumb_url: th.dataUrl }); renderGallery();
@@ -245,14 +249,16 @@ route('resource', async (r) => {
   async function addFiles(files, { how = '' } = {}) {
     files = [...files];
     if (!files.length) { status.textContent = how ? `Nothing to add: ${how} held no picture.` : 'No pictures chosen.'; return; }
-    let added = 0;
+    let added = 0; const failed = [];
     for (const f of files) {
       if (photos.length >= 12) { toast('A resource can have at most 12 pictures', 'error'); break; }
       const name = f.name || 'picture';
       status.textContent = `Preparing ${name}…`;
-      try { await uploadBlob(f, name); added++; } catch (e) { toast(`${name}: ${e.message}`, 'error'); }
+      try { await uploadBlob(f, name); added++; } catch (e) { failed.push(`${name}: ${e.message}`); toast(`${name}: ${e.message}`, 'error'); }
     }
-    status.textContent = added ? `${added} picture${added > 1 ? 's' : ''} added` : '';
+    // The card says what happened either way: a refused picture used to clear it and leave only a toast, so
+    // choosing a picture looked as if it did nothing.
+    status.textContent = [added ? `${added} picture${added > 1 ? 's' : ''} added` : '', failed.length ? `Not added: ${failed.join('; ')}` : ''].filter(Boolean).join('. ');
     if (added && how) toast(`${added} picture${added > 1 ? 's' : ''} added`, 'ok');
   }
   // "Add from a web address": for anyone who cannot use the operating system's file window (a testing
@@ -304,7 +310,8 @@ route('resource', async (r) => {
   const addressBtn = h('button', { class: 'btn sm', type: 'button', 'data-add-from-address': '1', onClick: openAddressDialog }, 'Add from a web address');
   const imagesIn = (list) => [...(list || [])].filter(f => f && f.type && f.type.startsWith('image/'));
   const head = h('div', { class: 'res-head' },
-    h('div', {}, h('div', { class: 'row mb', style: { gap: '.35rem' } }, badge(fmt.label(x.category), 'info'), x.is_active ? null : badge('Inactive', 'warn'), x.accepts_medicaid ? badge('Medicaid', 'ok') : null, x.accepts_uninsured ? badge('Uninsured OK', 'info') : null, x.mat_offered ? badge(`MAT: ${x.mat_offered}`, 'purple') : null, stale(x) ? badge(x.last_verified_at ? `verified ${fmt.date(x.last_verified_at)}` : 'never verified', 'warn') : badge(`verified ${fmt.date(x.last_verified_at)}`, 'ok')),
+    // A list, as on a client's record, so each badge is read on its own ("Status: Inactive"), not one run of text.
+    h('div', {}, h('ul', { class: 'row mb badge-list', style: { gap: '.35rem' }, 'aria-label': 'Category and status' }, ...[badge(fmt.label(x.category), 'info'), inactiveBadge(x), x.accepts_medicaid ? badge('Medicaid', 'ok') : null, x.accepts_uninsured ? badge('Uninsured OK', 'info') : null, x.mat_offered ? badge(`MAT: ${x.mat_offered}`, 'purple') : null, stale(x) ? badge(x.last_verified_at ? `verified ${fmt.date(x.last_verified_at)}` : 'never verified', 'warn') : badge(`verified ${fmt.date(x.last_verified_at)}`, 'ok')].filter(Boolean).map(b => h('li', {}, b))),
       x.organization ? h('div', { class: 'muted' }, x.organization) : null,
       x.summary ? h('p', { class: 'res-lead' }, x.summary) : h('p', { class: 'muted small' }, can('resources:write') ? 'No summary yet. Tap or click Edit to describe what this program offers.' : 'No summary yet.')));
   const contact = kv([['Phone', contactLinks(x.phone)], ['Fax', x.fax], ['Email', x.email ? h('a', { href: `mailto:${x.email}` }, x.email) : null], ['Website', x.website ? h('a', { href: siteHref(x.website), target: '_blank', rel: 'noopener' }, x.website) : null], ['Contact', x.contact_person],
@@ -360,6 +367,21 @@ route('resource', async (r) => {
           undoToast(`${x.name} deactivated: hidden from referral pickers.`, async () => { await put(`/api/resources/${x.id}`, { is_active: true }); refresh(); });
         } }, 'Deactivate')) : null) : null));
 });
+
+// The office keeps a picture of up to 2 MB (server/routes/resources.js MAX_PHOTO_BYTES). A PNG stays a PNG (a
+// logo keeps its sharp edges) only while it fits well under that: a photograph or screenshot saved as PNG is
+// several MB even at 1600 px, and was refused with nothing on the card to say so (QA 1.15.3). It is sent as
+// a JPEG instead, at a lower quality and size if it still does not fit.
+const PICTURE_BUDGET = 1.5 * 1024 * 1024;
+const dataUrlBytes = (u) => Math.floor((u.length - u.indexOf(',') - 1) * 3 / 4);
+async function fitPicture(blob) {
+  let pic = await shrinkImage(blob, 1600, 0.85);
+  for (const [max, q] of [[1600, 0.85], [1600, 0.7], [1280, 0.6], [1024, 0.5]]) {
+    if (dataUrlBytes(pic.dataUrl) <= PICTURE_BUDGET) break;
+    pic = await shrinkImage(blob, max, q, true);
+  }
+  return pic;
+}
 
 // Resize a picture in the browser (canvas) so uploads stay small and phones do not send 8 MB originals.
 export function shrinkImage(file, max, quality, forceJpeg = false) {

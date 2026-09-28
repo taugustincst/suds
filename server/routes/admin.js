@@ -85,7 +85,7 @@ module.exports = (r) => {
         if (k === 'scim_default_role' && v !== '' && !ROLES.includes(v)) throw badRequest(`scim_default_role must be one of ${ROLES.join(', ')}`);
         if (k === 'scim_group_roles' && v !== '') v = require('../scim').normaliseGroupRoles(v);
         // The profile always has a value: a blank one would be decided again from the data at the next start.
-        if (k === 'programme_profile' && !require('../programme').PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require('../programme').PROFILES).join(', ')}`, { fields: { programme_profile: 'choose a programme profile' } });
+        if (k === 'programme_profile' && !require('../programme').PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require('../programme').PROFILES).join(', ')}`, { fields: { programme_profile: 'choose a program profile' } });
         // A module switch is on (1), off (0), or blank for "as the profile has it".
         if (k.startsWith('module_') && v !== '' && !['0', '1'].includes(v)) throw badRequest(`${k} must be 1 (on), 0 (off) or blank (as the profile has it)`);
         if (k === 'default_fund_id' && v !== '' && !db.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v)) throw badRequest('default_fund_id must be an active funding source');

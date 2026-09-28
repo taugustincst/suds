@@ -9,7 +9,7 @@ import { h, get, post, put, del, state, form, modal, toast, table, badge, fmt, c
 const C = () => state.constants || {};
 // SUDS stores only the six dimension names and 0-4 ratings. The ASAM Criteria are copyrighted and "ASAM" is a
 // trademark of the American Society of Addiction Medicine; neither is included or licensed with SUDS.
-export const ASAM_NOTICE = 'SUDS records six-dimension risk ratings (0–4) and the level of care decision. It does not include the ASAM Criteria. "ASAM" is a trademark of the American Society of Addiction Medicine; this feature is not endorsed by ASAM. Your program needs its own licence from ASAM to use the Criteria.';
+export const ASAM_NOTICE = 'SUDS records six-dimension risk ratings (0–4) and the level of care decision. It does not include the ASAM Criteria. "ASAM" is a trademark of the American Society of Addiction Medicine; this feature is not endorsed by ASAM. Your program needs its own license from ASAM to use the Criteria.';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const PROBLEM_STATUS_KIND = { active: 'warn', resolved: 'ok', inactive: '' };
 const GOAL_STATUS_KIND = { active: 'info', met: 'ok', partially_met: 'warn', not_met: 'danger', discontinued: '' };
@@ -355,7 +355,7 @@ export async function instrumentsCard(onDone) {
     await put(`/api/admin/instruments/${i.code}`, { enabled: false }); toast(`${i.name} is off`, 'ok'); onDone && onDone();
   };
   return h('div', { class: 'card', 'data-instruments': '1' }, h('h2', {}, 'Screening instruments'),
-    h('p', { class: 'small muted' }, 'PHQ-9, GAD-7, AUDIT-C and the wellbeing item are always available. The instruments below are licensed for limited uses, so each is off until you confirm this program holds the rights to use it. The six-dimension assessment is ASAM-aligned only: SUDS does not include the ASAM Criteria, and your program needs its own licence from ASAM to use them.'),
+    h('p', { class: 'small muted' }, 'PHQ-9, GAD-7, AUDIT-C and the wellbeing item are always available. The instruments below are licensed for limited uses, so each is off until you confirm this program holds the rights to use it. The six-dimension assessment is ASAM-aligned only: SUDS does not include the ASAM Criteria, and your program needs its own license from ASAM to use them.'),
     table([
       { label: 'Instrument', render: i => h('div', {}, h('b', {}, i.name), h('div', { class: 'small muted' }, i.title)) },
       { label: 'Status', render: i => i.enabled ? h('span', {}, badge('On', 'ok'), i.confirmed_by_name ? h('div', { class: 'small muted' }, `Rights confirmed by ${i.confirmed_by_name}${i.confirmed_at ? ', ' + fmt.date(i.confirmed_at) : ''}`) : null) : badge('Off') },

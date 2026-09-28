@@ -94,7 +94,7 @@ function supplyPicker(cat, { lines = [], counts = {}, siteId = null, isNew = tru
     h('legend', {}, 'Supplies given'),
     list, addWrap, missingNotice(cat, missing, onAddStandard),
     siteSel ? h('div', { class: 'field' }, h('label', { for: siteSel.id }, 'Supplies came from'), siteSel) : null,
-    h('p', { class: 'help small muted' }, isNew ? 'Taken off the stock at that site, the batch that expires first first.' : 'A change here puts stock back or takes more, by the difference.'));
+    h('p', { class: 'help small muted' }, isNew ? 'Taken off the stock at that site, the batch that expires soonest first.' : 'A change here puts stock back or takes more, by the difference.'));
   return { el, value, untrackedValue, total: () => value().reduce((n, x) => n + x.quantity, 0) + Object.values(untrackedValue()).reduce((n, x) => n + x, 0),
     changed: () => snapshot() !== initial, site: () => (siteSel ? siteSel.value : null), siteChanged: () => !!siteSel && siteSel.value !== initialSite };
 }

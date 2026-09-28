@@ -93,7 +93,8 @@ async function fundsCard(open) {
       const toggle = async () => { await put(`/api/budget/funds/${x.id}`, { is_active: !x.is_active, if_updated_at: x.updated_at }); toast(x.is_active ? `"${x.name}" deactivated: no longer offered on new records` : `"${x.name}" is active again`, 'ok'); await refresh(); };
       return h('tr', { 'data-fund': x.id, class: x.is_active ? '' : 'muted' },
         h('td', {}, input, h('div', { class: 'small muted' }, `${fmt.label(x.source_type)} · ${fmt.date(x.fiscal_year_start)} – ${fmt.date(x.fiscal_year_end)}`)),
-        h('td', {}, x.is_active ? badge('Active', 'ok') : badge('Inactive')),
+        // data-label: on a phone the row is a stack, and the status is read with its heading ("Status Inactive").
+        h('td', { 'data-label': 'Status' }, x.is_active ? badge('Active', 'ok') : badge('Inactive')),
         h('td', { class: 'nowrap' }, h('button', { class: 'btn sm', type: 'button', 'data-fund-rename': x.id, onClick: save }, 'Save'), h('button', { class: 'btn sm ghost', type: 'button', 'data-fund-toggle': x.id, onClick: toggle }, x.is_active ? 'Deactivate' : 'Reactivate')));
     });
     box.replaceChildren(...[

@@ -192,6 +192,30 @@ try {
     // Back as the seed had it, for anything run after.
     await admin.api('PUT', '/api/admin/settings', { programme_profile: 'treatment', module_careplan: null });
   }
+  {
+    // QA 1.15.3, item 24: with the treatment-adjacent profile (its clinical modules on), a clinician's client
+    // record promotes Care plan and Assessments into the tab strip (1.15.2), at desktop and phone widths:
+    // shown as tabs, not folded under More.
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      const cl = await session('kpatel', PW, viewport);
+      const W = `clinician at ${viewport.width}px`;
+      const mods = await cl.page.evaluate(async () => { const a = await import('./app.js'); return ['careplan', 'assessments'].map(m => a.moduleOn(m)); });
+      eq(mods.join(','), 'true,true', `${W}: the treatment-adjacent profile has Care plan and Assessments on`);
+      const kid = (await cl.api('GET', '/api/clients?limit=1')).data.clients[0].id;
+      await cl.go(`client/${kid}/overview`);
+      await until(() => cl.page.$('.main nav.tabs button[data-tab=careplan]'));
+      const strip = await cl.page.evaluate(() => {
+        const vis = (b) => !!b && !b.hidden && b.offsetParent !== null && b.getBoundingClientRect().width > 0;
+        const tab = (k) => document.querySelector(`.main nav.tabs button[data-tab=${k}]`);
+        const more = [...document.querySelectorAll('.main nav.tabs [role=menuitem]')].map(x => x.textContent.trim());
+        return { careplan: vis(tab('careplan')), assessments: vis(tab('assessments')), more };
+      });
+      ok(strip.careplan, `${W}: Care plan is a visible tab`, strip);
+      ok(strip.assessments, `${W}: Assessments is a visible tab`, strip);
+      ok(!strip.more.some(x => /^(Care plan|Assessments)/.test(x)), `${W}: and neither is under More`, strip.more);
+      await cl.ctx.close();
+    }
+  }
 
   // ---------------------------------------------------------------------------------------------------- 6
   {

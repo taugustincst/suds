@@ -2,6 +2,9 @@ import { h, route, get, post, put, state, form, modal, toast, nav, table, pagedL
 
 // hasEpisodes: an existing client whose discharge lives on the Episodes tab (the New client form never
 // shows discharge fields: intake opens an episode, and discharging is what closes it).
+/** A client's risk level as shown: a blank one has not been assessed (there is no default level). */
+export const riskText = (level) => (level ? fmt.label(level) : 'Not assessed');
+
 export function clientFields(C, { isNew = true, hasEpisodes = false, openEpisode = false } = {}) {
   // While an episode is open, closing the record (or recording a death) is a discharge, and the discharge
   // is what closes the episode, ends the care team and clears the to-dos — so those two are taken off the
@@ -28,7 +31,8 @@ export function clientFields(C, { isNew = true, hasEpisodes = false, openEpisode
     { name: 'engagement_date', label: 'Engagement date', type: 'date', help: 'When they first actually engaged with services. Together with the referral date, this tracks time-to-engagement.' },
     { name: 'housing_status', label: 'Housing status', type: 'select', options: ['stable', 'doubled_up', 'shelter', 'unsheltered', 'transitional', 'sober_living', 'incarcerated', 'treatment_facility', 'unknown'] },
     { name: 'insurance', label: 'Insurance', type: 'select', options: ['medicaid', 'medicare', 'private', 'uninsured', 'va', 'pending', 'unknown'] }, { name: 'medicaid_id', label: 'Medicaid ID' },
-    { name: 'risk_level', label: 'Risk level', type: 'select', options: ['low', 'moderate', 'high', 'critical'], value: 'moderate', noBlank: true, required: true },
+    // Risk is a judgement somebody makes: it starts blank ("Not assessed"), never a default level (QA 1.15.3).
+    { name: 'risk_level', label: 'Risk level', type: 'select', options: ['low', 'moderate', 'high', 'critical'], placeholder: 'Not assessed' },
     ...(!isNew && !hasEpisodes ? [{ name: 'discharge_date', label: 'Discharge date', type: 'date' }, { name: 'discharge_reason', label: 'Discharge reason', type: 'select', list: 'DISCHARGE_REASONS' }] : []),
     { type: 'section', label: 'Substance use & health details', collapsible: true, hint: 'fill in what you know; you can come back later' },
     { name: 'primary_substance', label: 'Primary substance', type: 'select', list: 'SUBSTANCES' }, { name: 'secondary_substances', label: 'Secondary substances' }, { name: 'route_of_use', label: 'Route of use', type: 'select', options: ['oral', 'smoked', 'snorted', 'injected', 'multiple', 'unknown'] },
@@ -157,7 +161,7 @@ function duplicateCheck(f, { getModal, onDone, extra = () => ({}) }) {
 }
 
 // What a new client is given when Quick add creates them: the same starting values the full intake form has.
-const NEW_CLIENT_DEFAULTS = () => ({ status: 'active', intake_date: fmt.today(), risk_level: 'moderate', preferred_language: 'English' });
+const NEW_CLIENT_DEFAULTS = () => ({ status: 'active', intake_date: fmt.today(), preferred_language: 'English' });
 
 /**
  * Quick add (1.14.0): a new client from the few things the duplicate check needs — the name (or the name they
@@ -246,7 +250,7 @@ route('clients', async (r) => {
     const rq = await get('/api/patient-requests?status=open&limit=1000');
     requests = new Map(); for (const x of rq.rows) requests.set(x.client_id, [...(requests.get(x.client_id) || []), x]);
   }
-  const activeFilters = [requests ? 'open client rights request' : null, stale ? 'no contact in 30 days' : null, risk ? `risk: ${risk === 'high' ? 'high or critical' : risk}` : null, substance ? `substance: ${fmt.label(substance, 'SUBSTANCES')}` : null, mat ? `MAT: ${fmt.label(mat)}` : null, expiring ? 'consent expiring soon' : null].filter(Boolean);
+  const activeFilters = [requests ? 'open client rights request' : null, stale ? 'no contact in 30 days' : null, risk ? `risk: ${risk === 'high' ? 'high or critical' : risk === 'not_assessed' ? 'not assessed' : risk}` : null, substance ? `substance: ${fmt.label(substance, 'SUBSTANCES')}` : null, mat ? `MAT: ${fmt.label(mat)}` : null, expiring ? 'consent expiring soon' : null].filter(Boolean);
   const deid = !can('clients:read');
   const search = h('input', { type: 'search', value: q, placeholder: 'Name or preferred name (partial or misspelled OK), "Last, First", client code, DOB (YYYY-MM-DD) or exact phone', onKeydown: (e) => { if (e.key === 'Enter') nav(link({ q: search.value.trim() })); } });
   const statusSel = h('select', { onChange: () => nav(link({ status: statusSel.value })) }, ['active', 'waitlist', 'inactive', 'closed', 'deceased', 'all'].map(s => h('option', { value: s, selected: s === status }, fmt.label(s))));
@@ -260,7 +264,7 @@ route('clients', async (r) => {
     pagedList({ first: data, url: listUrl, key: 'clients', limit: PAGE, render: (rows) => table([
       { label: 'Client', render: c => h('div', {}, h('b', {}, c.display_name), h('div', { class: 'muted small' }, c.client_code, c.dob && !deid ? ` · DOB ${fmt.date(c.dob)}` : '')) },
       { label: 'Status', render: c => badge(fmt.label(clientStatus(c)), statusKind(clientStatus(c))) },
-      { label: 'Risk', render: c => badge(fmt.label(c.risk_level), statusKind(c.risk_level)) },
+      { label: 'Risk', render: c => badge(riskText(c.risk_level), statusKind(c.risk_level)) },
       { label: 'Primary substance', render: c => fmt.label(c.primary_substance, 'SUBSTANCES') },
       { label: 'MAT', render: c => fmt.label(c.mat_status) },
       { label: 'Assigned', key: 'assigned_workers' },
@@ -270,6 +274,6 @@ route('clients', async (r) => {
       expiring ? { label: 'Consent expires', render: c => fmt.date(c.consent_expires_at) } : null,
       requests ? { label: 'Request due', render: c => h('a', { href: `#/client/${c.id}/requests` }, (requests.get(c.id) || []).map(x => h('div', { style: x.overdue ? { color: 'var(--danger)', fontWeight: 600 } : {} }, `${fmt.label(x.kind)} · ${fmt.date(x.due_at)}${x.overdue ? ' — overdue' : ''}`))) } : null,
     ].filter(Boolean), rows, { onRow: deid ? null : (c) => nav(`client/${c.id}`), rowLabel: c => `${c.display_name}, ${fmt.label(c.status)}`,
-    compact: { primary: c => [h('span', {}, c.display_name), badge(fmt.label(c.risk_level), statusKind(c.risk_level))], secondary: c => [h('span', {}, 'last contact ', fmt.ago(c.last_contact)), h('span', {}, '· ', fmt.label(c.status)), c.overdue_tasks ? badge(`${c.overdue_tasks} overdue`, 'danger') : null, deid ? null : h('span', { class: 'mono' }, c.client_code)] },
+    compact: { primary: c => [h('span', {}, c.display_name), badge(riskText(c.risk_level), statusKind(c.risk_level))], secondary: c => [h('span', {}, 'last contact ', fmt.ago(c.last_contact)), h('span', {}, '· ', fmt.label(c.status)), c.overdue_tasks ? badge(`${c.overdue_tasks} overdue`, 'danger') : null, deid ? null : h('span', { class: 'mono' }, c.client_code)] },
     empty: q ? 'No one matches. Names are stored encrypted, so search only works from the start of the last name (misspellings are tolerated) — try just the first few letters, the full phone number, date of birth (YYYY-MM-DD) or the client code.' : (activeFilters.length ? 'No clients match these filters.' : status === 'active' ? 'No active clients yet. Click + New client to add your first.' : 'No clients with this status.') }) }));
 });

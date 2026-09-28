@@ -116,7 +116,7 @@ route('waitlist', async () => {
       { label: 'Client', render: r => r.display_name },
       { label: 'Code', key: 'client_code' },
       { label: 'Waiting', render: r => flag(`${r.days_waiting} day${r.days_waiting === 1 ? '' : 's'}`, r.days_waiting > 30, 'waiting more than 30 days'), num: true },
-      { label: 'Risk', render: r => badge(fmt.label(r.risk_level || 'unknown'), r.risk_level === 'critical' || r.risk_level === 'high' ? 'danger' : '') },
+      { label: 'Risk', render: r => badge(r.risk_level ? fmt.label(r.risk_level) : 'Not assessed', r.risk_level === 'critical' || r.risk_level === 'high' ? 'danger' : '') },
       { label: 'Substance', render: r => fmt.label(r.primary_substance || 'unknown', 'SUBSTANCES') },
       { label: 'Level of care', render: r => r.asam_level || '—' },
       { label: 'Last contact', render: r => (r.last_contact ? fmt.date(r.last_contact) : h('span', { style: { color: 'var(--danger)' } }, 'never')) },
