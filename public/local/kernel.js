@@ -6830,6 +6830,20 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL;
 
+-- Per-user permission overrides: grants and denies on top of the role's PERMS (server/auth.js
+-- effectivePerms). One row per (user, permission); mode says which. Migration 46 creates this table
+-- on existing databases; new databases get it here.
+CREATE TABLE IF NOT EXISTS user_permission_overrides (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  permission TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('grant','deny')),
+  reason TEXT NOT NULL,
+  granted_by TEXT REFERENCES users(id),
+  granted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (user_id, permission)
+);
+CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id);
+
 -- One row per physical phone/tablet running local mode, identified by a UUID the device itself generates
 -- once and sends on every sync call (never by the short-lived sync session, which starts and ends within a
 -- single sync run). "Wipe" here means the closest thing an offline-first app can offer to a real MDM remote
@@ -9512,6 +9526,91 @@ var require_http = __commonJS({
   }
 });
 
+// server/permissions.js
+var require_permissions = __commonJS({
+  "server/permissions.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var PRIVILEGED_PERMISSIONS = ["users:manage", "settings:manage", "apikeys:manage"];
+    var SENSITIVE = /* @__PURE__ */ new Set(["export:identified", "clients:all", "disclosures:override", "notes:clinical:breakglass", "clients:merge", "clients:legal-hold"]);
+    var DEFS = [
+      ["users:manage", "Manage users & permissions", "Create/edit/deactivate accounts, change roles, grant or revoke individual permissions."],
+      ["users:read", "See the staff directory", "Minimal staff list for assignment dropdowns."],
+      ["settings:manage", "Manage programme settings", "Programme profile, modules, MFA policy, SCIM mapping, caseload restriction."],
+      ["audit:read", "Read the audit log", "Tamper-evident audit trail and the break-glass review queue."],
+      ["apikeys:manage", "Manage API keys", "Intake API keys and FHIR client registrations."],
+      ["clients:read", "Open client records", "Identified client data for clients on the caseload (or all, with clients:all)."],
+      ["clients:write", "Edit client records", "Create and edit identified client records."],
+      ["clients:all", "See every client", "Bypasses caseload scoping; required for whole-programme internal reports."],
+      ["clients:list-deidentified", "List de-identified clients", "Client codes only, never names or identifiers."],
+      ["clients:merge", "Merge duplicate clients", "Combine two client records, audited."],
+      ["clients:legal-hold", "Place a legal hold", "Prevent deletion/merge of a client record under hold."],
+      ["interventions:*", "Visits & services (all)", "Log, edit and delete visits and services."],
+      ["calls:*", "Calls & texts (all)", "Log, edit and delete call and text records."],
+      ["time:read", "See time entries", "Own time entries."],
+      ["time:write", "Log time", "Create and edit own time entries."],
+      ["time:all", "See all time entries", "Every worker's time entries, any range or fund."],
+      ["time:approve", "Approve time", "Approve or reject others' time entries."],
+      ["resources:*", "Resource directory (all)", "Create, edit and publish community resources."],
+      ["resources:read", "Read the resource directory", "Community resources and referral targets."],
+      ["referrals:*", "Referrals (all)", "Create, edit and record outcomes on referrals."],
+      ["tasks:*", "To-dos (all)", "Create, assign and complete to-dos."],
+      ["budget:read", "See the budget", "Funding sources, lines and expenditures."],
+      ["budget:write", "Record spending", "Log expenditures and attach costs to visits."],
+      ["budget:approve", "Approve spending", "Approve, reject or mark reimbursed (never own entries)."],
+      ["budget:manage", "Manage the budget", "Funding sources, budget lines and allocations."],
+      ["notes:admin:read", "Read admin notes", "Non-clinical case notes."],
+      ["notes:admin:write", "Write admin notes", "Create and edit non-clinical case notes."],
+      ["notes:clinical:read", "Read clinical notes", "Clinical notes and assessments content."],
+      ["notes:clinical:write", "Write clinical notes", "Create and sign clinical notes."],
+      ["notes:clinical:breakglass", "Clinical notes via break-glass", "Open a clinical note only with a written reason; audited and queued for supervisor review."],
+      ["notes:cosign", "Countersign notes", "Countersign trainee notes."],
+      ["consents:*", "Consents (all)", "Record, edit and revoke Part 2 consents and disclosures."],
+      ["imports:*", "Data imports (all)", "Run and review bulk imports."],
+      ["graph:import", "Import from OneNote", "Fetch the shared OneNote notebook."],
+      ["reports:read", "Read reports", "Run aggregate reports."],
+      ["reports:internal", "Run internal reports", "Identified/caseload reports for programme use (never publication)."],
+      ["reports:exact", "Exact counts", "Unsuppressed counts for internal runs."],
+      ["reports:funder", "File the funder submission", "The programme's own submission runs of the funder report, NDP log and settlement report: exact aggregates, no client-level data."],
+      ["assignments:manage", "Manage caseloads", "Assign workers to clients and move caseloads between workers."],
+      ["export:read", "Export data", "De-identified (Safe Harbor) exports, caseload-scoped."],
+      ["export:identified", "Export identified data", "Exports with names, dates of birth, addresses. Never held with a de-identified role."],
+      ["forms:*", "Forms (all)", "Manage the form library and client forms."],
+      ["forms:read", "Read the form library", "Blank form templates."],
+      ["forms:write", "Manage form templates", "Upload and edit form templates."],
+      ["episodes:*", "Episodes (all)", "Open, edit and close treatment episodes."],
+      ["overdose:*", "Overdose events (all)", "Record overdose and reversal events."],
+      ["documents:read", "Read documents", "Programme documents."],
+      ["documents:write", "Manage documents", "Upload and organise programme documents."],
+      ["disclosures:override", "Override disclosure basis", "Record a disclosure on supervisor-override or other non-consent bases."],
+      ["patient-requests:*", "Client rights requests (all)", "Handle access/amendment/accounting requests."],
+      ["careplan:*", "Care plans (all)", "Problem list and care coordination plans."],
+      ["careplan:read", "Read care plans", "View care plans and problem lists."],
+      ["assessments:*", "Assessments (all)", "ASAM assessments and scored screenings."],
+      ["complaints:*", "Grievances (all)", "Record and resolve client grievances."],
+      ["incidents:*", "Incidents (all)", "Record and review incidents."],
+      ["court-orders:*", "Court orders (all)", "Record and manage court orders."],
+      ["court-orders:read", "Read court orders", "View court orders."],
+      ["agreements:*", "Agreements (all)", "Data-sharing and disclosure agreements."],
+      ["agreements:read", "Read agreements", "View agreements."],
+      ["supplies:*", "Supply cupboard (all)", "Items, sites, transfers, adjustments, disposal."],
+      ["supplies:read", "See supply stock", "Stock on hand by site and lot."],
+      ["supplies:receive", "Receive supply deliveries", "Record stock that arrived at a site."]
+    ];
+    var PERMISSION_CATALOG = DEFS.map(([name, label, description]) => ({
+      name,
+      label,
+      description,
+      risk: PRIVILEGED_PERMISSIONS.includes(name) ? "privileged" : SENSITIVE.has(name) ? "sensitive" : "standard"
+    }));
+    var KNOWN = new Set(PERMISSION_CATALOG.map((p) => p.name));
+    function isKnownPermission(name) {
+      return KNOWN.has(name);
+    }
+    module.exports = { PERMISSION_CATALOG, PRIVILEGED_PERMISSIONS, isKnownPermission };
+  }
+});
+
 // server/options.js
 var require_options = __commonJS({
   "server/options.js"(exports, module) {
@@ -10250,7 +10349,9 @@ var require_sync_tables = __commonJS({
         ["privacy_incidents", "determined_by"],
         ["privacy_incidents", "reported_by"],
         ["disclosure_agreements", "created_by"],
-        ["caloms_submissions", "created_by"]
+        ["caloms_submissions", "created_by"],
+        ["user_permission_overrides", "user_id"],
+        ["user_permission_overrides", "granted_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -38035,6 +38136,7 @@ var require_users2 = __commonJS({
     var devices = require_devices();
     var { badRequest, notFound, HttpError: HttpError3 } = require_http();
     var { validate } = require_validate();
+    var { isKnownPermission, PRIVILEGED_PERMISSIONS } = require_permissions();
     var { hashPasswordAsync, uuid: uuid2, randomToken } = require_crypto();
     var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
     var shape = {
@@ -38156,6 +38258,64 @@ var require_users2 = __commonJS({
         db3.run(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, ...params);
         audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped2.length, wipe_devices: wipeDevices } });
         return { ok: true, devices_wiped: wiped2.length };
+      });
+      r.get("/api/users/:id/permissions", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const target = db3.one(`SELECT id, role FROM users WHERE id=?`, ctx.params.id);
+        if (!target) throw notFound("User not found");
+        const eff = auth3.effectivePerms({ id: target.id, role: target.role });
+        const overrides = db3.all(
+          `SELECT permission, mode, reason, granted_by, granted_at FROM user_permission_overrides WHERE user_id=? ORDER BY permission`,
+          target.id
+        );
+        return {
+          user_id: target.id,
+          role: target.role,
+          role_permissions: auth3.rolePerms(target.role),
+          overrides,
+          effective: eff.allow,
+          denied: eff.deny
+        };
+      });
+      const permShape = { permission: { type: "string", required: true }, mode: { type: "string", required: true }, reason: { type: "string", required: true } };
+      r.post("/api/users/:id/permissions", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const v = validate(ctx.body || {}, permShape);
+        const fail = (msg, status = 400) => {
+          audit3.log({ user: ctx.user, action: "user.permission.denied", entity: "user", entityId: ctx.params.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason: msg } });
+          if (status === 404) throw notFound(msg);
+          throw badRequest(msg);
+        };
+        if (ctx.params.id === ctx.user.id) return fail("You cannot change your own permissions");
+        const target = db3.one(`SELECT id, role FROM users WHERE id=?`, ctx.params.id);
+        if (!target) return fail("User not found", 404);
+        if (v.mode !== "grant" && v.mode !== "deny") return fail('mode must be "grant" or "deny"');
+        if (!isKnownPermission(v.permission)) return fail(`Unknown permission "${v.permission}"`);
+        if (v.reason.trim().length < 10) return fail("reason must be at least 10 characters");
+        if (v.mode === "grant" && PRIVILEGED_PERMISSIONS.includes(v.permission) && target.role !== "admin")
+          return fail(`"${v.permission}" can only be granted to an administrator \u2014 change their role instead`);
+        db3.run(
+          `INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by)
+            VALUES(?, ?, ?, ?, ?) ON CONFLICT(user_id, permission) DO UPDATE SET mode=excluded.mode, reason=excluded.reason, granted_by=excluded.granted_by, granted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+          target.id,
+          v.permission,
+          v.mode,
+          v.reason,
+          ctx.user.id
+        );
+        audit3.log({ user: ctx.user, action: "user.permission.grant", entity: "user", entityId: target.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason: v.reason } });
+        return { ok: true };
+      });
+      r.delete("/api/users/:id/permissions/:permission", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        if (ctx.params.id === ctx.user.id) {
+          audit3.log({ user: ctx.user, action: "user.permission.denied", entity: "user", entityId: ctx.params.id, ip: ctx.ip, details: { permission: ctx.params.permission, reason: "self-edit" } });
+          throw badRequest("You cannot change your own permissions");
+        }
+        const target = db3.one(`SELECT id FROM users WHERE id=?`, ctx.params.id);
+        if (!target) throw notFound("User not found");
+        const row = db3.one(`SELECT permission, mode, reason FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
+        if (!row) throw notFound("No such override");
+        db3.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
+        audit3.log({ user: ctx.user, action: "user.permission.revoke", entity: "user", entityId: target.id, ip: ctx.ip, details: { permission: row.permission, mode: row.mode, reason: row.reason } });
+        return { ok: true };
       });
       r.get("/api/users/access-requests", auth3.requireAuth, auth3.requirePerm("users:manage"), () => ({ requests: db3.all(`SELECT id,username,display_name,email,access_note AS reason,requested_at FROM users WHERE access_status='pending' ORDER BY requested_at, username`) }));
       function pendingRequest(ctx) {
@@ -38798,13 +38958,44 @@ var require_auth2 = __commonJS({
       // need clients:read as well (server/routes/forms.js), which readonly does not hold.
       readonly: ["clients:list-deidentified", "resources:read", "reports:read", "users:read", "forms:read", "documents:read"]
     };
+    var { isKnownPermission } = require_permissions();
+    function rolePerms(role) {
+      return [...PERMS[role] || []];
+    }
+    function effectivePerms(user) {
+      if (!user) return { allow: [], deny: [] };
+      if (user._effectivePerms) return user._effectivePerms;
+      const allow = new Set(rolePerms(user.role));
+      const deny = /* @__PURE__ */ new Set();
+      if (user.id) {
+        try {
+          const rows = db3.all(`SELECT permission, mode FROM user_permission_overrides WHERE user_id=?`, user.id);
+          for (const r of rows) {
+            if (!isKnownPermission(r.permission)) continue;
+            if (r.mode === "deny") {
+              allow.delete(r.permission);
+              deny.add(r.permission);
+            } else {
+              allow.add(r.permission);
+            }
+          }
+        } catch (e) {
+        }
+      }
+      const out2 = { allow: [...allow].sort(), deny: [...deny].sort() };
+      user._effectivePerms = out2;
+      return out2;
+    }
     function hasPerm(user, perm) {
       if (!user) return false;
-      const perms = PERMS[user.role] || [];
-      if (perms.includes(perm)) return true;
-      const [ns] = perm.split(":");
-      if (perms.includes(`${ns}:*`)) return true;
-      if (perm.endsWith(":read") && perms.includes(perm.replace(/:read$/, ":write"))) return true;
+      const { allow, deny } = effectivePerms(user);
+      if (deny.includes(perm)) return false;
+      const ns = perm.split(":")[0];
+      if (deny.includes(`${ns}:*`)) return false;
+      if (perm.endsWith(":read") && deny.includes(perm.slice(0, -5) + ":write")) return false;
+      if (allow.includes(perm)) return true;
+      if (allow.includes(`${ns}:*`)) return true;
+      if (perm.endsWith(":read") && allow.includes(perm.slice(0, -5) + ":write")) return true;
       return false;
     }
     function requirePerm(...perms) {
@@ -39171,7 +39362,7 @@ var require_auth2 = __commonJS({
       return publicUser(user);
     }
     function publicUser(u) {
-      const perms = PERMS[u.role] || [];
+      const eff = effectivePerms(u);
       return {
         id: u.id,
         username: u.username,
@@ -39181,7 +39372,8 @@ var require_auth2 = __commonJS({
         role: u.role,
         mfa_enabled: !!u.mfa_enabled,
         must_change_password: !!u.must_change_password,
-        permissions: perms,
+        permissions: eff.allow,
+        denied_permissions: eff.deny,
         mfa_required: policy().mfaRequiredRoles.includes(u.role),
         mfa_setup_deadline: mfaDeadline(u),
         caseload_restricted: caseloadRestricted(u)
@@ -39200,6 +39392,8 @@ var require_auth2 = __commonJS({
       policy,
       PERMS,
       hasPerm,
+      rolePerms,
+      effectivePerms,
       activeAssignment,
       requirePerm,
       requireAuth,
@@ -40375,7 +40569,21 @@ var require_db = __commonJS({
       //     balance at the main office, and each old item keeps its id. A visit records any item it hands out
       //     (intervention_supplies), the site it drew from, and the syringes and sharps brought back.
       //     Self-contained and idempotent: every step checks what is already there.
-      (d) => migrateSupplies(d, safeSchema())
+      (d) => migrateSupplies(d, safeSchema()),
+      // 46: per-user permission overrides — grants and denies on top of the role's PERMS
+      // (server/auth.js effectivePerms). One row per (user, permission); mode says which.
+      (d) => {
+        d.exec(`CREATE TABLE IF NOT EXISTS user_permission_overrides (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      permission TEXT NOT NULL,
+      mode TEXT NOT NULL CHECK (mode IN ('grant','deny')),
+      reason TEXT NOT NULL,
+      granted_by TEXT REFERENCES users(id),
+      granted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+      PRIMARY KEY (user_id, permission)
+    )`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id)`);
+      }
     ];
     var MAIN_SITE_ID = "site-main";
     function ensureMainSite(d) {
