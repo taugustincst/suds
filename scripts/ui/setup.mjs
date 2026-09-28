@@ -13,7 +13,9 @@ const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { widt
 const errors = []; page.on('pageerror', e => errors.push('PAGEERROR ' + e.message));
 // The service worker cannot install behind a certificate the browser does not trust; a county trusts the
 // self-signed one once per device, the test never does. Everything else on the console is a defect.
-page.on('console', m => { if (m.type() === 'error' && !/40[13]|net::ERR|Failed to fetch|SSL certificate error/.test(m.text())) errors.push('CONSOLE ' + m.text().slice(0, 200)); });
+// The service worker cannot be fetched over the wizard's self-signed certificate: Chrome says "SSL certificate
+// error" or "An unknown error occurred when fetching the script" for the same thing.
+page.on('console', m => { if (m.type() === 'error' && !/40[13]|net::ERR|Failed to fetch|SSL certificate error|An unknown error occurred when fetching the script/.test(m.text())) errors.push('CONSOLE ' + m.text().slice(0, 200)); });
 
 await page.goto(base + '/'); await settle(page);
 ok(/#\/setup$/.test(page.url()), 'an unconfigured server opens on the setup wizard, not a sign-in', page.url());
