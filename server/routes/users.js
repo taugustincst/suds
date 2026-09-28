@@ -5,6 +5,7 @@ const audit = require('../audit');
 const devices = require('../devices');
 const { badRequest, notFound, HttpError } = require('../http');
 const { validate } = require('../validate');
+const { isKnownPermission, PRIVILEGED_PERMISSIONS } = require('../permissions');
 const { hashPasswordAsync, uuid, randomToken } = require('../crypto');
 
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
@@ -124,6 +125,63 @@ module.exports = (r) => {
     db.run(`UPDATE users SET ${sets.join(', ')} WHERE id=?`, ...params);
     audit.log({ user: ctx.user, action: 'user.update', entity: 'user', entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter(k => k !== 'password'), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length, wipe_devices: wipeDevices } });
     return { ok: true, devices_wiped: wiped.length };
+  });
+
+  // --- Per-user permission overrides (admin-managed) ---
+  // Effective permissions = role defaults + grants − denies (auth.effectivePerms).
+  // Deny always wins, including across wildcards and write-implies-read.
+  r.get('/api/users/:id/permissions', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    const target = db.one(`SELECT id, role FROM users WHERE id=?`, ctx.params.id);
+    if (!target) throw notFound('User not found');
+    const eff = auth.effectivePerms({ id: target.id, role: target.role });
+    const overrides = db.all(
+      `SELECT permission, mode, reason, granted_by, granted_at FROM user_permission_overrides WHERE user_id=? ORDER BY permission`, target.id);
+    return {
+      user_id: target.id,
+      role: target.role,
+      role_permissions: auth.rolePerms(target.role),
+      overrides,
+      effective: eff.allow,
+      denied: eff.deny,
+    };
+  });
+
+  // validate() has no string minLen option, so the 10-character reason minimum is enforced explicitly.
+  const permShape = { permission: { type: 'string', required: true }, mode: { type: 'string', required: true }, reason: { type: 'string', required: true } };
+
+  r.post('/api/users/:id/permissions', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    const v = validate(ctx.body || {}, permShape);
+    const fail = (msg, status = 400) => {
+      audit.log({ user: ctx.user, action: 'user.permission.denied', entity: 'user', entityId: ctx.params.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason: msg } });
+      if (status === 404) throw notFound(msg);
+      throw badRequest(msg);
+    };
+    if (ctx.params.id === ctx.user.id) return fail('You cannot change your own permissions');
+    const target = db.one(`SELECT id, role FROM users WHERE id=?`, ctx.params.id);
+    if (!target) return fail('User not found', 404);
+    if (v.mode !== 'grant' && v.mode !== 'deny') return fail('mode must be "grant" or "deny"');
+    if (!isKnownPermission(v.permission)) return fail(`Unknown permission "${v.permission}"`);
+    if (v.reason.trim().length < 10) return fail('reason must be at least 10 characters');
+    if (v.mode === 'grant' && PRIVILEGED_PERMISSIONS.includes(v.permission) && target.role !== 'admin')
+      return fail(`"${v.permission}" can only be granted to an administrator — change their role instead`);
+    db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by)
+            VALUES(?, ?, ?, ?, ?) ON CONFLICT(user_id, permission) DO UPDATE SET mode=excluded.mode, reason=excluded.reason, granted_by=excluded.granted_by, granted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+      target.id, v.permission, v.mode, v.reason, ctx.user.id);
+    audit.log({ user: ctx.user, action: 'user.permission.grant', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason: v.reason } });
+    return { ok: true };
+  });
+
+  r.delete('/api/users/:id/permissions/:permission', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    if (ctx.params.id === ctx.user.id) {
+      audit.log({ user: ctx.user, action: 'user.permission.denied', entity: 'user', entityId: ctx.params.id, ip: ctx.ip, details: { permission: ctx.params.permission, reason: 'self-edit' } });
+      throw badRequest('You cannot change your own permissions');
+    }
+    const target = db.one(`SELECT id FROM users WHERE id=?`, ctx.params.id);
+    if (!target) throw notFound('User not found');
+    const res = db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
+    if (!res.changes) throw notFound('No such override');
+    audit.log({ user: ctx.user, action: 'user.permission.revoke', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: ctx.params.permission } });
+    return { ok: true };
   });
 
   // ---- Access requests (self sign-up, POST /api/auth/signup) ----

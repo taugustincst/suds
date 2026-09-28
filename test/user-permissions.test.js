@@ -2,6 +2,7 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const H = require('./helpers');
+const auth = require('../server/auth');
 
 before(async () => { await H.start(); });
 after(() => H.stop());
@@ -32,4 +33,66 @@ test('permission catalog covers every string in PERMS exactly once', async () =>
     assert.ok(p.label && p.description, `${p.name} has label and description`);
     assert.ok(['standard', 'sensitive', 'privileged'].includes(p.risk), `${p.name} has a valid risk`);
   }
+});
+
+test('permissions API: grant, deny, revoke round-trip', async () => {
+  const admin = H.makeUser('permadmin', 'admin');
+  const nav = H.makeUser('permnav', 'navigator');
+  const a = H.client(); await a.login(admin.username, admin.password);
+  const n = H.client(); await a.login(admin.username, admin.password); // admin client
+  await n.login(nav.username, nav.password); // navigator client
+
+  // grant audit:read → the break-glass queue (server/routes/supervision.js:87 requires audit:read) opens
+  let r = await a.post(`/api/users/${nav.id}/permissions`, { permission: 'audit:read', mode: 'grant', reason: 'reviews the break-glass queue weekly' });
+  assert.equal(r.status, 200);
+  r = await n.get('/api/supervision/breakglass');
+  assert.equal(r.status, 200, 'grant takes effect over HTTP: navigator can read the break-glass queue');
+
+  // deny clients:read → client list is forbidden (fail-closed: 403, not an empty list)
+  r = await a.post(`/api/users/${nav.id}/permissions`, { permission: 'clients:read', mode: 'deny', reason: 'read-only outreach worker' });
+  assert.equal(r.status, 200);
+  r = await n.get('/api/clients');
+  assert.equal(r.status, 403, 'client list forbidden after deny');
+
+  // revoke → exactly back to role defaults
+  r = await a.del(`/api/users/${nav.id}/permissions/clients:read`);
+  assert.equal(r.status, 200);
+  r = await a.del(`/api/users/${nav.id}/permissions/audit:read`);
+  assert.equal(r.status, 200);
+  r = await a.get(`/api/users/${nav.id}/permissions`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data.overrides, [], 'no override rows remain');
+  const fresh = H.makeUser('permnav2', 'navigator');
+  assert.deepEqual(r.data.role_permissions.sort(), auth.rolePerms('navigator').sort(), 'effective matches untouched role defaults');
+});
+
+test('permissions API: guards', async () => {
+  const admin = H.makeUser('permadmin2', 'admin');
+  const nav = H.makeUser('permnav3', 'navigator');
+  const a = H.client(); await a.login(admin.username, admin.password);
+  const n = H.client(); await n.login(nav.username, nav.password);
+
+  // unknown permission
+  let r = await a.post(`/api/users/${nav.id}/permissions`, { permission: 'clients:reed', mode: 'grant', reason: 'a typo should never persist' });
+  assert.equal(r.status, 400);
+
+  // reason too short
+  r = await a.post(`/api/users/${nav.id}/permissions`, { permission: 'audit:read', mode: 'grant', reason: 'x' });
+  assert.equal(r.status, 400);
+
+  // privileged permission to a non-admin role
+  r = await a.post(`/api/users/${nav.id}/permissions`, { permission: 'users:manage', mode: 'grant', reason: 'wants to be a user manager' });
+  assert.equal(r.status, 400);
+
+  // self-edit blocked
+  r = await a.post(`/api/users/${admin.id}/permissions`, { permission: 'reports:funder', mode: 'grant', reason: 'admin grants to self' });
+  assert.equal(r.status, 400);
+
+  // non-admin cannot use the API at all
+  r = await n.post(`/api/users/${nav.id}/permissions`, { permission: 'audit:read', mode: 'grant', reason: 'escalation attempt' });
+  assert.equal(r.status, 403);
+
+  // audit log records the denied attempts too
+  const row = H.db.one(`SELECT * FROM audit_log WHERE action='user.permission.denied' AND entity_id=? ORDER BY at DESC LIMIT 1`, nav.id);
+  assert.ok(row, 'denied permission change is audited');
 });
