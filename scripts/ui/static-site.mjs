@@ -105,7 +105,7 @@ ok(await page.$$eval('[data-office]', els => els.every(el => el.classList.contai
 ok(await page.$eval('#cert', el => el.classList.contains('hidden')), 'there is no certificate to download');
 ok(await page.$eval('#signin-note', el => el.classList.contains('hidden')), 'and no "sign in first" note for a server that does not exist');
 ok(await page.$eval('#static-local', el => !el.classList.contains('hidden') && /Your records stay on this device/.test(el.textContent) && /backup/.test(el.textContent)), 'the "your records stay on this device" section is shown, with the advice to back up');
-eq(await page.$eval('#static-local a', a => a.getAttribute('href')), './', 'and its link opens this site');
+eq(await page.$$eval('a', as => as.filter(a => /^Open SUDS$/.test(a.textContent.trim())).map(a => a.getAttribute('href'))), ['./'], 'one "Open SUDS" link, which opens this site (the notice no longer repeats it)');
 ok(await page.$eval('#static-url', el => /127\.0\.0\.1/.test(el.textContent) && !/get-app/.test(el.textContent)), 'the address shown is this site\'s, not a server\'s', await page.$eval('#static-url', el => el.textContent));
 // every way into that page uses the file name: the login screen's tip, the offline banner, the admin card
 await page.goto(base + '/'); await signInAgain(page, 'staticnav', 'Navigator2026!!');

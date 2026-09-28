@@ -1302,7 +1302,7 @@ export function welcomeSteps() {
   ];
 }
 export function welcomeIntro() {
-  return `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS keeps your program's outreach, visits, naloxone and supplies, referrals and follow-ups in one place, with the privacy substance-use records need. ${window.SUDS_STATIC_HOST
+  return `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS keeps your program's outreach, visits, naloxone and supplies, referrals and follow-ups in one place, with the privacy that substance-use records need. ${window.SUDS_STATIC_HOST
       // The on-device app never syncs with anything (local/sync.js): promising "shows up on the other right
       // away" there sent people looking for their entries on a second device.
       ? 'Everything you record stays in this browser on this device, encrypted. Download a backup regularly from This device so a cleared browser or a lost phone does not take your records with it.'

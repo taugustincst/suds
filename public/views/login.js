@@ -9,7 +9,7 @@ const OIDC_ERRORS = {
 };
 
 // What SUDS is, in one line, on the first screen anyone sees.
-export const PURPOSE = 'Outreach, visits, naloxone and supplies, referrals and grant reporting for harm-reduction, prevention and recovery programs — with the privacy substance-use records need.';
+export const PURPOSE = 'Outreach, visits, naloxone and supplies, referrals and grant reporting for harm-reduction, prevention and recovery programs — with the privacy that substance-use records need.';
 // The published on-device web app (scripts/build-static-site.js): records live in this browser and nowhere
 // else, and nothing is ever synced from it (local/sync.js). An internal marker for those differences only.
 export const isStaticHost = () => { try { return window.SUDS_STATIC_HOST === true; } catch { return false; } };
