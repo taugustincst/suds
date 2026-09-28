@@ -4,7 +4,7 @@
 // phone, so it gets the same end-to-end proof the office app and the phone apps get.
 import * as pw from 'playwright';
 const { devices } = pw;
-import { makeChecks, until, settle, signInAgain, PLAYWRIGHT_WEBKIT_LINUX, WEBKIT_LINUX_SW_CACHE } from './assert.mjs';
+import { makeChecks, until, settle, signInAgain, PLAYWRIGHT_WEBKIT_LINUX, WEBKIT_LINUX_SW_CACHE, passRecoveryCode } from './assert.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -58,6 +58,7 @@ await page.check('input[name=storage_ack]');
 await page.click('button[type=submit]');
 await page.waitForSelector('.layout', { timeout: 10000 }).catch(() => {});
 ok(await page.$('.layout'), 'setup completes with no server round trip');
+await passRecoveryCode(page);
 ok(await page.evaluate(() => !!window.SUDS_LOCAL), 'the in-browser kernel is what answered every request');
 ok(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)), 'the page fits a phone screen width');
 

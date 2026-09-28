@@ -1,6 +1,6 @@
 // Phone-only copy: a brand-new device offers sample data, loads it, shows it everywhere, and removes it cleanly.
 import { chromium } from 'playwright';
-import { makeChecks, settle } from './assert.mjs';
+import { makeChecks, settle, passRecoveryCode } from './assert.mjs';
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const { ok, eq, finish } = makeChecks('sample-data');
 const browser = await chromium.launch();
@@ -9,7 +9,7 @@ const errors = []; page.on('pageerror', e => errors.push('PAGEERROR ' + e.messag
 await page.goto(base + '/?local=1#/'); await settle(page);
 if (!await page.$('input[name=username]')) { console.log('device already set up; wiping'); await page.evaluate(() => window.SUDS_LOCAL.wipe()); await page.reload(); await settle(page); }
 await page.fill('input[name=display_name]', 'Sample Nav'); await page.fill('input[name=username]', 'samplenav'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
-await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 }); await settle(page);
+await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 }); await settle(page); await passRecoveryCode(page);
 for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await settle(page); }
 ok(await page.$('[data-sample-banner]'), 'an empty device offers sample data on the dashboard');
 

@@ -169,3 +169,53 @@ test('the first sign-in after a restore moves the device to a key the backup nev
   assert.ok(!done.chain && done.wraps.every(w => !w.chained));
   assert.equal(await V.rekeyAfterRestore(done, out.dek, 'second', 'Second-Password-2', { userId: 'u2', keys }), null, 'once rotated, never again');
 });
+
+// The owner's recovery code (ADR-0008, "Recovery code"): one more wrap of the DEK, under a code of 140 bits.
+test('a recovery code wraps the DEK once, opens it only with that code, and stays out of backups and account lookups', async () => {
+  const dek = V.newDek(); const key = await V.importDek(dek);
+  const keys = { enc: '5'.repeat(64), idx: '6'.repeat(64) };
+  let v = await V.create(key, keys);
+  v = V.withWrap(v, await V.wrapDek(dek, 'Owner-Password-1', { userId: 'u1', name: await V.nameHash(v.salt, 'owner') }));
+  const code = V.newRecoveryCode();
+  assert.match(code, /^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){6}$/, 'seven groups of four Crockford base32 symbols');
+  assert.notEqual(V.newRecoveryCode(), code, 'random');
+  // Case, dashes and spaces do not matter; I, L and O are read as 1, 1 and 0; anything else is not a code.
+  const n = V.normalizeRecoveryCode(code);
+  assert.equal(n, code.replace(/-/g, ''));
+  assert.equal(V.normalizeRecoveryCode(' ' + code.toLowerCase().replace(/-/g, ' ') + ' '), n);
+  assert.equal(V.normalizeRecoveryCode('oOiIlL' + '0'.repeat(22)), '001111' + '0'.repeat(22));
+  assert.equal(V.normalizeRecoveryCode(code.slice(0, -1)), null, 'one symbol short');
+  assert.equal(V.normalizeRecoveryCode(code.replace(/.$/, 'U')), null, 'U is not in the alphabet');
+  assert.equal(V.normalizeRecoveryCode(undefined), null);
+  const wrap = await V.wrapRecovery(dek, code, v.salt);
+  assert.equal(wrap.recovery, true); assert.equal(wrap.user_id, undefined, 'it belongs to no account');
+  assert.equal(wrap.iterations, 600000, 'PBKDF2 like every wrap');
+  v = V.withRecovery(v, wrap);
+  assert.ok(!JSON.stringify(v).includes(n), 'the code is not stored');
+  assert.deepStrictEqual(await V.unlockRecovery(v, code.toLowerCase()), dek, 'the code opens the DEK');
+  assert.equal(await V.unlockRecovery(v, V.newRecoveryCode()), null, 'another code does not');
+  assert.equal(await V.unlockRecovery(v, 'not a code'), null);
+  // Its lookup name is one no username can have, and signing in by username never tries it.
+  assert.equal(wrap.name, await V.recoveryName(v.salt));
+  assert.equal(await V.unlock(v, 'recovery code #', 'recovery code #'), null);
+  assert.equal((await V.wrapsFor(v, 'recovery code #')).length, 0);
+  // An account's re-wrap keeps it; a new code replaces it (one recovery wrap at most).
+  v = V.withWrap(v, await V.wrapDek(dek, 'Owner-Password-2', { userId: 'u1', name: await V.nameHash(v.salt, 'owner') }));
+  assert.ok(V.recoveryWrap(v));
+  const code2 = V.newRecoveryCode();
+  v = V.withRecovery(v, await V.wrapRecovery(dek, code2, v.salt));
+  assert.equal(v.wraps.filter(w => w.recovery).length, 1);
+  assert.equal(await V.unlockRecovery(v, code), null, 'the old code stops working');
+  assert.deepStrictEqual(await V.unlockRecovery(v, code2), dek);
+  // A backup never carries it: a restored device gets a code of its own.
+  const rec = await V.backupRecord(v, key, V.newDek());
+  assert.equal(rec.wraps.length, 1); assert.ok(rec.wraps.every(w => !w.recovery));
+  // After a restore, a code made before the key rotation wraps the old key: the rotation drops it, and it is
+  // not counted as an account waiting to be let in again.
+  const r = await V.fromBackupRecord(JSON.parse(JSON.stringify(rec)), keys, {});
+  const withCode = V.withRecovery(r.vault, await V.wrapRecovery(r.dek, code2, r.vault.salt));
+  const out = await V.rekeyAfterRestore(withCode, r.dek, 'owner', 'Owner-Password-2', { userId: 'u1', keys });
+  assert.ok(out);
+  assert.equal(V.recoveryWrap(out.vault), null); assert.ok(out.vault.recovery_dropped_at);
+  assert.deepStrictEqual(out.dropped, []);
+});

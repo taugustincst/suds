@@ -6,7 +6,7 @@
 // raw column names (LOW).
 import { chromium } from 'playwright';
 import { createHmac } from 'node:crypto';
-import { makeChecks, until, settle, skipTour, signInAgain } from './assert.mjs';
+import { makeChecks, until, settle, skipTour, signInAgain, passRecoveryCode } from './assert.mjs';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const { ok, eq, fail, finish } = makeChecks('device-audit');
@@ -54,7 +54,7 @@ async function setupDevice(page, { username, password, name }) {
   await until(async () => (await page.$('input[name=display_name]')) || (await page.$('.boot.error')), { timeout: 20000 });
   await page.fill('input[name=display_name]', name); await page.fill('input[name=username]', username);
   await page.fill('input[name=password]', password); await page.fill('input[name=confirm]', password);
-  await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 15000 });
+  await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 15000 }); await passRecoveryCode(page);
   for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await settle(page); }
 }
 const idbHasDb = (page) => page.evaluate(() => new Promise((resolve) => {

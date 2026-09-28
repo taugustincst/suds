@@ -72,6 +72,25 @@ export async function signInAgain(page, username, password, { timeout = 20000 } 
   }
 }
 
+/**
+ * Past the recovery-code screen a device shows once after its first account is set up (public/views/local.js):
+ * tick "I have saved my recovery code" and continue, as a person does. Nothing to do where the app did not show
+ * it (an older build, the office server). Returns the code that was shown, or null.
+ */
+export async function passRecoveryCode(page) {
+  // A build from before 1.9.x keeps no activity record to settle on (multitab and qa-retest replay one); it
+  // has no recovery code either.
+  if (!(await page.evaluate(() => !!window.__sudsActivity).catch(() => false))) return null;
+  await settle(page);
+  if (!(await page.$('[data-recovery-screen]'))) return null;
+  const code = (await page.textContent('[data-recovery-code]')).trim();
+  await page.check('[data-recovery-screen] input[name=saved]');
+  await page.click('[data-recovery-screen] button[type=submit]');
+  await page.waitForSelector('[data-recovery-screen]', { state: 'detached', timeout: 15000 });
+  await settle(page);
+  return code;
+}
+
 // Playwright's WebKit on a Linux runner (CI's advisory `webkit` job) is WebKitGTK/WPE with Playwright's own
 // storage and network emulation, not iOS Safari. Two service-worker cache checks fail there on every run
 // while the same code passes in Chromium, and while, in the same WebKit run, the installed app itself boots

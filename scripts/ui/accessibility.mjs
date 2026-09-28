@@ -16,7 +16,8 @@
 //    episode records, complaint, incident, FHIR client, access request approval, identified export, resource,
 //    overdose, expenditure). The seed has none of the clinical, CalOMS or Part 2 records, so prepareOffice()
 //    makes them through the API before the passes start. For every seeded role on the office server, and for a fresh
-//    Sign up on SUDS on this device (the static build) — at desktop (1280) and phone (390) widths, in the
+//    Sign up on SUDS on this device (the static build: its recovery-code screen, the dialogs that make and use a
+//    code, and the locked sign-in page's "Can't sign in?") — at desktop (1280) and phone (390) widths, in the
 //    light and dark themes, and at 200% text. Any violation fails the run; the report lists every one by
 //    page, rule, impact and element, and a summary by rule at the end.
 // 2. What axe cannot judge, checked on the same pages: a descriptive title per address that never names a
@@ -35,7 +36,7 @@
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
-import { makeChecks, settle, until } from './assert.mjs';
+import { makeChecks, settle, until, passRecoveryCode } from './assert.mjs';
 
 const require = createRequire(import.meta.url);
 let axeSource;
@@ -558,7 +559,15 @@ async function deviceRun(cfg) {
   // The administrator role reaches every page on the device, Settings included.
   if (await page.$('select[name=role] option[value=admin]')) await page.selectOption('select[name=role]', 'admin');
   await page.check('input[name=storage_ack]'); await page.click('button[type=submit]');
-  await page.waitForSelector('.layout', { timeout: 20000 }); await dismissTour(page);
+  await page.waitForSelector('.layout', { timeout: 20000 }); await settle(page);
+  // The recovery code, shown once after set-up (views/local.js): audited as it is shown, and with the error the
+  // "I have saved it" box gives when Continue is pressed without it.
+  ok(await page.$('[data-recovery-screen]'), `device ${cfg.id}: set-up shows the recovery code screen`);
+  await axe(page, `device ${cfg.id} recovery code (set-up)`); await titleCheck(page, `device ${cfg.id} recovery code (set-up)`);
+  if (cfg.mobile) await reflowCheck(page, `device ${cfg.id} recovery code (set-up)`, 320);
+  await page.click('[data-recovery-screen] button[type=submit]'); await settle(page);
+  await axe(page, `device ${cfg.id} recovery code (not ticked)`);
+  await passRecoveryCode(page); await dismissTour(page);
   // One client with a record of each kind, so the tabs and lists have rows to audit.
   await page.evaluate(async () => {
     const H = { 'X-Requested-With': 'suds', 'Content-Type': 'application/json' };
@@ -574,6 +583,22 @@ async function deviceRun(cfg) {
   ok(clientId && resourceId, `${tag}: the device has a client and a resource to audit`, { clientId, resourceId });
   await auditPages(page, device, cfg, tag, { clientId, resourceId, settingsTabs: true });
   await auditDialogs(page, device, tag, clientId);
+  // Making a new recovery code (This device), and every way back in on the locked sign-in page.
+  await go(page, device, 'sync');
+  await page.click('[data-recovery-new]'); await page.waitForSelector('.modal input[name=password]'); await settle(page);
+  await axe(page, `device ${cfg.id} dialog: make a new recovery code`);
+  await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal')), { timeout: 5000 });
+  await page.evaluate(async () => (await import('./app.js')).logout()); await page.waitForSelector('.login input[name=username]'); await settle(page);
+  ok(await page.$('[data-cant-sign-in] [data-recover-open]'), `device ${cfg.id}: the locked sign-in page offers the recovery code`);
+  await axe(page, `device ${cfg.id} Log in (locked, Can't sign in?)`);
+  if (cfg.mobile) await reflowCheck(page, `device ${cfg.id} Log in (locked, Can't sign in?)`, 320);
+  await page.click('[data-recover-open]'); await page.waitForSelector('.modal input[name=code]'); await settle(page);
+  await axe(page, `device ${cfg.id} dialog: use your recovery code`);
+  await page.fill('.modal input[name=code]', '0000-0000-0000-0000-0000-0000-0000'); await page.fill('.modal input[name=password]', PW); await page.fill('.modal input[name=confirm]', PW);
+  await page.click('.modal button[type=submit]'); await until(() => page.$('.modal [data-field=code].error'), { timeout: 15000 }); await settle(page);
+  await axe(page, `device ${cfg.id} dialog: use your recovery code (wrong code)`);
+  await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal')), { timeout: 5000 });
+  await signIn(page, device, 'avery', PW);
   for (const file of ['get-app.html', 'accessibility.html']) {
     await page.goto(`${device}/${file}`); await page.waitForLoadState('networkidle');
     await axe(page, `device ${cfg.id} ${file}`);

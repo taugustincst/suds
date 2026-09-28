@@ -544,3 +544,9 @@ details.section > summary [data-section-hint] { font-weight: 400; }
 .modal [hidden] { display: none !important; }
 .step-heading { font-size: 1.05rem; margin: 0 0 .25rem; }
 .readmit-panel { margin-top: .5rem; }
+/* The owner's recovery code, shown once (views/local.js): large, spaced, and wrapping on a narrow screen. */
+.recovery-code { margin: 0 0 1rem; font-family: var(--mono); font-size: 1.35rem; letter-spacing: .06em; line-height: 1.6; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem; overflow-wrap: anywhere; user-select: all; }
+/* "Can't sign in?" on a device's sign-in page: the ways back in, and what each keeps. */
+.cant-sign-in { border-top: 1px solid var(--border); padding-top: .75rem; }
+.cant-sign-in ul { margin: .25rem 0 0; padding-left: 1.1rem; }
+.cant-sign-in li { margin-bottom: .4rem; }

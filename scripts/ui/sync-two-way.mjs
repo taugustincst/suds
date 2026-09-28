@@ -1,7 +1,7 @@
 // Two-way sync between a device and the office server, end to end in a real browser.
 // Every line here used to be a console.log compared to nothing, so this script passed with sync broken.
 import { chromium } from 'playwright';
-import { makeChecks, settle } from './assert.mjs';
+import { makeChecks, settle, passRecoveryCode } from './assert.mjs';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const { ok, eq, fail, finish } = makeChecks('sync-two-way');
@@ -26,7 +26,7 @@ try {
   await page.fill('input[name=password]', 'Navigator2026!!');
   await page.fill('input[name=confirm]', 'Navigator2026!!');
   await page.click('button[type=submit]');
-  await page.waitForSelector('.layout', { timeout: 15000 }); await settle(page);
+  await page.waitForSelector('.layout', { timeout: 15000 }); await settle(page); await passRecoveryCode(page);
 
   const s1 = await sync();
   ok(s1 && s1.ok, 'the first sync completes', s1 && s1.error);

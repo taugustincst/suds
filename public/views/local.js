@@ -1,4 +1,4 @@
-import { h, route, get, post, put, state, form, toast, nav, render, loadSession, badge, fmt, pageHead, eraseDeviceButton, kv, modal, clear } from '../app.js';
+import { h, route, get, post, put, state, form, toast, nav, navAndRender, render, loadSession, badge, fmt, pageHead, eraseDeviceButton, kv, modal, clear } from '../app.js';
 
 // A column name as the person would say it: `first_name_enc` is "first name" (the suffix is how the
 // database marks an encrypted column, not something a navigator should have to read past).
@@ -120,6 +120,133 @@ export async function backupReminderCard() {
     h('button', { type: 'button', class: 'btn ghost sm', 'aria-label': 'Dismiss until tomorrow', 'data-backup-reminder-dismiss': '1', onClick: () => { try { localStorage.setItem(REMINDER_KEY, today()); } catch {} card.remove(); } }, '✕'));
   return card;
 }
+
+// ---------------------------------------------------------------------------------------------------------
+// The owner's recovery code (local/vault.js; docs/architecture/ADR-0008-device-encryption.md, "Recovery code").
+// A random code that opens this device's records without a password, for the day the device administrator
+// forgets theirs. Made at set-up (and again after every use, or when asked for), shown once on its own screen,
+// and never stored: the kernel keeps only the device key wrapped under it.
+// ---------------------------------------------------------------------------------------------------------
+// The code to show, from the request that made it until the person leaves its screen. In this page's memory
+// only; a reload loses it (the device then asks for a new one: the old one may not have been saved).
+let freshCode = null;
+/** Show a new recovery code once, on its own screen; afterwards go to `after`. */
+export function showRecoveryCode(code, createdAt, { after = 'dashboard', recovered = false, username = '' } = {}) {
+  freshCode = { code, createdAt, after, recovered, username };
+  navAndRender('recovery-code');
+}
+const codeFileName = (at) => `suds-recovery-code-${String(at || new Date().toISOString()).slice(0, 10)}.txt`;
+function codeText(c) {
+  const program = state.org || '';
+  return [
+    'SUDS on this device: recovery code',
+    '',
+    `    ${c.code}`,
+    '',
+    `Made: ${fmt.dt(c.createdAt)}${program ? `\nProgram: ${program}` : ''}`,
+    `Web address: ${location.origin}${location.pathname}`,
+    '',
+    'If you forget your password: open SUDS on this device, choose Log in, then under "Can\'t sign in?" choose',
+    '"Use your recovery code". Type this code and choose a new password. Capitals and dashes do not matter.',
+    'The code then stops working and SUDS shows you a new one to keep instead.',
+    '',
+    'Keep this away from the device: whoever has this code can open every record on it, the way a key would.',
+    'Making a new code (This device > Recovery code) makes this one stop working.',
+  ].join('\n');
+}
+function downloadCode(c) {
+  const url = URL.createObjectURL(new Blob([codeText(c) + '\n'], { type: 'text/plain' }));
+  const a = h('a', { href: url, download: codeFileName(c.createdAt) }); document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+function printCode(c) {
+  const w = window.open('', '_blank');
+  if (!w) { toast('Allow pop-ups to print the recovery code, or download it instead', 'error'); return; }
+  w.document.open();
+  w.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>SUDS recovery code</title><style>body{font-family:system-ui,sans-serif;margin:2rem;color:#111;line-height:1.45;white-space:pre-wrap}</style></head><body>${esc(codeText(c))}</body></html>`);
+  w.document.close(); w.focus(); setTimeout(() => w.print(), 300);
+}
+
+/** "Make a new recovery code": the device administrator's password again, then the code on its own screen. */
+export function openRecoveryDialog({ exists = false, after = 'sync' } = {}) {
+  const f = form([
+    { name: 'password', label: 'Your password', type: 'password', required: true, autocomplete: 'current-password', help: 'To make sure it is you. Your password does not change.' },
+  ], { submitText: exists ? 'Make a new code' : 'Make the code', onCancel: () => m.close(), onSubmit: async (d) => {
+    // quiet: a wrong password here is this form's error, not the session ending.
+    const r = await post('/api/local/recovery', { password: d.password }, { quiet: true });
+    m.close();
+    showRecoveryCode(r.code, r.created_at, { after });
+  } });
+  const m = modal(exists ? 'Make a new recovery code' : 'Make a recovery code', h('div', {},
+    h('p', {}, 'If you forget your password, a recovery code lets you back into SUDS on this device and choose a new one, without losing any records.'),
+    exists ? h('p', { class: 'banner warn', 'data-recovery-replaces': '1' }, 'This replaces the recovery code you have now: the old one stops working at once.') : null,
+    f));
+  return m;
+}
+
+/** Home's prompt for the device administrator of a device with no recovery code (or one never confirmed saved). */
+let promptDismissed = false; // until the next sign-in (every page load, and every sign-in, starts again)
+export function resetRecoveryPrompt() { promptDismissed = false; }
+export async function recoveryPromptCard() {
+  if (!state.local || promptDismissed) return null;
+  let st; try { st = await get('/api/local/device', { quiet: true }); } catch { return null; }
+  if (!st || !st.device_admin || !st.recovery || (st.recovery.exists && st.recovery.saved)) return null;
+  const unsaved = st.recovery.exists;
+  const card = h('div', { class: 'banner warn mb', role: 'status', 'data-recovery-prompt': unsaved ? 'unsaved' : 'none' },
+    h('div', {}, h('b', {}, unsaved ? 'Your recovery code was not confirmed as saved. ' : 'This device has no recovery code. '),
+      'If you forget your password, a recovery code is the only way back to the records here without a backup. ',
+      h('button', { type: 'button', class: 'btn sm primary', 'data-recovery-prompt-make': '1', onClick: () => openRecoveryDialog({ exists: unsaved, after: 'dashboard' }) }, unsaved ? 'Make a new recovery code' : 'Make a recovery code')),
+    h('button', { type: 'button', class: 'btn ghost sm', 'aria-label': 'Dismiss until you next sign in', 'data-recovery-prompt-dismiss': '1', onClick: () => { promptDismissed = true; card.remove(); } }, '✕'));
+  return card;
+}
+
+/** The "Recovery code" card on This device: whether there is one and when it was made, and making a new one. */
+function recoveryCard(dev, onChange) {
+  if (!dev || !dev.recovery) return null;
+  const rc = dev.recovery;
+  const status = rc.exists
+    ? h('span', { 'data-recovery-state': rc.saved ? 'saved' : 'unsaved' }, `Made ${fmt.dt(rc.created_at)}`, rc.saved ? null : [' ', badge('Not confirmed as saved', 'warn')])
+    : h('span', { 'data-recovery-state': 'none' }, badge('None yet', 'warn'));
+  return h('div', { class: 'card', 'data-device-recovery': '1' }, h('h2', {}, 'Recovery code'),
+    kv([['Recovery code', status]]),
+    h('p', { class: 'small muted mt' }, 'If the person who manages this device forgets their password, the recovery code lets them back in from the sign-in page (Can’t sign in? → Use your recovery code) and keeps every record. Keep it away from this device: whoever has the code can open every record here, like a key. SUDS never shows an existing code again; making a new one makes the old one stop working.'),
+    dev.device_admin
+      ? h('div', { class: 'btn-row' }, h('button', { type: 'button', class: rc.exists && rc.saved ? 'btn' : 'btn primary', 'data-recovery-new': '1', onClick: () => openRecoveryDialog({ exists: rc.exists, after: 'sync' }) }, rc.exists ? 'Make a new recovery code' : 'Make a recovery code'))
+      : h('p', { class: 'small muted' }, 'Only the person who manages this device can make its recovery code.'));
+}
+
+// The screen that shows a new code, once: download, print, and "I have saved my recovery code" before going on.
+route('recovery-code', async () => {
+  const c = freshCode;
+  if (!c) {
+    // Reached again (a reload, the Back button): the code is gone from this page on purpose.
+    const dev = await get('/api/local/device', { quiet: true }).catch(() => null);
+    return h('div', {}, pageHead('Recovery code'),
+      h('div', { class: 'banner info mb', 'data-recovery-gone': '1' }, h('div', {}, 'A recovery code is shown only once, when it is made. If you did not save the one shown then, make a new one: the old one stops working.')),
+      recoveryCard(dev, () => nav('sync')) || h('p', {}, h('a', { href: '#/sync' }, 'This device')));
+  }
+  const f = form([
+    { name: 'saved', label: 'I have saved my recovery code somewhere safe, away from this device', type: 'checkbox', span: true },
+  ], { submitText: 'Continue', onSubmit: async (d) => {
+    if (!d.saved) { const e = new Error('Tick the box once you have saved the recovery code'); e.labelled = true; e.data = { fields: { saved: 'Save the code, then tick the box' } }; throw e; }
+    await post('/api/local/recovery/saved', {});
+    freshCode = null;
+    toast('Recovery code saved. Keep it safe.', 'ok');
+    navAndRender(c.after || 'dashboard');
+  } });
+  return h('div', { 'data-recovery-screen': '1' }, pageHead(c.recovered ? 'Your new recovery code' : 'Your recovery code'),
+    c.recovered ? h('div', { class: 'banner ok mb', role: 'status', 'data-recovered': '1' }, h('div', {}, h('b', {}, 'You are back in. '), c.username ? `Your username is “${c.username}” and your new password is set. ` : 'Your new password is set. ', 'The recovery code you used no longer works: here is a new one to keep instead.')) : null,
+    h('div', { class: 'card' },
+      h('p', {}, 'If you ever forget your password, this code lets you back into SUDS on this device and choose a new password, keeping every record. On the sign-in page choose ', h('b', {}, 'Can’t sign in?'), ' → ', h('b', {}, 'Use your recovery code'), '.'),
+      h('div', { class: 'recovery-code', 'data-recovery-code': '1' }, c.code),
+      h('p', { class: 'small muted' }, `Made ${fmt.dt(c.createdAt)}. Capitals and dashes do not matter when you type it.`),
+      h('div', { class: 'banner warn', 'data-recovery-warning': '1' }, h('div', {}, h('b', {}, 'This is the only time it is shown. '), 'SUDS does not keep a copy, so nobody can show it to you again. Keep it away from this device, on paper in a safe place or in a password manager: whoever has the code can open every record on this device, the way a key would.')),
+      h('div', { class: 'btn-row' },
+        h('button', { type: 'button', class: 'btn', 'data-recovery-download': '1', onClick: () => downloadCode(c) }, 'Download as a text file'),
+        h('button', { type: 'button', class: 'btn', 'data-recovery-print': '1', onClick: () => printCode(c) }, 'Print')),
+      f));
+});
 
 /** The "Keep your records safe" card on This device: storage protection, last backup, backup and restore. */
 async function safetyCard(dev, onChange) {
@@ -250,6 +377,7 @@ route('sync', async () => {
           kv([['This device', badge('SUDS on this device', 'info')], ['Where your records are', 'In this browser on this device only'], ['Clients', dev ? String(dev.clients) : '—']]),
           h('p', { class: 'small muted mt' }, 'Your records stay in this browser, encrypted with the passwords of the accounts on this device, and are never sent anywhere. Clearing this browser’s site data erases them, and a forgotten password with no other account here locks them away for good, so keep a recent backup.')),
         await safetyCard(dev, refresh),
+        recoveryCard(dev, refresh),
         accountsCard(dev, refresh),
         h('div', { class: 'card' }, h('h2', {}, 'Office server'), h('div', { class: 'banner info', 'data-static-no-sync': '1' }, h('div', {}, STATIC_HOST_MESSAGE)), h('div', { class: 'btn-row mt' }, eraseDeviceButton())),
         await sampleDataCard(refresh)));
@@ -265,5 +393,6 @@ route('sync', async () => {
       h('div', { class: 'card' }, h('h2', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this device to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
         h('div', { class: 'btn-row' }, eraseDeviceButton())),
       await safetyCard(dev, refresh),
+      recoveryCard(dev, refresh),
       await sampleDataCard(refresh)));
 });

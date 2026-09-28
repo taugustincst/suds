@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { makeChecks, until, settle } from './assert.mjs';
+import { makeChecks, until, settle, passRecoveryCode } from './assert.mjs';
 
 const office = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const device = process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8877';
@@ -170,7 +170,7 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   await page.click('button[type=submit]'); await settle(page);
   ok(!(await page.$('.layout')), 'the account is not created until the storage confirmation is ticked');
   await page.check('input[name=storage_ack]'); await page.click('button[type=submit]');
-  await page.waitForSelector('.layout', { timeout: 15000 }); await dismissTour(page);
+  await page.waitForSelector('.layout', { timeout: 15000 }); await passRecoveryCode(page); await dismissTour(page);
   ok(await page.$('.layout'), 'ticking it creates the first account, the device administrator, and signs in');
   await noBanner('home');
   ok(!(await page.$('[data-backup-reminder]')), 'no backup reminder while the device has no clients');

@@ -29,6 +29,7 @@ const ALLOWED = {
   'public/views/client.js': [{ line: /w\.document\.write\(html\)/, why: 'accounting of disclosures print page; every value through esc()', printable: true }],
   'public/views/clinical.js': [{ line: /w\.document\.write\(html\)/, why: 'care plan print page; every value through esc()', printable: true }],
   'public/views/compliance.js': [{ line: /w\.document\.write\(`<!doctype html>/, why: 'notice of privacy practices print page; every value through esc()', printable: true }],
+  'public/views/local.js': [{ line: /w\.document\.write\(`<!doctype html>/, why: 'recovery code print page (the code and fixed text); every value through esc()', printable: true }],
 };
 
 const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap(e => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));

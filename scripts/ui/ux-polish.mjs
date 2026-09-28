@@ -13,7 +13,7 @@
 // Screenshots go to $SHOTS (default /tmp/suds-ux-polish) so a person can look at them.
 import { chromium } from 'playwright';
 import fs from 'node:fs';
-import { makeChecks, until, settle } from './assert.mjs';
+import { makeChecks, until, settle, passRecoveryCode } from './assert.mjs';
 const base = process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8877';
 const SHOTS = process.env.SHOTS || '/tmp/suds-ux-polish';
 fs.mkdirSync(SHOTS, { recursive: true });
@@ -282,7 +282,7 @@ await ctx.close();
   await p.fill('input[name=display_name]', 'Kiran Patel'); await p.fill('input[name=username]', 'kpatel');
   await p.fill('input[name=password]', 'Navigator2026!!'); await p.fill('input[name=confirm]', 'Navigator2026!!');
   await p.check('input[name=storage_ack]');
-  await p.tap('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 15000 }); await settle(p);
+  await p.tap('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 15000 }); await settle(p); await passRecoveryCode(p);
   for (let i = 0; i < 6; i++) { const b = await p.$('.modal button.primary'); if (!b) break; await b.tap(); await settle(p); }
   ok(/, Kiran Patel$/.test((await p.textContent('h1')).trim()), '"Kiran Patel" is greeted by the whole display name');
   const btn = await until(() => p.$('[data-sample-banner] [data-load-sample]'), { timeout: 5000 });

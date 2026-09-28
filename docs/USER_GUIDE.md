@@ -27,6 +27,16 @@ SUDS needs a connection to the office. Without one, a banner says so and nothing
 ## Signing in
 Use your individual username. After 5 wrong passwords the account locks for 15 minutes. You are signed out automatically after 15 minutes without activity — a banner warns you one minute before. Supervisors and administrators must enroll an authenticator app (Profile → Multi-factor authentication → scan the QR code).
 
+**Forgot your password or locked out?** On the office SUDS, ask your supervisor or a SUDS administrator to reset it (Settings → Users). If the administrator is the one locked out, whoever runs the SUDS server resets that account on the server itself (`npm run reset-admin -- <username>`, docs/INSTALL.md).
+
+**On SUDS on this device** the records are encrypted with your password, so nobody can simply reset it for you. When the device is set up, SUDS shows a **recovery code** once: download it or print it, keep it somewhere safe away from the device (whoever has it can open every record on the device, like a key), and tick *I have saved my recovery code*. The sign-in page's **Can't sign in?** section then offers three ways back in:
+
+* **Use your recovery code** — type the code and a new password. You are signed in with every record kept, and SUDS shows a new code to save instead (the one you used stops working). Only the person who manages the device gets back in this way.
+* **Restore from a backup** — puts a backup file back, with the accounts and passwords it had. Anything recorded since the backup is lost.
+* **Start over on this device** — erases every record in this browser. Nothing is kept.
+
+The person who manages the device can make a new recovery code at any time under **This device → Recovery code** (it asks for their password first; the old code stops working). A device set up before this was added has no code: Home asks its manager to make one until they do.
+
 ## Dashboard
 Shows alerts (for supervisors and administrators, the team's overdue to-dos; your own are counted on the 🔔 bell in the header and listed under **To-dos for today**; unsigned notes, imported notes waiting for review, clients with no visit in 30 days, consents expiring, open client rights requests (access, amendment, restriction, an accounting of disclosures) and how many are past their 30-day deadline, active clients with no Part 2 notice on record, and — for supervisors — open privacy complaints and incidents nearing or past their notification deadline), your caseload sorted by risk and last contact, and 90-day activity charts. The visits and naloxone kits counted there include outreach and community distribution recorded with no client, and kits handed out on any kind of visit (the **Naloxone kits given** tile opens the visits that handed some out): a navigator's figures are their caseload's visits and the anonymous outreach they logged themselves; a supervisor's, an administrator's, finance's and read-only's are the whole program's, and agree with the funder report for the same period (the activity card is headed *What the team has been doing* for supervisors and *The program's visits* for finance and read-only). The budget figure (spent of budget) is shown only to the roles that approve spending — supervisors, finance and administrators. The same open-requests count appears on the Supervision page.
 

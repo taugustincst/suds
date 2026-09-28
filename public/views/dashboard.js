@@ -1,4 +1,4 @@
-import { backupReminderCard } from './local.js';
+import { backupReminderCard, recoveryPromptCard } from './local.js';
 import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName, prefs, welcomeCard } from '../app.js';
 
 // One refresh timer for Home, however often it is drawn (each draw used to start another, and they piled up).
@@ -112,6 +112,8 @@ async function drawHome(r) {
   if (supplies) alerts.push(...supplies.alerts);
   // The on-device app keeps its records nowhere else: a week without a backup is worth a word on Home.
   const backupReminder = await backupReminderCard();
+  // A device whose administrator has no recovery code yet (set up before 1.15, or the code never confirmed saved).
+  const recoveryPrompt = await recoveryPromptCard();
   // Empty program: offer sample data (office admins, or anyone on a phone-only copy)
   let sample = null;
   if (!c.active && !c.waitlist && !caseload.caseload.length && (state.local || can('settings:manage'))) {
@@ -220,6 +222,7 @@ async function drawHome(r) {
   return h('div', {},
     pageHead(`${greet}, ${who}`, autoToggle),
     welcomeCard({ force: r && r.query && r.query.get('welcome') === '1' }),
+    recoveryPrompt,
     backupReminder,
     securityNotes,
     sample,

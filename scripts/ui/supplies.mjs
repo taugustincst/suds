@@ -4,7 +4,7 @@
 // (/?local=1): the office's items and stock arrive by sync, a visit recorded offline draws the device's copy
 // down, and after the next sync the office has drawn it once and the device shows the office's figures.
 import { chromium } from 'playwright';
-import { makeChecks, until, settle, saved } from './assert.mjs';
+import { makeChecks, until, settle, saved, passRecoveryCode } from './assert.mjs';
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const { ok, eq, fail, finish } = makeChecks('supplies');
 const browser = await chromium.launch();
@@ -142,7 +142,7 @@ try {
   await dev.goto(base + '/?local=1#/');
   await until(async () => (await dev.$('input[name=username]')) || (await dev.$('.boot.error')), { timeout: 20000 });
   await dev.fill('input[name=display_name]', 'Phone Nav'); await dev.fill('input[name=username]', 'mrivera'); await dev.fill('input[name=password]', 'Navigator2026!!'); await dev.fill('input[name=confirm]', 'Navigator2026!!');
-  await dev.click('button[type=submit]'); await dev.waitForSelector('.layout', { timeout: 15000 });
+  await dev.click('button[type=submit]'); await dev.waitForSelector('.layout', { timeout: 15000 }); await passRecoveryCode(dev);
   for (let i = 0; i < 5; i++) { const b = await dev.$('.modal button.primary'); if (!b) break; await b.click(); await settle(dev); }
   const sync = async () => {
     await dev.goto(base + '/?local=1#/sync'); await dev.waitForSelector('input[name=office_password]', { timeout: 10000 });
