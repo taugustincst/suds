@@ -142,12 +142,15 @@ module.exports = (r) => {
     const v = validate(ctx.body, { decision: { type: 'string', required: true, enum: ['approved', 'rejected'] }, note: { type: 'string', maxLen: 500 } });
     // The same rule as expenditures: nobody signs off their own claim.
     if (t.user_id === ctx.user.id) throw forbidden('You cannot approve your own time');
-    if (t.status !== 'submitted') throw badRequest('Only submitted time can be approved or returned');
+    // Approved time is locked (server/rules/time_entries.js); returning it with a reason is how a supervisor
+    // reopens it for the worker to correct and resubmit. Nothing else moves an approved entry.
+    const reopening = t.status === 'approved' && v.decision === 'rejected';
+    if (t.status !== 'submitted' && !reopening) throw badRequest(t.status === 'approved' ? 'This time is already approved; return it with a reason to reopen it for correction' : 'Only submitted time can be approved or returned');
     if (v.decision === 'rejected' && !v.note) throw badRequest(NO_REASON);
     // The reviewer's note can name the client ("J. was seen Tuesday"): encrypted, and not in the audit entry.
     const note = v.note ? encrypt(v.note) : null;
     db.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db.now(), note, db.now(), t.id);
-    audit.log({ user: ctx.user, action: `time.${v.decision}`, entity: 'time_entry', entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes, note_recorded: v.note ? true : undefined } });
+    audit.log({ user: ctx.user, action: `time.${v.decision}`, entity: 'time_entry', entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes, note_recorded: v.note ? true : undefined, reopened: reopening || undefined } });
     return { ok: true };
   });
 
