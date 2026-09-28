@@ -5,7 +5,7 @@ const audit = require('../audit');
 const devices = require('../devices');
 const { badRequest, notFound, HttpError } = require('../http');
 const { validate } = require('../validate');
-const { isKnownPermission, PRIVILEGED_PERMISSIONS } = require('../permissions');
+const { isKnownPermission, PRIVILEGED_PERMISSIONS, PERMISSION_CATALOG } = require('../permissions');
 const { hashPasswordAsync, uuid, randomToken } = require('../crypto');
 
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
@@ -127,9 +127,11 @@ module.exports = (r) => {
     return { ok: true, devices_wiped: wiped.length };
   });
 
-  // --- Per-user permission overrides (admin-managed) ---
+  // ---- Per-user permission overrides (admin-managed permissions) ----
   // Effective permissions = role defaults + grants − denies (auth.effectivePerms).
   // Deny always wins, including across wildcards and write-implies-read.
+  // The full permission catalog for the grant dropdown and the labels the admin UI shows.
+  r.get('/api/permissions/catalog', auth.requireAuth, auth.requirePerm('users:manage'), () => ({ permissions: PERMISSION_CATALOG }));
   r.get('/api/users/:id/permissions', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
     const target = db.one(`SELECT id, role FROM users WHERE id=?`, ctx.params.id);
     if (!target) throw notFound('User not found');

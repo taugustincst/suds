@@ -86,6 +86,115 @@ async function openUserForm(values, onDone) {
     onDone();
   } });
   const m = modal(isNew ? 'New user' : `Edit ${values.display_name}`, f, { wide: true });
+  // Admin-managed per-user permission overrides, below the account fields. Additive: the role select above
+  // stays as-is. Only someone with users:manage gets here (the Users & roles tab is theirs alone).
+  if (can('users:manage')) {
+    const permBox = h('div', { id: 'user-perm-section', 'data-perm-section': '1' });
+    m.el.append(permBox);
+    renderPermissionsSection(permBox, isNew ? null : values.id);
+  }
+}
+
+// ---- Admin-managed per-user permission overrides ----
+// The Permissions section of the user editor: the role's baseline as a collapsible grouped list, the
+// effective permissions with their provenance (role baseline, granted override, denied override), the
+// individual overrides with their reason and who made them, and the grant/deny form. The API enforces
+// the guards (no self-edit, privileged permissions stay admin-only, reasons of 10+ characters); the UI
+// explains them and surfaces the API's error text.
+function permCatalogLabel(byName, name) { return (byName[name] && byName[name].label) || name; }
+function permNamespaceGroups(names) {
+  const groups = {};
+  for (const n of names) { const ns = String(n).split(':')[0] || 'other'; (groups[ns] = groups[ns] || []).push(n); }
+  return Object.keys(groups).sort().map((ns) => [ns, groups[ns].sort()]);
+}
+function permGrantedByName(id) {
+  const u = (state.users || []).find((x) => x.id === id);
+  return u ? u.display_name : id;
+}
+function permProvBadge(prov) {
+  return h('span', { 'data-perm-badge': prov }, badge(prov, prov === 'granted' ? 'ok' : prov === 'denied' ? 'danger' : ''));
+}
+async function renderPermissionsSection(box, userId) {
+  box.replaceChildren(h('h3', {}, 'Permissions'));
+  if (!userId) {
+    box.append(h('p', { class: 'muted' }, 'Save the user first to manage individual permissions.'));
+    return;
+  }
+  if (state.user && userId === state.user.id) {
+    box.append(h('p', { class: 'muted' }, 'You cannot change your own permissions.'));
+    return;
+  }
+  box.append(h('p', { class: 'small muted' }, 'Loading permissions…'));
+  let catalog, data;
+  try {
+    [catalog, data] = await Promise.all([get('/api/permissions/catalog'), get(`/api/users/${userId}/permissions`)]);
+  } catch (e) {
+    box.lastChild.textContent = `Permissions could not be loaded: ${e.message}`;
+    return;
+  }
+  box.lastChild.remove();
+  const byName = Object.fromEntries((catalog.permissions || []).map((p) => [p.name, p]));
+  const label = (n) => permCatalogLabel(byName, n);
+  const refresh = () => renderPermissionsSection(box, userId);
+
+  // The role baseline: what this person's role gives them, grouped by namespace.
+  box.append(h('h4', {}, `Role baseline — ${fmt.label(data.role)}`),
+    h('div', { 'data-perm-baseline': '1' }, permNamespaceGroups(data.role_permissions || []).map(([ns, names]) =>
+      h('details', {}, h('summary', {}, `${ns} (${names.length})`),
+        h('ul', {}, names.map((n) => h('li', {}, label(n), h('code', { class: 'small muted' }, ` ${n}`))))))));
+
+  // The effective permissions with their provenance: a granted override, a denied override, or the role.
+  const grantSet = new Set((data.overrides || []).filter((o) => o.mode === 'grant').map((o) => o.permission));
+  const denySet = new Set(data.denied || []);
+  const provOf = (n) => denySet.has(n) ? 'denied' : grantSet.has(n) ? 'granted' : 'role';
+  const shown = [...new Set([...(data.effective || []), ...(data.denied || [])])];
+  box.append(h('h4', {}, 'Effective permissions'),
+    h('div', { 'data-perm-effective': '1' }, permNamespaceGroups(shown).map(([ns, names]) =>
+      h('details', { open: true }, h('summary', {}, `${ns} (${names.length})`),
+        h('ul', {}, names.map((n) => h('li', {}, label(n), ' ', permProvBadge(provOf(n)))))))));
+
+  // The individual overrides: label, mode, reason, who granted it and when, with Revoke.
+  box.append(h('h4', {}, 'Individual overrides'),
+    h('div', { 'data-perm-overrides': '1' }, (data.overrides || []).length
+      ? data.overrides.map((o) => h('div', { class: 'card flat perm-override' },
+          h('div', {}, h('b', {}, label(o.permission)), ' ', permProvBadge(o.mode === 'grant' ? 'granted' : 'denied'), h('code', { class: 'small muted' }, ` ${o.permission}`)),
+          h('div', { class: 'small' }, o.reason),
+          h('div', { class: 'small muted' }, `by ${permGrantedByName(o.granted_by)} · ${fmt.dt(o.granted_at)}`),
+          h('div', { class: 'btn-row' }, h('button', { class: 'btn sm danger', 'data-perm-revoke': o.permission,
+            onClick: async () => {
+              if (!await confirmDialog('Revoke override', `Remove the ${o.permission} override for ${data.display_name || 'this person'}? Their permissions go back to what the ${data.role} role gives.`, { danger: true, okText: 'Revoke' })) return;
+              try { await del(`/api/users/${userId}/permissions/${encodeURIComponent(o.permission)}`); toast('Override revoked', 'ok'); await refresh(); }
+              catch (e) { toast(e.message, 'error'); }
+            } }, 'Revoke'))))
+      : h('p', { class: 'small muted' }, 'No individual overrides — this person has exactly what their role gives.')));
+
+  // The grant form: a permission from the catalog grouped by namespace (sensitive and privileged ones
+  // flagged), a mode, and a reason for the audit log.
+  const sel = h('select', { 'data-perm-select': '1', 'aria-label': 'Permission' });
+  for (const [ns, names] of permNamespaceGroups((catalog.permissions || []).map((p) => p.name))) {
+    sel.append(h('optgroup', { label: ns }, names.map((n) => { const p = byName[n];
+      return h('option', { value: p.name }, `${p.label} (${p.name})${p.risk === 'standard' ? '' : ` — ⚠ ${p.risk}`}`); })));
+  }
+  const denyRadio = h('input', { type: 'radio', name: 'perm-mode', value: 'deny', 'data-perm-mode': 'deny' });
+  const reason = h('textarea', { 'data-perm-reason': '1', rows: 2, placeholder: 'Why this person needs it — recorded in the audit log (at least 10 characters)' });
+  box.append(h('div', { 'data-perm-grant-form': '1' },
+    h('h4', {}, 'Grant or deny a permission'),
+    h('div', { class: 'field' }, h('label', {}, 'Permission'), sel,
+      h('div', { class: 'small muted' }, '⚠ sensitive and ⚠ privileged permissions need a real reason. Privileged ones can only go to administrators.')),
+    h('div', { class: 'field' }, h('label', {}, 'Mode'),
+      h('div', { class: 'row' },
+        h('label', {}, h('input', { type: 'radio', name: 'perm-mode', value: 'grant', 'data-perm-mode': 'grant', checked: true }), ' Grant'),
+        h('label', {}, denyRadio, ' Deny'))),
+    h('div', { class: 'field' }, h('label', {}, 'Reason (recorded in the audit log, at least 10 characters)'), reason),
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', 'data-perm-save': '1',
+      onClick: async () => {
+        const mode = denyRadio.checked ? 'deny' : 'grant';
+        try {
+          await post(`/api/users/${userId}/permissions`, { permission: sel.value, mode, reason: reason.value });
+          toast(mode === 'deny' ? 'Permission denied' : 'Permission granted', 'ok');
+          await refresh();
+        } catch (e) { toast(e.message, 'error'); }
+      } }, 'Save'))));
 }
 
 // Deactivating an account does not take its clients and to-dos away from it, so the confirmation says how

@@ -38136,7 +38136,7 @@ var require_users2 = __commonJS({
     var devices = require_devices();
     var { badRequest, notFound, HttpError: HttpError3 } = require_http();
     var { validate } = require_validate();
-    var { isKnownPermission, PRIVILEGED_PERMISSIONS } = require_permissions();
+    var { isKnownPermission, PRIVILEGED_PERMISSIONS, PERMISSION_CATALOG } = require_permissions();
     var { hashPasswordAsync, uuid: uuid2, randomToken } = require_crypto();
     var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
     var shape = {
@@ -38259,6 +38259,7 @@ var require_users2 = __commonJS({
         audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped2.length, wipe_devices: wipeDevices } });
         return { ok: true, devices_wiped: wiped2.length };
       });
+      r.get("/api/permissions/catalog", auth3.requireAuth, auth3.requirePerm("users:manage"), () => ({ permissions: PERMISSION_CATALOG }));
       r.get("/api/users/:id/permissions", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
         const target = db3.one(`SELECT id, role FROM users WHERE id=?`, ctx.params.id);
         if (!target) throw notFound("User not found");
