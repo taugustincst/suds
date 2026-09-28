@@ -1,7 +1,10 @@
 import { backupReminderCard } from './local.js';
 import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName, prefs, welcomeCard } from '../app.js';
 
-route('dashboard', async (r) => {
+// One refresh timer for Home, however often it is drawn (each draw used to start another, and they piled up).
+let homeTimer = null;
+async function drawHome(r) {
+  clearInterval(homeTimer);
   // Everything else Home asks the server for is asked for now, alongside the figures below, and waited for
   // where it is used. Each of these used to wait for the one before it: an administrator's Home was seven
   // round trips one after another, most of three seconds on a phone's connection before anything showed.
@@ -35,11 +38,17 @@ route('dashboard', async (r) => {
   // (WCAG 2.2.2: moving content has a way to stop it), and it never redraws the page under someone working in
   // it — focus on a control in the page, or a dialog open — because a redraw takes the keyboard focus away.
   const autoOn = () => prefs.get('home_autorefresh', true) !== false;
-  const timer = setInterval(() => {
-    if (!(location.hash.replace(/^#\/?/, '').split('?')[0] === 'dashboard' || location.hash === '' || location.hash === '#/')) { clearInterval(timer); return; }
-    const a = document.activeElement; const main = document.getElementById('main');
-    const working = a && a !== document.body && a !== main && a.tagName !== 'H1' && main && main.contains(a);
-    if (autoOn() && !working && !document.querySelector('.modal-bg')) nav('dashboard?_=' + Date.now());
+  const onHome = () => location.hash.replace(/^#\/?/, '').split('?')[0] === 'dashboard' || location.hash === '' || location.hash === '#/';
+  const idle = () => { const a = document.activeElement; const main = document.getElementById('main');
+    return !(a && a !== document.body && a !== main && a.tagName !== 'H1' && main && main.contains(a)) && !document.querySelector('.modal-bg'); };
+  // The refresh builds the new Home first and swaps it in whole, so the page never blanks to "Loading…"
+  // (it used to redraw the whole page every 90 seconds, empty until the figures came back).
+  homeTimer = setInterval(async () => {
+    if (!onHome()) { clearInterval(homeTimer); return; }
+    if (!autoOn() || !idle()) return;
+    let view; try { view = await drawHome(r); } catch { return; }
+    const main = document.getElementById('main');
+    if (main && onHome() && idle()) main.replaceChildren(view);
   }, 90_000);
   const autoToggle = h('label', { class: 'check small', style: { marginTop: 0 }, 'data-home-autorefresh': '1' }, h('input', { type: 'checkbox', checked: autoOn(), onChange: (e) => prefs.set('home_autorefresh', e.target.checked) }), 'Update this page every 90 seconds');
   const who = greetingName(state.user.display_name, state.user.username);
@@ -241,4 +250,5 @@ route('dashboard', async (r) => {
       h('div', { class: 'card' }, h('h2', { 'data-activity-heading': '1' }, activityHeading), bars(i.by_type.slice(0, 8), { list: 'INTERVENTION_TYPES', link: x => `interventions?type=${x.k}` }), h('div', { class: 'mt' }, sparkline(i.by_week.map(w => w.n), { label: 'Visits per week, last 90 days' }), h('div', { class: 'muted small' }, 'visits per week'))),
       state.user.role === 'admin' && !state.local ? h('div', { class: 'card' }, h('h2', {}, 'Use SUDS on phones and tablets'), h('p', { class: 'small muted' }, 'There is no app to install: staff open SUDS in the browser on the office Wi-Fi and add it to their home screen. Show them the QR code under Settings → Network & devices, or send them to ', h('a', { href: 'get-app.html' }, 'Use SUDS on your phone or tablet'), '.'), h('a', { class: 'btn sm', href: '#/admin?tab=network' }, 'Connect a device')) : null,
       d.consents_expiring.length ? h('div', { class: 'card' }, h('h2', {}, 'Consents expiring soon'), table([{ label: 'Client', render: r => h('a', { href: `#/client/${r.client_id}` }, r.client_code) }, { label: 'Type', render: r => fmt.label(r.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Expires', render: r => fmt.date(r.expires_at) }], d.consents_expiring, { wrap: false })) : null));
-});
+}
+route('dashboard', drawHome);
