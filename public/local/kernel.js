@@ -10444,12 +10444,12 @@ var require_permissions = __commonJS({
     var DEFS = [
       ["users:manage", "Manage users & permissions", "Create/edit/deactivate accounts, change roles, grant or revoke individual permissions."],
       ["users:read", "See the staff directory", "Minimal staff list for assignment dropdowns."],
-      ["settings:manage", "Manage programme settings", "Programme profile, modules, MFA policy, SCIM mapping, caseload restriction."],
+      ["settings:manage", "Manage program settings", "Program profile, modules, MFA policy, SCIM mapping, caseload restriction."],
       ["audit:read", "Read the audit log", "Tamper-evident audit trail and the break-glass review queue."],
       ["apikeys:manage", "Manage API keys", "Intake API keys and FHIR client registrations."],
       ["clients:read", "Open client records", "Identified client data for clients on the caseload (or all, with clients:all)."],
       ["clients:write", "Edit client records", "Create and edit identified client records."],
-      ["clients:all", "See every client", "Bypasses caseload scoping; required for whole-programme internal reports."],
+      ["clients:all", "See every client", "Bypasses caseload scoping; required for whole-program internal reports."],
       ["clients:list-deidentified", "List de-identified clients", "Client codes only, never names or identifiers."],
       ["clients:merge", "Merge duplicate clients", "Combine two client records, audited."],
       ["clients:legal-hold", "Place a legal hold", "Prevent deletion/merge of a client record under hold."],
@@ -10477,9 +10477,9 @@ var require_permissions = __commonJS({
       ["imports:*", "Data imports (all)", "Run and review bulk imports."],
       ["graph:import", "Import from OneNote", "Fetch the shared OneNote notebook."],
       ["reports:read", "Read reports", "Run aggregate reports."],
-      ["reports:internal", "Run internal reports", "Identified/caseload reports for programme use (never publication)."],
+      ["reports:internal", "Run internal reports", "Identified/caseload reports for program use (never publication)."],
       ["reports:exact", "Exact counts", "Unsuppressed counts for internal runs."],
-      ["reports:funder", "File the funder submission", "The programme's own submission runs of the funder report, NDP log and settlement report: exact aggregates, no client-level data."],
+      ["reports:funder", "File the funder submission", "The program's own submission runs of the funder report, NDP log and settlement report: exact aggregates, no client-level data."],
       ["assignments:manage", "Manage caseloads", "Assign workers to clients and move caseloads between workers."],
       ["export:read", "Export data", "De-identified (Safe Harbor) exports, caseload-scoped."],
       ["export:identified", "Export identified data", "Exports with names, dates of birth, addresses. Never held with a de-identified role."],
@@ -10488,8 +10488,8 @@ var require_permissions = __commonJS({
       ["forms:write", "Manage form templates", "Upload and edit form templates."],
       ["episodes:*", "Episodes (all)", "Open, edit and close treatment episodes."],
       ["overdose:*", "Overdose events (all)", "Record overdose and reversal events."],
-      ["documents:read", "Read documents", "Programme documents."],
-      ["documents:write", "Manage documents", "Upload and organise programme documents."],
+      ["documents:read", "Read documents", "Program documents."],
+      ["documents:write", "Manage documents", "Upload and organize program documents."],
       ["disclosures:override", "Override disclosure basis", "Record a disclosure on supervisor-override or other non-consent bases."],
       ["patient-requests:*", "Client rights requests (all)", "Handle access/amendment/accounting requests."],
       ["careplan:*", "Care plans (all)", "Problem list and care coordination plans."],
@@ -15139,7 +15139,7 @@ var require_form_starters = __commonJS({
           area("justification", "How this supports their recovery plan", { required: true }),
           text("amount", "Amount requested", { required: true }),
           text("vendor", "Vendor or provider"),
-          check("alternatives", "Other sources were checked first (Medicaid, CalFresh, housing programmes)"),
+          check("alternatives", "Other sources were checked first (Medicaid, CalFresh, housing programs)"),
           text("requested_by", "Requested by", { required: true }),
           date("requested_on", "Date", { required: true }),
           section("sec_approval", "Approval"),
@@ -21139,7 +21139,7 @@ var require_admin = __commonJS({
             if (k === "sso_deprovision_days" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 3650)) throw badRequest("sso_deprovision_days must be 0 (off) or a whole number of days");
             if (k === "scim_default_role" && v !== "" && !ROLES.includes(v)) throw badRequest(`scim_default_role must be one of ${ROLES.join(", ")}`);
             if (k === "scim_group_roles" && v !== "") v = require_scim().normaliseGroupRoles(v);
-            if (k === "programme_profile" && !require_programme().PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require_programme().PROFILES).join(", ")}`, { fields: { programme_profile: "choose a programme profile" } });
+            if (k === "programme_profile" && !require_programme().PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require_programme().PROFILES).join(", ")}`, { fields: { programme_profile: "choose a program profile" } });
             if (k.startsWith("module_") && v !== "" && !["0", "1"].includes(v)) throw badRequest(`${k} must be 1 (on), 0 (off) or blank (as the profile has it)`);
             if (k === "default_fund_id" && v !== "" && !db3.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v)) throw badRequest("default_fund_id must be an active funding source");
             if (k === "small_cell_threshold" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 2 && Number(v) <= 50)) throw badRequest("small_cell_threshold must be a whole number from 2 to 50");
@@ -28779,7 +28779,7 @@ var require_release_audit = __commonJS({
     }
     function refusalMessage(r) {
       const why = r.backstop ? "the check of this period's figures ran past the server's time limit" : r.outOfBudget ? "the check of this period's figures reached its limit before it could finish" : r.headline ? "the number of people served could not be shown without giving someone away" : "the check could not confirm that every small count in it is protected";
-      return `This period cannot be published: ${why}, so no publication release was made. Publish a longer standard period (a quarter or a year). The programme's own submission to its funder, which is not for publication, is unaffected.`;
+      return `This period cannot be published: ${why}, so no publication release was made. Publish a longer standard period (a quarter or a year). The program's own submission to its funder, which is not for publication, is unaffected.`;
     }
     function protectFigures(inputs, T, { strict = false, budget, stepLimit, timeLimitMs = AUDIT_BACKSTOP_MS, degrade = true } = {}) {
       const raw = prepare(inputs.funder, inputs.domains);
@@ -41881,7 +41881,7 @@ function isStaticHost() {
     return false;
   }
 }
-var STATIC_HOST_MESSAGE = 'SUDS on this device does not sync with an office server: your records stay in this browser. Keep them safe with "Download a backup" on this page. If your programme runs an office SUDS server, use SUDS at its address instead.';
+var STATIC_HOST_MESSAGE = 'SUDS on this device does not sync with an office server: your records stay in this browser. Keep them safe with "Download a backup" on this page. If your program runs an office SUDS server, use SUDS at its address instead.';
 function assertNotStaticHost() {
   if (isStaticHost()) throw new import_http.HttpError(403, STATIC_HOST_MESSAGE, { staticSyncRefused: true });
 }

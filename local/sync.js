@@ -359,7 +359,7 @@ function officeError(status, data) {
  * belong on an office server use SUDS at the office address instead (docs/PLATFORM.md).
  */
 export function isStaticHost() { try { return typeof window !== 'undefined' && window.SUDS_STATIC_HOST === true; } catch { return false; } }
-export const STATIC_HOST_MESSAGE = 'SUDS on this device does not sync with an office server: your records stay in this browser. Keep them safe with "Download a backup" on this page. If your programme runs an office SUDS server, use SUDS at its address instead.';
+export const STATIC_HOST_MESSAGE = 'SUDS on this device does not sync with an office server: your records stay in this browser. Keep them safe with "Download a backup" on this page. If your program runs an office SUDS server, use SUDS at its address instead.';
 function assertNotStaticHost() {
   if (isStaticHost()) throw new HttpError(403, STATIC_HOST_MESSAGE, { staticSyncRefused: true });
 }
