@@ -50,6 +50,7 @@ export function ensureTables() {
 /** The pull cursor is per office account: on a shared phone the second person to sync must get their own
  *  caseload from the beginning, not only what changed since a colleague's last sync. */
 export const cursorKey = (userId) => `sync_cursor:${userId}`;
+const scopeSettingKey = (userId) => `sync_scope:${userId}`;
 export function readCursor(userId, username) {
   const own = db.getSetting(cursorKey(userId), null);
   if (own) return own;
@@ -170,6 +171,26 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
         const removed = SYNC.purgeClient(db, id);
         if (removed) audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.caseload_removed', entity: 'client', entityId: id, clientId: id, details: { rows: removed } });
       }, (err) => skipped.push({ table: 'clients', id, reason: String(err && err.message || 'could not be removed').slice(0, 200) }));
+    }
+    // Other records the office says this person may no longer read (their access narrowed: a clinical note
+    // once clinical notes were denied, another worker's call with no client once clients:all was, a table
+    // whose permission went). Removed like a dropped client: not a deletion, never echoed back.
+    for (const pair of payload.dropped_rows || []) {
+      const [table, id] = Array.isArray(pair) ? pair : [];
+      const t = SYNC.tables.find(x => x.name === table); if (!t || typeof id !== 'string') continue;
+      db.savepoint(() => { db.run(`DELETE FROM ${t.name} WHERE id=?`, id); db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, id); },
+        (err) => skipped.push({ table: t.name, id, reason: String(err && err.message || 'could not be removed').slice(0, 200) }));
+    }
+    if ((payload.dropped_rows || []).length) audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.scope_removed', details: { rows: payload.dropped_rows.length } });
+    // This person's own per-user grants and denies (1.15.0), so the kernel applies the permissions the office
+    // does (server/auth.js effectivePerms): a navigator the office holds to their caseload is held to it here
+    // too, on a device other people sign in to. An office before 1.16.0 does not send them.
+    if (officeUserId && Array.isArray(payload.permission_overrides)) {
+      db.run(`DELETE FROM user_permission_overrides WHERE user_id=?`, officeUserId);
+      for (const o of payload.permission_overrides) {
+        if (!o || typeof o.permission !== 'string' || !['grant', 'deny'].includes(o.mode)) continue;
+        db.run(`INSERT OR REPLACE INTO user_permission_overrides(user_id, permission, mode, reason, granted_at) VALUES(?,?,?,?,?)`, officeUserId, o.permission, o.mode, String(o.reason || 'set at the office'), o.granted_at || db.now());
+      }
     }
     for (const [k, v] of Object.entries(payload.settings || {})) if (v !== null && v !== undefined) db.setSetting(k, v);
     settleSupplies(payload, officeUserId, skipped);
@@ -479,7 +500,11 @@ export async function run({ server, username, password, code, onProgress = () =>
     for (;;) {
       const backfilling = String(since).includes(BACKFILL_MARK);
       onProgress(backfilling ? `Downloading the records of newly assigned clients (page ${backfillPages + 1})…` : pages ? `Downloading changes from the office (page ${pages + 1})…` : 'Downloading changes from the office…');
-      const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}`, {}, token);
+      // The office's key of what this person may read, as of this device's last pull (server/routes/sync.js
+      // syncScopeKey). A device that synced before 1.16.0 has none: `legacy` (it holds what the 1.15 role
+      // defaults allowed). When it has changed, the office names what to remove and starts again for the rest.
+      const scopeKey = since === NEVER ? null : db.getSetting(scopeSettingKey(officeUserId), null) || 'legacy';
+      const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}${scopeKey ? `&scope=${encodeURIComponent(scopeKey)}` : ''}`, {}, token);
       // A restored office database (see resetExchangeState). Checked before this page is applied, so the
       // whole pull restarts from the beginning under the new generation.
       const generation = generationOf(pulled); const known = db.getSetting('office_db_generation', null);
@@ -511,6 +536,8 @@ export async function run({ server, username, password, code, onProgress = () =>
       // stored after every page, so a sync cut short resumes where it stopped.
       since = pulled.cursor;
       db.setSetting(cursorKey(officeUserId), since);
+      if (typeof pulled.scope === 'string') db.setSetting(scopeSettingKey(officeUserId), pulled.scope);
+      if (pulled.scope_changed) notices.push(pulled.scope_widened ? 'Your access at the office changed: this device downloaded everything you may now see.' : 'Your access at the office changed: records you may no longer see were removed from this device.');
       if (pulled.complete) break;
       if (backfilling || pulled.backfill) { if (++backfillPages > MAX_BACKFILL_PAGES) break; continue; }
       if (++pages > 200) break;

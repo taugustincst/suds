@@ -6702,7 +6702,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.15.3" : "local",
+      version: true ? "1.16.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -10447,9 +10447,9 @@ var require_permissions = __commonJS({
       ["settings:manage", "Manage program settings", "Program profile, modules, MFA policy, SCIM mapping, caseload restriction."],
       ["audit:read", "Read the audit log", "Tamper-evident audit trail and the break-glass review queue."],
       ["apikeys:manage", "Manage API keys", "Intake API keys and FHIR client registrations."],
-      ["clients:read", "Open client records", "Identified client data for clients on the caseload (or all, with clients:all)."],
+      ["clients:read", "Open client records", "Identified client data: every client with clients:all, otherwise only the clients assigned to them."],
       ["clients:write", "Edit client records", "Create and edit identified client records."],
-      ["clients:all", "See every client", "Bypasses caseload scoping; required for whole-program internal reports."],
+      ["clients:all", "See every client", "Every client, not only their caseload (navigators, clinicians, supervisors and administrators by default from 1.16.0), with whole-program reports and synced devices; also lets them change or delete other workers' records and remove a client record. Deny it to hold a person to their caseload."],
       ["clients:list-deidentified", "List de-identified clients", "Client codes only, never names or identifiers."],
       ["clients:merge", "Merge duplicate clients", "Combine two client records, audited."],
       ["clients:legal-hold", "Place a legal hold", "Prevent deletion/merge of a client record under hold."],
@@ -10469,7 +10469,7 @@ var require_permissions = __commonJS({
       ["budget:manage", "Manage the budget", "Funding sources, budget lines and allocations."],
       ["notes:admin:read", "Read admin notes", "Non-clinical case notes."],
       ["notes:admin:write", "Write admin notes", "Create and edit non-clinical case notes."],
-      ["notes:clinical:read", "Read clinical notes", "Clinical notes and assessments content."],
+      ["notes:clinical:read", "Read clinical notes", "Clinical notes, including SUD counseling notes (clinicians, supervisors and, read only, navigators by default from 1.16.0). Deny it to keep clinical notes from a person."],
       ["notes:clinical:write", "Write clinical notes", "Create and sign clinical notes."],
       ["notes:clinical:breakglass", "Clinical notes via break-glass", "Open a clinical note only with a written reason; audited and queued for supervisor review."],
       ["notes:cosign", "Countersign notes", "Countersign trainee notes."],
@@ -10481,7 +10481,7 @@ var require_permissions = __commonJS({
       ["reports:exact", "Exact counts", "Unsuppressed counts for internal runs."],
       ["reports:funder", "File the funder submission", "The program's own submission runs of the funder report, NDP log and settlement report: exact aggregates, no client-level data."],
       ["assignments:manage", "Manage caseloads", "Assign workers to clients and move caseloads between workers."],
-      ["export:read", "Export data", "De-identified (Safe Harbor) exports, caseload-scoped."],
+      ["export:read", "Export data", "De-identified (Safe Harbor) exports of the clients they can see (their caseload without clients:all)."],
       ["export:identified", "Export identified data", "Exports with names, dates of birth, addresses. Never held with a de-identified role."],
       ["forms:*", "Forms (all)", "Manage the form library and client forms."],
       ["forms:read", "Read the form library", "Blank form templates."],
@@ -11069,6 +11069,9 @@ var require_sync_tables = __commonJS({
         "default_supply_site_id",
         "supply_expiry_warn_days",
         "supply_syringes_per_litre",
+        // Caseload restriction (1.16.0): with each person's own grants and denies (pull's permission_overrides), a
+        // device holds a person the office holds to their caseload to it too (server/auth.js caseloadRestricted).
+        "caseload_restriction",
         // The programme profile and module switches (server/programme.js): a device shows what its office shows.
         ...require_programme().SETTING_KEYS
       ],
@@ -38402,6 +38405,83 @@ var require_sync = __commonJS({
       const sc = scopeSql(SYNC2.tables.find((t) => t.name === "clients"), user, "c");
       return ids.filter((id) => !db3.one(`SELECT 1 FROM clients c WHERE c.id=? AND ${sc.sql}`, id, ...sc.params));
     }
+    var SCOPE_V = "v1";
+    function scopePerms() {
+      const s = /* @__PURE__ */ new Set(["clients:all", "notes:clinical:read"]);
+      for (const t of SYNC2.tables) {
+        if (t.readPerm) s.add(t.readPerm);
+        if (t.redact) s.add(t.redact.perm);
+        if (t.unlinked) s.add(t.unlinked.all);
+      }
+      return [...s].sort();
+    }
+    function syncScopeKey(user) {
+      return [SCOPE_V, `caseload=${auth3.caseloadRestricted(user) ? 1 : 0}`, ...scopePerms().map((p) => `${p}=${auth3.hasPerm(user, p) ? 1 : 0}`)].join(";");
+    }
+    function parseScopeKey(key) {
+      const parts = String(key || "").split(";");
+      if (parts[0] !== SCOPE_V) return null;
+      const m = {};
+      for (const x of parts.slice(1)) {
+        const [k, v] = x.split("=");
+        if (k && (v === "0" || v === "1")) m[k] = v === "1";
+      }
+      return m;
+    }
+    function scopeChange(user, sent) {
+      if (!sent) return null;
+      const prevKey = sent === "legacy" ? syncScopeKey(auth3.asBefore1_16(user)) : sent;
+      const prev = parseScopeKey(prevKey);
+      const cur = parseScopeKey(syncScopeKey(user));
+      if (!prev) return null;
+      const change = { widened: false, redacted: false, caseloadNarrowed: false, lost: /* @__PURE__ */ new Set() };
+      const redactPerms = new Set(SYNC2.tables.filter((t) => t.redact).map((t) => t.redact.perm));
+      for (const [k, now2] of Object.entries(cur)) {
+        if (!(k in prev) || prev[k] === now2) continue;
+        if (k === "caseload") {
+          if (now2) change.caseloadNarrowed = true;
+          else change.widened = true;
+          continue;
+        }
+        if (now2) change.widened = true;
+        else change.lost.add(k);
+        if (redactPerms.has(k)) change.redacted = true;
+      }
+      return change.widened || change.redacted || change.caseloadNarrowed || change.lost.size ? change : null;
+    }
+    function scopeDrops(user, change) {
+      const clients = [];
+      const rows = [];
+      if (change.caseloadNarrowed) {
+        const sc = scopeSql(SYNC2.tables.find((t) => t.name === "clients"), user, "c");
+        clients.push(...db3.all(`SELECT c.id FROM clients c WHERE NOT (${sc.sql})`, ...sc.params).map((r) => r.id));
+      }
+      const lost = change.lost;
+      for (const t of SYNC2.tables) {
+        if (t.readPerm && lost.has(t.readPerm)) {
+          const sc = scopeSql(t, user, "x");
+          rows.push(...db3.all(`SELECT x.id FROM ${t.name} x WHERE ${sc.sql}`, ...sc.params).map((r) => [t.name, r.id]));
+          continue;
+        }
+        if (t.unlinked && lost.has(t.unlinked.all)) {
+          const sc = scopeSql(t, user, "x");
+          rows.push(...db3.all(`SELECT x.id FROM ${t.name} x WHERE x.${t.clientCol || "client_id"} IS NULL AND NOT (${sc.sql})`, ...sc.params).map((r) => [t.name, r.id]));
+        }
+        if ((t.scope === "importer" || t.scope === "via-import") && lost.has("clients:all")) {
+          const sc = scopeSql(t, user, "x");
+          rows.push(...db3.all(`SELECT x.id FROM ${t.name} x WHERE NOT (${sc.sql})`, ...sc.params).map((r) => [t.name, r.id]));
+        }
+      }
+      if (lost.has("notes:clinical:read") && !auth3.hasPerm(user, "notes:clinical:read")) {
+        const cf = auth3.caseloadFilter(user, "n.client_id");
+        const notes = db3.all(`SELECT n.id FROM notes n WHERE n.kind='clinical' AND ${cf.sql}`, ...cf.params).map((r) => r.id);
+        for (const id of notes) for (const a of db3.all(`SELECT id FROM note_addenda WHERE note_id=?`, id)) rows.push(["note_addenda", a.id]);
+        for (const id of notes) rows.push(["notes", id]);
+      }
+      const order = new Map(SYNC2.tables.map((t, i) => [t.name, i]));
+      const kidsFirst = rows.map((r, i) => [r, i]).sort((a, b) => order.get(b[0][0]) - order.get(a[0][0]) || a[1] - b[1]).map((x) => x[0]);
+      return { clients, rows: kidsFirst };
+    }
     function newlyInScopeSql(user, since, cursor) {
       return {
         sql: `SELECT DISTINCT a.client_id FROM assignments a WHERE a.user_id=? AND ${auth3.activeAssignment("a.")} AND a.updated_at > ? AND a.updated_at <= ?
@@ -38477,10 +38557,29 @@ var require_sync = __commonJS({
       }
       return { raw, next };
     }
-    function pull(user, sinceRaw, { limit: limit2 = PULL_LIMIT } = {}) {
+    function pull(user, sinceRaw, { limit: limit2 = PULL_LIMIT, scope = null } = {}) {
       const serverNow = db3.now();
-      const { since, bf } = parseCursor(String(sinceRaw || NEVER2));
-      if (bf) return pullBackfill(user, since, bf, limit2, serverNow);
+      let { since, bf } = parseCursor(String(sinceRaw || NEVER2));
+      const change = since !== NEVER2 ? scopeChange(user, scope) : null;
+      const drops = change ? scopeDrops(user, change) : null;
+      if (change && (change.widened || change.redacted)) {
+        since = NEVER2;
+        bf = null;
+      }
+      const withScope = (out2) => {
+        out2.scope = syncScopeKey(user);
+        if (drops) {
+          out2.dropped_clients = [.../* @__PURE__ */ new Set([...out2.dropped_clients || [], ...drops.clients])];
+          out2.dropped_rows = drops.rows;
+          out2.scope_changed = true;
+          if (change.widened || change.redacted) out2.scope_widened = true;
+        }
+        return out2;
+      };
+      if (bf) return withScope(pullBackfill(user, since, bf, limit2, serverNow));
+      return withScope(pullPage(user, since, limit2, serverNow));
+    }
+    function pullPage(user, since, limit2, serverNow) {
       const raw = {};
       const capped = [];
       const scopes = /* @__PURE__ */ new Map();
@@ -38514,8 +38613,9 @@ var require_sync = __commonJS({
       return out2;
     }
     function baseAnswer(cursor, serverNow, complete) {
-      const out2 = { cursor, server_now: serverNow, complete, db_generation: db3.getSetting("db_generation", null), tables: {}, tombstones: [], settings: {}, skipped: [], dropped_clients: [] };
+      const out2 = { cursor, server_now: serverNow, complete, db_generation: db3.getSetting("db_generation", null), tables: {}, tombstones: [], settings: {}, skipped: [], dropped_clients: [], dropped_rows: [] };
       for (const k of SYNC2.settings_keys) out2.settings[k] = db3.getSetting(k, null);
+      out2.settings.caseload_restriction = db3.getSetting("caseload_restriction", "1");
       out2.settings.org_timezone = require_budget().orgTimezone() || null;
       return out2;
     }
@@ -38562,8 +38662,9 @@ var require_sync = __commonJS({
         if (!auth3.hasPerm(ctx.user, "clients:read")) throw forbidden("Your role cannot sync client data");
         const since = ctx.query.get("since") || NEVER2;
         const limit2 = Math.min(Number(ctx.query.get("limit")) || PULL_LIMIT, PULL_LIMIT);
-        const out2 = pull(ctx.user, since, { limit: limit2 });
-        audit3.log({ user: ctx.user, action: "sync.pull", ip: ctx.ip, details: { since: since.split(BF_MARK)[0], backfill: since.includes(BF_MARK) || void 0, complete: out2.complete, rows: Object.fromEntries(Object.entries(out2.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
+        const out2 = pull(ctx.user, since, { limit: limit2, scope: ctx.query.get("scope") });
+        out2.permission_overrides = db3.all(`SELECT permission, mode, reason, granted_at FROM user_permission_overrides WHERE user_id=? ORDER BY permission`, ctx.user.id);
+        audit3.log({ user: ctx.user, action: "sync.pull", ip: ctx.ip, details: { since: since.split(BF_MARK)[0], backfill: since.includes(BF_MARK) || void 0, complete: out2.complete, scope_changed: out2.scope_changed || void 0, dropped: out2.scope_changed ? { clients: out2.dropped_clients.length, rows: out2.dropped_rows.length } : void 0, rows: Object.fromEntries(Object.entries(out2.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
         return out2;
       });
       r.post("/api/sync/push", requireLocalMode, auth3.requireAuth, (ctx) => {
@@ -39537,6 +39638,19 @@ var require_auth2 = __commonJS({
       user._effectivePerms = out2;
       return out2;
     }
+    var WIDENED_1_16 = { navigator: ["clients:all", "notes:clinical:read"], clinician: ["clients:all", "budget:read"] };
+    function asBefore1_16(user) {
+      const eff = effectivePerms(user);
+      const widened = WIDENED_1_16[user.role] || [];
+      if (!widened.length) return user;
+      let granted = [];
+      try {
+        granted = db3.all(`SELECT permission FROM user_permission_overrides WHERE user_id=? AND mode='grant'`, user.id).map((r) => r.permission);
+      } catch {
+      }
+      const drop = widened.filter((p) => !granted.includes(p));
+      return { id: user.id, role: user.role, _effectivePerms: { allow: eff.allow.filter((p) => !drop.includes(p)), deny: eff.deny } };
+    }
     function hasPerm(user, perm) {
       if (!user) return false;
       const { allow, deny } = effectivePerms(user);
@@ -39942,6 +40056,8 @@ var require_auth2 = __commonJS({
       auditUsername,
       policy,
       PERMS,
+      WIDENED_1_16,
+      asBefore1_16,
       hasPerm,
       rolePerms,
       effectivePerms,
@@ -41653,6 +41769,7 @@ function ensureTables() {
   import_db.default.get().exec(`CREATE TABLE IF NOT EXISTS sync_server_tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
 }
 var cursorKey = (userId) => `sync_cursor:${userId}`;
+var scopeSettingKey = (userId) => `sync_scope:${userId}`;
 function readCursor(userId, username) {
   const own = import_db.default.getSetting(cursorKey(userId), null);
   if (own) return own;
@@ -41764,6 +41881,26 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
         const removed = import_sync_tables.default.purgeClient(import_db.default, id);
         if (removed) import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.caseload_removed", entity: "client", entityId: id, clientId: id, details: { rows: removed } });
       }, (err2) => skipped.push({ table: "clients", id, reason: String(err2 && err2.message || "could not be removed").slice(0, 200) }));
+    }
+    for (const pair of payload.dropped_rows || []) {
+      const [table, id] = Array.isArray(pair) ? pair : [];
+      const t = import_sync_tables.default.tables.find((x) => x.name === table);
+      if (!t || typeof id !== "string") continue;
+      import_db.default.savepoint(
+        () => {
+          import_db.default.run(`DELETE FROM ${t.name} WHERE id=?`, id);
+          import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, id);
+        },
+        (err2) => skipped.push({ table: t.name, id, reason: String(err2 && err2.message || "could not be removed").slice(0, 200) })
+      );
+    }
+    if ((payload.dropped_rows || []).length) import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.scope_removed", details: { rows: payload.dropped_rows.length } });
+    if (officeUserId && Array.isArray(payload.permission_overrides)) {
+      import_db.default.run(`DELETE FROM user_permission_overrides WHERE user_id=?`, officeUserId);
+      for (const o of payload.permission_overrides) {
+        if (!o || typeof o.permission !== "string" || !["grant", "deny"].includes(o.mode)) continue;
+        import_db.default.run(`INSERT OR REPLACE INTO user_permission_overrides(user_id, permission, mode, reason, granted_at) VALUES(?,?,?,?,?)`, officeUserId, o.permission, o.mode, String(o.reason || "set at the office"), o.granted_at || import_db.default.now());
+      }
     }
     for (const [k, v] of Object.entries(payload.settings || {})) if (v !== null && v !== void 0) import_db.default.setSetting(k, v);
     settleSupplies(payload, officeUserId, skipped);
@@ -42039,7 +42176,8 @@ async function run({ server, username, password, code, onProgress = () => {
     for (; ; ) {
       const backfilling = String(since).includes(BACKFILL_MARK);
       onProgress(backfilling ? `Downloading the records of newly assigned clients (page ${backfillPages + 1})\u2026` : pages ? `Downloading changes from the office (page ${pages + 1})\u2026` : "Downloading changes from the office\u2026");
-      const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}`, {}, token2);
+      const scopeKey = since === NEVER ? null : import_db.default.getSetting(scopeSettingKey(officeUserId), null) || "legacy";
+      const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}${scopeKey ? `&scope=${encodeURIComponent(scopeKey)}` : ""}`, {}, token2);
       const generation = generationOf(pulled);
       const known = import_db.default.getSetting("office_db_generation", null);
       if (known !== null && known !== generation && !generationReset) {
@@ -42070,6 +42208,8 @@ async function run({ server, username, password, code, onProgress = () => {
       serverNow = pulled.server_now;
       since = pulled.cursor;
       import_db.default.setSetting(cursorKey(officeUserId), since);
+      if (typeof pulled.scope === "string") import_db.default.setSetting(scopeSettingKey(officeUserId), pulled.scope);
+      if (pulled.scope_changed) notices.push(pulled.scope_widened ? "Your access at the office changed: this device downloaded everything you may now see." : "Your access at the office changed: records you may no longer see were removed from this device.");
       if (pulled.complete) break;
       if (backfilling || pulled.backfill) {
         if (++backfillPages > MAX_BACKFILL_PAGES) break;

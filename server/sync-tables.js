@@ -24,6 +24,9 @@ module.exports = {
     // SUPRT-A's grant and site IDs and reassessment interval: a device pre-fills and schedules the same way.
     'suprt_grant_id', 'suprt_site_id', 'suprt_reassessment_months',
     'default_supply_site_id', 'supply_expiry_warn_days', 'supply_syringes_per_litre',
+    // Caseload restriction (1.16.0): with each person's own grants and denies (pull's permission_overrides), a
+    // device holds a person the office holds to their caseload to it too (server/auth.js caseloadRestricted).
+    'caseload_restriction',
     // The programme profile and module switches (server/programme.js): a device shows what its office shows.
     ...require('./programme').SETTING_KEYS],
   tables: [

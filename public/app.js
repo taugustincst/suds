@@ -1495,7 +1495,10 @@ export function firstDaySteps(role = state.user && state.user.role) {
       ['find', 'Find a client', 'Search by last name, phone number or client code, at the top of every page (or press /).', 'Open the client list', '#/clients', 'clients:read'],
       ['todos', 'Check your to-dos', 'Follow-ups and reminders, the overdue ones first. The bell at the top counts what is due.', 'Open To-dos', '#/tasks', 'tasks:read']],
     clinician: [
-      ['clients', 'Open your caseload', 'The clients you are assigned to, with who needs a check-in first.', 'Open the client list', '#/clients?sort=last_contact', 'clients:read'],
+      // 1.16.0: a clinician sees every client (clients:all) unless the programme holds them to their caseload.
+      state.user && state.user.caseload_restricted
+        ? ['clients', 'Open your caseload', 'The clients you are assigned to, with who needs a check-in first.', 'Open the client list', '#/clients?sort=last_contact', 'clients:read']
+        : ['clients', 'Open the client list', 'Every client in the program, longest without contact first; filter by worker to see your own.', 'Open the client list', '#/clients?sort=last_contact', 'clients:read'],
       ['note', 'Write a clinical note', 'SOAP, DAP or narrative, saved as a draft as you type; sign it when it is complete.', 'Write a note', openNote, 'notes:clinical:write'],
       ['notes', 'Look over unsigned notes', 'Drafts you have not signed yet, and notes waiting for you.', 'Open Notes', '#/notes', 'notes:admin:read']],
     supervisor: [
@@ -2010,7 +2013,7 @@ window.__suds = { downloadCsv: (...a) => downloadCsv(...a) };
 // Stamped by scripts/build-local.js from package.json. The two kernel assets are requested with it as a
 // version query so the browser may keep them for good (server/http.js serves `?v=` as immutable) while a
 // new release, with a new version, is a new URL. public/sw.js caches the same URLs for offline starts.
-const SUDS_VERSION = '1.15.3';
+const SUDS_VERSION = '1.16.0';
 
 // ---------- build stamp ----------
 // Which build is this? A tester reporting "still broken" after a release needs to be able to say, and so

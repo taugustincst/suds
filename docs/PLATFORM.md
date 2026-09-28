@@ -81,7 +81,7 @@ navigator does steps 1–3; the administrator does 4–5.
 
 Local mode is opened at `https://<office-suds>/?local=1`, or from the home-screen shortcut a browser makes
 of that page. It runs the whole SUDS server inside the browser (SQLite in WebAssembly, encryption in
-JavaScript) and stores an encrypted copy of the person's caseload in that browser profile. It is governed
+JavaScript) and stores an encrypted copy of what the person may see (from 1.16.0 the whole programme for a navigator or clinician with the role's defaults; their caseload for one held to it) in that browser profile. It is governed
 by these rules, all of which the server enforces:
 
 | Rule | What it means |
@@ -91,7 +91,7 @@ by these rules, all of which the server enforces:
 | **Purged and merged records cannot be resurrected.** | A client the retention job has purged, or a record merged into another, stays that way. A device that still holds the old row has it rejected (`purged`, `merged into another record`) and receives the tombstone. Nothing a device holds brings back a record the office has disposed of. |
 | **A restored office database is re-synced to.** | Every restore from a backup (`server/backup.js`) starts a new `db_generation`, which every pull reports. A device that sees it change forgets what it believed was exchanged and offers every record it holds again (the office still keeps whichever copy is newer), so work synced after the backup was taken is not silently lost. The Sync screen says *The office database was restored from a backup; re-sending this device's records*. |
 | **Per-user cursors.** | Each office account has its own sync position on a device (`sync_cursor:<user>`). A device used by two people does not let one person's position stand in for the other's, and a device that has been away longer than tombstones are kept is told to re-download rather than guess. |
-| **Minimum necessary applies on the device.** | Only the syncing account's caseload (all clients for a supervisor) is downloaded; clinical notes only for clinical roles; nobody else's credentials. What is on a device is listed below. |
+| **Minimum necessary applies on the device.** | Only what the syncing account may open is downloaded: all clients for a role holding `clients:all` (supervisors, administrators and, from 1.16.0, navigators and clinicians unless an administrator denies it), otherwise the caseload; clinical notes only for a role holding `notes:clinical:read` (from 1.16.0 navigators too); nobody else's credentials. A change to those permissions reaches the device at its next sync: it removes what the person may no longer see, or receives what they now may. What is on a device is listed below. |
 | **Devices are tracked.** | Every local-mode browser that syncs registers a device id. Settings → Synced devices shows them; an administrator can revoke or wipe any of them, and deactivating an account wipes its devices. |
 
 **Recommendation for counties.** For a harm-reduction & outreach programme, whose staff record visits where
@@ -114,7 +114,7 @@ else, and the `/app` page does not mention it.
 The device-data inventory for the county's data map. Everything below is in the on-device encrypted
 database once a sync has run:
 
-- Every synchronised table, scoped to the account: clients on the caseload (all clients for a supervisor),
+- Every synchronised table, scoped to the account: clients on the caseload (all clients for anyone holding `clients:all`: from 1.16.0 navigators and clinicians by default),
   their visits, calls, notes, referrals, consents, tasks, funding and budget rows, the resource directory,
   programme settings.
 - **The whole `users` table** — every staff account's id, username, display name, title, role, active flag

@@ -114,6 +114,13 @@ const kb = (n) => Math.round(n / 1024);
   server.keepAliveTimeout = 60_000;
   await new Promise(res => server.listen(0, '127.0.0.1', res));
   base = `http://127.0.0.1:${server.address().port}`;
+  // 1.16.0: a navigator holds clients:all and notes:clinical:read by default. The measurements below were taken of a
+  // navigator with a 2,000-client caseload, so 'nav' is held to it with per-user denies, as a programme does
+  // (Settings -> Users & permissions -> Permissions); the whole-programme first sync of a navigator with the
+  // role's defaults is measured on its own below.
+  const HELD = ['clients:all', 'notes:clinical:read'];
+  const holdNav = (on) => { for (const p of HELD) { if (on) db.run(`INSERT OR REPLACE INTO user_permission_overrides(user_id,permission,mode,reason) VALUES(?,?,'deny','bench: held to the 2,000-client caseload')`, fx.nav.id, p); else db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, fx.nav.id, p); } };
+  holdNav(true);
   const admin = session('admin', 'AdminPassw0rd!x', '10.1.0.1'); await admin.login();
   const nav = session('nav', fx.nav.password, '10.1.0.2'); await nav.login();
   const FY = 'from=2025-07-01&to=2026-06-30';
@@ -185,6 +192,15 @@ const kb = (n) => Math.round(n / 1024);
     return { metrics: { pages, rows, json_mb: +(jsonBytes / 1e6).toFixed(1), wire_mb: +(wireBytes / 1e6).toFixed(1), worst_page_ms: worst } };
   };
   await measure('sync first pull, navigator 2,000 caseload (all pages)', () => pull(nav, 500));
+  holdNav(false);
+  await measure('sync first pull, navigator with the 1.16.0 defaults: whole programme (all pages)', () => pull(nav, 1000));
+  // Then the programme holds them to their caseload: the device's next pull names what it must remove.
+  const wideScope = expectOk(await nav.get(`/api/sync/pull?since=${encodeURIComponent(new Date().toISOString())}`), 'pull').json.scope;
+  holdNav(true);
+  await measure('sync pull after clients:all and notes:clinical:read are denied (what to remove)', async () => {
+    const r = expectOk(await nav.get(`/api/sync/pull?since=${encodeURIComponent(new Date().toISOString())}&scope=${encodeURIComponent(wideScope)}`), 'pull');
+    return { metrics: { dropped_clients: r.json.dropped_clients.length, dropped_rows: r.json.dropped_rows.length, json_kb: kb(r.rawBytes), wire_kb: kb(r.wireBytes) } };
+  });
   await measure('sync first pull, admin (first 5 pages)', () => pull(admin, 5));
   await measure('sync pull, nothing new (navigator)', async () => { const r = expectOk(await nav.get(`/api/sync/pull?since=${encodeURIComponent(new Date().toISOString())}`), 'pull'); return bytes(r); });
 

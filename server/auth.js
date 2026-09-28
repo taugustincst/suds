@@ -145,6 +145,21 @@ function effectivePerms(user) {
   return out;
 }
 
+// The role defaults widened in 1.16.0 (the owner's decision; CHANGELOG). A local-mode device that synced before
+// then holds what the narrower defaults allowed, so sync compares against them (server/routes/sync.js,
+// syncScopeKey). `asBefore1_16(user)` is the user as the 1.15 defaults saw them: the same overrides, without the
+// widened defaults unless an administrator granted one explicitly.
+const WIDENED_1_16 = { navigator: ['clients:all', 'notes:clinical:read'], clinician: ['clients:all', 'budget:read'] };
+function asBefore1_16(user) {
+  const eff = effectivePerms(user);
+  const widened = WIDENED_1_16[user.role] || [];
+  if (!widened.length) return user;
+  let granted = [];
+  try { granted = db.all(`SELECT permission FROM user_permission_overrides WHERE user_id=? AND mode='grant'`, user.id).map(r => r.permission); } catch { /* before migration 46 */ }
+  const drop = widened.filter(p => !granted.includes(p));
+  return { id: user.id, role: user.role, _effectivePerms: { allow: eff.allow.filter(p => !drop.includes(p)), deny: eff.deny } };
+}
+
 function hasPerm(user, perm) {
   if (!user) return false;
   const { allow, deny } = effectivePerms(user);
@@ -628,5 +643,5 @@ function passwordPolicy(pw) {
   return errors;
 }
 
-module.exports = { auditUsername, policy, PERMS, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
+module.exports = { auditUsername, policy, PERMS, WIDENED_1_16, asBefore1_16, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
   createSession, markReauth, noteSsoProof, reauthStatus, verifySigner, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

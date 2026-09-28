@@ -63,6 +63,91 @@ function droppedClients(user, since) {
   return ids.filter(id => !db.one(`SELECT 1 FROM clients c WHERE c.id=? AND ${sc.sql}`, id, ...sc.params));
 }
 
+// ---- what a device may hold changes with its user's permissions (1.16.0) ----
+// A pull sends rows changed since the device's cursor, so a change to what the person may read (their role, a
+// per-user grant or deny, 1.15.0; the 1.16.0 widening of the navigator and clinician defaults) reached a device
+// that had already synced only in part: newly readable clients arrived whenever something about them happened
+// to change, and records the person may no longer read stayed on the device for good. The answer now carries
+// `scope`, a key of everything that decides what a pull sends (caseload scoping and the permissions the tables
+// read: clients:all, notes:clinical:read, each table's readPerm, redact and unlinked `all` permissions), and
+// the device sends back the key it last saw (?scope=; `legacy` from a device that synced before 1.16.0 and so
+// holds what the 1.15 role defaults allowed, auth.asBefore1_16). When the key differs:
+//  * anything the person may no longer read is named, for the device to remove (not a deletion: nothing is
+//    echoed back): clients off their caseload in `dropped_clients` as an ended assignment does, and other rows
+//    (clinical notes and their addenda, another worker's records with no client, another worker's imports,
+//    a table whose readPerm went) in `dropped_rows`, as [table, id] pairs;
+//  * anything newly readable is sent by starting this pull again from the beginning (`scope_widened`); the
+//    device keeps what it has and receives the rest, as at its first sync. A redacted table whose permission
+//    changed either way is re-sent the same way, so the device holds the amounts, or the placeholders, it may.
+const SCOPE_V = 'v1';
+function scopePerms() {
+  const s = new Set(['clients:all', 'notes:clinical:read']);
+  for (const t of SYNC.tables) { if (t.readPerm) s.add(t.readPerm); if (t.redact) s.add(t.redact.perm); if (t.unlinked) s.add(t.unlinked.all); }
+  return [...s].sort();
+}
+function syncScopeKey(user) {
+  return [SCOPE_V, `caseload=${auth.caseloadRestricted(user) ? 1 : 0}`, ...scopePerms().map(p => `${p}=${auth.hasPerm(user, p) ? 1 : 0}`)].join(';');
+}
+function parseScopeKey(key) {
+  const parts = String(key || '').split(';');
+  if (parts[0] !== SCOPE_V) return null;
+  const m = {};
+  for (const x of parts.slice(1)) { const [k, v] = x.split('='); if (k && (v === '0' || v === '1')) m[k] = v === '1'; }
+  return m;
+}
+/** How the scope changed from the key a device sent: { widened, redacted, caseloadNarrowed, lost: Set }; null when unchanged or unknown. */
+function scopeChange(user, sent) {
+  if (!sent) return null;
+  const prevKey = sent === 'legacy' ? syncScopeKey(auth.asBefore1_16(user)) : sent;
+  const prev = parseScopeKey(prevKey); const cur = parseScopeKey(syncScopeKey(user));
+  if (!prev) return null;
+  const change = { widened: false, redacted: false, caseloadNarrowed: false, lost: new Set() };
+  const redactPerms = new Set(SYNC.tables.filter(t => t.redact).map(t => t.redact.perm));
+  for (const [k, now] of Object.entries(cur)) {
+    if (!(k in prev) || prev[k] === now) continue; // a key an older server did not send is not a change
+    if (k === 'caseload') { if (now) change.caseloadNarrowed = true; else change.widened = true; continue; }
+    if (now) change.widened = true; else change.lost.add(k);
+    if (redactPerms.has(k)) change.redacted = true;
+  }
+  return change.widened || change.redacted || change.caseloadNarrowed || change.lost.size ? change : null;
+}
+/** What a device must remove after its person's scope narrowed (scopeChange). */
+function scopeDrops(user, change) {
+  const clients = [];
+  const rows = [];
+  if (change.caseloadNarrowed) {
+    const sc = scopeSql(SYNC.tables.find(t => t.name === 'clients'), user, 'c');
+    clients.push(...db.all(`SELECT c.id FROM clients c WHERE NOT (${sc.sql})`, ...sc.params).map(r => r.id));
+  }
+  const lost = change.lost;
+  for (const t of SYNC.tables) {
+    if (t.readPerm && lost.has(t.readPerm)) {
+      const sc = scopeSql(t, user, 'x');
+      rows.push(...db.all(`SELECT x.id FROM ${t.name} x WHERE ${sc.sql}`, ...sc.params).map(r => [t.name, r.id]));
+      continue;
+    }
+    if (t.unlinked && lost.has(t.unlinked.all)) {
+      const sc = scopeSql(t, user, 'x');
+      rows.push(...db.all(`SELECT x.id FROM ${t.name} x WHERE x.${t.clientCol || 'client_id'} IS NULL AND NOT (${sc.sql})`, ...sc.params).map(r => [t.name, r.id]));
+    }
+    if ((t.scope === 'importer' || t.scope === 'via-import') && lost.has('clients:all')) {
+      const sc = scopeSql(t, user, 'x');
+      rows.push(...db.all(`SELECT x.id FROM ${t.name} x WHERE NOT (${sc.sql})`, ...sc.params).map(r => [t.name, r.id]));
+    }
+  }
+  if (lost.has('notes:clinical:read') && !auth.hasPerm(user, 'notes:clinical:read')) {
+    const cf = auth.caseloadFilter(user, 'n.client_id');
+    const notes = db.all(`SELECT n.id FROM notes n WHERE n.kind='clinical' AND ${cf.sql}`, ...cf.params).map(r => r.id);
+    // Addenda first: the device removes children before what they hang off.
+    for (const id of notes) for (const a of db.all(`SELECT id FROM note_addenda WHERE note_id=?`, id)) rows.push(['note_addenda', a.id]);
+    for (const id of notes) rows.push(['notes', id]);
+  }
+  // Children before parents, in the tables' foreign-key order reversed (as sync-tables.js purgeClient).
+  const order = new Map(SYNC.tables.map((t, i) => [t.name, i]));
+  const kidsFirst = rows.map((r, i) => [r, i]).sort((a, b) => (order.get(b[0][0]) - order.get(a[0][0])) || (a[1] - b[1])).map(x => x[0]);
+  return { clients, rows: kidsFirst };
+}
+
 // Clients that came onto this person's caseload after the device's cursor: an active assignment of theirs was
 // created (or re-opened, or otherwise changed) in this page's window (since, cursor], and no assignment of
 // theirs that was already active before `since` kept the client in scope then. Assigning an existing client
@@ -155,10 +240,27 @@ function backfillPage(user, until, bf, limit) {
 // instant. Cutting a page in the middle of one timestamp would lose every row after the cut, because the
 // next request asks for `> cursor`. So a page always ends on a timestamp boundary — and when a single
 // timestamp is itself bigger than a page, that timestamp is sent whole rather than split.
-function pull(user, sinceRaw, { limit = PULL_LIMIT } = {}) {
+function pull(user, sinceRaw, { limit = PULL_LIMIT, scope = null } = {}) {
   const serverNow = db.now();
-  const { since, bf } = parseCursor(String(sinceRaw || NEVER));
-  if (bf) return pullBackfill(user, since, bf, limit, serverNow);
+  let { since, bf } = parseCursor(String(sinceRaw || NEVER));
+  // What the person may read changed since this device last pulled (see syncScopeKey above).
+  const change = since !== NEVER ? scopeChange(user, scope) : null;
+  const drops = change ? scopeDrops(user, change) : null;
+  if (change && (change.widened || change.redacted)) { since = NEVER; bf = null; }
+  const withScope = (out) => {
+    out.scope = syncScopeKey(user);
+    if (drops) {
+      out.dropped_clients = [...new Set([...(out.dropped_clients || []), ...drops.clients])];
+      out.dropped_rows = drops.rows;
+      out.scope_changed = true;
+      if (change.widened || change.redacted) out.scope_widened = true;
+    }
+    return out;
+  };
+  if (bf) return withScope(pullBackfill(user, since, bf, limit, serverNow));
+  return withScope(pullPage(user, since, limit, serverNow));
+}
+function pullPage(user, since, limit, serverNow) {
   const raw = {}; const capped = []; const scopes = new Map();
 
   // Where the page ends, in two passes. Up to 1.13 each table's first `limit` rows were read whole, and most of
@@ -212,8 +314,9 @@ function pull(user, sinceRaw, { limit = PULL_LIMIT } = {}) {
 // that sees a value it did not expect knows the office may have lost rows it had already accepted, forgets
 // what it thought was exchanged, and offers everything it holds again.
 function baseAnswer(cursor, serverNow, complete) {
-  const out = { cursor, server_now: serverNow, complete, db_generation: db.getSetting('db_generation', null), tables: {}, tombstones: [], settings: {}, skipped: [], dropped_clients: [] };
+  const out = { cursor, server_now: serverNow, complete, db_generation: db.getSetting('db_generation', null), tables: {}, tombstones: [], settings: {}, skipped: [], dropped_clients: [], dropped_rows: [] };
   for (const k of SYNC.settings_keys) out.settings[k] = db.getSetting(k, null);
+  out.settings.caseload_restriction = db.getSetting('caseload_restriction', '1'); // unset means on (server/auth.js)
   // The office's calendar goes to its devices, so "today" and a visit's service date are the same day on
   // both (the zone in force: the setting, else ORG_TIMEZONE).
   out.settings.org_timezone = require('./budget').orgTimezone() || null;
@@ -271,8 +374,12 @@ module.exports = (r) => {
     if (!auth.hasPerm(ctx.user, 'clients:read')) throw forbidden('Your role cannot sync client data');
     const since = ctx.query.get('since') || NEVER;
     const limit = Math.min(Number(ctx.query.get('limit')) || PULL_LIMIT, PULL_LIMIT);
-    const out = pull(ctx.user, since, { limit });
-    audit.log({ user: ctx.user, action: 'sync.pull', ip: ctx.ip, details: { since: since.split(BF_MARK)[0], backfill: since.includes(BF_MARK) || undefined, complete: out.complete, rows: Object.fromEntries(Object.entries(out.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
+    const out = pull(ctx.user, since, { limit, scope: ctx.query.get('scope') });
+    // The person's own per-user grants and denies (1.15.0): the device's kernel applies the same permissions
+    // as the office (server/auth.js effectivePerms), so a navigator held to their caseload at the office is
+    // held to it on a device other people also sign in to (local/sync.js applyPull).
+    out.permission_overrides = db.all(`SELECT permission, mode, reason, granted_at FROM user_permission_overrides WHERE user_id=? ORDER BY permission`, ctx.user.id);
+    audit.log({ user: ctx.user, action: 'sync.pull', ip: ctx.ip, details: { since: since.split(BF_MARK)[0], backfill: since.includes(BF_MARK) || undefined, complete: out.complete, scope_changed: out.scope_changed || undefined, dropped: out.scope_changed ? { clients: out.dropped_clients.length, rows: out.dropped_rows.length } : undefined, rows: Object.fromEntries(Object.entries(out.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
     return out;
   });
 

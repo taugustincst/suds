@@ -60,6 +60,12 @@ test('the role matrix: exactly the four grants, and nothing else moved', () => {
   for (const p of ['export:identified', 'clients:read', 'clients:all']) assert.ok(!P.finance.includes(p), `finance never holds ${p}`);
   assert.ok(!P.admin.includes('notes:clinical:read'), 'an administrator still reads clinical notes only by break-glass');
   assert.ok(!P.readonly.includes('clients:all') && !P.readonly.includes('clients:read'));
+  // Every role's list without the 1.16.0 additions (auth.WIDENED_1_16) is the 1.15.3 matrix, byte for byte:
+  // nothing else was added, removed or reordered. The digest was taken from 1.15.3's server/auth.js PERMS.
+  assert.deepEqual(auth.WIDENED_1_16, { navigator: ['clients:all', 'notes:clinical:read'], clinician: ['clients:all', 'budget:read'] });
+  for (const [role, added] of Object.entries(auth.WIDENED_1_16)) for (const p of added) assert.ok(P[role].includes(p));
+  const before = Object.fromEntries(Object.entries(P).map(([r, l]) => [r, l.filter(p => !(auth.WIDENED_1_16[r] || []).includes(p))]));
+  assert.equal(require('node:crypto').createHash('sha256').update(JSON.stringify(before)).digest('hex'), 'b3d0a221beace6b231f76250d399b836bdd4d8f3e92899f67dfda9396c292eb4', 'the rest of the matrix is 1.15.3\'s');
 });
 
 test('a navigator now sees every client: another worker\'s client opens, lists, searches and syncs', async () => {
@@ -167,4 +173,38 @@ test('a client a navigator creates is still assigned to them, over REST and from
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.deepEqual(r.data.rejected, []);
   assert.ok(H.db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=?`, id, navA.id), 'and so does a device\'s new client (server/rules/clients.js), so denying clients:all later leaves it on their caseload');
+});
+
+// A device that synced before 1.16.0 holds what the 1.15 defaults allowed. Its first pull after the upgrade says
+// so (scope=legacy, local/sync.js) and the office starts that pull again from the beginning when the person may
+// now read more, so the device does not end up with the rest of the programme only as its rows happen to change
+// (server/routes/sync.js syncScopeKey). A person the programme held to the old scope before the device synced
+// again sees no change at all.
+test('a device from before 1.16.0: widened defaults restart its pull; a person held to the old scope sees no change', async () => {
+  const first = async (cl, since, scope) => { const r = await cl.get(`/api/sync/pull?since=${encodeURIComponent(since)}${scope ? '&scope=' + encodeURIComponent(scope) : ''}`); assert.equal(r.status, 200, JSON.stringify(r.data)); return r.data; };
+  const later = new Date(Date.now() + 60_000).toISOString(); // a cursor after every row here
+  const nA = await first(c.rx_navA, later, 'legacy');
+  assert.equal(nA.scope_widened, true, 'a default navigator may now read more');
+  assert.ok(nA.tables.clients.some(x => x.id === ids.theirs), 'so the pull starts again and sends another worker\'s client');
+  assert.ok(nA.tables.notes.some(x => x.id === ids.clinical), 'and the clinical note');
+  assert.equal(nA.dropped_clients.length + nA.dropped_rows.length, 0, 'and removes nothing');
+  const cl = await first(c.rx_clin, later, 'legacy');
+  assert.equal(cl.scope_widened, true, 'a clinician too (clients:all, budget:read)');
+  const both = H.deny(H.makeUser('rx_both', 'navigator'), 'clients:all', 'notes:clinical:read');
+  const cb = H.client(); await cb.login('rx_both', PW);
+  const kept = await first(cb, later, 'legacy');
+  assert.ok(!kept.scope_changed, 'denied both before syncing again: nothing to change');
+  assert.equal(kept.tables.clients.length, 0, 'and the pull carries on from the device\'s cursor');
+  // The key the office sent last time, sent back unchanged, is no change either.
+  const now = await first(c.rx_navA, later, nA.scope);
+  assert.ok(!now.scope_changed && now.tables.clients.length === 0);
+  // Denied clients:all after syncing with it: every client off their caseload is named for removal.
+  const s = await first(c.rx_scoped, later, nA.scope);
+  assert.equal(s.scope_changed, true);
+  assert.ok(s.dropped_clients.includes(ids.theirs) && !s.dropped_clients.includes(ids.own), 'another worker\'s client goes; their own stays');
+  assert.ok(s.dropped_rows.some(([t, id]) => t === 'calls' && id === ids.call), 'and another worker\'s call with no client');
+  assert.ok(!s.dropped_rows.some(([t]) => t === 'notes'), 'clinical notes stay: only clients:all was denied');
+  // Each pull carries the person's own overrides, for the device's kernel to apply.
+  assert.deepEqual(s.permission_overrides.map(o => [o.permission, o.mode]), [['clients:all', 'deny']]);
+  assert.equal(s.settings.caseload_restriction, '1');
 });

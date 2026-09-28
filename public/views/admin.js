@@ -154,7 +154,12 @@ async function renderPermissionsSection(box, userId) {
   const refresh = () => renderPermissionsSection(box, userId);
 
   // The role baseline: what this person's role gives them, grouped by namespace.
+  // 1.16.0 widened the navigator and clinician baselines; say so where an administrator decides whether a
+  // person keeps them, and how to hold someone to their caseload instead.
+  const widened = { navigator: 'Since 1.16.0 a navigator sees every client (See every client) and reads clinical notes, without writing them (Read clinical notes).',
+    clinician: 'Since 1.16.0 a clinician sees every client (See every client) and the budget (See the budget), without recording spending.' }[data.role];
   box.append(h('h3', {}, `Role baseline — ${fmt.label(data.role)}`),
+    widened ? h('p', { class: 'small muted', 'data-perm-role-note': data.role }, `${widened} To hold this person to their own caseload, deny See every client below (clients:all)${data.role === 'navigator' ? '; to keep clinical notes from them, deny Read clinical notes (notes:clinical:read)' : ''}. Their devices follow at their next sync.`) : null,
     h('div', { 'data-perm-baseline': '1' }, permNamespaceGroups(data.role_permissions || []).map(([ns, names]) =>
       h('details', {}, h('summary', {}, `${ns} (${names.length})`),
         h('ul', {}, names.map((n) => h('li', {}, label(n), h('code', { class: 'small muted' }, ` ${n}`))))))));
