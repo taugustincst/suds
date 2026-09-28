@@ -136,6 +136,8 @@ module.exports = (r) => {
     const status = ctx.query.get('status');
     if (status && status !== 'all') { where.push('c.status=?'); params.push(status); }
     const q = (ctx.query.get('q') || '').trim();
+    // A name search ranks what it finds (1.15.3): see nameTier below.
+    let nameTier = null;
     if (q) {
       if (/^[A-Z]+\d*-\d+(-D)?$/i.test(q)) { where.push('c.client_code=?'); params.push(q.toUpperCase()); }
       else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) { where.push('c.dob_idx=?'); params.push(blindIndex(q)); }
@@ -158,6 +160,28 @@ module.exports = (r) => {
           }
         }
         where.push(`(${clauses.join(' OR ')})`);
+        // How well each record matched: 0 the full name, 1 a surname, first name, preferred name or word of a
+        // compound surname exactly, 2 the start of a name (its first three letters), 3 only sounds alike
+        // (Soundex). A name search is ordered by it (see pageOrder below): exact matches first, then the
+        // clients this person worked with lately, then the rest, best match first. Nothing is matched that
+        // was not before; only the order changes, except with ?rank=1 below.
+        const exactParts = parts.flatMap(p => M.searchPartTokens(p, { exact: true }));
+        const prefixes = parts.flatMap(p => [M.namePrefixIndex(p)]).filter(Boolean);
+        const inList = (n) => Array(n).fill('?').join(',');
+        nameTier = {
+          sql: `(CASE WHEN c.full_name_idx IN (?,?) THEN 0
+            WHEN c.last_name_idx IN (${inList(idxs.length)}) OR c.first_name_idx IN (${inList(parts.length)}) OR c.preferred_name_idx IN (${inList(parts.length)})${exactParts.map(() => ' OR instr(c.name_phonetic_idx, ?) > 0').join('')} THEN 1
+            ${prefixes.length ? `WHEN c.name_prefix_idx IN (${inList(prefixes.length)}) OR c.first_name_prefix_idx IN (${inList(prefixes.length)})${prefixes.map(() => ' OR instr(c.name_phonetic_idx, ?) > 0').join('')} THEN 2` : ''}
+            ELSE 3 END)`,
+          params: [blindIndex(parts.join('')), blindIndex([...parts].reverse().join('')), ...idxs, ...parts.map(p => blindIndex(p.toLowerCase())), ...parts.map(p => M.preferredNameIndex(p)), ...exactParts, ...prefixes, ...prefixes, ...prefixes],
+        };
+        // ?rank=1 (the search box at the top of every page) sets a minimum: a record that only sounds like the
+        // name is left out when something matched better, so a short list is not padded with look-alikes.
+        // When nothing matched better, the sound-alikes are the answer (a misspelling) and stay.
+        if (ctx.query.get('rank') === '1') {
+          const best = db.one(`SELECT MIN(${nameTier.sql}) t FROM clients c WHERE ${where.join(' AND ')}`, ...nameTier.params, ...params);
+          if (best && best.t !== null && best.t < 3) { where.push(`${nameTier.sql} < 3`); params.push(...nameTier.params); }
+        }
       }
     }
     const assigned = ctx.query.get('assigned_to');
@@ -190,9 +214,18 @@ module.exports = (r) => {
     const now = db.now();
     const LAST_CONTACT = `(SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied')))`;
     const OVERDUE = `(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END))`;
-    const sortCols = sort === 'overdue' ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [now] }
+    let sortCols = sort === 'overdue' ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [now] }
       : sort === 'last_contact' || sort === 'risk' ? { sql: `, ${LAST_CONTACT} AS last_contact`, params: [] } : { sql: '', params: [] };
-    const pageIds = db.all(`SELECT c.id ${sortCols.sql} FROM clients c ${w} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`, ...sortCols.params, ...params, limit, offset).map(x => x.id);
+    let pageOrder = order;
+    if (nameTier && !sort) {
+      // This person's recent clients: the same activity Home's "Recent clients" is drawn from (only ever used
+      // to order rows the caseload filter above already allows).
+      const recent = db.all(`SELECT client_id FROM audit_log WHERE user_id=? AND client_id IS NOT NULL AND action IN ('client.view','client.create','client.update','intervention.create','call.create','note.create','note.update') GROUP BY client_id ORDER BY MAX(at) DESC LIMIT 20`, ctx.user.id).map(x => x.client_id);
+      sortCols = { sql: `, ${nameTier.sql} AS match_tier, (c.id IN (SELECT value FROM json_each(?))) AS is_recent`, params: [...nameTier.params, JSON.stringify(recent)] };
+      // Exact name matches (tiers 0 and 1), then recent clients, then everyone else; within each, best match.
+      pageOrder = 'CASE WHEN match_tier <= 1 THEN 0 WHEN is_recent THEN 1 ELSE 2 END, match_tier, is_recent DESC, c.updated_at DESC';
+    }
+    const pageIds = db.all(`SELECT c.id ${sortCols.sql} FROM clients c ${w} ORDER BY ${pageOrder}, c.id LIMIT ? OFFSET ?`, ...sortCols.params, ...params, limit, offset).map(x => x.id);
     const byId = new Map(db.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth.activeAssignment('a.')}) AS assigned_workers,
       ${LAST_CONTACT} AS last_contact, ${OVERDUE} AS overdue_tasks
       ${consentWindow ? `, (SELECT MIN(co.expires_at) FROM consents co WHERE co.client_id=c.id AND co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ?) AS consent_expires_at` : ''}

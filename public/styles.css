@@ -108,6 +108,9 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
 .toasts, .toast { pointer-events: none; }
 .toast { background: var(--text); color: var(--bg); padding: .6rem .9rem; border-radius: 8px; box-shadow: var(--shadow); max-width: 380px; font-weight: 500; }
 .toast.error { background: var(--danger); color: #fff; } .toast.ok { background: var(--ok); color: #fff; }
+/* The one toast with a control (Undo): it takes taps and clicks, on its own area only. */
+.toast.undo-toast { pointer-events: auto; display: flex; align-items: center; gap: .75rem; justify-content: space-between; }
+.toast.undo-toast .btn { background: var(--bg); color: var(--text); border-color: var(--bg); flex: none; }
 
 /* Login */
 .login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 1rem; background: linear-gradient(160deg, var(--primary-soft), var(--bg) 60%); }
@@ -192,6 +195,7 @@ pre.note { white-space: pre-wrap; font-family: var(--font); background: var(--pa
 .appbar { display: flex; align-items: center; gap: .75rem; padding: .75rem 1.5rem 0; }
 .gsearch { position: relative; flex: 1; max-width: 520px; } .gsearch input { padding-left: .8rem; }
 .search-results { position: absolute; top: 100%; left: 0; right: 0; z-index: 25; margin-top: .25rem; max-height: 300px; overflow: auto; }
+.search-results .list-item { display: block; } .search-results .result-type { display: inline-block; min-width: 5.5rem; }
 .btn.quick { font-size: 1rem; padding: .55rem 1.1rem; border-radius: 999px; }
 .fab { display: none; }
 .quick-list { display: grid; gap: .5rem; } .quick-list .btn { justify-content: flex-start; font-size: 1.05rem; padding: .8rem 1rem; } .quick-list .ico { width: 1.6rem; text-align: center; font-size: 1.2rem; }
@@ -265,6 +269,11 @@ a.tel { font-variant-numeric: tabular-nums; } a.sms { font-weight: 600; }
 .bell { position: relative; font-size: 1.1rem; text-decoration: none; }
 .bell-count { position: absolute; top: -.2rem; right: -.2rem; min-width: 1.2rem; height: 1.2rem; padding: 0 .3rem; border-radius: 999px; background: var(--danger); color: #fff; font-size: .7rem; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 .bell.has-due { color: var(--danger); }
+/* The bell's panel (1.15.3): below the bell, inside the screen on a phone. */
+.bell-wrap { position: relative; display: inline-flex; }
+.bell-panel { position: absolute; right: 0; top: calc(100% + .35rem); width: min(22rem, calc(100vw - 2rem)); z-index: 65; box-shadow: var(--shadow); }
+.bell-panel h2 { margin: 0 0 .4rem; }
+.bell-panel-foot { justify-content: space-between; align-items: center; gap: .5rem; margin-top: .5rem; flex-wrap: wrap; }
 /* A safety plan on file is a chip, not a badge: it opens the plan. */
 button.chip { border: 0; cursor: pointer; font: inherit; }
 button.chip:hover { background: var(--primary); color: #fff; }
@@ -554,3 +563,12 @@ details.section > summary [data-section-hint] { font-weight: 400; }
 .download-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
 .download-list li { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
 .download-list li span { flex: 1 1 16rem; min-width: 0; }
+/* Keyboard shortcuts list (1.15.3) */
+kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85em; padding: .1rem .4rem; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--panel-2); color: var(--text); white-space: nowrap; }
+/* "Your first day" in the welcome card (1.15.3) */
+.first-day { margin: .25rem 0 .75rem; padding-left: 1.25rem; }
+.first-day li { margin-bottom: .6rem; }
+.first-day-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem; }
+.welcome-tips { margin-bottom: .75rem; }
+/* A tab strip that wraps rather than scrolls (Settings, 1.15.3): every tab stays inside the page at 200% zoom. */
+.tabs.wrapped { flex-wrap: wrap; overflow: visible; row-gap: 0; -webkit-mask-image: none; mask-image: none; scroll-snap-type: none; }

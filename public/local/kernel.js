@@ -43,9 +43,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/base64-js/index.js
+// ../../../node_modules/base64-js/index.js
 var require_base64_js = __commonJS({
-  "node_modules/base64-js/index.js"(exports) {
+  "../../../node_modules/base64-js/index.js"(exports) {
     "use strict";
     init_globals_inject();
     exports.byteLength = byteLength;
@@ -145,9 +145,9 @@ var require_base64_js = __commonJS({
   }
 });
 
-// node_modules/ieee754/index.js
+// ../../../node_modules/ieee754/index.js
 var require_ieee754 = __commonJS({
-  "node_modules/ieee754/index.js"(exports) {
+  "../../../node_modules/ieee754/index.js"(exports) {
     init_globals_inject();
     exports.read = function(buffer, offset, isLE3, mLen, nBytes) {
       var e, m;
@@ -229,9 +229,9 @@ var require_ieee754 = __commonJS({
   }
 });
 
-// node_modules/buffer/index.js
+// ../../../node_modules/buffer/index.js
 var require_buffer = __commonJS({
-  "node_modules/buffer/index.js"(exports) {
+  "../../../node_modules/buffer/index.js"(exports) {
     "use strict";
     init_globals_inject();
     var base64 = require_base64_js();
@@ -1906,7 +1906,7 @@ var init_path = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_assert.js
+// ../../../node_modules/@noble/ciphers/esm/_assert.js
 function isBytes(a) {
   return a instanceof Uint8Array || a != null && typeof a === "object" && a.constructor.name === "Uint8Array";
 }
@@ -1930,12 +1930,12 @@ function output(out2, instance) {
   }
 }
 var init_assert = __esm({
-  "node_modules/@noble/ciphers/esm/_assert.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/ciphers/esm/utils.js
+// ../../../node_modules/@noble/ciphers/esm/utils.js
 function utf8ToBytes(str) {
   if (typeof str !== "string")
     throw new Error(`string expected, got ${typeof str}`);
@@ -1998,7 +1998,7 @@ function clean(...arrays) {
 }
 var u8, u32, createView, isLE, wrapCipher;
 var init_utils = __esm({
-  "node_modules/@noble/ciphers/esm/utils.js"() {
+  "../../../node_modules/@noble/ciphers/esm/utils.js"() {
     init_globals_inject();
     init_assert();
     u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
@@ -2014,7 +2014,7 @@ var init_utils = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_polyval.js
+// ../../../node_modules/@noble/ciphers/esm/_polyval.js
 function _toGHASHKey(k) {
   k.reverse();
   const hiBit = k[15] & 1;
@@ -2037,7 +2037,7 @@ function wrapConstructorWithKey(hashCons) {
 }
 var BLOCK_SIZE, ZEROS16, ZEROS32, POLY, mul2, swapLE, estimateWindow, GHASH, Polyval, ghash, polyval;
 var init_polyval = __esm({
-  "node_modules/@noble/ciphers/esm/_polyval.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_polyval.js"() {
     init_globals_inject();
     init_assert();
     init_utils();
@@ -2212,7 +2212,7 @@ var init_polyval = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/aes.js
+// ../../../node_modules/@noble/ciphers/esm/aes.js
 function mul22(n) {
   return n << 1 ^ POLY2 & -(n >> 7);
 }
@@ -2492,7 +2492,7 @@ function decryptBlock(xk, block) {
 }
 var BLOCK_SIZE2, BLOCK_SIZE32, EMPTY_BLOCK, POLY2, sbox, invSbox, rotr32_8, rotl32_8, byteSwap, tableEncoding, tableDecoding, xPowers, ctr, ecb, cbc, cfb, gcm, limit, siv, AESW, AESKW_IV, aeskw, AESKWP_IV, aeskwp;
 var init_aes = __esm({
-  "node_modules/@noble/ciphers/esm/aes.js"() {
+  "../../../node_modules/@noble/ciphers/esm/aes.js"() {
     init_globals_inject();
     init_assert();
     init_polyval();
@@ -2965,7 +2965,7 @@ var init_aes = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_assert.js
+// ../../../node_modules/@noble/hashes/esm/_assert.js
 function number(n) {
   if (!Number.isSafeInteger(n) || n < 0)
     throw new Error(`positive integer expected, not ${n}`);
@@ -2999,21 +2999,21 @@ function output2(out2, instance) {
   }
 }
 var init_assert2 = __esm({
-  "node_modules/@noble/hashes/esm/_assert.js"() {
+  "../../../node_modules/@noble/hashes/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/hashes/esm/crypto.js
+// ../../../node_modules/@noble/hashes/esm/crypto.js
 var crypto2;
 var init_crypto = __esm({
-  "node_modules/@noble/hashes/esm/crypto.js"() {
+  "../../../node_modules/@noble/hashes/esm/crypto.js"() {
     init_globals_inject();
     crypto2 = typeof globalThis === "object" && "crypto" in globalThis ? globalThis.crypto : void 0;
   }
 });
 
-// node_modules/@noble/hashes/esm/utils.js
+// ../../../node_modules/@noble/hashes/esm/utils.js
 function byteSwap32(arr) {
   for (let i = 0; i < arr.length; i++) {
     arr[i] = byteSwap2(arr[i]);
@@ -3055,7 +3055,7 @@ function randomBytes(bytesLength = 32) {
 }
 var u322, createView2, rotr, rotl, isLE2, byteSwap2, Hash, toStr;
 var init_utils2 = __esm({
-  "node_modules/@noble/hashes/esm/utils.js"() {
+  "../../../node_modules/@noble/hashes/esm/utils.js"() {
     init_globals_inject();
     init_crypto();
     init_assert2();
@@ -3075,7 +3075,7 @@ var init_utils2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_md.js
+// ../../../node_modules/@noble/hashes/esm/_md.js
 function setBigUint642(view, byteOffset, value, isLE3) {
   if (typeof view.setBigUint64 === "function")
     return view.setBigUint64(byteOffset, value, isLE3);
@@ -3090,7 +3090,7 @@ function setBigUint642(view, byteOffset, value, isLE3) {
 }
 var Chi, Maj, HashMD;
 var init_md = __esm({
-  "node_modules/@noble/hashes/esm/_md.js"() {
+  "../../../node_modules/@noble/hashes/esm/_md.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3185,10 +3185,10 @@ var init_md = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha256.js
+// ../../../node_modules/@noble/hashes/esm/sha256.js
 var SHA256_K, SHA256_IV, SHA256_W, SHA256, sha256;
 var init_sha256 = __esm({
-  "node_modules/@noble/hashes/esm/sha256.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha256.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3343,10 +3343,10 @@ var init_sha256 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha1.js
+// ../../../node_modules/@noble/hashes/esm/sha1.js
 var SHA1_IV, SHA1_W, SHA1, sha1;
 var init_sha1 = __esm({
-  "node_modules/@noble/hashes/esm/sha1.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha1.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3425,10 +3425,10 @@ var init_sha1 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/hmac.js
+// ../../../node_modules/@noble/hashes/esm/hmac.js
 var HMAC, hmac;
 var init_hmac = __esm({
-  "node_modules/@noble/hashes/esm/hmac.js"() {
+  "../../../node_modules/@noble/hashes/esm/hmac.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3498,7 +3498,7 @@ var init_hmac = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/pbkdf2.js
+// ../../../node_modules/@noble/hashes/esm/pbkdf2.js
 function pbkdf2Init(hash2, _password, _salt, _opts) {
   hash(hash2);
   const opts = checkOpts({ dkLen: 32, asyncTick: 10 }, _opts);
@@ -3543,7 +3543,7 @@ function pbkdf2(hash2, password, salt, opts) {
   return pbkdf2Output(PRF, PRFSalt, DK, prfW, u);
 }
 var init_pbkdf2 = __esm({
-  "node_modules/@noble/hashes/esm/pbkdf2.js"() {
+  "../../../node_modules/@noble/hashes/esm/pbkdf2.js"() {
     init_globals_inject();
     init_assert2();
     init_hmac();
@@ -3551,7 +3551,7 @@ var init_pbkdf2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/scrypt.js
+// ../../../node_modules/@noble/hashes/esm/scrypt.js
 function XorAndSalsa(prev, pi, input, ii, out2, oi) {
   let y00 = prev[pi++] ^ input[ii++], y01 = prev[pi++] ^ input[ii++];
   let y02 = prev[pi++] ^ input[ii++], y03 = prev[pi++] ^ input[ii++];
@@ -3707,7 +3707,7 @@ function scrypt(password, salt, opts) {
   return scryptOutput(password, dkLen, B2, V, tmp);
 }
 var init_scrypt = __esm({
-  "node_modules/@noble/hashes/esm/scrypt.js"() {
+  "../../../node_modules/@noble/hashes/esm/scrypt.js"() {
     init_globals_inject();
     init_assert2();
     init_sha256();
@@ -3852,9 +3852,9 @@ var init_crypto2 = __esm({
   }
 });
 
-// node_modules/sql.js/dist/sql-wasm.js
+// ../../../node_modules/sql.js/dist/sql-wasm.js
 var require_sql_wasm = __commonJS({
-  "node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
+  "../../../node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
     init_globals_inject();
     var initSqlJsPromise = void 0;
     var initSqlJs = function(moduleConfig) {
@@ -9342,7 +9342,7 @@ var require_csp = __commonJS({
   }
 });
 
-// node_modules/fflate/esm/browser.js
+// ../../../node_modules/fflate/esm/browser.js
 function deflateSync(data, opts) {
   return dopt(data, opts || {}, 0, 0);
 }
@@ -9362,7 +9362,7 @@ function unzlibSync(data, opts) {
 }
 var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
 var init_browser = __esm({
-  "node_modules/fflate/esm/browser.js"() {
+  "../../../node_modules/fflate/esm/browser.js"() {
     init_globals_inject();
     u82 = Uint8Array;
     u16 = Uint16Array;
@@ -12683,6 +12683,7 @@ var require_clients = __commonJS({
           params.push(status);
         }
         const q = (ctx.query.get("q") || "").trim();
+        let nameTier = null;
         if (q) {
           if (/^[A-Z]+\d*-\d+(-D)?$/i.test(q)) {
             where.push("c.client_code=?");
@@ -12719,6 +12720,23 @@ var require_clients = __commonJS({
               }
             }
             where.push(`(${clauses.join(" OR ")})`);
+            const exactParts = parts.flatMap((p) => M.searchPartTokens(p, { exact: true }));
+            const prefixes = parts.flatMap((p) => [M.namePrefixIndex(p)]).filter(Boolean);
+            const inList = (n) => Array(n).fill("?").join(",");
+            nameTier = {
+              sql: `(CASE WHEN c.full_name_idx IN (?,?) THEN 0
+            WHEN c.last_name_idx IN (${inList(idxs.length)}) OR c.first_name_idx IN (${inList(parts.length)}) OR c.preferred_name_idx IN (${inList(parts.length)})${exactParts.map(() => " OR instr(c.name_phonetic_idx, ?) > 0").join("")} THEN 1
+            ${prefixes.length ? `WHEN c.name_prefix_idx IN (${inList(prefixes.length)}) OR c.first_name_prefix_idx IN (${inList(prefixes.length)})${prefixes.map(() => " OR instr(c.name_phonetic_idx, ?) > 0").join("")} THEN 2` : ""}
+            ELSE 3 END)`,
+              params: [blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")), ...idxs, ...parts.map((p) => blindIndex2(p.toLowerCase())), ...parts.map((p) => M.preferredNameIndex(p)), ...exactParts, ...prefixes, ...prefixes, ...prefixes]
+            };
+            if (ctx.query.get("rank") === "1") {
+              const best = db3.one(`SELECT MIN(${nameTier.sql}) t FROM clients c WHERE ${where.join(" AND ")}`, ...nameTier.params, ...params);
+              if (best && best.t !== null && best.t < 3) {
+                where.push(`${nameTier.sql} < 3`);
+                params.push(...nameTier.params);
+              }
+            }
           }
         }
         const assigned = ctx.query.get("assigned_to");
@@ -12752,8 +12770,14 @@ var require_clients = __commonJS({
         const now2 = db3.now();
         const LAST_CONTACT = `(SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied')))`;
         const OVERDUE = `(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END))`;
-        const sortCols = sort === "overdue" ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [now2] } : sort === "last_contact" || sort === "risk" ? { sql: `, ${LAST_CONTACT} AS last_contact`, params: [] } : { sql: "", params: [] };
-        const pageIds = db3.all(`SELECT c.id ${sortCols.sql} FROM clients c ${w} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`, ...sortCols.params, ...params, limit2, offset).map((x) => x.id);
+        let sortCols = sort === "overdue" ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [now2] } : sort === "last_contact" || sort === "risk" ? { sql: `, ${LAST_CONTACT} AS last_contact`, params: [] } : { sql: "", params: [] };
+        let pageOrder = order;
+        if (nameTier && !sort) {
+          const recent = db3.all(`SELECT client_id FROM audit_log WHERE user_id=? AND client_id IS NOT NULL AND action IN ('client.view','client.create','client.update','intervention.create','call.create','note.create','note.update') GROUP BY client_id ORDER BY MAX(at) DESC LIMIT 20`, ctx.user.id).map((x) => x.client_id);
+          sortCols = { sql: `, ${nameTier.sql} AS match_tier, (c.id IN (SELECT value FROM json_each(?))) AS is_recent`, params: [...nameTier.params, JSON.stringify(recent)] };
+          pageOrder = "CASE WHEN match_tier <= 1 THEN 0 WHEN is_recent THEN 1 ELSE 2 END, match_tier, is_recent DESC, c.updated_at DESC";
+        }
+        const pageIds = db3.all(`SELECT c.id ${sortCols.sql} FROM clients c ${w} ORDER BY ${pageOrder}, c.id LIMIT ? OFFSET ?`, ...sortCols.params, ...params, limit2, offset).map((x) => x.id);
         const byId = new Map(db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth3.activeAssignment("a.")}) AS assigned_workers,
       ${LAST_CONTACT} AS last_contact, ${OVERDUE} AS overdue_tasks
       ${consentWindow ? `, (SELECT MIN(co.expires_at) FROM consents co WHERE co.client_id=c.id AND co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ?) AS consent_expires_at` : ""}
@@ -22505,7 +22529,7 @@ var require_assignments2 = __commonJS({
     var db3 = require_db();
     var auth3 = require_auth2();
     var audit3 = require_audit();
-    var { notFound } = require_http();
+    var { notFound, badRequest } = require_http();
     var { validate } = require_validate();
     var { uuid: uuid2, encrypt: encrypt3 } = require_crypto();
     var rules = require_rules();
@@ -22515,12 +22539,15 @@ var require_assignments2 = __commonJS({
         if (!c) throw notFound();
         const v = validate(ctx.body, rules.forTable("assignments").shape());
         rules.assertWrite("assignments", { client_id: c.id, ...rules.toColumns("assignments", v) }, ctx);
+        const restores = ctx.query.get("restores");
+        const undone = restores ? db3.one(`SELECT id FROM assignments WHERE id=? AND client_id=? AND user_id=? AND role_on_case=? AND end_date IS NOT NULL`, restores, c.id, v.user_id, v.role_on_case || "primary") : null;
+        if (restores && !undone) throw badRequest("The assignment to restore was not found, or it has not ended.");
         const id = uuid2();
         db3.transaction(() => {
           if ((v.role_on_case || "primary") === "primary") db3.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, db3.now(), c.id);
           db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || "primary", v.start_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), v.notes ? encrypt3(v.notes) : null, ctx.user.id);
         });
-        audit3.log({ user: ctx.user, action: "assignment.create", entity: "assignment", entityId: id, clientId: c.id, ip: ctx.ip, details: { user_id: v.user_id, role: v.role_on_case } });
+        audit3.log({ user: ctx.user, action: undone ? "assignment.restore" : "assignment.create", entity: "assignment", entityId: id, clientId: c.id, ip: ctx.ip, details: { user_id: v.user_id, role: v.role_on_case, ...undone ? { restores: undone.id } : {} } });
         ctx.status = 201;
         return { id };
       });
@@ -25023,7 +25050,7 @@ var require_documents = __commonJS({
         return { id };
       });
       r.put("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
-        const d = db3.one(`SELECT id, updated_at FROM policy_documents WHERE id=?`, ctx.params.id);
+        const d = db3.one(`SELECT id, updated_at, is_active FROM policy_documents WHERE id=?`, ctx.params.id);
         if (!d) throw notFound();
         require_crud().assertFresh(ctx, d, "document");
         const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
@@ -25042,7 +25069,8 @@ var require_documents = __commonJS({
         if (!sets.length) return { ok: true, updated_at: d.updated_at };
         const stamp2 = db3.now();
         db3.run(`UPDATE policy_documents SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, d.id);
-        audit3.log({ user: ctx.user, action: "document.update", entity: "policy_document", entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)) } });
+        const reactivated = !!v2.is_active && !d.is_active;
+        audit3.log({ user: ctx.user, action: reactivated ? "document.reactivate" : "document.update", entity: "policy_document", entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)) } });
         return { ok: true, updated_at: stamp2 };
       });
       r.delete("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
@@ -37097,7 +37125,7 @@ var require_resources3 = __commonJS({
         return { id };
       });
       r.put("/api/resources/:id", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
-        const row = db3.one(`SELECT id, updated_at FROM resources WHERE id=?`, ctx.params.id);
+        const row = db3.one(`SELECT id, updated_at, is_active FROM resources WHERE id=?`, ctx.params.id);
         if (!row) throw notFound();
         require_crud().assertFresh(ctx, row, "resource");
         const v = validate(ctx.body, { ...shape, name: { ...shape.name, required: false }, category: { ...shape.category, required: false } }, { partial: true });
@@ -37107,7 +37135,8 @@ var require_resources3 = __commonJS({
         if (!keys.length) return { ok: true, updated_at: row.updated_at };
         const stamp2 = db3.now();
         db3.run(`UPDATE resources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, row.id);
-        audit3.log({ user: ctx.user, action: "resource.update", entity: "resource", entityId: row.id, ip: ctx.ip, details: { fields: keys } });
+        const reactivated = !!v.is_active && !row.is_active;
+        audit3.log({ user: ctx.user, action: reactivated ? "resource.reactivate" : "resource.update", entity: "resource", entityId: row.id, ip: ctx.ip, details: { fields: keys } });
         return { ok: true, updated_at: stamp2 };
       });
       r.delete("/api/resources/:id", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {

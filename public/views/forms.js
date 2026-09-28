@@ -144,7 +144,7 @@ export async function clientFormsTab(clientId, { refresh } = {}) {
       { label: 'Form', render: f => h('b', {}, f.template_name) }, { label: 'Status', render: f => badge(fmt.label(f.status), f.status === 'completed' ? 'ok' : f.status === 'void' ? 'warn' : 'info') },
       { label: 'Completed', render: f => f.completed_at ? `${fmt.date(f.completed_at)} · ${f.completed_by_name || ''}` : '—' }, { label: 'Started', render: f => `${fmt.date(f.created_at)} · ${f.created_by_name}` },
       { label: 'Signed copy', render: f => f.attachments ? badge(`${f.attachments} attached`, 'ok') : h('span', { class: 'muted small' }, 'none') },
-    ], forms, { onRow: f => openClientForm(f.id, { onChange: refresh }) }) : emptyState('No forms for this client yet', 'Releases of information, intake sheets and assistance requests you fill out here are saved to the record, printable, and can hold the signed copy.', can('forms:write') ? h('button', { class: 'btn primary', onClick: start }, '+ Fill out a form') : null));
+    ], forms, { onRow: f => openClientForm(f.id, { onChange: refresh }) }) : emptyState('No forms for this client yet', `Releases of information, intake sheets and assistance requests you fill out here are saved to the record, printable, and can hold the signed copy.${can('forms:write') ? '' : ' Someone on the care team who may fill out forms adds them.'}`, can('forms:write') ? h('button', { class: 'btn primary', onClick: start }, '+ Fill out a form') : null));
 }
 
 // ---------- Filler ----------

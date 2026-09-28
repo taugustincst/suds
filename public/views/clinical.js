@@ -125,7 +125,8 @@ export async function problemsTab(clientId, { refresh } = {}) {
         writable ? h('button', { class: 'btn sm ghost', 'data-edit-problem': p.id, onClick: () => openProblemForm(clientId, p, { onDone: refresh }) }, 'Edit') : null,
         writable && p.status === 'active' ? h('button', { class: 'btn sm ghost', 'data-resolve-problem': p.id, onClick: async () => { await put(`/api/problems/${p.id}`, { status: 'resolved', if_updated_at: p.updated_at }); toast('Marked resolved', 'ok'); refresh && refresh(); } }, 'Resolve') : null,
         h('button', { class: 'btn sm ghost', 'data-problem-history-btn': p.id, onClick: () => showHistory(p) }, 'History')) },
-    ], rows) : emptyState('No problems recorded', 'Add what the client is working on — health, substance use, housing, legal, income. An optional ICD-10-CM code and social determinant (Z) codes can be attached.'));
+    ], rows) : emptyState('No problems recorded', writable ? 'Add what the client is working on — health, substance use, housing, legal, income. An optional ICD-10-CM code and social determinant (Z) codes can be attached.' : 'The client\'s care team (a navigator or clinician who may edit the care plan) adds what the client is working on.',
+      writable ? h('button', { class: 'btn primary', 'data-empty-action': 'problem', onClick: () => openProblemForm(clientId, null, { onDone: refresh }) }, '+ Add the first problem') : null));
 }
 
 // ---------------------------------------------------------------- Care plan
@@ -206,7 +207,8 @@ export async function carePlanTab(clientId, { refresh, clientDisplay } = {}) {
       h('div', { class: 'row nowrap' },
         h('button', { class: 'btn sm', 'data-print-careplan': '1', onClick: () => printCarePlan(clientDisplay || '', problems, goals) }, 'Print'),
         writable ? h('button', { class: 'btn sm primary', 'data-add-goal': '1', onClick: () => openGoalForm(clientId, null, active, { onDone: refresh }) }, '+ Goal') : null)),
-      !goals.length ? emptyState('No goals yet', active.length ? 'Start with what the client most wants to change, in their words.' : 'Goals usually follow from the problem list — add problems first, then a goal for the ones the client wants to work on.') : null),
+      !goals.length ? emptyState('No goals yet', !writable ? 'The client\'s care team (a navigator or clinician who may edit the care plan) sets goals with the client.' : active.length ? 'Start with what the client most wants to change, in their words.' : 'Goals usually follow from the problem list — add problems first, then a goal for the ones the client wants to work on.',
+        writable ? (active.length ? h('button', { class: 'btn primary', 'data-empty-action': 'goal', onClick: () => openGoalForm(clientId, null, active, { onDone: refresh }) }, '+ Add the first goal') : h('a', { class: 'btn primary', 'data-empty-action': 'problems', href: `#/client/${clientId}/problems` }, 'Go to the problem list')) : null) : null),
     goals.map(goalCard));
 }
 

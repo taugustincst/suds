@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, modal, toast, table, badge, fmt, pageHead, loadSession, nav, render, kv, confirmDialog, prefs, can, refreshPermissions } from '../app.js';
+import { h, route, get, post, state, form, modal, toast, table, badge, fmt, pageHead, loadSession, nav, render, kv, confirmDialog, prefs, can, refreshPermissions, shortcutsOn, openShortcutsHelp } from '../app.js';
 import { qrSvg } from '../qr.js';
 
 route('profile', async (r) => {
@@ -34,6 +34,12 @@ route('profile', async (r) => {
   const reminders = can('tasks:read') ? h('div', { class: 'card' }, h('h2', {}, 'Reminders'),
     h('label', { class: 'check', for: 'notify-due', style: { marginTop: 0 } }, notifyBox, 'Show a notification on this device when one of my reminders comes due (while SUDS is open)'),
     h('p', { class: 'small muted mt' }, notifySupported ? 'The notification shows the reminder\'s title and the client\'s name, so switch it off on a shared computer. The bell at the top of every page shows the same count either way.' : 'This browser does not support notifications; the bell at the top of every page still shows what is due.')) : null;
+  // Keyboard shortcuts (WCAG 2.1.4): the single-key ones can be switched off, per person, on every device.
+  const shortcuts = h('div', { class: 'card', 'data-shortcuts-card': '1' }, h('h2', {}, 'Keyboard shortcuts'),
+    h('label', { class: 'check', for: 'shortcuts-on', style: { marginTop: 0 } }, h('input', { type: 'checkbox', id: 'shortcuts-on', 'data-shortcuts-on': '1', checked: shortcutsOn(), onChange: (e) => { prefs.set('shortcuts_off', !e.target.checked); toast(e.target.checked ? 'Single-key shortcuts on' : 'Single-key shortcuts off', 'ok'); } }),
+      'Use single-key shortcuts: / to find a client, n to log a visit, ? to list them'),
+    h('p', { class: 'small muted mt' }, 'They work only when you are not typing in a field. Switch them off if they get in your way, for example with speech recognition. Ctrl + Enter (⌘ + Enter on a Mac) saves the open form either way. ',
+      h('button', { class: 'btn sm', type: 'button', 'data-shortcuts-list': '1', onClick: () => openShortcutsHelp() }, 'Show the shortcuts')));
   return h('div', {}, pageHead('My profile'),
     force ? h('div', { class: 'banner warn' }, 'You must change your password before continuing.') : null,
     h('div', { class: 'grid cols-2' },
@@ -43,6 +49,7 @@ route('profile', async (r) => {
       h('div', { class: 'card' }, h('h2', {}, 'Multi-factor authentication'), mfaBox),
       h('div', { class: 'card' }, h('h2', {}, 'Change password'), pw),
       reminders,
+      shortcuts,
       state.local ? null : h('div', { class: 'card' }, h('h2', {}, 'Use SUDS on your phone'), h('p', { class: 'small' }, 'On the office Wi-Fi open ', h('b', {}, location.origin.replace(/^https?:\/\//, '')), ' or scan this code, then add it to the home screen: ', h('b', {}, 'iPhone:'), ' Share → Add to Home Screen. ', h('b', {}, 'Android:'), ' ⋮ → Install app. Your clients, notes and reminders are the same on every device — nothing to set up.'), h('div', { class: 'center' }, qrSvg(location.origin + '/', { size: 160 }))),
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Active sessions'), sessions.sessions.length > 1 ? h('button', { class: 'btn sm', onClick: async () => { await post('/api/auth/sessions/revoke-others', {}); toast('Other sessions signed out', 'ok'); nav('profile?_=' + Date.now()); } }, 'Sign out other sessions') : null),
         table([{ label: 'Started', render: s => fmt.dt(s.created_at) }, { label: 'Last active', render: s => fmt.dt(s.last_seen_at) }, { label: 'IP', key: 'ip' }, { label: 'Device', render: s => h('span', { class: 'small muted' }, (s.user_agent || '').slice(0, 60)) }, { label: '', srLabel: 'Current session', render: s => s.current ? badge('This session', 'ok') : '' }], sessions.sessions))));

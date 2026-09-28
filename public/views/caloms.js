@@ -106,7 +106,7 @@ export async function calomsEpisodeDialog(episode, { onChange } = {}) {
       { label: 'Problems', render: r => r.issues.length ? h('ul', { class: 'small', style: { margin: 0, paddingLeft: '1rem' } }, r.issues.map(i => h('li', {}, sevBadge(i.severity), ' ', i.message))) : badge('Ready', 'ok') },
       { label: 'Sent', render: r => (r.extracted_at ? fmt.date(r.extracted_at) : '—') },
       { label: '', render: r => can('episodes:write') && (r.record_type !== 'discharge' || episode.status === 'closed') ? h('button', { class: 'btn sm', 'data-caloms-edit': r.record_type, onClick: (e) => { e.stopPropagation(); editRecord(r.record_type, r); } }, 'Edit') : null },
-    ], rows, { rowLabel: r => `${RECORD_LABEL[r.record_type]} ${r.record_date}` }) : emptyState('No CalOMS records yet', 'Complete the admission record below.'),
+    ], rows, { rowLabel: r => `${RECORD_LABEL[r.record_type]} ${r.record_date}` }) : emptyState('No CalOMS records yet', can('episodes:write') ? 'Complete the admission record below (Still needed).' : 'A supervisor, clinician or anyone who may edit episodes completes the admission record.'),
     d.expected.length ? h('div', { class: 'mt' }, h('h3', {}, 'Still needed'), h('ul', {}, d.expected.map(x => h('li', {}, x.message, ' ',
       can('episodes:write') && x.record_type !== 'discharge' ? h('button', { class: 'btn sm primary', 'data-caloms-add': x.record_type, onClick: () => editRecord(x.record_type, null, x.record_type === 'annual_update' ? fmt.today() : null) }, x.record_type === 'admission' ? 'Complete admission record' : 'Record annual update') : null,
       x.record_type === 'discharge' ? h('span', { class: 'small muted' }, '(recorded with the discharge: reopen and discharge again, or ask a supervisor)') : null)))) : null,

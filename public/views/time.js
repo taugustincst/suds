@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, fmt, can, pageHead, confirmDialog, downloadCsv, nav, bars, stat, badge } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, fmt, can, pageHead, confirmDialog, downloadCsv, nav, bars, stat, badge, NOT_SAVED } from '../app.js';
 
 export function openTimeForm(values, { clientId, clientDisplay, onDone } = {}) {
   const C = state.constants; const isNew = !values;
@@ -10,16 +10,22 @@ export function openTimeForm(values, { clientId, clientDisplay, onDone } = {}) {
     { name: 'description', label: 'Description', span: true, help: 'What the time was for. Managers who approve time without access to client records see only the category, fund and minutes.' },
     can('time:all') ? { name: 'user_id', label: 'Worker', type: 'user', value: values?.user_id || state.user.id } : null,
   ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Log time' : 'Save', draftKey: isNew ? 'time:new' : `time:${values.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
+    // The same day and client as time a visit or call already logged: asked once more before saving (the
+    // notice above said so already), never refused, since a second session with the same person is real time.
+    if (isNew && d.client_id) await overlap.check();
+    if (isNew && d.client_id && overlap.sameClient && !(await confirmDialog('Log this time as well?', `${overlap.text} Log ${d.minutes} more minutes anyway?`, { okText: 'Log it anyway', cancelText: 'Go back' }))) return NOT_SAVED;
     if (isNew) await post('/api/time', d); else await put(`/api/time/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast('Time saved', 'ok'); m.close(); onDone && onDone();
   } });
-  if (isNew) overlapHint(f);
+  const overlap = isNew ? overlapHint(f) : null;
   const m = modal(isNew ? 'Log time' : 'Edit time entry', f);
 }
-// A visit logs its own time entry ("Also log this as a time entry"), so time typed in by hand for the same day
-// (and client) may be the same work twice. Said before saving, never a block: a second session with the
-// same person is real time too. Reads the day's visit-logged entries (GET /api/time?source=visit).
+// A visit or a call logs its own time entry ("Also log this as a time entry"), so time typed in by hand for the
+// same day (and client) may be the same work twice. Said before saving, never a block: a second session with
+// the same person is real time too. Reads the day's entries and keeps those a visit or call logged (source).
+// Returns { sameClient, text }, kept current, for the question asked on Save.
 function overlapHint(f) {
+  const state_ = { sameClient: false, text: '' };
   const hint = h('div', { class: 'banner warn small span hidden', role: 'status', 'data-time-overlap': '' });
   f.querySelector('[data-field="minutes"]').closest('.form-grid').append(hint);
   let seq = 0;
@@ -28,21 +34,27 @@ function overlapHint(f) {
     const worker = f.inputs.user_id?.value || state.user.id;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) { hint.classList.add('hidden'); return; }
     let rows = [];
-    try { rows = (await get(`/api/time?source=visit&from=${day}&to=${day}&limit=100${can('time:all') ? `&user_id=${encodeURIComponent(worker)}` : ''}`, { quiet: true })).rows || []; } catch { rows = []; }
+    try { rows = (await get(`/api/time?from=${day}&to=${day}&limit=200${can('time:all') ? `&user_id=${encodeURIComponent(worker)}` : ''}`, { quiet: true })).rows || []; } catch { rows = []; }
     if (mine !== seq) return;
-    rows = rows.filter(r => r.source === 'visit' && r.user_id === worker);
+    rows = rows.filter(r => (r.source === 'visit' || r.source === 'call') && r.user_id === worker);
     const same = client ? rows.filter(r => r.client_id === client) : rows;
     const whose = worker === state.user.id ? 'your' : `${(state.users.find(u => u.id === worker) || {}).display_name || 'this worker'}'s`;
-    if (!same.length) { hint.classList.add('hidden'); hint.dataset.timeOverlap = ''; hint.textContent = ''; return; }
+    state_.sameClient = !!client && same.length > 0;
+    if (!same.length) { hint.classList.add('hidden'); hint.dataset.timeOverlap = ''; hint.textContent = ''; state_.text = ''; return; }
     const mins = same.reduce((n, r) => n + (r.minutes || 0), 0);
+    const visits = same.filter(r => r.source === 'visit').length; const calls = same.length - visits;
+    const by = [visits ? (visits === 1 ? 'a visit' : `${visits} visits`) : null, calls ? (calls === 1 ? 'a call' : `${calls} calls`) : null].filter(Boolean).join(' and ');
     hint.dataset.timeOverlap = String(same.length);
-    hint.textContent = `${fmt.mins(mins)} of ${whose} time on ${fmt.date(day)} was already logged by ${same.length === 1 ? 'a visit' : `${same.length} visits`}${client ? ' with this client' : ''}. Log this only if it is different time, or it counts twice.`;
+    state_.text = `${fmt.mins(mins)} of ${whose} time on ${fmt.date(day)} was already logged by ${by}${client ? ' with this client' : ''}.`;
+    hint.textContent = `${state_.text} Log this only if it is different time, or it counts twice.`;
     hint.classList.remove('hidden');
   };
   // A client chosen from the search list sets its value without a change event, so a click is checked too.
   const soon = () => setTimeout(check, 0);
   f.addEventListener('change', soon); f.addEventListener('click', (e) => { if (e.target.closest('[data-field="client_id"]')) setTimeout(check, 50); });
   check();
+  state_.check = check;
+  return state_;
 }
 const statusBadge = (r) => {
   const s = r.status || 'draft';

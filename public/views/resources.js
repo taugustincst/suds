@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, confirmDialog, nav, kv, prefs, emptyState, clear, downloadCsv, img, setImage, contactLinks, mapLink } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, confirmDialog, nav, kv, prefs, emptyState, clear, downloadCsv, img, setImage, contactLinks, mapLink, undoToast } from '../app.js';
 
 const tagOpts = (list) => list.map(t => ({ value: t, label: fmt.label(t) }));
 // Comma-separated tag fields are edited as a checkbox grid
@@ -174,7 +174,7 @@ route('resources', async (r) => {
       x.summary ? h('p', { class: 'small res-summary' }, x.summary) : x.services ? h('p', { class: 'small res-summary muted' }, x.services) : null,
       h('div', { class: 'res-tags small' }, tagBadges(String(x.service_tags || '').split(',').slice(0, 5).join(','), 'purple'), x.accepts_medicaid ? badge('Medicaid', 'ok') : null, ' ', x.accepts_uninsured ? badge('Uninsured OK', 'info') : null),
       h('div', { class: 'small muted' }, x.city || '', x.phone ? ` · ☎ ${x.phone}` : '', x.photo_count ? ` · ${x.photo_count} photo${x.photo_count > 1 ? 's' : ''}` : '', stale(x) ? h('span', { style: { color: 'var(--warn)' } }, ' · needs verification') : null)))))
-    : emptyState('No resources match', 'Try another search, or add the program.', can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(null, (id) => nav(`resource/${id}`)) }, '+ Add resource') : null);
+    : emptyState('No resources match', can('resources:write') ? 'Try another search, or add the program.' : 'Try another search. A supervisor or administrator adds programs to the directory.', can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(null, (id) => nav(`resource/${id}`)) }, '+ Add resource') : null);
   const list = () => table([
     { label: '', render: x => thumb(x) },
     { label: 'Resource', render: x => h('div', {}, h('b', {}, x.name), x.organization ? h('div', { class: 'small muted' }, x.organization) : null) }, { label: 'Category', render: x => fmt.label(x.category) },
@@ -354,7 +354,11 @@ route('resource', async (r) => {
       h('div', {}, h('div', { class: 'card mb' }, h('h2', {}, 'Services offered'), services), h('div', { class: 'card' }, h('h2', {}, 'Contact & location'), contact))),
     h('div', { class: 'grid cols-2 mt' }, h('div', { class: 'card' }, h('h2', {}, 'Referral outcomes'), outcomes, recent ? h('div', { class: 'mt' }, recent) : null),
       x.notes || can('resources:write') ? h('div', { class: 'card' }, h('h2', {}, 'Internal notes'), x.notes ? h('p', { class: 'small', style: { whiteSpace: 'pre-wrap' } }, x.notes) : h('p', { class: 'muted small' }, 'Nothing noted.'),
-        can('resources:write') && x.is_active ? h('div', { class: 'btn-row' }, h('button', { class: 'btn danger sm', onClick: async () => { if (await confirmDialog('Deactivate', 'Hide this resource from referral pickers?', { danger: true, okText: 'Deactivate' })) { await del(`/api/resources/${x.id}`); toast('Resource deactivated', 'ok'); refresh(); } } }, 'Deactivate')) : null) : null));
+        can('resources:write') && x.is_active ? h('div', { class: 'btn-row' }, h('button', { class: 'btn danger sm', 'data-resource-deactivate': x.id, onClick: async () => {
+          // Reversible, so done at once with an Undo rather than asked first (it only hides the program).
+          await del(`/api/resources/${x.id}`); refresh();
+          undoToast(`${x.name} deactivated: hidden from referral pickers.`, async () => { await put(`/api/resources/${x.id}`, { is_active: true }); refresh(); });
+        } }, 'Deactivate')) : null) : null));
 });
 
 // Resize a picture in the browser (canvas) so uploads stay small and phones do not send 8 MB originals.
