@@ -1,7 +1,8 @@
 'use strict';
 // SUDS performance benchmark (docs/PERFORMANCE.md). Seeds a programme of realistic size (scripts/bench/seed.js),
 // then measures what staff wait for: the Home dashboard, the client list and search, a client's record and
-// timeline, the visits list, the Supplies page, saving a visit that hands out supplies, a device's first sync,
+// timeline, the visits list, the Supplies page, a publication release for the fiscal year, saving a visit that
+// hands out supplies, a device's first sync,
 // server start-up and memory, and 50 navigators working at once.
 //
 //   node scripts/bench/run.js [--root <checkout>] [--out results.json] [--small] [--no-load] [--data <dir>]
@@ -125,6 +126,27 @@ const kb = (n) => Math.round(n / 1024);
   for (let k = 1; k <= 2; k++) await measure(`dashboard FY admin #${k}`, get(admin, `/api/reports/dashboard?${FY}`));
   await measure('dashboard FY navigator (2,000 caseload)', get(nav, `/api/reports/dashboard?${FY}`));
   await measure('dashboard default 90 days admin', get(admin, '/api/reports/dashboard'));
+  // 5. A publication release for the fiscal year (server/publication-release.js; ADR-0009): the funder report,
+  // the NDP log and the settlement report for the whole programme, read and audited together, as the Reports page
+  // asks for them. The disclosure audit runs in a worker thread, so max_stall_ms is how long this server's main
+  // thread - every other person's request - was held while a year of 20,000 clients was released.
+  const release = async (period = FY) => {
+    const rs = await Promise.all(['funder', 'naloxone-ndp', 'opioid-settlement'].map((p) => admin.get(`/api/reports/${p}?${period}&purpose=publication`)));
+    // A 422 is the release refusing to publish (its disclosure check reached its work limit, say): an outcome
+    // worth measuring, and reported as such, not an error of the harness.
+    rs.forEach((r, i) => { if (r.status !== 422) expectOk(r, `publication release ${i}`); });
+    const refused = rs.filter((r) => r.status === 422);
+    return { note: refused.length ? `refused (422): ${String(refused[0].json && refused[0].json.error).slice(0, 140)}` : 'published',
+      metrics: { json_kb: kb(rs.reduce((n, r) => n + r.rawBytes, 0)), wire_kb: kb(rs.reduce((n, r) => n + r.wireBytes, 0)) } };
+  };
+  for (let k = 1; k <= 2; k++) await measure(`publication release FY (funder + NDP + settlement) #${k}`, () => release());
+  // ... and what a navigator waits for meanwhile: their client list, asked for while the release is audited.
+  await measure('client list navigator during a publication release (calendar 2025)', async () => {
+    // Another standard period, so it is not answered from the FY run's cache.
+    const rel = release('from=2025-01-01&to=2025-12-31'); await new Promise((r) => setTimeout(r, 50));
+    const t1 = process.hrtime.bigint(); expectOk(await nav.get('/api/clients?limit=50'), 'client list'); const listMs = Number(process.hrtime.bigint() - t1) / 1e6;
+    const r = await rel; return { note: `release ${r.note}`, metrics: { list_ms: Math.round(listMs) } };
+  });
   // 4. Supplies (Home fetches /api/supplies for anyone who records visits)
   for (let k = 1; k <= 2; k++) await measure(`supplies page (GET /api/supplies) #${k}`, get(admin, '/api/supplies'));
   await measure('supplies alerts', get(admin, '/api/supplies/alerts'));
@@ -257,7 +279,7 @@ function gitHead(root) { try { return require('node:child_process').execSync('gi
 
 function compare(a, b) {
   const A = JSON.parse(fs.readFileSync(a, 'utf8')); const B = JSON.parse(fs.readFileSync(b, 'utf8'));
-  const keys = ['wall_ms', 'max_stall_ms', 'per_entry_us', 'json_kb', 'wire_kb', 'wire_mb', 'json_mb', 'worst_page_ms', 'avg_ms', 'rss_mb', 'rss_mb_after', 'ops_per_s', 'errors', 'list_p50', 'list_p95', 'view_p50', 'view_p95', 'timeline_p50', 'timeline_p95', 'save_p50', 'save_p95', 'pages', 'rows'];
+  const keys = ['wall_ms', 'max_stall_ms', 'per_entry_us', 'json_kb', 'wire_kb', 'wire_mb', 'json_mb', 'worst_page_ms', 'avg_ms', 'list_ms', 'rss_mb', 'rss_mb_after', 'ops_per_s', 'errors', 'list_p50', 'list_p95', 'view_p50', 'view_p95', 'timeline_p50', 'timeline_p95', 'save_p50', 'save_p95', 'pages', 'rows'];
   console.log(`| Measurement | Before (${A.commit}) | After (${B.commit}) |\n|---|---|---|`);
   for (const r of A.rows) {
     const s = B.rows.find(x => x.label === r.label) || {};

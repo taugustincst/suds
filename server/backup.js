@@ -438,7 +438,9 @@ function restoreHeld(plainBytes) {
   // a failure here). Up to 1.13.0 it stayed in plaintext beside the live database indefinitely.
   let kept = aside;
   try { const sealed = `${aside}.enc`; encryptFileSync(aside, sealed); secureUnlink(aside); kept = sealed; }
-  catch (e) { console.warn(`[suds] ${JSON.stringify({ event: 'restore.aside_seal_failed', error: String(e && e.message || e).slice(0, 200) })}`); }
+  // A failure is retried by housekeeping every hour and reported, with the file's name, on Settings → Security
+  // status and by /api/health until it succeeds (server/db.js plaintextCopies).
+  catch (e) { db.noteSealError(aside, e); console.warn(`[suds] ${JSON.stringify({ event: 'restore.aside_seal_failed', error: String(e && e.message || e).slice(0, 200) })}`); }
   return { ...info, previous_database_kept_at: kept };
 }
 

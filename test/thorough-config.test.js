@@ -18,13 +18,26 @@ test('npm test does not run test/thorough; the thorough run finds it and every t
   for (const f of fs.readdirSync(path.join(root, 'test', 'thorough'))) assert.ok(f.endsWith('.test.js'), `${f}: test/thorough holds tests only`);
 });
 
-test('the thorough CI job runs the thorough set with SUDS_THOROUGH=1 and is required by the release gate', () => {
+test('the thorough CI jobs run the thorough set with SUDS_THOROUGH=1, split in two, and are required by the release gate', () => {
   const ci = fs.readFileSync(path.join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
-  const job = ci.slice(ci.indexOf('\n  thorough:'), ci.indexOf('\n  browser:'));
-  assert.match(job, /SUDS_THOROUGH: '1'/);
-  assert.match(job, /node scripts\/test-thorough\.js/);
-  assert.ok(!/continue-on-error/.test(job));
-  assert.ok(require('../scripts/release-gate').REQUIRED_JOBS.includes('thorough'));
+  const job = ci.slice(ci.indexOf('\n  thorough:'), ci.indexOf('\n  thorough-sdc:'));
+  const sdc = ci.slice(ci.indexOf('\n  thorough-sdc:'), ci.indexOf('\n  browser:'));
+  for (const [j, part] of [[job, 'rest'], [sdc, 'sdc']]) {
+    assert.match(j, /SUDS_THOROUGH: '1'/);
+    assert.match(j, new RegExp(`node scripts/test-thorough\\.js --part ${part}(\\n|$)`));
+    assert.ok(!/continue-on-error/.test(j));
+    const minutes = Number((/timeout-minutes: (\d+)/.exec(j) || [])[1]);
+    assert.ok(minutes >= 30, 'room for a slower runner');
+  }
+  const { REQUIRED_JOBS } = require('../scripts/release-gate');
+  assert.ok(REQUIRED_JOBS.includes('thorough') && REQUIRED_JOBS.includes('thorough-sdc'));
+  // The two parts are the whole set, with nothing in both and nothing left out.
+  const { thoroughFiles, SDC_SWEEPS } = require('../scripts/test-thorough');
+  const all = thoroughFiles(); const a = thoroughFiles('sdc'); const b = thoroughFiles('rest');
+  assert.deepEqual([...a, ...b].sort(), all.slice().sort());
+  assert.ok(!a.some((f) => b.includes(f)));
+  assert.deepEqual(a.slice().sort(), SDC_SWEEPS.slice().sort(), 'every SDC sweep file exists and has a thorough mode');
+  assert.throws(() => thoroughFiles('other'));
 });
 
 test('no test outside test/thorough asserts a fixed wall-clock budget', () => {

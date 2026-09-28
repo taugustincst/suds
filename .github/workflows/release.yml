@@ -63,12 +63,20 @@ jobs:
         run: |
           git fetch --quiet --depth 1 origin '+refs/tags/v*:refs/tags/v*'
           node scripts/release-policy.js
+  # The `release` environment: once the owner adds a required reviewer to it (GitHub -> Settings ->
+  # Environments -> release; docs/RELEASE.md, "Owner control over releases"), this job waits for that person's
+  # approval before anything is tested, packaged or published, however the workflow was started. Without the
+  # setting the environment is created on first use and does not wait.
   release:
     needs: gate
     runs-on: ubuntu-latest
+    environment: release
     if: github.event_name == 'push' || github.event.inputs.confirm == 'release'
     env:
       GH_TOKEN: ${{ github.token }}
+      # Who started the release, recorded in the release notes. Through the environment, never pasted into a script.
+      RELEASE_ACTOR: ${{ github.actor }}
+      RELEASE_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
     steps:
       - name: Check out
         run: git clone --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
@@ -127,6 +135,10 @@ jobs:
           git fetch --quiet --depth 1 origin '+refs/tags/v*:refs/tags/v*' || true
           node scripts/release-policy.js --notes-out "$RUNNER_TEMP/policy-notes.md"
           if [ -s "$RUNNER_TEMP/policy-notes.md" ]; then notes="$(cat "$RUNNER_TEMP/policy-notes.md")"$'\n\n'"${notes}"; fi
+          # Who released it: the account that pushed the tag or dispatched the workflow (and, on a re-run, who re-ran it).
+          by="Released by @${RELEASE_ACTOR} (${GITHUB_EVENT_NAME}, run ${GITHUB_RUN_ID})"
+          if [ -n "${RELEASE_TRIGGERING_ACTOR}" ] && [ "${RELEASE_TRIGGERING_ACTOR}" != "${RELEASE_ACTOR}" ]; then by="${by}, re-run by @${RELEASE_TRIGGERING_ACTOR}"; fi
+          notes="${notes:-See CHANGELOG.md}"$'\n\n'"---"$'\n'"${by}."
           if gh release view "$ver" >/dev/null 2>&1; then gh release upload "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --clobber; else
             gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --target "$(git rev-parse HEAD)" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}"; fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$ver"

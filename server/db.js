@@ -100,6 +100,13 @@ function rebuildTable(d, schemaText, table, coalesce = {}) {
     if (im) d.exec(line.trim());
   }
 }
+// Numbering (ADR-0007, "Numbering across branches"). A migration's position in this array is the schema
+// version it moves a database to, so once released it keeps that position and its code for good. Each entry is
+// headed by a comment `// N: what it does` at two spaces' indent, N being its position from 1; a new one is
+// appended at the end with the next number, and a branch that meets another branch's migration of the same
+// number renumbers its own (write migrations self-contained and idempotent so they can be). Continuation lines
+// of a header are indented further. scripts/migration-order.js (test/migration-order.test.js) fails when a
+// released migration moved, changed or went, or a header does not carry its position.
 const migrations = [
   // 1: initial schema (created by schema.sql)
   () => {},
@@ -844,9 +851,9 @@ function sealSnapshots(dbPath) {
       try { fs.unlinkSync(sealed); } catch {}
       backup.encryptFileSync(plain, sealed);
       backup.secureUnlink(plain);
-      console.log(`[suds] ${JSON.stringify({ event: 'db.snapshot_sealed', file: path.basename(sealed) })}`);
+      sealErrors.delete(plain); console.log(`[suds] ${JSON.stringify({ event: 'db.snapshot_sealed', file: path.basename(sealed) })}`);
     } catch (e) {
-      console.warn(`[suds] ${JSON.stringify({ event: 'db.snapshot_seal_failed', file: f, error: String(e && e.message || e).slice(0, 200) })}`);
+      noteSealError(plain, e); console.warn(`[suds] ${JSON.stringify({ event: 'db.snapshot_seal_failed', file: f, error: String(e && e.message || e).slice(0, 200) })}`);
     }
   }
   const cutoff = Date.now() - SNAPSHOT_KEEP_DAYS * 86400000;
@@ -876,11 +883,37 @@ function sealRestoreAsides(dbPath, backup) {
       const sealed = `${p}.enc`;
       try { fs.unlinkSync(sealed); } catch {}
       backup.encryptFileSync(p, sealed); backup.secureUnlink(p);
-      console.log(`[suds] ${JSON.stringify({ event: 'db.restore_aside_sealed', file: path.basename(sealed) })}`);
+      sealErrors.delete(p); console.log(`[suds] ${JSON.stringify({ event: 'db.restore_aside_sealed', file: path.basename(sealed) })}`);
     } catch (e) {
-      console.warn(`[suds] ${JSON.stringify({ event: 'db.restore_aside_seal_failed', file: f, error: String(e && e.message || e).slice(0, 200) })}`);
+      noteSealError(p, e); console.warn(`[suds] ${JSON.stringify({ event: 'db.restore_aside_seal_failed', file: f, error: String(e && e.message || e).slice(0, 200) })}`);
     }
   }
+}
+
+// A copy of the whole database still in plaintext beside it, once the server is running, means a seal above
+// (or restore()'s own) failed: a restore aside or a pre-migration snapshot. Until 1.16.0 that was one warning
+// line in the log, and the copy stayed plain until the next start. Now housekeeping retries the seal every hour
+// (sealPlaintextCopies), and each copy still plain is reported on Settings → Security status and by
+// /api/health, by file name, with what to do (server/security-status.js). `plaintextCopies` lists them; the
+// last seal error for each is kept in memory to say why.
+const sealErrors = new Map();
+function noteSealError(file, e) { sealErrors.set(file, { at: new Date().toISOString(), error: String(e && e.message || e).slice(0, 200) }); }
+function plaintextCopies(dbPath = openedPath) {
+  if (!dbPath || dbPath === ':memory:') return [];
+  if (require('./backup-lock').current()?.name === 'restore') return []; // a restore's own copy, needed plain until it finishes
+  const out = [];
+  const add = (dir, f, kind) => { const p = path.join(dir, f); let since = null; try { since = fs.statSync(p).mtime.toISOString(); } catch { return; } out.push({ file: f, path: p, kind, since, error: sealErrors.get(p) || null }); };
+  const dir = path.dirname(dbPath);
+  try { for (const f of fs.readdirSync(dir)) if (f.startsWith(path.basename(dbPath) + '.before-restore-') && !f.endsWith('.enc')) add(dir, f, 'restore'); } catch {}
+  const snaps = path.join(dir, 'pre-migration');
+  try { for (const f of fs.readdirSync(snaps)) if (f.startsWith(path.basename(dbPath) + '.v') && f.endsWith('.db')) add(snaps, f, 'snapshot'); } catch {}
+  return out.sort((a, b) => a.file.localeCompare(b.file));
+}
+/** Retry sealing every plaintext copy (housekeeping, hourly); returns what is still plain afterwards. */
+function sealPlaintextCopies(dbPath = openedPath) {
+  if (!dbPath || dbPath === ':memory:') return [];
+  if (plaintextCopies(dbPath).length) sealSnapshots(dbPath);
+  return plaintextCopies(dbPath);
 }
 
 // A stable identity for one foreign_key_check violation, so the same pre-existing orphan can be recognised
@@ -1047,4 +1080,4 @@ function setSetting(key, value) {
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
+module.exports = { open, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, plaintextCopies, sealPlaintextCopies, noteSealError, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };

@@ -1,0 +1,23 @@
+# Code owners (docs/RELEASE.md, "Owner control over releases"). With branch protection on `main` set to
+# "Require review from Code Owners", a pull request that touches any path below cannot merge until the owner
+# approves it. The file only names owners; the GitHub settings that make it binding are the owner's to turn on
+# (docs/RELEASE.md lists them). The last matching line wins, so keep specific paths below general ones.
+# test/release-gate.test.js checks this file names the owner for every path listed here.
+
+# How a release is made, gated and checked
+/.github/                        @taugustincst
+/scripts/release-gate.js         @taugustincst
+/scripts/release-policy.js       @taugustincst
+/scripts/test-thorough.js        @taugustincst
+/scripts/package.js              @taugustincst
+/test/release-gate.test.js       @taugustincst
+/test/release-policy.test.js     @taugustincst
+/test/migration-order.test.js    @taugustincst
+/docs/RELEASE.md                 @taugustincst
+
+# Who may do what, what may leave the programme, and the keys
+/server/auth.js                  @taugustincst
+/server/permissions.js           @taugustincst
+/server/disclosure.js            @taugustincst
+/server/crypto.js                @taugustincst
+/local/vault.js                  @taugustincst

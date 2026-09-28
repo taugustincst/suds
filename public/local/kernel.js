@@ -43,9 +43,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/base64-js/index.js
+// ../../../node_modules/base64-js/index.js
 var require_base64_js = __commonJS({
-  "node_modules/base64-js/index.js"(exports) {
+  "../../../node_modules/base64-js/index.js"(exports) {
     "use strict";
     init_globals_inject();
     exports.byteLength = byteLength;
@@ -145,9 +145,9 @@ var require_base64_js = __commonJS({
   }
 });
 
-// node_modules/ieee754/index.js
+// ../../../node_modules/ieee754/index.js
 var require_ieee754 = __commonJS({
-  "node_modules/ieee754/index.js"(exports) {
+  "../../../node_modules/ieee754/index.js"(exports) {
     init_globals_inject();
     exports.read = function(buffer, offset, isLE3, mLen, nBytes) {
       var e, m;
@@ -229,9 +229,9 @@ var require_ieee754 = __commonJS({
   }
 });
 
-// node_modules/buffer/index.js
+// ../../../node_modules/buffer/index.js
 var require_buffer = __commonJS({
-  "node_modules/buffer/index.js"(exports) {
+  "../../../node_modules/buffer/index.js"(exports) {
     "use strict";
     init_globals_inject();
     var base64 = require_base64_js();
@@ -1906,7 +1906,7 @@ var init_path = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_assert.js
+// ../../../node_modules/@noble/ciphers/esm/_assert.js
 function isBytes(a) {
   return a instanceof Uint8Array || a != null && typeof a === "object" && a.constructor.name === "Uint8Array";
 }
@@ -1930,12 +1930,12 @@ function output(out2, instance) {
   }
 }
 var init_assert = __esm({
-  "node_modules/@noble/ciphers/esm/_assert.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/ciphers/esm/utils.js
+// ../../../node_modules/@noble/ciphers/esm/utils.js
 function utf8ToBytes(str) {
   if (typeof str !== "string")
     throw new Error(`string expected, got ${typeof str}`);
@@ -1998,7 +1998,7 @@ function clean(...arrays) {
 }
 var u8, u32, createView, isLE, wrapCipher;
 var init_utils = __esm({
-  "node_modules/@noble/ciphers/esm/utils.js"() {
+  "../../../node_modules/@noble/ciphers/esm/utils.js"() {
     init_globals_inject();
     init_assert();
     u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
@@ -2014,7 +2014,7 @@ var init_utils = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_polyval.js
+// ../../../node_modules/@noble/ciphers/esm/_polyval.js
 function _toGHASHKey(k) {
   k.reverse();
   const hiBit = k[15] & 1;
@@ -2037,7 +2037,7 @@ function wrapConstructorWithKey(hashCons) {
 }
 var BLOCK_SIZE, ZEROS16, ZEROS32, POLY, mul2, swapLE, estimateWindow, GHASH, Polyval, ghash, polyval;
 var init_polyval = __esm({
-  "node_modules/@noble/ciphers/esm/_polyval.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_polyval.js"() {
     init_globals_inject();
     init_assert();
     init_utils();
@@ -2212,7 +2212,7 @@ var init_polyval = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/aes.js
+// ../../../node_modules/@noble/ciphers/esm/aes.js
 function mul22(n) {
   return n << 1 ^ POLY2 & -(n >> 7);
 }
@@ -2492,7 +2492,7 @@ function decryptBlock(xk, block) {
 }
 var BLOCK_SIZE2, BLOCK_SIZE32, EMPTY_BLOCK, POLY2, sbox, invSbox, rotr32_8, rotl32_8, byteSwap, tableEncoding, tableDecoding, xPowers, ctr, ecb, cbc, cfb, gcm, limit, siv, AESW, AESKW_IV, aeskw, AESKWP_IV, aeskwp;
 var init_aes = __esm({
-  "node_modules/@noble/ciphers/esm/aes.js"() {
+  "../../../node_modules/@noble/ciphers/esm/aes.js"() {
     init_globals_inject();
     init_assert();
     init_polyval();
@@ -2965,7 +2965,7 @@ var init_aes = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_assert.js
+// ../../../node_modules/@noble/hashes/esm/_assert.js
 function number(n) {
   if (!Number.isSafeInteger(n) || n < 0)
     throw new Error(`positive integer expected, not ${n}`);
@@ -2999,21 +2999,21 @@ function output2(out2, instance) {
   }
 }
 var init_assert2 = __esm({
-  "node_modules/@noble/hashes/esm/_assert.js"() {
+  "../../../node_modules/@noble/hashes/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/hashes/esm/crypto.js
+// ../../../node_modules/@noble/hashes/esm/crypto.js
 var crypto2;
 var init_crypto = __esm({
-  "node_modules/@noble/hashes/esm/crypto.js"() {
+  "../../../node_modules/@noble/hashes/esm/crypto.js"() {
     init_globals_inject();
     crypto2 = typeof globalThis === "object" && "crypto" in globalThis ? globalThis.crypto : void 0;
   }
 });
 
-// node_modules/@noble/hashes/esm/utils.js
+// ../../../node_modules/@noble/hashes/esm/utils.js
 function byteSwap32(arr) {
   for (let i = 0; i < arr.length; i++) {
     arr[i] = byteSwap2(arr[i]);
@@ -3055,7 +3055,7 @@ function randomBytes(bytesLength = 32) {
 }
 var u322, createView2, rotr, rotl, isLE2, byteSwap2, Hash, toStr;
 var init_utils2 = __esm({
-  "node_modules/@noble/hashes/esm/utils.js"() {
+  "../../../node_modules/@noble/hashes/esm/utils.js"() {
     init_globals_inject();
     init_crypto();
     init_assert2();
@@ -3075,7 +3075,7 @@ var init_utils2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_md.js
+// ../../../node_modules/@noble/hashes/esm/_md.js
 function setBigUint642(view, byteOffset, value, isLE3) {
   if (typeof view.setBigUint64 === "function")
     return view.setBigUint64(byteOffset, value, isLE3);
@@ -3090,7 +3090,7 @@ function setBigUint642(view, byteOffset, value, isLE3) {
 }
 var Chi, Maj, HashMD;
 var init_md = __esm({
-  "node_modules/@noble/hashes/esm/_md.js"() {
+  "../../../node_modules/@noble/hashes/esm/_md.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3185,10 +3185,10 @@ var init_md = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha256.js
+// ../../../node_modules/@noble/hashes/esm/sha256.js
 var SHA256_K, SHA256_IV, SHA256_W, SHA256, sha256;
 var init_sha256 = __esm({
-  "node_modules/@noble/hashes/esm/sha256.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha256.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3343,10 +3343,10 @@ var init_sha256 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha1.js
+// ../../../node_modules/@noble/hashes/esm/sha1.js
 var SHA1_IV, SHA1_W, SHA1, sha1;
 var init_sha1 = __esm({
-  "node_modules/@noble/hashes/esm/sha1.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha1.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3425,10 +3425,10 @@ var init_sha1 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/hmac.js
+// ../../../node_modules/@noble/hashes/esm/hmac.js
 var HMAC, hmac;
 var init_hmac = __esm({
-  "node_modules/@noble/hashes/esm/hmac.js"() {
+  "../../../node_modules/@noble/hashes/esm/hmac.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3498,7 +3498,7 @@ var init_hmac = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/pbkdf2.js
+// ../../../node_modules/@noble/hashes/esm/pbkdf2.js
 function pbkdf2Init(hash2, _password, _salt, _opts) {
   hash(hash2);
   const opts = checkOpts({ dkLen: 32, asyncTick: 10 }, _opts);
@@ -3543,7 +3543,7 @@ function pbkdf2(hash2, password, salt, opts) {
   return pbkdf2Output(PRF, PRFSalt, DK, prfW, u);
 }
 var init_pbkdf2 = __esm({
-  "node_modules/@noble/hashes/esm/pbkdf2.js"() {
+  "../../../node_modules/@noble/hashes/esm/pbkdf2.js"() {
     init_globals_inject();
     init_assert2();
     init_hmac();
@@ -3551,7 +3551,7 @@ var init_pbkdf2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/scrypt.js
+// ../../../node_modules/@noble/hashes/esm/scrypt.js
 function XorAndSalsa(prev, pi, input, ii, out2, oi) {
   let y00 = prev[pi++] ^ input[ii++], y01 = prev[pi++] ^ input[ii++];
   let y02 = prev[pi++] ^ input[ii++], y03 = prev[pi++] ^ input[ii++];
@@ -3707,7 +3707,7 @@ function scrypt(password, salt, opts) {
   return scryptOutput(password, dkLen, B2, V, tmp);
 }
 var init_scrypt = __esm({
-  "node_modules/@noble/hashes/esm/scrypt.js"() {
+  "../../../node_modules/@noble/hashes/esm/scrypt.js"() {
     init_globals_inject();
     init_assert2();
     init_sha256();
@@ -3852,9 +3852,9 @@ var init_crypto2 = __esm({
   }
 });
 
-// node_modules/sql.js/dist/sql-wasm.js
+// ../../../node_modules/sql.js/dist/sql-wasm.js
 var require_sql_wasm = __commonJS({
-  "node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
+  "../../../node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
     init_globals_inject();
     var initSqlJsPromise = void 0;
     var initSqlJs = function(moduleConfig) {
@@ -9342,7 +9342,7 @@ var require_csp = __commonJS({
   }
 });
 
-// node_modules/fflate/esm/browser.js
+// ../../../node_modules/fflate/esm/browser.js
 function deflateSync(data, opts) {
   return dopt(data, opts || {}, 0, 0);
 }
@@ -9362,7 +9362,7 @@ function unzlibSync(data, opts) {
 }
 var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
 var init_browser = __esm({
-  "node_modules/fflate/esm/browser.js"() {
+  "../../../node_modules/fflate/esm/browser.js"() {
     init_globals_inject();
     u82 = Uint8Array;
     u16 = Uint16Array;
@@ -19028,6 +19028,7 @@ try {
         secureUnlink(aside);
         kept = sealed;
       } catch (e) {
+        db3.noteSealError(aside, e);
         console.warn(`[suds] ${JSON.stringify({ event: "restore.aside_seal_failed", error: String(e && e.message || e).slice(0, 200) })}`);
       }
       return { ...info, previous_database_kept_at: kept };
@@ -19933,6 +19934,17 @@ var require_security_status = __commonJS({
         "server/dr-drill.js; report in <data>/backups/dr-drill-*.json"
       );
       add("Backups and recovery", "Monthly recovery drill", db3.getSetting("dr_drill_monthly", "0") === "1" ? "ok" : "info", db3.getSetting("dr_drill_monthly", "0") === "1" ? "on" : "off", "Settings \u2192 Scheduled backups.", "server/dr-drill.js runIfDue");
+      {
+        const plain = db3.plaintextCopies();
+        add(
+          "Backups and recovery",
+          "Unencrypted database copies",
+          plain.length ? "bad" : "ok",
+          plain.length ? `${plain.length} not encrypted: ${plain.map((p) => p.file).join(", ")}` : "none: restore undo copies and pre-migration snapshots are sealed",
+          plain.length ? plainCopiesAdvice(plain) : "A restore's undo copy and an upgrade's snapshot are encrypted with the backup key as soon as they are no longer needed in plaintext; a failure is retried every hour.",
+          "server/db.js plaintextCopies, sealPlaintextCopies"
+        );
+      }
       add("Backups and recovery", "Backup encryption key", config2.backupKey ? "ok" : "info", config2.backupKey ? "separate SUDS_BACKUP_KEY" : "derived from the PHI encryption key", config2.backupKey ? "" : "Setting SUDS_BACKUP_KEY lets the PHI key rotate without re-keying the backup set.", "server/backup.js");
       const verifiedAt = db3.getSetting("audit_verified_at", null);
       const fullAt = db3.getSetting("audit_full_verified_at", null);
@@ -20032,7 +20044,10 @@ var require_security_status = __commonJS({
       for (const i of items) counts[i.level]++;
       return { generated_at: db3.now(), version: config2.version, counts, items, mfa, attestation: "SUDS holds no SOC 2, ISO 27001, HITRUST, StateRAMP or FedRAMP attestation. This page reports the technical controls in this installation; independent attestation requires an auditor (docs/security/SOC2-READINESS.md)." };
     }
-    module.exports = { status, mfaReport, validateSettings };
+    function plainCopiesAdvice(plain) {
+      return plain.map((p) => `${p.path} (${p.kind === "restore" ? "the database as it was before a restore, kept to undo it" : "a snapshot taken before a schema upgrade"}; since ${p.since}) holds every record unencrypted${p.error ? `; sealing it failed: ${p.error.error}` : ""}.`).join(" ") + " SUDS tries again every hour. Make room on the disk and check that SUDS can write to that folder; the next hourly try (or a restart) then seals it. If it is not needed, delete it securely instead (shred -u, or your platform's secure delete).";
+    }
+    module.exports = { status, mfaReport, validateSettings, plainCopiesAdvice };
   }
 });
 
@@ -21567,6 +21582,7 @@ var require_app = __commonJS({
           const snap = db3.getSetting("last_snapshot_status", "") || "";
           if (minutes && lastSnap && Date.now() - Date.parse(lastSnap) > 3 * minutes * 6e4) warnings.push(`Snapshots are set for every ${minutes} minutes but the last one ran ${lastSnap}.`);
           if (minutes && /^failed/.test(snap)) warnings.push(`The last snapshot reported: ${snap}`);
+          for (const p of db3.plaintextCopies()) warnings.push(`The database copy ${p.file} (${p.kind === "restore" ? "set aside by a restore" : "taken before an upgrade"}) is not encrypted: sealing it failed. SUDS retries every hour; free disk space and check the data directory's permissions, or delete it securely if it is not needed. See Security status.`);
           for (const x of db3.indexProblems()) warnings.push(`The database index ${x.index} is missing and could not be created (${x.error}). See Security status.`);
           const crt = path.join(config2.dataDir, "certs", "suds.crt");
           if (fs.existsSync(crt)) {
@@ -41355,8 +41371,10 @@ var require_db = __commonJS({
           }
           backup.encryptFileSync(plain, sealed);
           backup.secureUnlink(plain);
+          sealErrors.delete(plain);
           console.log(`[suds] ${JSON.stringify({ event: "db.snapshot_sealed", file: path.basename(sealed) })}`);
         } catch (e) {
+          noteSealError(plain, e);
           console.warn(`[suds] ${JSON.stringify({ event: "db.snapshot_seal_failed", file: f, error: String(e && e.message || e).slice(0, 200) })}`);
         }
       }
@@ -41400,11 +41418,48 @@ var require_db = __commonJS({
           }
           backup.encryptFileSync(p, sealed);
           backup.secureUnlink(p);
+          sealErrors.delete(p);
           console.log(`[suds] ${JSON.stringify({ event: "db.restore_aside_sealed", file: path.basename(sealed) })}`);
         } catch (e) {
+          noteSealError(p, e);
           console.warn(`[suds] ${JSON.stringify({ event: "db.restore_aside_seal_failed", file: f, error: String(e && e.message || e).slice(0, 200) })}`);
         }
       }
+    }
+    var sealErrors = /* @__PURE__ */ new Map();
+    function noteSealError(file, e) {
+      sealErrors.set(file, { at: (/* @__PURE__ */ new Date()).toISOString(), error: String(e && e.message || e).slice(0, 200) });
+    }
+    function plaintextCopies(dbPath = openedPath) {
+      if (!dbPath || dbPath === ":memory:") return [];
+      if (require_backup_lock().current()?.name === "restore") return [];
+      const out2 = [];
+      const add = (dir2, f, kind) => {
+        const p = path.join(dir2, f);
+        let since = null;
+        try {
+          since = fs.statSync(p).mtime.toISOString();
+        } catch {
+          return;
+        }
+        out2.push({ file: f, path: p, kind, since, error: sealErrors.get(p) || null });
+      };
+      const dir = path.dirname(dbPath);
+      try {
+        for (const f of fs.readdirSync(dir)) if (f.startsWith(path.basename(dbPath) + ".before-restore-") && !f.endsWith(".enc")) add(dir, f, "restore");
+      } catch {
+      }
+      const snaps = path.join(dir, "pre-migration");
+      try {
+        for (const f of fs.readdirSync(snaps)) if (f.startsWith(path.basename(dbPath) + ".v") && f.endsWith(".db")) add(snaps, f, "snapshot");
+      } catch {
+      }
+      return out2.sort((a, b) => a.file.localeCompare(b.file));
+    }
+    function sealPlaintextCopies(dbPath = openedPath) {
+      if (!dbPath || dbPath === ":memory:") return [];
+      if (plaintextCopies(dbPath).length) sealSnapshots(dbPath);
+      return plaintextCopies(dbPath);
     }
     function fkViolationKeys(d) {
       return new Set(d.prepare("PRAGMA foreign_key_check").all().map((r) => `${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
@@ -41599,7 +41654,7 @@ var require_db = __commonJS({
     function tombstone(table, id) {
       run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now2());
     }
-    module.exports = { open: open3, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
+    module.exports = { open: open3, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, plaintextCopies, sealPlaintextCopies, noteSealError, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
   }
 });
 

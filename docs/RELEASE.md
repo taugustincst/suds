@@ -1,7 +1,7 @@
 # Releasing SUDS
 
 ## Production readiness checklist (per release)
-- [ ] CI is green for the exact commit being released: `npm test`, the browser suite (`scripts/ui/run-all.sh`, 38 scripts including the first-run wizard, local mode, sync, device encryption and recovery, the static build, accessibility and the QA-regression script `a11y-round4`), Node 24 and the recovery drill. The release workflow enforces this (see *Release gate* below); the box is here so nobody tags a commit they have not seen pass
+- [ ] CI is green for the exact commit being released: `npm test`, the browser suite (`scripts/ui/run-all.sh`, 39 scripts including the first-run wizard, local mode, sync, device encryption and recovery, the static build, accessibility and the QA-regression script `a11y-round4`), Node 24 and the recovery drill. The release workflow enforces this (see *Release gate* below); the box is here so nobody tags a commit they have not seen pass
 - [ ] `CHANGELOG.md` has a section for the version, `package.json` version matches
 - [ ] Docs updated (`README.md`, `docs/INSTALL.md`, `docs/DEPLOYMENT.md`, `docs/HIPAA.md`)
 - [ ] No secrets, databases or `data/` contents in the tree (`git status`, `.gitignore`)
@@ -44,7 +44,10 @@ anything the table above keeps for feature releases:
 * a schema migration (`server/db.js`, the length of the `migrations` array),
 * a permission (`server/auth.js` `PERMS`: a permission name not in the previous release, or an existing one
   granted to another role),
-* a route (every `METHOD path` the route modules register, including generated CRUD routes).
+* a route (every `METHOD path` the route modules register, including generated CRUD routes, and — since
+  1.16.0 — every route the browser kernel registers itself: the `/api/local/*` device routes in
+  `local/kernel.js` and `local/sync.js`, read from their source because the kernel only runs in a browser),
+* more than **1,500 added lines** outside docs, tests and generated files (below, *Patch releases stay small*).
 
 A minor or major bump may add all of these; it is held to the cadence instead (below). When a release
 genuinely has to break the policy (a security fix that needs a route, say), run it from the Actions tab
@@ -54,6 +57,38 @@ reviewing the release reads it. A tag push cannot carry an exception; an empty i
 input was called `allow_patch_changes` and covered patch releases only; that name still works, with the same
 effect. Dry run before tagging: `node scripts/release-policy.js` (compares the working tree with the latest
 tag; `--now <date>` to ask as of another day). The logic is tested in `test/release-policy.test.js`.
+
+### Patch releases stay small
+
+A fix release can carry a feature without adding a route, a permission or a migration — a new screen, a new
+report built from existing endpoints. So, **for a patch bump**, the same gate step also measures the release:
+the lines it **adds** against the previous tag (`git diff --numstat -M <previous tag>`), counting every file
+except
+
+* documentation: `docs/`, any `*.md` (the CHANGELOG among them),
+* tests: `test/`, the browser suite `scripts/ui/`, the benchmarks `scripts/bench/`,
+* generated files: `public/local/` (the kernel `npm run build:local` builds), `server/schema-text.js`,
+  `public/sw.js`, `package-lock.json`.
+
+More than **1,500** such lines fails the patch release (`PATCH_MAX_ADDED_LINES` in
+`scripts/release-policy.js`; for one run, `PATCH_MAX_ADDED_LINES=<n>` in the environment of a dry run). The
+refusal names the three largest files. The override is the same as for every other rule: a
+**`policy_exception`** with the reason, printed at the top of the release notes. Lines removed do not count, so
+a fix that deletes code is never held back by it. Tested with an injected diff in `test/release-policy.test.js`.
+
+What the recent patch releases would have scored (`node scripts/release-policy.js --version <v> --previous <tag> --next-ref v<v>`):
+
+| Release | Counted lines added | Size rule | Whole check |
+| --- | --- | --- | --- |
+| 1.14.1 | 24 | pass | pass |
+| 1.15.1 | 488 | pass | **fail**: three new device routes (`POST /api/local/recover`, `/api/local/recovery`, `/api/local/recovery/saved`), which the check did not see before 1.16.0 |
+| 1.15.2 | 176 | pass | pass |
+| 1.15.3 | 649 | pass | pass |
+
+For scale: the largest patch release so far was 1.12.1 (944 lines), and the feature releases 1.13.0 and
+1.14.0 added 2,092 and 7,632. The size rule is a backstop for a large feature, not a measure of what counts as
+a fix: 1.15.3's usability changes were small enough to pass it, and deciding whether a release is a fix release
+stays the job of the human review of its notes (rule 2 above).
 
 ### Feature releases are checked too
 
@@ -99,18 +134,80 @@ git tag v1.0.1 && git push origin v1.0.1
 Pushing the tag runs `.github/workflows/release.yml` (or start it from the Actions tab with *Run workflow* → type `release`; it then creates the tag itself), which first passes the release gate (below), then re-runs the tests, packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release with the zip attached. As its last step it starts the web-app (GitHub Pages) workflow for the new tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses marketplace actions, so they run under restrictive Actions policies.
 
 ### Release gate
-QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` runs `scripts/release-gate.js` for the commit being released (`GITHUB_SHA`) before anything is built. It asks the GitHub API (with the workflow's own token — no marketplace action) for the runs of `ci.yml` on that exact commit, counts only `push` runs (a `pull_request` run tests a merge commit, not this one), and passes only when one of them **concluded success with the `test`, `thorough`, `browser`, `node24` and `dr-drill` jobs all successful** (`thorough` runs, with `SUDS_THOROUGH=1`, the publication-release disclosure sweeps at full size — `npm test` runs a sample — and the performance checks in `test/thorough/`, which `npm test` leaves out so a busy runner cannot flake it: `npm run test:thorough`):
+QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` runs `scripts/release-gate.js` for the commit being released (`GITHUB_SHA`) before anything is built. It asks the GitHub API (with the workflow's own token — no marketplace action) for the runs of `ci.yml` on that exact commit, counts only `push` runs (a `pull_request` run tests a merge commit, not this one), and passes only when one of them **concluded success with the `test`, `thorough`, `thorough-sdc`, `browser`, `node24` and `dr-drill` jobs all successful** (with `SUDS_THOROUGH=1`, `thorough-sdc` runs the publication-release disclosure sweeps at full size — `npm test` runs a sample — and `thorough` the performance checks in `test/thorough/` and the other timing budgets, which `npm test` leaves out so a busy runner cannot flake it; `npm run test:thorough` runs both, `node scripts/test-thorough.js --part sdc|rest` either. Until 1.16.0 they were one job that took about 25 of its 30 minutes; the sweeps now have their own, with a 60-minute limit):
 
 | CI job | What it proves |
 | --- | --- |
 | `test` | `npm test`, the committed kernel and generated schema match their sources, the package builds, browser modules parse |
-| `browser` | the whole browser suite, `scripts/ui/run-all.sh` — 38 scripts, including `accessibility` (fails on any WCAG 2.1 AA finding) and the QA-regression script `a11y-round4` |
+| `browser` | the whole browser suite, `scripts/ui/run-all.sh` — 39 scripts, including `accessibility` (fails on any WCAG 2.1 AA finding) and the QA-regression script `a11y-round4` |
 | `node24` | `npm test` on the next Node LTS line |
+| `thorough` | the performance checks (`test/thorough/`) and timing budgets, at full size |
+| `thorough-sdc` | the statistical-disclosure-control attacker sweeps at full size (`scripts/test-thorough.js` `SDC_SWEEPS`) |
 | `dr-drill` | backup and restore actually work: `scripts/dr-exercise.js` (seed, encrypted backup through the scheduled path, `npm run dr-drill` with an escrowed key file, host restore into a fresh data directory, row counts, audit chain, signed report verified with the public key); the signed report is printed in the job log |
 
 `webkit` stays advisory (`continue-on-error`) and is not checked. If CI on the commit is still running (a tag pushed together with its commit) the gate waits, up to an hour (`RELEASE_GATE_WAIT_MINUTES`). A failed or missing required job fails the release with the reason; fix it (or re-run a flaky job — the latest attempt counts) and run the release again. The `release` job then checks out exactly the gated commit, so a branch that moved in the meantime cannot slip an untested commit in. The decision logic is tested in `test/release-gate.test.js`, which also fails if a required job is renamed out of `ci.yml`.
 
 1.11.0 itself was published while its `browser` job had failed — the case this gate now refuses.
+
+### Owner control over releases
+The gate proves CI passed; it does not prove the owner agreed. Anyone with write access can push a `v*` tag or
+dispatch the workflow, and the checks above run with whatever the pushed commit says. Three things, prepared in
+the repository since 1.16.0, put the owner in the path; **the first two only take effect once the owner turns
+on the GitHub settings below** (an assistant or a workflow cannot change repository settings).
+
+* **`environment: release`** on the `release` job in `release.yml`. The job then waits for a reviewer's
+  approval, after the gate and before anything is tested, packaged or published, however it was started (a
+  tag push or *Run workflow*).
+* **`.github/CODEOWNERS`** names `@taugustincst` for the release machinery (`.github/`, `scripts/release-gate.js`,
+  `scripts/release-policy.js`, `scripts/test-thorough.js`, `scripts/package.js`, their tests, this file) and for
+  the modules that decide who may do what and what may leave the programme: `server/auth.js`,
+  `server/permissions.js`, `server/disclosure.js`, `server/crypto.js`, `local/vault.js`.
+  `test/release-gate.test.js` fails if a listed path is renamed away from its owner.
+* **Who released it** is written at the foot of the GitHub Release notes: `Released by @<github.actor>
+  (<event>, run <id>)`, and `re-run by @<github.triggering_actor>` when someone else re-ran it.
+
+**What the owner must turn on (GitHub → the repository → Settings):**
+
+1. **Environments → New environment → `release`** (or open it, once the first release has created it):
+   * tick **Required reviewers** and add `taugustincst` (up to six people or teams may be listed; one approval
+     releases);
+   * tick **Prevent self-review**, so the person who pushed the tag or dispatched the run cannot approve it
+     themselves (leave it off only while the owner is the sole releaser);
+   * under **Deployment branches and tags**, choose *Selected branches and tags* and add the rules `main`
+     (branch, for *Run workflow*) and `v*` (tag), so the job cannot run from any other ref.
+2. **Branches → Add branch ruleset** (or *Add classic branch protection rule*) for **`main`**:
+   * **Require a pull request before merging**, with **Required approvals: 1** and **Require review from Code
+     Owners**; tick **Dismiss stale pull request approvals when new commits are pushed**;
+   * **Require status checks to pass**, with **Require branches to be up to date before merging**, and add the
+     CI jobs `test`, `thorough`, `thorough-sdc`, `browser`, `node24` and `dr-drill` (the release gate's
+     `REQUIRED_JOBS`; they appear in the list once they have run on a pull request);
+   * **Block force pushes** and **Restrict deletions**;
+   * **Do not allow bypassing the above settings** (classic: *Include administrators*), or the owner's own
+     pushes skip review — leave it off only if the owner accepts that.
+3. **Tags → Add rule** (Settings → Rules → Rulesets → *New tag ruleset*) for `v*`: **Restrict creations,
+   updates and deletions** to the owner (bypass list: repository admin), so nobody else can push a release tag.
+4. **Actions → General → Workflow permissions**: *Read repository contents and packages permissions* as the
+   default (`release.yml` asks for `contents: write` and `actions: write` itself), and leave **Allow GitHub
+   Actions to create and approve pull requests** off.
+
+Check it: push a test tag from a branch other than `main` (it must not run), then release normally and see
+the run stop at *Waiting for review: release needs approval* until the owner approves it.
+
+### Migration numbering across branches
+A migration's position in `server/db.js`'s `migrations` array is the schema version a database records, so
+two branches that each append "migration 49" and are merged in the wrong order would leave a county that ran
+one branch's build skipping the other's migration forever. Since 1.16.0:
+
+* **Convention** (comment above the array): every entry is headed `// N: what it does`, N its position from 1;
+  a new one goes at the end with the next number; when a branch meets another's migration of the same number it
+  renumbers its own (migrations are written self-contained and idempotent so they can be).
+* **Check**: `scripts/migration-order.js`, run by `test/migration-order.test.js` in `npm test`, compares the
+  array with the previous release tag's: every released migration must still be at its position with the same
+  code (comments and whitespace aside), none removed, and every header must carry its position. A moved,
+  edited or removed released migration, or two `// 49:` headers, fails CI. The `test` job fetches the release
+  tags for it and sets `SUDS_REQUIRE_RELEASE_TAGS`, so it cannot skip there; a checkout without tags skips it.
+  By hand: `node scripts/migration-order.js [--previous v1.15.3]`. Every tag from 1.6.1 to 1.15.3 passes.
+  ([ADR-0007](architecture/ADR-0007-migrations.md))
 
 ### Release QA: check the version on screen
 Every QA pass starts by confirming what is being tested. On the pilot server after deploy, and on the GitHub Pages site after the web-app workflow finishes (its run summary names the version it published), check that the version SUDS shows on screen is the one being released. A stale service worker or an unfinished deploy otherwise gets signed off as the new release.
