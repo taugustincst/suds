@@ -611,7 +611,7 @@ export const clientStatus = (c) => { const s = c && typeof c.status === 'string'
 export const statusKind = (s) => ({ active: 'ok', admitted: 'ok', completed: 'ok', done: 'ok', signed: 'ok', approved: 'ok', reimbursed: 'ok', reached: 'ok', replied: 'ok',
   waitlist: 'warn', pending: 'warn', waitlisted: 'warn', scheduled: 'info', contacted: 'info', accepted: 'info', in_progress: 'info', open: 'info', draft: 'warn', amended: 'purple', staged: 'warn', committed: 'ok',
   inactive: '', closed: '', cancelled: '', discarded: '', rejected: 'danger', deceased: 'danger', no_show: 'danger', declined_by_client: 'danger', declined_by_provider: 'danger', critical: 'danger', high: 'warn', urgent: 'danger', crisis_escalated: 'danger', no_reply: 'warn', sent: 'info', undeliverable: 'danger', opted_out: 'danger' }[s] || '');
-export const can = (perm) => { const u = state.user; if (!u) return false; const p = u.permissions || []; if (p.includes(perm)) return true; const [ns] = perm.split(':'); if (p.includes(`${ns}:*`)) return true; if (perm.endsWith(':read') && p.includes(perm.replace(/:read$/, ':write'))) return true; return false; };
+export const can = (perm) => { const u = state.user; if (!u) return false; const deny = u.denied_permissions || []; if (deny.includes(perm)) return false; const [ns] = perm.split(':'); if (deny.includes(`${ns}:*`)) return false; if (perm.endsWith(':read') && deny.includes(perm.replace(/:read$/, ':write'))) return false; const p = u.permissions || []; if (p.includes(perm)) return true; if (p.includes(`${ns}:*`)) return true; if (perm.endsWith(':read') && p.includes(perm.replace(/:read$/, ':write'))) return true; return false; };
 
 // ---------- forms ----------
 // fields: [{name,label,type:'text|number|date|datetime|select|textarea|checkbox|client|user|resource|fund', options, list, required, value, span, help, min, max, step}]
@@ -1701,6 +1701,15 @@ export async function loadSession() {
       }
     }
   } catch { state.user = null; }
+}
+/** Re-read the signed-in user's permission snapshot without signing out (an administrator may have
+ *  changed it mid-session). On failure the stale snapshot stays; the server enforces regardless. */
+export async function refreshPermissions() {
+  try {
+    const me = await get('/api/me', { quiet: true });
+    state.user = { ...state.user, permissions: me.permissions, denied_permissions: me.denied_permissions, caseload_restricted: me.caseload_restricted };
+    render();
+  } catch { /* stay on the stale snapshot; the server still enforces */ }
 }
 export async function loadRefData() {
   // Not fatal: an account that must change its password first is refused nearly everything, and the one

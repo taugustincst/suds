@@ -149,6 +149,7 @@ module.exports = {
     ['caloms_records', 'created_by'], ['caloms_records', 'updated_by'], ['suprt_assessments', 'created_by'], ['suprt_assessments', 'updated_by'],
     ['court_orders', 'recorded_by'], ['part2_notices', 'given_by'], ['complaints', 'handled_by'], ['complaints', 'created_by'],
     ['privacy_incidents', 'determined_by'], ['privacy_incidents', 'reported_by'], ['disclosure_agreements', 'created_by'], ['caloms_submissions', 'created_by'],
+    ['user_permission_overrides', 'user_id'], ['user_permission_overrides', 'granted_by'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.

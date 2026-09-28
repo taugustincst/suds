@@ -39,7 +39,7 @@ shown in the application as **Accessibility** (`accessibility.html`).
   of a client record (Overview with its clinical summary, Timeline, Interventions, Calls, Notes, Problems, Care
   plan, Assessments, Referrals, Forms, Tasks, Episodes, Consents & ROI with the Part 2 notice and court orders,
   Requests, Time, Assistance $, Care team), a resource profile, every Settings section (including Lists with a
-  list open, FHIR clients, System & backups with the recovery-drill card, Security status, and Users & roles
+  list open, FHIR clients, System & backups with the recovery-drill card, Security status, and Users & permissions
   with an access request waiting), the sign-in, sign-up, first-run, two-step-verification and "use SUDS on your
   phone" pages, the accessibility statement, and the dialogs used for daily work (+ Log and everything it
   records, new client, referral, consent with every §2.31 element, disclosure and the §2.32 notice shown after

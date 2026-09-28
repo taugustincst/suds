@@ -33,7 +33,7 @@ and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How
 
 The sign-in page has two options, **Log in** and **Sign up** (link straight to either with `#/login?mode=login` or `#/login?mode=signup`).
 
-* **Office server:** *Sign up* asks for an account — your name, a username, the password you choose and a line about your role. An administrator approves it under **Settings → Users & roles → Access requests** and chooses your role; then you *Log in*. Administrators can turn Sign up off; the page then says to ask them.
+* **Office server:** *Sign up* asks for an account — your name, a username, the password you choose and a line about your role. An administrator approves it under **Settings → Users & permissions → Access requests** and chooses your role; then you *Log in*. Administrators can turn Sign up off; the page then says to ask them.
 * **On this device:** the first *Sign up* creates your account and makes you the person who manages the device, once you confirm you understand where the records are kept. Anyone else sharing the device can *Sign up* for their own account (they see only their own clients) until you turn sign-ups off.
 
 ## At a glance
@@ -109,7 +109,7 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 | EHR integration | *Treatment-adjacent module, off by default (Settings › Program › Modules).* Read-only FHIR R4 API (Patient, EpisodeOfCare, Encounter, Consent, ServiceRequest, Task, Observation, DocumentReference, the resource directory, Bulk Data `$export`) for the county EHR or an HIE, with OAuth2 client-credentials clients and scopes; a client's records are shared only under a live 42 CFR Part 2 consent naming the recipient, labelled and recorded in the accounting of disclosures (docs/integration/FHIR.md) |
 | Reports | Dashboard, program summary, monthly trends, Excel / CSV exports of every table or one workbook (de-identified by default) |
 | Spreadsheets | Import clients, resources, visits, calls, time, to-dos and expenditures from Excel or CSV with templates, automatic column matching and row validation |
-| Administration | Users and roles, MFA enforcement, settings, tamper-evident audit log viewer, API keys |
+| Administration | Users & permissions, MFA enforcement, settings, tamper-evident audit log viewer, API keys |
 
 ## Roles
 
