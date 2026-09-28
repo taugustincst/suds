@@ -208,3 +208,25 @@ test('a device from before 1.16.0: widened defaults restart its pull; a person h
   assert.deepEqual(s.permission_overrides.map(o => [o.permission, o.mode]), [['clients:all', 'deny']]);
   assert.equal(s.settings.caseload_restriction, '1');
 });
+
+// Self-assignment must not undo a deny of clients:all: a person held to their caseload cannot put themselves on
+// another worker's client and so reach it (security review of 1.15.3, M1). A navigator never holds
+// assignments:manage; a supervisor held to a caseload does, and the office refuses them a client they cannot reach
+// (1.15.4, server/routes/assignments.js and server/rules/assignments.js), over REST and from a device.
+test('a deny of clients:all holds against self-assignment', async () => {
+  const self = await c.rx_scoped.post(`/api/clients/${ids.theirs}/assignments`, { user_id: scoped.id, role_on_case: 'primary' });
+  assert.equal(self.status, 403, 'a navigator cannot assign themselves (no assignments:manage)');
+  assert.equal((await c.rx_scoped.get(`/api/clients/${ids.theirs}`)).status, 403, 'and still cannot open the client');
+});
+// TODO(1.15.4 merge): drop `todo` once the security stream's M1 fix (reachability for assignment creation) lands.
+test('a supervisor held to a caseload cannot assign themselves past it', { todo: 'needs the 1.15.4 M1 fix (security stream)' }, async () => {
+  const heldSup = H.deny(H.makeUser('rx_heldsup', 'supervisor'), 'clients:all');
+  const hs = H.client(); await hs.login('rx_heldsup', PW);
+  const r = await hs.post(`/api/clients/${ids.theirs}/assignments`, { user_id: heldSup.id, role_on_case: 'primary' });
+  assert.ok([403, 404].includes(r.status), `a supervisor held to a caseload cannot assign themselves to a client off it (${r.status})`);
+  assert.ok(!H.db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=?`, ids.theirs, heldSup.id), 'no assignment was made');
+  assert.equal((await hs.get(`/api/clients/${ids.theirs}`)).status, 403);
+  const push = await hs.post('/api/sync/push', { device_now: new Date().toISOString(), tables: { assignments: [{ id: require('node:crypto').randomUUID(), client_id: ids.theirs, user_id: heldSup.id, role_on_case: 'primary', start_date: new Date().toISOString().slice(0, 10), updated_at: new Date().toISOString() }] } });
+  assert.equal(push.status, 200, JSON.stringify(push.data));
+  assert.ok(!H.db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=?`, ids.theirs, heldSup.id), 'nor from a device');
+});
