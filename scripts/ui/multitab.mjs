@@ -11,7 +11,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { makeChecks, until, settle, saved, signInAgain } from './assert.mjs';
+import { makeChecks, until, settle, saved, signInAgain, passRecoveryCode } from './assert.mjs';
 // A page of the 1.9.0 build has no activity hook (window.__sudsActivity) to wait on; pace it the old way.
 const pace = async (p) => ((await p.evaluate(() => !!window.__sudsActivity).catch(() => false)) ? settle(p) : p.waitForTimeout(150));
 
@@ -43,7 +43,7 @@ async function setup(page, url) {
   await page.waitForSelector('input[name=display_name]', { timeout: 20000 });
   await page.fill('input[name=display_name]', 'Tab Tester'); await page.fill('input[name=username]', 'tabs');
   await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
-  await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 15000 });
+  await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 15000 }); await passRecoveryCode(page);
   for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await pace(page); }
 }
 async function takeOver(page) {

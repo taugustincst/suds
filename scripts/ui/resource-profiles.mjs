@@ -1,7 +1,7 @@
 // Treatment center profiles: directory cards with cover pictures, profile page, picture upload/caption/remove, works in office and phone-only mode.
 import { chromium } from 'playwright';
 import fs from 'node:fs';
-import { makeChecks, settle, until } from './assert.mjs';
+import { makeChecks, settle, until, passRecoveryCode } from './assert.mjs';
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const { ok, eq, finish } = makeChecks('resource-profiles');
 const browser = await chromium.launch();
@@ -110,7 +110,7 @@ async function run(label, url, login) {
 }
 await run('office', base + '/#/login', async (p) => { await p.fill('input[name=username]', 'mrivera'); await p.fill('input[name=password]', 'Navigator2026!!'); await p.click('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 8000 }); await p.evaluate(() => fetch('/api/me/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ tour_done: true }) })); await settle(p); await p.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove())); });
 await run('local', base + '/?local=1#/', async (p) => {
-  if (await p.$('input[name=display_name]')) { await p.fill('input[name=display_name]', 'Pic Nav'); await p.fill('input[name=username]', 'picnav'); await p.fill('input[name=password]', 'Navigator2026!!'); await p.fill('input[name=confirm]', 'Navigator2026!!'); await p.click('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 10000 }); await settle(p); }
+  if (await p.$('input[name=display_name]')) { await p.fill('input[name=display_name]', 'Pic Nav'); await p.fill('input[name=username]', 'picnav'); await p.fill('input[name=password]', 'Navigator2026!!'); await p.fill('input[name=confirm]', 'Navigator2026!!'); await p.click('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 10000 }); await settle(p); await passRecoveryCode(p); }
   // phone-only copy: load sample data so there are resources with pictures
   await p.goto(base + '/?local=1#/sync'); await settle(p); if (await p.$('button:has-text("Load sample data")')) { await p.click('button:has-text("Load sample data")'); await p.waitForSelector('[data-sample=loaded]', { timeout: 30000 }); }
 });

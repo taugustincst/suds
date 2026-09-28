@@ -227,6 +227,16 @@ Network settings can be changed at runtime under Administration → Network & de
 4. Administration → Users: create staff accounts. Share temporary passwords in person or by phone, never by email.
 5. Budget → add funding sources and budget lines; Resource Directory → enter referral partners.
 
+**An administrator locked out** (forgotten password, lockout, lost authenticator): on the server, as the service
+account, run `npm run reset-admin -- <username>` (with the same environment the service runs with, so it opens
+the same database and keys; in Docker, `docker compose exec suds node scripts/reset-admin.js <username>`). Shell access
+to the server is the proof of ownership. It prints a random temporary password once, sets
+`must_change_password`, clears the lockout, failed attempts and two-step verification, revokes the account's
+sessions and audits `admin.reset_cli` (never the password); it refuses an account that is not an administrator.
+A sign-in rate limit on the address is in memory and clears when SUDS restarts. There is no stock or shared
+administrator password. SUDS on this device is different: its records are only in that browser, so its owner
+uses the device's recovery code or a backup (WEB_APP.md, *Can't sign in?*).
+
 ## 4. Backups
 
 ```bash

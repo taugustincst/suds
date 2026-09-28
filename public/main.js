@@ -12,7 +12,7 @@ import './views/dashboard.js';
 const views = {
   clients: ['clients'], client: ['client'], interventions: ['interventions'], calls: ['calls'], time: ['time'],
   resources: ['resources', 'resource'], referrals: ['referrals'], tasks: ['tasks'], budget: ['budget'], notes: ['notes'],
-  imports: ['imports'], reports: ['reports'], admin: ['admin'], profile: ['profile'], setup: ['setup'], local: ['sync'],
+  imports: ['imports'], reports: ['reports'], admin: ['admin'], profile: ['profile'], setup: ['setup'], local: ['sync', 'recovery-code'],
   forms: ['forms'], documents: ['documents'], supervision: ['supervision'], episodes: ['waitlist'],
   overdose: ['overdose'], funder: ['funder'], caloms: ['caloms'], supplies: ['supplies'], compliance: ['compliance'], suprt: ['suprt'],
 };

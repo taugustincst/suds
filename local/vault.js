@@ -11,6 +11,8 @@
 //   vault  { format, version, salt, kdf, iterations,
 //            wraps: [{ user_id, name, salt, iv, ct }],   name = SHA-256(salt | lower-cased username), so the
 //                                                       right wrap is found without trying every one
+//                   + at most one { recovery: true, name, salt, iv, ct, created_at, saved_at }: the DEK
+//                     wrapped under the owner's recovery code (no user_id; see newRecoveryCode below)
 //            keys:  { iv, ct },                          AES-GCM(DEK, {"enc":hex,"idx":hex})
 //            hints: { users, signup_enabled, program_contact },   what the locked sign-in page may show
 //            chain: { iv, ct },                          after a restore only: see backupRecord
@@ -124,8 +126,9 @@ export async function backupRecord(vault, dekKey, nextDek) {
   const chain = await seal(dekKey, nextDek, AAD_CHAIN);
   const w64 = (w) => ({ user_id: w.user_id, name: w.name, kdf: w.kdf, iterations: w.iterations, salt: b64(w.salt), iv: b64(w.iv), ct: b64(w.ct) });
   // A wrap that is itself chained (this device was restored and that account has not signed in since)
-  // cannot be carried: its chain belongs to the backup this device came from, not to this device's DEK.
-  return { format: BACKUP_FORMAT, version: VERSION, salt: b64(vault.salt), wraps: vault.wraps.filter(w => !w.chained).map(w64), chain: { iv: b64(chain.iv), ct: b64(chain.ct) }, next_dek: hex(u8(nextDek)) };
+  // cannot be carried: its chain belongs to the backup this device came from, not to this device's DEK. Nor
+  // is the recovery code's: it is this device's, and a restored device gets a code of its own.
+  return { format: BACKUP_FORMAT, version: VERSION, salt: b64(vault.salt), wraps: vault.wraps.filter(w => !w.chained && !w.recovery).map(w64), chain: { iv: b64(chain.iv), ct: b64(chain.ct) }, next_dek: hex(u8(nextDek)) };
 }
 /** The restored device's DEK and vault from a backup's record (see backupRecord), or null if it has none. */
 export async function fromBackupRecord(rec, keys, hints = {}) {
@@ -178,10 +181,13 @@ export async function rekeyAfterRestore(v, currentDek, username, password, { use
   if (!prev) return null;
   const dek = newDek(); const key = await importDek(dek);
   const others = v.wraps.filter(w => w.chained && w.user_id !== userId && w.name !== name);
-  const droppedWraps = v.wraps.filter(w => !w.chained && w.user_id !== userId);
+  // A recovery code made on the restored device wraps the backup's key too: it goes (the device administrator
+  // is asked for a new one), but it is not an account waiting to be let in again.
+  const droppedWraps = v.wraps.filter(w => !w.chained && !w.recovery && w.user_id !== userId);
   const dropped = droppedWraps.map(w => w.user_id);
   const own = await wrapDek(dek, password, { userId, name });
   const next = { ...v, keys: await sealKeys(key, keys), wraps: [...others, own], rekeyed_at: new Date().toISOString() };
+  if (recoveryWrap(v)) next.recovery_dropped_at = next.rekeyed_at;
   // Remembered by lookup name (a salted hash, never the username), so that account's next sign-in is told the
   // device was restored and moved to a new key, not that its password is wrong (droppedAfterRestore).
   const names = [...new Set([...(v.dropped_after_restore || []), ...droppedWraps.map(w => w.name)])];
@@ -193,11 +199,64 @@ export async function rekeyAfterRestore(v, currentDek, username, password, { use
   return { dek, key, vault: next, dropped };
 }
 
-/** The wraps whose lookup name matches `username` (normally one). */
+/** The wraps whose lookup name matches `username` (normally one). Never the recovery wrap. */
 export async function wrapsFor(vault, username) {
   if (!hasAccounts(vault)) return [];
   const name = await nameHash(vault.salt, username);
-  return vault.wraps.filter(w => w.name === name);
+  return vault.wraps.filter(w => w.name === name && !w.recovery);
+}
+
+// ---- the owner's recovery code (docs/architecture/ADR-0008-device-encryption.md, "Recovery code") ----
+// One more wrap of the DEK, under a key derived (PBKDF2, as every wrap) from a random code the device's owner
+// keeps on paper or in a file, away from the device: 28 symbols of Crockford base32 (140 bits), shown as seven
+// groups of four. Whoever holds it can open every record on the device, like a key. The code itself is never
+// stored; only its wrap is, under a lookup name no username can have (usernames are letters, digits and
+// . _ @ - only, so no username contains a space or '#'). At most one: a new code replaces the old wrap.
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+export const RECOVERY_LENGTH = 28;
+const RECOVERY_NAME = 'recovery code #';
+const RECOVERY_DOMAIN = 'suds-device-recovery|';
+/** A new recovery code, formatted for the owner (XXXX-XXXX-…). Shown once; never stored. */
+export function newRecoveryCode() {
+  const r = rand(RECOVERY_LENGTH); let s = '';
+  for (const b of r) s += CROCKFORD[b & 31]; // 256 is a multiple of 32: every symbol equally likely
+  r.fill(0);
+  return formatRecoveryCode(s);
+}
+/** XXXX-XXXX-… from the 28 symbols. */
+export function formatRecoveryCode(norm) { return String(norm).match(/.{1,4}/g).join('-'); }
+/**
+ * The code as typed, in the one form it is wrapped under: case, spaces and dashes do not matter, and the
+ * letters Crockford base32 leaves out because they look like digits (I, L, O) are read as 1, 1 and 0.
+ * Null when it cannot be a recovery code at all (wrong length, a character that is not in the alphabet).
+ */
+export function normalizeRecoveryCode(input) {
+  if (typeof input !== 'string' || input.length > 200) return null;
+  const s = input.toUpperCase().replace(/[\s\-\u2010-\u2015]/g, '').replace(/[IL]/g, '1').replace(/O/g, '0');
+  return s.length === RECOVERY_LENGTH && [...s].every(c => CROCKFORD.includes(c)) ? s : null;
+}
+/** The recovery wrap's lookup name: a name hash of a string no username can be. */
+export function recoveryName(vaultSalt) { return nameHash(vaultSalt, RECOVERY_NAME); }
+/** Wrap the DEK under a recovery code (formatted or not): the vault's one recovery wrap. */
+export async function wrapRecovery(dekRaw, code, vaultSalt) {
+  const norm = normalizeRecoveryCode(code);
+  if (!norm) throw new VaultError('Not a recovery code.', 'format');
+  const w = await wrapDek(dekRaw, RECOVERY_DOMAIN + norm, { userId: null, name: await recoveryName(vaultSalt) });
+  delete w.user_id;
+  return { ...w, recovery: true, saved_at: null };
+}
+/** The vault's recovery wrap, or null. */
+export function recoveryWrap(vault) { return (vault && Array.isArray(vault.wraps) && vault.wraps.find(w => w.recovery)) || null; }
+/** A copy of `vault` whose recovery wrap is `wrap` (any earlier one is gone), or none when `wrap` is null. */
+export function withRecovery(vault, wrap) {
+  const wraps = vault.wraps.filter(w => !w.recovery);
+  return { ...vault, wraps: wrap ? wraps.concat(wrap) : wraps };
+}
+/** The DEK from the recovery wrap, or null when this is not the code (or the device has none). */
+export async function unlockRecovery(vault, code) {
+  const w = recoveryWrap(vault); const norm = normalizeRecoveryCode(code);
+  if (!w || !norm) return null;
+  return unwrapDek(w, RECOVERY_DOMAIN + norm);
 }
 /** Try `password` against this username's wraps: { dek, wrap } or null. */
 export async function unlock(vault, username, password) {
@@ -239,7 +298,7 @@ export async function droppedAfterRestore(vault, username) {
 
 /** A copy of `vault` with `wrap` in place of any earlier wrap for the same account. */
 export function withWrap(vault, wrap) {
-  const next = { ...vault, wraps: vault.wraps.filter(w => w.user_id !== wrap.user_id).concat(wrap) };
+  const next = { ...vault, wraps: vault.wraps.filter(w => w.recovery || w.user_id !== wrap.user_id).concat(wrap) };
   // An account dropped at the rotation after a restore has a key again: it is no longer waiting.
   if (Array.isArray(next.dropped_after_restore)) {
     const left = next.dropped_after_restore.filter(n => n !== wrap.name);

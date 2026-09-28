@@ -500,7 +500,7 @@ function wipeLocalDatabase() {
  *  button starts disabled and only enables once the typed text matches exactly — a reason field that is
  *  merely non-empty (the pattern confirmDialog's requireReason uses elsewhere) is not a strong enough gate
  *  for something this irreversible and reachable with a single click. */
-function openDeviceResetDialog(onDone) {
+export function openDeviceResetDialog(onDone) {
   let confirmBox, eraseBtn;
   const m = modal('Reset this device', h('div', {},
     h('p', {}, 'This permanently erases everything SUDS has stored on this device — clients, visits, notes, everything — and signs out whatever account is set up here. There is no undo.'),
@@ -1596,7 +1596,7 @@ function restoreFocus(root, k) {
 }
 // Every address has its own title (WCAG 2.4.2): the page, the section within it, and the programme — never a
 // client's name, which would sit in the browser's history and tab list.
-const TITLES = { client: 'Client record', caloms: 'State reporting', resource: 'Resource profile', profile: 'My profile', sync: 'This device', mfa: 'Two-step verification', setup: 'Set up SUDS' };
+const TITLES = { client: 'Client record', caloms: 'State reporting', resource: 'Resource profile', profile: 'My profile', sync: 'This device', 'recovery-code': 'Recovery code', mfa: 'Two-step verification', setup: 'Set up SUDS' };
 export function setPageTitle(r = parseHash(), navItem = NAV.find(n => n.name === r.name)) {
   let page = TITLES[r.name] || navItem?.label;
   if (!page) page = document.querySelector('.main h1')?.textContent.trim() || (document.querySelector('[data-not-found]') ? 'Page not found' : 'SUDS');

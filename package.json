@@ -15,6 +15,7 @@
     "test:thorough": "node scripts/test-thorough.js",
     "seed": "node --no-warnings=ExperimentalWarning scripts/seed.js",
     "create-admin": "node --no-warnings=ExperimentalWarning scripts/create-admin.js",
+    "reset-admin": "node --no-warnings=ExperimentalWarning scripts/reset-admin.js",
     "backup": "node --no-warnings=ExperimentalWarning scripts/backup.js",
     "rotate-key": "node --no-warnings=ExperimentalWarning scripts/rotate-key.js",
     "rotate-index-key": "node --no-warnings=ExperimentalWarning scripts/rotate-index-key.js",

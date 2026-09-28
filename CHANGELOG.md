@@ -2,6 +2,39 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+A way back in for the owner of SUDS on this device who has forgotten the password, and for an office
+administrator who is locked out. No migration and no change on the office server's database; three new device
+routes (`POST /api/local/recovery`, `POST /api/local/recover`, and `POST /api/local/recovery/saved`) that exist
+only in the browser kernel, and one command-line script.
+
+- **Recovery code for SUDS on this device.** When a device is set up, right after its first account is created,
+  SUDS shows a recovery code once: seven groups of four letters and numbers. Download it as a text file or print
+  it, keep it somewhere safe away from the device, and tick *I have saved my recovery code* to go on. SUDS never
+  stores the code and can never show it again. Whoever has it can open every record on the device, like a key.
+- **"Can't sign in?" on the device sign-in page** lists every way back in and says which keep the records:
+  **Use your recovery code** (keeps every record: type the code and a new password; you are signed in and given
+  a new code, and the one you used stops working), **Restore from a backup** (the backup's records, accounts
+  and passwords; anything since the backup is lost) and **Start over on this device** (erases everything). A
+  wrong code gets a plain message and each further try waits a little longer; after several the message says to
+  check the saved file.
+- **This device → Recovery code** shows whether the device has a code and when it was made. The person who
+  manages the device can make a new one after typing their password again; the old code stops working at once.
+- **Devices set up before this release have no recovery code.** When the person who manages one next signs in,
+  Home asks them to make one. The reminder can be dismissed, but comes back at every sign-in until a code has
+  been made and saved. Other accounts are not asked, and cannot make one.
+- Using the code sets a new password for the person who manages the device, clears that account's lockout and
+  turns off its two-step verification on the device (set it up again with the new phone). If that account has
+  been removed or deactivated, the username typed becomes a new administrator account that manages the device.
+  The audit log records who made or used a code (`device.recovery_code.created`, `device.recovered`), never the
+  code.
+- **Office server: `npm run reset-admin -- <username>`** lets whoever runs the server let a locked-out
+  administrator back in (forgotten password, too many wrong attempts, or a lost authenticator phone). It prints a
+  new temporary password once, which must be changed at the next sign-in, clears the lockout and two-step
+  verification, ends the account's sessions and writes `admin.reset_cli` to the audit log. Having a shell on the
+  server is the proof of ownership; there is still no shared or stock administrator password.
+
 ## 1.15.0 — 2026-09-28
 
 **Released under a policy exception.** 1.15.0 is a feature release one day after 1.14.0, where the release

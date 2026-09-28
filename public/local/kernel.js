@@ -43,9 +43,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/base64-js/index.js
+// ../../../node_modules/base64-js/index.js
 var require_base64_js = __commonJS({
-  "node_modules/base64-js/index.js"(exports) {
+  "../../../node_modules/base64-js/index.js"(exports) {
     "use strict";
     init_globals_inject();
     exports.byteLength = byteLength;
@@ -145,9 +145,9 @@ var require_base64_js = __commonJS({
   }
 });
 
-// node_modules/ieee754/index.js
+// ../../../node_modules/ieee754/index.js
 var require_ieee754 = __commonJS({
-  "node_modules/ieee754/index.js"(exports) {
+  "../../../node_modules/ieee754/index.js"(exports) {
     init_globals_inject();
     exports.read = function(buffer, offset, isLE3, mLen, nBytes) {
       var e, m;
@@ -229,9 +229,9 @@ var require_ieee754 = __commonJS({
   }
 });
 
-// node_modules/buffer/index.js
+// ../../../node_modules/buffer/index.js
 var require_buffer = __commonJS({
-  "node_modules/buffer/index.js"(exports) {
+  "../../../node_modules/buffer/index.js"(exports) {
     "use strict";
     init_globals_inject();
     var base64 = require_base64_js();
@@ -1906,7 +1906,7 @@ var init_path = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_assert.js
+// ../../../node_modules/@noble/ciphers/esm/_assert.js
 function isBytes(a) {
   return a instanceof Uint8Array || a != null && typeof a === "object" && a.constructor.name === "Uint8Array";
 }
@@ -1930,12 +1930,12 @@ function output(out2, instance) {
   }
 }
 var init_assert = __esm({
-  "node_modules/@noble/ciphers/esm/_assert.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/ciphers/esm/utils.js
+// ../../../node_modules/@noble/ciphers/esm/utils.js
 function utf8ToBytes(str) {
   if (typeof str !== "string")
     throw new Error(`string expected, got ${typeof str}`);
@@ -1998,7 +1998,7 @@ function clean(...arrays) {
 }
 var u8, u32, createView, isLE, wrapCipher;
 var init_utils = __esm({
-  "node_modules/@noble/ciphers/esm/utils.js"() {
+  "../../../node_modules/@noble/ciphers/esm/utils.js"() {
     init_globals_inject();
     init_assert();
     u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
@@ -2014,7 +2014,7 @@ var init_utils = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_polyval.js
+// ../../../node_modules/@noble/ciphers/esm/_polyval.js
 function _toGHASHKey(k) {
   k.reverse();
   const hiBit = k[15] & 1;
@@ -2037,7 +2037,7 @@ function wrapConstructorWithKey(hashCons) {
 }
 var BLOCK_SIZE, ZEROS16, ZEROS32, POLY, mul2, swapLE, estimateWindow, GHASH, Polyval, ghash, polyval;
 var init_polyval = __esm({
-  "node_modules/@noble/ciphers/esm/_polyval.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_polyval.js"() {
     init_globals_inject();
     init_assert();
     init_utils();
@@ -2212,7 +2212,7 @@ var init_polyval = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/aes.js
+// ../../../node_modules/@noble/ciphers/esm/aes.js
 function mul22(n) {
   return n << 1 ^ POLY2 & -(n >> 7);
 }
@@ -2492,7 +2492,7 @@ function decryptBlock(xk, block) {
 }
 var BLOCK_SIZE2, BLOCK_SIZE32, EMPTY_BLOCK, POLY2, sbox, invSbox, rotr32_8, rotl32_8, byteSwap, tableEncoding, tableDecoding, xPowers, ctr, ecb, cbc, cfb, gcm, limit, siv, AESW, AESKW_IV, aeskw, AESKWP_IV, aeskwp;
 var init_aes = __esm({
-  "node_modules/@noble/ciphers/esm/aes.js"() {
+  "../../../node_modules/@noble/ciphers/esm/aes.js"() {
     init_globals_inject();
     init_assert();
     init_polyval();
@@ -2965,7 +2965,7 @@ var init_aes = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_assert.js
+// ../../../node_modules/@noble/hashes/esm/_assert.js
 function number(n) {
   if (!Number.isSafeInteger(n) || n < 0)
     throw new Error(`positive integer expected, not ${n}`);
@@ -2999,21 +2999,21 @@ function output2(out2, instance) {
   }
 }
 var init_assert2 = __esm({
-  "node_modules/@noble/hashes/esm/_assert.js"() {
+  "../../../node_modules/@noble/hashes/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/hashes/esm/crypto.js
+// ../../../node_modules/@noble/hashes/esm/crypto.js
 var crypto2;
 var init_crypto = __esm({
-  "node_modules/@noble/hashes/esm/crypto.js"() {
+  "../../../node_modules/@noble/hashes/esm/crypto.js"() {
     init_globals_inject();
     crypto2 = typeof globalThis === "object" && "crypto" in globalThis ? globalThis.crypto : void 0;
   }
 });
 
-// node_modules/@noble/hashes/esm/utils.js
+// ../../../node_modules/@noble/hashes/esm/utils.js
 function byteSwap32(arr) {
   for (let i = 0; i < arr.length; i++) {
     arr[i] = byteSwap2(arr[i]);
@@ -3055,7 +3055,7 @@ function randomBytes(bytesLength = 32) {
 }
 var u322, createView2, rotr, rotl, isLE2, byteSwap2, Hash, toStr;
 var init_utils2 = __esm({
-  "node_modules/@noble/hashes/esm/utils.js"() {
+  "../../../node_modules/@noble/hashes/esm/utils.js"() {
     init_globals_inject();
     init_crypto();
     init_assert2();
@@ -3075,7 +3075,7 @@ var init_utils2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_md.js
+// ../../../node_modules/@noble/hashes/esm/_md.js
 function setBigUint642(view, byteOffset, value, isLE3) {
   if (typeof view.setBigUint64 === "function")
     return view.setBigUint64(byteOffset, value, isLE3);
@@ -3090,7 +3090,7 @@ function setBigUint642(view, byteOffset, value, isLE3) {
 }
 var Chi, Maj, HashMD;
 var init_md = __esm({
-  "node_modules/@noble/hashes/esm/_md.js"() {
+  "../../../node_modules/@noble/hashes/esm/_md.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3185,10 +3185,10 @@ var init_md = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha256.js
+// ../../../node_modules/@noble/hashes/esm/sha256.js
 var SHA256_K, SHA256_IV, SHA256_W, SHA256, sha256;
 var init_sha256 = __esm({
-  "node_modules/@noble/hashes/esm/sha256.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha256.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3343,10 +3343,10 @@ var init_sha256 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha1.js
+// ../../../node_modules/@noble/hashes/esm/sha1.js
 var SHA1_IV, SHA1_W, SHA1, sha1;
 var init_sha1 = __esm({
-  "node_modules/@noble/hashes/esm/sha1.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha1.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3425,10 +3425,10 @@ var init_sha1 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/hmac.js
+// ../../../node_modules/@noble/hashes/esm/hmac.js
 var HMAC, hmac;
 var init_hmac = __esm({
-  "node_modules/@noble/hashes/esm/hmac.js"() {
+  "../../../node_modules/@noble/hashes/esm/hmac.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3498,7 +3498,7 @@ var init_hmac = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/pbkdf2.js
+// ../../../node_modules/@noble/hashes/esm/pbkdf2.js
 function pbkdf2Init(hash2, _password, _salt, _opts) {
   hash(hash2);
   const opts = checkOpts({ dkLen: 32, asyncTick: 10 }, _opts);
@@ -3543,7 +3543,7 @@ function pbkdf2(hash2, password, salt, opts) {
   return pbkdf2Output(PRF, PRFSalt, DK, prfW, u);
 }
 var init_pbkdf2 = __esm({
-  "node_modules/@noble/hashes/esm/pbkdf2.js"() {
+  "../../../node_modules/@noble/hashes/esm/pbkdf2.js"() {
     init_globals_inject();
     init_assert2();
     init_hmac();
@@ -3551,7 +3551,7 @@ var init_pbkdf2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/scrypt.js
+// ../../../node_modules/@noble/hashes/esm/scrypt.js
 function XorAndSalsa(prev, pi, input, ii, out2, oi) {
   let y00 = prev[pi++] ^ input[ii++], y01 = prev[pi++] ^ input[ii++];
   let y02 = prev[pi++] ^ input[ii++], y03 = prev[pi++] ^ input[ii++];
@@ -3707,7 +3707,7 @@ function scrypt(password, salt, opts) {
   return scryptOutput(password, dkLen, B2, V, tmp);
 }
 var init_scrypt = __esm({
-  "node_modules/@noble/hashes/esm/scrypt.js"() {
+  "../../../node_modules/@noble/hashes/esm/scrypt.js"() {
     init_globals_inject();
     init_assert2();
     init_sha256();
@@ -3852,9 +3852,9 @@ var init_crypto2 = __esm({
   }
 });
 
-// node_modules/sql.js/dist/sql-wasm.js
+// ../../../node_modules/sql.js/dist/sql-wasm.js
 var require_sql_wasm = __commonJS({
-  "node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
+  "../../../node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
     init_globals_inject();
     var initSqlJsPromise = void 0;
     var initSqlJs = function(moduleConfig) {
@@ -9342,7 +9342,7 @@ var require_csp = __commonJS({
   }
 });
 
-// node_modules/fflate/esm/browser.js
+// ../../../node_modules/fflate/esm/browser.js
 function deflateSync(data, opts) {
   return dopt(data, opts || {}, 0, 0);
 }
@@ -9362,7 +9362,7 @@ function unzlibSync(data, opts) {
 }
 var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
 var init_browser = __esm({
-  "node_modules/fflate/esm/browser.js"() {
+  "../../../node_modules/fflate/esm/browser.js"() {
     init_globals_inject();
     u82 = Uint8Array;
     u16 = Uint16Array;
@@ -42270,7 +42270,7 @@ async function unwrapDek(wrap, password) {
 async function backupRecord(vault, dekKey2, nextDek) {
   const chain = await seal(dekKey2, nextDek, AAD_CHAIN);
   const w64 = (w) => ({ user_id: w.user_id, name: w.name, kdf: w.kdf, iterations: w.iterations, salt: b642(w.salt), iv: b642(w.iv), ct: b642(w.ct) });
-  return { format: BACKUP_FORMAT, version: VERSION2, salt: b642(vault.salt), wraps: vault.wraps.filter((w) => !w.chained).map(w64), chain: { iv: b642(chain.iv), ct: b642(chain.ct) }, next_dek: hex2(u83(nextDek)) };
+  return { format: BACKUP_FORMAT, version: VERSION2, salt: b642(vault.salt), wraps: vault.wraps.filter((w) => !w.chained && !w.recovery).map(w64), chain: { iv: b642(chain.iv), ct: b642(chain.ct) }, next_dek: hex2(u83(nextDek)) };
 }
 async function fromBackupRecord(rec, keys, hints2 = {}) {
   if (!rec || rec.format !== BACKUP_FORMAT || !/^[0-9a-f]{64}$/.test(rec.next_dek || "") || !Array.isArray(rec.wraps) || !rec.chain) return null;
@@ -42306,10 +42306,11 @@ async function rekeyAfterRestore(v, currentDek, username, password, { userId, ke
   const dek2 = newDek();
   const key = await importDek(dek2);
   const others = v.wraps.filter((w) => w.chained && w.user_id !== userId && w.name !== name);
-  const droppedWraps = v.wraps.filter((w) => !w.chained && w.user_id !== userId);
+  const droppedWraps = v.wraps.filter((w) => !w.chained && !w.recovery && w.user_id !== userId);
   const dropped = droppedWraps.map((w) => w.user_id);
   const own = await wrapDek(dek2, password, { userId, name });
   const next = { ...v, keys: await sealKeys(key, keys), wraps: [...others, own], rekeyed_at: (/* @__PURE__ */ new Date()).toISOString() };
+  if (recoveryWrap(v)) next.recovery_dropped_at = next.rekeyed_at;
   const names = [.../* @__PURE__ */ new Set([...v.dropped_after_restore || [], ...droppedWraps.map((w) => w.name)])];
   if (names.length) next.dropped_after_restore = names;
   else delete next.dropped_after_restore;
@@ -42325,7 +42326,49 @@ async function rekeyAfterRestore(v, currentDek, username, password, { userId, ke
 async function wrapsFor(vault, username) {
   if (!hasAccounts(vault)) return [];
   const name = await nameHash(vault.salt, username);
-  return vault.wraps.filter((w) => w.name === name);
+  return vault.wraps.filter((w) => w.name === name && !w.recovery);
+}
+var CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+var RECOVERY_LENGTH = 28;
+var RECOVERY_NAME = "recovery code #";
+var RECOVERY_DOMAIN = "suds-device-recovery|";
+function newRecoveryCode() {
+  const r = rand(RECOVERY_LENGTH);
+  let s = "";
+  for (const b of r) s += CROCKFORD[b & 31];
+  r.fill(0);
+  return formatRecoveryCode(s);
+}
+function formatRecoveryCode(norm) {
+  return String(norm).match(/.{1,4}/g).join("-");
+}
+function normalizeRecoveryCode(input) {
+  if (typeof input !== "string" || input.length > 200) return null;
+  const s = input.toUpperCase().replace(/[\s\-\u2010-\u2015]/g, "").replace(/[IL]/g, "1").replace(/O/g, "0");
+  return s.length === RECOVERY_LENGTH && [...s].every((c) => CROCKFORD.includes(c)) ? s : null;
+}
+function recoveryName(vaultSalt) {
+  return nameHash(vaultSalt, RECOVERY_NAME);
+}
+async function wrapRecovery(dekRaw, code, vaultSalt) {
+  const norm = normalizeRecoveryCode(code);
+  if (!norm) throw new VaultError("Not a recovery code.", "format");
+  const w = await wrapDek(dekRaw, RECOVERY_DOMAIN + norm, { userId: null, name: await recoveryName(vaultSalt) });
+  delete w.user_id;
+  return { ...w, recovery: true, saved_at: null };
+}
+function recoveryWrap(vault) {
+  return vault && Array.isArray(vault.wraps) && vault.wraps.find((w) => w.recovery) || null;
+}
+function withRecovery(vault, wrap) {
+  const wraps = vault.wraps.filter((w) => !w.recovery);
+  return { ...vault, wraps: wrap ? wraps.concat(wrap) : wraps };
+}
+async function unlockRecovery(vault, code) {
+  const w = recoveryWrap(vault);
+  const norm = normalizeRecoveryCode(code);
+  if (!w || !norm) return null;
+  return unwrapDek(w, RECOVERY_DOMAIN + norm);
 }
 async function unlock(vault, username, password) {
   for (const w of await wrapsFor(vault, username)) {
@@ -42364,7 +42407,7 @@ async function droppedAfterRestore(vault, username) {
   return vault.dropped_after_restore.includes(await nameHash(vault.salt, username));
 }
 function withWrap(vault, wrap) {
-  const next = { ...vault, wraps: vault.wraps.filter((w) => w.user_id !== wrap.user_id).concat(wrap) };
+  const next = { ...vault, wraps: vault.wraps.filter((w) => w.recovery || w.user_id !== wrap.user_id).concat(wrap) };
   if (Array.isArray(next.dropped_after_restore)) {
     const left = next.dropped_after_restore.filter((n) => n !== wrap.name);
     if (left.length) next.dropped_after_restore = left;
@@ -42447,6 +42490,9 @@ var dekKey = null;
 var theVault = null;
 var lastActivity = Date.now();
 var unlockFailures = 0;
+var recoveryMisses = 0;
+var missesBeforeRecovery = 0;
+var MAX_RECOVERY_MISSES = 10;
 var sealer2 = () => ({ seal: (bytes3) => seal(dekKey, bytes3), sealSync: (bytes3) => sealSync(gcm, dek, bytes3) });
 function config() {
   return require_config();
@@ -42564,7 +42610,7 @@ async function rekeyIfRestored(userId, username, password) {
       return false;
     }
     before.dek.fill(0);
-    import_audit2.default.log({ user: { username: "device" }, action: "device.key_rotated", details: { reason: "restore", carried_accounts_waiting: out2.vault.wraps.filter((w) => w.chained).length, wraps_dropped: out2.dropped.length, dropped_accounts: out2.dropped } });
+    import_audit2.default.log({ user: { username: "device" }, action: "device.key_rotated", details: { reason: "restore", carried_accounts_waiting: out2.vault.wraps.filter((w) => w.chained).length, wraps_dropped: out2.dropped.length, dropped_accounts: out2.dropped, ...out2.vault.recovery_dropped_at ? { recovery_code_dropped: true } : {} } });
     return true;
   });
   vaultQueue = run2.catch(() => {
@@ -42619,9 +42665,48 @@ async function tryUnwrap(username, password) {
     unlockFailures = 0;
     return r;
   }
+  await missed();
+  return null;
+}
+async function missed() {
   unlockFailures++;
   await new Promise((res) => setTimeout(res, Math.min(5e3, 250 * unlockFailures)));
+}
+async function tryRecovery(code) {
+  const field = (message) => ({ fields: { code: message } });
+  if (!recoveryWrap(theVault)) return { status: 404, message: "This device has no recovery code. Restore a backup, or start over on this device.", extra: { noRecoveryCode: true } };
+  if (recoveryMisses >= MAX_RECOVERY_MISSES) return { status: 429, message: "Too many wrong recovery codes. Reload this page before you try again, and check the code against the file you saved or printed.", extra: { tooManyRecoveryCodes: true, ...field("Too many wrong codes: reload the page") } };
+  if (!normalizeRecoveryCode(code)) return { status: 400, message: "A recovery code is 28 letters and numbers in seven groups of four, like 7K3M-Q9TD-\u2026. Check what you typed.", extra: field("28 letters and numbers, in groups of four") };
+  const dek2 = await unlockRecovery(theVault, code);
+  if (dek2) {
+    unlockFailures = 0;
+    missesBeforeRecovery = recoveryMisses;
+    recoveryMisses = 0;
+    return { dek: dek2 };
+  }
+  recoveryMisses++;
+  await missed();
+  const hint = recoveryMisses >= 3 ? " Check it against the recovery code file you downloaded or the page you printed: only the newest code works, and making a new one replaced any older one." : " Check it and try again.";
+  return { status: 400, message: "That recovery code is not right." + hint, extra: { wrongRecoveryCode: true, attempts: recoveryMisses, ...field("That code is not right") } };
+}
+function recoveryRequestProblem(b) {
+  if (typeof b.password !== "string" || !b.password) return { message: "Choose a new password.", extra: { fields: { password: "Required" } } };
+  const errs = import_auth2.default.passwordPolicy(b.password);
+  if (errs.length) return { message: "Password must contain " + errs.join(", "), extra: { fields: { password: "Must contain " + errs.join(", ") } } };
+  if (b.username !== void 0 && b.username !== null && b.username !== "" && (typeof b.username !== "string" || b.username.length > 60 || !/^[a-zA-Z0-9._@-]+$/.test(b.username.trim()))) return { message: "A username is letters, numbers and . _ @ - only.", extra: { fields: { username: "Letters, numbers and . _ @ - only" } } };
   return null;
+}
+async function replaceRecoveryCode() {
+  if (phase !== "open" || !dek || !theVault || theVault.format !== VAULT_FORMAT || !hasAccounts(theVault) || !sqlite_default.hasSealer()) {
+    throw new import_http2.HttpError(409, "This device cannot make a recovery code right now. Sign out, sign in again and try once more.");
+  }
+  const code = newRecoveryCode();
+  const wrap = await wrapRecovery(dek, code, theVault.salt);
+  const replaced = !!recoveryWrap(theVault);
+  const next = withRecovery(theVault, wrap);
+  delete next.recovery_dropped_at;
+  await saveVault(next);
+  return { code, created_at: wrap.created_at, replaced };
 }
 async function lockDevice() {
   token = "";
@@ -42659,6 +42744,10 @@ async function reconcileVault() {
   let changed = false;
   const wraps = [];
   for (const w of theVault.wraps) {
+    if (w.recovery) {
+      wraps.push(w);
+      continue;
+    }
     const u = byId.get(w.user_id) || byName.get(w.name);
     if (!u || !u.is_active) {
       changed = true;
@@ -42672,7 +42761,7 @@ async function reconcileVault() {
   }
   const h = hints();
   if (JSON.stringify(h) !== JSON.stringify(theVault.hints || {})) changed = true;
-  if (changed) await saveVault({ ...theVault, wraps: wraps.length ? wraps : theVault.wraps, hints: h });
+  if (changed) await saveVault({ ...theVault, wraps: wraps.some((w) => !w.recovery) ? wraps : theVault.wraps, hints: h });
 }
 async function afterPasswordEvent(method, path, body, ctx, result) {
   const b = body || {};
@@ -42707,7 +42796,7 @@ async function lockedAnswer(method, path, body) {
   const b = body || {};
   if (method === "GET" && path === "/api/local/status") {
     const h = theVault && theVault.hints || {};
-    return { done: true, json: { local: true, static: isStaticHost(), locked: true, users: h.users || theVault.wraps.length, signup_enabled: !!h.signup_enabled, last_sync: null, sync_server: null, program_contact: h.program_contact || "" } };
+    return { done: true, json: { local: true, static: isStaticHost(), locked: true, users: h.users || theVault.wraps.filter((w) => !w.recovery).length, signup_enabled: !!h.signup_enabled, last_sync: null, sync_server: null, program_contact: h.program_contact || "", recovery: !!recoveryWrap(theVault) } };
   }
   const refused = (status, error, extra = {}) => ({ done: true, status, json: { error, locked: true, ...extra } });
   if (method === "POST" && path === "/api/auth/login") {
@@ -42729,6 +42818,14 @@ async function lockedAnswer(method, path, body) {
       }
     }
     return { done: false, relockOnFail: true };
+  }
+  if (method === "POST" && path === "/api/local/recover") {
+    const pre = recoveryRequestProblem(b);
+    if (pre) return refused(400, pre.message, pre.extra);
+    const r = await tryRecovery(b.code);
+    if (!r.dek) return refused(r.status, r.message, r.extra);
+    await unlockWith(r.dek);
+    return { done: false, relockOnFail: true, recovered: true };
   }
   if (method === "POST" && path === "/api/local/signup") {
     if (!b.sponsor_username || !b.sponsor_password) return refused(403, "Someone who already has an account on this device must type their username and password to let you sign up here.", { sponsorRequired: true });
@@ -42800,7 +42897,7 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
   const userCount = () => import_db2.default.one(`SELECT COUNT(*) n FROM users`).n;
   const clientCount = () => import_db2.default.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n;
   const signupEnabled = () => isStaticHost() && import_db2.default.getSetting("local_signup", "1") !== "0";
-  router.get("/api/local/status", () => ({ local: true, static: isStaticHost(), users: userCount(), signup_enabled: userCount() === 0 || signupEnabled(), last_sync: import_db2.default.getSetting("last_sync_at", null), sync_server: import_db2.default.getSetting("sync_server", null), program_contact: import_db2.default.getSetting("program_contact", "") || "" }));
+  router.get("/api/local/status", () => ({ local: true, static: isStaticHost(), users: userCount(), signup_enabled: userCount() === 0 || signupEnabled(), last_sync: import_db2.default.getSetting("last_sync_at", null), sync_server: import_db2.default.getSetting("sync_server", null), program_contact: import_db2.default.getSetting("program_contact", "") || "", recovery: !!recoveryWrap(theVault) }));
   const { validate } = require_validate();
   const accountShape = { display_name: { type: "string", required: true, maxLen: 120 }, username: { type: "string", required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, password: { type: "string", required: true, maxLen: 500 }, org_name: { type: "string", maxLen: 200 }, role: { type: "string", enum: ["navigator", "clinician", "supervisor", "admin"] }, storage_ack: { type: "boolean" } };
   function createFirstAccount(body) {
@@ -42869,7 +42966,7 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
   });
   router.get("/api/local/device", (ctx) => {
     if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
-    return { static: isStaticHost(), device_admin: isDeviceAdmin(ctx.user), signup_enabled: signupEnabled(), users: userCount(), clients: clientCount(), last_backup_at: import_db2.default.getSetting("last_backup_at", null) };
+    return { static: isStaticHost(), device_admin: isDeviceAdmin(ctx.user), signup_enabled: signupEnabled(), users: userCount(), clients: clientCount(), last_backup_at: import_db2.default.getSetting("last_backup_at", null), recovery: recoveryInfo() };
   });
   router.put("/api/local/device", (ctx) => {
     if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
@@ -42878,6 +42975,75 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     if (v.signup_enabled !== void 0) import_db2.default.setSetting("local_signup", v.signup_enabled ? "1" : "0");
     import_audit2.default.log({ user: ctx.user, action: "local.device.settings", details: { signup_enabled: v.signup_enabled } });
     return { ok: true };
+  });
+  const recoveryInfo = () => {
+    const w = recoveryWrap(theVault);
+    return { exists: !!w, created_at: w ? w.created_at : null, saved: !!(w && w.saved_at) };
+  };
+  const mayManageRecovery = (ctx) => {
+    import_auth2.default.requireAuth(ctx);
+    if (!isDeviceAdmin(ctx.user)) throw new import_http2.HttpError(403, "Only the person who manages this device can make its recovery code.");
+  };
+  router.post("/api/local/recovery", async (ctx) => {
+    mayManageRecovery(ctx);
+    const v = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 } });
+    await import_auth2.default.confirmPassword(ctx, v.password, { action: "device.recovery_code.failed" });
+    import_auth2.default.clearFailures(ctx.user.id);
+    const out2 = await replaceRecoveryCode();
+    import_audit2.default.log({ user: ctx.user, action: "device.recovery_code.created", details: { replaced: out2.replaced } });
+    return { code: out2.code, created_at: out2.created_at, replaced: out2.replaced };
+  });
+  router.post("/api/local/recovery/saved", async (ctx) => {
+    mayManageRecovery(ctx);
+    const w = recoveryWrap(theVault);
+    if (!w) throw new import_http2.HttpError(404, "This device has no recovery code yet.");
+    if (!w.saved_at) await saveVault(withRecovery(theVault, { ...w, saved_at: (/* @__PURE__ */ new Date()).toISOString() }));
+    return { ok: true, recovery: recoveryInfo() };
+  });
+  router.post("/api/local/recover", async (ctx) => {
+    const v = validate(ctx.body, { code: { type: "string", required: true, maxLen: 200 }, username: { type: "string", maxLen: 60 }, password: { type: "string", required: true, maxLen: 500 }, display_name: { type: "string", maxLen: 120 } });
+    const pre = recoveryRequestProblem(v);
+    if (pre) throw new import_http2.HttpError(400, pre.message, pre.extra);
+    if (!ctx.recoveryProven) {
+      if (phase !== "open") throw new import_http2.HttpError(409, "This device is not ready. Reload the page and try again.");
+      const r = await tryRecovery(v.code);
+      if (!r.dek) throw new import_http2.HttpError(r.status, r.message, r.extra);
+      r.dek.fill(0);
+    }
+    const wrongBefore = missesBeforeRecovery;
+    const { hashPasswordAsync, uuid: uuid2 } = require_crypto();
+    const typed = (v.username || "").trim();
+    const adminId = deviceAdminId();
+    let target = adminId ? import_db2.default.one(`SELECT id, username, is_active, password_hash, mfa_enabled, locked_until FROM users WHERE id=?`, adminId) : null;
+    if (target && (!target.is_active || /^scrypt\$0\$/.test(target.password_hash))) target = null;
+    let created = false;
+    const hash2 = await hashPasswordAsync(v.password);
+    if (target) {
+      if (typed && typed.toLowerCase() !== target.username.toLowerCase()) throw new import_http2.HttpError(400, `The account that manages this device is called \u201C${target.username}\u201D. Type that username, or leave the username empty.`, { adminUsername: target.username, fields: { username: `This device is managed by \u201C${target.username}\u201D` } });
+      import_db2.default.run(`UPDATE users SET password_hash=?, must_change_password=0, password_changed_at=?, failed_attempts=0, locked_until=NULL, mfa_enabled=0, mfa_secret_enc=NULL, totp_last_step=NULL, updated_at=? WHERE id=?`, hash2, import_db2.default.now(), import_db2.default.now(), target.id);
+      import_auth2.default.revokeAllForUser(target.id);
+    } else {
+      if (!typed) throw new import_http2.HttpError(400, "Nobody manages this device any more. Choose a username for a new administrator account.", { usernameRequired: true, fields: { username: "Choose a username for the new administrator account" } });
+      if (import_db2.default.one(`SELECT 1 FROM users WHERE username=?`, typed)) throw new import_http2.HttpError(400, "That username is already used on this device. Choose another for the new administrator account.", { fields: { username: "Already used on this device" } });
+      const id = uuid2();
+      import_db2.default.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,'admin',0,?)`, id, typed, hash2, (v.display_name || "").trim() || typed, import_db2.default.now());
+      import_db2.default.setSetting("device_admin_user_id", id);
+      target = { id, username: typed, mfa_enabled: 0, locked_until: null };
+      created = true;
+    }
+    await enrol(target.id, target.username, v.password);
+    const next = await replaceRecoveryCode();
+    import_audit2.default.log({
+      user: { id: target.id, username: target.username },
+      action: "device.recovered",
+      entity: "user",
+      entityId: target.id,
+      details: { method: "recovery_code", account: created ? "created" : "reset", mfa_cleared: !!target.mfa_enabled, lockout_cleared: !!target.locked_until, wrong_codes_before: wrongBefore }
+    });
+    import_audit2.default.log({ user: { id: target.id, username: target.username }, action: "device.recovery_code.created", details: { replaced: true, reason: "recovered" } });
+    const result = await import_auth2.default.login({ username: target.username, password: v.password, ctx });
+    ctx.res.setHeader("Set-Cookie", import_auth2.default.cookieHeader(result.token));
+    return { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline, username: target.username, account: created ? "created" : "reset", recovery_code: next.code, recovery_created_at: next.created_at };
   });
   const mayRestore = (ctx) => {
     if (userCount() === 0) return;
@@ -43069,6 +43235,7 @@ async function handle(method, path, body, headers = {}) {
   const res = new FakeRes();
   const ctx = { req: { socket: { remoteAddress: "127.0.0.1" } }, res, method, path: url.pathname, query: url.searchParams, params: {}, headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])), cookies: {}, ip: "device", user: null, session: null, body: null, rawBody: null };
   let relockOnFail = false;
+  let recovered = false;
   try {
     if (sqlite_default.isWiped()) throw new import_http2.HttpError(410, "This device has been erased and needs to be set up again.", { wiped: true });
     if (sqlite_default.isFrozen()) throw new import_http2.HttpError(409, "SUDS is now open in another window on this device. Use that window, or take it back here.", { frozen: true });
@@ -43077,6 +43244,7 @@ async function handle(method, path, body, headers = {}) {
       const a = await lockedAnswer(method, url.pathname, body);
       if (a.done) return { status: a.status || 200, headers: { "content-type": "application/json" }, json: a.json };
       relockOnFail = a.relockOnFail;
+      recovered = !!a.recovered;
     }
     if (body && typeof body === "object" && !(body instanceof ArrayBuffer) && !(body instanceof Uint8Array) && ("sponsor_password" in body || "sponsor_username" in body)) {
       body = { ...body };
@@ -43089,6 +43257,7 @@ async function handle(method, path, body, headers = {}) {
     ctx.params = m.params;
     if (token) ctx.headers.authorization = "Bearer " + token;
     ctx.user = import_auth2.default.resolveSession(ctx);
+    ctx.recoveryProven = recovered && url.pathname === "/api/local/recover";
     if (body instanceof ArrayBuffer || body instanceof Uint8Array) {
       ctx.rawBody = import_buffer.Buffer.from(body);
       ctx.body = {};

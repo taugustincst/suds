@@ -19,7 +19,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { makeChecks, until, settle, signInAgain, PLAYWRIGHT_WEBKIT_LINUX, WEBKIT_LINUX_SW_CACHE } from './assert.mjs';
+import { makeChecks, until, settle, signInAgain, PLAYWRIGHT_WEBKIT_LINUX, WEBKIT_LINUX_SW_CACHE, passRecoveryCode } from './assert.mjs';
 // A page of the older build has no activity hook (window.__sudsActivity) to wait on; pace it the old way.
 const pace = async (p) => ((await p.evaluate(() => !!window.__sudsActivity).catch(() => false)) ? settle(p) : p.waitForTimeout(150));
 // SUDS_BROWSER=webkit (or firefox) runs this script in that engine instead of Chromium; CI's WebKit smoke
@@ -55,7 +55,7 @@ for (const [label, base] of surfaces) {
   await page.fill('input[name=username]', 'qatest'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
   // The on-device app asks the person to confirm where their records are kept (not the office's local mode).
   if (await page.$('input[name=storage_ack]')) await page.check('input[name=storage_ack]');
-  await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 }); await settle(page);
+  await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 }); await settle(page); await passRecoveryCode(page);
   for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await settle(page); }
 
   // P3-1 greeting
@@ -202,7 +202,7 @@ for (const [label, base] of surfaces) {
       await page.getByRole('combobox', { name: /Your role/ }).selectOption('admin');
       await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
       await page.getByRole('checkbox').first().check();
-      await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 }); await settle(page);
+      await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 }); await settle(page); await passRecoveryCode(page);
       for (let i = 0; i < 6; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await settle(page); }
 
       await step('greeting', async () => {
@@ -450,7 +450,7 @@ else if (buildOldSite()) {
     await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 15000 });
     await page.fill('input[name=display_name]', 'QATEST'); await page.selectOption('select[name=role]', 'admin');
     await page.fill('input[name=username]', 'qatest'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
-    await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 15000 }); await dismissTour(page);
+    await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 15000 }); await passRecoveryCode(page); await dismissTour(page);
     ok(/QATEST$/.test((await page.textContent('h1')).trim()), `${label}: set up as QATEST on the ${OLD_COMMIT} build`);
     await page.goto(base + '/#/clients'); await page.waitForSelector('button:has-text("New client")', { timeout: 10000 });
     await page.click('button:has-text("New client")'); await page.waitForSelector('.modal input[name=first_name]');

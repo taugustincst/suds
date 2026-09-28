@@ -49,6 +49,10 @@ let phase = 'starting';
 let dek = null; let dekKey = null; let theVault = null;
 let lastActivity = Date.now();
 let unlockFailures = 0;
+// Wrong recovery codes typed since this page loaded (lockedAnswer, /api/local/recover). Each one waits like a
+// wrong password (missed); after MAX_RECOVERY_MISSES the page must be reloaded before another is tried.
+let recoveryMisses = 0; let missesBeforeRecovery = 0; // the count the last right code cleared, for the audit
+const MAX_RECOVERY_MISSES = 10;
 const sealer = () => ({ seal: (bytes) => vault.seal(dekKey, bytes), sealSync: (bytes) => vault.sealSync(gcm, dek, bytes) });
 function config() { return require('./shims/config.js'); }
 function setKeys(k) { const c = config(); c.encryptionKey = Buffer.from(k.enc, 'hex'); c.indexKey = Buffer.from(k.idx, 'hex'); }
@@ -151,7 +155,7 @@ async function rekeyIfRestored(userId, username, password) {
     before.dek.fill(0);
     // Which accounts lost their key (account ids: staff accounts, not clients), so whoever reads the device's
     // audit knows who will need to be let in again, not merely how many.
-    audit.log({ user: { username: 'device' }, action: 'device.key_rotated', details: { reason: 'restore', carried_accounts_waiting: out.vault.wraps.filter(w => w.chained).length, wraps_dropped: out.dropped.length, dropped_accounts: out.dropped } });
+    audit.log({ user: { username: 'device' }, action: 'device.key_rotated', details: { reason: 'restore', carried_accounts_waiting: out.vault.wraps.filter(w => w.chained).length, wraps_dropped: out.dropped.length, dropped_accounts: out.dropped, ...(out.vault.recovery_dropped_at ? { recovery_code_dropped: true } : {}) } });
     return true;
   });
   vaultQueue = run.catch(() => {});
@@ -189,10 +193,58 @@ async function tryUnwrap(username, password) {
   if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) return null;
   const r = await vault.unlock(theVault, username, password);
   if (r) { unlockFailures = 0; return r; }
-  // Each guess already costs a PBKDF2 derivation; repeated misses also wait, a little longer each time.
+  await missed();
+  return null;
+}
+/** Each guess already costs a PBKDF2 derivation; repeated misses also wait, a little longer each time. */
+async function missed() {
   unlockFailures++;
   await new Promise(res => setTimeout(res, Math.min(5000, 250 * unlockFailures)));
+}
+/**
+ * Try a recovery code against the vault's recovery wrap (local/vault.js). { dek } when it opens the device,
+ * or { status, message, extra } to answer with. A code that cannot be one (wrong length or letters) is said
+ * so at once and not counted; a wrong one waits like a wrong password and counts towards the page's limit.
+ * The code is never logged, stored or audited.
+ */
+async function tryRecovery(code) {
+  const field = (message) => ({ fields: { code: message } });
+  if (!vault.recoveryWrap(theVault)) return { status: 404, message: 'This device has no recovery code. Restore a backup, or start over on this device.', extra: { noRecoveryCode: true } };
+  if (recoveryMisses >= MAX_RECOVERY_MISSES) return { status: 429, message: 'Too many wrong recovery codes. Reload this page before you try again, and check the code against the file you saved or printed.', extra: { tooManyRecoveryCodes: true, ...field('Too many wrong codes: reload the page') } };
+  if (!vault.normalizeRecoveryCode(code)) return { status: 400, message: 'A recovery code is 28 letters and numbers in seven groups of four, like 7K3M-Q9TD-…. Check what you typed.', extra: field('28 letters and numbers, in groups of four') };
+  const dek = await vault.unlockRecovery(theVault, code);
+  if (dek) { unlockFailures = 0; missesBeforeRecovery = recoveryMisses; recoveryMisses = 0; return { dek }; }
+  recoveryMisses++;
+  await missed();
+  const hint = recoveryMisses >= 3
+    ? ' Check it against the recovery code file you downloaded or the page you printed: only the newest code works, and making a new one replaced any older one.'
+    : ' Check it and try again.';
+  return { status: 400, message: 'That recovery code is not right.' + hint, extra: { wrongRecoveryCode: true, attempts: recoveryMisses, ...field('That code is not right') } };
+}
+/** The shape of a recovery request, checked before any code is tried: a mistake here costs no attempt. */
+function recoveryRequestProblem(b) {
+  if (typeof b.password !== 'string' || !b.password) return { message: 'Choose a new password.', extra: { fields: { password: 'Required' } } };
+  const errs = auth.passwordPolicy(b.password);
+  if (errs.length) return { message: 'Password must contain ' + errs.join(', '), extra: { fields: { password: 'Must contain ' + errs.join(', ') } } };
+  if (b.username !== undefined && b.username !== null && b.username !== '' && (typeof b.username !== 'string' || b.username.length > 60 || !/^[a-zA-Z0-9._@-]+$/.test(b.username.trim()))) return { message: 'A username is letters, numbers and . _ @ - only.', extra: { fields: { username: 'Letters, numbers and . _ @ - only' } } };
   return null;
+}
+/**
+ * A new recovery code for this device, replacing any earlier one (its wrap goes in the same vault write, so
+ * the old code stops opening the device at once). Returns the code, which the caller hands to the person
+ * once and keeps nowhere.
+ */
+async function replaceRecoveryCode() {
+  if (phase !== 'open' || !dek || !theVault || theVault.format !== vault.VAULT_FORMAT || !vault.hasAccounts(theVault) || !sqlite.hasSealer()) {
+    throw new HttpError(409, 'This device cannot make a recovery code right now. Sign out, sign in again and try once more.');
+  }
+  const code = vault.newRecoveryCode();
+  const wrap = await vault.wrapRecovery(dek, code, theVault.salt);
+  const replaced = !!vault.recoveryWrap(theVault);
+  const next = vault.withRecovery(theVault, wrap);
+  delete next.recovery_dropped_at;
+  await saveVault(next);
+  return { code, created_at: wrap.created_at, replaced };
 }
 /**
  * Lock: save (sealed), close the database, forget the keys. Only a device with an account that can open it
@@ -234,6 +286,8 @@ async function reconcileVault() {
   const byName = new Map(); for (const u of users) byName.set(await vault.nameHash(theVault.salt, u.username), u);
   let changed = false; const wraps = [];
   for (const w of theVault.wraps) {
+    // The recovery code's wrap belongs to no account: it stays until a new code replaces it.
+    if (w.recovery) { wraps.push(w); continue; }
     const u = byId.get(w.user_id) || byName.get(w.name);
     if (!u || !u.is_active) { changed = true; continue; }
     const name = await vault.nameHash(theVault.salt, u.username);
@@ -241,7 +295,7 @@ async function reconcileVault() {
   }
   const h = hints();
   if (JSON.stringify(h) !== JSON.stringify(theVault.hints || {})) changed = true;
-  if (changed) await saveVault({ ...theVault, wraps: wraps.length ? wraps : theVault.wraps, hints: h });
+  if (changed) await saveVault({ ...theVault, wraps: wraps.some(w => !w.recovery) ? wraps : theVault.wraps, hints: h });
 }
 /**
  * After a request that set or proved a password, wrap the DEK for it. Every one of these is a moment the
@@ -281,7 +335,7 @@ async function lockedAnswer(method, path, body) {
   const b = body || {};
   if (method === 'GET' && path === '/api/local/status') {
     const h = (theVault && theVault.hints) || {};
-    return { done: true, json: { local: true, static: sync.isStaticHost(), locked: true, users: h.users || theVault.wraps.length, signup_enabled: !!h.signup_enabled, last_sync: null, sync_server: null, program_contact: h.program_contact || '' } };
+    return { done: true, json: { local: true, static: sync.isStaticHost(), locked: true, users: h.users || theVault.wraps.filter(w => !w.recovery).length, signup_enabled: !!h.signup_enabled, last_sync: null, sync_server: null, program_contact: h.program_contact || '', recovery: !!vault.recoveryWrap(theVault) } };
   }
   const refused = (status, error, extra = {}) => ({ done: true, status, json: { error, locked: true, ...extra } });
   if (method === 'POST' && path === '/api/auth/login') {
@@ -300,6 +354,16 @@ async function lockedAnswer(method, path, body) {
     // Vouched for by a backed-up account after a restore: its password rotates the key too.
     if (b.sponsor_username && r.wrap.chained) { try { await rekeyIfRestored(r.wrap.user_id, b.sponsor_username, b.sponsor_password); } catch (e) { reportError(e); } }
     return { done: false, relockOnFail: true };
+  }
+  if (method === 'POST' && path === '/api/local/recover') {
+    // "Forgot the password? Use your recovery code": the owner's code opens the device (its own wrap), and the
+    // route below sets the device administrator's new password and signs them in (ADR-0008, "Recovery code").
+    const pre = recoveryRequestProblem(b);
+    if (pre) return refused(400, pre.message, pre.extra);
+    const r = await tryRecovery(b.code);
+    if (!r.dek) return refused(r.status, r.message, r.extra);
+    await unlockWith(r.dek);
+    return { done: false, relockOnFail: true, recovered: true };
   }
   if (method === 'POST' && path === '/api/local/signup') {
     // A new account would get the key to every record on the device, so someone who can already open it
@@ -377,7 +441,7 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
   // Later sign-ups are for the published on-device app, where nobody else issues accounts. A copy the
   // office server hands out (/?local=1) gets its accounts from the office and has one person on it.
   const signupEnabled = () => sync.isStaticHost() && db.getSetting('local_signup', '1') !== '0';
-  router.get('/api/local/status', () => ({ local: true, static: sync.isStaticHost(), users: userCount(), signup_enabled: userCount() === 0 || signupEnabled(), last_sync: db.getSetting('last_sync_at', null), sync_server: db.getSetting('sync_server', null), program_contact: db.getSetting('program_contact', '') || '' }));
+  router.get('/api/local/status', () => ({ local: true, static: sync.isStaticHost(), users: userCount(), signup_enabled: userCount() === 0 || signupEnabled(), last_sync: db.getSetting('last_sync_at', null), sync_server: db.getSetting('sync_server', null), program_contact: db.getSetting('program_contact', '') || '', recovery: !!vault.recoveryWrap(theVault) }));
   const { validate } = require('../server/validate.js');
   const accountShape = { display_name: { type: 'string', required: true, maxLen: 120 }, username: { type: 'string', required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, password: { type: 'string', required: true, maxLen: 500 }, org_name: { type: 'string', maxLen: 200 }, role: { type: 'string', enum: ['navigator', 'clinician', 'supervisor', 'admin'] }, storage_ack: { type: 'boolean' } };
   function createFirstAccount(body) {
@@ -458,7 +522,7 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
   // the signed-in person manages the device.
   router.get('/api/local/device', (ctx) => {
     if (!ctx.user) throw new HttpError(401, 'Sign in first');
-    return { static: sync.isStaticHost(), device_admin: isDeviceAdmin(ctx.user), signup_enabled: signupEnabled(), users: userCount(), clients: clientCount(), last_backup_at: db.getSetting('last_backup_at', null) };
+    return { static: sync.isStaticHost(), device_admin: isDeviceAdmin(ctx.user), signup_enabled: signupEnabled(), users: userCount(), clients: clientCount(), last_backup_at: db.getSetting('last_backup_at', null), recovery: recoveryInfo() };
   });
   router.put('/api/local/device', (ctx) => {
     if (!ctx.user) throw new HttpError(401, 'Sign in first');
@@ -467,6 +531,82 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
     if (v.signup_enabled !== undefined) db.setSetting('local_signup', v.signup_enabled ? '1' : '0');
     audit.log({ user: ctx.user, action: 'local.device.settings', details: { signup_enabled: v.signup_enabled } });
     return { ok: true };
+  });
+
+  // ---- the owner's recovery code (local/vault.js; docs/architecture/ADR-0008-device-encryption.md) ----
+  // Whether the device has one and when it was made (never the code: it is not stored), and whether its maker
+  // said they saved it. Home and This device ask the device administrator to make one until both are true.
+  const recoveryInfo = () => { const w = vault.recoveryWrap(theVault); return { exists: !!w, created_at: w ? w.created_at : null, saved: !!(w && w.saved_at) }; };
+  const mayManageRecovery = (ctx) => {
+    auth.requireAuth(ctx);
+    if (!isDeviceAdmin(ctx.user)) throw new HttpError(403, 'Only the person who manages this device can make its recovery code.');
+  };
+  // Make a new code (replacing any earlier one). The device administrator's password again first, with the
+  // sign-in's protections (auth.confirmPassword: limit, failure count, lockout, audit of a failure).
+  router.post('/api/local/recovery', async (ctx) => {
+    mayManageRecovery(ctx);
+    const v = validate(ctx.body, { password: { type: 'string', required: true, maxLen: 500 } });
+    await auth.confirmPassword(ctx, v.password, { action: 'device.recovery_code.failed' });
+    auth.clearFailures(ctx.user.id);
+    const out = await replaceRecoveryCode();
+    audit.log({ user: ctx.user, action: 'device.recovery_code.created', details: { replaced: out.replaced } });
+    return { code: out.code, created_at: out.created_at, replaced: out.replaced };
+  });
+  // "I have saved my recovery code", ticked on the screen that showed it.
+  router.post('/api/local/recovery/saved', async (ctx) => {
+    mayManageRecovery(ctx);
+    const w = vault.recoveryWrap(theVault);
+    if (!w) throw new HttpError(404, 'This device has no recovery code yet.');
+    if (!w.saved_at) await saveVault(vault.withRecovery(theVault, { ...w, saved_at: new Date().toISOString() }));
+    return { ok: true, recovery: recoveryInfo() };
+  });
+  // Use it: on the locked sign-in page the kernel has already opened the device with the code (lockedAnswer,
+  // ctx.recoveryProven); on a device that is open anyway (after a restore, before anyone signs in) the code is
+  // checked here. Sets the device administrator's new password, clears their lockout and two-step
+  // verification on this device, wraps the device key for the new password, replaces the code that was used
+  // with a new one (returned once, to be shown once) and signs them in. With no device administrator left
+  // (removed or deactivated), the username given becomes a new administrator account that manages the device.
+  router.post('/api/local/recover', async (ctx) => {
+    const v = validate(ctx.body, { code: { type: 'string', required: true, maxLen: 200 }, username: { type: 'string', maxLen: 60 }, password: { type: 'string', required: true, maxLen: 500 }, display_name: { type: 'string', maxLen: 120 } });
+    const pre = recoveryRequestProblem(v);
+    if (pre) throw new HttpError(400, pre.message, pre.extra);
+    if (!ctx.recoveryProven) {
+      if (phase !== 'open') throw new HttpError(409, 'This device is not ready. Reload the page and try again.');
+      const r = await tryRecovery(v.code);
+      if (!r.dek) throw new HttpError(r.status, r.message, r.extra);
+      r.dek.fill(0);
+    }
+    const wrongBefore = missesBeforeRecovery;
+    const { hashPasswordAsync, uuid } = require('../server/crypto.js');
+    const typed = (v.username || '').trim();
+    const adminId = deviceAdminId();
+    let target = adminId ? db.one(`SELECT id, username, is_active, password_hash, mfa_enabled, locked_until FROM users WHERE id=?`, adminId) : null;
+    if (target && (!target.is_active || /^scrypt\$0\$/.test(target.password_hash))) target = null;
+    let created = false;
+    const hash = await hashPasswordAsync(v.password);
+    if (target) {
+      // The code holder can open every record here anyway, so naming the account is no disclosure.
+      if (typed && typed.toLowerCase() !== target.username.toLowerCase()) throw new HttpError(400, `The account that manages this device is called “${target.username}”. Type that username, or leave the username empty.`, { adminUsername: target.username, fields: { username: `This device is managed by “${target.username}”` } });
+      db.run(`UPDATE users SET password_hash=?, must_change_password=0, password_changed_at=?, failed_attempts=0, locked_until=NULL, mfa_enabled=0, mfa_secret_enc=NULL, totp_last_step=NULL, updated_at=? WHERE id=?`, hash, db.now(), db.now(), target.id);
+      auth.revokeAllForUser(target.id);
+    } else {
+      if (!typed) throw new HttpError(400, 'Nobody manages this device any more. Choose a username for a new administrator account.', { usernameRequired: true, fields: { username: 'Choose a username for the new administrator account' } });
+      if (db.one(`SELECT 1 FROM users WHERE username=?`, typed)) throw new HttpError(400, 'That username is already used on this device. Choose another for the new administrator account.', { fields: { username: 'Already used on this device' } });
+      const id = uuid();
+      db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,'admin',0,?)`, id, typed, hash, (v.display_name || '').trim() || typed, db.now());
+      db.setSetting('device_admin_user_id', id);
+      target = { id, username: typed, mfa_enabled: 0, locked_until: null };
+      created = true;
+    }
+    // The new password opens the device from now on; the code that was used stops, replaced by a new one.
+    await enrol(target.id, target.username, v.password);
+    const next = await replaceRecoveryCode();
+    audit.log({ user: { id: target.id, username: target.username }, action: 'device.recovered', entity: 'user', entityId: target.id,
+      details: { method: 'recovery_code', account: created ? 'created' : 'reset', mfa_cleared: !!target.mfa_enabled, lockout_cleared: !!target.locked_until, wrong_codes_before: wrongBefore } });
+    audit.log({ user: { id: target.id, username: target.username }, action: 'device.recovery_code.created', details: { replaced: true, reason: 'recovered' } });
+    const result = await auth.login({ username: target.username, password: v.password, ctx });
+    ctx.res.setHeader('Set-Cookie', auth.cookieHeader(result.token));
+    return { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline, username: target.username, account: created ? 'created' : 'reset', recovery_code: next.code, recovery_created_at: next.created_at };
   });
 
   // ---- device backup and restore (local/backup.js) ----
@@ -616,7 +756,7 @@ async function handle(method, path, body, headers = {}) {
   const url = new URL(path, 'http://local');
   const res = new FakeRes();
   const ctx = { req: { socket: { remoteAddress: '127.0.0.1' } }, res, method, path: url.pathname, query: url.searchParams, params: {}, headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])), cookies: {}, ip: 'device', user: null, session: null, body: null, rawBody: null };
-  let relockOnFail = false;
+  let relockOnFail = false; let recovered = false;
   try {
     // Nothing runs against an erased database: the page is about to reload into first-run setup.
     if (sqlite.isWiped()) throw new HttpError(410, 'This device has been erased and needs to be set up again.', { wiped: true });
@@ -632,7 +772,7 @@ async function handle(method, path, body, headers = {}) {
     if (phase === 'locked') {
       const a = await lockedAnswer(method, url.pathname, body);
       if (a.done) return { status: a.status || 200, headers: { 'content-type': 'application/json' }, json: a.json };
-      relockOnFail = a.relockOnFail;
+      relockOnFail = a.relockOnFail; recovered = !!a.recovered;
     }
     // The vouching account's password is the kernel's business only: it never reaches a route (or its logs).
     if (body && typeof body === 'object' && !(body instanceof ArrayBuffer) && !(body instanceof Uint8Array) && ('sponsor_password' in body || 'sponsor_username' in body)) { body = { ...body }; delete body.sponsor_username; delete body.sponsor_password; }
@@ -642,6 +782,8 @@ async function handle(method, path, body, headers = {}) {
     ctx.params = m.params;
     if (token) ctx.headers.authorization = 'Bearer ' + token;
     ctx.user = auth.resolveSession(ctx);
+    // Opened with the recovery code by lockedAnswer just now (never anything a request can claim for itself).
+    ctx.recoveryProven = recovered && url.pathname === '/api/local/recover';
     if (body instanceof ArrayBuffer || body instanceof Uint8Array) { ctx.rawBody = Buffer.from(body); ctx.body = {}; }
     else if (typeof body === 'string') { ctx.rawBody = Buffer.from(body); ctx.body = {}; }
     else ctx.body = body || {};

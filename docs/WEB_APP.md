@@ -62,8 +62,14 @@ register (`HIPAA.md`, *Risk register notes*).
   after signing out or 15 minutes idle, SUDS is locked until someone signs in; nothing in the browser's storage
   is readable without a password. While you are signed in the records are open on the device, so sign out
   when you put it down, and still use a device with a passcode and disk encryption.
-- **A forgotten password cannot be recovered** — not by anyone — unless another account on this device can
-  set a new one, or you have a backup. Choose a password you will remember, and keep backups.
+- **A forgotten password needs the recovery code, or a backup.** Right after the first account is created the
+  app shows a **recovery code** once (seven groups of four letters and numbers): download it or print it, keep
+  it away from the device, and tick *I have saved my recovery code* to go on. On the sign-in page, **Can't sign
+  in? → Use your recovery code** takes the code and a new password for the person who manages the device,
+  keeps every record, signs them in and shows a new code (the used one stops working). Whoever holds the code
+  can open every record on the device, like a key, so keep it as you would a key. Nobody else can let you in:
+  SUDS has no shared or stock password, and the code is never stored anywhere but on the paper or in the file
+  you keep. See *Can't sign in?* below.
 - **Someone new is let in by someone already here.** On a device that is locked, **Sign up** asks for the
   username and password of a person who already has an account on it: a new account gets the key to every
   record, so it cannot be created by whoever happens to pick the device up.
@@ -87,6 +93,34 @@ register (`HIPAA.md`, *Risk register notes*).
   nothing — not even a password — is sent. A programme that needs records shared between staff runs the office
   server instead. The server flag `ALLOW_STATIC_SYNC` is a no-op kept only so existing deployments do not fail
   on an unknown setting.
+
+## Can't sign in?
+
+The sign-in page of SUDS on this device (and of an office's offline copy, `/?local=1`) lists every way back in
+under **Can't sign in?**, and what each does to the records:
+
+| Way back in | Who | The records |
+| --- | --- | --- |
+| **Use your recovery code** | whoever has the device's recovery code | **all kept**; the device administrator's password is replaced |
+| **Restore from a backup** | whoever has a backup file and its passphrase | replaced by the backup's; anything recorded since it was made is lost; its accounts and passwords come with it |
+| **Start over on this device** | anyone holding the device | **none kept**: everything in this browser is erased (on an office copy, what was synced comes back from the office) |
+
+**The recovery code.** At set-up, after the first account is created, the app shows the code once on its own
+screen (*Download as a text file*, *Print*, and a required *I have saved my recovery code* box before going
+on). The device administrator can make a new one under **This device → Recovery code**, after typing their
+password again; the new code replaces the old one at once. This device says whether a code exists and when it
+was made — never the code. A device set up before 1.15.1 has no code: Home asks its administrator to make one
+at every sign-in until they do (the prompt can be dismissed until the next sign-in; navigators are not asked).
+
+Using it (**Can't sign in? → Use your recovery code**): the code (capitals, spaces and dashes do not matter),
+optionally the device administrator's username (left empty, SUDS tells you what it is), and a new password
+under the usual password policy. The app then sets that password, clears the account's lockout and two-step
+verification on this device, signs the person in and shows a new recovery code, once, as at set-up. If the
+device administrator's account has been removed or deactivated, the username typed becomes a new
+administrator account that manages the device. A wrong code is refused with a plain message; each wrong code
+waits a little longer before the next can be tried, after three the message says to check the saved file, and
+after ten the page has to be reloaded. The audit log records that a code was made (`device.recovery_code.created`)
+or used (`device.recovered`, with who and how) — never the code.
 
 ## Device backup and restore
 
@@ -200,9 +234,12 @@ Behind a proxy, run the build with `NODE_USE_ENV_PROXY=1` as well as `HTTPS_PROX
 DEPLOYMENT.md, "Outbound internet").
 
 `scripts/ui/static-site.mjs` (first run with no query string, the storage confirmation, a client recorded
-fully offline, a reload, installability) and `scripts/ui/signup.mjs` (Sign up and Log in on both builds, a
+fully offline, a reload, installability), `scripts/ui/signup.mjs` (Sign up and Log in on both builds, a
 second account's caseload, sign-ups off, backup → erase → restore, wrong passphrase, tampered file, the backup
-reminder) are the automated checks for this build; both run in `scripts/ui/run-all.sh`.
+reminder) and `scripts/ui/device-recovery.mjs` (the recovery code at set-up, *Can't sign in?*, a wrong and a
+right code, the old password and the used code refused, a new code from This device, the prompt on a device
+set up before 1.15.1) are the automated checks for this build; all run in `scripts/ui/run-all.sh`.
+`test/device-recovery.test.js` runs the same recovery through the kernel in `npm test`.
 
 ## What the browser kernel is built from
 

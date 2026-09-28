@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-import { makeChecks, until, settle, saved, signInAgain } from './assert.mjs';
+import { makeChecks, until, settle, saved, signInAgain, passRecoveryCode } from './assert.mjs';
 const { ok, eq, fail, finish } = makeChecks('local-mode');
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 import('node:fs').then(m => m.mkdirSync('/tmp/suds-shots', { recursive: true }));
@@ -15,7 +15,7 @@ console.log('hash:', page.url().split('#')[1], '| boot text:', bootText);
 ok(await page.$('input[name=username]'), 'the local kernel booted and offered first-run setup', bootText);
 {
   await page.fill('input[name=display_name]', 'Phone Nav'); await page.fill('input[name=username]', 'mrivera'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
-  await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 });
+  await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 }); await passRecoveryCode(page);
   ok(await page.$('.layout'), 'the app is usable straight after setup');
   await page.waitForSelector('text=On this device', { timeout: 5000 }).catch(() => {});
   ok(await page.$('text=On this device'), 'and says it is running on this device');
@@ -74,24 +74,25 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
     L.handle = (method, path, ...rest) => method === 'GET' && path.startsWith('/api/local/status') && asked++ > 0
       ? new Promise(r => setTimeout(r, 800)).then(() => handle(method, path, ...rest)) : handle(method, path, ...rest);
     window.__signinScreens = [];
-    new MutationObserver(() => window.__signinScreens.push({ forms: app.querySelectorAll('.login input[name=username]').length, resetLinks: [...app.querySelectorAll('a')].filter(a => a.textContent === 'Reset this device').length }))
+    new MutationObserver(() => window.__signinScreens.push({ forms: app.querySelectorAll('.login input[name=username]').length, resetLinks: [...app.querySelectorAll('a')].filter(a => a.textContent === 'Start over on this device').length }))
       .observe(app, { childList: true });
   });
   await page.click('text=Sign out');
   // The Sync page has a username field of its own (the office sign-in), so wait for the sign-in page itself.
   await page.waitForSelector('.login input[name=username]', { timeout: 8000 });
-  // What a click on "Reset this device" would land on a moment later (inside the slowed render's window).
+  // What a click on "Start over on this device" would land on a moment later (inside the slowed render's window).
   await new Promise(r => setTimeout(r, 250));
-  const matchedFirst = await page.$eval('text=Reset this device', el => el.tagName).catch(() => null);
+  const matchedFirst = await page.$eval('text=Start over on this device', el => el.tagName).catch(() => null);
   await new Promise(r => setTimeout(r, 1200)); // long enough for a second, slowed render to land
   const screens = await page.evaluate(() => window.__signinScreens);
   const shown = screens.findIndex(s => s.forms > 0);
   ok(shown >= 0 && screens.slice(shown).every(s => s.forms > 0 && s.resetLinks > 0), 'once the sign-in page is showing after Sign out, it is never blanked by a second render', screens);
   eq(await page.$$eval('input[name=username]', e => e.length), 1, 'signing out draws one sign-in form, not two (and nothing of the page it left)');
-  eq(matchedFirst, 'A', '"Reset this device" on the sign-in page is the link, not the screen-reader announcement of the dialog just closed');
+  eq(matchedFirst, 'A', '"Start over on this device" on the sign-in page is the link, not the screen-reader announcement of the dialog just closed');
   ok(!(await page.$('input[name=display_name]')), 'signing out lands back on the login screen, not first-run setup', page.url());
-  ok(await page.$('#app a:has-text("Reset this device")'), 'a locked-out device offers a self-service reset instead of only "ask an admin"');
-  await page.click('text=Reset this device'); await page.waitForSelector('.modal');
+  ok(await page.$('#app a:has-text("Start over on this device")'), 'a locked-out device offers a self-service reset instead of only "ask an admin"');
+  ok(/Can’t sign in\?/.test(await page.textContent('[data-cant-sign-in]')) && await page.$('[data-cant-sign-in] [data-way-back=backup] [data-restore-open]'), 'under "Can’t sign in?", beside restoring a backup');
+  await page.click('text=Start over on this device'); await page.waitForSelector('.modal');
   ok(await page.isDisabled('.modal button.danger'), 'the erase button starts disabled until the confirmation text matches');
   await page.fill('#reset-device-confirm', 'nope');
   ok(await page.isDisabled('.modal button.danger'), 'a wrong confirmation phrase leaves the erase button disabled');
@@ -170,7 +171,7 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   const version = JSON.parse(await (await fetch(base + '/version.json')).text()).version;
   eq((await p.textContent('[data-build-stamp]') || '').trim(), `SUDS ${version}`, 'the start screen shows which build is running');
   await p.fill('input[name=display_name]', 'Stamp Nav'); await p.fill('input[name=username]', 'stamp'); await p.fill('input[name=password]', 'Navigator2026!!'); await p.fill('input[name=confirm]', 'Navigator2026!!');
-  await p.click('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 10000 });
+  await p.click('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 10000 }); await passRecoveryCode(p);
   for (let i = 0; i < 5; i++) { const b = await p.$('.modal button.primary'); if (!b) break; await b.click(); await settle(p); }
   ok(/SUDS \d+\.\d+\.\d+/.test(await p.textContent('.sidebar .foot')), 'and so does the sidebar once signed in');
   // An uncaught error is kept on the device, without long digit runs, and listed on the Sync page.
@@ -226,7 +227,7 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   dp.on('pageerror', e => errors.push('PAGEERROR ' + e.message));
   await dp.goto(base + '/?local=1#/'); await dp.waitForSelector('input[name=display_name]', { timeout: 15000 });
   await dp.fill('input[name=display_name]', 'Picture Nav'); await dp.fill('input[name=username]', 'picnav'); await dp.fill('input[name=password]', 'Navigator2026!!'); await dp.fill('input[name=confirm]', 'Navigator2026!!');
-  await dp.click('button[type=submit]'); await dp.waitForSelector('.layout', { timeout: 15000 });
+  await dp.click('button[type=submit]'); await dp.waitForSelector('.layout', { timeout: 15000 }); await passRecoveryCode(dp);
   await dp.goto(base + '/?local=1#/resources'); await settle(dp);
   await dp.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
   await dp.click('[data-region=sacramento-metro] button:has-text("Add")');

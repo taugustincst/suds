@@ -6,7 +6,7 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
-import { makeChecks, until, settle, saved, signInAgain } from './assert.mjs';
+import { makeChecks, until, settle, saved, signInAgain, passRecoveryCode } from './assert.mjs';
 
 const base = process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8878';
 const { ok, eq, fail, finish } = makeChecks('device-encryption');
@@ -57,7 +57,7 @@ async function firstRun(page, { name, username, password }) {
   await page.fill('input[name=password]', password); await page.fill('input[name=confirm]', password);
   await page.selectOption('select[name=role]', 'admin'); // may store documents (the large image below)
   await page.check('input[name=storage_ack]'); await page.click('button[type=submit]');
-  await page.waitForSelector('.layout', { timeout: 20000 });
+  await page.waitForSelector('.layout', { timeout: 20000 }); await passRecoveryCode(page);
   for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await settle(page); }
 }
 
@@ -221,7 +221,7 @@ const NAME = { first: 'Quintessa', last: 'Zabriskie', city: 'Xanaduville' };
   const page = watch(await ctx.newPage(), 'notice');
   await page.goto(base + '/'); await page.waitForSelector('[data-storage-notice]', { timeout: 20000 });
   const notice = await page.textContent('[data-storage-notice]');
-  ok(/encrypted with your password/.test(notice) && /cannot be recovered/.test(notice) && /backup/.test(notice), 'the set-up screen says the records are encrypted with the password, and that a forgotten one cannot be recovered without a backup', notice);
+  ok(/encrypted with your password/.test(notice) && /only the recovery code/.test(notice) && /backup/.test(notice), 'the set-up screen says the records are encrypted with the password, and that only the recovery code or a backup gets past a forgotten one', notice);
   ok(!/keys are kept in the same browser/.test(notice), 'and no longer says the keys sit beside the data');
   await ctx.close();
 }

@@ -1,5 +1,5 @@
-import { h, route, get, post, state, form, offerDeviceReset, nav, navAndRender, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink } from '../app.js';
-import { restoreBackupButton, requestPersistentStorage } from './local.js';
+import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink } from '../app.js';
+import { restoreBackupButton, requestPersistentStorage, showRecoveryCode, resetRecoveryPrompt } from './local.js';
 
 const OIDC_ERRORS = {
   provider_denied: 'The identity provider declined the sign-in.',
@@ -63,7 +63,7 @@ async function accountPage(r) {
     document.title = `${m === 'signup' ? 'Sign up' : 'Log in'} — ${state.local ? 'SUDS on this device' : 'SUDS'}`;
     for (const [k, b] of Object.entries(tabs)) { const on = k === m; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; b.classList.toggle('active', on); }
     panel.setAttribute('aria-labelledby', `account-tab-${m}`);
-    const content = m === 'signup' ? await signupPanel(status, noAccount) : await loginPanel(r, noAccount, back);
+    const content = m === 'signup' ? await signupPanel(status, noAccount) : await loginPanel(r, noAccount, back, status);
     clear(panel).append(content);
     const q = new URLSearchParams(r.query); q.delete('_'); q.set('mode', m);
     replaceHash(`#/login?${q}`);
@@ -89,7 +89,7 @@ async function accountPage(r) {
   return h('main', { class: 'login-wrap', id: 'main', tabindex: '-1' }, card, accessibilityLink());
 }
 
-async function loginPanel(r, noAccount, back = '') {
+async function loginPanel(r, noAccount, back = '', status = {}) {
   if (noAccount) {
     return h('div', { 'data-no-account': '1' },
       h('p', {}, 'There is no account on this device yet. Choose ', h('b', {}, 'Sign up'), ' to set SUDS up here, or put a backup back.'),
@@ -108,6 +108,7 @@ async function loginPanel(r, noAccount, back = '') {
     try { r2 = await post('/api/auth/login', d); }
     catch (e) { if (e.data && e.data.sponsorRequired && showSponsor && !d.sponsor_username) { showSponsor(true); if (!e.data.droppedAfterRestore) e.message += ' If your account has not been used on this device since its records were encrypted, someone who can already log in here can let you in below.'; e.labelled = true; } throw e; }
     await loadSession();
+    resetRecoveryPrompt();
     let to;
     if (r2.mfaPending) to = 'mfa';
     // Past the deadline the server refuses everything else anyway; inside it, the banner on every page says
@@ -127,10 +128,52 @@ async function loginPanel(r, noAccount, back = '') {
     oidc.enabled ? h('div', { class: 'small muted center mb' }, '— or —') : null,
     f,
     // A device with no office server behind it has no administrator to ask for a password reset — "ask
-    // your supervisor" is not an answer there, so it gets a self-service reset instead.
+    // your supervisor" is not an answer there, so it gets the ways back in that exist on a device instead.
     state.local
-      ? offerDeviceReset()
+      ? cantSignIn(status)
       : h('p', { class: 'small muted center mt' }, 'Forgot your password or locked out? Ask your supervisor or the SUDS administrator to reset it.'));
+}
+
+// ---- a device: "Can't sign in?" — every way back in, and what each does to the records ----
+// The records are encrypted under a key that only an account's password, or the owner's recovery code, opens
+// (local/vault.js), so nothing on this page can let anyone in without a secret they hold.
+function cantSignIn(status = {}) {
+  const item = (what, keeps, text) => h('li', { 'data-way-back': what }, text, ' ', h('b', {}, keeps));
+  const office = !isStaticHost();
+  return h('section', { class: 'cant-sign-in mt', 'aria-labelledby': 'cant-sign-in-title', 'data-cant-sign-in': '1' },
+    h('h2', { id: 'cant-sign-in-title', class: 'eyebrow' }, 'Can’t sign in?'),
+    h('ul', { class: 'small' },
+      status.recovery
+        ? item('recovery', 'Keeps every record.', [h('a', { href: '#', 'data-recover-open': '1', onClick: (e) => { e.preventDefault(); openRecoverDialog(); } }, 'Use your recovery code'), ' — forgot the password? The code you saved when this device was set up lets the person who manages it choose a new password.'])
+        : item('recovery', '', 'Recovery code: this device has none yet. Once someone can sign in, the person who manages it can make one under This device.'),
+      item('backup', 'Records added since the backup was made are lost.', [restoreBackupButton({ link: true }), ' — puts a backup file back, with the accounts and passwords it had when it was made.']),
+      item('start-over', office ? 'Anything not yet synced is lost; the rest comes back from the office SUDS.' : 'Nothing is kept.', [h('a', { href: '#', 'data-device-reset-open': '1', onClick: (e) => { e.preventDefault(); openDeviceResetDialog(); } }, 'Start over on this device'), ' — erases every record in this browser and sets SUDS up again.'])));
+}
+
+/** "Use your recovery code": the code, the device administrator's username (optional) and a new password. */
+function openRecoverDialog() {
+  const f = oneColumn(form([
+    { name: 'code', label: 'Recovery code', required: true, autocomplete: 'off', placeholder: 'XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX', help: 'The 28 letters and numbers you downloaded or printed when the code was made. Capitals, spaces and dashes do not matter.' },
+    { name: 'username', label: 'Username (optional)', autocomplete: 'username', pattern: '[a-zA-Z0-9._@\\-]+', help: 'The username of the person who manages this device. Leave it empty if you do not remember it: SUDS tells you. If that account is gone, type a username for a new administrator account.' },
+    { name: 'password', label: 'New password', type: 'password', required: true, autocomplete: 'new-password', help: PASSWORD_HELP },
+    { name: 'confirm', label: 'Confirm new password', type: 'password', required: true, autocomplete: 'new-password' },
+  ], { submitText: 'Use the code', onCancel: () => m.close(), onSubmit: async (d) => {
+    if (d.password !== d.confirm) throw fieldError('confirm', 'Passwords do not match');
+    const body = { code: d.code, password: d.password };
+    if (d.username && d.username.trim()) body.username = d.username.trim();
+    // quiet: a wrong code is this form's answer (with a message of its own), not a session ending.
+    const r = await post('/api/local/recover', body, { quiet: true });
+    m.close();
+    await loadSession();
+    resetRecoveryPrompt();
+    // The code that was used no longer works: the new one is shown once, as at set-up.
+    showRecoveryCode(r.recovery_code, r.recovery_created_at, { after: 'dashboard', recovered: true, username: r.username });
+  } }));
+  for (const [k, v] of [['autocapitalize', 'characters'], ['spellcheck', 'false']]) f.inputs.code.setAttribute(k, v);
+  const m = modal('Use your recovery code', h('div', { 'data-recover-dialog': '1' },
+    h('p', {}, 'Type the recovery code you saved, and choose a new password for the person who manages this device. Every record on the device stays as it is. You are signed in straight away, and SUDS shows you a new recovery code to keep: the one you use here stops working.'),
+    f));
+  return m;
 }
 
 async function signupPanel(status, noAccount) {
@@ -172,7 +215,7 @@ function firstRun() {
   const f = oneColumn(form([
     { name: 'org_name', label: 'Program name (optional)', placeholder: 'e.g. Clark County Harm Reduction Outreach', span: true },
     { name: 'display_name', label: 'Your name', required: true }, { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', value: stat ? 'guest' : '', help: stat ? 'Suggested: guest. You will use this to log in on this device.' : 'Use the same username as on the office SUDS if you have one.' },
-    { name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: `${PASSWORD_HELP} It encrypts the records on this device: nobody can recover them if it is forgotten, except from a backup.` }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
+    { name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: `${PASSWORD_HELP} It encrypts the records on this device. Next you get a recovery code: with it, or a backup, a forgotten password can be replaced.` }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
     // Asked for rather than assumed: a clinician set up as a navigator loses access to clinical notes,
     // including notes they wrote themselves, and only finds out when they try to open one.
     { name: 'role', label: 'Your role', type: 'select', noBlank: true, value: 'navigator', span: true,
@@ -190,7 +233,14 @@ function firstRun() {
     delete d.confirm;
     await post('/api/local/signup', d);
     await requestPersistentStorage();
-    await signInAs(d.username, d.password);
+    await post('/api/auth/login', { username: d.username, password: d.password });
+    await loadSession();
+    // The owner's recovery code (local/vault.js): made now, while the password just typed is at hand, and shown
+    // once on its own screen. If it cannot be made, Home asks for one until it is.
+    let made = null;
+    try { made = await post('/api/local/recovery', { password: d.password }, { quiet: true }); } catch { /* Home asks */ }
+    if (made && made.code) showRecoveryCode(made.code, made.created_at, { after: 'dashboard' });
+    else navAndRender('dashboard');
   } }));
   // Optional, and after the real thing: one tap from nothing to a set of fictional records to look around.
   let tryIt = null;
@@ -218,7 +268,7 @@ function firstRun() {
   const notice = stat
     ? h('div', { class: 'banner info mb', 'data-storage-notice': '1' }, h('div', {}, h('b', {}, 'Where your records are kept. '),
       'Everything you record is stored in this browser on this device, and nowhere else, encrypted with your password: SUDS locks when you log out or step away, and only a password of an account on this device opens it. ',
-      h('b', {}, 'If you forget your password and nobody else has an account here, the records cannot be recovered'), ' — not by anyone — except from a backup. ',
+      h('b', {}, 'If you forget your password, only the recovery code you are given next, or a backup, gets you back to the records'), ' — nobody else can. ',
       'The same goes if this browser’s site data is cleared, or the device is lost or replaced: download a backup regularly from ', h('b', {}, 'This device'), ' and keep its passphrase safe.'))
     : h('div', {},
       h('div', { class: 'banner warn mb', 'data-browser-copy-warning': '1' }, h('div', {}, h('b', {}, 'This is an offline copy of the office SUDS. '), 'Its records are encrypted with the password you choose here, and SUDS locks when you log out or step away. Keep that password to yourself: if you forget it, the records on this device cannot be opened, and anything not yet synced is lost — the office copy is re-downloaded when you set the device up again. Keep real client information on the office SUDS unless your administrator has approved this device for field work.')),

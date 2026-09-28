@@ -1,6 +1,6 @@
 // Form library + clickable cards: library cards, designer, fill from a client record with autofill, complete, PDF, attach a signed copy; office and phone-only mode.
 import { chromium } from 'playwright';
-import { makeChecks, until, settle, skipTour } from './assert.mjs';
+import { makeChecks, until, settle, skipTour, passRecoveryCode } from './assert.mjs';
 import fs from 'node:fs';
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const browser = await chromium.launch(); const errors = [];
@@ -102,7 +102,7 @@ async function designer() {
 await run('office', base + '/', async (p) => { await p.goto(base + '/#/login'); await p.fill('input[name=username]', 'mrivera'); await p.fill('input[name=password]', 'Navigator2026!!'); await p.click('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 8000 }); });
 await designer();
 await run('local', base + '/?local=1', async (p) => {
-  if (await p.$('input[name=display_name]')) { await p.fill('input[name=display_name]', 'Form Nav'); await p.fill('input[name=username]', 'formnav'); await p.fill('input[name=password]', 'Navigator2026!!'); await p.fill('input[name=confirm]', 'Navigator2026!!'); await p.click('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 10000 }); }
+  if (await p.$('input[name=display_name]')) { await p.fill('input[name=display_name]', 'Form Nav'); await p.fill('input[name=username]', 'formnav'); await p.fill('input[name=password]', 'Navigator2026!!'); await p.fill('input[name=confirm]', 'Navigator2026!!'); await p.click('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 10000 }); await passRecoveryCode(p); }
   await p.goto(base + '/?local=1#/sync'); await p.waitForSelector('button:has-text("Sync now")', { timeout: 10000 }).catch(() => {}); if (await p.$('button:has-text("Load sample data")')) { await p.click('button:has-text("Load sample data")'); await p.waitForSelector('[data-sample=loaded]', { timeout: 40000 }); }
 });
 finish(errors);
