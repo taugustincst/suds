@@ -185,11 +185,22 @@ route('funder', async (r) => {
     h('p', { class: 'small muted' }, 'Only when figures will be published or shared beyond your funder: a public dashboard, a board pack, a county website. A publication release covers the whole program for one month, quarter or fiscal year that has ended. Small counts are screened; a table the automatic check cannot confirm is protected is withheld and listed with the reason; and you confirm you have reviewed it before its files are exported. The submission above is what your funder asks for.'),
     canPublishThis ? h('p', {}, h('button', { class: 'btn', 'data-prepare-publication-button': '1', onClick: () => publish([from, to]) }, `Prepare a publication release for ${fmt.date(from)} – ${fmt.date(to)}`)) : null,
     periodButtons(publish, canPublishThis ? 'Or another period (whole program, ended):' : 'Choose a period (whole program, ended):')) : null;
+  // The three files, each with a line saying what it is for: three bare buttons left people guessing which one
+  // goes to the funder. The two report files keep the publication review's gating (review.download).
+  const downloads = can('export:read') ? h('section', { class: 'card', 'data-funder-downloads': '1' },
+    h('h2', {}, 'Which file do I send?'),
+    h('ul', { class: 'download-list' },
+      h('li', {}, h('button', { class: 'btn primary', 'data-funder-export': 'xlsx', 'aria-describedby': 'funder-dl-xlsx', onClick: () => review.download(`/api/reports/funder/export?${qs}&format=xlsx`, downloadCsv) }, 'This report (Excel)'),
+        h('span', { class: 'small', id: 'funder-dl-xlsx', 'data-funder-export-help': 'xlsx' }, publishable
+          ? 'The publication release: the file to publish or share once you have reviewed it above.'
+          : 'The submission workbook: this report as it is on screen, with an About sheet. Send this one to your funder.')),
+      h('li', {}, h('button', { class: 'btn', 'data-funder-export': 'csv', 'aria-describedby': 'funder-dl-csv', onClick: () => review.download(`/api/reports/funder/export?${qs}`, downloadCsv) }, 'CSV'),
+        h('span', { class: 'small', id: 'funder-dl-csv', 'data-funder-export-help': 'csv' }, 'The same figures as plain rows, for a funder portal or data system that asks you to upload a file.')),
+      h('li', {}, h('button', { class: 'btn', 'data-funder-export': 'workbook', 'aria-describedby': 'funder-dl-workbook', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Export everything to Excel'),
+        h('span', { class: 'small', id: 'funder-dl-workbook', 'data-funder-export-help': 'workbook' }, 'Every program sheet for the period, for your own checking and analysis. Not for sending: it is not the report.'))),
+    publishable || !pubOn || !submissionOk ? null : h('p', { class: 'small muted' }, 'To publish or share figures beyond your funder, prepare a publication release (below) and export that instead.')) : null;
   return h('div', {},
-    pageHead('Funder report',
-      can('export:read') ? h('button', { class: 'btn', 'data-funder-export': 'xlsx', onClick: () => review.download(`/api/reports/funder/export?${qs}&format=xlsx`, downloadCsv) }, 'This report (Excel)') : null,
-      can('export:read') ? h('button', { class: 'btn ghost', 'data-funder-export': 'csv', onClick: () => review.download(`/api/reports/funder/export?${qs}`, downloadCsv) }, 'CSV') : null,
-      can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Export everything to Excel') : null),
+    pageHead('Funder report'),
     // Which kind of run this is, first: the exported file says the same on its About sheet.
     runKindBanner(d, publishable || submissionOk ? null : h('p', { class: 'small' }, 'To publish or share figures, a supervisor or an administrator prepares a publication release.')),
     pubOn ? null : h('p', { class: 'small muted', 'data-publication-off': '1' }, 'Publication releases are switched off for this program (Settings › Program › Modules): this report is for your funder, not for publishing or sharing.'),
@@ -199,6 +210,7 @@ route('funder', async (r) => {
       h('h2', {}, 'Review before you share it'),
       withheldTables(d), publicationGuidance(), review.box,
       submissionOk ? backToSubmission() : null) : null,
+    downloads,
 
     // Custom ranges, one fund and year-to-date runs are not publication releases: offered only to a role that may run them.
     internalOk && !publishable ? h('div', { class: 'filters', 'data-custom-range': '1' },

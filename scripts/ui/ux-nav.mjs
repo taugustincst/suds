@@ -58,6 +58,8 @@ const sidebar = (page) => page.evaluate(() => {
   const name = (a) => [...a.childNodes].filter(n => !(n.classList && n.classList.contains('ico'))).map(n => n.textContent).join('').trim();
   return { main: [...nav.querySelectorAll(':scope > a')].map(name), more: more ? [...more.querySelectorAll('a')].map(name) : [] };
 });
+// Open the sidebar's folded "More" group (a no-op when it is already open).
+const openMore = (page) => page.evaluate(() => { const d = document.querySelector('.sidebar details.nav-more'); if (d) d.open = true; });
 // How long a page takes from the address changing to its content replacing the loading line, and what that line said.
 async function timePage(s, hash) {
   await s.go('profile');
@@ -108,21 +110,24 @@ try {
   {
     const sb = await sidebar(sup.page);
     counts.supervisor = { main: sb.main.length, more: sb.more.length };
-    eq(sb.main.includes('State reporting'), !!mods.caloms || !!mods.handoff, `a supervisor sees State reporting exactly when CalOMS or the hand-off is on (${JSON.stringify({ caloms: mods.caloms, handoff: mods.handoff })})`);
-    eq(sb.main.includes('SUPRT-A'), !!mods.suprt, 'and SUPRT-A exactly when it is on');
-    if (sb.main.includes('State reporting')) { await sup.page.click('.sidebar a[href="#/caloms"]'); await settle(sup.page); eq(await sup.page.title(), 'State reporting — SUDS', 'the State reporting entry opens its page'); }
+    // 1.15.2: a supervisor's reporting pages are under More (their main list is the supervision queue, the
+    // caseloads and the team's daily pages), still there exactly when the module is on.
+    const all = [...sb.main, ...sb.more];
+    eq(all.includes('State reporting'), !!mods.caloms || !!mods.handoff, `a supervisor sees State reporting exactly when CalOMS or the hand-off is on (${JSON.stringify({ caloms: mods.caloms, handoff: mods.handoff })})`);
+    eq(all.includes('SUPRT-A'), !!mods.suprt, 'and SUPRT-A exactly when it is on');
+    if (all.includes('State reporting')) { await openMore(sup.page); await sup.page.click('.sidebar a[href="#/caloms"]'); await settle(sup.page); eq(await sup.page.title(), 'State reporting — SUDS', 'the State reporting entry opens its page'); }
   }
   // Switching SUPRT-A on puts its entry in the menu; switching it off takes it away again.
   const admin = await session('admin', 'AdminPassw0rd!x');
   const suprtWas = !!mods.suprt;
   eq((await admin.api('PUT', '/api/admin/settings', { module_suprt: '1' })).status, 200, 'an administrator switches SUPRT-A on');
   await sup.page.reload(); await sup.page.waitForSelector('.layout'); await settle(sup.page);
-  ok((await sidebar(sup.page)).main.includes('SUPRT-A'), 'SUPRT-A is in the supervisor\'s sidebar once it is on', (await sidebar(sup.page)).main);
-  await sup.page.click('.sidebar a[href="#/suprt"]'); await settle(sup.page);
+  ok((await sidebar(sup.page)).more.includes('SUPRT-A'), 'SUPRT-A is in the supervisor\'s sidebar (under More) once it is on', await sidebar(sup.page));
+  await openMore(sup.page); await sup.page.click('.sidebar a[href="#/suprt"]'); await settle(sup.page);
   ok(/SUPRT-A/.test(await sup.page.textContent('.main h1')), 'and opens its page');
   eq((await admin.api('PUT', '/api/admin/settings', { module_suprt: '0' })).status, 200, 'switched off again');
   await sup.page.reload(); await sup.page.waitForSelector('.layout'); await settle(sup.page);
-  ok(!(await sidebar(sup.page)).main.includes('SUPRT-A'), 'and its entry goes');
+  ok(![...(await sidebar(sup.page)).main, ...(await sidebar(sup.page)).more].includes('SUPRT-A'), 'and its entry goes');
   if (suprtWas) await admin.api('PUT', '/api/admin/settings', { module_suprt: '1' });
   counts.finance = (await sidebar(fin.page)).main.length;
   counts.admin = (await sidebar(admin.page)).main.length;

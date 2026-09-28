@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker, clear, contactLinks, mapLink, openHref, tabStrip, clientStatus, emptyState, downloadCsv, flag, moduleOn } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker, clear, contactLinks, mapLink, openHref, tabStrip, clientStatus, emptyState, downloadCsv, flag, moduleOn, supervising } from '../app.js';
 import { openClientForm } from './clients.js';
 import { openInterventionForm, openRepeatInterventionForm, interventionTable } from './interventions.js';
 import { openCallForm, callTable } from './calls.js';
@@ -55,6 +55,15 @@ route('client', async (r) => {
     moduleTab('suprt', 'suprt', 'SUPRT-A', can('clients:read'), can('clients:write'), n('suprt')),
     ['forms', `Forms (${c.counts.forms || 0})`], ['episodes', 'Episodes'], ['requests', 'Requests'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team'],
     tab === 'timeline' ? ['timeline', 'All activity'] : null].filter(Boolean);
+  // The sections in the strip: the six everyone uses, then what this person's own work turns to most, by
+  // permission (deny-aware can()), not role name — a supervisor's episodes and care team (who is working this
+  // client), a clinician's care plan and assessments. A module switched off has no tab, so nothing is promoted
+  // in its place. tabStrip still measures the row and folds under More whatever does not fit (WCAG 1.4.10).
+  function coreTabs() {
+    const core = ['overview', 'interventions', 'notes', 'tasks', 'consents', 'referrals'];
+    const extra = supervising() ? ['episodes', 'team'] : can('notes:clinical:write') ? ['careplan', 'assessments'] : [];
+    return [...core, ...extra.filter(k => tabs.some(t => t[0] === k))];
+  }
   // What can be added to this record. On a wide screen each is its own button; on a phone (styles.css,
   // .client-actions) they fold into one "Add…" button that opens the same list, so the section tabs are not
   // pushed below the fold by a wall of buttons.
@@ -104,7 +113,7 @@ route('client', async (r) => {
         c.safety_plan ? h('button', { class: 'chip', type: 'button', 'data-safety-plan': c.safety_plan.id, title: 'Open the safety plan', onClick: async () => (await import('./notes.js')).openNote(c.safety_plan.id, { onChange: refresh }) }, `🛟 Safety plan on file (${fmt.date(c.safety_plan.occurred_at)})`) : null].filter(Boolean).map(x => h('li', {}, x)))),
       actionBar()),
     // The strip holds the sections used every day; the rest are under More.
-    tabStrip(tabs, tab, (k) => nav(`client/${id}/${k}`), { label: 'Client record sections', core: ['overview', 'interventions', 'notes', 'tasks', 'consents', 'referrals'] }),
+    tabStrip(tabs, tab, (k) => nav(`client/${id}/${k}`), { label: 'Client record sections', core: coreTabs() }),
     body);
 
   // Free text such as "Rosa (sister) 555-0134" gets its number turned into a tel: link.
