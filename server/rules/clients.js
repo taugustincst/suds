@@ -28,7 +28,7 @@ const FIELDS = {
 // a client's address made before a legal hold was set can never lift the hold by winning last-write-wins.
 const GUARDED = [
   [['legal_hold', 'legal_hold_reason_enc', 'legal_hold_cleared_reason_enc'], (u) => auth.hasPerm(u, 'clients:legal-hold')],
-  [['deleted_at', 'removed_reason_enc'], (u) => auth.hasPerm(u, 'clients:all') && auth.hasPerm(u, 'clients:write')],
+  [['deleted_at', 'removed_reason_enc'], (u) => auth.hasPerm(u, 'records:manage-others') && auth.hasPerm(u, 'clients:write')],
   [['merged_into'], (u) => auth.hasPerm(u, 'clients:merge')],
 ];
 const DEFAULTS = { legal_hold: 0, legal_hold_reason_enc: null, legal_hold_cleared_reason_enc: null, deleted_at: null, removed_reason_enc: null, merged_into: null };

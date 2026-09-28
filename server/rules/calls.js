@@ -18,8 +18,8 @@ module.exports = define({
     follow_up_needed: { type: 'boolean' }, follow_up_due: { type: 'date' }, summary: { type: 'string', maxLen: 4000 },
     log_time: { type: 'boolean', sync: false },
   },
-  owner: { col: 'user_id', all: 'clients:all' },
-  editableBy: ownedBy(['user_id'], 'clients:all'),
+  owner: { col: 'user_id', all: 'records:manage-others' },
+  editableBy: ownedBy(['user_id'], 'records:manage-others'),
   check(row, c) {
     const e = c.existing;
     if (row.outcome === undefined || row.outcome === null) return null;

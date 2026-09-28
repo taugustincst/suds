@@ -31,9 +31,9 @@ function scopeSql(t, user, alias) {
   const cf = auth.caseloadFilter(user, `${alias}.${t.clientCol}`);
   if (t.scope === 'all' || t.scope === 'users') return { sql: '1=1', params: [] };
   // Imports are their importer's until filed (server/routes/imports.js shows them to nobody else without
-  // clients:all). They used to travel to every device, other people's OneNote pages included.
+  // records:manage-others, 1.16.0; before, clients:all). They used to travel to every device, other people's OneNote pages included.
   if (t.scope === 'importer' || t.scope === 'via-import') {
-    if (auth.hasPerm(user, 'clients:all')) return { sql: '1=1', params: [] };
+    if (auth.hasPerm(user, 'records:manage-others')) return { sql: '1=1', params: [] };
     if (t.scope === 'importer') return { sql: `(${alias}.imported_by=? OR ${alias}.imported_by IS NULL)`, params: [user.id] };
     return { sql: `${alias}.import_id IN (SELECT i.id FROM imports i WHERE i.imported_by=? OR i.imported_by IS NULL)`, params: [user.id] };
   }
@@ -81,7 +81,7 @@ function droppedClients(user, since) {
 //    changed either way is re-sent the same way, so the device holds the amounts, or the placeholders, it may.
 const SCOPE_V = 'v1';
 function scopePerms() {
-  const s = new Set(['clients:all', 'notes:clinical:read']);
+  const s = new Set(['clients:all', 'records:manage-others', 'notes:clinical:read']);
   for (const t of SYNC.tables) { if (t.readPerm) s.add(t.readPerm); if (t.redact) s.add(t.redact.perm); if (t.unlinked) s.add(t.unlinked.all); }
   return [...s].sort();
 }
@@ -130,7 +130,7 @@ function scopeDrops(user, change) {
       const sc = scopeSql(t, user, 'x');
       rows.push(...db.all(`SELECT x.id FROM ${t.name} x WHERE x.${t.clientCol || 'client_id'} IS NULL AND NOT (${sc.sql})`, ...sc.params).map(r => [t.name, r.id]));
     }
-    if ((t.scope === 'importer' || t.scope === 'via-import') && lost.has('clients:all')) {
+    if ((t.scope === 'importer' || t.scope === 'via-import') && lost.has('records:manage-others')) {
       const sc = scopeSql(t, user, 'x');
       rows.push(...db.all(`SELECT x.id FROM ${t.name} x WHERE NOT (${sc.sql})`, ...sc.params).map(r => [t.name, r.id]));
     }

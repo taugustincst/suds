@@ -196,7 +196,7 @@ module.exports = (r) => {
   r.post('/api/notes/:id/request-cosign', auth.requireAuth, (ctx) => {
     const n = load(ctx, ctx.params.id);
     if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
-    if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden('Only the author can ask for a review of their note');
+    if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'records:manage-others')) throw forbidden('Only the author can ask for a review of their note');
     if (n.cosigned_at) throw badRequest('This note has already been countersigned');
     const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: 'boolean' } });
     const flag = cosign_requested === false ? 0 : 1;
@@ -313,7 +313,7 @@ module.exports = (r) => {
     const n = load(ctx, ctx.params.id);
     if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
     if (n.status !== 'draft') throw badRequest('Signed notes are part of the legal record and cannot be deleted');
-    if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden();
+    if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'records:manage-others')) throw forbidden();
     db.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), n.id);
     audit.log({ user: ctx.user, action: 'note.delete', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip });
     return { ok: true };

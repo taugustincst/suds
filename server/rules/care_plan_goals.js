@@ -14,7 +14,7 @@ module.exports = define({
     goal: { type: 'string', required: true, maxLen: 1000 }, problem_id: { type: 'string', maxLen: 60 }, status: { type: 'string', enum: CL.GOAL_STATUSES },
     start_date: { type: 'date' }, target_date: { type: 'date' }, review_date: { type: 'date' },
   },
-  deletableBy: ownedBy(['created_by'], 'clients:all', 'Only the person who added this goal, or a supervisor, can delete it. Mark it discontinued instead.'),
+  deletableBy: ownedBy(['created_by'], 'records:manage-others', 'Only the person who added this goal, or a supervisor, can delete it. Mark it discontinued instead.'),
   check(row, c) {
     const pid = row.problem_id;
     if (!pid || (c.existing && pid === c.existing.problem_id)) return null;

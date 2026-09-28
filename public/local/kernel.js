@@ -10440,7 +10440,7 @@ var require_permissions = __commonJS({
     "use strict";
     init_globals_inject();
     var PRIVILEGED_PERMISSIONS = ["users:manage", "settings:manage", "apikeys:manage"];
-    var SENSITIVE = /* @__PURE__ */ new Set(["export:identified", "clients:all", "disclosures:override", "notes:clinical:breakglass", "clients:merge", "clients:legal-hold"]);
+    var SENSITIVE = /* @__PURE__ */ new Set(["export:identified", "clients:all", "records:manage-others", "disclosures:override", "notes:clinical:breakglass", "clients:merge", "clients:legal-hold"]);
     var DEFS = [
       ["users:manage", "Manage users & permissions", "Create/edit/deactivate accounts, change roles, grant or revoke individual permissions."],
       ["users:read", "See the staff directory", "Minimal staff list for assignment dropdowns."],
@@ -10449,7 +10449,8 @@ var require_permissions = __commonJS({
       ["apikeys:manage", "Manage API keys", "Intake API keys and FHIR client registrations."],
       ["clients:read", "Open client records", "Identified client data: every client with clients:all, otherwise only the clients assigned to them."],
       ["clients:write", "Edit client records", "Create and edit identified client records."],
-      ["clients:all", "See every client", "Every client, not only their caseload (navigators, clinicians, supervisors and administrators by default from 1.16.0), with whole-program reports and synced devices; also lets them change or delete other workers' records and remove a client record. Deny it to hold a person to their caseload."],
+      ["clients:all", "See every client", "Every client, not only their caseload (navigators, clinicians, supervisors and administrators by default from 1.16.0), to read and add their own work to, with whole-program reports and synced devices. Deny it to hold a person to their caseload."],
+      ["records:manage-others", "Manage other workers' records", "Change or delete another worker's visits, calls, referrals, overdose reports, to-dos, care-plan goals, assessments and draft notes; record work under another worker's name; remove a client record; see other workers' staged imports. Supervisors and administrators."],
       ["clients:list-deidentified", "List de-identified clients", "Client codes only, never names or identifiers."],
       ["clients:merge", "Merge duplicate clients", "Combine two client records, audited."],
       ["clients:legal-hold", "Place a legal hold", "Prevent deletion/merge of a client record under hold."],
@@ -11116,7 +11117,7 @@ var require_sync_tables = __commonJS({
         { name: "note_addenda", enc: ["content_enc", "reason_enc"], legacy: { reason: "reason_enc" }, scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
         { name: "disclosures", enc: ["recipient_enc", "purpose_enc", "what_enc", "justification_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         // An import (a OneNote page, a Pocket AI transcript) is its importer's until it is filed against a client:
-        // the REST routes show it only to them (or to clients:all), and a device gets the same -- scope 'importer'.
+        // the REST routes show it only to them (or to records:manage-others), and a device gets the same -- scope 'importer'.
         { name: "imports", enc: ["filename_enc"], legacy: { filename: "filename_enc" }, scope: "importer", writePerm: "imports:write" },
         { name: "import_items", enc: ["content_enc", "title_enc", "metadata_enc"], legacy: { metadata: "metadata_enc" }, scope: "via-import", writePerm: "imports:write", parent: ["imports", "import_id"] },
         { name: "form_templates", enc: [], scope: "all", writePerm: "forms:manage", blob: ["file_b64"] },
@@ -11608,7 +11609,7 @@ var require_expenditures = __commonJS({
         // Only when this expenditure's opioid settlement category differs from its fund's.
         ...SETTLEMENT
       },
-      owner: { col: "user_id", all: "clients:all" },
+      owner: { col: "user_id", all: "records:manage-others" },
       editableBy: (user, row) => row.status === "pending" && (row.user_id === user.id || auth3.hasPerm(user, "budget:approve")) ? null : notPermitted("You cannot edit this record"),
       // An approver's ruling made offline (approve, reject, reimburse) is theirs to send, whatever the item's status.
       othersMayChange: (existing, row, changed, c) => auth3.hasPerm(c.user, "budget:approve") && changed.every((col) => APPROVAL.includes(col)),
@@ -13008,7 +13009,7 @@ var require_clients = __commonJS({
         audit3.log({ user: ctx.user, action: v.hold ? "client.legal_hold.set" : "client.legal_hold.clear", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason_recorded: v.reason ? true : void 0 } });
         return { ok: true, legal_hold: v.hold ? 1 : 0 };
       });
-      r.delete("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("clients:all"), (ctx) => {
+      r.delete("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("records:manage-others"), (ctx) => {
         const row = loadClient(ctx, ctx.params.id);
         if (!auth3.hasPerm(ctx.user, "clients:write")) throw forbidden();
         if (row.legal_hold) throw badRequest("This record is on legal hold and cannot be deleted until the hold is cleared");
@@ -13117,7 +13118,7 @@ var require_clients2 = __commonJS({
     };
     var GUARDED = [
       [["legal_hold", "legal_hold_reason_enc", "legal_hold_cleared_reason_enc"], (u) => auth3.hasPerm(u, "clients:legal-hold")],
-      [["deleted_at", "removed_reason_enc"], (u) => auth3.hasPerm(u, "clients:all") && auth3.hasPerm(u, "clients:write")],
+      [["deleted_at", "removed_reason_enc"], (u) => auth3.hasPerm(u, "records:manage-others") && auth3.hasPerm(u, "clients:write")],
       [["merged_into"], (u) => auth3.hasPerm(u, "clients:merge")]
     ];
     var DEFAULTS = { legal_hold: 0, legal_hold_reason_enc: null, legal_hold_cleared_reason_enc: null, deleted_at: null, removed_reason_enc: null, merged_into: null };
@@ -14011,7 +14012,7 @@ var require_supplies = __commonJS({
       const visit = db3.one(`SELECT id, client_id, user_id FROM interventions WHERE id=?`, raw.intervention_id);
       if (!visit) return "refers to a record the office server does not have (the visit)";
       if (existing && existing.intervention_id !== raw.intervention_id) return "has a value the office does not accept (a supply line cannot move to another visit)";
-      if (visit.client_id ? !auth3.canAccessClient(user, visit.client_id) : visit.user_id !== user.id && !auth3.hasPerm(user, "clients:all")) return visit.client_id ? "not on caseload" : "not permitted";
+      if (visit.client_id ? !auth3.canAccessClient(user, visit.client_id) : visit.user_id !== user.id && !auth3.hasPerm(user, "records:manage-others")) return visit.client_id ? "not on caseload" : "not permitted";
       const it = item(raw.item_id);
       if (!it) return "refers to a record the office server does not have (the supply item)";
       const q = Number(raw.quantity);
@@ -14141,8 +14142,8 @@ var require_interventions = __commonJS({
         // created with it in one step and linked to it (routes/interventions.js; the note's own rules apply).
         note: { type: "object", sync: false }
       },
-      owner: { col: "user_id", all: "clients:all" },
-      editableBy: ownedBy(["user_id"], "clients:all"),
+      owner: { col: "user_id", all: "records:manage-others" },
+      editableBy: ownedBy(["user_id"], "records:manage-others"),
       authorise(row, c) {
         if (!auth3.hasPerm(c.user, "budget:write")) {
           const e = c.existing;
@@ -14245,8 +14246,8 @@ var require_overdose_events = __commonJS({
         funding_source_id: { type: "string" },
         notes: { type: "string", maxLen: 4e3 }
       },
-      owner: { col: "reported_by", all: "clients:all" },
-      editableBy: ownedBy(["reported_by"], "clients:all")
+      owner: { col: "reported_by", all: "records:manage-others" },
+      editableBy: ownedBy(["reported_by"], "records:manage-others")
     });
   }
 });
@@ -14280,8 +14281,8 @@ var require_calls = __commonJS({
         summary: { type: "string", maxLen: 4e3 },
         log_time: { type: "boolean", sync: false }
       },
-      owner: { col: "user_id", all: "clients:all" },
-      editableBy: ownedBy(["user_id"], "clients:all"),
+      owner: { col: "user_id", all: "records:manage-others" },
+      editableBy: ownedBy(["user_id"], "records:manage-others"),
       check(row, c) {
         const e = c.existing;
         if (row.outcome === void 0 || row.outcome === null) return null;
@@ -14740,8 +14741,8 @@ var require_referrals2 = __commonJS({
         notes: { type: "string", maxLen: 2e3 },
         episode_id: { type: "string" }
       },
-      owner: { col: "user_id", all: "clients:all" },
-      editableBy: ownedBy(["user_id"], "clients:all"),
+      owner: { col: "user_id", all: "records:manage-others" },
+      editableBy: ownedBy(["user_id"], "records:manage-others"),
       // What anyone on the caseload may change on someone else's referral: its outcome (POST /api/referrals/:id/outcome
       // is not the maker's alone), and the flag a consent's revocation sets on the referrals that relied on it.
       othersMayChange: (existing, row, changed) => changed.every((col) => OTHERS.includes(col)),
@@ -14807,7 +14808,7 @@ var require_tasks = __commonJS({
         is_milestone: { type: "boolean" },
         completed_at: { type: "datetime" }
       },
-      editableBy: (user, row) => row.assigned_to === user.id || row.created_by === user.id || auth3.hasPerm(user, "clients:all") ? null : notPermitted("You cannot edit this record"),
+      editableBy: (user, row) => row.assigned_to === user.id || row.created_by === user.id || auth3.hasPerm(user, "records:manage-others") ? null : notPermitted("You cannot edit this record"),
       othersMayChange: (existing, row, changed) => ["done", "cancelled"].includes(row.status) && changed.every((col) => col === "status" || col === "completed_at")
     });
   }
@@ -14864,8 +14865,8 @@ var require_notes = __commonJS({
         problem_ids: { type: "array", maxLen: 30, of: "string", fromColumn: JSON.parse }
       },
       tombstone: "never",
-      owner: { col: "author_id", all: "clients:all" },
-      editableBy: (user, row) => row.status === "draft" && row.author_id !== user.id && !auth3.hasPerm(user, "clients:all") ? notPermitted("Only the author can edit a draft") : null,
+      owner: { col: "author_id", all: "records:manage-others" },
+      editableBy: (user, row) => row.status === "draft" && row.author_id !== user.id && !auth3.hasPerm(user, "records:manage-others") ? notPermitted("Only the author can edit a draft") : null,
       authorise(row, c) {
         const kind = c.existing ? c.existing.kind : row.kind;
         if (kind === "clinical" && !auth3.hasPerm(c.user, "notes:clinical:write")) return refuse("clinical notes not permitted for this role", { status: 403, message: "You cannot author clinical notes" });
@@ -15005,7 +15006,7 @@ var require_imports = __commonJS({
     init_globals_inject();
     var auth3 = require_auth2();
     var { define: define2, notPermitted } = require_core();
-    var importersOnly = (user, row) => !row.imported_by || row.imported_by === user.id || auth3.hasPerm(user, "clients:all") ? null : notPermitted("That import belongs to another worker");
+    var importersOnly = (user, row) => !row.imported_by || row.imported_by === user.id || auth3.hasPerm(user, "records:manage-others") ? null : notPermitted("That import belongs to another worker");
     module.exports = define2({
       table: "imports",
       fields: { filename: { type: "string", maxLen: 200 } },
@@ -15713,7 +15714,7 @@ var require_patient_requests = __commonJS({
         handled_by: { type: "string" },
         closed_at: { type: "datetime" }
       },
-      editableBy: (user, row) => row.handled_by === user.id || row.created_by === user.id || auth3.hasPerm(user, "clients:all") ? null : notPermitted("You cannot edit this record")
+      editableBy: (user, row) => row.handled_by === user.id || row.created_by === user.id || auth3.hasPerm(user, "records:manage-others") ? null : notPermitted("You cannot edit this record")
     });
     module.exports.KINDS = KINDS;
     module.exports.STATUSES = STATUSES;
@@ -15791,7 +15792,7 @@ var require_care_plan_goals = __commonJS({
         target_date: { type: "date" },
         review_date: { type: "date" }
       },
-      deletableBy: ownedBy(["created_by"], "clients:all", "Only the person who added this goal, or a supervisor, can delete it. Mark it discontinued instead."),
+      deletableBy: ownedBy(["created_by"], "records:manage-others", "Only the person who added this goal, or a supervisor, can delete it. Mark it discontinued instead."),
       check(row, c) {
         const pid = row.problem_id;
         if (!pid || c.existing && pid === c.existing.problem_id) return null;
@@ -15825,7 +15826,7 @@ var require_care_plan_steps = __commonJS({
       },
       // Deleting a goal deletes its steps, whoever added them (DELETE /api/goals/:id): a step whose goal goes in the
       // same push goes with it.
-      deletableBy: (user, row, { deleting } = {}) => row.created_by === user.id || auth3.hasPerm(user, "clients:all") || deleting && deleting.has(`care_plan_goals:${row.goal_id}`) ? null : notPermitted("Only the person who added this step, or a supervisor, can delete it. Mark it cancelled instead."),
+      deletableBy: (user, row, { deleting } = {}) => row.created_by === user.id || auth3.hasPerm(user, "records:manage-others") || deleting && deleting.has(`care_plan_goals:${row.goal_id}`) ? null : notPermitted("Only the person who added this step, or a supervisor, can delete it. Mark it cancelled instead."),
       check(row, c) {
         if (c.via !== "rest" || !row.owner_user_id || c.existing && row.owner_user_id === c.existing.owner_user_id) return null;
         if (!db3.one(`SELECT 1 FROM users WHERE id=?`, row.owner_user_id)) return refuse("has a value the office does not accept (its owner is not a staff account)", { message: "Validation failed", fields: { owner_user_id: "is not a staff account" } });
@@ -15864,8 +15865,8 @@ var require_asam_assessments = __commonJS({
         summary: { type: "string", maxLen: 5e3 },
         update_client_level: { type: "boolean", sync: false }
       },
-      editableBy: ownedBy(["assessed_by"], "clients:all", "Only the person who completed this assessment, or a supervisor, can change it"),
-      deletableBy: ownedBy(["assessed_by"], "clients:all", "Only the person who completed this assessment, or a supervisor, can delete it"),
+      editableBy: ownedBy(["assessed_by"], "records:manage-others", "Only the person who completed this assessment, or a supervisor, can change it"),
+      deletableBy: ownedBy(["assessed_by"], "records:manage-others", "Only the person who completed this assessment, or a supervisor, can delete it"),
       check(row, c) {
         const val = (k) => row[k] !== void 0 ? row[k] : c.existing ? c.existing[k] : void 0;
         const rec = val("recommended_loc");
@@ -15904,8 +15905,8 @@ var require_outcome_measures = __commonJS({
         variant: { type: "string", enum: ["men", "women", "unspecified"] },
         notes: { type: "string", maxLen: 2e3 }
       },
-      editableBy: ownedBy(["administered_by"], "clients:all", "Only the person who gave this questionnaire, or a supervisor, can change it"),
-      deletableBy: ownedBy(["administered_by"], "clients:all", "Only the person who gave this questionnaire, or a supervisor, can delete it"),
+      editableBy: ownedBy(["administered_by"], "records:manage-others", "Only the person who gave this questionnaire, or a supervisor, can change it"),
+      deletableBy: ownedBy(["administered_by"], "records:manage-others", "Only the person who gave this questionnaire, or a supervisor, can delete it"),
       check(row, c) {
         const code = row.instrument || c.existing && c.existing.instrument;
         if (!instrumentEnabledHere(code) && (!c.existing || c.changed().length)) {
@@ -17271,7 +17272,7 @@ var require_crud = __commonJS({
         }
         if (canEdit && !canEdit(ctx, row)) throw forbidden(`You cannot ${what} this record`);
       }
-      const ownerAll = R.owner && R.owner.col === ownerCol ? R.owner.all : "clients:all";
+      const ownerAll = R.owner && R.owner.col === ownerCol ? R.owner.all : "records:manage-others";
       const restrictOwner = opts.restrictOwner !== void 0 ? opts.restrictOwner : !!(R.owner && R.owner.col === ownerCol);
       const base = opts.base || `/api/${entity}s`;
       const readPerm = `${perm}:read`, writePerm = `${perm}:write`;
@@ -17400,7 +17401,7 @@ var require_crud = __commonJS({
       });
     }
     function ownerOrManager(col = "user_id") {
-      return (ctx, row) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all");
+      return (ctx, row) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "records:manage-others");
     }
     module.exports = { build, ownerOrManager, clientExists, assertFresh, STALE_MESSAGE };
   }
@@ -30529,7 +30530,7 @@ var require_reports = __commonJS({
               team,
               unsigned: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope}`, ...p).n,
               unsigned_overdue: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope} AND created_at < ?`, ...p, new Date(Date.now() - Number(db3.getSetting("note_lock_days", "3")) * 864e5).toISOString()).n,
-              staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
+              staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "records:manage-others") ? 1 : 0).n
             };
           })(),
           budget: auth3.hasPerm(ctx.user, "budget:read") ? db3.one(`SELECT ROUND((SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1),2) total, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')),2) spent, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending'),2) pending`) : null,
@@ -31236,13 +31237,13 @@ var require_imports2 = __commonJS({
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='staged') AS staged,
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='committed') AS committed,
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='discarded') AS discarded
-      FROM imports i LEFT JOIN users u ON u.id=i.imported_by ${auth3.hasPerm(ctx.user, "clients:all") ? "" : "WHERE i.imported_by=? OR i.imported_by IS NULL"} ORDER BY i.created_at DESC LIMIT 200`, ...auth3.hasPerm(ctx.user, "clients:all") ? [] : [ctx.user.id]);
+      FROM imports i LEFT JOIN users u ON u.id=i.imported_by ${auth3.hasPerm(ctx.user, "records:manage-others") ? "" : "WHERE i.imported_by=? OR i.imported_by IS NULL"} ORDER BY i.created_at DESC LIMIT 200`, ...auth3.hasPerm(ctx.user, "records:manage-others") ? [] : [ctx.user.id]);
         return { imports: rows.map(importView) };
       });
       r.get("/api/imports/:id", auth3.requireAuth, auth3.requirePerm("imports:read", "imports:write"), (ctx) => {
         const imp = db3.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id);
         if (!imp) throw notFound();
-        if (imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        if (imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden();
         const items = db3.all(`SELECT x.*, c.client_code AS suggested_client_code FROM import_items x LEFT JOIN clients c ON c.id=x.suggested_client_id WHERE import_id=? ORDER BY captured_at, created_at`, imp.id).map((x) => itemView(x));
         for (const it of items) if (it.suggested_client_id) {
           const c = db3.one(`SELECT * FROM clients WHERE id=?`, it.suggested_client_id);
@@ -31307,7 +31308,7 @@ var require_imports2 = __commonJS({
         const it = db3.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id);
         if (!it) throw notFound();
         const imp = db3.one(`SELECT imported_by FROM imports WHERE id=?`, it.import_id);
-        if (imp && imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        if (imp && imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden();
         if (it.status !== "staged") throw badRequest("Item already processed");
         db3.run(`UPDATE import_items SET status='discarded' WHERE id=?`, it.id);
         audit3.log({ user: ctx.user, action: "import.discard", entity: "import_item", entityId: it.id, ip: ctx.ip });
@@ -31316,7 +31317,7 @@ var require_imports2 = __commonJS({
       r.delete("/api/imports/:id", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
         const imp = db3.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id);
         if (!imp) throw notFound();
-        if (imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        if (imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden();
         db3.run(`DELETE FROM import_items WHERE import_id=? AND status<>'committed'`, imp.id);
         db3.run(`UPDATE imports SET status='purged' WHERE id=?`, imp.id);
         audit3.log({ user: ctx.user, action: "import.purge", entity: "import", entityId: imp.id, ip: ctx.ip });
@@ -32058,7 +32059,7 @@ var require_notes2 = __commonJS({
       r.post("/api/notes/:id/request-cosign", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
         if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can ask for a review of their note");
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden("Only the author can ask for a review of their note");
         if (n.cosigned_at) throw badRequest("This note has already been countersigned");
         const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: "boolean" } });
         const flag = cosign_requested === false ? 0 : 1;
@@ -32178,7 +32179,7 @@ var require_notes2 = __commonJS({
         const n = load(ctx, ctx.params.id);
         if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
         if (n.status !== "draft") throw badRequest("Signed notes are part of the legal record and cannot be deleted");
-        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden();
         db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
         audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
         return { ok: true };
@@ -38325,7 +38326,7 @@ var require_push = __commonJS({
           this.reject(t.name, ts.id, "not on caseload");
           return;
         }
-        if (t.scope === "all" && !auth3.hasPerm(user, "clients:all")) return;
+        if (t.scope === "all" && !auth3.hasPerm(user, "records:manage-others")) return;
         if (!SYNC2.mayReachUnlinked(t.name, user, existing, auth3.hasPerm)) {
           this.reject(t.name, ts.id, "not permitted");
           return;
@@ -38381,7 +38382,7 @@ var require_sync = __commonJS({
       const cf = auth3.caseloadFilter(user, `${alias}.${t.clientCol}`);
       if (t.scope === "all" || t.scope === "users") return { sql: "1=1", params: [] };
       if (t.scope === "importer" || t.scope === "via-import") {
-        if (auth3.hasPerm(user, "clients:all")) return { sql: "1=1", params: [] };
+        if (auth3.hasPerm(user, "records:manage-others")) return { sql: "1=1", params: [] };
         if (t.scope === "importer") return { sql: `(${alias}.imported_by=? OR ${alias}.imported_by IS NULL)`, params: [user.id] };
         return { sql: `${alias}.import_id IN (SELECT i.id FROM imports i WHERE i.imported_by=? OR i.imported_by IS NULL)`, params: [user.id] };
       }
@@ -38407,7 +38408,7 @@ var require_sync = __commonJS({
     }
     var SCOPE_V = "v1";
     function scopePerms() {
-      const s = /* @__PURE__ */ new Set(["clients:all", "notes:clinical:read"]);
+      const s = /* @__PURE__ */ new Set(["clients:all", "records:manage-others", "notes:clinical:read"]);
       for (const t of SYNC2.tables) {
         if (t.readPerm) s.add(t.readPerm);
         if (t.redact) s.add(t.redact.perm);
@@ -38467,7 +38468,7 @@ var require_sync = __commonJS({
           const sc = scopeSql(t, user, "x");
           rows.push(...db3.all(`SELECT x.id FROM ${t.name} x WHERE x.${t.clientCol || "client_id"} IS NULL AND NOT (${sc.sql})`, ...sc.params).map((r) => [t.name, r.id]));
         }
-        if ((t.scope === "importer" || t.scope === "via-import") && lost.has("clients:all")) {
+        if ((t.scope === "importer" || t.scope === "via-import") && lost.has("records:manage-others")) {
           const sc = scopeSql(t, user, "x");
           rows.push(...db3.all(`SELECT x.id FROM ${t.name} x WHERE NOT (${sc.sql})`, ...sc.params).map((r) => [t.name, r.id]));
         }
@@ -38937,6 +38938,8 @@ var require_users2 = __commonJS({
         if (v.mode !== "grant" && v.mode !== "deny") return fail('mode must be "grant" or "deny"');
         if (!isKnownPermission(v.permission)) return fail(`Unknown permission "${v.permission}"`);
         if (v.reason.trim().length < 10) return fail("reason must be at least 10 characters");
+        if (v.mode === "grant" && v.permission === "records:manage-others" && !auth3.rolePerms(target.role).includes("clients:write"))
+          return fail(`"${v.permission}" can only be granted to a role that records client work (navigator, clinician, supervisor, administrator)`);
         if (v.mode === "grant" && PRIVILEGED_PERMISSIONS.includes(v.permission) && target.role !== "admin")
           return fail(`"${v.permission}" can only be granted to an administrator \u2014 change their role instead`);
         db3.run(
@@ -39431,6 +39434,7 @@ var require_auth2 = __commonJS({
         "clients:read",
         "clients:write",
         "clients:all",
+        "records:manage-others",
         "interventions:*",
         "calls:*",
         "time:read",
@@ -39479,6 +39483,7 @@ var require_auth2 = __commonJS({
         "clients:read",
         "clients:write",
         "clients:all",
+        "records:manage-others",
         "interventions:*",
         "calls:*",
         "time:read",

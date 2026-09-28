@@ -64,7 +64,11 @@ test('the role matrix: exactly the four grants, and nothing else moved', () => {
   // nothing else was added, removed or reordered. The digest was taken from 1.15.3's server/auth.js PERMS.
   assert.deepEqual(auth.WIDENED_1_16, { navigator: ['clients:all', 'notes:clinical:read'], clinician: ['clients:all', 'budget:read'] });
   for (const [role, added] of Object.entries(auth.WIDENED_1_16)) for (const p of added) assert.ok(P[role].includes(p));
-  const before = Object.fromEntries(Object.entries(P).map(([r, l]) => [r, l.filter(p => !(auth.WIDENED_1_16[r] || []).includes(p))]));
+  // records:manage-others (1.16.0) is what supervisors and administrators held through clients:all before: new to
+  // them as a string, not as a power, and held by no other role.
+  for (const r of ['admin', 'supervisor']) assert.ok(P[r].includes('records:manage-others'), `${r} holds records:manage-others`);
+  for (const r of ['navigator', 'clinician', 'finance', 'readonly']) assert.ok(!P[r].includes('records:manage-others'), `${r} does not`);
+  const before = Object.fromEntries(Object.entries(P).map(([r, l]) => [r, l.filter(p => !(auth.WIDENED_1_16[r] || []).includes(p) && p !== 'records:manage-others')]));
   assert.equal(require('node:crypto').createHash('sha256').update(JSON.stringify(before)).digest('hex'), 'b3d0a221beace6b231f76250d399b836bdd4d8f3e92899f67dfda9396c292eb4', 'the rest of the matrix is 1.15.3\'s');
 });
 
@@ -229,4 +233,81 @@ test('a supervisor held to a caseload cannot assign themselves past it', { todo:
   const push = await hs.post('/api/sync/push', { device_now: new Date().toISOString(), tables: { assignments: [{ id: require('node:crypto').randomUUID(), client_id: ids.theirs, user_id: heldSup.id, role_on_case: 'primary', start_date: new Date().toISOString().slice(0, 10), updated_at: new Date().toISOString() }] } });
   assert.equal(push.status, 200, JSON.stringify(push.data));
   assert.ok(!H.db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=?`, ids.theirs, heldSup.id), 'nor from a device');
+});
+
+// The owner's decision for 1.16.0: navigators and clinicians SEE every client and add their own work to any
+// record, but do not manage other workers' records. That power is records:manage-others (supervisors and
+// administrators, who held it through clients:all before): changing or deleting another worker's visits, calls,
+// overdose reports, to-dos and draft notes, recording work under another worker's name, soft-deleting a client,
+// and seeing another worker's staged imports. REST and sync push enforce it from the same rules (server/rules/*).
+test('see everyone, change only your own: navigators and clinicians add to any client but cannot manage others\' records', async () => {
+  const now = () => new Date().toISOString();
+  const expect = (r, status, what) => { assert.equal(r.status, status, `${what}: ${JSON.stringify(r.data)}`); return r.data; };
+  // navB's records on navB's client.
+  const mine = {};
+  mine.visit = expect(await c.rx_navB.post('/api/interventions', { client_id: ids.theirs, type: 'outreach', occurred_at: now(), duration_minutes: 10 }), 201, 'navB visit').id;
+  mine.call = expect(await c.rx_navB.post('/api/calls', { client_id: ids.theirs, direction: 'outbound', method: 'phone', started_at: now(), summary: 'check-in' }), 201, 'navB call').id;
+  mine.od = expect(await c.rx_navB.post('/api/overdose-events', { client_id: ids.theirs, occurred_at: now(), kind: 'reversal' }), 201, 'navB overdose').id;
+  mine.task = expect(await c.rx_navB.post('/api/tasks', { client_id: ids.theirs, title: 'Rx follow up' }), 201, 'navB task').id;
+  mine.note = expect(await c.rx_navB.post('/api/notes', { client_id: ids.theirs, kind: 'admin', format: 'narrative', title: 'Rx draft', content: 'draft by navB', occurred_at: now() }), 201, 'navB draft note').id;
+  const row = (t, id) => H.db.one(`SELECT * FROM ${t} WHERE id=?`, id);
+  for (const who of ['rx_navA', 'rx_clin']) {
+    const cl = c[who];
+    // Sees, and adds their own work.
+    expect(await cl.get(`/api/clients/${ids.theirs}`), 200, `${who} opens the client`);
+    expect(await cl.post('/api/interventions', { client_id: ids.theirs, type: 'outreach', occurred_at: now(), duration_minutes: 5 }), 201, `${who} adds a visit`);
+    expect(await cl.post('/api/notes', { client_id: ids.theirs, kind: 'admin', format: 'narrative', title: 'mine', content: `${who} note`, occurred_at: now() }), 201, `${who} adds a note`);
+    // Cannot change or delete another worker's records.
+    for (const [path, body] of [[`/api/interventions/${mine.visit}`, { duration_minutes: 99 }], [`/api/calls/${mine.call}`, { summary: 'changed' }], [`/api/overdose-events/${mine.od}`, { kind: 'overdose' }], [`/api/tasks/${mine.task}`, { title: 'changed' }], [`/api/notes/${mine.note}`, { content: 'changed' }]]) {
+      assert.equal((await cl.put(path, body)).status, 403, `${who} PUT ${path}`);
+      assert.equal((await cl.del(path)).status, 403, `${who} DELETE ${path}`);
+    }
+    assert.equal(row('interventions', mine.visit).duration_minutes, 10, 'the visit is unchanged');
+    // Cannot record work under another worker's name: REST puts it under their own; sync push refuses it.
+    const as = expect(await cl.post('/api/interventions', { client_id: ids.theirs, type: 'outreach', occurred_at: now(), duration_minutes: 5, user_id: navB.id }), 201, `${who} names another worker`);
+    const me = who === 'rx_navA' ? navA : clinU;
+    assert.equal(row('interventions', as.id).user_id, me.id, 'recorded under their own name, not navB\'s');
+    const id = require('node:crypto').randomUUID();
+    const p = expect(await cl.post('/api/sync/push', { device_now: now(), tables: { interventions: [{ id, client_id: ids.theirs, user_id: navB.id, type: 'outreach', occurred_at: now(), duration_minutes: 5, updated_at: now() }] } }), 200, 'push');
+    assert.ok(p.rejected.some(x => x.id === id && /another user/.test(x.reason)), `${who}: a device cannot attribute a visit to navB (${JSON.stringify(p.rejected)})`);
+    // Nor edit or delete another worker's visit from a device.
+    const v = row('interventions', mine.visit);
+    const pe = expect(await cl.post('/api/sync/push', { device_now: now(), tables: { interventions: [{ ...v, duration_minutes: 77, updated_at: new Date(Date.now() + 1000).toISOString() }] } }), 200, 'push edit');
+    assert.ok(pe.rejected.some(x => x.id === mine.visit && /not permitted/.test(x.reason)), `${who}: push edit refused (${JSON.stringify(pe.rejected)})`);
+    const pd = expect(await cl.post('/api/sync/push', { device_now: now(), tombstones: [{ table_name: 'interventions', id: mine.visit, deleted_at: now() }] }), 200, 'push tombstone');
+    assert.ok(pd.rejected.some(x => x.id === mine.visit && /not permitted/.test(x.reason)), `${who}: push delete refused (${JSON.stringify(pd.rejected)})`);
+    assert.equal(row('interventions', mine.visit).duration_minutes, 10);
+    // Cannot soft-delete a client record.
+    assert.equal((await cl.del(`/api/clients/${ids.theirs}`, { reason: 'entered in error by test' })).status, 403, `${who} cannot remove a client`);
+    const pc = expect(await cl.post('/api/sync/push', { device_now: now(), tables: { clients: [{ ...row('clients', ids.theirs), deleted_at: now(), removed_reason_enc: 'test', updated_at: new Date(Date.now() + 2000).toISOString() }] } }), 200, 'push client delete');
+    assert.ok(!row('clients', ids.theirs).deleted_at, `${who}: a device cannot remove the client either (${JSON.stringify(pc.rejected)})`);
+  }
+  // A supervisor and an administrator still can.
+  for (const [cl, label] of [[c.rx_sup, 'supervisor'], [null, 'admin']]) {
+    const k = cl || H.client(); if (!cl) await k.login('admin', 'AdminPassw0rd!x');
+    assert.equal((await k.put(`/api/interventions/${mine.visit}`, { duration_minutes: label === 'admin' ? 12 : 11 })).status, 200, `${label} edits another worker's visit`);
+    assert.equal((await k.put(`/api/tasks/${mine.task}`, { title: `edited by ${label}` })).status, 200, `${label} edits another worker's to-do`);
+  }
+  assert.equal((await c.rx_sup.del(`/api/calls/${mine.call}`)).status, 200, 'a supervisor deletes another worker\'s call');
+  const gone = expect(await c.rx_navB.post('/api/clients', { first_name: 'Remy', last_name: 'Rxremoved' }), 201, 'a client to remove').id;
+  assert.equal((await c.rx_sup.del(`/api/clients/${gone}`, { reason: 'entered in error by test' })).status, 200, 'a supervisor removes a client record');
+});
+
+test('another worker\'s staged imports stay theirs; records:manage-others is granted only to a role that records client work', async () => {
+  const imp = require('node:crypto').randomUUID();
+  H.db.run(`INSERT INTO imports(id,source,imported_by) VALUES(?,?,?)`, imp, 'onenote', navB.id);
+  const listed = async (cl) => JSON.stringify((await cl.get('/api/imports')).data).includes(imp);
+  assert.equal(await listed(c.rx_navA), false, 'a navigator does not see another worker\'s import');
+  assert.equal(await listed(c.rx_clin), false, 'nor a clinician');
+  assert.equal(await listed(c.rx_navB), true, 'its importer does');
+  assert.equal(await listed(c.rx_sup), true, 'a supervisor does');
+  assert.ok(!(await pullAll(c.rx_navA)).imports?.some(x => x.id === imp), 'and it does not sync to another navigator\'s device');
+  const admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
+  const fin = H.makeUser('rx_fin', 'finance');
+  assert.equal((await admin.post(`/api/users/${fin.id}/permissions`, { permission: 'records:manage-others', mode: 'grant', reason: 'test: should be refused' })).status, 400, 'never to finance');
+  assert.equal((await admin.post(`/api/users/${navA.id}/permissions`, { permission: 'records:manage-others', mode: 'grant', reason: 'team lead covering for a supervisor' })).status, 200, 'a navigator may be granted it');
+  assert.equal(await listed(c.rx_navA), true, 'and then sees other workers\' imports');
+  assert.equal((await admin.del(`/api/users/${navA.id}/permissions/records:manage-others`)).status, 200);
+  const cat = (await admin.get('/api/permissions/catalog')).data.permissions.find(p => p.name === 'records:manage-others');
+  assert.equal(cat.risk, 'sensitive');
 });

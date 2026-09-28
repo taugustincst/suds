@@ -13,8 +13,7 @@ module.exports = {
     // was: push "rejected: is missing a required field", rest 400 -- still refused; the reason now names the field
     "invalid: name missing": { push: "rejected: is missing a required field (name)", rest: 400 },
     "role without permission (clin)": { push: "rejected: your role cannot write resources", rest: 403 },
-    // was: push "kept", rest 200 -- 1.16.0: a device's tombstone of shared reference data is applied for a clients:all holder (server/rules/push.js), which a navigator now is; REST DELETE already allowed it (resources:*)
-    "tombstone": { push: "deleted", rest: 200 },
+    "tombstone": { push: "kept", rest: 200 },
     "device clock two hours fast": { push: "applied (office time)", rest: null },
     "an older device edit": { push: "conflict", rest: 409 },
   },
@@ -111,21 +110,16 @@ module.exports = {
     "invalid: a cost with no budget line": { push: "rejected: is missing a required field (a budget line for its cost)", rest: 400 },
     // was: (not recorded in 1.13.0) -- new case (1.13.0 would have applied it); REST refuses this; so does push now
     "invalid: a cost on a line of another fund": { push: "rejected: has a value the office does not accept (its budget line belongs to another fund)", rest: 400 },
-    // was: push "rejected: attributed to another user, which your role cannot do", rest 201 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "invalid: attributed to another worker": { push: "applied", rest: 201 },
+    "invalid: attributed to another worker": { push: "rejected: attributed to another user, which your role cannot do", rest: 201 },
     // was: push "rejected: not on caseload", rest 403 -- 1.16.0: a navigator holds clients:all, so nav2's client is not off their caseload; a navigator denied clients:all is refused as before (test/role-expansion.test.js)
     "client off the caseload": { push: "applied", rest: 201 },
     // was: push "applied", rest 403 -- REST's edit rule (the record's worker, or a manager) now applies to a device's edit
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client": { push: "applied", rest: 200 },
+    "another worker's record on a shared client": { push: "rejected: not permitted", rest: 403 },
     // was: push "deleted", rest 403 -- REST's DELETE rule (the record's worker, or a manager) now applies to a device's tombstone
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client: tombstone": { push: "deleted", rest: 200 },
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record with no client": { push: "applied", rest: 200 },
+    "another worker's record on a shared client: tombstone": { push: "rejected: not permitted", rest: 403 },
+    "another worker's record with no client": { push: "rejected: not permitted", rest: 403 },
     // was: push "deleted", rest 403 -- REST's DELETE rule (the record's worker, or a manager) now applies to a device's tombstone
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record with no client: tombstone": { push: "deleted", rest: 200 },
+    "another worker's record with no client: tombstone": { push: "rejected: not permitted", rest: 403 },
     "role without permission (fin)": { push: "http 403", rest: 403 },
     "tombstone": { push: "deleted", rest: 200 },
     "device clock two hours fast": { push: "applied (office time)", rest: null },
@@ -138,21 +132,16 @@ module.exports = {
     // was: push "applied", rest 400 -- REST refuses this; so does push now
     "invalid: doses negative": { push: "rejected: has a value the office does not accept (naloxone_doses: min 0)", rest: 400 },
     // was: push "applied", rest 201 -- REST refuses this; so does push now
-    // was: push "rejected: attributed to another user, which your role cannot do", rest 201 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "invalid: reported by another worker": { push: "applied", rest: 201 },
+    "invalid: reported by another worker": { push: "rejected: attributed to another user, which your role cannot do", rest: 201 },
     // was: push "rejected: not on caseload", rest 403 -- 1.16.0: a navigator holds clients:all, so nav2's client is not off their caseload; a navigator denied clients:all is refused as before (test/role-expansion.test.js)
     "client off the caseload": { push: "applied", rest: 201 },
     // was: push "applied", rest 403 -- REST's edit rule (the record's worker, or a manager) now applies to a device's edit
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client": { push: "applied", rest: 200 },
+    "another worker's record on a shared client": { push: "rejected: not permitted", rest: 403 },
     // was: push "deleted", rest 403 -- REST's DELETE rule (the record's worker, or a manager) now applies to a device's tombstone
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client: tombstone": { push: "deleted", rest: 200 },
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record with no client": { push: "applied", rest: 200 },
+    "another worker's record on a shared client: tombstone": { push: "rejected: not permitted", rest: 403 },
+    "another worker's record with no client": { push: "rejected: not permitted", rest: 403 },
     // was: push "deleted", rest 403 -- REST's DELETE rule (the record's worker, or a manager) now applies to a device's tombstone
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record with no client: tombstone": { push: "deleted", rest: 200 },
+    "another worker's record with no client: tombstone": { push: "rejected: not permitted", rest: 403 },
     "role without permission (fin)": { push: "http 403", rest: 403 },
     "tombstone": { push: "deleted", rest: 200 },
     "device clock two hours fast": { push: "applied (office time)", rest: null },
@@ -169,16 +158,12 @@ module.exports = {
     // was: push "rejected: not on caseload", rest 403 -- 1.16.0: a navigator holds clients:all, so nav2's client is not off their caseload; a navigator denied clients:all is refused as before (test/role-expansion.test.js)
     "client off the caseload": { push: "applied", rest: 201 },
     // was: push "applied", rest 403 -- REST's edit rule (the record's worker, or a manager) now applies to a device's edit
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client": { push: "applied", rest: 200 },
+    "another worker's record on a shared client": { push: "rejected: not permitted", rest: 403 },
     // was: push "deleted", rest 403 -- REST's DELETE rule (the record's worker, or a manager) now applies to a device's tombstone
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client: tombstone": { push: "deleted", rest: 200 },
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record with no client": { push: "applied", rest: 200 },
+    "another worker's record on a shared client: tombstone": { push: "rejected: not permitted", rest: 403 },
+    "another worker's record with no client": { push: "rejected: not permitted", rest: 403 },
     // was: push "deleted", rest 403 -- REST's DELETE rule (the record's worker, or a manager) now applies to a device's tombstone
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record with no client: tombstone": { push: "deleted", rest: 200 },
+    "another worker's record with no client: tombstone": { push: "rejected: not permitted", rest: 403 },
     "role without permission (fin)": { push: "http 403", rest: 403 },
     "tombstone": { push: "deleted", rest: 200 },
     "device clock two hours fast": { push: "applied (office time)", rest: null },
@@ -262,11 +247,9 @@ module.exports = {
     // was: push "rejected: not on caseload", rest 403 -- 1.16.0: a navigator holds clients:all, so nav2's client is not off their caseload; a navigator denied clients:all is refused as before (test/role-expansion.test.js)
     "client off the caseload": { push: "applied", rest: 201 },
     // was: push "applied", rest 403 -- REST's edit rule (the record's worker, or a manager) now applies to a device's edit
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client": { push: "applied", rest: 200 },
+    "another worker's record on a shared client": { push: "rejected: not permitted", rest: 403 },
     // was: push "deleted", rest 403 -- REST's DELETE rule (the record's worker, or a manager) now applies to a device's tombstone
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client: tombstone": { push: "deleted", rest: 200 },
+    "another worker's record on a shared client: tombstone": { push: "rejected: not permitted", rest: 403 },
     "role without permission (fin)": { push: "http 403", rest: 403 },
     "tombstone": { push: "deleted", rest: 200 },
     "device clock two hours fast": { push: "applied (office time)", rest: null },
@@ -283,16 +266,12 @@ module.exports = {
     // was: push "rejected: not on caseload", rest 403 -- 1.16.0: a navigator holds clients:all, so nav2's client is not off their caseload; a navigator denied clients:all is refused as before (test/role-expansion.test.js)
     "client off the caseload": { push: "applied", rest: 201 },
     // was: push "applied", rest 403 -- REST's edit rule (the record's worker, or a manager) now applies to a device's edit
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client": { push: "applied", rest: 200 },
+    "another worker's record on a shared client": { push: "rejected: not permitted", rest: 403 },
     // was: push "deleted", rest 403 -- REST's DELETE rule (the record's worker, or a manager) now applies to a device's tombstone
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client: tombstone": { push: "deleted", rest: 200 },
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record with no client": { push: "applied", rest: 200 },
+    "another worker's record on a shared client: tombstone": { push: "rejected: not permitted", rest: 403 },
+    "another worker's record with no client": { push: "rejected: not permitted", rest: 403 },
     // was: push "deleted", rest 403 -- REST's DELETE rule (the record's worker, or a manager) now applies to a device's tombstone
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record with no client: tombstone": { push: "deleted", rest: 200 },
+    "another worker's record with no client: tombstone": { push: "rejected: not permitted", rest: 403 },
     "role without permission (fin)": { push: "http 403", rest: 403 },
     "tombstone": { push: "deleted", rest: 200 },
     "device clock two hours fast": { push: "applied (office time)", rest: null },
@@ -330,10 +309,8 @@ module.exports = {
     // was: push "rejected: not on caseload", rest 403 -- 1.16.0: a navigator holds clients:all, so nav2's client is not off their caseload; a navigator denied clients:all is refused as before (test/role-expansion.test.js)
     "client off the caseload": { push: "applied", rest: 201 },
     // was: push "applied", rest 403 -- REST's edit rule (the record's worker, or a manager) now applies to a device's edit
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (server/rules/notes.js), which a navigator now holds: REST deletes another worker's draft; a device still never deletes a note
-    "another worker's record on a shared client": { push: "applied", rest: 200 },
-    // was: push "kept", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (server/rules/notes.js), which a navigator now holds: REST deletes another worker's draft; a device still never deletes a note
-    "another worker's record on a shared client: tombstone": { push: "kept", rest: 200 },
+    "another worker's record on a shared client": { push: "rejected: not permitted", rest: 403 },
+    "another worker's record on a shared client: tombstone": { push: "kept", rest: 403 },
     "role without permission (fin)": { push: "http 403", rest: 403 },
     "tombstone": { push: "kept", rest: 200 },
     "device clock two hours fast": { push: "applied (office time)", rest: null },
@@ -348,11 +325,9 @@ module.exports = {
     // was: push "rejected: not on caseload", rest 403 -- 1.16.0: a navigator holds clients:all, so nav2's client is not off their caseload; a navigator denied clients:all is refused as before (test/role-expansion.test.js)
     "client off the caseload": { push: "applied", rest: 201 },
     // was: push "applied", rest 403 -- REST's edit rule (the record's worker, or a manager) now applies to a device's edit
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client": { push: "applied", rest: 200 },
+    "another worker's record on a shared client": { push: "rejected: not permitted", rest: 403 },
     // was: push "deleted", rest 403 -- REST's DELETE rule (the record's worker, or a manager) now applies to a device's tombstone
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client: tombstone": { push: "deleted", rest: 200 },
+    "another worker's record on a shared client: tombstone": { push: "rejected: not permitted", rest: 403 },
     "role without permission (fin)": { push: "http 403", rest: 403 },
     "tombstone": { push: "deleted", rest: 200 },
     "device clock two hours fast": { push: "applied (office time)", rest: null },
@@ -387,8 +362,7 @@ module.exports = {
     "client off the caseload": { push: "applied", rest: 201 },
     "another worker's record on a shared client": { push: "applied", rest: 200 },
     // was: push "deleted", rest 403 -- REST's DELETE rule (the record's worker, or a manager) now applies to a device's tombstone
-    // was: push "rejected: not permitted", rest 403 -- 1.16.0: clients:all is the rules' "or a manager" (owner.all / ownedBy in server/rules/), which a navigator now holds, over REST and sync alike
-    "another worker's record on a shared client: tombstone": { push: "deleted", rest: 200 },
+    "another worker's record on a shared client: tombstone": { push: "rejected: not permitted", rest: 403 },
     "role without permission (fin)": { push: "http 403", rest: 403 },
     // was: push "applied", rest 403 -- REST refuses new work while the module is off; a device that recorded it while the module was on keeps it, flagged
     "module switched off": { push: "flagged: was accepted, but Care plan & problem list is switched off at the office; an administrator can switch it on in Settings › Program › Modules", rest: 403 },

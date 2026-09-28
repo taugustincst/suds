@@ -23,8 +23,8 @@ module.exports = define({
     variant: { type: 'string', enum: ['men', 'women', 'unspecified'] },
     notes: { type: 'string', maxLen: 2000 },
   },
-  editableBy: ownedBy(['administered_by'], 'clients:all', 'Only the person who gave this questionnaire, or a supervisor, can change it'),
-  deletableBy: ownedBy(['administered_by'], 'clients:all', 'Only the person who gave this questionnaire, or a supervisor, can delete it'),
+  editableBy: ownedBy(['administered_by'], 'records:manage-others', 'Only the person who gave this questionnaire, or a supervisor, can change it'),
+  deletableBy: ownedBy(['administered_by'], 'records:manage-others', 'Only the person who gave this questionnaire, or a supervisor, can delete it'),
   check(row, c) {
     const code = row.instrument || (c.existing && c.existing.instrument);
     // A result already on file stays, and an unchanged copy of it is not refused.

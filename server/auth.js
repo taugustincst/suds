@@ -47,10 +47,15 @@ function ssoPolicy() {
 // admins are system administrators, not treating staff, and must use break-glass (audited) to read clinical
 // content.
 // clients:all (1.16.0: navigators and clinicians too, by the owner's decision: outreach engages whoever walks
-// in, clinicians cover for each other) takes a role out of caseload scoping, and carries the "or a manager"
-// powers over other workers' records (server/rules/). A programme that wants a person held to their caseload
-// denies them clients:all with a per-user override (effectivePerms below), which restores the scoping
-// everywhere (test/role-expansion.test.js).
+// in, clinicians cover for each other) takes a role out of caseload scoping: it is seeing, and adding one's own
+// work to, every client. A programme that wants a person held to their caseload denies them clients:all with a
+// per-user override (effectivePerms below), which restores the scoping everywhere (test/role-expansion.test.js).
+// records:manage-others (1.16.0) is the "or a manager" power that clients:all used to carry, separated from it by
+// the owner's decision: changing or deleting another worker's visits, calls, referrals, overdose reports, to-dos,
+// care-plan goals and steps, assessments, outcome measures, rights requests and draft notes; recording work under
+// another worker's name; soft-deleting a client record; and seeing another worker's staged imports
+// (server/rules/*, server/crud.js, sync push). Held by supervisors and administrators, who held it through
+// clients:all before, so nobody lost anything; a navigator or clinician edits only their own work.
 // careplan (the CalAIM problem list and care coordination plan) is everyday case-management work, held by
 // every role that works with clients, as clients:write is; an administrator may read it. assessments (ASAM
 // ratings and scored screening instruments such as the PHQ-9) are clinical content, held like clinical
@@ -82,12 +87,12 @@ function ssoPolicy() {
 // adjustments after a count, disposal of expired stock), held by supervisors and administrators. A visit's own
 // draw-down needs only interventions:write, as it always has.
 const PERMS = {
-  admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
+  admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all','records:manage-others',
                'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve','budget:manage',
                'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','graph:import','reports:read','assignments:manage','export:read','export:identified','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','clients:legal-hold','patient-requests:*','careplan:read',
                'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*'],
-  supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
+  supervisor: ['clients:read','clients:write','clients:all','records:manage-others','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
                'consents:*','imports:*','graph:import','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*',

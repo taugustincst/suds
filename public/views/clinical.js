@@ -191,7 +191,7 @@ export async function carePlanTab(clientId, { refresh, clientDisplay } = {}) {
           const m = modal('Reviewed with the client today', f);
         } }, 'Reviewed') : null,
         h('button', { class: 'btn sm ghost', 'data-edit-goal': g.id, onClick: () => openGoalForm(clientId, g, active.concat(problems.filter(p => p.id === g.problem_id && p.status !== 'active')), { onDone: refresh }) }, 'Edit'),
-        (g.created_by === state.user.id || can('clients:all')) ? h('button', { class: 'btn sm ghost danger', onClick: async () => { if (await confirmDialog('Delete this goal?', 'For a goal entered in error. A goal the client has moved on from should be marked Discontinued instead, so the plan keeps its history.', { danger: true, okText: 'Delete' })) { await del(`/api/goals/${g.id}`); toast('Goal deleted', 'ok'); refresh && refresh(); } } }, 'Delete') : null) : null),
+        (g.created_by === state.user.id || can('records:manage-others')) ? h('button', { class: 'btn sm ghost danger', onClick: async () => { if (await confirmDialog('Delete this goal?', 'For a goal entered in error. A goal the client has moved on from should be marked Discontinued instead, so the plan keeps its history.', { danger: true, okText: 'Delete' })) { await del(`/api/goals/${g.id}`); toast('Goal deleted', 'ok'); refresh && refresh(); } } }, 'Delete') : null) : null),
     g.steps.length ? table([
       { label: 'Step', render: s => h('span', { 'data-step': s.id }, s.step) },
       { label: 'Who', render: s => `${fmt.label(s.owner_role)}${s.owner_name ? ' — ' + s.owner_name : ''}` },
@@ -243,7 +243,7 @@ function openAsamForm(clientId, a, { onDone } = {}) {
 }
 function asamDetail(a, { onDone } = {}) {
   const dims = C().ASAM_DIMENSIONS || [];
-  const mayEdit = can('assessments:write') && (a.assessed_by === state.user.id || can('clients:all'));
+  const mayEdit = can('assessments:write') && (a.assessed_by === state.user.id || can('records:manage-others'));
   const m = modal(`Six-dimension assessment — ${fmt.date(a.assessed_at)}`, h('div', {},
     kv([['Assessed by', a.assessed_by_name], ['Recommended level', a.recommended_loc], ['Referred to', a.actual_loc], ['Discrepancy', a.discrepancy ? `${fmt.label(a.discrepancy_reason)}${a.discrepancy_notes ? ' — ' + a.discrepancy_notes : ''}` : 'None'], ['Summary', a.summary]]),
     table([{ label: 'Dimension', key: 'label' }, { label: 'Rating', render: d => String(a[`${d.key}_rating`]) }, { label: 'Notes', render: d => a.dimension_notes?.[d.key] || '—' }], dims),
@@ -327,7 +327,7 @@ export async function assessmentsTab(clientId, { refresh, clientDisplay } = {}) 
       { label: 'Date', render: m => fmt.date(m.administered_at) }, { label: 'Measure', key: 'name' },
       { label: 'Score', render: m => h('span', { 'data-outcome-score': m.id }, `${m.total_score}`) }, { label: 'Result', render: m => h('span', {}, m.band || '—', m.safety_flag ? ' ' : '', m.safety_flag ? badge('Safety alert', 'danger') : null) },
       { label: 'By', key: 'administered_by_name' },
-      { label: '', render: m => writable && (m.administered_by === state.user.id || can('clients:all')) ? h('button', { class: 'btn sm ghost danger', onClick: async (e) => { e.stopPropagation(); if (await confirmDialog('Delete this result?', 'Only for a questionnaire entered in error.', { danger: true, okText: 'Delete' })) { await del(`/api/outcomes/${m.id}`); toast('Deleted', 'ok'); refresh && refresh(); } } }, 'Delete') : null },
+      { label: '', render: m => writable && (m.administered_by === state.user.id || can('records:manage-others')) ? h('button', { class: 'btn sm ghost danger', onClick: async (e) => { e.stopPropagation(); if (await confirmDialog('Delete this result?', 'Only for a questionnaire entered in error.', { danger: true, okText: 'Delete' })) { await del(`/api/outcomes/${m.id}`); toast('Deleted', 'ok'); refresh && refresh(); } } }, 'Delete') : null },
     ], out.rows, { empty: 'No outcome measures yet.', onRow: (m) => {
       const ins = INS[m.instrument];
       modal(`${m.name} — ${fmt.date(m.administered_at)}`, h('div', {}, kv([['Score', `${m.total_score} of ${ins?.max ?? '?'} — ${m.band || ''}`], ['Given by', m.administered_by_name], ['Notes', m.notes]]),

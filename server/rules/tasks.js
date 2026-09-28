@@ -13,6 +13,6 @@ module.exports = define({
     due_at: { type: 'datetime' }, priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'] }, status: { type: 'string', enum: ['open', 'in_progress', 'done', 'cancelled'] },
     is_milestone: { type: 'boolean' }, completed_at: { type: 'datetime' },
   },
-  editableBy: (user, row) => (row.assigned_to === user.id || row.created_by === user.id || auth.hasPerm(user, 'clients:all') ? null : notPermitted('You cannot edit this record')),
+  editableBy: (user, row) => (row.assigned_to === user.id || row.created_by === user.id || auth.hasPerm(user, 'records:manage-others') ? null : notPermitted('You cannot edit this record')),
   othersMayChange: (existing, row, changed) => ['done', 'cancelled'].includes(row.status) && changed.every(col => col === 'status' || col === 'completed_at'),
 });

@@ -24,7 +24,7 @@ module.exports = define({
     // Only when this expenditure's opioid settlement category differs from its fund's.
     ...SETTLEMENT,
   },
-  owner: { col: 'user_id', all: 'clients:all' },
+  owner: { col: 'user_id', all: 'records:manage-others' },
   editableBy: (user, row) => (row.status === 'pending' && (row.user_id === user.id || auth.hasPerm(user, 'budget:approve')) ? null : notPermitted('You cannot edit this record')),
   // An approver's ruling made offline (approve, reject, reimburse) is theirs to send, whatever the item's status.
   othersMayChange: (existing, row, changed, c) => auth.hasPerm(c.user, 'budget:approve') && changed.every(col => APPROVAL.includes(col)),

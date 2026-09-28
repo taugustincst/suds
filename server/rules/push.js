@@ -408,7 +408,7 @@ class PushSession {
     if (R.tombstone === 'never') return; // never hard-deleted through sync (the legal record)
     const clientId = t.clientCol ? existing[t.clientCol] : null;
     if (clientId && !auth.canAccessClient(user, clientId)) { this.reject(t.name, ts.id, 'not on caseload'); return; }
-    if (t.scope === 'all' && !auth.hasPerm(user, 'clients:all')) return; // shared reference data is not deleted from devices
+    if (t.scope === 'all' && !auth.hasPerm(user, 'records:manage-others')) return; // shared reference data is not deleted from devices
     // Whose record it is: the REST DELETE route's rule, and a record with no client is its owners'.
     if (!SYNC.mayReachUnlinked(t.name, user, existing, auth.hasPerm)) { this.reject(t.name, ts.id, 'not permitted'); return; }
     const no = R.deletableBy ? R.deletableBy(user, existing, { deleting }) : R.editableBy ? R.editableBy(user, existing) : null;

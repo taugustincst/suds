@@ -5,14 +5,16 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 ## 1.16.0 — (unreleased)
 
 A feature release: the owner widened two roles' defaults. Expansion only: nobody loses a permission, and
-supervisor, administrator, finance and read-only are unchanged (finance still never holds `clients:read` or
-`export:identified`). No migration, no new route, no new permission string; the sync pull answer gains fields
-(below).
+supervisor, administrator, finance and read-only keep exactly what they could do (finance still never holds
+`clients:read` or `export:identified`). One new permission string, `records:manage-others`, splits "manage other
+workers' records" off `clients:all`; supervisors and administrators hold it. No migration, no new route; the sync
+pull answer gains fields (below).
 
 | Role | Added | Not added |
 |---|---|---|
-| navigator | `clients:all` (outreach engages whoever walks in, not only their caseload); `notes:clinical:read` | `notes:clinical:write` |
-| clinician | `clients:all` (coverage and on-call); `budget:read` (programme spending) | `budget:write` |
+| navigator | `clients:all` (outreach engages whoever walks in, not only their caseload); `notes:clinical:read` | `notes:clinical:write`, `records:manage-others` |
+| clinician | `clients:all` (coverage and on-call); `budget:read` (programme spending) | `budget:write`, `records:manage-others` |
+| supervisor, administrator | `records:manage-others` (what `clients:all` gave them before; no new power) | |
 
 **Administrators: upgrade note.** After upgrading, every navigator and clinician sees every client in the
 program, and navigators can read clinical notes (SUD counseling notes included). To keep the old scoping for a
@@ -30,15 +32,29 @@ What follows from `clients:all`, for a navigator or clinician who holds it:
   settlement reports (their first run stays *internal, suppressed*; they may also ask for a publication release
   of the whole programme; still no exact counts), and in sync. A client they create is still assigned to them,
   now from a device as well as over REST, so a later deny leaves it on their caseload.
-- **The powers SUDS ties to `clients:all`**, which supervisors and administrators have always had: changing or
-  deleting another worker's visits, calls, referrals, overdose reports, to-dos, patient-rights requests, care-plan
-  goals, assessments and outcome measures; editing another worker's draft note (only its author signs it);
-  recording a visit or overdose report under another worker's name; seeing another worker's records with no client
-  (an anonymous call or outreach contact) and their staged imports; and removing a client record (with a reason,
-  audited; never one on legal hold). A per-user deny of `clients:all` takes these away with the rest.
+- **Seeing is not managing: `records:manage-others`** (new permission string, the owner's decision). A navigator
+  or clinician sees every client and adds their own work to any record (a visit, a call, a note, a referral, a
+  to-do), and sees another worker's records with no client (an anonymous call or outreach contact). They do NOT
+  change or delete another worker's visits, calls, referrals, overdose reports, to-dos, care-plan goals and steps,
+  assessments, outcome measures, rights requests or draft notes; record work under another worker's name; remove a
+  client record; or see another worker's staged imports. Those powers were carried by `clients:all` and are now
+  `records:manage-others`, held by supervisors and administrators (who held them through `clients:all` before, so
+  nobody loses anything). It is used by `server/crud.js` (`ownerOrManager`, the owner column on insert), every
+  `server/rules/*` `owner`/`editableBy`/`deletableBy` (so sync push refuses the same edits, deletions and
+  attributions as REST), client removal (`DELETE /api/clients/:id` and the device's equivalent, and the button on
+  the client page), a device's deletion of shared reference data, supply lines on another worker's visit with no
+  client, the imports list, Home's staged-imports count and which imports a device pulls. The screens show Edit,
+  Delete and Update only where the person may use them. In the catalog it is *Manage other workers' records*,
+  rated sensitive; a grant through the 1.15.0 overrides is refused for a role without `clients:write` (finance,
+  read-only). `test/role-expansion.test.js`: a default navigator and clinician get 403 over REST and a refusal by
+  sync push; a supervisor and an administrator still succeed. The sync-rules characterisation is back to its 1.15
+  outcomes for another worker's records (the 1.16.0 `was:` notes remain only for "client off the caseload").
 - **Clinical notes for navigators**: listed, opened, on the timeline and synced to their devices; still not written,
-  signed or added to. Assessments stay clinicians' and supervisors'. An administrator still reads a clinical note
-  only by break-glass; SUD counseling notes and every Part 2 rule are unchanged.
+  signed or added to. That includes notes marked as SUD counseling notes (42 CFR §2.11), by the owner's decision: a
+  programme whose policy keeps those to the treating clinician denies the navigator *Read clinical notes*
+  (`notes:clinical:read`) under Settings → Users & permissions → Permissions (docs/compliance/PART2.md). Assessments
+  stay clinicians' and supervisors'. An administrator still reads a clinical note only by break-glass; every Part 2
+  disclosure rule is unchanged.
 - **Budget for clinicians**: Funding & spending and the settlement report open; recording spending does not.
 - **Home**: a navigator's or clinician's activity card counts the program's visits and says so (*What the team has
   been doing*), as the dashboard follows what a person can see. Their to-do counts, and the overdue pill, stay

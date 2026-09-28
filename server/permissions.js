@@ -8,7 +8,7 @@
 //   warning in the admin UI); 'standard' = everything else.
 const PRIVILEGED_PERMISSIONS = ['users:manage', 'settings:manage', 'apikeys:manage'];
 
-const SENSITIVE = new Set(['export:identified', 'clients:all', 'disclosures:override', 'notes:clinical:breakglass', 'clients:merge', 'clients:legal-hold']);
+const SENSITIVE = new Set(['export:identified', 'clients:all', 'records:manage-others', 'disclosures:override', 'notes:clinical:breakglass', 'clients:merge', 'clients:legal-hold']);
 
 const DEFS = [
   ['users:manage', 'Manage users & permissions', 'Create/edit/deactivate accounts, change roles, grant or revoke individual permissions.'],
@@ -18,7 +18,8 @@ const DEFS = [
   ['apikeys:manage', 'Manage API keys', 'Intake API keys and FHIR client registrations.'],
   ['clients:read', 'Open client records', 'Identified client data: every client with clients:all, otherwise only the clients assigned to them.'],
   ['clients:write', 'Edit client records', 'Create and edit identified client records.'],
-  ['clients:all', 'See every client', 'Every client, not only their caseload (navigators, clinicians, supervisors and administrators by default from 1.16.0), with whole-program reports and synced devices; also lets them change or delete other workers\' records and remove a client record. Deny it to hold a person to their caseload.'],
+  ['clients:all', 'See every client', 'Every client, not only their caseload (navigators, clinicians, supervisors and administrators by default from 1.16.0), to read and add their own work to, with whole-program reports and synced devices. Deny it to hold a person to their caseload.'],
+  ['records:manage-others', 'Manage other workers\' records', 'Change or delete another worker\'s visits, calls, referrals, overdose reports, to-dos, care-plan goals, assessments and draft notes; record work under another worker\'s name; remove a client record; see other workers\' staged imports. Supervisors and administrators.'],
   ['clients:list-deidentified', 'List de-identified clients', 'Client codes only, never names or identifiers.'],
   ['clients:merge', 'Merge duplicate clients', 'Combine two client records, audited.'],
   ['clients:legal-hold', 'Place a legal hold', 'Prevent deletion/merge of a client record under hold.'],

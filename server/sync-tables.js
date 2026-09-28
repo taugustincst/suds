@@ -70,7 +70,7 @@ module.exports = {
     { name: 'note_addenda', enc: ['content_enc', 'reason_enc'], legacy: { reason: 'reason_enc' }, scope: 'via-note', writePerm: 'notes:admin:write', parent: ['notes', 'note_id'] },
     { name: 'disclosures', enc: ['recipient_enc', 'purpose_enc', 'what_enc', 'justification_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     // An import (a OneNote page, a Pocket AI transcript) is its importer's until it is filed against a client:
-    // the REST routes show it only to them (or to clients:all), and a device gets the same -- scope 'importer'.
+    // the REST routes show it only to them (or to records:manage-others), and a device gets the same -- scope 'importer'.
     { name: 'imports', enc: ['filename_enc'], legacy: { filename: 'filename_enc' }, scope: 'importer', writePerm: 'imports:write' },
     { name: 'import_items', enc: ['content_enc', 'title_enc', 'metadata_enc'], legacy: { metadata: 'metadata_enc' }, scope: 'via-import', writePerm: 'imports:write', parent: ['imports', 'import_id'] },
     { name: 'form_templates', enc: [], scope: 'all', writePerm: 'forms:manage', blob: ['file_b64'] },

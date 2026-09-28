@@ -167,6 +167,10 @@ module.exports = (r) => {
     if (v.mode !== 'grant' && v.mode !== 'deny') return fail('mode must be "grant" or "deny"');
     if (!isKnownPermission(v.permission)) return fail(`Unknown permission "${v.permission}"`);
     if (v.reason.trim().length < 10) return fail('reason must be at least 10 characters');
+    // Managing other workers' records (1.16.0) presupposes writing client records at all: never for a
+    // de-identified role (finance, read-only), whose role holds no clients:write.
+    if (v.mode === 'grant' && v.permission === 'records:manage-others' && !auth.rolePerms(target.role).includes('clients:write'))
+      return fail(`"${v.permission}" can only be granted to a role that records client work (navigator, clinician, supervisor, administrator)`);
     if (v.mode === 'grant' && PRIVILEGED_PERMISSIONS.includes(v.permission) && target.role !== 'admin')
       return fail(`"${v.permission}" can only be granted to an administrator — change their role instead`);
     db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by)

@@ -17,8 +17,8 @@ module.exports = define({
     closed_at: { type: 'datetime' }, outcome: { type: 'string', maxLen: 500 }, barrier: { type: 'string', maxLen: 300 }, warm_handoff: { type: 'boolean' }, consent_id: { type: 'string' },
     follow_up_due: { type: 'date' }, notes: { type: 'string', maxLen: 2000 }, episode_id: { type: 'string' },
   },
-  owner: { col: 'user_id', all: 'clients:all' },
-  editableBy: ownedBy(['user_id'], 'clients:all'),
+  owner: { col: 'user_id', all: 'records:manage-others' },
+  editableBy: ownedBy(['user_id'], 'records:manage-others'),
   // What anyone on the caseload may change on someone else's referral: its outcome (POST /api/referrals/:id/outcome
   // is not the maker's alone), and the flag a consent's revocation sets on the referrals that relied on it.
   othersMayChange: (existing, row, changed) => changed.every(col => OTHERS.includes(col)),

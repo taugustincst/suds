@@ -199,7 +199,7 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
     { name: 'duration_minutes', label: 'Duration (minutes)', type: 'number', min: 0, max: 1440, step: 1, value: 30, help: isNew ? 'Filled in as 30 minutes: change it to how long the visit took.' : null },
     isNew ? { name: 'log_time', label: 'Also log this as a time entry', type: 'checkbox', value: logTimeDefault, span: true, help: ' ' } : null,
     isNew ? { name: 'time_category', label: 'Time category', type: 'select', list: 'TIME_CATEGORIES', value: 'direct_service' } : null,
-    ...(isNew && can('clients:all') ? [section('recorded_by', 'Recorded by'), { name: 'user_id', label: 'Worker (defaults to you)', type: 'user' }] : []),
+    ...(isNew && can('records:manage-others') ? [section('recorded_by', 'Recorded by'), { name: 'user_id', label: 'Worker (defaults to you)', type: 'user' }] : []),
     // A substantive visit's note, written here and saved with the visit in one request (server/routes/
     // interventions.js planNote): the same kinds, formats and Part 2 flag as the Note form, as a draft.
     ...(noteKinds.length ? [section('note', 'Add a note'),
@@ -408,7 +408,7 @@ export function interventionTable(rows, { showClient = true, onChange } = {}) {
       ? r.supplies.map((x, i) => [i ? ' ' : null, badge(`${x.quantity} ${x.item}`, x.category === 'naloxone' ? 'ok' : 'info')])
       : [r.naloxone_kits ? badge(`${r.naloxone_kits} naloxone`, 'ok') : null, r.fentanyl_strips ? [' ', badge(`${r.fentanyl_strips} FTS`, 'info')] : null]).concat(r.syringes_returned ? [' ', badge(`${r.syringes_returned} returned${r.returns_estimated ? ' (est.)' : ''}`, '')] : []) },
     { label: 'Worker', key: 'worker' }, { label: 'Summary', render: r => h('span', { class: 'small' }, (r.summary || '').slice(0, 120)) },
-    { label: '', render: r => (r.user_id === state.user.id || can('clients:all')) && can('interventions:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: (e) => { e.stopPropagation(); openInterventionForm(r, { onDone: onChange }); } }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this visit', onClick: async (e) => { e.stopPropagation(); if (await confirmDialog('Delete visit', 'Delete this visit? This is logged.', { danger: true, okText: 'Delete' })) { await del(`/api/interventions/${r.id}`); toast('Deleted'); onChange && onChange(); } } }, '✕')) : null },
+    { label: '', render: r => (r.user_id === state.user.id || can('records:manage-others')) && can('interventions:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: (e) => { e.stopPropagation(); openInterventionForm(r, { onDone: onChange }); } }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this visit', onClick: async (e) => { e.stopPropagation(); if (await confirmDialog('Delete visit', 'Delete this visit? This is logged.', { danger: true, okText: 'Delete' })) { await del(`/api/interventions/${r.id}`); toast('Deleted'); onChange && onChange(); } } }, '✕')) : null },
   ].filter(Boolean), rows, { empty: 'Nothing recorded yet. Use + Log › Log a visit for a visit, screening, warm handoff or other service.' });
 }
 

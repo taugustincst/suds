@@ -34,8 +34,8 @@ module.exports = define({
     // created with it in one step and linked to it (routes/interventions.js; the note's own rules apply).
     note: { type: 'object', sync: false },
   },
-  owner: { col: 'user_id', all: 'clients:all' },
-  editableBy: ownedBy(['user_id'], 'clients:all'),
+  owner: { col: 'user_id', all: 'records:manage-others' },
+  editableBy: ownedBy(['user_id'], 'records:manage-others'),
   authorise(row, c) {
     // Only when the value is actually changing (or being set on a new row): a device re-syncing an unrelated
     // edit to a row that already, legitimately, carries a cost must not suddenly need budget:write.
