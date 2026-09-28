@@ -82,6 +82,28 @@ Under 50 navigators at once the server is bounded by committing: every audited r
 on its own, and a saved visit commits the visit, its draw-down and their audit entries separately (22% of the
 server's time under that load). That is deliberate; see "Decided against".
 
+## A navigator's device syncs the whole programme (1.16.0)
+
+From 1.16.0 navigators and clinicians hold `clients:all` by default (docs/HIPAA.md, *Minimum necessary*), so a
+device's first sync is no longer one caseload but everything the programme holds that the person may read. The
+same harness, on the same 20,000-client programme, with the benchmark navigator now holding the role's defaults
+(`node scripts/bench/run.js --no-load`, 4 CPUs):
+
+| First sync | Rows | Pages | JSON / on the wire | Server time; worst page |
+|---|---|---|---|---|
+| A navigator's 2,000-client caseload (1.15, above) | 104,000 | 30 | 79.7 MB / 5.1 MB | 5.5 s; 237 ms |
+| A navigator with the 1.16.0 defaults: the whole programme, clinical notes included | 503,742 | 120 | 460.3 MB / 29.2 MB | 23.5 s; 445 ms |
+
+The office copes: each page stays within its limit and the event loop is never held longer than 0.27 s. The
+device is the concern. A browser in local mode keeps the whole database in memory (sql.js) and seals the whole
+image again after changes, so five times the rows is roughly five times the memory and the sealing work, on a
+phone as much as on a laptop. On-screen lists are unaffected (the office's client, visit, note and call lists for
+a navigator took 17 to 187 ms, as before). A programme larger than a few thousand clients that uses local mode
+(off by default, `LOCAL_MODE_ENABLED`) should hold the people who sync a device to their caseload: deny them
+*See every client* (`clients:all`) under Settings → Users & permissions → Permissions, and the device carries
+their caseload again (`test/role-expansion.test.js`). SUDS on this device (no office) is unaffected: it holds only
+what was entered on it.
+
 ## What changed, and why
 
 **Compressed responses.** JSON answers of 1 kB or more are compressed when the request accepts it: brotli

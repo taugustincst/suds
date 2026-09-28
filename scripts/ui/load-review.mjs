@@ -160,6 +160,10 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   eq((await a.api('POST', `/api/episodes/${ep.id}/close`, { discharge_reason: 'lost_contact', closed_at: '2021-06-01' })).status, 200, 'and discharged them');
   await a.close();
 
+  // From 1.16.0 a navigator sees every client (clients:all); navigator B is held to their caseload here, as a
+  // programme does with a per-user deny (Settings -> Users & permissions -> Permissions).
+  const bId = (await admin.api('GET', '/api/users')).data.users.find(u => u.username === 'dchen').id;
+  eq((await admin.api('POST', `/api/users/${bId}/permissions`, { permission: 'clients:all', mode: 'deny', reason: 'held to their own caseload' })).status, 200, 'the administrator holds navigator B to their caseload');
   const b = await session('dchen', PW);
   const { page, api } = b;
   eq((await api('GET', `/api/clients?status=all&q=${who.last_name}`)).data.total, 0, 'navigator B cannot find them by search (caseload-scoped, unchanged)');

@@ -60,7 +60,7 @@ async function drawHome(r) {
   // Your own overdue to-dos are counted in one place, the bell in the header (and listed under To-dos for
   // today below); a pill here said the same number a third time. A supervisor's count covers the team, which
   // the bell does not, so theirs stays, and says so.
-  if (d.tasks.overdue && can('clients:all')) alerts.push(['danger', `${d.tasks.overdue} overdue to-do${d.tasks.overdue > 1 ? 's' : ''} across the team`, '#/tasks?overdue=1']);
+  if (d.tasks.overdue && d.tasks.team) alerts.push(['danger', `${d.tasks.overdue} overdue to-do${d.tasks.overdue > 1 ? 's' : ''} across the team`, '#/tasks?overdue=1']);
   if (d.notes.unsigned) alerts.push([d.notes.unsigned_overdue ? 'danger' : 'warn', `${d.notes.unsigned} unsigned note${d.notes.unsigned > 1 ? 's' : ''}${d.notes.team ? ' across your team' : ''}`, d.notes.team ? '#/supervision' : '#/notes?status=draft&mine=1']);
   if (cont.staged_imports) alerts.push(['info', `${cont.staged_imports} imported note${cont.staged_imports > 1 ? 's' : ''} to review`, '#/imports']);
   if (c.no_contact_30d) alerts.push(['warn', `${c.no_contact_30d} client${many(c.no_contact_30d) ? 's' : ''} not contacted in 30 days`, '#/clients?stale=1']);

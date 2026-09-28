@@ -128,6 +128,9 @@ test('override deny of clients:all restores caseload scoping: exports, dashboard
   const [mine, all] = [await dash(c.rx_scoped), await dash(c.rx_sup)];
   assert.ok(mine.active <= 1 && all.active >= 2, `the dashboard counts only their caseload (${mine.active} of ${all.active})`);
   assert.equal((await dash(c.rx_navA)).active, all.active, 'the default navigator\'s dashboard is the programme\'s');
+  // Home's to-do counts stay a front-line worker's own: the team's are for someone who supervises (countersigns).
+  assert.equal((await c.rx_navA.get('/api/reports/dashboard')).data.tasks.team, false, 'a navigator\'s Home counts their own to-dos');
+  assert.equal((await c.rx_sup.get('/api/reports/dashboard')).data.tasks.team, true, 'a supervisor\'s counts the team\'s');
   assert.equal(auth.reportRunAllowed({ id: scoped.id, role: 'navigator' }), false, 'no whole-programme internal report run');
   assert.equal(auth.reportRunAllowed({ id: scoped.id, role: 'navigator' }, { caseloadScoped: true }), true, 'its own caseload\'s, as before');
 });

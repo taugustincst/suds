@@ -221,7 +221,9 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   eq(grab.status, 403, 'a later sign-up asking to be an administrator is refused');
   eq((await kernel('POST', '/api/local/signup', { display_name: 'Eve Grab', username: 'evegrab', password: PW, role: 'supervisor' })).status, 403, 'as is any role but navigator');
   await logout(); await login('owner');
-  eq((await clientNames()).join(','), 'Alpha Owner', 'the first person still sees only their own client');
+  // The device administrator keeps the role's defaults: from 1.16.0 a navigator holds clients:all, so they see
+  // every client on the device; the later sign-up is held to its own (local/kernel.js SIGNUP_SCOPE).
+  eq((await clientNames()).join(','), 'Alpha Owner,Beta Second', 'the device administrator, a navigator, sees every client on the device');
 
   // ---- the device administrator gives the second account another role ----
   await page.goto(device + '/#/sync'); await settle(page);
@@ -289,7 +291,7 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   await page.click('.modal [data-restore-go]');
   await page.waitForSelector('[data-mode-tab=login][aria-selected=true]', { timeout: 20000 }); await page.waitForSelector('input[name=username]'); await settle(page);
   await login('owner');
-  eq((await clientNames()).join(','), 'Alpha Owner', 'after the restore, the device administrator\'s client is back');
+  eq((await clientNames()).join(','), 'Alpha Owner,Beta Second', 'after the restore, the device\'s clients are back (the administrator, a navigator, sees every client: clients:all, 1.16.0)');
   const audit = await page.evaluate(() => window.SUDS_LOCAL.handle('GET', '/api/local/device', undefined, {}).then(r => r.json));
   ok(audit && audit.last_backup_at && audit.users === 2, 'with both accounts and the backup date', audit);
   await logout(); await login('second');

@@ -244,6 +244,10 @@ const [c1, c2, c3] = mine;
   const made = await nav.api('POST', '/api/clients', { ...who, intake_date: '2020-01-15' });
   const ep = (await nav.api('GET', `/api/clients/${made.data.id}/episodes`)).data.episodes[0];
   eq((await nav.api('POST', `/api/episodes/${ep.id}/close`, { discharge_reason: 'lost_contact', closed_at: '2021-06-01' })).status, 200, 'an earlier client is discharged');
+  // From 1.16.0 a navigator sees every client (clients:all), so the record would simply be shown; the offer is for
+  // a worker the programme holds to their caseload (a per-user deny).
+  const bId = (await admin.api('GET', '/api/users')).data.users.find(u => u.username === 'dchen').id;
+  eq((await admin.api('POST', `/api/users/${bId}/permissions`, { permission: 'clients:all', mode: 'deny', reason: 'held to their own caseload' })).status, 200, 'the administrator holds the other navigator to their caseload');
   const b = await session('dchen', PW);
   const hisBefore = (await b.api('GET', '/api/clients?status=all&limit=1')).data.total;
   await go(b.page, 'clients');

@@ -295,7 +295,9 @@ eq((await admin.api('GET', '/api/supplies')).data.rows.length, 0, 'the supply cu
   ok(t3 && /10 × Naloxone kit/.test(await t3.textContent()), 'an anonymous distribution of 10 kits with no supply item says the kits were not taken off', t3 && await t3.textContent());
   await until(async () => !(await page.$('.modal-bg')));
   await go(page, 'dashboard');
-  eq(await page.textContent('[data-activity-heading]'), 'What you have been doing (90 days)', 'a navigator\'s Home activity card is theirs');
+  // 1.16.0: a navigator holds clients:all, so Home's activity card counts the program's visits and says so
+  // (was: "What you have been doing", their caseload's); their to-dos on Home are still their own.
+  eq(await page.textContent('[data-activity-heading]'), 'What the team has been doing (90 days)', 'a navigator\'s Home activity card says whose visits it counts');
   await phone.close();
 }
 {

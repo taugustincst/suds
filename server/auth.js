@@ -43,8 +43,14 @@ function ssoPolicy() {
 }
 
 // ---- Role-based permissions (minimum necessary) ----
-// clinical notes are visible only to clinical roles and supervisors; admins are system administrators,
-// not treating staff, and must use break-glass (audited) to read clinical content.
+// clinical notes are written by clinicians and supervisors and read by them and (1.16.0, read only) navigators;
+// admins are system administrators, not treating staff, and must use break-glass (audited) to read clinical
+// content.
+// clients:all (1.16.0: navigators and clinicians too, by the owner's decision: outreach engages whoever walks
+// in, clinicians cover for each other) takes a role out of caseload scoping, and carries the "or a manager"
+// powers over other workers' records (server/rules/). A programme that wants a person held to their caseload
+// denies them clients:all with a per-user override (effectivePerms below), which restores the scoping
+// everywhere (test/role-expansion.test.js).
 // careplan (the CalAIM problem list and care coordination plan) is everyday case-management work, held by
 // every role that works with clients, as clients:write is; an administrator may read it. assessments (ASAM
 // ratings and scored screening instruments such as the PHQ-9) are clinical content, held like clinical
@@ -53,8 +59,9 @@ function ssoPolicy() {
 // publication release (purpose internal or submission: a custom range, one fund, a period not yet ended).
 // Suppression inside one report cannot stop two being subtracted from each other (August's release minus
 // 1-30 August is whoever was served on the 31st), so such runs are for people who can already see client-level
-// data or run the programme: supervisors and administrators. A caseload-scoped role (navigator, clinician)
-// may also run one that counts only its own caseload, whose records it can open anyway (reportRunAllowed).
+// data or run the programme: supervisors and administrators, and (1.16.0) navigators and clinicians, who hold
+// clients:all. A caseload-scoped role (one denied clients:all) may run one that counts only its own caseload,
+// whose records it can open anyway (reportRunAllowed).
 // Finance and readonly get publication releases only; finance's money and hours are exact in those and on
 // Budget / Time, and it needs no people counts beyond them.
 // graph:import: browse and fetch the shared OneNote notebook the server's Microsoft Graph credentials open
@@ -86,7 +93,8 @@ const PERMS = {
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*',
                'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*'],
   // Front-line staff hold export:read so the Export buttons on their own screens work; without
-  // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
+  // export:identified every file they can produce is de-identified (Safe Harbor), and caseload-scoped for a
+  // person denied clients:all. budget:read (1.16.0): a clinician sees programme spending; no budget:write.
   clinician:  ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
                'budget:read','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
                'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','assessments:*','court-orders:read','agreements:read','supplies:read','supplies:receive'],

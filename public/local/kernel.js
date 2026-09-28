@@ -30458,11 +30458,18 @@ var require_reports = __commonJS({
               return d.length ? d[Math.floor(d.length / 2)] : null;
             })()
           })),
-          tasks: {
-            open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
-            overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db3.now(), ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
-            due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
-          },
+          // The team's to-dos for someone who supervises a team (a countersigner who sees every client, as the
+          // unsigned-notes alert below): from 1.16.0 a navigator and a clinician hold clients:all too, and their Home
+          // counts their own to-dos, as it always has.
+          tasks: (() => {
+            const team = auth3.hasPerm(ctx.user, "notes:cosign") && auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0;
+            return {
+              team: !!team,
+              open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, team).n,
+              overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db3.now(), ctx.user.id, team).n,
+              due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, team).n
+            };
+          })(),
           time: auth3.hasPerm(ctx.user, "time:read") || auth3.hasPerm(ctx.user, "time:write") ? {
             minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?)`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0).n,
             by_category: db3.all(`SELECT category k, SUM(minutes) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?) GROUP BY category ORDER BY n DESC`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0)
@@ -39376,7 +39383,8 @@ var require_auth2 = __commonJS({
         "supplies:*"
       ],
       // Front-line staff hold export:read so the Export buttons on their own screens work; without
-      // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
+      // export:identified every file they can produce is de-identified (Safe Harbor), and caseload-scoped for a
+      // person denied clients:all. budget:read (1.16.0): a clinician sees programme spending; no budget:write.
       clinician: [
         "clients:read",
         "clients:write",

@@ -2,6 +2,59 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased — 1.16.0
+
+A feature release: the owner widened two roles' defaults. Expansion only: nobody loses a permission, and
+supervisor, administrator, finance and read-only are unchanged (finance still never holds `clients:read` or
+`export:identified`). No migration, no new route, no new permission string.
+
+| Role | Added | Not added |
+|---|---|---|
+| navigator | `clients:all` (outreach engages whoever walks in, not only their caseload); `notes:clinical:read` | `notes:clinical:write` |
+| clinician | `clients:all` (coverage and on-call); `budget:read` (programme spending) | `budget:write` |
+
+**Administrators, before you upgrade.** On upgrade, every navigator and clinician can see every client in the
+program, and navigators can read clinical notes. To keep the old scoping for a person, deny *See every client*
+(`clients:all`) — and, for a navigator, *Read clinical notes* (`notes:clinical:read`) — under **Settings → Users &
+permissions → Permissions** (1.15.0). With **Caseload restriction** on (Program settings; the default), that person
+is then held to their caseload everywhere it applied before: client list and search, a record and its timeline,
+the duplicate check at intake, exports, the dashboard and reports, and what their devices sync
+(`test/role-expansion.test.js`). Minimum necessary for navigators and clinicians is from now on the programme's
+own per-user choice (docs/HIPAA.md).
+
+What follows from `clients:all`, for a navigator or clinician who holds it:
+
+- **Every client**, over REST, search, exports (de-identified, as before), the dashboard and the funder, NDP and
+  settlement reports (their first run stays *internal, suppressed*; they may also ask for a publication release
+  of the whole programme; still no exact counts), and in sync. A client they create is still assigned to them,
+  now from a device as well as over REST, so a later deny leaves it on their caseload.
+- **The powers SUDS ties to `clients:all`**, which supervisors and administrators have always had: changing or
+  deleting another worker's visits, calls, referrals, overdose reports, to-dos, patient-rights requests, care-plan
+  goals, assessments and outcome measures; editing another worker's draft note (only its author signs it);
+  recording a visit or overdose report under another worker's name; seeing another worker's records with no client
+  (an anonymous call or outreach contact) and their staged imports; and removing a client record (with a reason,
+  audited; never one on legal hold). A per-user deny of `clients:all` takes these away with the rest.
+- **Clinical notes for navigators**: listed, opened, on the timeline and synced to their devices; still not written,
+  signed or added to. Assessments stay clinicians' and supervisors'. An administrator still reads a clinical note
+  only by break-glass; SUD counseling notes and every Part 2 rule are unchanged.
+- **Budget for clinicians**: Funding & spending and the settlement report open; recording spending does not.
+- **Home**: a navigator's or clinician's activity card counts the program's visits and says so (*What the team has
+  been doing*), as the dashboard follows what a person can see. Their to-do counts, and the overdue pill, stay
+  their own: the team's are for someone who countersigns and sees every client (a supervisor or administrator,
+  as before; `tasks.team` in `GET /api/reports/dashboard`).
+- **Devices.** A navigator's first sync is now the whole programme: at 20,000 clients, 504,000 rows (29 MB on the
+  wire, 460 MB of JSON) against 104,000 for a 2,000-client caseload (docs/PERFORMANCE.md). A programme that uses
+  local mode should deny `clients:all` to the people who sync devices unless its programme is small.
+- **SUDS on this device.** The first account (the device administrator) keeps its role's defaults. Anyone who
+  signs up on a shared device after it is given per-user denies of `clients:all` and `notes:clinical:read`, so they
+  still see only their own clients; so is every such account on a device that upgrades. The denies stay if the
+  device administrator makes the account a navigator or clinician, and go if it is made a supervisor or an
+  administrator (`local/kernel.js`, `test/device-signup-scope.test.js`).
+
+The sign-up and new-user role descriptions and the Caseload restriction setting say what the roles now see.
+Tests that exercise caseload scoping use a navigator or clinician held to their caseload (`H.makeCaseloadUser`);
+the sync-rules characterisation records the new outcomes with `was:` notes.
+
 ## 1.15.2 — 2026-09-28
 
 Fixes from a UI evaluation of all six roles (about 120 pages). No migration, no new permission, no change to
