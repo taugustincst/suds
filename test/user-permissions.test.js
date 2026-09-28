@@ -17,3 +17,19 @@ test('migration 46 created user_permission_overrides', async () => {
   H.db.run(`DELETE FROM users WHERE id=?`, u.id);
   assert.strictEqual(H.db.one(`SELECT COUNT(*) AS c FROM user_permission_overrides WHERE user_id=?`, u.id).c, 0, 'ON DELETE CASCADE cleans up overrides');
 });
+
+test('permission catalog covers every string in PERMS exactly once', async () => {
+  const { PERMISSION_CATALOG, isKnownPermission, PRIVILEGED_PERMISSIONS } = require('../server/permissions');
+  const auth = require('../server/auth');
+  const inPerms = new Set(Object.values(auth.PERMS).flat());
+  const inCatalog = new Set(PERMISSION_CATALOG.map((p) => p.name));
+  assert.deepEqual([...inCatalog].sort(), [...inPerms].sort(), 'catalog matches PERMS exactly (deduped)');
+  assert.ok(isKnownPermission('reports:funder'));
+  assert.ok(!isKnownPermission('clients:reed'), 'typos are not known');
+  assert.ok(!isKnownPermission('reports:*'), 'bare wildcards are not grantable entries');
+  assert.deepEqual(PRIVILEGED_PERMISSIONS.sort(), ['apikeys:manage', 'settings:manage', 'users:manage']);
+  for (const p of PERMISSION_CATALOG) {
+    assert.ok(p.label && p.description, `${p.name} has label and description`);
+    assert.ok(['standard', 'sensitive', 'privileged'].includes(p.risk), `${p.name} has a valid risk`);
+  }
+});
