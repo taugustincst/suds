@@ -31672,6 +31672,7 @@ var require_me = __commonJS({
     var { withClientName, SELECT: NAME_COLS } = require_client_name();
     var MAX_PREF_BYTES = 8e3;
     module.exports = (r) => {
+      r.get("/api/me", auth3.requireAuth, (ctx) => auth3.publicUser(ctx.user));
       r.get("/api/me/prefs", auth3.requireAuth, (ctx) => {
         const out2 = {};
         for (const p of db3.all(`SELECT key, value FROM user_prefs WHERE user_id=?`, ctx.user.id)) {

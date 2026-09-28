@@ -60,3 +60,17 @@ test('publicUser sends effective permissions and denies', async () => {
   assert.ok(p.permissions.includes('reports:funder'), 'grant in permissions');
   assert.ok(Array.isArray(p.denied_permissions), 'denied_permissions present');
 });
+
+test('GET /api/me returns effective permissions including denies', async () => {
+  const nav = H.makeUser('menav', 'navigator');
+  const n = H.client(); await n.login(nav.username, nav.password);
+  H.db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason) VALUES(?, 'audit:read', 'grant', 'me check grant')`, nav.id);
+  H.db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason) VALUES(?, 'clients:read', 'deny', 'me check deny')`, nav.id);
+  const r = await n.get('/api/me');
+  assert.equal(r.status, 200);
+  assert.ok(r.data.permissions.includes('audit:read'), 'grant visible in own snapshot');
+  assert.ok(r.data.permissions.includes('time:read'), 'role defaults present');
+  assert.ok(!r.data.permissions.includes('clients:read'), 'deny removed from the effective list');
+  assert.ok((r.data.denied_permissions || []).includes('clients:read'), 'deny visible in denied_permissions');
+  assert.ok('caseload_restricted' in r.data, 'snapshot carries caseload_restricted');
+});

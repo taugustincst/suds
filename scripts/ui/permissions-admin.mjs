@@ -61,6 +61,31 @@ else {
   ok(/Read the audit log/.test(await page.textContent('[data-perm-overrides]')), 'the override row carries the catalog label');
   ok(/reviews the break-glass queue weekly/.test(await page.textContent('[data-perm-overrides]')), 'and the reason that was given');
 
+  // ---- Task 7: /api/me snapshot, deny-aware gating, mid-session refresh ----
+  const navId = created.data.id;
+  const nav = await session(uname, 'Navigator2026!!');
+  // A user created through the API must change the temporary password before the API serves them.
+  const pwChanged = await nav.api('POST', '/api/auth/password', { current_password: 'Navigator2026!!', new_password: 'Navigator2026!!x' });
+  eq(pwChanged.status, 200, 'the navigator clears the forced password change');
+  const me1 = await nav.api('GET', '/api/me');
+  eq(me1.status, 200, 'GET /api/me returns the permission snapshot');
+  ok(me1.data.permissions.includes('audit:read'), 'the grant is visible in the /api/me snapshot');
+  ok(me1.data.permissions.includes('clients:read'), 'role defaults are in the snapshot');
+  ok(!(me1.data.denied_permissions || []).includes('clients:read'), 'nothing denied yet');
+  await go(nav.page, 'profile');
+  ok(await nav.page.$('.sidebar a[href="#/clients"]'), 'the navigator sees My clients before the mid-session deny');
+  // The administrator denies clients:read while the navigator is signed in.
+  const denyMid = await admin.api('POST', `/api/users/${navId}/permissions`, { permission: 'clients:read', mode: 'deny', reason: 'task seven mid-session deny test' });
+  eq(denyMid.status, 200, 'the administrator denies clients:read mid-session');
+  const me2 = await nav.api('GET', '/api/me');
+  ok(!(me2.data.permissions || []).includes('clients:read'), 'the deny is out of the effective list');
+  ok((me2.data.denied_permissions || []).includes('clients:read'), 'and listed in denied_permissions');
+  // Refresh picks it up without signing out; the denied page leaves the sidebar.
+  await nav.page.click('[data-refresh-permissions]');
+  const clientsGone = await until(async () => !(await nav.page.$('.sidebar a[href="#/clients"]')), { timeout: 8000 });
+  ok(clientsGone, 'after Refresh permissions the denied page leaves the sidebar');
+  await nav.close();
+
   // Revoke it; the badge is gone.
   await page.click('[data-perm-revoke="audit:read"]');
   await page.waitForSelector('.modal-bg .modal', { timeout: 5000 }); await settle(page);
