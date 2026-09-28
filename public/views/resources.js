@@ -237,7 +237,7 @@ route('resource', async (r) => {
   // One upload path for every way a picture arrives: the file window, a drop onto the card, a paste, or a
   // picture this page fetched from a web address on a device. Shrunk here, sent as an ordinary upload.
   const uploadBlob = async (blob, name, caption = '') => {
-    const pic = await shrinkImage(blob, 1600, 0.85); const th = await shrinkImage(blob, 240, 0.7, true);
+    const pic = await fitPicture(blob); const th = await shrinkImage(blob, 240, 0.7, true);
     status.textContent = `Uploading ${name}…`;
     const r = await post(`/api/resources/${x.id}/photos`, { data_url: pic.dataUrl, thumb_url: th.dataUrl, width: pic.width, height: pic.height, caption });
     photos.push({ ...r.photo, data_url: pic.dataUrl, thumb_url: th.dataUrl }); renderGallery();
@@ -245,14 +245,16 @@ route('resource', async (r) => {
   async function addFiles(files, { how = '' } = {}) {
     files = [...files];
     if (!files.length) { status.textContent = how ? `Nothing to add: ${how} held no picture.` : 'No pictures chosen.'; return; }
-    let added = 0;
+    let added = 0; const failed = [];
     for (const f of files) {
       if (photos.length >= 12) { toast('A resource can have at most 12 pictures', 'error'); break; }
       const name = f.name || 'picture';
       status.textContent = `Preparing ${name}…`;
-      try { await uploadBlob(f, name); added++; } catch (e) { toast(`${name}: ${e.message}`, 'error'); }
+      try { await uploadBlob(f, name); added++; } catch (e) { failed.push(`${name}: ${e.message}`); toast(`${name}: ${e.message}`, 'error'); }
     }
-    status.textContent = added ? `${added} picture${added > 1 ? 's' : ''} added` : '';
+    // The card says what happened either way: a refused picture used to clear it and leave only a toast, so
+    // choosing a picture looked as if it did nothing.
+    status.textContent = [added ? `${added} picture${added > 1 ? 's' : ''} added` : '', failed.length ? `Not added: ${failed.join('; ')}` : ''].filter(Boolean).join('. ');
     if (added && how) toast(`${added} picture${added > 1 ? 's' : ''} added`, 'ok');
   }
   // "Add from a web address": for anyone who cannot use the operating system's file window (a testing
@@ -356,6 +358,21 @@ route('resource', async (r) => {
       x.notes || can('resources:write') ? h('div', { class: 'card' }, h('h2', {}, 'Internal notes'), x.notes ? h('p', { class: 'small', style: { whiteSpace: 'pre-wrap' } }, x.notes) : h('p', { class: 'muted small' }, 'Nothing noted.'),
         can('resources:write') && x.is_active ? h('div', { class: 'btn-row' }, h('button', { class: 'btn danger sm', onClick: async () => { if (await confirmDialog('Deactivate', 'Hide this resource from referral pickers?', { danger: true, okText: 'Deactivate' })) { await del(`/api/resources/${x.id}`); toast('Resource deactivated', 'ok'); refresh(); } } }, 'Deactivate')) : null) : null));
 });
+
+// The office keeps a picture of up to 2 MB (server/routes/resources.js MAX_PHOTO_BYTES). A PNG stays a PNG (a
+// logo keeps its sharp edges) only while it fits well under that: a photograph or screenshot saved as PNG is
+// several MB even at 1600 px, and was refused with nothing on the card to say so (QA 1.15.3). It is sent as
+// a JPEG instead, at a lower quality and size if it still does not fit.
+const PICTURE_BUDGET = 1.5 * 1024 * 1024;
+const dataUrlBytes = (u) => Math.floor((u.length - u.indexOf(',') - 1) * 3 / 4);
+async function fitPicture(blob) {
+  let pic = await shrinkImage(blob, 1600, 0.85);
+  for (const [max, q] of [[1600, 0.85], [1600, 0.7], [1280, 0.6], [1024, 0.5]]) {
+    if (dataUrlBytes(pic.dataUrl) <= PICTURE_BUDGET) break;
+    pic = await shrinkImage(blob, max, q, true);
+  }
+  return pic;
+}
 
 // Resize a picture in the browser (canvas) so uploads stay small and phones do not send 8 MB originals.
 export function shrinkImage(file, max, quality, forceJpeg = false) {
