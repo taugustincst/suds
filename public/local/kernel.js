@@ -6702,7 +6702,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.14.0" : "local",
+      version: true ? "1.14.1" : "local",
       env: "local",
       isProd: true,
       isTest: false,

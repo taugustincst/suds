@@ -2,6 +2,18 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.14.1 — 2026-09-28
+
+A fix release from the retest of 1.14.0 on the live site. No migration, permission or route.
+
+- **Home no longer blanks while it refreshes.** Home's 90-second refresh redrew the whole page, which showed
+  "Loading…" with no heading until the figures came back, and each redraw started another refresh timer
+  without stopping the last, so refreshes multiplied the longer Home stayed open. There is now one timer, and a
+  refresh builds the new Home first and swaps it in whole, only while nobody is working in the page.
+- The sign-in page's line reads "…with the privacy that substance-use records need".
+- The phone/tablet page offers **Open SUDS** once; the notice that records stay on the device no longer
+  repeats the link.
+
 ## 1.14.0 — 2026-09-27
 
 **Released under a policy exception.** 1.14.0 is a feature release one day after 1.13.0, where the release
