@@ -8,6 +8,9 @@ const { withClientName, SELECT: NAME_COLS } = require('../client-name');
 
 const MAX_PREF_BYTES = 8000;
 module.exports = (r) => {
+  // The signed-in user's own permission snapshot: effective permissions (grants applied, denies
+  // removed) plus the deny list, so the UI can gate exactly like the server and refresh mid-session.
+  r.get('/api/me', auth.requireAuth, (ctx) => auth.publicUser(ctx.user));
   r.get('/api/me/prefs', auth.requireAuth, (ctx) => {
     const out = {};
     for (const p of db.all(`SELECT key, value FROM user_prefs WHERE user_id=?`, ctx.user.id)) { try { out[p.key] = JSON.parse(p.value); } catch { out[p.key] = p.value; } }

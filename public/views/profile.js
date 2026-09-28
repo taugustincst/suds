@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, modal, toast, table, badge, fmt, pageHead, loadSession, nav, render, kv, confirmDialog, prefs, can } from '../app.js';
+import { h, route, get, post, state, form, modal, toast, table, badge, fmt, pageHead, loadSession, nav, render, kv, confirmDialog, prefs, can, refreshPermissions } from '../app.js';
 import { qrSvg } from '../qr.js';
 
 route('profile', async (r) => {
@@ -37,7 +37,9 @@ route('profile', async (r) => {
   return h('div', {}, pageHead('My profile'),
     force ? h('div', { class: 'banner warn' }, 'You must change your password before continuing.') : null,
     h('div', { class: 'grid cols-2' },
-      h('div', { class: 'card' }, h('h2', {}, 'Account'), kv([['Name', u.display_name], ['Username', u.username], ['Role', fmt.label(u.role)], ['Title', u.title], ['Email', u.email], ['Caseload', u.caseload_restricted ? 'Assigned clients only' : 'All clients']])),
+      h('div', { class: 'card' }, h('h2', {}, 'Account'), kv([['Name', u.display_name], ['Username', u.username], ['Role', fmt.label(u.role)], ['Title', u.title], ['Email', u.email], ['Caseload', u.caseload_restricted ? 'Assigned clients only' : 'All clients']]),
+        h('p', { class: 'small mt' }, h('button', { class: 'btn sm', 'data-refresh-permissions': '1', onClick: async (e) => { e.target.disabled = true; await refreshPermissions(); toast('Permissions refreshed', 'ok'); } }, 'Refresh permissions'), ' ',
+          h('span', { class: 'muted' }, 'If an administrator changed what you can do, pick it up without signing out.'))),
       h('div', { class: 'card' }, h('h2', {}, 'Multi-factor authentication'), mfaBox),
       h('div', { class: 'card' }, h('h2', {}, 'Change password'), pw),
       reminders,
