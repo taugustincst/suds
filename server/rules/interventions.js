@@ -30,6 +30,9 @@ module.exports = define({
     // the site they came from, and syringe services returns (docs/SUPPLIES.md).
     supplies: { type: 'array', maxLen: 50, sync: false }, supply_site_id: { type: 'string' },
     syringes_returned: { type: 'number', integer: true, min: 0, max: 100000 }, returns_estimated: { type: 'boolean' }, sharps_returned_litres: { type: 'number', min: 0, max: 1000 },
+    // Request-only (1.14.0): a note written with the visit ({ kind, format, title, content, part2_protected, ... }),
+    // created with it in one step and linked to it (routes/interventions.js; the note's own rules apply).
+    note: { type: 'object', sync: false },
   },
   owner: { col: 'user_id', all: 'clients:all' },
   editableBy: ownedBy(['user_id'], 'clients:all'),

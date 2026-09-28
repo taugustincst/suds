@@ -86,6 +86,30 @@ function load(ctx, id) {
   return n;
 }
 
+/**
+ * May this caller write this new note (validated against the notes shape)? Its kind is one they may author,
+ * the client exists and is theirs to see, and the table's rules hold. Throws if not. Shared by POST
+ * /api/notes and a visit recorded with its note (routes/interventions.js), which checks before it writes
+ * anything, so a note that would be refused never leaves a visit saved without it.
+ */
+function checkNewNote(ctx, v) {
+  if (!auth.hasPerm(ctx.user, kindPerm(v.kind, 'write'))) throw forbidden(`You cannot author ${v.kind} notes`);
+  if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound('Client not found');
+  auth.assertClientAccess(ctx, v.client_id);
+  rules.assertWrite('notes', rules.toColumns('notes', v), ctx);
+}
+/** Write a new (draft) note that checkNewNote has passed, and audit it. Returns its id. */
+function insertNote(ctx, v) {
+  const id = uuid();
+  const linked = problemIds(v.problem_ids, v.client_id) ?? null;
+  const author = db.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
+  db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids,counseling_note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    id, v.client_id, ctx.user.id, v.kind, v.format || 'narrative', v.title ? encrypt(v.title) : null, encrypt(v.content), v.structured ? encrypt(JSON.stringify(v.structured)) : null, v.occurred_at,
+    v.intervention_id || null, v.call_id || null, v.part2_protected ?? 1, v.source || 'manual', v.source_ref || null, author?.requires_cosign ? 1 : 0, v.cosign_requested ? 1 : 0, linked, v.counseling_note ? 1 : 0);
+  audit.log({ user: ctx.user, action: 'note.create', entity: 'note', entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : undefined, counseling_note: v.counseling_note ? true : undefined, with_visit: v._with_visit ? true : undefined } });
+  return id;
+}
+
 module.exports = (r) => {
   r.get('/api/notes', auth.requireAuth, auth.requirePerm('notes:admin:read', 'notes:clinical:read', 'notes:admin:write', 'notes:clinical:write'), (ctx) => {
     const { limit, offset } = paging(ctx.query, { limit: 100, max: 500 });
@@ -112,10 +136,15 @@ module.exports = (r) => {
     if (ctx.query.get('from')) { where.push('n.occurred_at >= ?'); params.push(ctx.query.get('from')); }
     if (ctx.query.get('to')) { where.push('n.occurred_at <= ?'); params.push(ctx.query.get('to') + 'T23:59:59.999Z'); }
     const w = 'WHERE ' + where.join(' AND ');
-    const rows = db.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
+    // The page's notes are found first, from the index (idx_notes_list), and only those rows are read: sorting
+    // a caseload's notes whole, bodies and all, to keep a hundred was 140 ms for a 2,000-client caseload.
+    // (By rowid, which the index carries; the id is only in the row.)
+    const pageIds = db.all(`SELECT n.rowid AS rid FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit, offset).map(x => x.rid);
+    const byId = new Map(db.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
       n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
-      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda
-      FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit, offset);
+      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda, n.rowid AS rid
+      FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id WHERE n.rowid IN (SELECT value FROM json_each(?))`, JSON.stringify(pageIds)).map(({ rid, ...x }) => [rid, x]));
+    const rows = pageIds.map(id => byId.get(id));
     const out = rows.map(x => ({ ...x, title: x.title_enc ? decrypt(x.title_enc) : null, title_enc: undefined, ...signatureState(x) }));
     // Listing notes is a PHI read (titles are clinical narrative), so it is audited like any other.
     audit.log({ user: ctx.user, action: 'note.list', ip: ctx.ip, clientId: ctx.query.get('client_id') || null, details: { count: out.length, kinds, filter: ctx.query.get('awaiting_cosign') === '1' ? 'awaiting_cosign' : undefined } });
@@ -124,17 +153,8 @@ module.exports = (r) => {
 
   r.post('/api/notes', auth.requireAuth, (ctx) => {
     const v = validate(ctx.body, shape);
-    if (!auth.hasPerm(ctx.user, kindPerm(v.kind, 'write'))) throw forbidden(`You cannot author ${v.kind} notes`);
-    if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound('Client not found');
-    auth.assertClientAccess(ctx, v.client_id);
-    rules.assertWrite('notes', rules.toColumns('notes', v), ctx);
-    const id = uuid();
-    const linked = problemIds(v.problem_ids, v.client_id) ?? null;
-    const author = db.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
-    db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids,counseling_note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      id, v.client_id, ctx.user.id, v.kind, v.format || 'narrative', v.title ? encrypt(v.title) : null, encrypt(v.content), v.structured ? encrypt(JSON.stringify(v.structured)) : null, v.occurred_at,
-      v.intervention_id || null, v.call_id || null, v.part2_protected ?? 1, v.source || 'manual', v.source_ref || null, author?.requires_cosign ? 1 : 0, v.cosign_requested ? 1 : 0, linked, v.counseling_note ? 1 : 0);
-    audit.log({ user: ctx.user, action: 'note.create', entity: 'note', entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : undefined, counseling_note: v.counseling_note ? true : undefined } });
+    checkNewNote(ctx, v);
+    const id = insertNote(ctx, v);
     // updated_at: the version the editor's next autosave sends as if_updated_at.
     ctx.status = 201; return { id, updated_at: db.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at };
   });
@@ -312,3 +332,6 @@ module.exports = (r) => {
     return out;
   });
 };
+module.exports.checkNewNote = checkNewNote;
+module.exports.insertNote = insertNote;
+module.exports.noteShape = shape;

@@ -6702,7 +6702,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.13.0" : "local",
+      version: true ? "1.14.1" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -6995,7 +6995,9 @@ CREATE TABLE IF NOT EXISTS assignments (
 );
 CREATE INDEX IF NOT EXISTS idx_assignments_updated ON assignments(updated_at);
 CREATE INDEX IF NOT EXISTS idx_assign_client ON assignments(client_id);
-CREATE INDEX IF NOT EXISTS idx_assign_user ON assignments(user_id);
+-- A worker's caseload, read from the index alone (every caseload-scoped query asks it; migration 47 widened
+-- idx_assign_user): whose it is, which client, and whether the assignment has ended.
+CREATE INDEX IF NOT EXISTS idx_assign_caseload ON assignments(user_id, client_id, end_date, ended_at);
 
 CREATE TABLE IF NOT EXISTS funding_sources (
   id TEXT PRIMARY KEY,
@@ -7072,6 +7074,11 @@ CREATE INDEX IF NOT EXISTS idx_interventions_user ON interventions(user_id, occu
 -- the columns the funder report counts ride along, so a year of visits is read from the index alone.
 CREATE INDEX IF NOT EXISTS idx_interventions_period ON interventions(occurred_at, funding_source_id, client_id, naloxone_kits, fentanyl_strips);
 CREATE INDEX IF NOT EXISTS idx_interventions_updated ON interventions(updated_at);
+-- Sync reads (migration 47, docs/PERFORMANCE.md): a device's pull finds where its page ends from a caseload's
+-- updated_at values alone, so client, time and owner are in the index and the rows are read only when sent.
+CREATE INDEX IF NOT EXISTS idx_interventions_sync ON interventions(client_id, updated_at, user_id);
+-- The Home dashboard's pass over the period's visits (migration 47), read from the index alone.
+CREATE INDEX IF NOT EXISTS idx_interventions_dashboard ON interventions(occurred_at, client_id, user_id, type, duration_minutes, naloxone_kits, fentanyl_strips);
 
 CREATE TABLE IF NOT EXISTS calls (
   id TEXT PRIMARY KEY,
@@ -7099,6 +7106,7 @@ CREATE INDEX IF NOT EXISTS idx_calls_client ON calls(client_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_user ON calls(user_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_started ON calls(started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_updated ON calls(updated_at);
+CREATE INDEX IF NOT EXISTS idx_calls_sync ON calls(client_id, updated_at, user_id);
 
 CREATE TABLE IF NOT EXISTS time_entries (
   id TEXT PRIMARY KEY,
@@ -7318,8 +7326,12 @@ CREATE TABLE IF NOT EXISTS notes (
   -- each service to the problem list). Ids only, never the problem text.
   problem_ids TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_notes_client ON notes(client_id, occurred_at);
+-- A client's notes by date, and a caseload's notes list, read from the index alone (migration 47 widened idx_notes_client).
+CREATE INDEX IF NOT EXISTS idx_notes_list ON notes(client_id, occurred_at, kind, deleted_at, author_id);
 CREATE INDEX IF NOT EXISTS idx_notes_author ON notes(author_id);
+CREATE INDEX IF NOT EXISTS idx_notes_sync ON notes(client_id, updated_at);
+-- Unsigned notes (Home's alert, migration 47): the drafts only, a handful of rows however many notes there are.
+CREATE INDEX IF NOT EXISTS idx_notes_drafts ON notes(author_id, created_at) WHERE status='draft' AND deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS note_addenda (
   id TEXT PRIMARY KEY,
@@ -7331,6 +7343,8 @@ CREATE TABLE IF NOT EXISTS note_addenda (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_note_addenda_updated ON note_addenda(updated_at);
+-- A note's addenda (the notes list counts them per note; migration 47).
+CREATE INDEX IF NOT EXISTS idx_note_addenda_note ON note_addenda(note_id);
 
 CREATE TABLE IF NOT EXISTS consents (
   id TEXT PRIMARY KEY,
@@ -7575,6 +7589,8 @@ CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_id
 CREATE INDEX IF NOT EXISTS idx_clients_first_name ON clients(first_name_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_first_name_prefix ON clients(first_name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_preferred_name ON clients(preferred_name_idx);
+-- The duplicates merged into a caseload's clients travel with them (sync pull; migration 47).
+CREATE INDEX IF NOT EXISTS idx_clients_merged ON clients(merged_into) WHERE merged_into IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);
 CREATE INDEX IF NOT EXISTS idx_resource_photos_updated ON resource_photos(updated_at);
 CREATE INDEX IF NOT EXISTS idx_funding_sources_updated ON funding_sources(updated_at);
@@ -7741,7 +7757,7 @@ CREATE TABLE IF NOT EXISTS intervention_supplies (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_intervention_supplies_visit ON intervention_supplies(intervention_id);
-CREATE INDEX IF NOT EXISTS idx_intervention_supplies_client ON intervention_supplies(client_id);
+CREATE INDEX IF NOT EXISTS idx_intervention_supplies_sync ON intervention_supplies(client_id, updated_at, user_id);
 CREATE INDEX IF NOT EXISTS idx_intervention_supplies_updated ON intervention_supplies(updated_at);
 
 -- The stock ledger. Append-only: a row is never changed or removed (a mistake is corrected by another row),
@@ -7773,7 +7789,9 @@ CREATE TABLE IF NOT EXISTS supply_ledger (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_supply_ledger_updated ON supply_ledger(updated_at);
-CREATE INDEX IF NOT EXISTS idx_supply_ledger_stock ON supply_ledger(item_id, site_id, expires_on, lot_number);
+-- On hand is SUM(quantity) per item, site and lot: read from this index alone (migration 47 added quantity).
+CREATE INDEX IF NOT EXISTS idx_supply_ledger_onhand ON supply_ledger(item_id, site_id, expires_on, lot_number, quantity);
+CREATE INDEX IF NOT EXISTS idx_supply_ledger_item_created ON supply_ledger(item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_supply_ledger_visit ON supply_ledger(intervention_id) WHERE intervention_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_supply_ledger_occurred ON supply_ledger(occurred_on);
 
@@ -8138,6 +8156,7 @@ CREATE TABLE IF NOT EXISTS suprt_assessments (
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_client ON suprt_assessments(client_id, assessment_date);
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_date ON suprt_assessments(assessment_date);
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_updated ON suprt_assessments(updated_at);
+CREATE INDEX IF NOT EXISTS idx_suprt_assessments_sync ON suprt_assessments(client_id, updated_at);
 `;
   }
 });
@@ -8502,9 +8521,11 @@ var require_clients_model = __commonJS({
       db3.setSetting(counterKey, String(n));
       return code;
     }
+    var SUMMARY_KEEP = ["id", "client_code", "display_name", "first_name", "last_name", "preferred_name", "dob", "phone", "status", "risk_level", "primary_substance", "mat_status", "intake_date", "referral_date", "engagement_date", "city", "flags", "ok_to_text", "ok_to_voicemail", "updated_at"];
+    var SUMMARY_READS = new Set([...SUMMARY_KEEP, "deleted_at", "merged_into"].flatMap((k) => [k, `${k}_enc`]));
     function summary(row, opts) {
-      const d = decryptRow(row, opts);
-      const keep = ["id", "client_code", "display_name", "first_name", "last_name", "preferred_name", "dob", "phone", "status", "risk_level", "primary_substance", "mat_status", "intake_date", "referral_date", "engagement_date", "city", "flags", "ok_to_text", "ok_to_voicemail", "updated_at"];
+      const d = decryptRow(row ? Object.fromEntries(Object.entries(row).filter(([k]) => SUMMARY_READS.has(k))) : row, opts);
+      const keep = SUMMARY_KEEP;
       const o = {};
       for (const k of keep) if (d[k] !== void 0) o[k] = d[k];
       o.days_to_engagement = daysToEngagement(d);
@@ -9183,7 +9204,7 @@ var require_constants = __commonJS({
         phones_communication: "Phones and Communication",
         food_basic_needs: "Food and Basic Needs",
         // Codes the generic wording printed as "Opioids Fentanyl", "Court Probation", "Ems", "Va", "Crisis 24 7",
-        // "Non Binary" and "Readonly" (the third UX review, 1.13.1). Exports' labels come from here too.
+        // "Non Binary" and "Readonly" (the third UX review, 1.14.0). Exports' labels come from here too.
         opioids_fentanyl: "Opioids (fentanyl)",
         opioids_heroin: "Opioids (heroin)",
         opioids_rx: "Opioids (prescription)",
@@ -9318,6 +9339,771 @@ var require_csp = __commonJS({
     init_globals_inject();
     var CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
     module.exports = { CSP };
+  }
+});
+
+// node_modules/fflate/esm/browser.js
+function deflateSync(data, opts) {
+  return dopt(data, opts || {}, 0, 0);
+}
+function inflateSync(data, opts) {
+  return inflt(data, { i: 2 }, opts && opts.out, opts && opts.dictionary);
+}
+function zlibSync(data, opts) {
+  if (!opts)
+    opts = {};
+  var a = adler();
+  a.p(data);
+  var d = dopt(data, opts, opts.dictionary ? 6 : 2, 4);
+  return zlh(d, opts), wbytes(d, d.length - 4, a.d()), d;
+}
+function unzlibSync(data, opts) {
+  return inflt(data.subarray(zls(data, opts && opts.dictionary), -4), { i: 2 }, opts && opts.out, opts && opts.dictionary);
+}
+var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
+var init_browser = __esm({
+  "node_modules/fflate/esm/browser.js"() {
+    init_globals_inject();
+    u82 = Uint8Array;
+    u16 = Uint16Array;
+    i32 = Int32Array;
+    fleb = new u82([
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      2,
+      2,
+      2,
+      2,
+      3,
+      3,
+      3,
+      3,
+      4,
+      4,
+      4,
+      4,
+      5,
+      5,
+      5,
+      5,
+      0,
+      /* unused */
+      0,
+      0,
+      /* impossible */
+      0
+    ]);
+    fdeb = new u82([
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      2,
+      2,
+      3,
+      3,
+      4,
+      4,
+      5,
+      5,
+      6,
+      6,
+      7,
+      7,
+      8,
+      8,
+      9,
+      9,
+      10,
+      10,
+      11,
+      11,
+      12,
+      12,
+      13,
+      13,
+      /* unused */
+      0,
+      0
+    ]);
+    clim = new u82([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]);
+    freb = function(eb, start2) {
+      var b = new u16(31);
+      for (var i = 0; i < 31; ++i) {
+        b[i] = start2 += 1 << eb[i - 1];
+      }
+      var r = new i32(b[30]);
+      for (var i = 1; i < 30; ++i) {
+        for (var j = b[i]; j < b[i + 1]; ++j) {
+          r[j] = j - b[i] << 5 | i;
+        }
+      }
+      return { b, r };
+    };
+    _a = freb(fleb, 2);
+    fl = _a.b;
+    revfl = _a.r;
+    fl[28] = 258, revfl[258] = 28;
+    _b = freb(fdeb, 0);
+    fd = _b.b;
+    revfd = _b.r;
+    rev = new u16(32768);
+    for (i = 0; i < 32768; ++i) {
+      x = (i & 43690) >> 1 | (i & 21845) << 1;
+      x = (x & 52428) >> 2 | (x & 13107) << 2;
+      x = (x & 61680) >> 4 | (x & 3855) << 4;
+      rev[i] = ((x & 65280) >> 8 | (x & 255) << 8) >> 1;
+    }
+    hMap = function(cd, mb, r) {
+      var s = cd.length;
+      var i = 0;
+      var l = new u16(mb);
+      for (; i < s; ++i) {
+        if (cd[i])
+          ++l[cd[i] - 1];
+      }
+      var le = new u16(mb);
+      for (i = 1; i < mb; ++i) {
+        le[i] = le[i - 1] + l[i - 1] << 1;
+      }
+      var co;
+      if (r) {
+        co = new u16(1 << mb);
+        var rvb = 15 - mb;
+        for (i = 0; i < s; ++i) {
+          if (cd[i]) {
+            var sv = i << 4 | cd[i];
+            var r_1 = mb - cd[i];
+            var v = le[cd[i] - 1]++ << r_1;
+            for (var m = v | (1 << r_1) - 1; v <= m; ++v) {
+              co[rev[v] >> rvb] = sv;
+            }
+          }
+        }
+      } else {
+        co = new u16(s);
+        for (i = 0; i < s; ++i) {
+          if (cd[i]) {
+            co[i] = rev[le[cd[i] - 1]++] >> 15 - cd[i];
+          }
+        }
+      }
+      return co;
+    };
+    flt = new u82(288);
+    for (i = 0; i < 144; ++i)
+      flt[i] = 8;
+    for (i = 144; i < 256; ++i)
+      flt[i] = 9;
+    for (i = 256; i < 280; ++i)
+      flt[i] = 7;
+    for (i = 280; i < 288; ++i)
+      flt[i] = 8;
+    fdt = new u82(32);
+    for (i = 0; i < 32; ++i)
+      fdt[i] = 5;
+    flm = /* @__PURE__ */ hMap(flt, 9, 0);
+    flrm = /* @__PURE__ */ hMap(flt, 9, 1);
+    fdm = /* @__PURE__ */ hMap(fdt, 5, 0);
+    fdrm = /* @__PURE__ */ hMap(fdt, 5, 1);
+    max = function(a) {
+      var m = a[0];
+      for (var i = 1; i < a.length; ++i) {
+        if (a[i] > m)
+          m = a[i];
+      }
+      return m;
+    };
+    bits = function(d, p, m) {
+      var o = p / 8 | 0;
+      return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
+    };
+    bits16 = function(d, p) {
+      var o = p / 8 | 0;
+      return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
+    };
+    shft = function(p) {
+      return (p + 7) / 8 | 0;
+    };
+    slc = function(v, s, e) {
+      if (s == null || s < 0)
+        s = 0;
+      if (e == null || e > v.length)
+        e = v.length;
+      return new u82(v.subarray(s, e));
+    };
+    ec = [
+      "unexpected EOF",
+      "invalid block type",
+      "invalid length/literal",
+      "invalid distance",
+      "stream finished",
+      "no stream handler",
+      ,
+      "no callback",
+      "invalid UTF-8 data",
+      "extra field too long",
+      "date not in range 1980-2099",
+      "filename too long",
+      "stream finishing",
+      "invalid zip data"
+      // determined by unknown compression method
+    ];
+    err = function(ind, msg, nt) {
+      var e = new Error(msg || ec[ind]);
+      e.code = ind;
+      if (Error.captureStackTrace)
+        Error.captureStackTrace(e, err);
+      if (!nt)
+        throw e;
+      return e;
+    };
+    inflt = function(dat, st, buf, dict) {
+      var sl = dat.length, dl = dict ? dict.length : 0;
+      if (!sl || st.f && !st.l)
+        return buf || new u82(0);
+      var noBuf = !buf;
+      var resize = noBuf || st.i != 2;
+      var noSt = st.i;
+      if (noBuf)
+        buf = new u82(sl * 3);
+      var cbuf = function(l2) {
+        var bl = buf.length;
+        if (l2 > bl) {
+          var nbuf = new u82(Math.max(bl * 2, l2));
+          nbuf.set(buf);
+          buf = nbuf;
+        }
+      };
+      var final = st.f || 0, pos = st.p || 0, bt = st.b || 0, lm = st.l, dm = st.d, lbt = st.m, dbt = st.n;
+      var tbts = sl * 8;
+      do {
+        if (!lm) {
+          final = bits(dat, pos, 1);
+          var type = bits(dat, pos + 1, 3);
+          pos += 3;
+          if (!type) {
+            var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
+            if (t > sl) {
+              if (noSt)
+                err(0);
+              break;
+            }
+            if (resize)
+              cbuf(bt + l);
+            buf.set(dat.subarray(s, t), bt);
+            st.b = bt += l, st.p = pos = t * 8, st.f = final;
+            continue;
+          } else if (type == 1)
+            lm = flrm, dm = fdrm, lbt = 9, dbt = 5;
+          else if (type == 2) {
+            var hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
+            var tl = hLit + bits(dat, pos + 5, 31) + 1;
+            pos += 14;
+            var ldt = new u82(tl);
+            var clt = new u82(19);
+            for (var i = 0; i < hcLen; ++i) {
+              clt[clim[i]] = bits(dat, pos + i * 3, 7);
+            }
+            pos += hcLen * 3;
+            var clb = max(clt), clbmsk = (1 << clb) - 1;
+            var clm = hMap(clt, clb, 1);
+            for (var i = 0; i < tl; ) {
+              var r = clm[bits(dat, pos, clbmsk)];
+              pos += r & 15;
+              var s = r >> 4;
+              if (s < 16) {
+                ldt[i++] = s;
+              } else {
+                var c = 0, n = 0;
+                if (s == 16)
+                  n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
+                else if (s == 17)
+                  n = 3 + bits(dat, pos, 7), pos += 3;
+                else if (s == 18)
+                  n = 11 + bits(dat, pos, 127), pos += 7;
+                while (n--)
+                  ldt[i++] = c;
+              }
+            }
+            var lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
+            lbt = max(lt);
+            dbt = max(dt);
+            lm = hMap(lt, lbt, 1);
+            dm = hMap(dt, dbt, 1);
+          } else
+            err(1);
+          if (pos > tbts) {
+            if (noSt)
+              err(0);
+            break;
+          }
+        }
+        if (resize)
+          cbuf(bt + 131072);
+        var lms = (1 << lbt) - 1, dms = (1 << dbt) - 1;
+        var lpos = pos;
+        for (; ; lpos = pos) {
+          var c = lm[bits16(dat, pos) & lms], sym = c >> 4;
+          pos += c & 15;
+          if (pos > tbts) {
+            if (noSt)
+              err(0);
+            break;
+          }
+          if (!c)
+            err(2);
+          if (sym < 256)
+            buf[bt++] = sym;
+          else if (sym == 256) {
+            lpos = pos, lm = null;
+            break;
+          } else {
+            var add = sym - 254;
+            if (sym > 264) {
+              var i = sym - 257, b = fleb[i];
+              add = bits(dat, pos, (1 << b) - 1) + fl[i];
+              pos += b;
+            }
+            var d = dm[bits16(dat, pos) & dms], dsym = d >> 4;
+            if (!d)
+              err(3);
+            pos += d & 15;
+            var dt = fd[dsym];
+            if (dsym > 3) {
+              var b = fdeb[dsym];
+              dt += bits16(dat, pos) & (1 << b) - 1, pos += b;
+            }
+            if (pos > tbts) {
+              if (noSt)
+                err(0);
+              break;
+            }
+            if (resize)
+              cbuf(bt + 131072);
+            var end = bt + add;
+            if (bt < dt) {
+              var shift = dl - dt, dend = Math.min(dt, end);
+              if (shift + bt < 0)
+                err(3);
+              for (; bt < dend; ++bt)
+                buf[bt] = dict[shift + bt];
+            }
+            for (; bt < end; ++bt)
+              buf[bt] = buf[bt - dt];
+          }
+        }
+        st.l = lm, st.p = lpos, st.b = bt, st.f = final;
+        if (lm)
+          final = 1, st.m = lbt, st.d = dm, st.n = dbt;
+      } while (!final);
+      return bt != buf.length && noBuf ? slc(buf, 0, bt) : buf.subarray(0, bt);
+    };
+    wbits = function(d, p, v) {
+      v <<= p & 7;
+      var o = p / 8 | 0;
+      d[o] |= v;
+      d[o + 1] |= v >> 8;
+    };
+    wbits16 = function(d, p, v) {
+      v <<= p & 7;
+      var o = p / 8 | 0;
+      d[o] |= v;
+      d[o + 1] |= v >> 8;
+      d[o + 2] |= v >> 16;
+    };
+    hTree = function(d, mb) {
+      var t = [];
+      for (var i = 0; i < d.length; ++i) {
+        if (d[i])
+          t.push({ s: i, f: d[i] });
+      }
+      var s = t.length;
+      var t2 = t.slice();
+      if (!s)
+        return { t: et, l: 0 };
+      if (s == 1) {
+        var v = new u82(t[0].s + 1);
+        v[t[0].s] = 1;
+        return { t: v, l: 1 };
+      }
+      t.sort(function(a, b) {
+        return a.f - b.f;
+      });
+      t.push({ s: -1, f: 25001 });
+      var l = t[0], r = t[1], i0 = 0, i1 = 1, i2 = 2;
+      t[0] = { s: -1, f: l.f + r.f, l, r };
+      while (i1 != s - 1) {
+        l = t[t[i0].f < t[i2].f ? i0++ : i2++];
+        r = t[i0 != i1 && t[i0].f < t[i2].f ? i0++ : i2++];
+        t[i1++] = { s: -1, f: l.f + r.f, l, r };
+      }
+      var maxSym = t2[0].s;
+      for (var i = 1; i < s; ++i) {
+        if (t2[i].s > maxSym)
+          maxSym = t2[i].s;
+      }
+      var tr = new u16(maxSym + 1);
+      var mbt = ln(t[i1 - 1], tr, 0);
+      if (mbt > mb) {
+        var i = 0, dt = 0;
+        var lft = mbt - mb, cst = 1 << lft;
+        t2.sort(function(a, b) {
+          return tr[b.s] - tr[a.s] || a.f - b.f;
+        });
+        for (; i < s; ++i) {
+          var i2_1 = t2[i].s;
+          if (tr[i2_1] > mb) {
+            dt += cst - (1 << mbt - tr[i2_1]);
+            tr[i2_1] = mb;
+          } else
+            break;
+        }
+        dt >>= lft;
+        while (dt > 0) {
+          var i2_2 = t2[i].s;
+          if (tr[i2_2] < mb)
+            dt -= 1 << mb - tr[i2_2]++ - 1;
+          else
+            ++i;
+        }
+        for (; i >= 0 && dt; --i) {
+          var i2_3 = t2[i].s;
+          if (tr[i2_3] == mb) {
+            --tr[i2_3];
+            ++dt;
+          }
+        }
+        mbt = mb;
+      }
+      return { t: new u82(tr), l: mbt };
+    };
+    ln = function(n, l, d) {
+      return n.s == -1 ? Math.max(ln(n.l, l, d + 1), ln(n.r, l, d + 1)) : l[n.s] = d;
+    };
+    lc = function(c) {
+      var s = c.length;
+      while (s && !c[--s])
+        ;
+      var cl = new u16(++s);
+      var cli = 0, cln = c[0], cls = 1;
+      var w = function(v) {
+        cl[cli++] = v;
+      };
+      for (var i = 1; i <= s; ++i) {
+        if (c[i] == cln && i != s)
+          ++cls;
+        else {
+          if (!cln && cls > 2) {
+            for (; cls > 138; cls -= 138)
+              w(32754);
+            if (cls > 2) {
+              w(cls > 10 ? cls - 11 << 5 | 28690 : cls - 3 << 5 | 12305);
+              cls = 0;
+            }
+          } else if (cls > 3) {
+            w(cln), --cls;
+            for (; cls > 6; cls -= 6)
+              w(8304);
+            if (cls > 2)
+              w(cls - 3 << 5 | 8208), cls = 0;
+          }
+          while (cls--)
+            w(cln);
+          cls = 1;
+          cln = c[i];
+        }
+      }
+      return { c: cl.subarray(0, cli), n: s };
+    };
+    clen = function(cf, cl) {
+      var l = 0;
+      for (var i = 0; i < cl.length; ++i)
+        l += cf[i] * cl[i];
+      return l;
+    };
+    wfblk = function(out2, pos, dat) {
+      var s = dat.length;
+      var o = shft(pos + 2);
+      out2[o] = s & 255;
+      out2[o + 1] = s >> 8;
+      out2[o + 2] = out2[o] ^ 255;
+      out2[o + 3] = out2[o + 1] ^ 255;
+      for (var i = 0; i < s; ++i)
+        out2[o + i + 4] = dat[i];
+      return (o + 4 + s) * 8;
+    };
+    wblk = function(dat, out2, final, syms, lf, df, eb, li, bs, bl, p) {
+      wbits(out2, p++, final);
+      ++lf[256];
+      var _a2 = hTree(lf, 15), dlt = _a2.t, mlb = _a2.l;
+      var _b2 = hTree(df, 15), ddt = _b2.t, mdb = _b2.l;
+      var _c = lc(dlt), lclt = _c.c, nlc = _c.n;
+      var _d = lc(ddt), lcdt = _d.c, ndc = _d.n;
+      var lcfreq = new u16(19);
+      for (var i = 0; i < lclt.length; ++i)
+        ++lcfreq[lclt[i] & 31];
+      for (var i = 0; i < lcdt.length; ++i)
+        ++lcfreq[lcdt[i] & 31];
+      var _e = hTree(lcfreq, 7), lct = _e.t, mlcb = _e.l;
+      var nlcc = 19;
+      for (; nlcc > 4 && !lct[clim[nlcc - 1]]; --nlcc)
+        ;
+      var flen = bl + 5 << 3;
+      var ftlen = clen(lf, flt) + clen(df, fdt) + eb;
+      var dtlen = clen(lf, dlt) + clen(df, ddt) + eb + 14 + 3 * nlcc + clen(lcfreq, lct) + 2 * lcfreq[16] + 3 * lcfreq[17] + 7 * lcfreq[18];
+      if (bs >= 0 && flen <= ftlen && flen <= dtlen)
+        return wfblk(out2, p, dat.subarray(bs, bs + bl));
+      var lm, ll, dm, dl;
+      wbits(out2, p, 1 + (dtlen < ftlen)), p += 2;
+      if (dtlen < ftlen) {
+        lm = hMap(dlt, mlb, 0), ll = dlt, dm = hMap(ddt, mdb, 0), dl = ddt;
+        var llm = hMap(lct, mlcb, 0);
+        wbits(out2, p, nlc - 257);
+        wbits(out2, p + 5, ndc - 1);
+        wbits(out2, p + 10, nlcc - 4);
+        p += 14;
+        for (var i = 0; i < nlcc; ++i)
+          wbits(out2, p + 3 * i, lct[clim[i]]);
+        p += 3 * nlcc;
+        var lcts = [lclt, lcdt];
+        for (var it = 0; it < 2; ++it) {
+          var clct = lcts[it];
+          for (var i = 0; i < clct.length; ++i) {
+            var len = clct[i] & 31;
+            wbits(out2, p, llm[len]), p += lct[len];
+            if (len > 15)
+              wbits(out2, p, clct[i] >> 5 & 127), p += clct[i] >> 12;
+          }
+        }
+      } else {
+        lm = flm, ll = flt, dm = fdm, dl = fdt;
+      }
+      for (var i = 0; i < li; ++i) {
+        var sym = syms[i];
+        if (sym > 255) {
+          var len = sym >> 18 & 31;
+          wbits16(out2, p, lm[len + 257]), p += ll[len + 257];
+          if (len > 7)
+            wbits(out2, p, sym >> 23 & 31), p += fleb[len];
+          var dst = sym & 31;
+          wbits16(out2, p, dm[dst]), p += dl[dst];
+          if (dst > 3)
+            wbits16(out2, p, sym >> 5 & 8191), p += fdeb[dst];
+        } else {
+          wbits16(out2, p, lm[sym]), p += ll[sym];
+        }
+      }
+      wbits16(out2, p, lm[256]);
+      return p + ll[256];
+    };
+    deo = /* @__PURE__ */ new i32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
+    et = /* @__PURE__ */ new u82(0);
+    dflt = function(dat, lvl, plvl, pre, post, st) {
+      var s = st.z || dat.length;
+      var o = new u82(pre + s + 5 * (1 + Math.ceil(s / 7e3)) + post);
+      var w = o.subarray(pre, o.length - post);
+      var lst = st.l;
+      var pos = (st.r || 0) & 7;
+      if (lvl) {
+        if (pos)
+          w[0] = st.r >> 3;
+        var opt = deo[lvl - 1];
+        var n = opt >> 13, c = opt & 8191;
+        var msk_1 = (1 << plvl) - 1;
+        var prev = st.p || new u16(32768), head = st.h || new u16(msk_1 + 1);
+        var bs1_1 = Math.ceil(plvl / 3), bs2_1 = 2 * bs1_1;
+        var hsh = function(i2) {
+          return (dat[i2] ^ dat[i2 + 1] << bs1_1 ^ dat[i2 + 2] << bs2_1) & msk_1;
+        };
+        var syms = new i32(25e3);
+        var lf = new u16(288), df = new u16(32);
+        var lc_1 = 0, eb = 0, i = st.i || 0, li = 0, wi = st.w || 0, bs = 0;
+        for (; i + 2 < s; ++i) {
+          var hv = hsh(i);
+          var imod = i & 32767, pimod = head[hv];
+          prev[imod] = pimod;
+          head[hv] = imod;
+          if (wi <= i) {
+            var rem = s - i;
+            if ((lc_1 > 7e3 || li > 24576) && (rem > 423 || !lst)) {
+              pos = wblk(dat, w, 0, syms, lf, df, eb, li, bs, i - bs, pos);
+              li = lc_1 = eb = 0, bs = i;
+              for (var j = 0; j < 286; ++j)
+                lf[j] = 0;
+              for (var j = 0; j < 30; ++j)
+                df[j] = 0;
+            }
+            var l = 2, d = 0, ch_1 = c, dif = imod - pimod & 32767;
+            if (rem > 2 && hv == hsh(i - dif)) {
+              var maxn = Math.min(n, rem) - 1;
+              var maxd = Math.min(32767, i);
+              var ml = Math.min(258, rem);
+              while (dif <= maxd && --ch_1 && imod != pimod) {
+                if (dat[i + l] == dat[i + l - dif]) {
+                  var nl = 0;
+                  for (; nl < ml && dat[i + nl] == dat[i + nl - dif]; ++nl)
+                    ;
+                  if (nl > l) {
+                    l = nl, d = dif;
+                    if (nl > maxn)
+                      break;
+                    var mmd = Math.min(dif, nl - 2);
+                    var md = 0;
+                    for (var j = 0; j < mmd; ++j) {
+                      var ti = i - dif + j & 32767;
+                      var pti = prev[ti];
+                      var cd = ti - pti & 32767;
+                      if (cd > md)
+                        md = cd, pimod = ti;
+                    }
+                  }
+                }
+                imod = pimod, pimod = prev[imod];
+                dif += imod - pimod & 32767;
+              }
+            }
+            if (d) {
+              syms[li++] = 268435456 | revfl[l] << 18 | revfd[d];
+              var lin = revfl[l] & 31, din = revfd[d] & 31;
+              eb += fleb[lin] + fdeb[din];
+              ++lf[257 + lin];
+              ++df[din];
+              wi = i + l;
+              ++lc_1;
+            } else {
+              syms[li++] = dat[i];
+              ++lf[dat[i]];
+            }
+          }
+        }
+        for (i = Math.max(i, wi); i < s; ++i) {
+          syms[li++] = dat[i];
+          ++lf[dat[i]];
+        }
+        pos = wblk(dat, w, lst, syms, lf, df, eb, li, bs, i - bs, pos);
+        if (!lst) {
+          st.r = pos & 7 | w[pos / 8 | 0] << 3;
+          pos -= 7;
+          st.h = head, st.p = prev, st.i = i, st.w = wi;
+        }
+      } else {
+        for (var i = st.w || 0; i < s + lst; i += 65535) {
+          var e = i + 65535;
+          if (e >= s) {
+            w[pos / 8 | 0] = lst;
+            e = s;
+          }
+          pos = wfblk(w, pos + 1, dat.subarray(i, e));
+        }
+        st.i = s;
+      }
+      return slc(o, 0, pre + shft(pos) + post);
+    };
+    adler = function() {
+      var a = 1, b = 0;
+      return {
+        p: function(d) {
+          var n = a, m = b;
+          var l = d.length | 0;
+          for (var i = 0; i != l; ) {
+            var e = Math.min(i + 2655, l);
+            for (; i < e; ++i)
+              m += n += d[i];
+            n = (n & 65535) + 15 * (n >> 16), m = (m & 65535) + 15 * (m >> 16);
+          }
+          a = n, b = m;
+        },
+        d: function() {
+          a %= 65521, b %= 65521;
+          return (a & 255) << 24 | (a & 65280) << 8 | (b & 255) << 8 | b >> 8;
+        }
+      };
+    };
+    dopt = function(dat, opt, pre, post, st) {
+      if (!st) {
+        st = { l: 1 };
+        if (opt.dictionary) {
+          var dict = opt.dictionary.subarray(-32768);
+          var newDat = new u82(dict.length + dat.length);
+          newDat.set(dict);
+          newDat.set(dat, dict.length);
+          dat = newDat;
+          st.w = dict.length;
+        }
+      }
+      return dflt(dat, opt.level == null ? 6 : opt.level, opt.mem == null ? st.l ? Math.ceil(Math.max(8, Math.min(13, Math.log(dat.length))) * 1.5) : 20 : 12 + opt.mem, pre, post, st);
+    };
+    wbytes = function(d, b, v) {
+      for (; v; ++b)
+        d[b] = v, v >>>= 8;
+    };
+    zlh = function(c, o) {
+      var lv = o.level, fl2 = lv == 0 ? 0 : lv < 6 ? 1 : lv == 9 ? 3 : 2;
+      c[0] = 120, c[1] = fl2 << 6 | (o.dictionary && 32);
+      c[1] |= 31 - (c[0] << 8 | c[1]) % 31;
+      if (o.dictionary) {
+        var h = adler();
+        h.p(o.dictionary);
+        wbytes(c, 2, h.d());
+      }
+    };
+    zls = function(d, dict) {
+      if ((d[0] & 15) != 8 || d[0] >> 4 > 7 || (d[0] << 8 | d[1]) % 31)
+        err(6, "invalid zlib data");
+      if ((d[1] >> 5 & 1) == +!dict)
+        err(6, "invalid zlib data: " + (d[1] & 32 ? "need" : "unexpected") + " dictionary");
+      return (d[1] >> 3 & 4) + 2;
+    };
+    td = typeof TextDecoder != "undefined" && /* @__PURE__ */ new TextDecoder();
+    tds = 0;
+    try {
+      td.decode(et, { stream: true });
+      tds = 1;
+    } catch (e) {
+    }
+  }
+});
+
+// local/shims/zlib.js
+var zlib_exports = {};
+__export(zlib_exports, {
+  default: () => zlib_default,
+  deflateRawSync: () => deflateRawSync,
+  deflateSync: () => deflateSync2,
+  inflateRawSync: () => inflateRawSync,
+  inflateSync: () => inflateSync2
+});
+function inflateRawSync(buf) {
+  return import_buffer.Buffer.from(inflateSync(new Uint8Array(buf)));
+}
+function deflateRawSync(buf) {
+  return import_buffer.Buffer.from(deflateSync(new Uint8Array(buf)));
+}
+function deflateSync2(buf) {
+  return import_buffer.Buffer.from(zlibSync(new Uint8Array(buf)));
+}
+function inflateSync2(buf) {
+  return import_buffer.Buffer.from(unzlibSync(new Uint8Array(buf)));
+}
+var zlib_default;
+var init_zlib = __esm({
+  "local/shims/zlib.js"() {
+    init_globals_inject();
+    init_browser();
+    zlib_default = { inflateRawSync, deflateRawSync, deflateSync: deflateSync2, inflateSync: inflateSync2 };
   }
 });
 
@@ -9472,33 +10258,150 @@ var require_http = __commonJS({
       res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(body) });
       res.end(body);
     }
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    var COMPRESS_MIN = 1024;
+    var BR_QUALITY = 4;
+    function accepts(req, enc2) {
+      const header = String(req && req.headers && req.headers["accept-encoding"] || "").toLowerCase();
+      for (const part of header.split(",")) {
+        const [name, ...params] = part.trim().split(";").map((x) => x.trim());
+        if (name !== enc2) continue;
+        const q = params.find((x) => x.startsWith("q="));
+        return !q || Number(q.slice(2)) > 0;
+      }
+      return false;
+    }
+    function chooseEncoding(req) {
+      if (typeof zlib.brotliCompress !== "function" || typeof zlib.gzip !== "function") return null;
+      if (accepts(req, "br")) return "br";
+      if (accepts(req, "gzip")) return "gzip";
+      return null;
+    }
+    function compress(buf, enc2, { quality = BR_QUALITY, level = 6 } = {}) {
+      return new Promise((resolve2, reject) => {
+        const done = (err2, out2) => err2 ? reject(err2) : resolve2(out2);
+        if (enc2 === "br") zlib.brotliCompress(buf, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: quality, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: buf.length } }, done);
+        else zlib.gzip(buf, { level }, done);
+      });
+    }
+    function sendJsonTo(req, res, status, obj) {
+      const body = import_buffer.Buffer.from(JSON.stringify(obj ?? null));
+      const big = body.length >= COMPRESS_MIN;
+      const enc2 = big ? chooseEncoding(req) : null;
+      const plain = () => {
+        const headers = { "Content-Type": "application/json; charset=utf-8", "Content-Length": body.length };
+        if (big) headers.Vary = "Accept-Encoding";
+        res.writeHead(status, headers);
+        res.end(body);
+      };
+      if (!enc2) {
+        plain();
+        return void 0;
+      }
+      return compress(body, enc2).then((out2) => {
+        if (res.headersSent || res.destroyed) return;
+        res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Encoding": enc2, Vary: "Accept-Encoding", "Content-Length": out2.length });
+        res.end(out2);
+      }, (err2) => {
+        console.error("[suds] compressing a response failed; sending it uncompressed:", err2 && err2.message);
+        if (!res.headersSent && !res.destroyed) plain();
+      });
+    }
     var PRECOMPRESSED = [["br", ".br"], ["gzip", ".gz"]];
     function pickEncoding(req, filePath) {
-      const accept = String(req && req.headers && req.headers["accept-encoding"] || "").toLowerCase();
       for (const [enc2, ext] of PRECOMPRESSED) {
-        if (!new RegExp(`(^|,)\\s*${enc2}\\s*(;|,|$)`).test(accept)) continue;
+        if (!accepts(req, enc2)) continue;
         if (fs.existsSync(filePath + ext)) return { enc: enc2, file: filePath + ext };
       }
       return null;
     }
-    function cachePolicy(url) {
+    var REVALIDATE = /* @__PURE__ */ new Set([".js", ".css", ".svg", ".png", ".ico", ".woff2", ".webmanifest"]);
+    var NO_STORE_FILES = /* @__PURE__ */ new Set(["sw.js", "version.json"]);
+    function cachePolicy(url, filePath) {
       if (url && url.pathname.startsWith("/local/") && url.searchParams.get("v")) return "public, max-age=31536000, immutable";
-      return null;
+      if (!url || !filePath || url.pathname.startsWith("/local/")) return null;
+      if (NO_STORE_FILES.has(path.basename(filePath)) || !REVALIDATE.has(path.extname(filePath).toLowerCase())) return null;
+      return "no-cache";
+    }
+    var COMPRESSIBLE = /* @__PURE__ */ new Set([".html", ".js", ".css", ".json", ".svg", ".txt", ".md", ".webmanifest", ".ico"]);
+    var FILE_CACHE_MAX = 400;
+    var fileCache = /* @__PURE__ */ new Map();
+    function cachedFile(filePath) {
+      const st = fs.statSync(filePath);
+      let e = fileCache.get(filePath);
+      if (e && e.size === st.size && e.mtimeMs === st.mtimeMs) return e;
+      const data = fs.readFileSync(filePath);
+      e = {
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+        data,
+        variants: /* @__PURE__ */ new Map(),
+        etag: `W/"${(init_crypto2(), __toCommonJS(crypto_exports)).createHash("sha256").update(data).digest("base64url").slice(0, 32)}"`
+      };
+      if (fileCache.size >= FILE_CACHE_MAX) fileCache.clear();
+      fileCache.set(filePath, e);
+      return e;
+    }
+    function compressedVariant(e, enc2) {
+      if (!e.variants.has(enc2)) {
+        e.variants.set(enc2, compress(e.data, enc2, { quality: zlib.constants.BROTLI_MAX_QUALITY, level: 9 }).then((out2) => out2.length < e.data.length ? out2 : null, () => null));
+      }
+      return e.variants.get(enc2);
+    }
+    function notModified(req, etag) {
+      const inm = req && req.headers && req.headers["if-none-match"];
+      if (!inm) return false;
+      const opaque = (t) => t.trim().replace(/^W\//, "");
+      return String(inm).split(",").some((t) => opaque(t) === "*" || opaque(t) === opaque(etag));
     }
     function sendFile(res, filePath, { req, url } = {}) {
       const ext = path.extname(filePath).toLowerCase();
       const headers = { "Content-Type": MIME[ext] || "application/octet-stream" };
-      const cache = cachePolicy(url);
+      const cache = cachePolicy(url, filePath);
       if (cache) headers["Cache-Control"] = cache;
       const pre = req ? pickEncoding(req, filePath) : null;
       if (pre) {
         headers["Content-Encoding"] = pre.enc;
         headers.Vary = "Accept-Encoding";
+        const data = fs.readFileSync(pre.file);
+        headers["Content-Length"] = data.length;
+        res.writeHead(200, headers);
+        res.end(data);
+        return void 0;
       }
-      const data = fs.readFileSync(pre ? pre.file : filePath);
-      headers["Content-Length"] = data.length;
-      res.writeHead(200, headers);
-      res.end(data);
+      const e = cachedFile(filePath);
+      const compressible = COMPRESSIBLE.has(ext) && e.data.length >= COMPRESS_MIN;
+      if (compressible) headers.Vary = "Accept-Encoding";
+      if (cache === "no-cache") {
+        headers.ETag = e.etag;
+        if (notModified(req, e.etag)) {
+          delete headers["Content-Type"];
+          res.writeHead(304, headers);
+          res.end();
+          return void 0;
+        }
+      }
+      const plain = () => {
+        headers["Content-Length"] = e.data.length;
+        res.writeHead(200, headers);
+        res.end(e.data);
+      };
+      const enc2 = compressible && req ? chooseEncoding(req) : null;
+      if (!enc2) {
+        plain();
+        return void 0;
+      }
+      return compressedVariant(e, enc2).then((out2) => {
+        if (res.headersSent || res.destroyed) return;
+        if (!out2) {
+          plain();
+          return;
+        }
+        headers["Content-Encoding"] = enc2;
+        headers["Content-Length"] = out2.length;
+        res.writeHead(200, headers);
+        res.end(out2);
+      });
     }
     function serveStatic(root) {
       root = path.resolve(root);
@@ -9518,11 +10421,16 @@ var require_http = __commonJS({
           sendJson(res, 404, { error: "Not found" });
           return true;
         }
-        sendFile(res, file, { req, url });
+        const pending = sendFile(res, file, { req, url });
+        if (pending) pending.catch((e) => {
+          console.error("[suds] static file:", e && e.message);
+          if (!res.headersSent) sendJson(res, 500, { error: "Internal server error" });
+          else res.destroy();
+        });
         return true;
       };
     }
-    module.exports = { Router: Router2, HttpError: HttpError3, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, parseRequestUrl, readBody, securityHeaders, contentDisposition, sendJson, sendFile, serveStatic };
+    module.exports = { Router: Router2, HttpError: HttpError3, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, parseRequestUrl, readBody, securityHeaders, contentDisposition, sendJson, sendJsonTo, sendFile, serveStatic, chooseEncoding, COMPRESS_MIN };
   }
 });
 
@@ -11732,6 +12640,7 @@ var require_clients = __commonJS({
     }
     var canReadmit = (user) => auth3.hasPerm(user, "clients:write") && auth3.hasPerm(user, "episodes:write");
     var OFFER_MESSAGE = "An earlier record exists for this person. A supervisor will be asked to review it.";
+    var READMIT_REASON_MIN = 8;
     function readmitOffers(ctx, hidden) {
       if (!canReadmit(ctx.user)) return [];
       return hidden.filter((m) => m.reasons.includes(SURNAME_DOB) && isDischarged(m.id)).map((m) => {
@@ -11840,11 +12749,16 @@ var require_clients = __commonJS({
           overdue: "overdue_tasks DESC, last_contact ASC",
           risk: `CASE c.risk_level WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'moderate' THEN 2 ELSE 3 END, last_contact ASC`
         }[sort] || "c.updated_at DESC";
-        const rows = db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth3.activeAssignment("a.")}) AS assigned_workers,
-      (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied'))) AS last_contact,
-      (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END)) AS overdue_tasks
+        const now2 = db3.now();
+        const LAST_CONTACT = `(SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied')))`;
+        const OVERDUE = `(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END))`;
+        const sortCols = sort === "overdue" ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [now2] } : sort === "last_contact" || sort === "risk" ? { sql: `, ${LAST_CONTACT} AS last_contact`, params: [] } : { sql: "", params: [] };
+        const pageIds = db3.all(`SELECT c.id ${sortCols.sql} FROM clients c ${w} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`, ...sortCols.params, ...params, limit2, offset).map((x) => x.id);
+        const byId = new Map(db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth3.activeAssignment("a.")}) AS assigned_workers,
+      ${LAST_CONTACT} AS last_contact, ${OVERDUE} AS overdue_tasks
       ${consentWindow ? `, (SELECT MIN(co.expires_at) FROM consents co WHERE co.client_id=c.id AND co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ?) AS consent_expires_at` : ""}
-      FROM clients c ${w} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`, db3.now(), ...consentWindow ? [consentWindow.from, consentWindow.to] : [], ...params, limit2, offset);
+      FROM clients c WHERE c.id IN (SELECT value FROM json_each(?))`, now2, ...consentWindow ? [consentWindow.from, consentWindow.to] : [], JSON.stringify(pageIds)).map((x) => [x.id, x]));
+        const rows = pageIds.map((id) => byId.get(id));
         const total = db3.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
         audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", status, sort: sort || void 0, filters: filters.length ? filters : void 0, offset: offset || void 0, count: rows.length, deidentified: deidentify } });
         return { clients: rows.map((x) => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks, ...consentWindow ? { consent_expires_at: x.consent_expires_at } : {} })), total, limit: limit2, offset };
@@ -11909,7 +12823,8 @@ var require_clients = __commonJS({
           reason: { type: "string", required: true, maxLen: 300 },
           referral_source: { type: "string", maxLen: 120 }
         });
-        if (v.reason.length < 15) throw badRequest("Say why you are re-admitting this person (at least 15 characters) \u2014 a supervisor reviews every re-admission", { fields: { reason: "must be at least 15 characters" } });
+        const why = v.reason.trim();
+        if (why.length < READMIT_REASON_MIN) throw badRequest(`Say why you are re-admitting this person (at least ${READMIT_REASON_MIN} characters, for example "walked in") \u2014 a supervisor reviews every re-admission`, { fields: { reason: `must be at least ${READMIT_REASON_MIN} characters` } });
         const row = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL AND merged_into IS NULL`, ctx.params.id);
         if (!row) throw notFound("Client not found");
         const match = possibleDuplicates(v).find((m) => m.id === row.id);
@@ -12020,7 +12935,13 @@ var require_clients = __commonJS({
           open_tasks: db3.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, row.id).n,
           minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
           spent: db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n,
-          episodes: db3.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n
+          episodes: db3.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n,
+          // For the record's module tabs, which show only when the module is on and has something on this record
+          // or the reader may add to it (public/views/client.js): counts only, for a role that may read them.
+          problems: auth3.hasPerm(ctx.user, "careplan:read") ? db3.one(`SELECT COUNT(*) n FROM problems WHERE client_id=?`, row.id).n : null,
+          goals: auth3.hasPerm(ctx.user, "careplan:read") ? db3.one(`SELECT COUNT(*) n FROM care_plan_goals WHERE client_id=?`, row.id).n : null,
+          assessments: auth3.hasPerm(ctx.user, "assessments:read") ? db3.one(`SELECT (SELECT COUNT(*) FROM asam_assessments WHERE client_id=?) + (SELECT COUNT(*) FROM outcome_measures WHERE client_id=?) n`, row.id, row.id).n : null,
+          suprt: db3.one(`SELECT COUNT(*) n FROM suprt_assessments WHERE client_id=?`, row.id).n
         };
         client.open_episode = !!db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id);
         const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, `notes:${k}:read`) || auth3.hasPerm(ctx.user, `notes:${k}:write`));
@@ -12067,7 +12988,7 @@ var require_clients = __commonJS({
         audit3.log({ user: ctx.user, action: "client.delete", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason_recorded: true } });
         return { ok: true };
       });
-      r.get("/api/clients/:id/timeline", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
+      r.get("/api/clients/:id/timeline", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => O.cached(() => {
         const row = loadClient(ctx, ctx.params.id);
         const id = row.id;
         const canClinical = auth3.hasPerm(ctx.user, "notes:clinical:read");
@@ -12077,30 +12998,31 @@ var require_clients = __commonJS({
         const cut = (col) => before ? `AND ${col} < ?` : "";
         const cutP = before ? [before] : [];
         const events = [];
+        const add = (at, build) => events.push({ at, build });
         for (const x of db3.all(`SELECT i.*, u.display_name AS worker FROM interventions i JOIN users u ON u.id=i.user_id WHERE client_id=? ${cut("i.occurred_at")} ORDER BY i.occurred_at DESC LIMIT ?`, id, ...cutP, per))
-          events.push({ kind: "intervention", id: x.id, at: x.occurred_at, title: O.labelOf("INTERVENTION_TYPES", x.type), detail: x.summary_enc ? decrypt3(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf("OUTCOMES", x.outcome) : null, location: x.location } });
+          add(x.occurred_at, () => ({ kind: "intervention", id: x.id, at: x.occurred_at, title: O.labelOf("INTERVENTION_TYPES", x.type), detail: x.summary_enc ? decrypt3(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf("OUTCOMES", x.outcome) : null, location: x.location } }));
         for (const x of db3.all(`SELECT c.*, u.display_name AS worker FROM calls c JOIN users u ON u.id=c.user_id WHERE client_id=? ${cut("c.started_at")} ORDER BY c.started_at DESC LIMIT ?`, id, ...cutP, per))
-          events.push({ kind: "call", id: x.id, at: x.started_at, title: `${x.direction} ${x.method === "text" ? "text message" : "call"} (${O.labelOf("CALL_CONTACT_TYPES", x.contact_type)})`, detail: x.summary_enc ? decrypt3(x.summary_enc) : x.purpose_enc ? decrypt3(x.purpose_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf(x.method === "text" ? "TEXT_OUTCOMES" : "CALL_OUTCOMES", x.outcome) : null, crisis: !!x.crisis } });
+          add(x.started_at, () => ({ kind: "call", id: x.id, at: x.started_at, title: `${x.direction} ${x.method === "text" ? "text message" : "call"} (${O.labelOf("CALL_CONTACT_TYPES", x.contact_type)})`, detail: x.summary_enc ? decrypt3(x.summary_enc) : x.purpose_enc ? decrypt3(x.purpose_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf(x.method === "text" ? "TEXT_OUTCOMES" : "CALL_OUTCOMES", x.outcome) : null, crisis: !!x.crisis } }));
         for (const x of db3.all(`SELECT n.id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.source,u.display_name AS worker FROM notes n JOIN users u ON u.id=n.author_id WHERE client_id=? AND deleted_at IS NULL ${cut("n.occurred_at")} ORDER BY n.occurred_at DESC LIMIT ?`, id, ...cutP, per))
-          if (x.kind === "admin" || canClinical) events.push({ kind: "note", id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt3(x.title_enc) : O.labelOf("NOTE_FORMATS", x.format)}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } });
+          if (x.kind === "admin" || canClinical) add(x.occurred_at, () => ({ kind: "note", id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt3(x.title_enc) : O.labelOf("NOTE_FORMATS", x.format)}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } }));
         for (const x of db3.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=? ${cut("r.referred_at")} ORDER BY r.referred_at DESC LIMIT ?`, id, ...cutP, per))
-          events.push({ kind: "referral", id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes_enc ? decrypt3(x.notes_enc) : null, worker: x.worker, meta: { status: x.status, outcome: x.outcome_enc ? decrypt3(x.outcome_enc) : null } });
+          add(x.referred_at, () => ({ kind: "referral", id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes_enc ? decrypt3(x.notes_enc) : null, worker: x.worker, meta: { status: x.status, outcome: x.outcome_enc ? decrypt3(x.outcome_enc) : null } }));
         for (const x of db3.all(`SELECT t.*, u.display_name AS worker FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE client_id=? ORDER BY COALESCE(t.completed_at, t.due_at, t.created_at) DESC LIMIT ?`, id, per))
-          events.push({ kind: x.is_milestone ? "milestone" : "task", id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title_enc ? decrypt3(x.title_enc) : "", detail: x.description_enc ? decrypt3(x.description_enc) : null, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } });
+          add(x.completed_at || x.due_at || x.created_at, () => ({ kind: x.is_milestone ? "milestone" : "task", id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title_enc ? decrypt3(x.title_enc) : "", detail: x.description_enc ? decrypt3(x.description_enc) : null, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } }));
         for (const x of db3.all(`SELECT * FROM consents WHERE client_id=? ORDER BY signed_at DESC LIMIT ?`, id, per))
-          events.push({ kind: "consent", id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, " ")}${x.recipient_enc ? " \u2192 " + decrypt3(x.recipient_enc) : ""}`, detail: x.purpose_enc ? decrypt3(x.purpose_enc) : null, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } });
+          add(x.signed_at, () => ({ kind: "consent", id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, " ")}${x.recipient_enc ? " \u2192 " + decrypt3(x.recipient_enc) : ""}`, detail: x.purpose_enc ? decrypt3(x.purpose_enc) : null, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } }));
         if (auth3.hasPerm(ctx.user, "budget:read"))
           for (const x of db3.all(`SELECT e.*, f.name AS fund FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE client_id=? ORDER BY e.spent_at DESC LIMIT ?`, id, per))
-            events.push({ kind: "expense", id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, " ")}`, detail: x.description_enc ? decrypt3(x.description_enc) : null, meta: { fund: x.fund, status: x.status } });
-        events.push({ kind: "milestone", id: "intake", at: row.intake_date, title: "Program intake", meta: {} });
-        if (row.referral_date) events.push({ kind: "milestone", id: "referral", at: row.referral_date, title: "Referred in", meta: {} });
-        if (row.engagement_date) events.push({ kind: "milestone", id: "engagement", at: row.engagement_date, title: "Engaged with services", meta: {} });
-        if (row.discharge_date) events.push({ kind: "milestone", id: "discharge", at: row.discharge_date, title: `Discharge: ${row.discharge_reason ? /^[a-z_]+$/.test(row.discharge_reason) ? O.labelOf("DISCHARGE_REASONS", row.discharge_reason) : row.discharge_reason : ""}`, meta: {} });
+            add(x.spent_at, () => ({ kind: "expense", id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, " ")}`, detail: x.description_enc ? decrypt3(x.description_enc) : null, meta: { fund: x.fund, status: x.status } }));
+        add(row.intake_date, () => ({ kind: "milestone", id: "intake", at: row.intake_date, title: "Program intake", meta: {} }));
+        if (row.referral_date) add(row.referral_date, () => ({ kind: "milestone", id: "referral", at: row.referral_date, title: "Referred in", meta: {} }));
+        if (row.engagement_date) add(row.engagement_date, () => ({ kind: "milestone", id: "engagement", at: row.engagement_date, title: "Engaged with services", meta: {} }));
+        if (row.discharge_date) add(row.discharge_date, () => ({ kind: "milestone", id: "discharge", at: row.discharge_date, title: `Discharge: ${row.discharge_reason ? /^[a-z_]+$/.test(row.discharge_reason) ? O.labelOf("DISCHARGE_REASONS", row.discharge_reason) : row.discharge_reason : ""}`, meta: {} }));
         events.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
-        const page = events.slice(offset, offset + limit2);
+        const page = events.slice(offset, offset + limit2).map((e) => e.build());
         audit3.log({ user: ctx.user, action: "client.timeline", entity: "client", entityId: id, clientId: id, ip: ctx.ip, details: { events: page.length } });
         return { events: page, limit: limit2, offset, more: events.length > offset + limit2 };
-      });
+      }));
     };
     module.exports.possibleDuplicates = possibleDuplicates;
     module.exports.flagForReview = flagForReview;
@@ -12991,24 +13913,27 @@ var require_supplies = __commonJS({
     var estimateReturns = (litres) => Math.round(Number(litres || 0) * syringesPerLitre());
     function stock({ date = today() } = {}) {
       const warnBy = addDays(date, expiryWarnDays());
-      const lotRows = db3.all(`SELECT item_id, site_id, lot_number, expires_on, SUM(quantity) quantity FROM supply_ledger GROUP BY item_id, site_id, lot_number, expires_on HAVING SUM(quantity) <> 0`).map((l) => ({ ...l, state: !l.expires_on ? "no_expiry" : l.expires_on < date ? "expired" : l.expires_on <= warnBy ? "expiring" : "ok" }));
+      const sums = db3.all(`SELECT item_id, site_id, lot_number, expires_on, SUM(quantity) quantity FROM supply_ledger GROUP BY item_id, site_id, lot_number, expires_on`);
+      const lotRows = sums.filter((l) => l.quantity !== 0).map((l) => ({ ...l, state: !l.expires_on ? "no_expiry" : l.expires_on < date ? "expired" : l.expires_on <= warnBy ? "expiring" : "ok" }));
       const totals = /* @__PURE__ */ new Map();
       for (const l of lotRows) {
         const k = `${l.item_id}|${l.site_id}`;
         totals.set(k, (totals.get(k) || 0) + l.quantity);
       }
-      return { lots: lotRows, bySite: [...totals].map(([k, quantity]) => {
+      const out2 = { lots: lotRows, bySite: [...totals].map(([k, quantity]) => {
         const [item_id, site_id] = k.split("|");
         return { item_id, site_id, quantity };
       }), warn_by: warnBy, date };
+      Object.defineProperty(out2, "onHandOf", { enumerable: false, value: (itemId, siteId) => totals.get(`${itemId}|${siteId}`) || 0 });
+      return out2;
     }
-    function alerts({ date = today() } = {}) {
-      const s = stock({ date });
+    function alerts({ date = today(), stock: s = null } = {}) {
+      if (!s || s.date !== date) s = stock({ date });
       const positive = s.lots.filter((l) => l.quantity > 0);
       const lowRows = [];
       for (const it of db3.all(`SELECT id, name, low_stock FROM supply_items WHERE is_active=1 AND low_stock IS NOT NULL`)) {
         for (const st of db3.all(`SELECT id, name FROM supply_sites WHERE is_active=1 AND id IN (SELECT site_id FROM supply_ledger WHERE item_id=?)`, it.id)) {
-          const q = onHand(it.id, st.id);
+          const q = s.onHandOf(it.id, st.id);
           if (q <= it.low_stock) lowRows.push({ item_id: it.id, site_id: st.id, quantity: q, low_stock: it.low_stock });
         }
       }
@@ -13182,7 +14107,10 @@ var require_interventions = __commonJS({
         supply_site_id: { type: "string" },
         syringes_returned: { type: "number", integer: true, min: 0, max: 1e5 },
         returns_estimated: { type: "boolean" },
-        sharps_returned_litres: { type: "number", min: 0, max: 1e3 }
+        sharps_returned_litres: { type: "number", min: 0, max: 1e3 },
+        // Request-only (1.14.0): a note written with the visit ({ kind, format, title, content, part2_protected, ... }),
+        // created with it in one step and linked to it (routes/interventions.js; the note's own rules apply).
+        note: { type: "object", sync: false }
       },
       owner: { col: "user_id", all: "clients:all" },
       editableBy: ownedBy(["user_id"], "clients:all"),
@@ -15230,771 +16158,6 @@ var require_suprt = __commonJS({
   }
 });
 
-// node_modules/fflate/esm/browser.js
-function deflateSync(data, opts) {
-  return dopt(data, opts || {}, 0, 0);
-}
-function inflateSync(data, opts) {
-  return inflt(data, { i: 2 }, opts && opts.out, opts && opts.dictionary);
-}
-function zlibSync(data, opts) {
-  if (!opts)
-    opts = {};
-  var a = adler();
-  a.p(data);
-  var d = dopt(data, opts, opts.dictionary ? 6 : 2, 4);
-  return zlh(d, opts), wbytes(d, d.length - 4, a.d()), d;
-}
-function unzlibSync(data, opts) {
-  return inflt(data.subarray(zls(data, opts && opts.dictionary), -4), { i: 2 }, opts && opts.out, opts && opts.dictionary);
-}
-var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
-var init_browser = __esm({
-  "node_modules/fflate/esm/browser.js"() {
-    init_globals_inject();
-    u82 = Uint8Array;
-    u16 = Uint16Array;
-    i32 = Int32Array;
-    fleb = new u82([
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      1,
-      1,
-      1,
-      1,
-      2,
-      2,
-      2,
-      2,
-      3,
-      3,
-      3,
-      3,
-      4,
-      4,
-      4,
-      4,
-      5,
-      5,
-      5,
-      5,
-      0,
-      /* unused */
-      0,
-      0,
-      /* impossible */
-      0
-    ]);
-    fdeb = new u82([
-      0,
-      0,
-      0,
-      0,
-      1,
-      1,
-      2,
-      2,
-      3,
-      3,
-      4,
-      4,
-      5,
-      5,
-      6,
-      6,
-      7,
-      7,
-      8,
-      8,
-      9,
-      9,
-      10,
-      10,
-      11,
-      11,
-      12,
-      12,
-      13,
-      13,
-      /* unused */
-      0,
-      0
-    ]);
-    clim = new u82([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]);
-    freb = function(eb, start2) {
-      var b = new u16(31);
-      for (var i = 0; i < 31; ++i) {
-        b[i] = start2 += 1 << eb[i - 1];
-      }
-      var r = new i32(b[30]);
-      for (var i = 1; i < 30; ++i) {
-        for (var j = b[i]; j < b[i + 1]; ++j) {
-          r[j] = j - b[i] << 5 | i;
-        }
-      }
-      return { b, r };
-    };
-    _a = freb(fleb, 2);
-    fl = _a.b;
-    revfl = _a.r;
-    fl[28] = 258, revfl[258] = 28;
-    _b = freb(fdeb, 0);
-    fd = _b.b;
-    revfd = _b.r;
-    rev = new u16(32768);
-    for (i = 0; i < 32768; ++i) {
-      x = (i & 43690) >> 1 | (i & 21845) << 1;
-      x = (x & 52428) >> 2 | (x & 13107) << 2;
-      x = (x & 61680) >> 4 | (x & 3855) << 4;
-      rev[i] = ((x & 65280) >> 8 | (x & 255) << 8) >> 1;
-    }
-    hMap = function(cd, mb, r) {
-      var s = cd.length;
-      var i = 0;
-      var l = new u16(mb);
-      for (; i < s; ++i) {
-        if (cd[i])
-          ++l[cd[i] - 1];
-      }
-      var le = new u16(mb);
-      for (i = 1; i < mb; ++i) {
-        le[i] = le[i - 1] + l[i - 1] << 1;
-      }
-      var co;
-      if (r) {
-        co = new u16(1 << mb);
-        var rvb = 15 - mb;
-        for (i = 0; i < s; ++i) {
-          if (cd[i]) {
-            var sv = i << 4 | cd[i];
-            var r_1 = mb - cd[i];
-            var v = le[cd[i] - 1]++ << r_1;
-            for (var m = v | (1 << r_1) - 1; v <= m; ++v) {
-              co[rev[v] >> rvb] = sv;
-            }
-          }
-        }
-      } else {
-        co = new u16(s);
-        for (i = 0; i < s; ++i) {
-          if (cd[i]) {
-            co[i] = rev[le[cd[i] - 1]++] >> 15 - cd[i];
-          }
-        }
-      }
-      return co;
-    };
-    flt = new u82(288);
-    for (i = 0; i < 144; ++i)
-      flt[i] = 8;
-    for (i = 144; i < 256; ++i)
-      flt[i] = 9;
-    for (i = 256; i < 280; ++i)
-      flt[i] = 7;
-    for (i = 280; i < 288; ++i)
-      flt[i] = 8;
-    fdt = new u82(32);
-    for (i = 0; i < 32; ++i)
-      fdt[i] = 5;
-    flm = /* @__PURE__ */ hMap(flt, 9, 0);
-    flrm = /* @__PURE__ */ hMap(flt, 9, 1);
-    fdm = /* @__PURE__ */ hMap(fdt, 5, 0);
-    fdrm = /* @__PURE__ */ hMap(fdt, 5, 1);
-    max = function(a) {
-      var m = a[0];
-      for (var i = 1; i < a.length; ++i) {
-        if (a[i] > m)
-          m = a[i];
-      }
-      return m;
-    };
-    bits = function(d, p, m) {
-      var o = p / 8 | 0;
-      return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
-    };
-    bits16 = function(d, p) {
-      var o = p / 8 | 0;
-      return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
-    };
-    shft = function(p) {
-      return (p + 7) / 8 | 0;
-    };
-    slc = function(v, s, e) {
-      if (s == null || s < 0)
-        s = 0;
-      if (e == null || e > v.length)
-        e = v.length;
-      return new u82(v.subarray(s, e));
-    };
-    ec = [
-      "unexpected EOF",
-      "invalid block type",
-      "invalid length/literal",
-      "invalid distance",
-      "stream finished",
-      "no stream handler",
-      ,
-      "no callback",
-      "invalid UTF-8 data",
-      "extra field too long",
-      "date not in range 1980-2099",
-      "filename too long",
-      "stream finishing",
-      "invalid zip data"
-      // determined by unknown compression method
-    ];
-    err = function(ind, msg, nt) {
-      var e = new Error(msg || ec[ind]);
-      e.code = ind;
-      if (Error.captureStackTrace)
-        Error.captureStackTrace(e, err);
-      if (!nt)
-        throw e;
-      return e;
-    };
-    inflt = function(dat, st, buf, dict) {
-      var sl = dat.length, dl = dict ? dict.length : 0;
-      if (!sl || st.f && !st.l)
-        return buf || new u82(0);
-      var noBuf = !buf;
-      var resize = noBuf || st.i != 2;
-      var noSt = st.i;
-      if (noBuf)
-        buf = new u82(sl * 3);
-      var cbuf = function(l2) {
-        var bl = buf.length;
-        if (l2 > bl) {
-          var nbuf = new u82(Math.max(bl * 2, l2));
-          nbuf.set(buf);
-          buf = nbuf;
-        }
-      };
-      var final = st.f || 0, pos = st.p || 0, bt = st.b || 0, lm = st.l, dm = st.d, lbt = st.m, dbt = st.n;
-      var tbts = sl * 8;
-      do {
-        if (!lm) {
-          final = bits(dat, pos, 1);
-          var type = bits(dat, pos + 1, 3);
-          pos += 3;
-          if (!type) {
-            var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
-            if (t > sl) {
-              if (noSt)
-                err(0);
-              break;
-            }
-            if (resize)
-              cbuf(bt + l);
-            buf.set(dat.subarray(s, t), bt);
-            st.b = bt += l, st.p = pos = t * 8, st.f = final;
-            continue;
-          } else if (type == 1)
-            lm = flrm, dm = fdrm, lbt = 9, dbt = 5;
-          else if (type == 2) {
-            var hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
-            var tl = hLit + bits(dat, pos + 5, 31) + 1;
-            pos += 14;
-            var ldt = new u82(tl);
-            var clt = new u82(19);
-            for (var i = 0; i < hcLen; ++i) {
-              clt[clim[i]] = bits(dat, pos + i * 3, 7);
-            }
-            pos += hcLen * 3;
-            var clb = max(clt), clbmsk = (1 << clb) - 1;
-            var clm = hMap(clt, clb, 1);
-            for (var i = 0; i < tl; ) {
-              var r = clm[bits(dat, pos, clbmsk)];
-              pos += r & 15;
-              var s = r >> 4;
-              if (s < 16) {
-                ldt[i++] = s;
-              } else {
-                var c = 0, n = 0;
-                if (s == 16)
-                  n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
-                else if (s == 17)
-                  n = 3 + bits(dat, pos, 7), pos += 3;
-                else if (s == 18)
-                  n = 11 + bits(dat, pos, 127), pos += 7;
-                while (n--)
-                  ldt[i++] = c;
-              }
-            }
-            var lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
-            lbt = max(lt);
-            dbt = max(dt);
-            lm = hMap(lt, lbt, 1);
-            dm = hMap(dt, dbt, 1);
-          } else
-            err(1);
-          if (pos > tbts) {
-            if (noSt)
-              err(0);
-            break;
-          }
-        }
-        if (resize)
-          cbuf(bt + 131072);
-        var lms = (1 << lbt) - 1, dms = (1 << dbt) - 1;
-        var lpos = pos;
-        for (; ; lpos = pos) {
-          var c = lm[bits16(dat, pos) & lms], sym = c >> 4;
-          pos += c & 15;
-          if (pos > tbts) {
-            if (noSt)
-              err(0);
-            break;
-          }
-          if (!c)
-            err(2);
-          if (sym < 256)
-            buf[bt++] = sym;
-          else if (sym == 256) {
-            lpos = pos, lm = null;
-            break;
-          } else {
-            var add = sym - 254;
-            if (sym > 264) {
-              var i = sym - 257, b = fleb[i];
-              add = bits(dat, pos, (1 << b) - 1) + fl[i];
-              pos += b;
-            }
-            var d = dm[bits16(dat, pos) & dms], dsym = d >> 4;
-            if (!d)
-              err(3);
-            pos += d & 15;
-            var dt = fd[dsym];
-            if (dsym > 3) {
-              var b = fdeb[dsym];
-              dt += bits16(dat, pos) & (1 << b) - 1, pos += b;
-            }
-            if (pos > tbts) {
-              if (noSt)
-                err(0);
-              break;
-            }
-            if (resize)
-              cbuf(bt + 131072);
-            var end = bt + add;
-            if (bt < dt) {
-              var shift = dl - dt, dend = Math.min(dt, end);
-              if (shift + bt < 0)
-                err(3);
-              for (; bt < dend; ++bt)
-                buf[bt] = dict[shift + bt];
-            }
-            for (; bt < end; ++bt)
-              buf[bt] = buf[bt - dt];
-          }
-        }
-        st.l = lm, st.p = lpos, st.b = bt, st.f = final;
-        if (lm)
-          final = 1, st.m = lbt, st.d = dm, st.n = dbt;
-      } while (!final);
-      return bt != buf.length && noBuf ? slc(buf, 0, bt) : buf.subarray(0, bt);
-    };
-    wbits = function(d, p, v) {
-      v <<= p & 7;
-      var o = p / 8 | 0;
-      d[o] |= v;
-      d[o + 1] |= v >> 8;
-    };
-    wbits16 = function(d, p, v) {
-      v <<= p & 7;
-      var o = p / 8 | 0;
-      d[o] |= v;
-      d[o + 1] |= v >> 8;
-      d[o + 2] |= v >> 16;
-    };
-    hTree = function(d, mb) {
-      var t = [];
-      for (var i = 0; i < d.length; ++i) {
-        if (d[i])
-          t.push({ s: i, f: d[i] });
-      }
-      var s = t.length;
-      var t2 = t.slice();
-      if (!s)
-        return { t: et, l: 0 };
-      if (s == 1) {
-        var v = new u82(t[0].s + 1);
-        v[t[0].s] = 1;
-        return { t: v, l: 1 };
-      }
-      t.sort(function(a, b) {
-        return a.f - b.f;
-      });
-      t.push({ s: -1, f: 25001 });
-      var l = t[0], r = t[1], i0 = 0, i1 = 1, i2 = 2;
-      t[0] = { s: -1, f: l.f + r.f, l, r };
-      while (i1 != s - 1) {
-        l = t[t[i0].f < t[i2].f ? i0++ : i2++];
-        r = t[i0 != i1 && t[i0].f < t[i2].f ? i0++ : i2++];
-        t[i1++] = { s: -1, f: l.f + r.f, l, r };
-      }
-      var maxSym = t2[0].s;
-      for (var i = 1; i < s; ++i) {
-        if (t2[i].s > maxSym)
-          maxSym = t2[i].s;
-      }
-      var tr = new u16(maxSym + 1);
-      var mbt = ln(t[i1 - 1], tr, 0);
-      if (mbt > mb) {
-        var i = 0, dt = 0;
-        var lft = mbt - mb, cst = 1 << lft;
-        t2.sort(function(a, b) {
-          return tr[b.s] - tr[a.s] || a.f - b.f;
-        });
-        for (; i < s; ++i) {
-          var i2_1 = t2[i].s;
-          if (tr[i2_1] > mb) {
-            dt += cst - (1 << mbt - tr[i2_1]);
-            tr[i2_1] = mb;
-          } else
-            break;
-        }
-        dt >>= lft;
-        while (dt > 0) {
-          var i2_2 = t2[i].s;
-          if (tr[i2_2] < mb)
-            dt -= 1 << mb - tr[i2_2]++ - 1;
-          else
-            ++i;
-        }
-        for (; i >= 0 && dt; --i) {
-          var i2_3 = t2[i].s;
-          if (tr[i2_3] == mb) {
-            --tr[i2_3];
-            ++dt;
-          }
-        }
-        mbt = mb;
-      }
-      return { t: new u82(tr), l: mbt };
-    };
-    ln = function(n, l, d) {
-      return n.s == -1 ? Math.max(ln(n.l, l, d + 1), ln(n.r, l, d + 1)) : l[n.s] = d;
-    };
-    lc = function(c) {
-      var s = c.length;
-      while (s && !c[--s])
-        ;
-      var cl = new u16(++s);
-      var cli = 0, cln = c[0], cls = 1;
-      var w = function(v) {
-        cl[cli++] = v;
-      };
-      for (var i = 1; i <= s; ++i) {
-        if (c[i] == cln && i != s)
-          ++cls;
-        else {
-          if (!cln && cls > 2) {
-            for (; cls > 138; cls -= 138)
-              w(32754);
-            if (cls > 2) {
-              w(cls > 10 ? cls - 11 << 5 | 28690 : cls - 3 << 5 | 12305);
-              cls = 0;
-            }
-          } else if (cls > 3) {
-            w(cln), --cls;
-            for (; cls > 6; cls -= 6)
-              w(8304);
-            if (cls > 2)
-              w(cls - 3 << 5 | 8208), cls = 0;
-          }
-          while (cls--)
-            w(cln);
-          cls = 1;
-          cln = c[i];
-        }
-      }
-      return { c: cl.subarray(0, cli), n: s };
-    };
-    clen = function(cf, cl) {
-      var l = 0;
-      for (var i = 0; i < cl.length; ++i)
-        l += cf[i] * cl[i];
-      return l;
-    };
-    wfblk = function(out2, pos, dat) {
-      var s = dat.length;
-      var o = shft(pos + 2);
-      out2[o] = s & 255;
-      out2[o + 1] = s >> 8;
-      out2[o + 2] = out2[o] ^ 255;
-      out2[o + 3] = out2[o + 1] ^ 255;
-      for (var i = 0; i < s; ++i)
-        out2[o + i + 4] = dat[i];
-      return (o + 4 + s) * 8;
-    };
-    wblk = function(dat, out2, final, syms, lf, df, eb, li, bs, bl, p) {
-      wbits(out2, p++, final);
-      ++lf[256];
-      var _a2 = hTree(lf, 15), dlt = _a2.t, mlb = _a2.l;
-      var _b2 = hTree(df, 15), ddt = _b2.t, mdb = _b2.l;
-      var _c = lc(dlt), lclt = _c.c, nlc = _c.n;
-      var _d = lc(ddt), lcdt = _d.c, ndc = _d.n;
-      var lcfreq = new u16(19);
-      for (var i = 0; i < lclt.length; ++i)
-        ++lcfreq[lclt[i] & 31];
-      for (var i = 0; i < lcdt.length; ++i)
-        ++lcfreq[lcdt[i] & 31];
-      var _e = hTree(lcfreq, 7), lct = _e.t, mlcb = _e.l;
-      var nlcc = 19;
-      for (; nlcc > 4 && !lct[clim[nlcc - 1]]; --nlcc)
-        ;
-      var flen = bl + 5 << 3;
-      var ftlen = clen(lf, flt) + clen(df, fdt) + eb;
-      var dtlen = clen(lf, dlt) + clen(df, ddt) + eb + 14 + 3 * nlcc + clen(lcfreq, lct) + 2 * lcfreq[16] + 3 * lcfreq[17] + 7 * lcfreq[18];
-      if (bs >= 0 && flen <= ftlen && flen <= dtlen)
-        return wfblk(out2, p, dat.subarray(bs, bs + bl));
-      var lm, ll, dm, dl;
-      wbits(out2, p, 1 + (dtlen < ftlen)), p += 2;
-      if (dtlen < ftlen) {
-        lm = hMap(dlt, mlb, 0), ll = dlt, dm = hMap(ddt, mdb, 0), dl = ddt;
-        var llm = hMap(lct, mlcb, 0);
-        wbits(out2, p, nlc - 257);
-        wbits(out2, p + 5, ndc - 1);
-        wbits(out2, p + 10, nlcc - 4);
-        p += 14;
-        for (var i = 0; i < nlcc; ++i)
-          wbits(out2, p + 3 * i, lct[clim[i]]);
-        p += 3 * nlcc;
-        var lcts = [lclt, lcdt];
-        for (var it = 0; it < 2; ++it) {
-          var clct = lcts[it];
-          for (var i = 0; i < clct.length; ++i) {
-            var len = clct[i] & 31;
-            wbits(out2, p, llm[len]), p += lct[len];
-            if (len > 15)
-              wbits(out2, p, clct[i] >> 5 & 127), p += clct[i] >> 12;
-          }
-        }
-      } else {
-        lm = flm, ll = flt, dm = fdm, dl = fdt;
-      }
-      for (var i = 0; i < li; ++i) {
-        var sym = syms[i];
-        if (sym > 255) {
-          var len = sym >> 18 & 31;
-          wbits16(out2, p, lm[len + 257]), p += ll[len + 257];
-          if (len > 7)
-            wbits(out2, p, sym >> 23 & 31), p += fleb[len];
-          var dst = sym & 31;
-          wbits16(out2, p, dm[dst]), p += dl[dst];
-          if (dst > 3)
-            wbits16(out2, p, sym >> 5 & 8191), p += fdeb[dst];
-        } else {
-          wbits16(out2, p, lm[sym]), p += ll[sym];
-        }
-      }
-      wbits16(out2, p, lm[256]);
-      return p + ll[256];
-    };
-    deo = /* @__PURE__ */ new i32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
-    et = /* @__PURE__ */ new u82(0);
-    dflt = function(dat, lvl, plvl, pre, post, st) {
-      var s = st.z || dat.length;
-      var o = new u82(pre + s + 5 * (1 + Math.ceil(s / 7e3)) + post);
-      var w = o.subarray(pre, o.length - post);
-      var lst = st.l;
-      var pos = (st.r || 0) & 7;
-      if (lvl) {
-        if (pos)
-          w[0] = st.r >> 3;
-        var opt = deo[lvl - 1];
-        var n = opt >> 13, c = opt & 8191;
-        var msk_1 = (1 << plvl) - 1;
-        var prev = st.p || new u16(32768), head = st.h || new u16(msk_1 + 1);
-        var bs1_1 = Math.ceil(plvl / 3), bs2_1 = 2 * bs1_1;
-        var hsh = function(i2) {
-          return (dat[i2] ^ dat[i2 + 1] << bs1_1 ^ dat[i2 + 2] << bs2_1) & msk_1;
-        };
-        var syms = new i32(25e3);
-        var lf = new u16(288), df = new u16(32);
-        var lc_1 = 0, eb = 0, i = st.i || 0, li = 0, wi = st.w || 0, bs = 0;
-        for (; i + 2 < s; ++i) {
-          var hv = hsh(i);
-          var imod = i & 32767, pimod = head[hv];
-          prev[imod] = pimod;
-          head[hv] = imod;
-          if (wi <= i) {
-            var rem = s - i;
-            if ((lc_1 > 7e3 || li > 24576) && (rem > 423 || !lst)) {
-              pos = wblk(dat, w, 0, syms, lf, df, eb, li, bs, i - bs, pos);
-              li = lc_1 = eb = 0, bs = i;
-              for (var j = 0; j < 286; ++j)
-                lf[j] = 0;
-              for (var j = 0; j < 30; ++j)
-                df[j] = 0;
-            }
-            var l = 2, d = 0, ch_1 = c, dif = imod - pimod & 32767;
-            if (rem > 2 && hv == hsh(i - dif)) {
-              var maxn = Math.min(n, rem) - 1;
-              var maxd = Math.min(32767, i);
-              var ml = Math.min(258, rem);
-              while (dif <= maxd && --ch_1 && imod != pimod) {
-                if (dat[i + l] == dat[i + l - dif]) {
-                  var nl = 0;
-                  for (; nl < ml && dat[i + nl] == dat[i + nl - dif]; ++nl)
-                    ;
-                  if (nl > l) {
-                    l = nl, d = dif;
-                    if (nl > maxn)
-                      break;
-                    var mmd = Math.min(dif, nl - 2);
-                    var md = 0;
-                    for (var j = 0; j < mmd; ++j) {
-                      var ti = i - dif + j & 32767;
-                      var pti = prev[ti];
-                      var cd = ti - pti & 32767;
-                      if (cd > md)
-                        md = cd, pimod = ti;
-                    }
-                  }
-                }
-                imod = pimod, pimod = prev[imod];
-                dif += imod - pimod & 32767;
-              }
-            }
-            if (d) {
-              syms[li++] = 268435456 | revfl[l] << 18 | revfd[d];
-              var lin = revfl[l] & 31, din = revfd[d] & 31;
-              eb += fleb[lin] + fdeb[din];
-              ++lf[257 + lin];
-              ++df[din];
-              wi = i + l;
-              ++lc_1;
-            } else {
-              syms[li++] = dat[i];
-              ++lf[dat[i]];
-            }
-          }
-        }
-        for (i = Math.max(i, wi); i < s; ++i) {
-          syms[li++] = dat[i];
-          ++lf[dat[i]];
-        }
-        pos = wblk(dat, w, lst, syms, lf, df, eb, li, bs, i - bs, pos);
-        if (!lst) {
-          st.r = pos & 7 | w[pos / 8 | 0] << 3;
-          pos -= 7;
-          st.h = head, st.p = prev, st.i = i, st.w = wi;
-        }
-      } else {
-        for (var i = st.w || 0; i < s + lst; i += 65535) {
-          var e = i + 65535;
-          if (e >= s) {
-            w[pos / 8 | 0] = lst;
-            e = s;
-          }
-          pos = wfblk(w, pos + 1, dat.subarray(i, e));
-        }
-        st.i = s;
-      }
-      return slc(o, 0, pre + shft(pos) + post);
-    };
-    adler = function() {
-      var a = 1, b = 0;
-      return {
-        p: function(d) {
-          var n = a, m = b;
-          var l = d.length | 0;
-          for (var i = 0; i != l; ) {
-            var e = Math.min(i + 2655, l);
-            for (; i < e; ++i)
-              m += n += d[i];
-            n = (n & 65535) + 15 * (n >> 16), m = (m & 65535) + 15 * (m >> 16);
-          }
-          a = n, b = m;
-        },
-        d: function() {
-          a %= 65521, b %= 65521;
-          return (a & 255) << 24 | (a & 65280) << 8 | (b & 255) << 8 | b >> 8;
-        }
-      };
-    };
-    dopt = function(dat, opt, pre, post, st) {
-      if (!st) {
-        st = { l: 1 };
-        if (opt.dictionary) {
-          var dict = opt.dictionary.subarray(-32768);
-          var newDat = new u82(dict.length + dat.length);
-          newDat.set(dict);
-          newDat.set(dat, dict.length);
-          dat = newDat;
-          st.w = dict.length;
-        }
-      }
-      return dflt(dat, opt.level == null ? 6 : opt.level, opt.mem == null ? st.l ? Math.ceil(Math.max(8, Math.min(13, Math.log(dat.length))) * 1.5) : 20 : 12 + opt.mem, pre, post, st);
-    };
-    wbytes = function(d, b, v) {
-      for (; v; ++b)
-        d[b] = v, v >>>= 8;
-    };
-    zlh = function(c, o) {
-      var lv = o.level, fl2 = lv == 0 ? 0 : lv < 6 ? 1 : lv == 9 ? 3 : 2;
-      c[0] = 120, c[1] = fl2 << 6 | (o.dictionary && 32);
-      c[1] |= 31 - (c[0] << 8 | c[1]) % 31;
-      if (o.dictionary) {
-        var h = adler();
-        h.p(o.dictionary);
-        wbytes(c, 2, h.d());
-      }
-    };
-    zls = function(d, dict) {
-      if ((d[0] & 15) != 8 || d[0] >> 4 > 7 || (d[0] << 8 | d[1]) % 31)
-        err(6, "invalid zlib data");
-      if ((d[1] >> 5 & 1) == +!dict)
-        err(6, "invalid zlib data: " + (d[1] & 32 ? "need" : "unexpected") + " dictionary");
-      return (d[1] >> 3 & 4) + 2;
-    };
-    td = typeof TextDecoder != "undefined" && /* @__PURE__ */ new TextDecoder();
-    tds = 0;
-    try {
-      td.decode(et, { stream: true });
-      tds = 1;
-    } catch (e) {
-    }
-  }
-});
-
-// local/shims/zlib.js
-var zlib_exports = {};
-__export(zlib_exports, {
-  default: () => zlib_default,
-  deflateRawSync: () => deflateRawSync,
-  deflateSync: () => deflateSync2,
-  inflateRawSync: () => inflateRawSync,
-  inflateSync: () => inflateSync2
-});
-function inflateRawSync(buf) {
-  return import_buffer.Buffer.from(inflateSync(new Uint8Array(buf)));
-}
-function deflateRawSync(buf) {
-  return import_buffer.Buffer.from(deflateSync(new Uint8Array(buf)));
-}
-function deflateSync2(buf) {
-  return import_buffer.Buffer.from(zlibSync(new Uint8Array(buf)));
-}
-function inflateSync2(buf) {
-  return import_buffer.Buffer.from(unzlibSync(new Uint8Array(buf)));
-}
-var zlib_default;
-var init_zlib = __esm({
-  "local/shims/zlib.js"() {
-    init_globals_inject();
-    init_browser();
-    zlib_default = { inflateRawSync, deflateRawSync, deflateSync: deflateSync2, inflateSync: inflateSync2 };
-  }
-});
-
 // server/importers/text.js
 var require_text = __commonJS({
   "server/importers/text.js"(exports, module) {
@@ -17052,6 +17215,9 @@ var require_crud = __commonJS({
     function clientExists(id) {
       return !!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id);
     }
+    function countJoins(joins, where) {
+      return joins.replace(/\s*LEFT JOIN (\w+) (\w+) ON \2\.id=\w+\.\w+/g, (clause, _table, alias) => new RegExp(`\\b${alias}\\.`).test(where) ? clause : "");
+    }
     var STALE_MESSAGE = "This record was changed by someone else since you opened it. Reload to see their changes.";
     function assertFresh(ctx, row, entity) {
       const token2 = ctx.body && typeof ctx.body === "object" ? ctx.body.if_updated_at : void 0;
@@ -17130,7 +17296,7 @@ var require_crud = __commonJS({
         const w = "WHERE " + where.join(" AND ");
         const order = opts.order || `${table}.${dateCol} DESC`;
         const rows = db3.all(`SELECT ${select} FROM ${table} ${joins} ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, limit2, offset);
-        const total = db3.one(`SELECT COUNT(*) n FROM ${table} ${joins} ${w}`, ...params).n;
+        const total = db3.one(`SELECT COUNT(*) n FROM ${table} ${countJoins(joins, w)} ${w}`, ...params).n;
         audit3.log({ user: ctx.user, action: `${entity}.list`, ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: rows.length } });
         return { rows: decorate(ctx, rows), total, limit: limit2, offset };
       });
@@ -17238,11 +17404,22 @@ var require_budget = __commonJS({
     function validTimezone(tz) {
       if (typeof tz !== "string" || !tz.trim() || tz.length > 64) return false;
       try {
-        new Intl.DateTimeFormat("en-US", { timeZone: tz });
+        formatter("en-US", { timeZone: tz });
         return true;
       } catch {
         return false;
       }
+    }
+    var formatters = /* @__PURE__ */ new Map();
+    function formatter(locale, opts) {
+      const key = `${locale}|${JSON.stringify(opts)}`;
+      let f = formatters.get(key);
+      if (!f) {
+        f = new Intl.DateTimeFormat(locale, opts);
+        if (formatters.size > 200) formatters.clear();
+        formatters.set(key, f);
+      }
+      return f;
     }
     function orgTimezone() {
       let v = null;
@@ -17256,7 +17433,7 @@ var require_budget = __commonJS({
       const d = when instanceof Date ? when : new Date(when);
       if (!Number.isFinite(d.getTime())) return null;
       try {
-        return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+        return formatter("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
       } catch {
         return d.toISOString().slice(0, 10);
       }
@@ -17266,7 +17443,7 @@ var require_budget = __commonJS({
       if (!Number.isFinite(guess)) return null;
       const offset = (ms) => {
         try {
-          const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+          const p = Object.fromEntries(formatter("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
           return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - ms % 1e3);
         } catch {
           return 0;
@@ -20431,7 +20608,7 @@ var require_demo = __commonJS({
           const phone = `555-01${String(i + 1).padStart(2, "0")}`;
           const intake = 150 - i * 11;
           db3.run(
-            `INSERT INTO clients(id,client_code,first_name_enc,last_name_enc,last_name_idx,full_name_idx,name_prefix_idx,name_phonetic_idx,first_name_idx,first_name_prefix_idx,preferred_name_enc,dob_enc,dob_idx,phone_enc,phone_idx,email_enc,address_enc,city,zip,gender,pronouns,preferred_language,status,intake_date,discharge_date,discharge_reason,primary_substance,secondary_substances,route_of_use,risk_level,mat_status,mat_medication,overdose_history,last_overdose_date,naloxone_provided,naloxone_last_date,housing_status,insurance,asam_level,referral_source,justice_involved,pregnant_or_parenting,co_occurring_mh,goals_enc,flags_enc,ok_to_text,ok_to_voicemail,created_by,created_at) VALUES(${Array(49).fill("?").join(",")})`,
+            `INSERT INTO clients(id,client_code,first_name_enc,last_name_enc,last_name_idx,full_name_idx,name_prefix_idx,name_phonetic_idx,first_name_idx,first_name_prefix_idx,preferred_name_enc,preferred_name_idx,dob_enc,dob_idx,phone_enc,phone_idx,email_enc,address_enc,city,zip,gender,pronouns,preferred_language,status,intake_date,discharge_date,discharge_reason,primary_substance,secondary_substances,route_of_use,risk_level,mat_status,mat_medication,overdose_history,last_overdose_date,naloxone_provided,naloxone_last_date,housing_status,insurance,asam_level,referral_source,justice_involved,pregnant_or_parenting,co_occurring_mh,goals_enc,flags_enc,ok_to_text,ok_to_voicemail,created_by,created_at) VALUES(${Array(50).fill("?").join(",")})`,
             id,
             `${DEMO_PREFIX}${String(i + 1).padStart(4, "0")}`,
             encrypt3(fn),
@@ -20443,6 +20620,7 @@ var require_demo = __commonJS({
             blindIndex2(fn.trim().toLowerCase()),
             M.namePrefixIndex(fn),
             pref ? encrypt3(pref) : null,
+            M.preferredNameIndex(pref || ""),
             encrypt3(dob),
             blindIndex2(dob),
             encrypt3(phone),
@@ -21543,7 +21721,10 @@ var require_time = __commonJS({
         // (time:all) -- sync-tables.js `unlinked`, which crud.js applies to these routes.
         joins: "JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id",
         select: `time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${NAME_COLS}`,
-        afterLoad: (ctx, x) => withheldFor(ctx.user, presentTime(withClientName(ctx, x))),
+        // source (1.14.0): where the entry came from — 'visit' (logged with a visit: "Also log this as a time
+        // entry"), 'call' (logged with a call) or 'manual' — so a list can mark the generated ones and the time
+        // form can warn before the same work is logged twice.
+        afterLoad: (ctx, x) => ({ ...withheldFor(ctx.user, presentTime(withClientName(ctx, x))), source: x.intervention_id ? "visit" : x.call_id ? "call" : "manual" }),
         // shape, owner (time:all), canEdit and the fund-period check: server/rules/time_entries.js.
         filters: (ctx, where, params) => {
           if (!auth3.hasPerm(ctx.user, "time:all")) {
@@ -21555,6 +21736,15 @@ var require_time = __commonJS({
             where.push("time_entries.category=?");
             params.push(cat);
           }
+          const uid = ctx.query.get("user_id");
+          if (uid) {
+            where.push("time_entries.user_id=?");
+            params.push(uid);
+          }
+          const src = ctx.query.get("source");
+          if (src === "visit") where.push("time_entries.intervention_id IS NOT NULL");
+          else if (src === "call") where.push("time_entries.call_id IS NOT NULL");
+          else if (src === "manual") where.push("time_entries.intervention_id IS NULL AND time_entries.call_id IS NULL");
         },
         // Reassigning whose hours these are is a time:all action (see public/views/time.js, which only shows the
         // Worker picker when can('time:all')): the rules' owner, which crud.js applies on insert and update alike.
@@ -27500,9 +27690,13 @@ var require_sdc = __commonJS({
       const phase2 = (d2, allowed) => {
         const z2 = new Float64Array(W + 1);
         for (let j = 0; j < W; j++) z2[j] = d2[j] || 0;
+        work += W + 1;
         for (let i = 0; i < m; i++) {
           const db3 = d2[basis[i]] || 0;
-          if (db3) for (let k = 0; k <= W; k++) z2[k] -= db3 * T[i][k];
+          if (db3) {
+            for (let k = 0; k <= W; k++) z2[k] -= db3 * T[i][k];
+            work += W + 1;
+          }
         }
         for (let iter = 0; iter < 5e4; iter++) {
           let pj = -1;
@@ -27692,7 +27886,12 @@ var require_sdc = __commonJS({
           };
           if (all) vars.forEach((_, i) => add(i));
           else for (const [i] of terms) add(i);
-          for (let q = 0; q < queue.length; q++) for (const ci of byVar[queue[q]]) for (const [j] of cons[ci].terms) add(j);
+          let scan = terms.length;
+          for (let q = 0; q < queue.length; q++) for (const ci of byVar[queue[q]]) {
+            const k = cons[ci].terms;
+            scan += k.length;
+            for (const [j] of k) add(j);
+          }
           const members = queue;
           const n = members.length;
           const touched = /* @__PURE__ */ new Set();
@@ -27703,6 +27902,7 @@ var require_sdc = __commonJS({
             for (const [j, c2] of cons[ci].terms) if (!idx.has(j)) b -= c2 * values[j];
             return b;
           });
+          tick(meter, 2 * scan + n);
           let constant = 0;
           for (const [i, co] of terms) if (!idx.has(i)) constant += co * values[i];
           const key = `${sig}|${members.map((i) => i + s[i]).join(",")}|${rhs.join(",")}|${constant}`;
@@ -27791,13 +27991,17 @@ var require_sdc = __commonJS({
         }
         function deficit(s, q) {
           const p = problem(s, q.terms);
+          if (q.kind === "cond") {
+            const rk = `${q.id}|reach|${p.key}`;
+            if (!cache.has(rk)) cache.set(rk, reaches(p));
+            if (!cache.get(rk)) return 0;
+          }
           const t = q.kind === "sec" ? null : targets(s, q);
           const key = `${q.id}|${q.kind}|${p.key}|${t ? `${t.join(",")}:${t.open}` : ""}`;
           if (cache.has(key)) return cache.get(key);
           let d = 0;
           if (q.kind === "pri" || q.kind === "cond") {
-            if (q.kind === "cond" && !reaches(p)) d = 0;
-            else if (p.n === 0) d = t.filter((v) => p.constant !== v).length + (q.kind === "cond" && t.open ? 1 : 0);
+            if (p.n === 0) d = t.filter((v) => p.constant !== v).length + (q.kind === "cond" && t.open ? 1 : 0);
             else {
               d = t.filter((v) => !intFeasible(p.prob, p.c, v - p.constant, opt).feasible).length;
               if (q.kind === "cond" && t.open && intMax(p.prob, p.c, null, { ...opt, enough: T - p.constant }).value + p.constant < T) d += 1;
@@ -27813,7 +28017,7 @@ var require_sdc = __commonJS({
         function quantities(s) {
           const out2 = [];
           vars.forEach((v, i) => {
-            if (!v.people) return;
+            if (!v.people || v.aux) return;
             if (s[i] === "pri") out2.push({ id: v.id, terms: [[i, 1]], kind: "pri", home: [i] });
             else if (s[i] === "sec") out2.push({ id: v.id, terms: [[i, 1]], kind: "sec", home: [i] });
             else if ((s[i] === "withheld" || s[i] === "unpub") && byVar[i].length) out2.push({ id: v.id, terms: [[i, 1]], kind: "cond", home: [i] });
@@ -27883,8 +28087,9 @@ var require_sdc = __commonJS({
           if (sub !== null && hiddenTotals.has(tot) && vars[sub].people && s[sub] === "vis" && values[sub] >= T) s[sub] = "sec";
         }
         w.applyMirror(s);
+        const watch = model.watch || {};
         for (const cover of covers) {
-          const pri = cover.parts.filter((i) => s[i] === "pri");
+          const pri = cover.parts.flatMap((i) => s[i] === "pri" ? [i] : s[i] === "unpub" && watch[i] ? watch[i] : []);
           if (!pri.length) continue;
           const c = cover.parts.filter((i) => hideable(s, i)).sort((a, b) => vars[b].people - vars[a].people || a - b)[0];
           if (c === void 0) continue;
@@ -27914,11 +28119,19 @@ var require_sdc = __commonJS({
         const touchOf = (st, q) => {
           const p = w.problem(st, q.terms);
           const t = new Set(q.terms.map(([i]) => i));
+          let scan = 0;
           for (const i of p.members) {
             t.add(i);
-            for (const ci of w.byVar[i]) for (const [j] of w.cons[ci].terms) t.add(j);
+            for (const ci of w.byVar[i]) {
+              scan += w.cons[ci].terms.length;
+              for (const [j] of w.cons[ci].terms) t.add(j);
+            }
           }
-          for (const [i] of q.terms) for (const ci of w.byVar[i]) for (const [j] of w.cons[ci].terms) t.add(j);
+          for (const [i] of q.terms) for (const ci of w.byVar[i]) {
+            scan += w.cons[ci].terms.length;
+            for (const [j] of w.cons[ci].terms) t.add(j);
+          }
+          tick(meter, scan);
           return t;
         };
         const follow = (st) => {
@@ -28202,7 +28415,7 @@ var require_sdc = __commonJS({
       }
       return { run: run2, consistent };
     }
-    var STEP_LIMIT = 2e8;
+    var STEP_LIMIT = 4e8;
     var DEGRADE_BUDGET_FACTOR = 8;
     var DEGRADE_BUDGET_MIN = 2e6;
     function protect(model, T, { budget = 4e3, stepLimit = STEP_LIMIT, timeLimitMs = Infinity, consistency = true, degrade = true, debug = false } = {}) {
@@ -28331,13 +28544,13 @@ var require_release_audit = __commonJS({
         fixed: { months: months.map((x) => x.fixed), by: by.map((x) => x.fixed), dis: dis.map((x) => x.fixed) }
       };
     }
-    function buildModel({ funder: raw, perFund, settlement }) {
+    function buildModel({ funder: raw, perFund, settlement }, T) {
       const vars = [];
       const cons = [];
       const derived = [];
       const mirror = [];
       const v = (id, value, o = {}) => {
-        vars.push({ id, value, people: o.people !== false, total: !!o.total, table: o.table || id, published: o.published !== false });
+        vars.push({ id, value, people: o.people !== false, total: !!o.total, table: o.table || id, published: o.published !== false, ...o.aux ? { aux: true } : {} });
         return vars.length - 1;
       };
       const rel = (terms, op, rhs = 0) => cons.push({ terms, op, rhs });
@@ -28373,6 +28586,7 @@ var require_release_audit = __commonJS({
       });
       const fundVars = /* @__PURE__ */ new Map();
       h.funds = raw.by_funding_source.map((f) => {
+        if (f.combined) return null;
         const p = subset(`fund.${f.id}.people`, f.clients_served, "by_funding_source");
         const s = v(`fund.${f.id}.services`, f.services, { people: false, table: "by_funding_source" });
         rel([[p, 1], [s, -1]], "<=");
@@ -28380,10 +28594,54 @@ var require_release_audit = __commonJS({
         fundVars.set(f.id, { p, s });
         return { p, s };
       });
+      const partOf = /* @__PURE__ */ new Map();
+      h.folds = [];
+      const watch = {};
+      const fold = raw.fund_fold;
+      if (fold) {
+        for (const g of fold.groups) {
+          const k = g.members.length;
+          const tag = `fund.${fold.id}/${g.key === null ? "-" : g.key}`;
+          const table = `unpublished.fund.${fold.id}`;
+          let x;
+          if (g.key === null) {
+            x = v(`${tag}.one`, perFund.get(g.members[0])?.clients_served || 1, { table, published: false });
+            rel([[x, 1], [N, -1]], "<=");
+          } else {
+            const q = v(`${tag}.people`, g.people, { table, published: false, aux: k > 1 });
+            const t = v(`${tag}.services`, g.services, { people: false, table, published: false });
+            rel([[q, 1], [t, -1]], "<=");
+            rel([[q, 1], [N, -1]], "<=");
+            const part = { p: q, s: t, aux: k > 1 };
+            for (const id of g.members) partOf.set(id, part);
+            if (k === 1) x = q;
+            else {
+              x = v(`${tag}.one`, perFund.get(g.members[0])?.clients_served || 1, { table, published: false });
+              rel([[x, 1], [q, -1]], "<=");
+              rel([[q, 1], [x, -1]], "<=", (k - 1) * (T - 1));
+            }
+            watch[q] = [x];
+            rel([[x, 1], [t, -1]], "<=", -(k - 1));
+          }
+          rel([[x, 1]], ">=", 1);
+          rel([[x, 1]], "<=", T - 1);
+          derived.push({ id: `${vars[x].id}:rest`, terms: [[N, 1], [x, -1]] });
+          h.folds.push({ key: g.key, x });
+        }
+      }
       const byUseKey = /* @__PURE__ */ new Map();
+      const listed = /* @__PURE__ */ new Set();
       for (const f of settlement.fundKeys) {
         const act = perFund.get(f.id);
         if (!act || !act.services) continue;
+        if (partOf.has(f.id)) {
+          const part = partOf.get(f.id);
+          if (listed.has(part)) continue;
+          listed.add(part);
+          if (!byUseKey.has(f.key)) byUseKey.set(f.key, []);
+          byUseKey.get(f.key).push(part);
+          continue;
+        }
         if (!fundVars.has(f.id)) {
           const p = subset(`fund.${f.id}.people`, act.clients_served, `unpublished.fund.${f.id}`, { published: false });
           const s = v(`fund.${f.id}.services`, act.services, { people: false, table: `unpublished.fund.${f.id}`, published: false });
@@ -28404,8 +28662,9 @@ var require_release_audit = __commonJS({
           rel([[p, 1], ...fs.map((f) => [f.p, -1])], "<=");
           for (const f of fs) {
             rel([[p, 1], [f.p, -1]], ">=");
-            derived.push({ id: `use.${x.use_code}-${vars[f.p].id}`, terms: [[p, 1], [f.p, -1]] });
+            if (!f.aux) derived.push({ id: `use.${x.use_code}-${vars[f.p].id}`, terms: [[p, 1], [f.p, -1]] });
           }
+          for (const fo of h.folds) if (fo.key === x.use_code && !fs.some((f) => f.p === fo.x)) derived.push({ id: `use.${x.use_code}-${vars[fo.x].id}`, terms: [[p, 1], [fo.x, -1]] });
         }
         return { p, s };
       });
@@ -28457,7 +28716,7 @@ var require_release_audit = __commonJS({
       soft([[Dall, 1], [E, -DOSES_MAX]], "<=");
       soft([[Dall, 1], [Dr, -1], [E, -DOSES_MAX], [R, DOSES_MAX]], "<=");
       mirror.push([R, Dr], [R, Dall], [E, Dall]);
-      return { model: { vars, cons, derived, mirror, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] }, h };
+      return { model: { vars, cons, derived, mirror, watch, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] }, h };
     }
     function digest(text) {
       let h1 = 2166136261;
@@ -28511,7 +28770,7 @@ var require_release_audit = __commonJS({
     }
     function protectFigures(inputs, T, { strict = false, budget, stepLimit, timeLimitMs = AUDIT_BACKSTOP_MS, degrade = true } = {}) {
       const raw = prepare(inputs.funder, inputs.domains);
-      const { model, h } = buildModel({ ...inputs, funder: raw });
+      const { model, h } = buildModel({ ...inputs, funder: raw }, T);
       model.strict = strict;
       const audit3 = SDC.protect(model, T, { ...budget === void 0 ? {} : { budget }, ...stepLimit === void 0 ? {} : { stepLimit }, timeLimitMs, degrade });
       const { status, withheldTables } = audit3;
@@ -28542,7 +28801,7 @@ var require_release_audit = __commonJS({
       if (byGone) withheld.push("by_administered_by");
       if (monthsGone) withheld.push("by_month");
       const smallGroup = ep.discharges > 0 && ep.discharges < T;
-      const byFund = raw.by_funding_source.map((f, i) => ({ ...SC.withCell(f, "clients_served", show(h.funds[i].p)), services: show(h.funds[i].s) }));
+      const byFund = raw.by_funding_source.map((f, i) => h.funds[i] ? { ...SC.withCell(f, "clients_served", show(h.funds[i].p)), services: show(h.funds[i].s) } : f);
       const none = byFund.find((f) => f.id === null);
       const funder = {
         unduplicated: { served: show(h.N), new_admissions: show(h.newAdm), with_a_referral: show(h.ref), admitted_after_referral: show(h.adm), on_mat: show(h.mat) },
@@ -28663,7 +28922,8 @@ var require_harm_reduction_reports = __commonJS({
       return rows;
     }
     var byDate = (a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type));
-    function ndpPublished({ from, to }, counting, dist, shown) {
+    var ndpSettings = () => ({ county: db3.getSetting("county_name", "") || null, doses_per_kit: dosesPerKit() });
+    function ndpPublished({ from, to }, counting, dist, shown, settings = ndpSettings()) {
       const rev2 = shown.rows.map((x) => ({
         date: x.month,
         entry: "reversal",
@@ -28680,8 +28940,8 @@ var require_harm_reduction_reports = __commonJS({
       return {
         from,
         to,
-        county: db3.getSetting("county_name", "") || null,
-        doses_per_kit: dosesPerKit(),
+        county: settings.county,
+        doses_per_kit: settings.doses_per_kit,
         template_note: NDP_TEMPLATE_NOTE,
         rows: [...d, ...rev2].sort(byDate),
         by: "month",
@@ -28758,7 +29018,7 @@ var require_harm_reduction_reports = __commonJS({
         }
       }
       const services = db3.all(`SELECT COALESCE(f.settlement_use,'uncategorised') AS use_code, COUNT(*) services, COUNT(DISTINCT CASE WHEN c.deleted_at IS NULL THEN i.client_id END) people, COALESCE(SUM(i.naloxone_kits),0) naloxone_kits
-    FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts("i.occurred_at")} GROUP BY use_code`, ...tsP);
+    FROM interventions i CROSS JOIN funding_sources f ON f.id=i.funding_source_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts("i.occurred_at")} GROUP BY use_code`, ...tsP);
       const fix = (m) => [...m].map(([code, b]) => ({ code, ...b, approved_amount: money(b.approved_amount), pending_amount: money(b.pending_amount) }));
       const useRows = fix(byUse).map((x) => ({ ...x, schedule: USE_LABEL[x.code]?.schedule || "Uncategorised", label: USE_LABEL[x.code]?.label || "No settlement category recorded" }));
       const hiaaRows = fix(byHiaa).map((x) => ({ ...x, label: HIAA_LABEL[x.code] || "No High Impact Abatement Activity recorded" }));
@@ -29051,7 +29311,7 @@ var require_harm_reduction_reports = __commonJS({
         send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-opioid-settlement-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? "xlsx" : "csv"}`, classification: "Opioid settlement expenditures by category (categories need verification against the governing agreement). No client information." });
       });
     }
-    module.exports = { ndp, settlement, settlementFigures, distributionRows, ndpPublished, header, routes, layoutRoutes, dhcsRows, countyRows, checkCountyLayout, countyLayout, DHCS_FIELDS, DHCS_NOTE, dhcsPeople, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
+    module.exports = { ndp, settlement, settlementFigures, distributionRows, ndpPublished, ndpSettings, header, routes, layoutRoutes, dhcsRows, countyRows, checkCountyLayout, countyLayout, DHCS_FIELDS, DHCS_NOTE, dhcsPeople, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
   }
 });
 
@@ -29060,6 +29320,7 @@ var require_publication_release = __commonJS({
   "server/publication-release.js"(exports, module) {
     "use strict";
     init_globals_inject();
+    var db3 = require_db();
     var FR = require_funder_report();
     var SC = require_small_cells();
     var RA = require_release_audit();
@@ -29121,6 +29382,7 @@ var require_publication_release = __commonJS({
       worker = w;
       return w;
     }
+    var auditStats = { worker: 0, inline: 0 };
     function dispatch(id) {
       const p = pending.get(id);
       if (!p) return;
@@ -29145,7 +29407,11 @@ var require_publication_release = __commonJS({
     }
     function runAudit(inputs, T) {
       const opts = { ...auditOptions };
-      if (inline()) return Promise.resolve().then(() => RA.protectFigures(inputs, T, opts));
+      if (inline()) {
+        auditStats.inline++;
+        return new Promise((resolve2) => require_spreadsheet().defer(resolve2)).then(() => RA.protectFigures(inputs, T, opts));
+      }
+      auditStats.worker++;
       return new Promise((resolve2, reject) => {
         const id = ++seq;
         pending.set(id, { resolve: resolve2, reject, timer: null, w: null, msg: { id, inputs, T, opts } });
@@ -29163,7 +29429,9 @@ var require_publication_release = __commonJS({
         if (r.refused && r.refused.backstop) console.warn(`[suds] a publication release (${inputs.domains.months[0] || ""} to ${inputs.domains.months[inputs.domains.months.length - 1] || ""}) was refused: its audit ran past the wall-clock backstop`);
         return r;
       });
-      p.catch(() => cache.delete(key));
+      p.then((r) => {
+        if (r.refused && r.refused.backstop) cache.delete(key);
+      }, () => cache.delete(key));
       cache.delete(key);
       cache.set(key, { p, at: Date.now() });
       while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
@@ -29171,17 +29439,74 @@ var require_publication_release = __commonJS({
     }
     function clearCache() {
       cache.clear();
+      released.clear();
     }
+    var VERSION_TABLES = ["clients", "interventions", "calls", "referrals", "episodes", "overdose_events", "funding_sources", "time_entries", "expenditures", "settings", "option_overrides"];
+    function dataVersion() {
+      const out2 = VERSION_TABLES.map((t) => {
+        try {
+          const r = db3.one(`SELECT COUNT(*) n, MAX(updated_at) u FROM ${t}`);
+          return [r.n, r.u];
+        } catch {
+          try {
+            const r = db3.one(`SELECT COUNT(*) n, MAX(rowid) u FROM ${t}`);
+            return [r.n, r.u];
+          } catch {
+            return null;
+          }
+        }
+      });
+      const ts = db3.one(`SELECT COUNT(*) n, MAX(deleted_at) u FROM tombstones`);
+      return JSON.stringify([out2, [ts.n, ts.u]]);
+    }
+    var released = /* @__PURE__ */ new Map();
     async function release(ctx, range, counting) {
+      const T = counting.threshold;
+      const read = await db3.readSnapshot(async (canYield) => {
+        const key = JSON.stringify([T, range.from, range.to, dataVersion()]);
+        const hit = released.get(key);
+        if (hit && Date.now() - hit.at < CACHE_MS) return { hit };
+        let settle;
+        const p = new Promise((resolve2, reject) => {
+          settle = { resolve: resolve2, reject };
+        });
+        p.catch((e) => {
+          if (!(e && e.status === 422) || e.extra && e.extra.backstop) released.delete(key);
+        });
+        released.set(key, { at: Date.now(), p });
+        while (released.size > CACHE_MAX) released.delete(released.keys().next().value);
+        try {
+          return { key, settle, p, figures: canYield ? await FR.runAsync(readFigures(ctx, range, T)) : FR.runSync(readFigures(ctx, range, T)) };
+        } catch (e) {
+          settle.reject(e);
+          throw e;
+        }
+      });
+      if (read.hit) return structuredClone(await read.hit.p);
+      try {
+        read.settle.resolve(await assemble(read.figures, range, counting));
+      } catch (e) {
+        read.settle.reject(e);
+      }
+      return structuredClone(await read.p);
+    }
+    function* readFigures(ctx, range, T) {
       const HR = require_harm_reduction_reports();
       const O = require_options();
-      const T = counting.threshold;
-      const { raw, perFund } = FR.runSync(FR.figures(ctx, range, null, { fold: T }));
+      const { raw, perFund } = yield* FR.figures(ctx, range, null, { fold: T });
+      yield;
       const settle = HR.settlementFigures(range);
+      yield;
       const dist = HR.distributionRows(ctx, range, true);
       const domains = { months: RA.monthsOf(range.from, range.to), administered_by: O.known("ADMINISTERED_BY"), discharge_reasons: O.known("DISCHARGE_REASONS") };
+      const ndpSettings = HR.ndpSettings();
+      return { raw, perFund, settle, dist, domains, ndpSettings };
+    }
+    async function assemble({ raw, perFund, settle, dist, domains, ndpSettings }, range, counting) {
+      const HR = require_harm_reduction_reports();
+      const T = counting.threshold;
       const p = await audited({ funder: raw, perFund, settlement: settle, domains }, T);
-      if (p.refused) throw new HttpError3(422, p.refused.message, { code: "publication_refused" });
+      if (p.refused) throw new HttpError3(422, p.refused.message, { code: "publication_refused", ...p.refused.backstop ? { backstop: true } : {} });
       const rel = { ...counting.release, id: p.id, reports: ["funder", "naloxone-ndp", "opioid-settlement"], withheld: p.withheld_tables, withheld_reasons: p.withheld_reasons };
       const withRelease = (d) => ({ ...d, release: rel });
       const { fundKeys, ...s } = settle;
@@ -29194,10 +29519,10 @@ var require_publication_release = __commonJS({
           ...HR.header(counting),
           services_by_use: s.services_by_use.map((x, i) => ({ ...SC.withCell(x, "people", p.uses[i].people), services: p.uses[i].services }))
         }),
-        ndp: withRelease(HR.ndpPublished(range, counting, dist, p.ndp))
+        ndp: withRelease(HR.ndpPublished(range, counting, dist, p.ndp, ndpSettings))
       };
     }
-    module.exports = { release, runAudit, setAuditOptions, clearCache, _setWorkerForTests, protectFigures: RA.protectFigures, buildModel: RA.buildModel, prepare: RA.prepare, digest: RA.digest, monthsOf: RA.monthsOf, AUDIT_BACKSTOP_MS: RA.AUDIT_BACKSTOP_MS };
+    module.exports = { release, runAudit, auditStats, dataVersion, VERSION_TABLES, setAuditOptions, clearCache, _setWorkerForTests, protectFigures: RA.protectFigures, buildModel: RA.buildModel, prepare: RA.prepare, digest: RA.digest, monthsOf: RA.monthsOf, AUDIT_BACKSTOP_MS: RA.AUDIT_BACKSTOP_MS };
   }
 });
 
@@ -29295,7 +29620,7 @@ var require_funder_report = __commonJS({
         return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the program's own ${s.purpose === "submission" ? "submission to its funder" : "internal use"}; not for publication or sharing.`;
       }
       if (s.purpose === "publication") {
-        return `${PUBLICATION_LABEL}: the whole program, ${PERIOD_LABEL[rel.period] || "one standard period"}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it; a table that cannot be protected, or whose protection the check cannot confirm, is withheld, prints no rows and is listed with the reason, and the rest of the release is checked again without it). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
+        return `${PUBLICATION_LABEL}: the whole program, ${PERIOD_LABEL[rel.period] || "one standard period"}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it; a table that cannot be protected, or whose protection the check cannot confirm, is withheld, prints no rows and is listed with the reason, and the rest of the release is checked again without it). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Funds that served fewer than ${T} people are listed together in one row, "Other funds", with their people and services withheld. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
       }
       return `${s.purpose === "submission" ? "The program's own submission to its funder" : "Internal"}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole program minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the program and its funder.`;
     }
@@ -29309,6 +29634,37 @@ var require_funder_report = __commonJS({
       if (small.length <= FOLD_KEEP) return null;
       const combined = new Set(small.slice(FOLD_KEEP));
       return (k) => combined.has(String(k)) ? FOLDED : k;
+    }
+    var FUND_FOLD_KEEP = 0;
+    var FUND_FOLD_ID = "combined-funds";
+    var settlementKeyOf = (f) => f.source_type === "opioid_settlement" || f.settlement_use != null || f.settlement_hiaa != null ? f.settlement_use || "uncategorised" : null;
+    var byKeyNullFirst = (a, b) => a === b ? 0 : a === null ? -1 : b === null ? 1 : a < b ? -1 : a > b ? 1 : 0;
+    function foldFunds(rows, T, unionOf, { keep = FUND_FOLD_KEEP } = {}) {
+      if (!T) return null;
+      const small = rows.filter((f) => f.clients_served > 0 && f.clients_served < T);
+      if (small.length <= keep) return null;
+      const combined = small.slice(keep);
+      const ids = new Set(combined.map((f) => f.id));
+      const sum = (fs, k) => fs.reduce((a, f) => a + (f[k] || 0), 0);
+      const keys = [...new Set(combined.map((f) => f.group ?? null))].sort(byKeyNullFirst);
+      const groups = keys.map((key) => {
+        const fs = combined.filter((f) => (f.group ?? null) === key);
+        return { key, members: fs.map((f) => f.id), people: unionOf(fs.map((f) => f.id)), services: sum(fs, "services") };
+      });
+      const row = {
+        id: FUND_FOLD_ID,
+        name: `Other funds (${combined.length} combined)`,
+        grant_number: null,
+        fiscal_year_start: null,
+        fiscal_year_end: null,
+        combined: true,
+        funds_combined: combined.length,
+        clients_served: SC.WITHHELD,
+        services: SC.WITHHELD,
+        approved_minutes: sum(combined, "approved_minutes"),
+        unapproved_minutes: sum(combined, "unapproved_minutes")
+      };
+      return { rows: [...rows.filter((f) => !ids.has(f.id)), row], fold: { id: FUND_FOLD_ID, members: combined.map((f) => f.id), groups } };
     }
     var NALOXONE = `(o.naloxone_used=1 OR o.kind='reversal')`;
     function overdoseFigures(ts, tsP, cf = null) {
@@ -29382,6 +29738,7 @@ var require_funder_report = __commonJS({
       db3.run(`CREATE TEMP TABLE ${table} (id TEXT PRIMARY KEY) WITHOUT ROWID`);
       try {
         db3.run(`INSERT OR IGNORE INTO ${served}(id) SELECT i.client_id FROM interventions i WHERE ${ts("i.occurred_at")} AND i.client_id IS NOT NULL ${fundJoin}`, ...tsP, ...fundP);
+        yield;
         if (!fund) db3.run(`INSERT OR IGNORE INTO ${served}(id) SELECT ca.client_id FROM calls ca WHERE ${ts("ca.started_at")} AND ca.client_id IS NOT NULL`, ...tsP);
         db3.run(`DELETE FROM ${served} WHERE id NOT IN (SELECT c.id FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql})`, ...cf.params);
         yield;
@@ -29426,6 +29783,7 @@ var require_funder_report = __commonJS({
           admitted_after_referral: db3.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN ${served} s ON s.id=r.client_id WHERE ${ts("r.admitted_at")}`, ...tsP).n,
           on_mat: people.filter((p) => p.mat_status === "active").length
         };
+        yield;
         const episodes = {
           admissions: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
           discharges: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
@@ -29436,11 +29794,14 @@ var require_funder_report = __commonJS({
             return d.length ? Math.round(d[Math.floor(d.length / 2)]) : null;
           })()
         };
+        yield;
         const scoped = auth3.caseloadRestricted(ctx.user);
         const overdose = overdoseFigures(ts, tsP, scoped ? cf : null);
+        yield;
         const svc = new Map(db3.all(`SELECT i.funding_source_id f, COUNT(*) services, COUNT(DISTINCT i.client_id) clients_served,
         COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips, COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
       FROM interventions i WHERE ${ts("i.occurred_at")} GROUP BY i.funding_source_id`, ...tsP).map((x) => [x.f, x]));
+        yield;
         for (const x of db3.all(`SELECT i.funding_source_id f, COUNT(DISTINCT i.client_id) n FROM interventions i WHERE i.client_id IN (SELECT id FROM clients WHERE deleted_at IS NOT NULL) AND ${ts("i.occurred_at")} GROUP BY i.funding_source_id`, ...tsP)) {
           if (svc.has(x.f)) svc.get(x.f).clients_served -= x.n;
         }
@@ -29456,7 +29817,31 @@ var require_funder_report = __commonJS({
         const hrs = new Map(db3.all(`SELECT t.funding_source_id f, COALESCE(SUM(CASE WHEN t.status='approved' THEN t.minutes END),0) approved_minutes,
       COALESCE(SUM(CASE WHEN t.status IN ('draft','submitted') THEN t.minutes END),0) unapproved_minutes FROM time_entries t WHERE t.work_date BETWEEN ? AND ? GROUP BY t.funding_source_id`, from, to).map((x) => [x.f, x]));
         const fundFigures = (id) => ({ clients_served: svc.get(id)?.clients_served || 0, services: svc.get(id)?.services || 0, approved_minutes: hrs.get(id)?.approved_minutes || 0, unapproved_minutes: hrs.get(id)?.unapproved_minutes || 0 });
-        const byFund = fund ? db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.id=?`, fund).map((f) => ({ ...f, ...fundFigures(f.id) })) : db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`).map((f) => ({ ...f, ...fundFigures(f.id) }));
+        let byFund = fund ? db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.id=?`, fund).map((f) => ({ ...f, ...fundFigures(f.id) })) : db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end, f.source_type, f.settlement_use, f.settlement_hiaa FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name, f.id`).map(({ source_type, settlement_use, settlement_hiaa, ...f }) => ({ ...f, ...fundFigures(f.id), group: settlementKeyOf({ source_type, settlement_use, settlement_hiaa }) }));
+        let fundFold = null;
+        if (!fund && !scoped && opts.fold) {
+          let under = null;
+          const unionOf = (ids) => {
+            if (!under) {
+              under = /* @__PURE__ */ new Map();
+              const small = byFund.filter((f) => f.clients_served > 0 && f.clients_served < opts.fold).map((f) => f.id);
+              for (const x of db3.all(`SELECT DISTINCT i.funding_source_id f, i.client_id cid FROM interventions i LEFT JOIN clients c ON c.id=i.client_id
+            WHERE i.client_id IS NOT NULL AND c.deleted_at IS NULL AND ${ts("i.occurred_at")} AND i.funding_source_id IN (SELECT value FROM json_each(?))`, ...tsP, JSON.stringify(small))) {
+                if (!under.has(x.f)) under.set(x.f, []);
+                under.get(x.f).push(x.cid);
+              }
+            }
+            const people2 = /* @__PURE__ */ new Set();
+            for (const id of ids) for (const c of under.get(id) || []) people2.add(c);
+            return people2.size;
+          };
+          const folded = foldFunds(byFund, opts.fold, unionOf);
+          if (folded) {
+            byFund = folded.rows;
+            fundFold = folded.fold;
+          }
+        }
+        byFund = byFund.map(({ group, ...f }) => f);
         const none = { id: null, name: "No funding source", grant_number: null, fiscal_year_start: null, fiscal_year_end: null, ...fundFigures(null) };
         if (!fund) byFund.push(none);
         let approved = 0, unapproved = 0;
@@ -29486,7 +29871,9 @@ var require_funder_report = __commonJS({
           overdose,
           naloxone_distribution: distribution,
           by_funding_source: byFund,
-          attribution: { ...attribution, unattributed_clients: fund ? 0 : none.clients_served }
+          attribution: { ...attribution, unattributed_clients: fund ? 0 : none.clients_served },
+          // The funds a publication release combined, for its audit (not printed; foldFunds).
+          ...fundFold ? { fund_fold: fundFold } : {}
         };
         return { raw, perFund: svc };
       } finally {
@@ -29511,7 +29898,7 @@ var require_funder_report = __commonJS({
       const fund = ctx.query.get("funding_source_id") || null;
       const counting = countingMode(ctx, { from, to }, { fund });
       if (counting.purpose === "publication") return (await require_publication_release().release(ctx, range, counting)).funder;
-      const { raw } = await runAsync(figures(ctx, range, fund));
+      const { raw } = await db3.readSnapshot(async () => runAsync(figures(ctx, range, fund)));
       const sc = { threshold: counting.threshold, exact: counting.mode === "exact" };
       return { ...header(counting, from, to, fund), caseload_scope_note: raw.caseload_scope_note, ...suppress(raw, sc) };
     }
@@ -29647,7 +30034,7 @@ var require_funder_report = __commonJS({
         csvColumns: long
       };
     }
-    module.exports = { RUN_LABEL, publicationOn, publicationOffMessage, build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };
+    module.exports = { RUN_LABEL, publicationOn, publicationOffMessage, build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, foldFunds, settlementKeyOf, FUND_FOLD_ID, FUND_FOLD_KEEP, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };
   }
 });
 
@@ -29921,11 +30308,76 @@ var require_reports = __commonJS({
         throw forbidden(`Your role can run this report only as a publication release: the whole program (all funding sources) for one calendar month, quarter or year (starting 1 January, April, July or October) that has ended. This run is not one, because ${why}. Internal runs and exact counts are for supervisors and administrators; the program's submission to its funder is also run by finance.`);
       };
     }
+    var nextMonth = (m) => {
+      const y = Number(m.slice(0, 4));
+      const mo = Number(m.slice(5, 7));
+      return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`;
+    };
+    function* monthlyFigures(user, s) {
+      const out2 = {};
+      out2.intakes = db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s);
+      out2.discharges = db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s);
+      yield;
+      const visits = [];
+      const bounds = [];
+      for (let m = s.slice(0, 7); m <= (/* @__PURE__ */ new Date()).toISOString().slice(0, 7); m = nextMonth(m)) bounds.push(m);
+      for (let i = 0; i < bounds.length; i++) {
+        const hi = i + 1 < bounds.length ? bounds[i + 1] : null;
+        visits.push(...db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions
+      WHERE occurred_at >= ?${hi ? " AND occurred_at < ?" : ""} GROUP BY month ORDER BY month`, i ? bounds[i] : s, ...hi ? [hi] : []));
+        yield;
+      }
+      out2.interventions = visits.map(({ month, n, minutes, clients }) => ({ month, n, minutes, clients }));
+      out2.naloxone = visits.map(({ month, kits, strips }) => ({ month, kits, strips }));
+      out2.unduplicated_clients = visits.filter((x) => x.clients > 0).map(({ month, clients }) => ({ month, clients }));
+      yield;
+      out2.calls = db3.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s);
+      out2.referrals = db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s);
+      yield;
+      out2.overdose_events = db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s);
+      out2.episodes = db3.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s);
+      yield;
+      out2.mat_linkage = db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s);
+      out2.spend = auth3.hasPerm(user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [];
+      out2.time = db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s);
+      const order = ["intakes", "discharges", "interventions", "calls", "referrals", "naloxone", "overdose_events", "episodes", "unduplicated_clients", "mat_linkage", "spend", "time"];
+      return Object.fromEntries(order.map((k) => [k, out2[k]]));
+    }
     function visitScope(user, alias = "i") {
       const cf = auth3.caseloadFilter(user, `${alias}.client_id`);
       const all = !auth3.caseloadRestricted(user) || auth3.hasPerm(user, "clients:all");
       return { sql: `(CASE WHEN ${alias}.client_id IS NULL THEN (${alias}.user_id=? OR ?) ELSE ${cf.sql} END)`, params: [user.id, all ? 1 : 0, ...cf.params] };
     }
+    var dashGroups = {
+      count: (groups) => groups.reduce((s, g) => s + g.n, 0),
+      /** COALESCE(SUM(field), 0) over the groups. */
+      sum: (groups, field) => groups.reduce((s, g) => s + (g[field] ?? 0), 0),
+      cmp(a, b) {
+        const rank = (v) => v === null || v === void 0 ? 0 : typeof v === "number" ? 1 : 2;
+        if (rank(a) !== rank(b)) return rank(a) - rank(b);
+        if (a === null || a === void 0) return 0;
+        if (typeof a === "number") return a - b;
+        return a < b ? -1 : a > b ? 1 : 0;
+      },
+      /** GROUP BY key(g): [{ [name]: key, n, ...SUM(sums) }], in key order. */
+      rollup(groups, key, name = "k", sums = []) {
+        const m = /* @__PURE__ */ new Map();
+        for (const g of groups) {
+          const k = key(g);
+          let r = m.get(k);
+          if (!r) {
+            r = { [name]: k, n: 0 };
+            for (const f of sums) r[f] = null;
+            m.set(k, r);
+          }
+          r.n += g.n;
+          for (const f of sums) if (g[f] !== null && g[f] !== void 0) r[f] = (r[f] ?? 0) + g[f];
+        }
+        return [...m.values()].sort((a, b) => dashGroups.cmp(a[name], b[name]));
+      },
+      /** ORDER BY n DESC over rows in key order; equal counts in reverse key order. */
+      byCount: (rows) => rows.map((r, i) => [r, i]).sort((a, b) => b[0].n - a[0].n || b[1] - a[1]).map(([r]) => r)
+    };
     module.exports = (r) => {
       r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), async (ctx) => {
         const { from, to, ts, tsP } = range(ctx);
@@ -29950,46 +30402,52 @@ var require_reports = __commonJS({
           return v;
         };
         const vs = visitScope(ctx.user);
+        const hr = CFX.risk("high");
+        const clientGroups = await q(() => scoped(`SELECT status, primary_substance, mat_status, (${hr.sql}) AS high, COUNT(*) n, SUM(CASE WHEN intake_date BETWEEN ? AND ? THEN 1 ELSE 0 END) AS new_n
+      FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status, primary_substance, mat_status, high`, ...hr.params, from, to));
+        const active = clientGroups.filter((g) => g.status === "active");
+        const visitGroups = await q(() => db3.all(`SELECT i.type, i.user_id, strftime('%Y-%W', i.occurred_at) AS wk, COUNT(*) n, SUM(i.duration_minutes) minutes, SUM(i.naloxone_kits) kits, SUM(i.fentanyl_strips) strips
+      FROM interventions i WHERE ${ts("i.occurred_at")} AND ${vs.sql} GROUP BY i.type, i.user_id, wk`, ...tsP, ...vs.params));
+        const callGroups = await q(() => db3.all(`SELECT outcome, direction, crisis, method, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE ${ts("started_at")} GROUP BY outcome, direction, crisis, method`, ...tsP));
+        const workerNames = new Map(db3.all(`SELECT id, display_name FROM users`).map((u) => [u.id, u.display_name]));
+        const G = dashGroups;
         const out2 = {
           from,
           to,
           clients: {
-            active: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n),
-            waitlist: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n),
-            new_in_range: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n),
+            active: G.count(active),
+            waitlist: G.count(clientGroups.filter((g) => g.status === "waitlist")),
+            new_in_range: G.sum(clientGroups, "new_n"),
             // The tiles use the client list's own predicates (server/client-filters.js), so a tile and the list it
             // opens count the same people.
-            high_risk: await q(() => {
-              const f = CFX.risk("high");
-              return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
-            }),
+            high_risk: G.count(active.filter((g) => g.high)),
             no_contact_30d: await q(() => {
               const f = CFX.noContactSince();
               return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND ${f.sql}`, ...f.params).n;
             }),
-            by_status: await q(() => scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`)),
-            by_substance: await q(() => scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`)),
-            mat: await q(() => scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`))
+            by_status: G.rollup(clientGroups, (g) => g.status, "status").map((r2) => ({ status: r2.status, n: r2.n })),
+            by_substance: G.byCount(G.rollup(active, (g) => g.primary_substance ?? "unknown")),
+            mat: G.rollup(active, (g) => g.mat_status ?? "unknown")
           },
-          // The period's totals in one pass over its visits, not one pass per figure.
-          // Every visit in the period, with or without a client (visitScope): an anonymous distribution of ten kits
-          // is ten kits on Home and Reports as it is in the funder report and the NDP log.
           interventions: {
-            ...await q(() => db3.one(`SELECT COUNT(*) total, COALESCE(SUM(duration_minutes),0) minutes, COALESCE(SUM(naloxone_kits),0) naloxone_kits, COALESCE(SUM(fentanyl_strips),0) fentanyl_strips
-          FROM interventions i WHERE ${ts("i.occurred_at")} AND ${vs.sql}`, ...tsP, ...vs.params)),
-            by_type: await q(() => db3.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i WHERE ${ts("i.occurred_at")} AND ${vs.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...vs.params)),
-            by_week: await q(() => db3.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i WHERE ${ts("i.occurred_at")} AND ${vs.sql} GROUP BY k ORDER BY k`, ...tsP, ...vs.params)),
-            by_worker: await q(() => db3.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id WHERE ${ts("i.occurred_at")} AND ${vs.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...vs.params))
+            total: G.count(visitGroups),
+            minutes: G.sum(visitGroups, "minutes"),
+            naloxone_kits: G.sum(visitGroups, "kits"),
+            fentanyl_strips: G.sum(visitGroups, "strips"),
+            by_type: G.byCount(G.rollup(visitGroups, (g) => g.type, "k", ["minutes"])),
+            by_week: G.rollup(visitGroups, (g) => g.wk),
+            // Grouped by worker (the user id); a visit whose worker is not in users has no row, as the join had none.
+            by_worker: G.byCount(G.rollup(visitGroups.filter((g) => workerNames.has(g.user_id)), (g) => g.user_id, "id", ["minutes"])).map((r2) => ({ k: workerNames.get(r2.id), n: r2.n, minutes: r2.minutes }))
           },
-          calls: await q(() => ({
-            total: db3.one(`SELECT COUNT(*) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
-            minutes: db3.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
-            crisis: db3.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts("started_at")}`, ...tsP).n,
-            by_outcome: db3.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY outcome ORDER BY n DESC`, ...tsP),
-            by_direction: db3.all(`SELECT direction k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY direction`, ...tsP),
+          calls: {
+            total: G.count(callGroups),
+            minutes: G.sum(callGroups, "minutes"),
+            crisis: G.count(callGroups.filter((g) => g.crisis === 1)),
+            by_outcome: G.byCount(G.rollup(callGroups, (g) => g.outcome)),
+            by_direction: G.rollup(callGroups, (g) => g.direction),
             // Texts are logged alongside calls, so say how the total splits rather than reporting them as calls.
-            texts: db3.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts("started_at")}`, ...tsP).n
-          })),
+            texts: G.count(callGroups.filter((g) => g.method === "text"))
+          },
           referrals: await q(() => ({
             total: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql}`, ...tsP, ...cf.params).n,
             by_status: db3.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, ...tsP, ...cf.params),
@@ -30059,27 +30517,15 @@ var require_reports = __commonJS({
         audit3.log({ user: ctx.user, action: "report.dashboard", ip: ctx.ip, details: { from, to } });
         return require_dashboard_mask().dashboard(ctx.user, out2);
       });
-      r.get("/api/reports/monthly", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+      r.get("/api/reports/monthly", auth3.requireAuth, auth3.requirePerm("reports:read"), async (ctx) => {
         const months = Math.min(24, Math.max(1, Number(ctx.query.get("months") || 12)));
         const start2 = /* @__PURE__ */ new Date();
         start2.setUTCDate(1);
         start2.setUTCMonth(start2.getUTCMonth() - months + 1);
         const s = start2.toISOString().slice(0, 10);
         audit3.log({ user: ctx.user, action: "report.monthly", ip: ctx.ip, details: { months } });
-        return require_dashboard_mask().monthly(ctx.user, {
-          intakes: db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
-          discharges: db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),
-          interventions: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-          calls: db3.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s),
-          referrals: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s),
-          naloxone: db3.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-          overdose_events: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-          episodes: db3.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s),
-          unduplicated_clients: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? AND client_id IS NOT NULL GROUP BY month ORDER BY month`, s),
-          mat_linkage: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
-          spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
-          time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s)
-        });
+        const out2 = await db3.readSnapshot(async (canYield) => canYield ? FR.runAsync(monthlyFigures(ctx.user, s)) : FR.runSync(monthlyFigures(ctx.user, s)));
+        return require_dashboard_mask().monthly(ctx.user, out2);
       });
       r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), requireReportRun({ caseloadScoped: true, fund: true }), async (ctx) => {
         const out2 = await FR.build(ctx, range(ctx));
@@ -30241,6 +30687,8 @@ var require_reports = __commonJS({
       });
     };
     module.exports.range = range;
+    module.exports.monthlyFigures = monthlyFigures;
+    module.exports.dashGroups = dashGroups;
   }
 });
 
@@ -31014,7 +31462,7 @@ var require_supplies2 = __commonJS({
       r.get("/api/supplies", ...read, (ctx) => {
         const stock = S.stock();
         const me = db3.one(`SELECT default_site_id FROM users WHERE id=?`, ctx.user.id);
-        const al = S.alerts();
+        const al = S.alerts({ date: stock.date, stock });
         const naloxone = S.defaultItemFor("naloxone");
         const fts = S.defaultItemFor("fentanyl_test_strips");
         return {
@@ -31040,7 +31488,10 @@ var require_supplies2 = __commonJS({
         site_id: S.siteForUser(ctx.user.id),
         syringes_per_litre: S.syringesPerLitre(),
         categories: N.CATEGORIES,
-        products: N.NALOXONE_PRODUCTS
+        products: N.NALOXONE_PRODUCTS,
+        // Whether this caller can add an item here (supplies:manage, on a copy that owns its configuration): the
+        // visit form offers "Add naloxone kits and test strips" when the programme keeps neither, else says who can.
+        can_configure: auth3.hasPerm(ctx.user, "supplies:manage") && configurable()
       }));
       r.get("/api/supplies/alerts", ...read, () => S.alerts());
       r.get("/api/supplies/ledger", ...read, (ctx) => {
@@ -31321,6 +31772,386 @@ var require_supplies2 = __commonJS({
   }
 });
 
+// server/routes/notes.js
+var require_notes2 = __commonJS({
+  "server/routes/notes.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { badRequest, notFound, forbidden } = require_http();
+    var { validate, paging } = require_validate();
+    var { encrypt: encrypt3, decrypt: decrypt3, sha256: sha2562, uuid: uuid2 } = require_crypto();
+    var rules = require_rules();
+    var shape = rules.forTable("notes").fields;
+    function problemIds(ids, clientId) {
+      if (ids === void 0) return void 0;
+      if (ids === null || !ids.length) return null;
+      const uniq = [...new Set(ids)];
+      for (const id of uniq) {
+        const p = db3.one(`SELECT client_id FROM problems WHERE id=?`, id);
+        if (!p || p.client_id !== clientId) throw badRequest("Validation failed", { fields: { problem_ids: "names a problem that is not on this client's problem list" } });
+      }
+      return JSON.stringify(uniq);
+    }
+    function linkedProblems(ctx, n) {
+      let ids = [];
+      try {
+        ids = n.problem_ids ? JSON.parse(n.problem_ids) : [];
+      } catch {
+        ids = [];
+      }
+      if (!Array.isArray(ids) || !ids.length) return [];
+      if (!auth3.hasPerm(ctx.user, "careplan:read")) return ids.map((id) => ({ id }));
+      return ids.map((id) => {
+        const p = db3.one(`SELECT id, problem_enc, status FROM problems WHERE id=?`, id);
+        return p ? { id: p.id, problem: decrypt3(p.problem_enc), status: p.status } : { id };
+      });
+    }
+    function kindPerm(kind, rw) {
+      return `notes:${kind}:${rw}`;
+    }
+    function verifyIdentity(ctx) {
+      const body = validate(ctx.body || {}, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" } }, { partial: true });
+      return auth3.verifySigner(ctx, body);
+    }
+    var BREAK_GLASS_MIN = 15;
+    function breakGlassReason(ctx) {
+      const raw = ctx.headers["x-break-glass-reason"];
+      if (raw === void 0 || raw === null || raw === "") return null;
+      const reason = String(raw).trim();
+      if (reason.length < BREAK_GLASS_MIN) throw badRequest(`A break-glass reason must be at least ${BREAK_GLASS_MIN} characters and say why emergency access is needed`);
+      return reason.slice(0, 300);
+    }
+    function recordBreakGlass(ctx, { clientId, noteId = null, reason }) {
+      const id = uuid2();
+      db3.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at) VALUES(?,?,?,?,?,?)`, id, ctx.user.id, clientId || null, noteId, encrypt3(reason), db3.now());
+      return id;
+    }
+    function canRead(ctx, note) {
+      if (auth3.hasPerm(ctx.user, kindPerm(note.kind, "read")) || auth3.hasPerm(ctx.user, kindPerm(note.kind, "write"))) return true;
+      if (note.kind === "clinical" && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && breakGlassReason(ctx)) return "breakglass";
+      return false;
+    }
+    function present(row, { withContent = true } = {}) {
+      const out2 = { ...row };
+      delete out2.content_enc;
+      delete out2.structured_enc;
+      delete out2.title_enc;
+      out2.title = row.title_enc ? decrypt3(row.title_enc) : null;
+      if ("cosign_note_enc" in row) {
+        out2.cosign_note = row.cosign_note_enc ? decrypt3(row.cosign_note_enc) : null;
+        delete out2.cosign_note_enc;
+      }
+      if (withContent) {
+        out2.content = decrypt3(row.content_enc);
+        out2.structured = row.structured_enc ? JSON.parse(decrypt3(row.structured_enc)) : null;
+      }
+      return out2;
+    }
+    function signatureState(n) {
+      const wanted = !!n.cosign_required || !!n.cosign_requested;
+      return { signed: n.status !== "draft", cosign_required: !!n.cosign_required, cosign_requested: !!n.cosign_requested, cosigned: !!n.cosigned_at, awaiting_cosign: wanted && n.status !== "draft" && !n.cosigned_at };
+    }
+    function load(ctx, id) {
+      const n = db3.one(`SELECT n.*, u.display_name AS author, s.display_name AS signer, cs.display_name AS cosigner
+    FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users s ON s.id=n.signed_by LEFT JOIN users cs ON cs.id=n.cosigned_by
+    WHERE n.id=? AND n.deleted_at IS NULL`, id);
+      if (!n) throw notFound("Note not found");
+      auth3.assertClientAccess(ctx, n.client_id);
+      return n;
+    }
+    function checkNewNote(ctx, v) {
+      if (!auth3.hasPerm(ctx.user, kindPerm(v.kind, "write"))) throw forbidden(`You cannot author ${v.kind} notes`);
+      if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
+      auth3.assertClientAccess(ctx, v.client_id);
+      rules.assertWrite("notes", rules.toColumns("notes", v), ctx);
+    }
+    function insertNote(ctx, v) {
+      const id = uuid2();
+      const linked = problemIds(v.problem_ids, v.client_id) ?? null;
+      const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
+      db3.run(
+        `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids,counseling_note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        id,
+        v.client_id,
+        ctx.user.id,
+        v.kind,
+        v.format || "narrative",
+        v.title ? encrypt3(v.title) : null,
+        encrypt3(v.content),
+        v.structured ? encrypt3(JSON.stringify(v.structured)) : null,
+        v.occurred_at,
+        v.intervention_id || null,
+        v.call_id || null,
+        v.part2_protected ?? 1,
+        v.source || "manual",
+        v.source_ref || null,
+        author?.requires_cosign ? 1 : 0,
+        v.cosign_requested ? 1 : 0,
+        linked,
+        v.counseling_note ? 1 : 0
+      );
+      audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0, counseling_note: v.counseling_note ? true : void 0, with_visit: v._with_visit ? true : void 0 } });
+      return id;
+    }
+    module.exports = (r) => {
+      r.get("/api/notes", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:clinical:read", "notes:admin:write", "notes:clinical:write"), (ctx) => {
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
+        const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, kindPerm(k, "read")) || auth3.hasPerm(ctx.user, kindPerm(k, "write")));
+        const glassReason = !kinds.includes("clinical") && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && ctx.query.get("client_id") && ctx.query.get("kind") === "clinical" ? breakGlassReason(ctx) : null;
+        if (glassReason) {
+          kinds.push("clinical");
+          const event = recordBreakGlass(ctx, { clientId: ctx.query.get("client_id"), reason: glassReason });
+          audit3.log({ user: ctx.user, action: "note.list.breakglass", clientId: ctx.query.get("client_id"), ip: ctx.ip, details: { reason_recorded: true, breakglass_event: event } });
+        }
+        const where = ["n.deleted_at IS NULL", `n.kind IN (${kinds.map(() => "?").join(",") || "''"})`];
+        const params = [...kinds];
+        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
+        where.push(cf.sql);
+        params.push(...cf.params);
+        for (const [q, col] of [["client_id", "n.client_id"], ["kind", "n.kind"], ["status", "n.status"], ["author_id", "n.author_id"], ["source", "n.source"]]) {
+          const v = ctx.query.get(q);
+          if (v) {
+            where.push(`${col}=?`);
+            params.push(v);
+          }
+        }
+        if (ctx.query.get("mine") === "1") {
+          where.push("n.author_id=?");
+          params.push(ctx.user.id);
+        }
+        if (ctx.query.get("unsigned") === "1") where.push("n.status='draft'");
+        if (ctx.query.get("awaiting_cosign") === "1") {
+          where.push("(n.cosign_required=1 OR n.cosign_requested=1) AND n.status<>'draft' AND n.cosigned_at IS NULL");
+          if (!auth3.hasPerm(ctx.user, "notes:cosign")) {
+            where.push("1=0");
+          }
+        }
+        if (ctx.query.get("from")) {
+          where.push("n.occurred_at >= ?");
+          params.push(ctx.query.get("from"));
+        }
+        if (ctx.query.get("to")) {
+          where.push("n.occurred_at <= ?");
+          params.push(ctx.query.get("to") + "T23:59:59.999Z");
+        }
+        const w = "WHERE " + where.join(" AND ");
+        const pageIds = db3.all(`SELECT n.rowid AS rid FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset).map((x) => x.rid);
+        const byId = new Map(db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
+      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
+      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda, n.rowid AS rid
+      FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id WHERE n.rowid IN (SELECT value FROM json_each(?))`, JSON.stringify(pageIds)).map(({ rid, ...x }) => [rid, x]));
+        const rows = pageIds.map((id) => byId.get(id));
+        const out2 = rows.map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0, ...signatureState(x) }));
+        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: out2.length, kinds, filter: ctx.query.get("awaiting_cosign") === "1" ? "awaiting_cosign" : void 0 } });
+        return { rows: out2, total: db3.one(`SELECT COUNT(*) n FROM notes n ${w}`, ...params).n };
+      });
+      r.post("/api/notes", auth3.requireAuth, (ctx) => {
+        const v = validate(ctx.body, shape);
+        checkNewNote(ctx, v);
+        const id = insertNote(ctx, v);
+        ctx.status = 201;
+        return { id, updated_at: db3.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at };
+      });
+      r.get("/api/notes/:id", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        const access = canRead(ctx, n);
+        if (!access) {
+          audit3.log({ user: ctx.user, action: "note.view.denied", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, success: false });
+          throw forbidden("You do not have access to this note");
+        }
+        const addenda = db3.all(`SELECT a.id,a.reason_enc,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map((a) => ({ ...a, content: decrypt3(a.content_enc), reason: a.reason_enc ? decrypt3(a.reason_enc) : null, content_enc: void 0, reason_enc: void 0 }));
+        const event = access === "breakglass" ? recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) }) : null;
+        audit3.log({ user: ctx.user, action: access === "breakglass" ? "note.view.breakglass" : "note.view", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === "breakglass" ? { reason_recorded: true, breakglass_event: event } : { kind: n.kind } });
+        return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
+      });
+      r.put("/api/notes/:id", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
+        rules.assertEditable("notes", ctx, n);
+        require_crud().assertFresh(ctx, n, "note");
+        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids }, { partial: true, existing: n });
+        rules.assertWrite("notes", { id: n.id, ...rules.toColumns("notes", v) }, ctx, { existing: n });
+        const sets = [];
+        const params = [];
+        for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected", "counseling_note", "cosign_requested"]) if (v[k] !== void 0) {
+          sets.push(`${k}=?`);
+          params.push(v[k]);
+        }
+        if (v.title !== void 0) {
+          sets.push("title_enc=?");
+          params.push(v.title ? encrypt3(v.title) : null);
+        }
+        if (v.content !== void 0) {
+          sets.push("content_enc=?");
+          params.push(encrypt3(v.content));
+        }
+        const linked = problemIds(v.problem_ids, n.client_id);
+        if (linked !== void 0) {
+          sets.push("problem_ids=?");
+          params.push(linked);
+        }
+        if (v.structured !== void 0) {
+          sets.push("structured_enc=?");
+          params.push(v.structured ? encrypt3(JSON.stringify(v.structured)) : null);
+        }
+        const stamp2 = sets.length ? db3.now() : n.updated_at;
+        if (sets.length) db3.run(`UPDATE notes SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, n.id);
+        audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
+        return { ok: true, updated_at: stamp2 };
+      });
+      r.post("/api/notes/:id/request-cosign", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can ask for a review of their note");
+        if (n.cosigned_at) throw badRequest("This note has already been countersigned");
+        const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: "boolean" } });
+        const flag = cosign_requested === false ? 0 : 1;
+        db3.run(`UPDATE notes SET cosign_requested=?, updated_at=? WHERE id=?`, flag, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: flag ? "note.cosign.requested" : "note.cosign.request_withdrawn", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+        return { ok: true, cosign_requested: !!flag, awaiting_cosign: !!flag && n.status !== "draft" };
+      });
+      r.get("/api/notes/handoffs", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:admin:write"), (ctx) => {
+        const hours = Math.min(24 * 7, Math.max(1, Number(ctx.query.get("hours") || 24)));
+        const since = new Date(Date.now() - hours * 36e5).toISOString();
+        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
+        const { withClientName, SELECT: NAME_COLS } = require_client_name();
+        const rows = db3.all(`SELECT n.id, n.client_id, n.occurred_at, n.status, n.title_enc, n.content_enc, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS}
+      FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
+      WHERE n.deleted_at IS NULL AND n.kind='admin' AND n.format='handoff' AND n.occurred_at >= ? AND ${cf.sql} ORDER BY n.occurred_at DESC LIMIT 50`, since, ...cf.params);
+        const out2 = rows.map((x) => {
+          const o = withClientName(ctx, x);
+          let content = "";
+          try {
+            content = decrypt3(x.content_enc);
+          } catch {
+            content = "";
+          }
+          return { ...o, title: x.title_enc ? decrypt3(x.title_enc) : null, excerpt: content.slice(0, 240), title_enc: void 0, content_enc: void 0 };
+        });
+        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, details: { count: out2.length, kinds: ["admin"], filter: "handoffs", hours } });
+        return { rows: out2, hours };
+      });
+      r.post("/api/notes/:id/sign", auth3.requireAuth, async (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.status !== "draft") throw badRequest("Note is already signed");
+        if (n.author_id !== ctx.user.id) throw forbidden("Only the author can sign a note. Supervisors countersign instead.");
+        const identity = await verifyIdentity(ctx);
+        const hash2 = sha2562(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ""}`);
+        db3.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db3.now(), ctx.user.id, hash2, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required, identity } });
+        return { ok: true, signature_hash: hash2, awaiting_cosign: !!n.cosign_required };
+      });
+      function cosignRefusal(ctx, n) {
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "read")) && !auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) return `You cannot read ${n.kind} notes`;
+        if (n.status === "draft") return "The author has not signed this note yet";
+        if (n.author_id === ctx.user.id) return "A note cannot be countersigned by its own author";
+        if (n.cosigned_at) return "This note has already been countersigned";
+        return null;
+      }
+      function applyCosign(ctx, n, note, identity, batch) {
+        const hash2 = sha2562(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ""}`);
+        db3.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), hash2, note ? encrypt3(note) : null, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.cosign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash: hash2, note_recorded: note ? true : void 0, identity, batch: batch || void 0 } });
+        return hash2;
+      }
+      r.post("/api/notes/:id/cosign", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        const why = cosignRefusal(ctx, n);
+        if (why) {
+          if (/cannot read/.test(why)) throw forbidden(why);
+          throw badRequest(why);
+        }
+        const { note } = validate(ctx.body, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, note: { type: "string", maxLen: 1e3 } });
+        const identity = await verifyIdentity(ctx);
+        return { ok: true, cosignature_hash: applyCosign(ctx, n, note, identity, false) };
+      });
+      r.post("/api/notes/cosign-batch", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
+        const v = validate(ctx.body, { ids: { type: "array", required: true, maxLen: 100, of: "string" }, password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, note: { type: "string", maxLen: 1e3 }, comments: { type: "object" } });
+        if (!v.ids.length) throw badRequest("Choose at least one note to countersign");
+        const ids = [...new Set(v.ids)];
+        const comments = {};
+        if (v.comments !== void 0 && v.comments !== null) {
+          if (Array.isArray(v.comments)) throw badRequest("Validation failed", { fields: { comments: "must be an object of note id to comment" } });
+          for (const [id, text] of Object.entries(v.comments)) {
+            if (!ids.includes(id)) throw badRequest("Validation failed", { fields: { comments: "a comment is for a note that is not in this batch" } });
+            if (typeof text !== "string" || text.length > 1e3) throw badRequest("Validation failed", { fields: { comments: "each comment must be text of at most 1000 characters" } });
+            if (text.trim()) comments[id] = text.trim();
+          }
+        }
+        if (v.note && v.note.trim()) {
+          if (Object.keys(comments).length) throw badRequest("Give each note its own comment, not a shared one as well");
+          const clients = new Set(ids.map((id) => (db3.one(`SELECT client_id FROM notes WHERE id=? AND deleted_at IS NULL`, id) || {}).client_id).filter(Boolean));
+          if (clients.size > 1) throw badRequest("One comment cannot be applied to notes about different clients. Give each note its own comment, or countersign it on its own.", { fields: { note: "one comment for several clients" } });
+        }
+        const identity = await verifyIdentity(ctx);
+        const cosigned = [];
+        const skipped = [];
+        for (const id of ids) {
+          const n = db3.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id);
+          if (!n) {
+            skipped.push({ id, reason: "Note not found" });
+            continue;
+          }
+          if (!auth3.canAccessClient(ctx.user, n.client_id)) {
+            skipped.push({ id, reason: "This client is not on your caseload" });
+            continue;
+          }
+          const why = cosignRefusal(ctx, n);
+          if (why) {
+            skipped.push({ id, reason: why });
+            continue;
+          }
+          applyCosign(ctx, n, comments[id] || v.note && v.note.trim() || void 0, identity, true);
+          cosigned.push(id);
+        }
+        return { ok: true, cosigned, skipped };
+      });
+      r.post("/api/notes/:id/addenda", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        const { content, reason } = validate(ctx.body, require_rules().forTable("note_addenda").shape());
+        const id = uuid2();
+        db3.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason_enc) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt3(content), reason ? encrypt3(reason) : null);
+        if (n.status === "signed") db3.run(`UPDATE notes SET status='amended', updated_at=? WHERE id=?`, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.addendum", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reason ? { reason_recorded: true } : void 0 });
+        ctx.status = 201;
+        return { id };
+      });
+      r.delete("/api/notes/:id", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.status !== "draft") throw badRequest("Signed notes are part of the legal record and cannot be deleted");
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/notes/:id/verify", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!canRead(ctx, n)) throw forbidden();
+        if (!n.signature_hash) return { signed: false, ...signatureState(n) };
+        const hash2 = sha2562(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ""}`);
+        const out2 = { signed: true, intact: hash2 === n.signature_hash, signed_at: n.signed_at, signer: n.signer, ...signatureState(n) };
+        if (n.cosignature_hash) {
+          out2.cosigner = n.cosigner;
+          out2.cosigned_at = n.cosigned_at;
+          out2.cosignature_intact = sha2562(`${n.id}|${n.cosigned_by}|cosign|${n.content_enc}|${n.structured_enc || ""}`) === n.cosignature_hash;
+        }
+        return out2;
+      });
+    };
+    module.exports.checkNewNote = checkNewNote;
+    module.exports.insertNote = insertNote;
+    module.exports.noteShape = shape;
+  }
+});
+
 // server/routes/interventions.js
 var require_interventions2 = __commonJS({
   "server/routes/interventions.js"(exports, module) {
@@ -31332,6 +32163,7 @@ var require_interventions2 = __commonJS({
     var C = require_constants();
     var O = require_options();
     var { badRequest, forbidden } = require_http();
+    var { validate } = require_validate();
     var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     var supplies = require_supplies2();
     var S = require_supplies();
@@ -31413,6 +32245,28 @@ var require_interventions2 = __commonJS({
       }
       return { ...row, summary, summary_enc: void 0 };
     }
+    var notes = require_notes2();
+    var NOTE_KEYS = ["kind", "format", "title", "content", "structured", "part2_protected", "counseling_note", "cosign_requested"];
+    function planNote(ctx, v) {
+      const raw = v.note;
+      delete v.note;
+      if (raw === void 0 || raw === null) return;
+      if (typeof raw !== "object" || Array.isArray(raw)) throw badRequest("Validation failed", { fields: { note: "must be an object" } });
+      if (!v.client_id) throw badRequest("A note is about a client: choose the client this visit was with, or save the visit without the note.", { fields: { client_id: "is required to add a note" } });
+      const body = { client_id: v.client_id, occurred_at: v.occurred_at, source: "manual" };
+      for (const k of NOTE_KEYS) if (raw[k] !== void 0) body[k] = raw[k];
+      let nv;
+      try {
+        nv = validate(body, notes.noteShape);
+      } catch (e) {
+        const f = e.extra && e.extra.fields;
+        if (f) e.extra.fields = Object.fromEntries(Object.entries(f).map(([k, m]) => [`note_${k}`, m]));
+        throw e;
+      }
+      notes.checkNewNote(ctx, nv);
+      nv._with_visit = true;
+      v._note = nv;
+    }
     var COUNT_COLS = Object.keys(SN.COUNTED);
     function planSupplies(ctx, v, row = null) {
       const desired = v.supplies !== void 0 && v.supplies !== null ? v.supplies : null;
@@ -31457,9 +32311,11 @@ var require_interventions2 = __commonJS({
             params.push(t);
           }
           if (ctx.query.get("funding") === "none") where.push("interventions.funding_source_id IS NULL");
+          if (ctx.query.get("naloxone") === "1") where.push("interventions.naloxone_kits > 0");
         },
         afterLoad: (ctx, row) => withLines(decodeSummary(row)),
         beforeInsert: (ctx, v) => {
+          planNote(ctx, v);
           v._log_time = v.log_time;
           delete v.log_time;
           v._time_category = v.time_category;
@@ -31476,6 +32332,8 @@ var require_interventions2 = __commonJS({
           planSupplies(ctx, v);
         },
         beforeUpdate: (ctx, v, row) => {
+          if (v.note !== void 0 && v.note !== null) throw badRequest("A note is added to a visit when it is recorded. To write one about an existing visit, use + Note on the client record.");
+          delete v.note;
           delete v.log_time;
           delete v.time_category;
           v._service_date = v.service_date || null;
@@ -31513,6 +32371,7 @@ var require_interventions2 = __commonJS({
           );
           syncExpenditure(row);
           applySupplies(ctx, row, row._supply_plan);
+          if (row._note) row._note.id = notes.insertNote(ctx, { ...row._note, intervention_id: row.id });
         },
         afterUpdate: (ctx, row, prev) => {
           syncExpenditure(row);
@@ -31525,7 +32384,7 @@ var require_interventions2 = __commonJS({
         insertResult: (ctx, row) => {
           const lines = S.visitLines(row.id);
           const u = Object.entries(SN.COUNTED).filter(([col, cat]) => Number(row[col] || 0) > 0 && !lines.some((l) => l.category === cat)).map(([col]) => ({ item: UNTRACKED_NAMES[col], quantity: Number(row[col]) }));
-          return u.length ? { supplies_untracked: u } : {};
+          return { ...u.length ? { supplies_untracked: u } : {}, ...row._note && row._note.id ? { note_id: row._note.id } : {} };
         },
         // The FKs from expenditures.intervention_id and time_entries.intervention_id are ON DELETE SET NULL, so
         // this has to run before the delete — after it, there is no longer any way to find the records this
@@ -31719,374 +32578,6 @@ var require_me = __commonJS({
         const lastSeenElsewhere = db3.one(`SELECT last_seen_at, user_agent FROM sessions WHERE user_id=? AND revoked_at IS NULL AND id<>? ORDER BY last_seen_at DESC LIMIT 1`, uid, ctx.session.id);
         require_audit().log({ user: ctx.user, action: "me.continue", ip: ctx.ip, details: { recent: recent.length, drafts: drafts.length, due_today: dueToday.length } });
         return { recent, drafts, staged_imports: staged, due_today: dueToday, other_device: lastSeenElsewhere ? { last_seen_at: lastSeenElsewhere.last_seen_at, mobile: /Mobi|Android|iPhone|iPad/i.test(lastSeenElsewhere.user_agent || "") } : null };
-      });
-    };
-  }
-});
-
-// server/routes/notes.js
-var require_notes2 = __commonJS({
-  "server/routes/notes.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth2();
-    var audit3 = require_audit();
-    var C = require_constants();
-    var { badRequest, notFound, forbidden } = require_http();
-    var { validate, paging } = require_validate();
-    var { encrypt: encrypt3, decrypt: decrypt3, sha256: sha2562, uuid: uuid2 } = require_crypto();
-    var rules = require_rules();
-    var shape = rules.forTable("notes").fields;
-    function problemIds(ids, clientId) {
-      if (ids === void 0) return void 0;
-      if (ids === null || !ids.length) return null;
-      const uniq = [...new Set(ids)];
-      for (const id of uniq) {
-        const p = db3.one(`SELECT client_id FROM problems WHERE id=?`, id);
-        if (!p || p.client_id !== clientId) throw badRequest("Validation failed", { fields: { problem_ids: "names a problem that is not on this client's problem list" } });
-      }
-      return JSON.stringify(uniq);
-    }
-    function linkedProblems(ctx, n) {
-      let ids = [];
-      try {
-        ids = n.problem_ids ? JSON.parse(n.problem_ids) : [];
-      } catch {
-        ids = [];
-      }
-      if (!Array.isArray(ids) || !ids.length) return [];
-      if (!auth3.hasPerm(ctx.user, "careplan:read")) return ids.map((id) => ({ id }));
-      return ids.map((id) => {
-        const p = db3.one(`SELECT id, problem_enc, status FROM problems WHERE id=?`, id);
-        return p ? { id: p.id, problem: decrypt3(p.problem_enc), status: p.status } : { id };
-      });
-    }
-    function kindPerm(kind, rw) {
-      return `notes:${kind}:${rw}`;
-    }
-    function verifyIdentity(ctx) {
-      const body = validate(ctx.body || {}, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" } }, { partial: true });
-      return auth3.verifySigner(ctx, body);
-    }
-    var BREAK_GLASS_MIN = 15;
-    function breakGlassReason(ctx) {
-      const raw = ctx.headers["x-break-glass-reason"];
-      if (raw === void 0 || raw === null || raw === "") return null;
-      const reason = String(raw).trim();
-      if (reason.length < BREAK_GLASS_MIN) throw badRequest(`A break-glass reason must be at least ${BREAK_GLASS_MIN} characters and say why emergency access is needed`);
-      return reason.slice(0, 300);
-    }
-    function recordBreakGlass(ctx, { clientId, noteId = null, reason }) {
-      const id = uuid2();
-      db3.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at) VALUES(?,?,?,?,?,?)`, id, ctx.user.id, clientId || null, noteId, encrypt3(reason), db3.now());
-      return id;
-    }
-    function canRead(ctx, note) {
-      if (auth3.hasPerm(ctx.user, kindPerm(note.kind, "read")) || auth3.hasPerm(ctx.user, kindPerm(note.kind, "write"))) return true;
-      if (note.kind === "clinical" && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && breakGlassReason(ctx)) return "breakglass";
-      return false;
-    }
-    function present(row, { withContent = true } = {}) {
-      const out2 = { ...row };
-      delete out2.content_enc;
-      delete out2.structured_enc;
-      delete out2.title_enc;
-      out2.title = row.title_enc ? decrypt3(row.title_enc) : null;
-      if ("cosign_note_enc" in row) {
-        out2.cosign_note = row.cosign_note_enc ? decrypt3(row.cosign_note_enc) : null;
-        delete out2.cosign_note_enc;
-      }
-      if (withContent) {
-        out2.content = decrypt3(row.content_enc);
-        out2.structured = row.structured_enc ? JSON.parse(decrypt3(row.structured_enc)) : null;
-      }
-      return out2;
-    }
-    function signatureState(n) {
-      const wanted = !!n.cosign_required || !!n.cosign_requested;
-      return { signed: n.status !== "draft", cosign_required: !!n.cosign_required, cosign_requested: !!n.cosign_requested, cosigned: !!n.cosigned_at, awaiting_cosign: wanted && n.status !== "draft" && !n.cosigned_at };
-    }
-    function load(ctx, id) {
-      const n = db3.one(`SELECT n.*, u.display_name AS author, s.display_name AS signer, cs.display_name AS cosigner
-    FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users s ON s.id=n.signed_by LEFT JOIN users cs ON cs.id=n.cosigned_by
-    WHERE n.id=? AND n.deleted_at IS NULL`, id);
-      if (!n) throw notFound("Note not found");
-      auth3.assertClientAccess(ctx, n.client_id);
-      return n;
-    }
-    module.exports = (r) => {
-      r.get("/api/notes", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:clinical:read", "notes:admin:write", "notes:clinical:write"), (ctx) => {
-        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
-        const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, kindPerm(k, "read")) || auth3.hasPerm(ctx.user, kindPerm(k, "write")));
-        const glassReason = !kinds.includes("clinical") && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && ctx.query.get("client_id") && ctx.query.get("kind") === "clinical" ? breakGlassReason(ctx) : null;
-        if (glassReason) {
-          kinds.push("clinical");
-          const event = recordBreakGlass(ctx, { clientId: ctx.query.get("client_id"), reason: glassReason });
-          audit3.log({ user: ctx.user, action: "note.list.breakglass", clientId: ctx.query.get("client_id"), ip: ctx.ip, details: { reason_recorded: true, breakglass_event: event } });
-        }
-        const where = ["n.deleted_at IS NULL", `n.kind IN (${kinds.map(() => "?").join(",") || "''"})`];
-        const params = [...kinds];
-        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
-        where.push(cf.sql);
-        params.push(...cf.params);
-        for (const [q, col] of [["client_id", "n.client_id"], ["kind", "n.kind"], ["status", "n.status"], ["author_id", "n.author_id"], ["source", "n.source"]]) {
-          const v = ctx.query.get(q);
-          if (v) {
-            where.push(`${col}=?`);
-            params.push(v);
-          }
-        }
-        if (ctx.query.get("mine") === "1") {
-          where.push("n.author_id=?");
-          params.push(ctx.user.id);
-        }
-        if (ctx.query.get("unsigned") === "1") where.push("n.status='draft'");
-        if (ctx.query.get("awaiting_cosign") === "1") {
-          where.push("(n.cosign_required=1 OR n.cosign_requested=1) AND n.status<>'draft' AND n.cosigned_at IS NULL");
-          if (!auth3.hasPerm(ctx.user, "notes:cosign")) {
-            where.push("1=0");
-          }
-        }
-        if (ctx.query.get("from")) {
-          where.push("n.occurred_at >= ?");
-          params.push(ctx.query.get("from"));
-        }
-        if (ctx.query.get("to")) {
-          where.push("n.occurred_at <= ?");
-          params.push(ctx.query.get("to") + "T23:59:59.999Z");
-        }
-        const w = "WHERE " + where.join(" AND ");
-        const rows = db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
-      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
-      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda
-      FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
-        const out2 = rows.map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0, ...signatureState(x) }));
-        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: out2.length, kinds, filter: ctx.query.get("awaiting_cosign") === "1" ? "awaiting_cosign" : void 0 } });
-        return { rows: out2, total: db3.one(`SELECT COUNT(*) n FROM notes n ${w}`, ...params).n };
-      });
-      r.post("/api/notes", auth3.requireAuth, (ctx) => {
-        const v = validate(ctx.body, shape);
-        if (!auth3.hasPerm(ctx.user, kindPerm(v.kind, "write"))) throw forbidden(`You cannot author ${v.kind} notes`);
-        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
-        auth3.assertClientAccess(ctx, v.client_id);
-        rules.assertWrite("notes", rules.toColumns("notes", v), ctx);
-        const id = uuid2();
-        const linked = problemIds(v.problem_ids, v.client_id) ?? null;
-        const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
-        db3.run(
-          `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids,counseling_note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          id,
-          v.client_id,
-          ctx.user.id,
-          v.kind,
-          v.format || "narrative",
-          v.title ? encrypt3(v.title) : null,
-          encrypt3(v.content),
-          v.structured ? encrypt3(JSON.stringify(v.structured)) : null,
-          v.occurred_at,
-          v.intervention_id || null,
-          v.call_id || null,
-          v.part2_protected ?? 1,
-          v.source || "manual",
-          v.source_ref || null,
-          author?.requires_cosign ? 1 : 0,
-          v.cosign_requested ? 1 : 0,
-          linked,
-          v.counseling_note ? 1 : 0
-        );
-        audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0, counseling_note: v.counseling_note ? true : void 0 } });
-        ctx.status = 201;
-        return { id, updated_at: db3.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at };
-      });
-      r.get("/api/notes/:id", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        const access = canRead(ctx, n);
-        if (!access) {
-          audit3.log({ user: ctx.user, action: "note.view.denied", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, success: false });
-          throw forbidden("You do not have access to this note");
-        }
-        const addenda = db3.all(`SELECT a.id,a.reason_enc,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map((a) => ({ ...a, content: decrypt3(a.content_enc), reason: a.reason_enc ? decrypt3(a.reason_enc) : null, content_enc: void 0, reason_enc: void 0 }));
-        const event = access === "breakglass" ? recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) }) : null;
-        audit3.log({ user: ctx.user, action: access === "breakglass" ? "note.view.breakglass" : "note.view", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === "breakglass" ? { reason_recorded: true, breakglass_event: event } : { kind: n.kind } });
-        return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
-      });
-      r.put("/api/notes/:id", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
-        rules.assertEditable("notes", ctx, n);
-        require_crud().assertFresh(ctx, n, "note");
-        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids }, { partial: true, existing: n });
-        rules.assertWrite("notes", { id: n.id, ...rules.toColumns("notes", v) }, ctx, { existing: n });
-        const sets = [];
-        const params = [];
-        for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected", "counseling_note", "cosign_requested"]) if (v[k] !== void 0) {
-          sets.push(`${k}=?`);
-          params.push(v[k]);
-        }
-        if (v.title !== void 0) {
-          sets.push("title_enc=?");
-          params.push(v.title ? encrypt3(v.title) : null);
-        }
-        if (v.content !== void 0) {
-          sets.push("content_enc=?");
-          params.push(encrypt3(v.content));
-        }
-        const linked = problemIds(v.problem_ids, n.client_id);
-        if (linked !== void 0) {
-          sets.push("problem_ids=?");
-          params.push(linked);
-        }
-        if (v.structured !== void 0) {
-          sets.push("structured_enc=?");
-          params.push(v.structured ? encrypt3(JSON.stringify(v.structured)) : null);
-        }
-        const stamp2 = sets.length ? db3.now() : n.updated_at;
-        if (sets.length) db3.run(`UPDATE notes SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, n.id);
-        audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
-        return { ok: true, updated_at: stamp2 };
-      });
-      r.post("/api/notes/:id/request-cosign", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can ask for a review of their note");
-        if (n.cosigned_at) throw badRequest("This note has already been countersigned");
-        const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: "boolean" } });
-        const flag = cosign_requested === false ? 0 : 1;
-        db3.run(`UPDATE notes SET cosign_requested=?, updated_at=? WHERE id=?`, flag, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: flag ? "note.cosign.requested" : "note.cosign.request_withdrawn", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
-        return { ok: true, cosign_requested: !!flag, awaiting_cosign: !!flag && n.status !== "draft" };
-      });
-      r.get("/api/notes/handoffs", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:admin:write"), (ctx) => {
-        const hours = Math.min(24 * 7, Math.max(1, Number(ctx.query.get("hours") || 24)));
-        const since = new Date(Date.now() - hours * 36e5).toISOString();
-        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
-        const { withClientName, SELECT: NAME_COLS } = require_client_name();
-        const rows = db3.all(`SELECT n.id, n.client_id, n.occurred_at, n.status, n.title_enc, n.content_enc, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS}
-      FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
-      WHERE n.deleted_at IS NULL AND n.kind='admin' AND n.format='handoff' AND n.occurred_at >= ? AND ${cf.sql} ORDER BY n.occurred_at DESC LIMIT 50`, since, ...cf.params);
-        const out2 = rows.map((x) => {
-          const o = withClientName(ctx, x);
-          let content = "";
-          try {
-            content = decrypt3(x.content_enc);
-          } catch {
-            content = "";
-          }
-          return { ...o, title: x.title_enc ? decrypt3(x.title_enc) : null, excerpt: content.slice(0, 240), title_enc: void 0, content_enc: void 0 };
-        });
-        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, details: { count: out2.length, kinds: ["admin"], filter: "handoffs", hours } });
-        return { rows: out2, hours };
-      });
-      r.post("/api/notes/:id/sign", auth3.requireAuth, async (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.status !== "draft") throw badRequest("Note is already signed");
-        if (n.author_id !== ctx.user.id) throw forbidden("Only the author can sign a note. Supervisors countersign instead.");
-        const identity = await verifyIdentity(ctx);
-        const hash2 = sha2562(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ""}`);
-        db3.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db3.now(), ctx.user.id, hash2, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required, identity } });
-        return { ok: true, signature_hash: hash2, awaiting_cosign: !!n.cosign_required };
-      });
-      function cosignRefusal(ctx, n) {
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "read")) && !auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) return `You cannot read ${n.kind} notes`;
-        if (n.status === "draft") return "The author has not signed this note yet";
-        if (n.author_id === ctx.user.id) return "A note cannot be countersigned by its own author";
-        if (n.cosigned_at) return "This note has already been countersigned";
-        return null;
-      }
-      function applyCosign(ctx, n, note, identity, batch) {
-        const hash2 = sha2562(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ""}`);
-        db3.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), hash2, note ? encrypt3(note) : null, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.cosign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash: hash2, note_recorded: note ? true : void 0, identity, batch: batch || void 0 } });
-        return hash2;
-      }
-      r.post("/api/notes/:id/cosign", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        const why = cosignRefusal(ctx, n);
-        if (why) {
-          if (/cannot read/.test(why)) throw forbidden(why);
-          throw badRequest(why);
-        }
-        const { note } = validate(ctx.body, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, note: { type: "string", maxLen: 1e3 } });
-        const identity = await verifyIdentity(ctx);
-        return { ok: true, cosignature_hash: applyCosign(ctx, n, note, identity, false) };
-      });
-      r.post("/api/notes/cosign-batch", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
-        const v = validate(ctx.body, { ids: { type: "array", required: true, maxLen: 100, of: "string" }, password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, note: { type: "string", maxLen: 1e3 }, comments: { type: "object" } });
-        if (!v.ids.length) throw badRequest("Choose at least one note to countersign");
-        const ids = [...new Set(v.ids)];
-        const comments = {};
-        if (v.comments !== void 0 && v.comments !== null) {
-          if (Array.isArray(v.comments)) throw badRequest("Validation failed", { fields: { comments: "must be an object of note id to comment" } });
-          for (const [id, text] of Object.entries(v.comments)) {
-            if (!ids.includes(id)) throw badRequest("Validation failed", { fields: { comments: "a comment is for a note that is not in this batch" } });
-            if (typeof text !== "string" || text.length > 1e3) throw badRequest("Validation failed", { fields: { comments: "each comment must be text of at most 1000 characters" } });
-            if (text.trim()) comments[id] = text.trim();
-          }
-        }
-        if (v.note && v.note.trim()) {
-          if (Object.keys(comments).length) throw badRequest("Give each note its own comment, not a shared one as well");
-          const clients = new Set(ids.map((id) => (db3.one(`SELECT client_id FROM notes WHERE id=? AND deleted_at IS NULL`, id) || {}).client_id).filter(Boolean));
-          if (clients.size > 1) throw badRequest("One comment cannot be applied to notes about different clients. Give each note its own comment, or countersign it on its own.", { fields: { note: "one comment for several clients" } });
-        }
-        const identity = await verifyIdentity(ctx);
-        const cosigned = [];
-        const skipped = [];
-        for (const id of ids) {
-          const n = db3.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id);
-          if (!n) {
-            skipped.push({ id, reason: "Note not found" });
-            continue;
-          }
-          if (!auth3.canAccessClient(ctx.user, n.client_id)) {
-            skipped.push({ id, reason: "This client is not on your caseload" });
-            continue;
-          }
-          const why = cosignRefusal(ctx, n);
-          if (why) {
-            skipped.push({ id, reason: why });
-            continue;
-          }
-          applyCosign(ctx, n, comments[id] || v.note && v.note.trim() || void 0, identity, true);
-          cosigned.push(id);
-        }
-        return { ok: true, cosigned, skipped };
-      });
-      r.post("/api/notes/:id/addenda", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        const { content, reason } = validate(ctx.body, require_rules().forTable("note_addenda").shape());
-        const id = uuid2();
-        db3.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason_enc) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt3(content), reason ? encrypt3(reason) : null);
-        if (n.status === "signed") db3.run(`UPDATE notes SET status='amended', updated_at=? WHERE id=?`, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.addendum", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reason ? { reason_recorded: true } : void 0 });
-        ctx.status = 201;
-        return { id };
-      });
-      r.delete("/api/notes/:id", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.status !== "draft") throw badRequest("Signed notes are part of the legal record and cannot be deleted");
-        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
-        db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
-        return { ok: true };
-      });
-      r.get("/api/notes/:id/verify", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!canRead(ctx, n)) throw forbidden();
-        if (!n.signature_hash) return { signed: false, ...signatureState(n) };
-        const hash2 = sha2562(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ""}`);
-        const out2 = { signed: true, intact: hash2 === n.signature_hash, signed_at: n.signed_at, signer: n.signer, ...signatureState(n) };
-        if (n.cosignature_hash) {
-          out2.cosigner = n.cosigner;
-          out2.cosigned_at = n.cosigned_at;
-          out2.cosignature_intact = sha2562(`${n.id}|${n.cosigned_by}|cosign|${n.content_enc}|${n.structured_enc || ""}`) === n.cosignature_hash;
-        }
-        return out2;
       });
     };
   }
@@ -37900,7 +38391,8 @@ var require_sync = __commonJS({
       return { since, bf: { from: bf.from, t: bf.t, k: bf.k, i: bf.i } };
     }
     function backfillPage(user, until, bf, limit2) {
-      const arrivedQ = newlyInScopeSql(user, bf.from, until);
+      const q = newlyInScopeSql(user, bf.from, until);
+      const arrivedQ = { sql: "SELECT value FROM json_each(?)", params: [JSON.stringify(db3.all(q.sql, ...q.params).map((r) => r.client_id))] };
       const tables = bfTables();
       const raw = {};
       let budget = limit2;
@@ -37941,24 +38433,24 @@ var require_sync = __commonJS({
       if (bf) return pullBackfill(user, since, bf, limit2, serverNow);
       const raw = {};
       const capped = [];
+      const scopes = /* @__PURE__ */ new Map();
       for (const t of SYNC2.tables) {
+        const newest = db3.one(`SELECT MAX(updated_at) m FROM ${t.name}`).m;
+        if (newest === null || newest === void 0 || newest <= since) continue;
         const sc = scopeSql(t, user, "x");
-        const rows = db3.all(`SELECT x.* FROM ${t.name} x WHERE x.updated_at > ? AND ${sc.sql} ORDER BY x.updated_at LIMIT ?`, since, ...sc.params, limit2 + 1);
-        if (rows.length <= limit2) {
-          raw[t.name] = rows;
-          continue;
+        scopes.set(t.name, sc);
+        const stamps = db3.all(`SELECT x.updated_at u FROM ${t.name} x WHERE x.updated_at > ? AND ${sc.sql} ORDER BY x.updated_at LIMIT ?`, since, ...sc.params, limit2 + 1);
+        if (stamps.length <= limit2) continue;
+        const boundary = stamps[limit2].u;
+        let lastSafe = null;
+        for (const s of stamps) {
+          if (s.u < boundary) lastSafe = s.u;
+          else break;
         }
-        const boundary = rows[limit2].updated_at;
-        const safe = rows.filter((r) => r.updated_at < boundary);
-        if (safe.length) {
-          raw[t.name] = safe;
-          capped.push(safe[safe.length - 1].updated_at);
-          continue;
-        }
-        raw[t.name] = db3.all(`SELECT x.* FROM ${t.name} x WHERE x.updated_at = ? AND ${sc.sql} ORDER BY x.updated_at`, boundary, ...sc.params);
-        capped.push(boundary);
+        capped.push(lastSafe !== null ? lastSafe : boundary);
       }
       const cursor = capped.length ? capped.reduce((a, b) => a < b ? a : b) : serverNow;
+      for (const [name, sc] of scopes) raw[name] = db3.all(`SELECT x.* FROM ${name} x WHERE x.updated_at > ? AND x.updated_at <= ? AND ${sc.sql} ORDER BY x.updated_at`, since, cursor, ...sc.params);
       const out2 = baseAnswer(cursor, serverNow, capped.length === 0);
       exportInto(out2, user, raw, cursor);
       if (newlyInScope(user, since, cursor).length) {
@@ -38060,6 +38552,7 @@ var require_sync = __commonJS({
     };
     module.exports.pull = pull;
     module.exports.push = push;
+    module.exports.scopeSql = scopeSql;
   }
 });
 
@@ -38520,7 +39013,7 @@ var require_app2 = __commonJS({
     var audit3 = require_audit();
     var auth3 = require_auth2();
     var idempotency2 = require_idempotency();
-    var { Router: Router2, HttpError: HttpError3, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, serveStatic } = require_http();
+    var { Router: Router2, HttpError: HttpError3, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, sendJsonTo, serveStatic } = require_http();
     var buckets = /* @__PURE__ */ new Map();
     function rateLimit(key, max2, windowMs) {
       const now2 = Date.now();
@@ -38703,7 +39196,7 @@ var require_app2 = __commonJS({
             return out2;
           });
           if (ctx.idempotentReplay && !res.headersSent) res.setHeader("Idempotent-Replayed", "true");
-          if (!res.headersSent) sendJson(res, result === void 0 ? 204 : ctx.status || 200, result === void 0 ? null : result);
+          if (!res.headersSent) await sendJsonTo(req, res, result === void 0 ? 204 : ctx.status || 200, result === void 0 ? null : result);
         } catch (err2) {
           if (err2 instanceof HttpError3 && url.pathname.startsWith("/fhir/")) {
             if (err2.status === 413 && !res.headersSent) res.setHeader("Connection", "close");
@@ -39946,6 +40439,7 @@ var require_db = __commonJS({
         } catch {
         }
       }
+      openedPath = dbPath;
       return db3;
     }
     function openWith(bytes3) {
@@ -39956,6 +40450,7 @@ var require_db = __commonJS({
         }
         db3 = void 0;
       }
+      openedPath = null;
       db3 = bytes3 ? new DatabaseSync2(":memory:", bytes3) : new DatabaseSync2(":memory:");
       try {
         db3.exec("PRAGMA busy_timeout = 5000");
@@ -40572,7 +41067,38 @@ var require_db = __commonJS({
       //     (intervention_supplies), the site it drew from, and the syringes and sharps brought back.
       //     Self-contained and idempotent: every step checks what is already there.
       (d) => migrateSupplies(d, safeSchema()),
-      // 46: per-user permission overrides — grants and denies on top of the role's PERMS
+      // 46: the sample data (server/demo.js) wrote a client's preferred name but not its search index until 1.14.0,
+      //     so a sample client could not be found by the name it goes by. Every client with a preferred name and no
+      //     index gets the index its name derives (clients-model preferredNameIndex, as a save writes it). Only
+      //     those rows: an index already written is left alone, and a second run finds nothing to do. A row that
+      //     cannot be decrypted keeps what it had (as migration 26). updated_at is not touched: the index is
+      //     derived, never synchronised, and each device's own copy of this migration fills in its own.
+      (d) => {
+        const { decrypt: decrypt3 } = require_crypto();
+        const M = require_clients_model();
+        const upd = d.prepare(`UPDATE clients SET preferred_name_idx=? WHERE id=? AND preferred_name_idx IS NULL`);
+        for (const c of d.prepare(`SELECT id, preferred_name_enc FROM clients WHERE preferred_name_enc IS NOT NULL AND preferred_name_idx IS NULL`).all()) {
+          let name;
+          try {
+            name = decrypt3(c.preferred_name_enc);
+          } catch {
+            continue;
+          }
+          const idx = M.preferredNameIndex(name);
+          if (idx) upd.run(idx, c.id);
+        }
+      },
+      // 47: indexes for what was slow at 20,000 clients, 100,000 visits and 200,000 notes (docs/PERFORMANCE.md): a
+      //     worker's caseload, a device's sync pull (client and updated_at together), the Home dashboard's visits
+      //     and unsigned notes, a note's addenda, a caseload's notes list, the merged duplicates of a caseload, and
+      //     supplies on hand read from the index alone. Four indexes become wider ones and are dropped.
+      //     Self-contained and idempotent: each index is created from its line in schema.sql only when missing, so
+      //     it can be renumbered beside other 1.14.0 migrations.
+      (d) => {
+        for (const old of ["idx_intervention_supplies_client", "idx_supply_ledger_stock", "idx_notes_client", "idx_assign_user"]) d.exec(`DROP INDEX IF EXISTS ${old}`);
+        createIndexesFromSchema(d, safeSchema(), PERF_INDEXES_47);
+      },
+      // 48: per-user permission overrides — grants and denies on top of the role's PERMS
       // (server/auth.js effectivePerms). One row per (user, permission); mode says which.
       (d) => {
         d.exec(`CREATE TABLE IF NOT EXISTS user_permission_overrides (
@@ -40587,6 +41113,28 @@ var require_db = __commonJS({
         d.exec(`CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id)`);
       }
     ];
+    var PERF_INDEXES_47 = [
+      "idx_assign_caseload",
+      "idx_interventions_sync",
+      "idx_interventions_dashboard",
+      "idx_calls_sync",
+      "idx_notes_list",
+      "idx_notes_sync",
+      "idx_notes_drafts",
+      "idx_note_addenda_note",
+      "idx_clients_merged",
+      "idx_intervention_supplies_sync",
+      "idx_supply_ledger_onhand",
+      "idx_supply_ledger_item_created",
+      "idx_suprt_assessments_sync"
+    ];
+    function createIndexesFromSchema(d, schemaText, names) {
+      for (const name of names) {
+        const line = schemaText.split("\n").map((l) => l.trim()).find((l) => l.startsWith(`CREATE INDEX IF NOT EXISTS ${name} ON `));
+        if (!line) throw new Error(`migration: no definition for index ${name} in schema`);
+        d.exec(line);
+      }
+    }
     var MAIN_SITE_ID = "site-main";
     function ensureMainSite(d) {
       d.prepare(`INSERT OR IGNORE INTO supply_sites(id,name,kind,sort_order) VALUES(?,?,?,0)`).run(MAIN_SITE_ID, "Main office", "office");
@@ -40632,7 +41180,7 @@ var require_db = __commonJS({
       } else {
         encryptedColumns = 0;
         migrate(d, dbPath);
-        if (encryptedColumns || !d.prepare(`SELECT 1 FROM settings WHERE key='${SCRUBBED}'`).get()) scrubFreePages(d, encryptedColumns ? "column encrypted" : "once, after upgrading to 1.13.1");
+        if (encryptedColumns || !d.prepare(`SELECT 1 FROM settings WHERE key='${SCRUBBED}'`).get()) scrubFreePages(d, encryptedColumns ? "column encrypted" : "once, after upgrading to 1.14.0");
         if (!d.prepare(`SELECT 1 FROM settings WHERE key='programme_profile'`).get()) {
           d.prepare(`INSERT INTO settings(key,value) VALUES('programme_profile',?)`).run(require_programme().defaultForExisting(d));
         }
@@ -40859,14 +41407,58 @@ var require_db = __commonJS({
         console.warn(`[suds] this database has ${remaining.length} pre-existing orphaned reference(s), not introduced by this upgrade, by table: ${Object.entries(byTable).map(([t, n]) => `${t}=${n}`).join(", ")}. Records are otherwise intact; anything joined through the missing reference may just be absent from a report until it is repaired.`);
       }
     }
+    var snapshotStore = null;
+    try {
+      const { AsyncLocalStorage } = (init_empty(), __toCommonJS(empty_exports));
+      if (typeof AsyncLocalStorage === "function") snapshotStore = new AsyncLocalStorage();
+    } catch {
+      snapshotStore = null;
+    }
+    var openedPath = null;
+    async function readSnapshot(fn) {
+      const file = db3 && openedPath && openedPath !== ":memory:" ? openedPath : null;
+      if (!snapshotStore || !file || txDepth > 0 || snapshotStore.getStore()) return fn(false);
+      let conn2;
+      try {
+        conn2 = new DatabaseSync2(file, { readOnly: true });
+        conn2.exec("PRAGMA busy_timeout = 5000");
+        conn2.exec("BEGIN");
+        conn2.prepare("SELECT count(*) FROM sqlite_master").get();
+      } catch (e) {
+        try {
+          if (conn2) conn2.close();
+        } catch {
+        }
+        console.warn("[suds] a read snapshot could not be opened; reading without letting the event loop go:", e && e.message);
+        return fn(false);
+      }
+      try {
+        return await snapshotStore.run(conn2, () => fn(true));
+      } finally {
+        try {
+          conn2.exec("COMMIT");
+        } catch {
+        }
+        try {
+          conn2.close();
+        } catch {
+        }
+      }
+    }
+    var inSnapshot = () => !!(snapshotStore && snapshotStore.getStore());
     function get() {
+      const s = snapshotStore && snapshotStore.getStore();
+      if (s) return s;
       if (!db3) open3();
       return db3;
     }
     function close() {
       if (db3) {
+        stmts = /* @__PURE__ */ new Map();
+        stmtsFor = null;
         db3.close();
         db3 = void 0;
+        openedPath = null;
       }
     }
     function isOpen() {
@@ -40875,14 +41467,33 @@ var require_db = __commonJS({
     function now2() {
       return (/* @__PURE__ */ new Date()).toISOString();
     }
+    var STMT_CACHE_MAX = 2e3;
+    var stmts = /* @__PURE__ */ new Map();
+    var stmtsFor = null;
+    function prepared(sql) {
+      const snap = snapshotStore && snapshotStore.getStore();
+      if (snap) return snap.prepare(sql);
+      const d = get();
+      if (stmtsFor !== d) {
+        stmts = /* @__PURE__ */ new Map();
+        stmtsFor = d;
+      }
+      let st = stmts.get(sql);
+      if (!st) {
+        st = d.prepare(sql);
+        if (stmts.size >= STMT_CACHE_MAX) stmts.clear();
+        stmts.set(sql, st);
+      }
+      return st;
+    }
     function all(sql, ...params) {
-      return get().prepare(sql).all(...params);
+      return prepared(sql).all(...params);
     }
     function one(sql, ...params) {
-      return get().prepare(sql).get(...params);
+      return prepared(sql).get(...params);
     }
     function run2(sql, ...params) {
-      return get().prepare(sql).run(...params);
+      return prepared(sql).run(...params);
     }
     var txDepth = 0;
     function transaction(fn) {
@@ -40944,7 +41555,7 @@ var require_db = __commonJS({
     function tombstone(table, id) {
       run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now2());
     }
-    module.exports = { open: open3, openWith, get, close, isOpen, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
+    module.exports = { open: open3, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
   }
 });
 

@@ -29,7 +29,8 @@ eq(await admin.$eval('select[name=default_fund_id]', s => s.value), fund.id, 'Se
 
 const sup = await signIn('jwalker', 'Navigator2026!!');
 await sup.goto(base + '/#/interventions'); await settle(sup);
-await sup.click('text=+ Log a visit'); await sup.waitForSelector('.modal select[name=funding_source_id]');
+// 1.14.0: the fund is in the visit's "Funding & cost" section, folded until opened (its value is set all the same).
+await sup.click('text=+ Log a visit'); await sup.waitForSelector('.modal select[name=funding_source_id]', { state: 'attached' });
 eq(await sup.$eval('.modal select[name=funding_source_id]', s => s.value), fund.id, 'a new visit is pre-filled with the default fund');
 await sup.keyboard.press('Escape'); await settle(sup);
 

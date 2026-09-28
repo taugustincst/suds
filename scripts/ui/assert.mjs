@@ -41,17 +41,20 @@ export async function saved(page, { timeout = 15000 } = {}) {
 }
 
 /**
- * Put the first-visit welcome tour away the way a person does, deterministically. Home schedules the tour
- * 400 ms after it renders (app.js maybeTour, counted as busy), so after settle() it is either showing or
- * not coming. Its own Skip records tour_done (on a device copy, in the kernel — waited for until it is on
+ * Put the first-visit welcome away the way a person does, deterministically: the card on Home (its Got it),
+ * or on an older build the tour dialog Home scheduled 400 ms after it rendered (its Skip). Its own Skip records tour_done (on a device copy, in the kernel — waited for until it is on
  * disk, so a reload does not bring the tour back over the next click). Removing the dialog from the DOM
  * instead, as scripts used to, left the tour free to open again after a reload and take a click meant for
  * the page: device-audit and forms failed that way now and then.
  */
 export async function skipTour(page) {
   await settle(page);
+  // Since 1.14.0 the welcome is a card on Home ("Got it"), not a dialog; the dialog's Skip is still handled
+  // for a build from before then (qa-retest replays an older static site).
   const skip = await page.$('.modal-bg .modal .btn-row button.ghost:has-text("Skip")');
   if (skip) { await skip.click(); await until(async () => !(await page.$('.modal-bg')), { timeout: 5000 }); await settle(page); }
+  const gotIt = await page.$('[data-welcome-done]');
+  if (gotIt) { await gotIt.click(); await until(async () => !(await page.$('[data-welcome]')), { timeout: 5000 }); await settle(page); }
   if (await page.evaluate(() => !!(window.SUDS_LOCAL && window.SUDS_LOCAL.isDirty))) await saved(page);
 }
 

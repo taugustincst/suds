@@ -95,7 +95,8 @@ function simplex(n, rows, lb, ub, c) {
   const phase = (d, allowed) => {
     const z = new Float64Array(W + 1);
     for (let j = 0; j < W; j++) z[j] = d[j] || 0;
-    for (let i = 0; i < m; i++) { const db = d[basis[i]] || 0; if (db) for (let k = 0; k <= W; k++) z[k] -= db * T[i][k]; }
+    work += W + 1;
+    for (let i = 0; i < m; i++) { const db = d[basis[i]] || 0; if (db) { for (let k = 0; k <= W; k++) z[k] -= db * T[i][k]; work += W + 1; } }
     for (let iter = 0; iter < 50000; iter++) {
       let pj = -1;
       for (let j = 0; j < W; j++) if (allowed(j) && z[j] > FEAS) { pj = j; break; }
@@ -216,7 +217,11 @@ const intFeasible = (prob, c, v, opts) => intFeasibleIn(prob, c, v, v, opts);
 //   cons: [{ terms: [[varIndex, coef]], op, rhs, soft }]
 //   derived: [{ id, terms: [[varIndex, coef]] }]              counts of people printed nowhere
 //   mirror: [[peopleIndex, figureIndex]]                        a figure hidden whenever its people cell is
+//   watch: { varIndex: [varIndex] }                              an unprinted part of a cover, and the small
+//                                                               counts it stands for (run(), covers)
 // }
+// A var with aux: true is a count of people that only ties others (the people of several combined funds); it
+// is not itself one of the sensitive quantities.
 // status per var: 'vis' | 'pri' | 'sec' | 'withheld' | 'unpub'.
 //
 // run(values) is the suppression for one world (one set of true values); it is also what the attacker runs.
@@ -262,15 +267,20 @@ function auditor(model, T, { budget, meter = newMeter() }) {
     // The problem restricted to what can move with the quantity: the non-fixed variables reachable from it
     // through constraints, and every constraint that touches them (fixed variables become constants). With
     // all = true, every hidden variable (a whole world). Only printed values enter it.
+    // Finding the problem is work too (the terms it scans), counted in the budget like a solve's: with many
+    // funds it was as much of the audit's time as the solving, so a budget that counted only the solving
+    // stood for anything from 0.1 to 1 second of work per 25 million units (1.13.0).
     function problem(s, terms, all = false) {
       const idx = new Map(); const queue = [];
       const add = (i) => { if (s[i] !== 'vis' && !idx.has(i)) { idx.set(i, idx.size); queue.push(i); } };
       if (all) vars.forEach((_, i) => add(i)); else for (const [i] of terms) add(i);
-      for (let q = 0; q < queue.length; q++) for (const ci of byVar[queue[q]]) for (const [j] of cons[ci].terms) add(j);
+      let scan = terms.length;
+      for (let q = 0; q < queue.length; q++) for (const ci of byVar[queue[q]]) { const k = cons[ci].terms; scan += k.length; for (const [j] of k) add(j); }
       const members = queue; const n = members.length;
       const touched = new Set(); for (const i of members) for (const ci of byVar[i]) touched.add(ci);
       const order = [...touched].sort((a, b) => a - b);
       const rhs = order.map(ci => { let b = cons[ci].rhs; for (const [j, c] of cons[ci].terms) if (!idx.has(j)) b -= c * values[j]; return b; });
+      tick(meter, 2 * scan + n);
       let constant = 0;
       for (const [i, co] of terms) if (!idx.has(i)) constant += co * values[i];
       const key = `${sig}|${members.map(i => i + s[i]).join(',')}|${rhs.join(',')}|${constant}`;
@@ -342,13 +352,22 @@ function auditor(model, T, { budget, meter = newMeter() }) {
     //   sec: a suppressed count of people: its feasible range must span at least P.
     function deficit(s, q) {
       const p = problem(s, q.terms);
+      // A withheld, unprinted or derived count that the printout does not let be small is protected, whatever
+      // its targets: that is asked first, so the targets (a linear program over everything its symbols tie it
+      // to, which through the people served is most of the model) are worked out only for the counts that can
+      // be small. The answer is the same; with 120 funds the targets of counts that could not be small were
+      // most of the audit's work (1.13.0).
+      if (q.kind === 'cond') {
+        const rk = `${q.id}|reach|${p.key}`;
+        if (!cache.has(rk)) cache.set(rk, reaches(p));
+        if (!cache.get(rk)) return 0;
+      }
       const t = q.kind === 'sec' ? null : targets(s, q);
       const key = `${q.id}|${q.kind}|${p.key}|${t ? `${t.join(',')}:${t.open}` : ''}`;
       if (cache.has(key)) return cache.get(key);
       let d = 0;
       if (q.kind === 'pri' || q.kind === 'cond') {
-        if (q.kind === 'cond' && !reaches(p)) d = 0;
-        else if (p.n === 0) d = t.filter(v => p.constant !== v).length + (q.kind === 'cond' && t.open ? 1 : 0);
+        if (p.n === 0) d = t.filter(v => p.constant !== v).length + (q.kind === 'cond' && t.open ? 1 : 0);
         else {
           d = t.filter(v => !intFeasible(p.prob, p.c, v - p.constant, opt).feasible).length;
           // An unprinted count the symbols let be T or more, which the numbers printed beside them say is
@@ -370,7 +389,7 @@ function auditor(model, T, { budget, meter = newMeter() }) {
     function quantities(s) {
       const out = [];
       vars.forEach((v, i) => {
-        if (!v.people) return;
+        if (!v.people || v.aux) return; // aux: a count that only ties others (the people of several combined funds), not itself held to the rule
         if (s[i] === 'pri') out.push({ id: v.id, terms: [[i, 1]], kind: 'pri', home: [i] });
         else if (s[i] === 'sec') out.push({ id: v.id, terms: [[i, 1]], kind: 'sec', home: [i] });
         else if ((s[i] === 'withheld' || s[i] === 'unpub') && byVar[i].length) out.push({ id: v.id, terms: [[i, 1]], kind: 'cond', home: [i] });
@@ -445,8 +464,11 @@ function auditor(model, T, { budget, meter = newMeter() }) {
     // one is at least 2). So the first part that is shown (structural order) is hidden whenever the printout
     // would pin a small part were that one at the least value the printout allows it - a question about the
     // printed figures and symbols alone, so the answer is the same in every world that prints this release.
+    // A part printed nowhere can stand for small counts too (model.watch: the people of a settlement use's
+    // combined funds stand for each of those funds): the same rule, asked of the counts it stands for.
+    const watch = model.watch || {};
     for (const cover of covers) {
-      const pri = cover.parts.filter(i => s[i] === 'pri');
+      const pri = cover.parts.flatMap(i => (s[i] === 'pri' ? [i] : s[i] === 'unpub' && watch[i] ? watch[i] : []));
       if (!pri.length) continue;
       const c = cover.parts.filter(i => hideable(s, i)).sort((a, b) => (vars[b].people - vars[a].people) || (a - b))[0];
       if (c === undefined) continue;
@@ -473,8 +495,10 @@ function auditor(model, T, { budget, meter = newMeter() }) {
     const passed = new Map();
     const touchOf = (st, q) => {
       const p = w.problem(st, q.terms); const t = new Set(q.terms.map(([i]) => i));
-      for (const i of p.members) { t.add(i); for (const ci of w.byVar[i]) for (const [j] of w.cons[ci].terms) t.add(j); }
-      for (const [i] of q.terms) for (const ci of w.byVar[i]) for (const [j] of w.cons[ci].terms) t.add(j);
+      let scan = 0;
+      for (const i of p.members) { t.add(i); for (const ci of w.byVar[i]) { scan += w.cons[ci].terms.length; for (const [j] of w.cons[ci].terms) t.add(j); } }
+      for (const [i] of q.terms) for (const ci of w.byVar[i]) { scan += w.cons[ci].terms.length; for (const [j] of w.cons[ci].terms) t.add(j); }
+      tick(meter, scan);
       return t;
     };
     // The headline's companions (model.companions: new admissions, episodes opened - counts a reader takes as
@@ -727,11 +751,16 @@ function auditor(model, T, { budget, meter = newMeter() }) {
   return { run, consistent };
 }
 
-// The audit's budget for one release, in solver work (tableau cells; answers from the cache are free). Set
-// well above what a real programme needs (docs/architecture/ADR-0009-publication-release.md: a 5,000-person
-// year takes about 6% of it, 800 one-person languages folded about 21%): a few seconds of solving on a server,
-// in a worker thread.
-const STEP_LIMIT = 200e6;
+// The audit's budget for one release, in solver work: the tableau cells its linear programs touch and the
+// constraint terms it scans to find each problem (answers from the cache are free). A count, so what is
+// published depends on the figures alone. What it costs in time was measured (1.14.0, a 4-core cloud container,
+// Node 22, warmed up, one core): 60 to 200 million units a second across the tests' releases and a
+// 20,000-client benchmark, about 110 million typically - so this budget is about 2 to 7 seconds of one core in
+// the server's worker thread (1.13.0's 200 million, counting the solving only, was 0.6 to 1.2 seconds, not
+// "a few seconds"). Well above what a real programme needs (docs/architecture/ADR-0009-publication-release.md):
+// a 5,000-person year takes about 17 million units, 800 one-person languages folded about 44 million, a year
+// of 20,000 people with 120 funds (80 of them small, combined) about 14 million.
+const STEP_LIMIT = 400e6;
 // The degraded release's own check: at most this many times the work the full release's took, plus this much.
 const DEGRADE_BUDGET_FACTOR = 8;
 const DEGRADE_BUDGET_MIN = 2e6;

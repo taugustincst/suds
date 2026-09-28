@@ -139,7 +139,7 @@ function countingStatement(s) {
     return `Exact counts: every figure is the true number, including groups of fewer than ${T} people. For the program's own ${s.purpose === 'submission' ? 'submission to its funder' : 'internal use'}; not for publication or sharing.`;
   }
   if (s.purpose === 'publication') {
-    return `${PUBLICATION_LABEL}: the whole program, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it; a table that cannot be protected, or whose protection the check cannot confirm, is withheld, prints no rows and is listed with the reason, and the rest of the release is checked again without it). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
+    return `${PUBLICATION_LABEL}: the whole program, ${PERIOD_LABEL[rel.period] || 'one standard period'}. Small cells suppressed: ${how} The funder report, the NDP log and the opioid settlement report for this period are one release, audited together: the audit is designed so that nothing any of them prints, nor which figures it hides, says more about a small hidden count of people than "fewer than ${T}" (a count of services or of naloxone doses that would is hidden with it; a table that cannot be protected, or whose protection the check cannot confirm, is withheld, prints no rows and is listed with the reason, and the rest of the release is checked again without it). Every month of the period, and every code of the "given by" and discharge-reason lists, is listed whether its count is 0 or not. Funds that served fewer than ${T} people are listed together in one row, "Other funds", with their people and services withheld. Small cells are screened automatically, which is not a guarantee: review the withheld and small figures before sharing. ${PUBLICATION_GUIDANCE}`;
   }
   return `${s.purpose === 'submission' ? 'The program\'s own submission to its funder' : 'Internal'}, not for publication${why}. Small cells suppressed: ${how} Figures from a run like this can be subtracted from a published release (the whole program minus one fund, one period minus a shorter one) to reveal a small group, so they stay within the program and its funder.`;
 }
@@ -162,6 +162,45 @@ function foldOf(counts, T) {
   if (small.length <= FOLD_KEEP) return null;
   const combined = new Set(small.slice(FOLD_KEEP));
   return (k) => (combined.has(String(k)) ? FOLDED : k);
+}
+
+// Funding sources are a fixed list - a release lists every active fund, zero or not - but a programme can hold
+// dozens of small grants, and each fund with people under the threshold added cells, and counts worked out
+// from them, that the audit had to protect (server/sdc.js): 60 small funds over a year took the audit past
+// its budget and the whole release was refused (1.13.0). In a publication release every fund that served 1 to
+// T-1 people is combined in one row, "Other funds (n combined)": how many funds it combines and their staff
+// hours (not counts of people), with its people and services withheld. Which funds are combined follows from
+// their symbols alone ("<T", which the release printed for each until 1.13.0), so the combining says nothing
+// a reader did not know, and the row prints no count of people or services, which 1.13.0 did not print for
+// those funds either (each was "<T", its services hidden with it). What the settlement report's people and
+// services by allowable use still say about the combined funds is modelled (server/release-audit.js
+// buildModel; docs/HIPAA.md "Small cells in aggregate reports"). FUND_FOLD_KEEP small funds are listed
+// first (none: the tests set more, to check that listing some does not matter).
+const FUND_FOLD_KEEP = 0;
+const FUND_FOLD_ID = 'combined-funds';
+/** The key a settlement fund's people are grouped under in the settlement report, or null for another fund (as harm-reduction-reports.js settlementFigures). */
+const settlementKeyOf = (f) => (f.source_type === 'opioid_settlement' || f.settlement_use != null || f.settlement_hiaa != null ? (f.settlement_use || 'uncategorised') : null);
+const byKeyNullFirst = (a, b) => (a === b ? 0 : a === null ? -1 : b === null ? 1 : a < b ? -1 : a > b ? 1 : 0);
+/**
+ * Combine the small funds of a publication release's fund table. rows: the active funds in the table's order
+ * ({ id, name, clients_served, services, approved_minutes, unapproved_minutes, group: settlement key or null }).
+ * unionOf(ids): the distinct people served under any of those funds. Returns null when `keep` or fewer
+ * funds are small, else { rows: the funds listed, then the combined row; fold: { id, members, groups } } -
+ * groups: the combined funds by settlement key (null: not a settlement fund, first), each with its true people
+ * (distinct) and services, for the audit (never printed). Pure, so the tests' programmes combine with it too.
+ */
+function foldFunds(rows, T, unionOf, { keep = FUND_FOLD_KEEP } = {}) {
+  if (!T) return null;
+  const small = rows.filter(f => f.clients_served > 0 && f.clients_served < T);
+  if (small.length <= keep) return null;
+  const combined = small.slice(keep);
+  const ids = new Set(combined.map(f => f.id));
+  const sum = (fs, k) => fs.reduce((a, f) => a + (f[k] || 0), 0);
+  const keys = [...new Set(combined.map(f => f.group ?? null))].sort(byKeyNullFirst);
+  const groups = keys.map(key => { const fs = combined.filter(f => (f.group ?? null) === key); return { key, members: fs.map(f => f.id), people: unionOf(fs.map(f => f.id)), services: sum(fs, 'services') }; });
+  const row = { id: FUND_FOLD_ID, name: `Other funds (${combined.length} combined)`, grant_number: null, fiscal_year_start: null, fiscal_year_end: null, combined: true, funds_combined: combined.length,
+    clients_served: SC.WITHHELD, services: SC.WITHHELD, approved_minutes: sum(combined, 'approved_minutes'), unapproved_minutes: sum(combined, 'unapproved_minutes') };
+  return { rows: [...rows.filter(f => !ids.has(f.id)), row], fold: { id: FUND_FOLD_ID, members: combined.map(f => f.id), groups } };
 }
 
 // A reversal: naloxone used and the person survived. An event recorded as kind "reversal" had naloxone
@@ -251,6 +290,7 @@ function* figures(ctx, { from, to, ts, tsP }, fund, opts = {}) {
   db.run(`CREATE TEMP TABLE ${table} (id TEXT PRIMARY KEY) WITHOUT ROWID`);
   try {
     db.run(`INSERT OR IGNORE INTO ${served}(id) SELECT i.client_id FROM interventions i WHERE ${ts('i.occurred_at')} AND i.client_id IS NOT NULL ${fundJoin}`, ...tsP, ...fundP);
+    yield;
     if (!fund) db.run(`INSERT OR IGNORE INTO ${served}(id) SELECT ca.client_id FROM calls ca WHERE ${ts('ca.started_at')} AND ca.client_id IS NOT NULL`, ...tsP);
     db.run(`DELETE FROM ${served} WHERE id NOT IN (SELECT c.id FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql})`, ...cf.params);
     yield;
@@ -291,6 +331,7 @@ function* figures(ctx, { from, to, ts, tsP }, fund, opts = {}) {
       admitted_after_referral: db.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN ${served} s ON s.id=r.client_id WHERE ${ts('r.admitted_at')}`, ...tsP).n,
       on_mat: people.filter(p => p.mat_status === 'active').length,
     };
+    yield;
 
     const episodes = {
       admissions: db.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
@@ -302,9 +343,11 @@ function* figures(ctx, { from, to, ts, tsP }, fund, opts = {}) {
         return d.length ? Math.round(d[Math.floor(d.length / 2)]) : null;
       })(),
     };
+    yield;
 
     const scoped = auth.caseloadRestricted(ctx.user);
     const overdose = overdoseFigures(ts, tsP, scoped ? cf : null);
+    yield;
 
     // One grouped pass over the period's visits, read from the covering index (idx_interventions_period):
     // services and people per funding source — with an explicit "No funding source" row, since a visit
@@ -314,6 +357,7 @@ function* figures(ctx, { from, to, ts, tsP }, fund, opts = {}) {
     const svc = new Map(db.all(`SELECT i.funding_source_id f, COUNT(*) services, COUNT(DISTINCT i.client_id) clients_served,
         COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips, COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
       FROM interventions i WHERE ${ts('i.occurred_at')} GROUP BY i.funding_source_id`, ...tsP).map(x => [x.f, x]));
+    yield;
     // The few deleted clients among them, found through the client index rather than tested on every visit.
     for (const x of db.all(`SELECT i.funding_source_id f, COUNT(DISTINCT i.client_id) n FROM interventions i WHERE i.client_id IN (SELECT id FROM clients WHERE deleted_at IS NOT NULL) AND ${ts('i.occurred_at')} GROUP BY i.funding_source_id`, ...tsP)) {
       if (svc.has(x.f)) svc.get(x.f).clients_served -= x.n;
@@ -337,9 +381,33 @@ function* figures(ctx, { from, to, ts, tsP }, fund, opts = {}) {
     // Filtered to one fund, the report is about that fund: its row, its staff hours, and no "No funding
     // source" row (a visit charged to no fund is not work charged to this one). Unfiltered, every active fund
     // and the "No funding source" row.
-    const byFund = fund
+    let byFund = fund
       ? db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.id=?`, fund).map(f => ({ ...f, ...fundFigures(f.id) }))
-      : db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`).map(f => ({ ...f, ...fundFigures(f.id) }));
+      : db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end, f.source_type, f.settlement_use, f.settlement_hiaa FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name, f.id`)
+        .map(({ source_type, settlement_use, settlement_hiaa, ...f }) => ({ ...f, ...fundFigures(f.id), group: settlementKeyOf({ source_type, settlement_use, settlement_hiaa }) }));
+    // A publication release combines its small funds (foldFunds).
+    let fundFold = null;
+    if (!fund && !scoped && opts.fold) {
+      // Who was served under each small fund, read once in one pass over the period (a person deleted since is
+      // not a person served, as in clients_served): the combined funds' people are counted from it.
+      let under = null;
+      const unionOf = (ids) => {
+        if (!under) {
+          under = new Map();
+          const small = byFund.filter(f => f.clients_served > 0 && f.clients_served < opts.fold).map(f => f.id);
+          for (const x of db.all(`SELECT DISTINCT i.funding_source_id f, i.client_id cid FROM interventions i LEFT JOIN clients c ON c.id=i.client_id
+            WHERE i.client_id IS NOT NULL AND c.deleted_at IS NULL AND ${ts('i.occurred_at')} AND i.funding_source_id IN (SELECT value FROM json_each(?))`, ...tsP, JSON.stringify(small))) {
+            if (!under.has(x.f)) under.set(x.f, []);
+            under.get(x.f).push(x.cid);
+          }
+        }
+        const people = new Set(); for (const id of ids) for (const c of under.get(id) || []) people.add(c);
+        return people.size;
+      };
+      const folded = foldFunds(byFund, opts.fold, unionOf);
+      if (folded) { byFund = folded.rows; fundFold = folded.fold; }
+    }
+    byFund = byFund.map(({ group, ...f }) => f);
     const none = { id: null, name: 'No funding source', grant_number: null, fiscal_year_start: null, fiscal_year_end: null, ...fundFigures(null) };
     if (!fund) byFund.push(none);
     let approved = 0, unapproved = 0;
@@ -359,6 +427,8 @@ function* figures(ctx, { from, to, ts, tsP }, fund, opts = {}) {
       caseload_scope_note: scoped ? CASELOAD_NOTE : null,
       unduplicated, demographics, episodes, overdose, naloxone_distribution: distribution, by_funding_source: byFund,
       attribution: { ...attribution, unattributed_clients: fund ? 0 : none.clients_served },
+      // The funds a publication release combined, for its audit (not printed; foldFunds).
+      ...(fundFold ? { fund_fold: fundFold } : {}),
     };
     return { raw, perFund: svc };
   } finally { db.run(`DROP TABLE IF EXISTS ${served}`); }
@@ -375,7 +445,12 @@ async function build(ctx, range) {
   // A publication release is computed once for all three reports that publish from it (the funder report,
   // the NDP log and the settlement report) and audited as one (server/publication-release.js).
   if (counting.purpose === 'publication') return (await require('./publication-release').release(ctx, range, counting)).funder;
-  const { raw } = await runAsync(figures(ctx, range, fund));
+  // One state of the data, as a publication release and the monthly trend read (db.readSnapshot): the figures
+  // are read in phases that let the event loop go, and a visit saved between two phases used to be able to
+  // land in one table of the report and not the next. Where no snapshot can be opened (the browser kernel, an
+  // in-memory database) it reads as it always did, still letting the event loop go between phases so a
+  // device's screen stays responsive during a year's report (test/kernel-parity.test.js).
+  const { raw } = await db.readSnapshot(async () => runAsync(figures(ctx, range, fund)));
   const sc = { threshold: counting.threshold, exact: counting.mode === 'exact' };
   return { ...header(counting, from, to, fund), caseload_scope_note: raw.caseload_scope_note, ...suppress(raw, sc) };
 }
@@ -488,4 +563,4 @@ function sheets(d, ctx, fundName) {
   };
 }
 
-module.exports = { RUN_LABEL, publicationOn, publicationOffMessage, build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };
+module.exports = { RUN_LABEL, publicationOn, publicationOffMessage, build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, foldFunds, settlementKeyOf, FUND_FOLD_ID, FUND_FOLD_KEEP, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };

@@ -3,7 +3,7 @@
 // the plaintext recoverable. After upgrading schema 41 -> 43 all 50 import file names were still in the free
 // pages of suds.db (no secure_delete, no VACUUM), and 85 more copies sat in the plaintext pre-migration
 // snapshots beside it. Now every connection runs with secure_delete, an upgrade that encrypted a column ends
-// with a VACUUM, a database from before 1.13.1 is vacuumed once, and the pre-migration snapshots are sealed
+// with a VACUUM, a database from before 1.14.0 is vacuumed once, and the pre-migration snapshots are sealed
 // with the backup key once the upgrade has succeeded (and deleted after SNAPSHOT_KEEP_DAYS). Checked by
 // scanning the bytes of every file for the plaintext.
 process.env.SUDS_ENV = 'test';

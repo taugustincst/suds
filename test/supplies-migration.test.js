@@ -21,6 +21,9 @@ before(() => {
   const d = new DatabaseSync(dbPath);
   d.exec(sql);
   adminId = d.prepare(`SELECT id FROM users WHERE role='admin' LIMIT 1`).get().id;
+  // The fixture holds a few cupboard rows of its own (it has rows in every table with an encrypted column):
+  // this test's cupboard is exactly the four below.
+  d.exec(`DELETE FROM supply_stock`);
   const add = d.prepare(`INSERT INTO supply_stock(id,item,quantity,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?)`);
   add.run('stock-nal', 'Naloxone kit', 42, adminId, '2026-01-02T10:00:00.000Z', '2026-08-15T17:30:00.000Z');
   add.run('stock-fts', 'Fentanyl test strips', 180, null, '2026-01-02T10:00:00.000Z', '2026-08-01T09:00:00.000Z');

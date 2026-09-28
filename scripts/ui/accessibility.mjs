@@ -302,7 +302,30 @@ async function prepareOffice() {
 const DIALOGS = [
   ['+ Log menu', null, async (p) => { await p.locator('.appbar .quick:visible, .fab .quick:visible').first().click(); }],
   ['New client', 'clients:write', async (p) => p.evaluate(async () => (await import('./views/clients.js')).openClientForm(null))],
+  // 1.14.0: "+ New client" is Quick add; the full intake is its own dialog.
+  ['New client — full intake', 'clients:write', async (p) => p.evaluate(async () => (await import('./views/clients.js')).openClientForm(null, null, { full: true }))],
   ['Log visit', 'interventions:write', async (p) => p.evaluate(async () => (await import('./views/interventions.js')).openInterventionForm(null, {}))],
+  // The visit's folded sections, every one open (axe does not look inside a closed one).
+  ['Log visit, every section open', 'interventions:write', async (p) => { await p.evaluate(async () => (await import('./views/interventions.js')).openInterventionForm(null, {})); await p.waitForSelector('.modal details[data-section-key]'); await p.evaluate(() => document.querySelectorAll('.modal details').forEach(d => { d.open = true; })); }],
+  // The referral's steps inside its one dialog: the consent naming the provider, and a provider not listed.
+  ['Referral: record a consent (step)', ['referrals:write'], async (p) => {
+    await p.evaluate(async () => {
+      // Through the app's own client, so a device copy asks its in-page server.
+      const a = await import('./app.js');
+      const c = ((await a.get('/api/clients?limit=1', { quiet: true })).clients || [])[0]; const r = ((await a.get('/api/resources?limit=50', { quiet: true })).rows || []);
+      const name = `Axe Step Clinic ${Date.now() % 100000}`;
+      const made = a.can('resources:write') ? await a.post('/api/resources', { name, category: 'outpatient' }, { quiet: true }).catch(() => ({})) : {};
+      (await import('./views/referrals.js')).openReferralForm(null, { clientId: c && c.id, clientDisplay: 'the client', resourceId: made.id || (r[0] && r[0].id) });
+    });
+    await p.waitForSelector('.modal select[name=resource_id]');
+    const b = await p.waitForSelector('.modal [data-record-consent-naming]', { timeout: 5000 }).catch(() => null);
+    if (b) { await b.click(); await p.waitForSelector('.modal [data-referral-step="consent"]'); }
+  }],
+  ['Referral: add a provider (step)', ['referrals:write'], async (p) => {
+    await p.evaluate(async () => (await import('./views/referrals.js')).openReferralForm(null, {}));
+    await p.waitForSelector('.modal select[name=resource_id]');
+    if (await p.$('.modal select[name=resource_id] option[value="__add_resource__"]')) { await p.selectOption('.modal select[name=resource_id]', '__add_resource__'); await p.waitForSelector('.modal [data-referral-step="provider"]'); }
+  }],
   ['Log call', 'calls:write', async (p) => p.evaluate(async () => (await import('./views/calls.js')).openCallForm(null, {}))],
   ['Log text', 'calls:write', async (p) => p.evaluate(async () => (await import('./views/calls.js')).openCallForm(null, { method: 'text' }))],
   ['Write note', ['notes:admin:write', 'notes:clinical:write'], async (p) => p.evaluate(async () => (await import('./views/notes.js')).openNoteForm(null, {}))],
@@ -642,7 +665,7 @@ async function keyboardRun() {
   await go(page, office, 'dashboard');
   ok(await tabTo(page, '.appbar .quick'), `${K}: Tab reaches "+ Log"`);
   await page.keyboard.press('Enter'); await page.waitForSelector('.modal .quick-list');
-  ok(await tabTo(page, '.modal .quick-list button', { text: 'Visit' }), `${K}: Tab reaches "Visit"`);
+  ok(await tabTo(page, '.modal .quick-list button', { text: 'Log a visit' }), `${K}: Tab reaches "Log a visit"`);
   await page.keyboard.press('Enter'); await page.waitForSelector('.modal [name=type]');
   ok((await active(page))?.inModal, `${K}: the visit form opens with focus inside it`);
   ok(await chooseClient(page, `Board${stamp}`) === clientId, `${K}: the client is chosen from the search with arrow keys and Enter`);
@@ -664,7 +687,10 @@ async function keyboardRun() {
   if (!(await page.evaluate(() => document.querySelector('.modal [name=type]').value))) { await page.keyboard.press('ArrowDown'); }
   await tabTo(page, '.modal [name=recipient]'); await keyboardType(page, 'Harbor Clinic');
   await tabTo(page, '.modal [name=purpose]'); await keyboardType(page, 'Coordinate treatment admission');
-  await tabTo(page, '.modal [name=scope]'); await keyboardType(page, 'Name, contact details and referral need');
+  // 1.14.0: what the consent covers is its ticks (written into its scope); the free text is an optional note.
+  await tabTo(page, '.modal [name=cat_demographics]'); await page.keyboard.press('Space');
+  await tabTo(page, '.modal [name=cat_referrals]'); await page.keyboard.press('Space');
+  await tabTo(page, '.modal [name=scope_note]'); await keyboardType(page, 'Referral need');
   await tabTo(page, '.modal [name=signed_on_paper]'); await page.keyboard.press('Space');
   await tabTo(page, '.modal [name=redisclosure_notice_given]'); await page.keyboard.press('Space');
   await tabTo(page, '.modal [name=expires_event]'); await keyboardType(page, 'discharge from the program');
@@ -673,7 +699,7 @@ async function keyboardRun() {
   const cons = await api(page, 'GET', `/api/clients/${clientId}/consents`);
   eq((cons.data?.consents || []).length, 1, `${K}: the consent is recorded`, cons.data);
   await go(page, office, `client/${clientId}/referrals`);
-  ok(await tabTo(page, 'button', { text: '+ Referral' }), `${K}: Tab reaches "+ Referral"`);
+  ok(await tabTo(page, 'button', { text: '+ Make a referral' }), `${K}: Tab reaches "+ Make a referral"`);
   await page.keyboard.press('Enter'); await page.waitForSelector('.modal [name=resource_id]');
   await tabTo(page, '.modal select[name=resource_id]'); await page.keyboard.press('ArrowDown');
   await tabTo(page, '.modal select[name=consent_id]'); await page.keyboard.press('ArrowDown');

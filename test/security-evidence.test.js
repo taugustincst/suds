@@ -269,7 +269,8 @@ test('recovery drill: restores the newest backup into a throwaway copy, proves i
   assert.equal(doc.report.counts.restored.clients, before.clients);
   assert.ok(doc.report.checks.some((c) => /second-factor/.test(c.name) && c.ok));
   assert.ok(doc.report.decrypt_sample.tried >= 2 && doc.report.decrypt_sample.failed === 0);
-  doc.report.rto.seconds = 1;
+  // Any edit breaks the signature; the edit must change the value (a drill that took a second has rto 1 already).
+  doc.report.rto.seconds += 7;
   assert.equal(drill.verifyReport(doc), false);
   // The live database: no drill account, the same rows, and the throwaway copy is gone.
   assert.equal(db.one(`SELECT COUNT(*) n FROM users WHERE username LIKE 'dr-drill-%'`).n, 0);

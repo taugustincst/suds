@@ -78,6 +78,44 @@ function requireReportRun({ caseloadScoped, fund = false }) {
   };
 }
 
+const nextMonth = (m) => { const y = Number(m.slice(0, 4)); const mo = Number(m.slice(5, 7)); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`; };
+/** The monthly report's figures, in phases (a generator: `yield` marks where the event loop may be let go). */
+function* monthlyFigures(user, s) {
+  const out = {};
+  out.intakes = db.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s);
+  out.discharges = db.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s);
+  yield;
+  // One pass over the visits for the services, the people served and the naloxone (three passes until 1.13.0),
+  // a month at a time with the event loop let go in between: the minutes are not in the period index, so the
+  // pass reads every visit's row (0.3 s at 100,000 visits in one piece). Months are whole strings' prefixes, so
+  // each visit falls in exactly one piece, and the last piece takes everything after (dated ahead) as before.
+  // A month with only anonymous visits has no row of people served, as before.
+  const visits = [];
+  const bounds = []; for (let m = s.slice(0, 7); m <= new Date().toISOString().slice(0, 7); m = nextMonth(m)) bounds.push(m);
+  for (let i = 0; i < bounds.length; i++) {
+    const hi = i + 1 < bounds.length ? bounds[i + 1] : null;
+    visits.push(...db.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions
+      WHERE occurred_at >= ?${hi ? ' AND occurred_at < ?' : ''} GROUP BY month ORDER BY month`, i ? bounds[i] : s, ...(hi ? [hi] : [])));
+    yield;
+  }
+  out.interventions = visits.map(({ month, n, minutes, clients }) => ({ month, n, minutes, clients }));
+  out.naloxone = visits.map(({ month, kits, strips }) => ({ month, kits, strips }));
+  out.unduplicated_clients = visits.filter(x => x.clients > 0).map(({ month, clients }) => ({ month, clients }));
+  yield;
+  out.calls = db.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s);
+  out.referrals = db.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s);
+  yield;
+  out.overdose_events = db.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s);
+  out.episodes = db.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s);
+  yield;
+  out.mat_linkage = db.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s);
+  out.spend = auth.hasPerm(user, 'budget:read') ? db.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [];
+  out.time = db.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s);
+  // The keys in the order the report has always had them.
+  const order = ['intakes', 'discharges', 'interventions', 'calls', 'referrals', 'naloxone', 'overdose_events', 'episodes', 'unduplicated_clients', 'mat_linkage', 'spend', 'time'];
+  return Object.fromEntries(order.map(k => [k, out[k]]));
+}
+
 /**
  * Which of the period's visits Home and the Reports dashboard count for this user. A visit for a client counts
  * when the client is on the user's caseload (everyone, for a role that is not caseload-scoped). A visit with no
@@ -91,6 +129,40 @@ function visitScope(user, alias = 'i') {
   const all = !auth.caseloadRestricted(user) || auth.hasPerm(user, 'clients:all');
   return { sql: `(CASE WHEN ${alias}.client_id IS NULL THEN (${alias}.user_id=? OR ?) ELSE ${cf.sql} END)`, params: [user.id, all ? 1 : 0, ...cf.params] };
 }
+
+/**
+ * Figures summed from grouped rows (the dashboard reads each table once, grouped, and adds up here). `n` is a
+ * group's COUNT(*); other fields are SUMs, which SQL leaves NULL when every value was NULL. Keys are ordered
+ * as SQLite orders them (NULL first, numbers before text, text by character code), so a list comes out in the order
+ * GROUP BY gave it; byCount is ORDER BY n DESC, and among equal counts puts the later key first, as SQLite's
+ * sorter did with the grouped rows it was given (test/perf-dashboard.test.js checks both against SQLite).
+ */
+const dashGroups = {
+  count: (groups) => groups.reduce((s, g) => s + g.n, 0),
+  /** COALESCE(SUM(field), 0) over the groups. */
+  sum: (groups, field) => groups.reduce((s, g) => s + (g[field] ?? 0), 0),
+  cmp(a, b) {
+    const rank = (v) => (v === null || v === undefined ? 0 : typeof v === 'number' ? 1 : 2);
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
+    if (a === null || a === undefined) return 0;
+    if (typeof a === 'number') return a - b;
+    return a < b ? -1 : a > b ? 1 : 0;
+  },
+  /** GROUP BY key(g): [{ [name]: key, n, ...SUM(sums) }], in key order. */
+  rollup(groups, key, name = 'k', sums = []) {
+    const m = new Map();
+    for (const g of groups) {
+      const k = key(g);
+      let r = m.get(k);
+      if (!r) { r = { [name]: k, n: 0 }; for (const f of sums) r[f] = null; m.set(k, r); }
+      r.n += g.n;
+      for (const f of sums) if (g[f] !== null && g[f] !== undefined) r[f] = (r[f] ?? 0) + g[f];
+    }
+    return [...m.values()].sort((a, b) => dashGroups.cmp(a[name], b[name]));
+  },
+  /** ORDER BY n DESC over rows in key order; equal counts in reverse key order. */
+  byCount: (rows) => rows.map((r, i) => [r, i]).sort((a, b) => b[0].n - a[0].n || b[1] - a[1]).map(([r]) => r),
+};
 
 module.exports = (r) => {
   r.get('/api/reports/dashboard', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
@@ -106,32 +178,46 @@ module.exports = (r) => {
     // tens of milliseconds, not for all of them. q(fn): run one query, then yield.
     const q = async (fn) => { const v = fn(); await new Promise((resolve) => defer(resolve)); return v; };
     const vs = visitScope(ctx.user);
+    // Up to 1.13 each figure was its own pass: eight over the clients, four over the period's visits (each
+    // reading every visit row whole) and six over its calls — 1.3 seconds at 20,000 clients and 100,000 visits.
+    // Each table is now read once, grouped by everything the figures break down by, and the figures are
+    // summed from those groups here (dashGroups); the visits come from a covering index (schema.sql,
+    // idx_interventions_dashboard). The numbers, and the order of every list, are those the separate queries
+    // gave (test/perf-dashboard.test.js compares the two).
+    const hr = CFX.risk('high');
+    const clientGroups = await q(() => scoped(`SELECT status, primary_substance, mat_status, (${hr.sql}) AS high, COUNT(*) n, SUM(CASE WHEN intake_date BETWEEN ? AND ? THEN 1 ELSE 0 END) AS new_n
+      FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status, primary_substance, mat_status, high`, ...hr.params, from, to));
+    const active = clientGroups.filter(g => g.status === 'active');
+    // Every visit in the period, with or without a client (visitScope): an anonymous distribution of ten kits
+    // is ten kits on Home and Reports as it is in the funder report and the NDP log.
+    const visitGroups = await q(() => db.all(`SELECT i.type, i.user_id, strftime('%Y-%W', i.occurred_at) AS wk, COUNT(*) n, SUM(i.duration_minutes) minutes, SUM(i.naloxone_kits) kits, SUM(i.fentanyl_strips) strips
+      FROM interventions i WHERE ${ts('i.occurred_at')} AND ${vs.sql} GROUP BY i.type, i.user_id, wk`, ...tsP, ...vs.params));
+    const callGroups = await q(() => db.all(`SELECT outcome, direction, crisis, method, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE ${ts('started_at')} GROUP BY outcome, direction, crisis, method`, ...tsP));
+    const workerNames = new Map(db.all(`SELECT id, display_name FROM users`).map(u => [u.id, u.display_name]));
+    const G = dashGroups;
     const out = {
       from, to,
-      clients: { active: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n), waitlist: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n),
-        new_in_range: await q(() => scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n),
+      clients: { active: G.count(active), waitlist: G.count(clientGroups.filter(g => g.status === 'waitlist')),
+        new_in_range: G.sum(clientGroups, 'new_n'),
         // The tiles use the client list's own predicates (server/client-filters.js), so a tile and the list it
         // opens count the same people.
-        high_risk: await q(() => { const f = CFX.risk('high'); return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n; }),
+        high_risk: G.count(active.filter(g => g.high)),
         no_contact_30d: await q(() => { const f = CFX.noContactSince(); return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND ${f.sql}`, ...f.params).n; }),
-        by_status: await q(() => scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`)),
-        by_substance: await q(() => scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`)),
-        mat: await q(() => scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`)),
+        by_status: G.rollup(clientGroups, g => g.status, 'status').map(r => ({ status: r.status, n: r.n })),
+        by_substance: G.byCount(G.rollup(active, g => g.primary_substance ?? 'unknown')),
+        mat: G.rollup(active, g => g.mat_status ?? 'unknown'),
       },
-      // The period's totals in one pass over its visits, not one pass per figure.
-      // Every visit in the period, with or without a client (visitScope): an anonymous distribution of ten kits
-      // is ten kits on Home and Reports as it is in the funder report and the NDP log.
-      interventions: { ...await q(() => db.one(`SELECT COUNT(*) total, COALESCE(SUM(duration_minutes),0) minutes, COALESCE(SUM(naloxone_kits),0) naloxone_kits, COALESCE(SUM(fentanyl_strips),0) fentanyl_strips
-          FROM interventions i WHERE ${ts('i.occurred_at')} AND ${vs.sql}`, ...tsP, ...vs.params)),
-        by_type: await q(() => db.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i WHERE ${ts('i.occurred_at')} AND ${vs.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...vs.params)),
-        by_week: await q(() => db.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i WHERE ${ts('i.occurred_at')} AND ${vs.sql} GROUP BY k ORDER BY k`, ...tsP, ...vs.params)),
-        by_worker: await q(() => db.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id WHERE ${ts('i.occurred_at')} AND ${vs.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...vs.params)),
+      interventions: { total: G.count(visitGroups), minutes: G.sum(visitGroups, 'minutes'), naloxone_kits: G.sum(visitGroups, 'kits'), fentanyl_strips: G.sum(visitGroups, 'strips'),
+        by_type: G.byCount(G.rollup(visitGroups, g => g.type, 'k', ['minutes'])),
+        by_week: G.rollup(visitGroups, g => g.wk),
+        // Grouped by worker (the user id); a visit whose worker is not in users has no row, as the join had none.
+        by_worker: G.byCount(G.rollup(visitGroups.filter(g => workerNames.has(g.user_id)), g => g.user_id, 'id', ['minutes'])).map(r => ({ k: workerNames.get(r.id), n: r.n, minutes: r.minutes })),
       },
-      calls: await q(() => ({ total: db.one(`SELECT COUNT(*) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n, minutes: db.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n,
-        crisis: db.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts('started_at')}`, ...tsP).n, by_outcome: db.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE ${ts('started_at')} GROUP BY outcome ORDER BY n DESC`, ...tsP),
-        by_direction: db.all(`SELECT direction k, COUNT(*) n FROM calls WHERE ${ts('started_at')} GROUP BY direction`, ...tsP),
+      calls: { total: G.count(callGroups), minutes: G.sum(callGroups, 'minutes'),
+        crisis: G.count(callGroups.filter(g => g.crisis === 1)), by_outcome: G.byCount(G.rollup(callGroups, g => g.outcome)),
+        by_direction: G.rollup(callGroups, g => g.direction),
         // Texts are logged alongside calls, so say how the total splits rather than reporting them as calls.
-        texts: db.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts('started_at')}`, ...tsP).n })),
+        texts: G.count(callGroups.filter(g => g.method === 'text')) },
       referrals: await q(() => ({ total: db.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts('r.referred_at')} AND ${cf.sql}`, ...tsP, ...cf.params).n,
         by_status: db.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts('r.referred_at')} AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, ...tsP, ...cf.params),
         by_category: db.all(`SELECT res.category k, COUNT(*) n, SUM(CASE WHEN r.status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE ${ts('r.referred_at')} AND ${cf.sql} GROUP BY res.category ORDER BY n DESC`, ...tsP, ...cf.params),
@@ -186,26 +272,16 @@ module.exports = (r) => {
   });
 
   // Outcomes / monthly program report
-  r.get('/api/reports/monthly', auth.requireAuth, auth.requirePerm('reports:read'), (ctx) => {
+  r.get('/api/reports/monthly', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
     const months = Math.min(24, Math.max(1, Number(ctx.query.get('months') || 12)));
     const start = new Date(); start.setUTCDate(1); start.setUTCMonth(start.getUTCMonth() - months + 1);
     const s = start.toISOString().slice(0, 10);
     // Exact programme-wide counts of people by month: an insider view (docs/HIPAA.md, small cells), so it is audited.
     audit.log({ user: ctx.user, action: 'report.monthly', ip: ctx.ip, details: { months } });
-    return require('../dashboard-mask').monthly(ctx.user, {
-      intakes: db.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
-      discharges: db.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),
-      interventions: db.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-      calls: db.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s),
-      referrals: db.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s),
-      naloxone: db.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-      overdose_events: db.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-      episodes: db.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s),
-      unduplicated_clients: db.all(`SELECT substr(occurred_at,1,7) month, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? AND client_id IS NOT NULL GROUP BY month ORDER BY month`, s),
-      mat_linkage: db.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
-      spend: auth.hasPerm(ctx.user, 'budget:read') ? db.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
-      time: db.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s),
-    });
+    // Read from one snapshot, letting the event loop go between the queries where there is a snapshot to read
+    // from (db.readSnapshot): twelve months at 20,000 clients held it for 315 ms in one piece (1.13.0).
+    const out = await db.readSnapshot(async (canYield) => (canYield ? FR.runAsync(monthlyFigures(ctx.user, s)) : FR.runSync(monthlyFigures(ctx.user, s))));
+    return require('../dashboard-mask').monthly(ctx.user, out);
   });
 
   // The report a funder actually asks for (server/funder-report.js): unduplicated people served, broken down
@@ -363,3 +439,5 @@ module.exports = (r) => {
 };
 // The report period helper, for other exports that bound a period the same way (server/routes/handoff.js).
 module.exports.range = range;
+module.exports.monthlyFigures = monthlyFigures;
+module.exports.dashGroups = dashGroups;

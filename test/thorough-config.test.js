@@ -13,6 +13,7 @@ test('npm test does not run test/thorough; the thorough run finds it and every t
   assert.ok(!/\*\*/.test(pkg.scripts.test), 'a recursive glob would pull test/thorough into npm test');
   const files = require('../scripts/test-thorough').thoroughFiles();
   assert.ok(files.includes('test/publication-release.test.js'), 'the full-size disclosure sweeps');
+  assert.ok(files.includes('test/publication-release-funds.test.js'), 'the combined-funds families at T = 3 and 5');
   assert.ok(files.includes('test/thorough/perf.test.js') && files.includes('test/thorough/funder-perf.test.js'));
   for (const f of fs.readdirSync(path.join(root, 'test', 'thorough'))) assert.ok(f.endsWith('.test.js'), `${f}: test/thorough holds tests only`);
 });

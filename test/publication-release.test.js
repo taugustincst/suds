@@ -80,6 +80,19 @@ test('API: the August release (reviewer e2e1) and the overdose quarter survive t
   }
 });
 
+test('API: the tests\' releases are audited in the worker thread, as the server\'s are', async () => {
+  // docs/architecture/ADR-0009: the API tests exercise the worker path (test/helpers.js does not set
+  // SUDS_AUDIT_INLINE); the pure tests below call the audit directly.
+  const PR = require('../server/publication-release');
+  assert.notEqual(process.env.SUDS_AUDIT_INLINE, '1');
+  const before = { ...PR.auditStats };
+  PR.clearCache();
+  const r = await sup.get(`/api/reports/funder?${AUG}${PUB}`);
+  assert.equal(r.status, 200, JSON.stringify(r.data).slice(0, 200));
+  assert.equal(PR.auditStats.worker, before.worker + 1, 'one audit, in the worker');
+  assert.equal(PR.auditStats.inline, before.inline, 'none inline');
+});
+
 test('API: determinism - asking again, or for the export, serves the identical release', async () => {
   const first = await releaseOf(AUG);
   const again = await releaseOf(AUG);
@@ -318,9 +331,10 @@ function publish(prog, T, opts = {}) {
     funder: p.funder,
     settlement: { funds: prog.funds.filter(f => f.use).map(f => ({ id: f.id, settlement_use: f.use })), services_by_use: settlement.services_by_use.map((x, i) => ({ ...x, people: p.uses[i].people, services: p.uses[i].services })) },
     ndp: HR.ndpPublished(prog.range, counting, new Map(), p.ndp),
-    domains: prog.inputs.domains, withheld: p.withheld_tables,
+    // The list of funds is known (a combined fund is one of the active funds the fund table does not list).
+    domains: prog.inputs.domains, withheld: p.withheld_tables, activeFunds: prog.funds.filter(f => f.active).map(f => f.id),
   };
-  const truth = { funder: raw, settlement: { services_by_use: settlement.services_by_use }, inactiveFunds: prog.inactiveFunds };
+  const truth = { funder: raw, settlement: { services_by_use: settlement.services_by_use }, inactiveFunds: prog.inactiveFunds, fundTruth: prog.fundTruth };
   return { p, pub, truth };
 }
 /** Whatever a report prints is true: a number is the count, "<T" a count of 1..T-1, "suppressed" at least T. */
@@ -384,7 +398,7 @@ test('reviewer reproduction: the funder report and the settlement report of one 
 });
 
 // ---- random programmes, every report of the release attacked together ----
-function randomProgramme(r) {
+function randomProgramme(r, { fold = null } = {}) {
   const pick = (xs, w) => { let u = r() * w.reduce((a, b) => a + b, 0); for (let i = 0; i < xs.length; i++) { u -= w[i]; if (u < 0) return xs[i]; } return xs[xs.length - 1]; };
   const T = 3 + Math.floor(r() * 3);
   const skew = [1 + r() * 8, 1, r()];
@@ -410,7 +424,7 @@ function randomProgramme(r) {
   // closed before it opened, which an import could write).
   const episodes = Array.from({ length: Math.floor(r() * 14) }, () => ({ opened: r() < 0.6 ? 'in' : 'before', state: r() < 0.5 ? 'closed' : 'open', reason: pick(['completed', 'moved', 'lost'], skew) }));
   if (r() < 0.05) episodes.push({ opened: 'in', state: 'closed-before' });
-  return { T, prog: figuresOf({ people, anon, events, episodes, funds }) };
+  return { T, prog: figuresOf({ people, anon, events, episodes, funds, ...(fold ? { fold: { T, ...fold } } : {}) }) };
 }
 
 test('property: nothing any report of a release publishes lets an attacker narrow a hidden count beyond the rule', () => {
@@ -435,6 +449,61 @@ test('property: nothing any report of a release publishes lets an attacker narro
   assert.ok(hidden > runs / 2, `hidden ${hidden}`); assert.ok(secondary > 0, `secondary ${secondary}, withheld ${withheld}`);
   assert.ok(runs - refused >= runs / 5, `refused ${refused} of ${runs}`);
   if (process.env.SUDS_PERF_VERBOSE) console.log(`[release] random programmes: ${refused} of ${runs} refused`);
+});
+
+// ---- small funds combined (1.14.0) ----
+// A publication release combines every fund with 1 to T-1 people in one row, "Other funds (n combined)", which
+// prints how many funds it holds and their staff hours but no people or services (server/funder-report.js
+// foldFunds); what the settlement report says about them is modelled with one stand-in per allowable use
+// (server/release-audit.js buildModel). The attacker models every combined fund on its own: the active funds
+// the table does not list, each 1 to T-1 people. Two kinds of programme: many funds (four to six besides a main
+// one, most of them small, settlement and other funds) with plain demographics, whose audits are quick and
+// nearly always publish; and the random programmes above, every breakdown varied, most of them refused at these
+// thresholds (the check cannot show such tiny programmes protected), so fewer of them.
+function fundsProgramme(r, keep) {
+  const T = r() < 0.6 ? 3 : 4;
+  const funds = [{ id: 'A', use: 'u1', active: true }];
+  const k = 4 + Math.floor(r() * 3);
+  for (let i = 0; i < k; i++) funds.push({ id: `F${i}`, use: r() < 0.6 ? (r() < 0.5 ? 'u1' : 'u2') : null, active: true });
+  if (r() < 0.3) funds.push({ id: 'Z', use: 'u2', active: false });
+  const people = Array.from({ length: 2 * T + Math.floor(r() * 10) }, () => {
+    const visits = {};
+    if (r() < 0.85) visits.A = 1 + Math.floor(r() * 2);
+    for (const f of funds.slice(1)) if (r() < (f.active ? 0.15 : 0.1)) visits[f.id] = 1 + Math.floor(r() * 2);
+    if (r() < 0.1) visits[null] = 1;
+    return person({ gender: r() < 0.8 ? 'm' : 'f', housing: r() < 0.7 ? 'u' : 's', visits, mat: r() < 0.5 });
+  });
+  const anon = r() < 0.3 ? { A: 1 + Math.floor(r() * 2), ...(r() < 0.5 ? { F0: 1 } : {}) } : {};
+  return { T, prog: figuresOf({ people, anon, funds, fold: { T, keep } }) };
+}
+test('property: a release that combines its small funds lets nobody narrow any of them, or anything else, beyond the rule', () => {
+  const r = rng(Number(process.env.PR_SEED) || 20261131);
+  const runs = Number(process.env.PR_RUNS) || (THOROUGH ? 300 : 30);
+  const rich = THOROUGH ? 60 : 10;
+  let combined = 0; let two = 0; let refused = 0; let richPublished = 0;
+  for (let run = 0; run < runs + rich; run++) {
+    // Every small fund combined (as the server does), or the first listed and the rest combined.
+    const keep = run % 3 === 2 ? 1 : 0;
+    const { T, prog } = run < runs ? fundsProgramme(r, keep) : randomProgramme(r, { fold: { keep } });
+    const x = publish(prog, T);
+    if (refusedRelease(x)) { refused++; continue; }
+    if (run >= runs) richPublished++;
+    const { pub, truth } = x;
+    const row = pub.funder.by_funding_source.find(f => f.combined);
+    if (row) {
+      combined++; if (row.funds_combined >= 2) two++;
+      assert.equal(row.clients_served, 'withheld'); assert.equal(row.services, 'withheld');
+      assert.equal(row.funds_combined, prog.combined.length);
+      // Only small funds are combined, and the funds listed after the kept ones are not small.
+      for (const id of prog.combined) assert.ok(prog.fundTruth[id].people > 0 && prog.fundTruth[id].people < T, `run ${run}: ${id}`);
+      assert.ok(pub.funder.by_funding_source.filter(f => f.id && !f.combined && f.clients_served === `<${T}`).length <= keep, `run ${run}`);
+    }
+    assert.deepEqual(attack(pub, truth, T), [], `run ${run}, T=${T}, keep=${keep}: ${JSON.stringify(prog.fundTruth)}`);
+  }
+  assert.ok(combined > runs / 2, `combined in ${combined} of ${runs + rich - refused} published`);
+  assert.ok(two > runs / 5, `two or more funds combined in ${two}`);
+  assert.ok(richPublished > 0, 'a random programme was published');
+  if (process.env.SUDS_PERF_VERBOSE) console.log(`[release] combined funds: ${combined} releases with a combined row (${two} with two or more funds), ${refused} of ${runs + rich} refused`);
 });
 
 // ---- realistic programmes (1.13.0) ----
@@ -703,6 +772,7 @@ test('algorithm-aware attacker: small programmes at thresholds 3 and 5', () => {
     assertNoPatternLeak('events and reversals', pattern.events(3 * T, 5 * T, 20), T);
     assertNoPatternLeak('two months', pattern.months(T + 2, 2 * T + 1), T);
     assertNoPatternLeak('two funds', pattern.funds(T + 1, 2 * T), T);
+    // Two small funds combined in "Other funds (n combined)" (1.14.0): test/publication-release-funds.test.js.
     // Race codes, a cover: 1.12.4 refused most 60-100 person quarters here, and let this one leak at T = 3
     // (a=2 b=2 none=3 printed "<3", "<3", "suppressed": exactly 2 each).
     assertNoPatternLeak('race codes', T === 3 ? pattern.race(10, 15) : pattern.race(12, 18), T);

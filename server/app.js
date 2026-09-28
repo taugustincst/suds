@@ -6,7 +6,7 @@ const db = require('./db');
 const audit = require('./audit');
 const auth = require('./auth');
 const idempotency = require('./idempotency');
-const { Router, HttpError, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, serveStatic } = require('./http');
+const { Router, HttpError, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, sendJsonTo, serveStatic } = require('./http');
 
 // Simple in-memory rate limiter (per IP + bucket). Deliberately process-local, not shared across
 // instances: SUDS runs as exactly one process per database (server/instance-lock.js enforces this at
@@ -153,7 +153,8 @@ function createHandler() {
       // A POST with an Idempotency-Key runs once per (user, key); a retry gets the stored answer (idempotency.js).
       const result = await idempotency.run(ctx, async () => { let out; for (const h of m.handlers) { out = await h(ctx); } return out; });
       if (ctx.idempotentReplay && !res.headersSent) res.setHeader('Idempotent-Replayed', 'true');
-      if (!res.headersSent) sendJson(res, result === undefined ? 204 : (ctx.status || 200), result === undefined ? null : result);
+      // Compressed when it is large and the client accepts it (http.js sendJsonTo), off the event loop.
+      if (!res.headersSent) await sendJsonTo(req, res, result === undefined ? 204 : (ctx.status || 200), result === undefined ? null : result);
     } catch (err) {
       // Routes that stream (exports, PDFs, backups, certificates) may already have written a header. A
       // second write here would throw inside the catch and take the process down, so it is guarded: the

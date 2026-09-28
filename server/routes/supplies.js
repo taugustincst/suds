@@ -82,7 +82,7 @@ module.exports = (r) => {
   r.get('/api/supplies', ...read, (ctx) => {
     const stock = S.stock();
     const me = db.one(`SELECT default_site_id FROM users WHERE id=?`, ctx.user.id);
-    const al = S.alerts();
+    const al = S.alerts({ date: stock.date, stock });
     const naloxone = S.defaultItemFor('naloxone'); const fts = S.defaultItemFor('fentanyl_test_strips');
     return {
       rows: legacyRows(stock),
@@ -102,6 +102,9 @@ module.exports = (r) => {
     items: S.items({ all: false }).map(({ id, name, category, product, unit, quick }) => ({ id, name, category, product, unit, quick })),
     sites: S.sites({ all: false }).map(({ id, name, kind }) => ({ id, name, kind })),
     site_id: S.siteForUser(ctx.user.id), syringes_per_litre: S.syringesPerLitre(), categories: N.CATEGORIES, products: N.NALOXONE_PRODUCTS,
+    // Whether this caller can add an item here (supplies:manage, on a copy that owns its configuration): the
+    // visit form offers "Add naloxone kits and test strips" when the programme keeps neither, else says who can.
+    can_configure: auth.hasPerm(ctx.user, 'supplies:manage') && configurable(),
   }));
 
   // The expiry and stock alerts, for the Home page of whoever runs the cupboard.

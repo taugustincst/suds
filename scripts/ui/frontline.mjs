@@ -2,7 +2,7 @@
 // confirmation soon after signing in (and the password once the window has passed), the supervision queue
 // with client names, rows that open the note or referral from the keyboard, countersigning several notes
 // in one step, the referral form choosing the one consent that names the provider, and the warning for a
-// consent that is already on file. And (1.13.1, the third UX review) anonymous outreach counted on Home and Reports as
+// consent that is already on file. And (1.14.0, the third UX review) anonymous outreach counted on Home and Reports as
 // in the funder report, overdose doses said as stored, "+ Log → Overdose or reversal", the supply cupboard step
 // and the visit that says its kits were not taken off, "Select all" when countersigning, per-role Home
 // headings, and a forced password change that asks the server for nothing it will refuse.
@@ -113,7 +113,8 @@ let consentId;
     await page.selectOption('.modal select[name=type]', 'part2_disclosure');
     await page.fill('.modal input[name=recipient]', 'frontline harbor clinic');
     await page.fill('.modal input[name=purpose]', 'Referral');
-    await page.fill('.modal textarea[name=scope]', 'Referral summary');
+    // 1.14.0: what the consent covers is its ticks (written into its scope), not a second free-text answer.
+    await page.check('.modal input[name=cat_referrals]');
     await page.fill('.modal input[name=expires_at]', '2027-01-01');
     for (const n of ['signed_on_paper', 'revocation_right_given', 'redisclosure_notice_given', 'refusal_consequences_given']) await page.check(`.modal input[name=${n}]`);
     await page.click('.modal button[type=submit]:has-text("Record consent")');
@@ -171,7 +172,7 @@ await nav.close();
   await page.keyboard.press('Enter');
   ok(await until(() => page.$('.modal .kv')), 'Enter on a queue row opens that note');
   await closeModals(page);
-  // Several at once. "Select all" (1.13.1) ticks every note in the queue, and clears them again.
+  // Several at once. "Select all" (1.14.0) ticks every note in the queue, and clears them again.
   const rowsInQueue = (await page.$$('[data-cosign-pick]')).length;
   const all = await page.$('[data-cosign-select-all]');
   ok(all, 'the queue has a "Select all" checkbox');
@@ -231,7 +232,7 @@ await nav.close();
   await api('PUT', `/api/clients/${client.id}`, { flags: before || '' });
 }
 
-// ---- 7. the third UX review (1.13.1) ----
+// ---- 7. the third UX review (1.14.0) ----
 const statValue = (page, label) => page.evaluate((l) => { const s = [...document.querySelectorAll('.main .stat')].find(x => x.querySelector('.l')?.textContent.trim() === l); return s ? Number(s.querySelector('.v').textContent.replace(/[^\d]/g, '')) : null; }, label);
 const pageText = (page) => page.evaluate(() => (document.querySelector('.main')?.innerText || '').replace(/\s+/g, ' '));
 const cupboard = (await admin.api('GET', '/api/supplies')).data.rows;
@@ -285,6 +286,9 @@ eq((await admin.api('GET', '/api/supplies')).data.rows.length, 0, 'the supply cu
   await page.evaluate(async () => (await import('./views/interventions.js')).openInterventionForm(null, {}));
   await page.waitForSelector('.modal select[name=type]');
   await page.selectOption('.modal select[name=type]', 'naloxone_distribution');
+  // 1.14.0: said inside the visit form before it is saved, with who can add the items; the toast stays as a fallback.
+  const inForm = await page.$('.modal [data-supplies-missing]');
+  ok(inForm && /not taken off any stock/.test(await inForm.textContent()) && /Ask a supervisor or administrator/.test(await inForm.textContent()), 'the visit form says, before saving, that kits will not come off any stock', inForm && await inForm.textContent());
   await page.fill('.modal input[name=naloxone_kits]', '10');
   await page.click('.modal button[type=submit]');
   const t3 = await until(() => page.$('#toasts .toast:has-text("not taken off Supplies")'), { timeout: 5000 });

@@ -5,6 +5,7 @@ const crud = require('../crud');
 const C = require('../constants');
 const O = require('../options');
 const { badRequest, forbidden } = require('../http');
+const { validate } = require('../validate');
 const { uuid, encrypt, decrypt } = require('../crypto');
 const supplies = require('./supplies');
 const S = require('../supplies');
@@ -70,6 +71,34 @@ function decodeSummary(row) {
   return { ...row, summary, summary_enc: undefined };
 }
 
+// ---- a note written with the visit (1.14.0) ----
+// The visit form's "Add a note": the note a substantive visit needs (the summary holds no names or health
+// details) written in the same dialog and saved with the visit in one request. It is an ordinary draft note,
+// linked to the visit and its client, under the Note form's permissions, rules, encryption and audit
+// (routes/notes.js checkNewNote/insertNote). Everything is checked before the visit is written, and the
+// note is inserted in the visit's own transaction, so a refused note never leaves the visit saved alone.
+const notes = require('./notes');
+const NOTE_KEYS = ['kind', 'format', 'title', 'content', 'structured', 'part2_protected', 'counseling_note', 'cosign_requested'];
+function planNote(ctx, v) {
+  const raw = v.note; delete v.note;
+  if (raw === undefined || raw === null) return;
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw badRequest('Validation failed', { fields: { note: 'must be an object' } });
+  if (!v.client_id) throw badRequest('A note is about a client: choose the client this visit was with, or save the visit without the note.', { fields: { client_id: 'is required to add a note' } });
+  const body = { client_id: v.client_id, occurred_at: v.occurred_at, source: 'manual' };
+  for (const k of NOTE_KEYS) if (raw[k] !== undefined) body[k] = raw[k];
+  let nv;
+  try { nv = validate(body, notes.noteShape); }
+  catch (e) {
+    // Named as the visit form names them ("Note"), so the error lands under the note's own fields.
+    const f = e.extra && e.extra.fields;
+    if (f) e.extra.fields = Object.fromEntries(Object.entries(f).map(([k, m]) => [`note_${k}`, m]));
+    throw e;
+  }
+  notes.checkNewNote(ctx, nv);
+  nv._with_visit = true;
+  v._note = nv;
+}
+
 // ---- supplies handed out (docs/SUPPLIES.md) ----
 // `supplies` on a request is the whole list of items the visit handed out ([{ item_id, quantity }]); the
 // naloxone_kits and fentanyl_strips counts every report reads are the sums of its naloxone and fentanyl test
@@ -115,15 +144,20 @@ module.exports = (r) => {
       const t = ctx.query.get('type'); if (t) { where.push('interventions.type=?'); params.push(t); }
       // The funder report's "No funding source" warning links here, to the visits that need one.
       if (ctx.query.get('funding') === 'none') where.push('interventions.funding_source_id IS NULL');
+      // Home's "Naloxone kits given" links here: the visits that handed out a kit, whatever their type (a
+      // kit given on an outreach contact or a follow-up counts the same as one on a distribution visit).
+      if (ctx.query.get('naloxone') === '1') where.push('interventions.naloxone_kits > 0');
     },
     afterLoad: (ctx, row) => withLines(decodeSummary(row)),
-    beforeInsert: (ctx, v) => { v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); checkCostPermission(ctx, v);
+    beforeInsert: (ctx, v) => { planNote(ctx, v); v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); checkCostPermission(ctx, v);
       // Nobody chose a fund (the field was not on the form: a role not shown it, or an API client): the
       // worker's default fund, else the programme's. An explicit "none" (null) is left as chosen.
       if (!('funding_source_id' in v)) { const f = require('./budget').defaultFundFor(v.user_id || ctx.user.id); if (f) v.funding_source_id = f; }
       planSupplies(ctx, v);
     },
     beforeUpdate: (ctx, v, row) => {
+      if (v.note !== undefined && v.note !== null) throw badRequest('A note is added to a visit when it is recorded. To write one about an existing visit, use + Note on the client record.');
+      delete v.note;
       delete v.log_time; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v);
       checkCostPermission(ctx, v);
       planSupplies(ctx, v, row);
@@ -140,6 +174,8 @@ module.exports = (r) => {
         uuid(), row.client_id, row.user_id, ctx.user.id, require('../crypto').encrypt(`Follow up: ${O.labelOf('INTERVENTION_TYPES', row.type)}`), row.follow_up_due, 'normal');
       syncExpenditure(row);
       applySupplies(ctx, row, row._supply_plan);
+      // The note written with the visit: in the same transaction, so both are saved or neither is.
+      if (row._note) row._note.id = notes.insertNote(ctx, { ...row._note, intervention_id: row.id });
     },
     afterUpdate: (ctx, row, prev) => {
       syncExpenditure(row); syncTimeEntry(row, prev);
@@ -152,7 +188,7 @@ module.exports = (r) => {
       const lines = S.visitLines(row.id);
       const u = Object.entries(SN.COUNTED).filter(([col, cat]) => Number(row[col] || 0) > 0 && !lines.some(l => l.category === cat))
         .map(([col]) => ({ item: UNTRACKED_NAMES[col], quantity: Number(row[col]) }));
-      return u.length ? { supplies_untracked: u } : {};
+      return { ...(u.length ? { supplies_untracked: u } : {}), ...(row._note && row._note.id ? { note_id: row._note.id } : {}) };
     },
     // The FKs from expenditures.intervention_id and time_entries.intervention_id are ON DELETE SET NULL, so
     // this has to run before the delete — after it, there is no longer any way to find the records this

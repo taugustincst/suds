@@ -55,7 +55,7 @@ const ctx = await browser.newContext(PIXEL7);
 const page = await ctx.newPage(); watch(page, 'device');
 await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 15000 });
 await shot(page, 'setup');
-eq(await page.$eval('[data-purpose]', p => p.textContent), 'Outreach, visits, naloxone and supplies, referrals and grant reporting for harm-reduction, prevention and recovery programs — with the privacy substance-use records need.', 'M3: the first screen says what SUDS is');
+eq(await page.$eval('[data-purpose]', p => p.textContent), 'Outreach, visits, naloxone and supplies, referrals and grant reporting for harm-reduction, prevention and recovery programs — with the privacy that substance-use records need.', 'M3: the first screen says what SUDS is');
 const setupText = await page.textContent('.login-wrap');
 ok(!/both directions|tap Sync/i.test(setupText), 'M2: first-run setup on the device does not promise a sync with the office');
 ok(/in this browser on this device, and nowhere else/.test(setupText) && /backup/.test(setupText), 'M2: it says the records stay in this browser, and to back them up');
@@ -68,18 +68,18 @@ await page.tap('[data-try-sample]');
 await page.waitForSelector('.layout', { timeout: 30000 });
 await settle(page);
 
-// the tour
-const tour = await until(() => page.$('.modal'), { timeout: 5000 });
-ok(tour, 'the welcome tour opens for the new sample account');
-const step1 = tour ? await page.textContent('.modal') : '';
-ok(!/shows up on the other right away/.test(step1), 'M2: the tour does not promise that entries appear on other devices', step1.slice(0, 200));
-ok(/stays in this browser/.test(step1) && /backup/.test(step1), 'M2: the tour says records stay in this browser, and to back them up');
-ok(/^Hi Sample User\./.test(step1.replace(/^Welcome to SUDS/, '').trim()), 'the tour greets "Sample User" by the whole display name', step1.slice(0, 60));
-let labels = [];
-for (let i = 0; i < 8; i++) { const b = await page.$('.modal button.primary'); if (!b) break; labels.push((await b.textContent()).trim()); if (labels.at(-1) === 'Done') { await shot(page, 'tour-last-step'); } await b.tap(); await settle(page); }
-eq(labels.at(-1), 'Done', 'the last tour step\'s button says Done');
-ok(labels.slice(0, -1).every(l => l === 'Next'), 'the steps before it say Next', labels);
-ok(!(await page.$('.modal-bg')), 'Done closes the tour');
+// the welcome: one card on Home since 1.14.0 (it was a five-step dialog over the whole of Home)
+const tour = await until(() => page.$('[data-welcome]'), { timeout: 5000 });
+ok(tour, 'the welcome card shows for the new sample account');
+ok(!(await page.$('.modal-bg')), 'and nothing blocks the page behind it');
+const step1 = tour ? await page.textContent('[data-welcome-intro]') : '';
+ok(!/shows up on the other right away/.test(step1), 'M2: the welcome does not promise that entries appear on other devices', step1.slice(0, 200));
+ok(/stays in this browser/.test(step1) && /backup/.test(step1), 'M2: the welcome says records stay in this browser, and to back them up');
+ok(/^Hi Sample User\./.test(step1.trim()), 'the welcome greets "Sample User" by the whole display name', step1.slice(0, 60));
+await shot(page, 'welcome-card');
+eq((await page.textContent('[data-welcome-done]')).trim(), 'Got it', 'its button says Got it');
+await page.tap('[data-welcome-done]'); await settle(page);
+ok(!(await page.$('[data-welcome]')), 'Got it puts the welcome away');
 
 const h1 = (await page.textContent('h1')).trim();
 ok(/^Good (morning|afternoon|evening), Sample User$/.test(h1), 'the greeting uses the whole display name, as typed', h1);
@@ -220,7 +220,7 @@ if (!withConsent.length) {
 ok(withConsent.length, 'the sample data has a client with a valid Part 2 consent naming this provider');
 if (withConsent.length) {
   const { c } = withConsent[0];
-  await page.tap('button:has-text("+ Refer a client")'); await page.waitForSelector('.modal .client-picker input[type=text]');
+  await page.tap('button:has-text("+ Make a referral")'); await page.waitForSelector('.modal .client-picker input[type=text]');
   ok(/Choose the client first/.test(await page.textContent('.modal [data-consent-help]')), 'before a client is chosen, the consent list says to choose one');
   await page.tap('.modal .client-picker input[type=text]');
   await page.fill('.modal .client-picker input[type=text]', c.last_name || c.display_name.split(' ').pop());

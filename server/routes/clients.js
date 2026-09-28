@@ -85,6 +85,11 @@ const OFFER_MESSAGE = 'An earlier record exists for this person. A supervisor wi
  * A caller holding clients:all can open every record, so nothing is hidden from them and this does not apply:
  * they see the record itself, with its code and status, among the matches.
  */
+// The re-admission reason is for the supervisor who reviews it (the review task and the review queue), so it
+// has to say something ("walked in", "released from jail") -- not "x". It was 15 characters, the break-glass
+// minimum, which is a different act (opening notes outside a role, docs/HIPAA.md); no rule or document asks 15
+// of a re-admission, and a worker with the person in front of them wrote padding to reach it (1.14.0).
+const READMIT_REASON_MIN = 8;
 function readmitOffers(ctx, hidden) {
   if (!canReadmit(ctx.user)) return [];
   return hidden.filter(m => m.reasons.includes(SURNAME_DOB) && isDischarged(m.id)).map(m => {
@@ -178,11 +183,21 @@ module.exports = (r) => {
     const sort = ctx.query.get('sort') || '';
     const order = { last_contact: 'last_contact IS NOT NULL, last_contact ASC', overdue: 'overdue_tasks DESC, last_contact ASC',
       risk: `CASE c.risk_level WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'moderate' THEN 2 ELSE 3 END, last_contact ASC` }[sort] || 'c.updated_at DESC';
-    const rows = db.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth.activeAssignment('a.')}) AS assigned_workers,
-      (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied'))) AS last_contact,
-      (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END)) AS overdue_tasks
+    // The page is found first, computing only what it is sorted by, and the columns that are shown (who is
+    // assigned, last contact, overdue to-dos, consent expiry) are then worked out for its rows alone. One query
+    // used to work every one of them out for every client in the list before sorting and cutting it to a page:
+    // 200 ms for a sort of 20,000 clients, 90 ms to reach page 100 of the default order.
+    const now = db.now();
+    const LAST_CONTACT = `(SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied')))`;
+    const OVERDUE = `(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END))`;
+    const sortCols = sort === 'overdue' ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [now] }
+      : sort === 'last_contact' || sort === 'risk' ? { sql: `, ${LAST_CONTACT} AS last_contact`, params: [] } : { sql: '', params: [] };
+    const pageIds = db.all(`SELECT c.id ${sortCols.sql} FROM clients c ${w} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`, ...sortCols.params, ...params, limit, offset).map(x => x.id);
+    const byId = new Map(db.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth.activeAssignment('a.')}) AS assigned_workers,
+      ${LAST_CONTACT} AS last_contact, ${OVERDUE} AS overdue_tasks
       ${consentWindow ? `, (SELECT MIN(co.expires_at) FROM consents co WHERE co.client_id=c.id AND co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ?) AS consent_expires_at` : ''}
-      FROM clients c ${w} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`, db.now(), ...(consentWindow ? [consentWindow.from, consentWindow.to] : []), ...params, limit, offset);
+      FROM clients c WHERE c.id IN (SELECT value FROM json_each(?))`, now, ...(consentWindow ? [consentWindow.from, consentWindow.to] : []), JSON.stringify(pageIds)).map(x => [x.id, x]));
+    const rows = pageIds.map(id => byId.get(id));
     const total = db.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
     audit.log({ user: ctx.user, action: 'client.list', ip: ctx.ip, details: { q: q ? '[redacted]' : '', status, sort: sort || undefined, filters: filters.length ? filters : undefined, offset: offset || undefined, count: rows.length, deidentified: deidentify } });
     return { clients: rows.map(x => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks, ...(consentWindow ? { consent_expires_at: x.consent_expires_at } : {}) })), total, limit, offset };
@@ -260,7 +275,8 @@ module.exports = (r) => {
   r.post('/api/clients/:id/readmit', auth.requireAuth, auth.requirePerm('clients:write'), auth.requirePerm('episodes:write'), (ctx) => {
     const v = validate(ctx.body, { first_name: { type: 'string', maxLen: 100 }, last_name: { type: 'string', maxLen: 100 }, dob: { type: 'date' }, phone: { type: 'string', maxLen: 40 },
       reason: { type: 'string', required: true, maxLen: 300 }, referral_source: { type: 'string', maxLen: 120 } });
-    if (v.reason.length < 15) throw badRequest('Say why you are re-admitting this person (at least 15 characters) — a supervisor reviews every re-admission', { fields: { reason: 'must be at least 15 characters' } });
+    const why = v.reason.trim();
+    if (why.length < READMIT_REASON_MIN) throw badRequest(`Say why you are re-admitting this person (at least ${READMIT_REASON_MIN} characters, for example "walked in") — a supervisor reviews every re-admission`, { fields: { reason: `must be at least ${READMIT_REASON_MIN} characters` } });
     const row = db.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL AND merged_into IS NULL`, ctx.params.id);
     if (!row) throw notFound('Client not found');
     const match = possibleDuplicates(v).find(m => m.id === row.id);
@@ -397,6 +413,12 @@ module.exports = (r) => {
       minutes: db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
       spent: db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n,
       episodes: db.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n,
+      // For the record's module tabs, which show only when the module is on and has something on this record
+      // or the reader may add to it (public/views/client.js): counts only, for a role that may read them.
+      problems: auth.hasPerm(ctx.user, 'careplan:read') ? db.one(`SELECT COUNT(*) n FROM problems WHERE client_id=?`, row.id).n : null,
+      goals: auth.hasPerm(ctx.user, 'careplan:read') ? db.one(`SELECT COUNT(*) n FROM care_plan_goals WHERE client_id=?`, row.id).n : null,
+      assessments: auth.hasPerm(ctx.user, 'assessments:read') ? db.one(`SELECT (SELECT COUNT(*) FROM asam_assessments WHERE client_id=?) + (SELECT COUNT(*) FROM outcome_measures WHERE client_id=?) n`, row.id, row.id).n : null,
+      suprt: db.one(`SELECT COUNT(*) n FROM suprt_assessments WHERE client_id=?`, row.id).n,
     };
     client.open_episode = !!db.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id);
     // The most recent signed safety plan this person may read, so the overview can say one is on file
@@ -458,7 +480,8 @@ module.exports = (r) => {
   });
 
   // Unified timeline for a client: interventions, calls, notes (metadata only), referrals, tasks/milestones, consents, expenditures
-  r.get('/api/clients/:id/timeline', auth.requireAuth, auth.requirePerm('clients:read'), (ctx) => {
+  // O.cached: each list's labels are read once for the whole timeline, not once per event.
+  r.get('/api/clients/:id/timeline', auth.requireAuth, auth.requirePerm('clients:read'), (ctx) => O.cached(() => {
     const row = loadClient(ctx, ctx.params.id);
     const id = row.id;
     const canClinical = auth.hasPerm(ctx.user, 'notes:clinical:read');
@@ -469,31 +492,35 @@ module.exports = (r) => {
     const before = ctx.query.get('before') || null;
     const cut = (col) => (before ? `AND ${col} < ?` : '');
     const cutP = before ? [before] : [];
+    // Every kind's most recent rows are merged and sorted by date, and only the page's are then built: the
+    // summaries, titles and recipients are decrypted (and list labels looked up) for the events shown, not for
+    // every row fetched to find them (page 5 of a long history decrypted 2,500 values to show 100).
     const events = [];
+    const add = (at, build) => events.push({ at, build });
     for (const x of db.all(`SELECT i.*, u.display_name AS worker FROM interventions i JOIN users u ON u.id=i.user_id WHERE client_id=? ${cut('i.occurred_at')} ORDER BY i.occurred_at DESC LIMIT ?`, id, ...cutP, per))
-      events.push({ kind: 'intervention', id: x.id, at: x.occurred_at, title: O.labelOf('INTERVENTION_TYPES', x.type), detail: x.summary_enc ? decrypt(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf('OUTCOMES', x.outcome) : null, location: x.location } });
+      add(x.occurred_at, () => ({ kind: 'intervention', id: x.id, at: x.occurred_at, title: O.labelOf('INTERVENTION_TYPES', x.type), detail: x.summary_enc ? decrypt(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf('OUTCOMES', x.outcome) : null, location: x.location } }));
     for (const x of db.all(`SELECT c.*, u.display_name AS worker FROM calls c JOIN users u ON u.id=c.user_id WHERE client_id=? ${cut('c.started_at')} ORDER BY c.started_at DESC LIMIT ?`, id, ...cutP, per))
-      events.push({ kind: 'call', id: x.id, at: x.started_at, title: `${x.direction} ${x.method === 'text' ? 'text message' : 'call'} (${O.labelOf('CALL_CONTACT_TYPES', x.contact_type)})`, detail: x.summary_enc ? decrypt(x.summary_enc) : (x.purpose_enc ? decrypt(x.purpose_enc) : null), worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf(x.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES', x.outcome) : null, crisis: !!x.crisis } });
+      add(x.started_at, () => ({ kind: 'call', id: x.id, at: x.started_at, title: `${x.direction} ${x.method === 'text' ? 'text message' : 'call'} (${O.labelOf('CALL_CONTACT_TYPES', x.contact_type)})`, detail: x.summary_enc ? decrypt(x.summary_enc) : (x.purpose_enc ? decrypt(x.purpose_enc) : null), worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf(x.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES', x.outcome) : null, crisis: !!x.crisis } }));
     for (const x of db.all(`SELECT n.id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.source,u.display_name AS worker FROM notes n JOIN users u ON u.id=n.author_id WHERE client_id=? AND deleted_at IS NULL ${cut('n.occurred_at')} ORDER BY n.occurred_at DESC LIMIT ?`, id, ...cutP, per))
-      if (x.kind === 'admin' || canClinical) events.push({ kind: 'note', id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt(x.title_enc) : O.labelOf('NOTE_FORMATS', x.format)}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } });
+      if (x.kind === 'admin' || canClinical) add(x.occurred_at, () => ({ kind: 'note', id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt(x.title_enc) : O.labelOf('NOTE_FORMATS', x.format)}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } }));
     for (const x of db.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=? ${cut('r.referred_at')} ORDER BY r.referred_at DESC LIMIT ?`, id, ...cutP, per))
-      events.push({ kind: 'referral', id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes_enc ? decrypt(x.notes_enc) : null, worker: x.worker, meta: { status: x.status, outcome: x.outcome_enc ? decrypt(x.outcome_enc) : null } });
+      add(x.referred_at, () => ({ kind: 'referral', id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes_enc ? decrypt(x.notes_enc) : null, worker: x.worker, meta: { status: x.status, outcome: x.outcome_enc ? decrypt(x.outcome_enc) : null } }));
     for (const x of db.all(`SELECT t.*, u.display_name AS worker FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE client_id=? ORDER BY COALESCE(t.completed_at, t.due_at, t.created_at) DESC LIMIT ?`, id, per))
-      events.push({ kind: x.is_milestone ? 'milestone' : 'task', id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title_enc ? decrypt(x.title_enc) : '', detail: x.description_enc ? decrypt(x.description_enc) : null, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } });
+      add(x.completed_at || x.due_at || x.created_at, () => ({ kind: x.is_milestone ? 'milestone' : 'task', id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title_enc ? decrypt(x.title_enc) : '', detail: x.description_enc ? decrypt(x.description_enc) : null, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } }));
     for (const x of db.all(`SELECT * FROM consents WHERE client_id=? ORDER BY signed_at DESC LIMIT ?`, id, per))
-      events.push({ kind: 'consent', id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, ' ')}${x.recipient_enc ? ' → ' + decrypt(x.recipient_enc) : ''}`, detail: x.purpose_enc ? decrypt(x.purpose_enc) : null, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } });
+      add(x.signed_at, () => ({ kind: 'consent', id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, ' ')}${x.recipient_enc ? ' → ' + decrypt(x.recipient_enc) : ''}`, detail: x.purpose_enc ? decrypt(x.purpose_enc) : null, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } }));
     if (auth.hasPerm(ctx.user, 'budget:read'))
       for (const x of db.all(`SELECT e.*, f.name AS fund FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE client_id=? ORDER BY e.spent_at DESC LIMIT ?`, id, per))
-        events.push({ kind: 'expense', id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, ' ')}`, detail: x.description_enc ? decrypt(x.description_enc) : null, meta: { fund: x.fund, status: x.status } });
-    events.push({ kind: 'milestone', id: 'intake', at: row.intake_date, title: 'Program intake', meta: {} });
-    if (row.referral_date) events.push({ kind: 'milestone', id: 'referral', at: row.referral_date, title: 'Referred in', meta: {} });
-    if (row.engagement_date) events.push({ kind: 'milestone', id: 'engagement', at: row.engagement_date, title: 'Engaged with services', meta: {} });
-    if (row.discharge_date) events.push({ kind: 'milestone', id: 'discharge', at: row.discharge_date, title: `Discharge: ${row.discharge_reason ? (/^[a-z_]+$/.test(row.discharge_reason) ? O.labelOf('DISCHARGE_REASONS', row.discharge_reason) : row.discharge_reason) : ''}`, meta: {} });
+        add(x.spent_at, () => ({ kind: 'expense', id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, ' ')}`, detail: x.description_enc ? decrypt(x.description_enc) : null, meta: { fund: x.fund, status: x.status } }));
+    add(row.intake_date, () => ({ kind: 'milestone', id: 'intake', at: row.intake_date, title: 'Program intake', meta: {} }));
+    if (row.referral_date) add(row.referral_date, () => ({ kind: 'milestone', id: 'referral', at: row.referral_date, title: 'Referred in', meta: {} }));
+    if (row.engagement_date) add(row.engagement_date, () => ({ kind: 'milestone', id: 'engagement', at: row.engagement_date, title: 'Engaged with services', meta: {} }));
+    if (row.discharge_date) add(row.discharge_date, () => ({ kind: 'milestone', id: 'discharge', at: row.discharge_date, title: `Discharge: ${row.discharge_reason ? (/^[a-z_]+$/.test(row.discharge_reason) ? O.labelOf('DISCHARGE_REASONS', row.discharge_reason) : row.discharge_reason) : ''}`, meta: {} }));
     events.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
-    const page = events.slice(offset, offset + limit);
+    const page = events.slice(offset, offset + limit).map(e => e.build());
     audit.log({ user: ctx.user, action: 'client.timeline', entity: 'client', entityId: id, clientId: id, ip: ctx.ip, details: { events: page.length } });
     return { events: page, limit, offset, more: events.length > offset + limit };
-  });
+  }));
 };
 module.exports.possibleDuplicates = possibleDuplicates;
 module.exports.flagForReview = flagForReview;

@@ -126,9 +126,12 @@ function modelOf(pub, truth, T, { symbolic = false } = {}) {
   tv.set('N', tf.unduplicated.served);
   for (const k of ['on_mat', 'with_a_referral', 'admitted_after_referral']) tv.set(k, tf.unduplicated[k]);
   for (const k of ['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_ethnicity', 'by_race_code']) for (const x of tf.demographics[k]) tv.set(`${k}:${x.k}`, x.n);
-  for (const f of tf.by_funding_source) { tv.set(`fund:${f.id}:p`, f.clients_served); tv.set(`fund:${f.id}:s`, f.services); }
+  // (The combined row of a release that combines small funds holds no count of its own: its funds' are below.)
+  for (const f of tf.by_funding_source) if (!f.combined) { tv.set(`fund:${f.id}:p`, f.clients_served); tv.set(`fund:${f.id}:s`, f.services); }
   for (const x of truth.settlement.services_by_use) { tv.set(`use:${x.use_code}:p`, x.people); tv.set(`use:${x.use_code}:s`, x.services); }
   for (const [id, x] of Object.entries(truth.inactiveFunds || {})) { tv.set(`fund:${id}:p`, x.people); tv.set(`fund:${id}:s`, x.services); }
+  // Every fund's own figures, the ones a release combines too (truth.fundTruth).
+  for (const [id, x] of Object.entries(truth.fundTruth || {})) if (!tv.has(`fund:${id}:p`)) { tv.set(`fund:${id}:p`, x.people); tv.set(`fund:${id}:s`, x.services); }
   const od = tf.overdose;
   tv.set('E', od.events); tv.set('R', od.reversals); tv.set('F', od.fatal); tv.set('C', od.community_reported);
   tv.set('Dall', od.naloxone_doses || 0); tv.set('Dr', od.by_month.reduce((a, m) => a + (m.reversal_doses || 0), 0));
@@ -137,6 +140,8 @@ function modelOf(pub, truth, T, { symbolic = false } = {}) {
   const te = tf.episodes;
   tv.set('D', te.discharges); tv.set('A', te.admissions); tv.set('O', te.open_at_end); for (const x of te.by_discharge_reason) tv.set(`dis:${x.k}`, x.n);
   const CAP = Math.max(0, ...tv.values()) + 3 * T + 2;
+  // A true value that is not a number would make every bound NaN, and the propagation would never settle.
+  if (!Number.isFinite(CAP)) throw new Error(`the attacker's truth holds a value that is not a count: ${[...tv].filter(([, v]) => !Number.isFinite(v)).map(([k, v]) => `${k}=${v}`).join(', ')}`);
   // A key the data do not hold is truly 0.
   const truthOf = (name) => (tv.has(name) ? tv.get(name) : /^(n|r|d|by|dis):/.test(name) ? 0 : undefined);
 
@@ -192,8 +197,20 @@ function modelOf(pub, truth, T, { symbolic = false } = {}) {
   const unk = race.findIndex(x => x.k === 'unknown');
   if (unk >= 0) ri.forEach((i, j) => { if (j !== unk) add([[i, 1], [ri[unk], 1], [N, -1]], '<='); });
   for (const r of f.by_funding_source) {
+    if (r.combined) continue; // prints no people or services
     const p = V(`fund:${r.id}:p`, r.clients_served); const s = V(`fund:${r.id}:s`, r.services, false);
     add([[p, 1], [N, -1]], '<='); add([[p, 1], [s, -1]], '<='); rest(`fund ${r.name}`, p);
+  }
+  // Funds a release combines ("Other funds (n combined)"): the active funds it does not list (the list of funds
+  // is known: pub.activeFunds), each of which served 1 to T-1 people, each person at least once.
+  if (f.by_funding_source.some(r => r.combined)) {
+    const shown = new Set(f.by_funding_source.map(r => r.id));
+    for (const id of pub.activeFunds || []) {
+      if (shown.has(id)) continue;
+      const p = V(`fund:${id}:p`); const s = V(`fund:${id}:s`, undefined, false);
+      vars[p].lo = Math.max(vars[p].lo, 1); vars[p].hi = Math.min(vars[p].hi, T - 1);
+      add([[p, 1], [N, -1]], '<='); add([[p, 1], [s, -1]], '<='); rest(`fund ${id}`, p);
+    }
   }
 
   // Overdose events, by month, in the funder report and again in the NDP log.

@@ -329,7 +329,7 @@ const LOCKED_MESSAGE = 'Account locked after too many failed attempts. Try again
  * The password of the person already signed in, given again to change it or to turn two-step verification
  * off. It gets the sign-in's protections, as a signature's password does (verifySigner): the per-address
  * limit, the account's failure count and lockout, and an audit entry (`action`) for every failure. Before
- * 1.13.1 these routes took unlimited guesses from inside a session (security review of 1.13.0, finding 5).
+ * 1.14.0 these routes took unlimited guesses from inside a session (security review of 1.13.0, finding 5).
  * Throws on failure; the caller clears the failure count once everything it asks for has been given.
  */
 async function confirmPassword(ctx, password, { action, message = 'Password is incorrect' }) {

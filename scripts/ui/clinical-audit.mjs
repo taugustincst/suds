@@ -42,6 +42,8 @@ const nav = await session('mrivera', 'Navigator2026!!');
   await go(page, 'clients');
   await page.click('text=+ New client'); await page.waitForSelector('.modal input[name=first_name]');
   await page.fill('.modal input[name=first_name]', 'Draft'); await page.fill('.modal input[name=last_name]', 'Gone' + stamp);
+  // 1.14.0: + New client is Quick add; the address is on the full intake, one button on (what was typed carries over).
+  await page.click('.modal button[data-full-intake]'); await page.waitForSelector('.modal input[name=city]', { state: 'attached' });
   await page.fill('.modal input[name=city]', 'Auburn');
   await page.click('.modal button[type=submit]'); await page.waitForURL(/#\/client\//, { timeout: 10000 });
   createdId = page.url().split('/client/')[1].split('/')[0];
@@ -49,7 +51,8 @@ const nav = await session('mrivera', 'Navigator2026!!');
   await go(page, 'clients');
   await page.click('text=+ New client'); await page.waitForSelector('.modal input[name=first_name]');
   eq(await page.inputValue('.modal input[name=first_name]'), '', 'the next New client form opens empty');
-  eq(await page.inputValue('.modal input[name=city]'), '', 'including fields typed later');
+  await page.click('.modal button[data-full-intake]'); await page.waitForSelector('.modal input[name=city]', { state: 'attached' });
+  eq(await page.inputValue('.modal input[name=city]'), '', 'including fields typed later (the full intake too)');
   ok(!(await page.$('.modal .banner:has-text("Restored")')), 'and shows no "Restored" banner');
   // L1. contact details are checked in the form, under the field, before any request
   await page.fill('.modal input[name=first_name]', 'Bad'); await page.fill('.modal input[name=last_name]', 'Email' + stamp);
@@ -89,7 +92,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   const exp = (await api('POST', '/api/clients', { first_name: 'Expired', last_name: 'Consent' + stamp, confirm_duplicate: true })).data;
   await api('POST', `/api/clients/${exp.id}/consents`, { type: 'part2_disclosure', recipient: 'Granite Detox', purpose: 'referral', scope: 'dates of service', signed_at: day(-400), expires_at: day(-1), signed_on_paper: true, redisclosure_notice_given: true, revocation_right_given: true, refusal_consequences_given: true });
   await go(page, `client/${exp.id}/referrals`);
-  await page.click('button:has-text("+ Referral")'); await page.waitForSelector('.modal select[name=consent_id]');
+  await page.click('button:has-text("+ Make a referral")'); await page.waitForSelector('.modal select[name=consent_id]');
   eq(await page.$$eval('.modal select[name=consent_id] option', o => o.filter(x => x.value).length), 0, 'the expired consent is not offered');
   ok(/\(expired\)/.test(await page.$eval('.modal select[name=consent_id] option:first-child', o => o.textContent)), 'the empty choice reads "(expired)"');
   ok(await page.$('.modal a[data-add-consent]'), 'with a link to record a new release');
@@ -506,7 +509,8 @@ const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 
   ok(await page.$('.modal input[name=revocation_right_given]') && await page.$('.modal input[name=refusal_consequences_given]') && await page.$('.modal select[name=signer_relationship]') && await page.$('.modal input[name=discloser]'), 'and every 2024 §2.31 element');
   // The rule's class wording alone names nobody SUDS can check: the providers are named too.
   await page.fill('.modal input[name=recipient]', 'Riverbend OTP and my other treating providers');
-  await page.fill('.modal textarea[name=scope]', 'Treatment records and MAT status'); await page.fill('.modal input[name=expires_at]', day(365));
+  // 1.14.0: the ticks are the scope (what SUDS enforces), the free text an optional note.
+  await page.check('.modal input[name=cat_encounters]'); await page.fill('.modal textarea[name=scope_note]', 'MAT status'); await page.fill('.modal input[name=expires_at]', day(365));
   await page.check('.modal input[name=signed_on_paper]'); await page.check('.modal input[name=redisclosure_notice_given]');
   await page.click('.modal button[type=submit]');
   const refused = await until(() => page.$('.modal .banner.danger:not(.hidden)'));

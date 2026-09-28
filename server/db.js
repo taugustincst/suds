@@ -23,6 +23,7 @@ function open(dbPath = config.dbPath) {
     throw e;
   }
   if (dbPath !== ':memory:') for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) { try { fs.chmodSync(f, 0o600); } catch {} }
+  openedPath = dbPath;
   return db;
 }
 
@@ -32,6 +33,7 @@ function open(dbPath = config.dbPath) {
 // would later save that stale copy over them (1.9.2: taking a window back did exactly that).
 function openWith(bytes) {
   if (db) { try { db.close(); } catch {} db = undefined; }
+  openedPath = null;
   db = bytes ? new DatabaseSync(':memory:', bytes) : new DatabaseSync(':memory:');
   try { db.exec('PRAGMA busy_timeout = 5000'); } catch {}
   try { db.exec(SECURE_DELETE); } catch {}
@@ -602,7 +604,33 @@ const migrations = [
   //     (intervention_supplies), the site it drew from, and the syringes and sharps brought back.
   //     Self-contained and idempotent: every step checks what is already there.
   (d) => migrateSupplies(d, safeSchema()),
-  // 46: per-user permission overrides — grants and denies on top of the role's PERMS
+  // 46: the sample data (server/demo.js) wrote a client's preferred name but not its search index until 1.14.0,
+  //     so a sample client could not be found by the name it goes by. Every client with a preferred name and no
+  //     index gets the index its name derives (clients-model preferredNameIndex, as a save writes it). Only
+  //     those rows: an index already written is left alone, and a second run finds nothing to do. A row that
+  //     cannot be decrypted keeps what it had (as migration 26). updated_at is not touched: the index is
+  //     derived, never synchronised, and each device's own copy of this migration fills in its own.
+  (d) => {
+    const { decrypt } = require('./crypto');
+    const M = require('./clients-model');
+    const upd = d.prepare(`UPDATE clients SET preferred_name_idx=? WHERE id=? AND preferred_name_idx IS NULL`);
+    for (const c of d.prepare(`SELECT id, preferred_name_enc FROM clients WHERE preferred_name_enc IS NOT NULL AND preferred_name_idx IS NULL`).all()) {
+      let name; try { name = decrypt(c.preferred_name_enc); } catch { continue; }
+      const idx = M.preferredNameIndex(name);
+      if (idx) upd.run(idx, c.id);
+    }
+  },
+  // 47: indexes for what was slow at 20,000 clients, 100,000 visits and 200,000 notes (docs/PERFORMANCE.md): a
+  //     worker's caseload, a device's sync pull (client and updated_at together), the Home dashboard's visits
+  //     and unsigned notes, a note's addenda, a caseload's notes list, the merged duplicates of a caseload, and
+  //     supplies on hand read from the index alone. Four indexes become wider ones and are dropped.
+  //     Self-contained and idempotent: each index is created from its line in schema.sql only when missing, so
+  //     it can be renumbered beside other 1.14.0 migrations.
+  (d) => {
+    for (const old of ['idx_intervention_supplies_client', 'idx_supply_ledger_stock', 'idx_notes_client', 'idx_assign_user']) d.exec(`DROP INDEX IF EXISTS ${old}`);
+    createIndexesFromSchema(d, safeSchema(), PERF_INDEXES_47);
+  },
+  // 48: per-user permission overrides — grants and denies on top of the role's PERMS
   // (server/auth.js effectivePerms). One row per (user, permission); mode says which.
   (d) => {
     d.exec(`CREATE TABLE IF NOT EXISTS user_permission_overrides (
@@ -617,6 +645,16 @@ const migrations = [
     d.exec(`CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id)`);
   },
 ];
+const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
+  'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];
+/** Create the named indexes exactly as schema.sql declares them (so a fresh and an upgraded database match). */
+function createIndexesFromSchema(d, schemaText, names) {
+  for (const name of names) {
+    const line = schemaText.split('\n').map(l => l.trim()).find(l => l.startsWith(`CREATE INDEX IF NOT EXISTS ${name} ON `));
+    if (!line) throw new Error(`migration: no definition for index ${name} in schema`);
+    d.exec(line);
+  }
+}
 
 // The site every install starts with: created with this fixed id on a fresh database and by migration 45, so
 // an office and every device that syncs with it hold the same row (a device never creates sites of its own).
@@ -675,10 +713,10 @@ function initialise(d, schemaText, dbPath) {
   } else {
     encryptedColumns = 0;
     migrate(d, dbPath);
-    // An upgrade that encrypted a column, and (once) any database from before 1.13.1 — a 1.13.0 install at
+    // An upgrade that encrypted a column, and (once) any database from before 1.14.0 — a 1.13.0 install at
     // schema 43 already carries the plaintext its upgrades left in free pages — is vacuumed. Data hygiene,
     // not schema: a setting records it, like reindexNameParts below; no migration.
-    if (encryptedColumns || !d.prepare(`SELECT 1 FROM settings WHERE key='${SCRUBBED}'`).get()) scrubFreePages(d, encryptedColumns ? 'column encrypted' : 'once, after upgrading to 1.13.1');
+    if (encryptedColumns || !d.prepare(`SELECT 1 FROM settings WHERE key='${SCRUBBED}'`).get()) scrubFreePages(d, encryptedColumns ? 'column encrypted' : 'once, after upgrading to 1.14.0');
     // A database from before programme profiles: decided once from what it holds, so an upgrade never hides
     // a module the programme was using (server/programme.js defaultForExisting). Data, not schema.
     if (!d.prepare(`SELECT 1 FROM settings WHERE key='programme_profile'`).get()) {
@@ -897,16 +935,74 @@ function migrate(d, dbPath) {
   }
 }
 
-function get() { if (!db) open(); return db; }
-function close() { if (db) { db.close(); db = undefined; } }
+// A read that lets the event loop go between its phases must still read one state of the data. The server
+// has one connection, so a transaction on it would take in every other request's writes (and a rollback would
+// undo them). readSnapshot(fn) opens a second, read-only connection to the same file instead, begins a read
+// transaction on it - in WAL mode that is a snapshot: writers on the main connection carry on, and this reader
+// sees none of their commits until it ends - and runs fn with every db call made in fn's own asynchronous
+// context (AsyncLocalStorage) answered from it; other requests, interleaved while fn waits, use the main
+// connection as before. fn(true) may yield. Where there is no second connection to open - an in-memory
+// database (the tests), the browser kernel (no node:async_hooks), or a caller inside a transaction on the main
+// connection, whose uncommitted rows a snapshot would not see - fn(false) runs on the main connection and must
+// not yield: nothing else runs in between, so it reads one state too (server/publication-release.js).
+let snapshotStore = null;
+try { const { AsyncLocalStorage } = require('node:async_hooks'); if (typeof AsyncLocalStorage === 'function') snapshotStore = new AsyncLocalStorage(); } catch { snapshotStore = null; }
+let openedPath = null;
+async function readSnapshot(fn) {
+  const file = db && openedPath && openedPath !== ':memory:' ? openedPath : null;
+  if (!snapshotStore || !file || txDepth > 0 || snapshotStore.getStore()) return fn(false);
+  let conn;
+  try {
+    conn = new DatabaseSync(file, { readOnly: true });
+    conn.exec('PRAGMA busy_timeout = 5000');
+    conn.exec('BEGIN');
+    // A deferred transaction takes its snapshot at its first read: take it now, before fn yields.
+    conn.prepare('SELECT count(*) FROM sqlite_master').get();
+  } catch (e) {
+    try { if (conn) conn.close(); } catch {}
+    console.warn('[suds] a read snapshot could not be opened; reading without letting the event loop go:', e && e.message);
+    return fn(false);
+  }
+  try { return await snapshotStore.run(conn, () => fn(true)); }
+  finally { try { conn.exec('COMMIT'); } catch {} try { conn.close(); } catch {} }
+}
+/** Is the code running now inside readSnapshot's snapshot (so its reads come from the second connection)? */
+const inSnapshot = () => !!(snapshotStore && snapshotStore.getStore());
+
+function get() { const s = snapshotStore && snapshotStore.getStore(); if (s) return s; if (!db) open(); return db; }
+function close() { if (db) { stmts = new Map(); stmtsFor = null; db.close(); db = undefined; openedPath = null; } }
 /** Is a database handle open now? Does not open one (unlike get()) — /api/health/ready asks this. */
 function isOpen() { return !!db; }
 
 // helpers
 function now() { return new Date().toISOString(); }
-function all(sql, ...params) { return get().prepare(sql).all(...params); }
-function one(sql, ...params) { return get().prepare(sql).get(...params); }
-function run(sql, ...params) { return get().prepare(sql).run(...params); }
+// Prepared statements are kept and reused, per open handle. Compiling a statement costs several times what
+// running a simple one does (a settings read: 9 µs prepared each time, under 2 µs reused; the client list's
+// query: 75 µs to compile), and a request runs dozens. Each call below runs its statement to completion
+// (all, get and run reset it before returning), so a kept statement holds no read snapshot and the same one
+// can serve a nested call. SQLite recompiles a kept statement itself when the schema changes under it. The
+// cache is dropped whenever the handle changes (close, reopen, a device loading its copy) and when it fills,
+// since SQL built with a variable number of placeholders would otherwise grow it without bound.
+const STMT_CACHE_MAX = 2000;
+let stmts = new Map(); let stmtsFor = null;
+function prepared(sql) {
+  // Inside readSnapshot the reads go to its own short-lived connection: prepared there, not cached, so the
+  // main connection's statements are neither mixed with its own nor dropped each time a snapshot read runs.
+  const snap = snapshotStore && snapshotStore.getStore();
+  if (snap) return snap.prepare(sql);
+  const d = get();
+  if (stmtsFor !== d) { stmts = new Map(); stmtsFor = d; }
+  let st = stmts.get(sql);
+  if (!st) {
+    st = d.prepare(sql);
+    if (stmts.size >= STMT_CACHE_MAX) stmts.clear();
+    stmts.set(sql, st);
+  }
+  return st;
+}
+function all(sql, ...params) { return prepared(sql).all(...params); }
+function one(sql, ...params) { return prepared(sql).get(...params); }
+function run(sql, ...params) { return prepared(sql).run(...params); }
 // Transactions nest: the outermost is a real BEGIN/COMMIT, inner ones become savepoints, so a helper that
 // opens its own transaction inside a route that already has one cannot silently roll the outer one back.
 let txDepth = 0;
@@ -951,4 +1047,4 @@ function setSetting(key, value) {
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, isOpen, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
+module.exports = { open, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };

@@ -52,18 +52,21 @@ eq(prov.status, 201, 'a provider');
 {
   const { page, api } = nav;
   await go(page, 'referrals');
-  ok(await page.$('.main button:text-is("+ Referral")'), 'the Referrals page button reads "+ Referral"');
+  ok(await page.$('.main button:text-is("+ Make a referral")'), 'the Referrals page button reads "+ Make a referral" (one verb for the action everywhere, 1.14.0)');
   await page.evaluate(async ({ id, rid }) => (await import('./views/referrals.js')).openReferralForm(null, { clientId: id, clientDisplay: 'Quintero-Vasquez, Rosalind', resourceId: rid }), { id: clientId, rid: prov.data.id });
   const btn = await until(() => page.$('.modal [data-record-consent-naming]'));
   ok(btn, 'with no consent naming the provider, the referral form offers to record one');
   eq(btn && (await btn.textContent()).trim(), 'Record a consent naming Hope Street Detox', 'naming the provider');
   await btn.click();
-  await until(() => page.$('.modal h2:has-text("Record a consent naming Hope Street Detox")'));
+  // 1.14.0: a step of the referral dialog (its own heading), not a second dialog on top of it.
+  await until(() => page.$('.modal [data-referral-step="consent"] h3:has-text("Record a consent naming Hope Street Detox")'));
+  eq((await page.$$('.modal')).length, 1, 'the consent is recorded inside the referral dialog');
   eq(await page.inputValue('.modal select[name=type]'), 'part2_disclosure', 'the consent form opens on a Part 2 disclosure consent');
   eq(await page.inputValue('.modal input[name=recipient]'), 'Hope Street Detox', 'to the provider');
   eq(await page.inputValue('.modal input[name=purpose]'), 'Referral and care coordination', 'for referral and care coordination');
   ok(await page.isChecked('.modal input[name=cat_referrals]'), 'covering referrals');
-  await page.fill('.modal textarea[name=scope]', 'Name, contact details and presenting need');
+  ok(await page.isChecked('.modal input[name=cat_demographics]'), 'and identity (what the referral shares): the ticks are the consent\'s scope');
+  await page.fill('.modal textarea[name=scope_note]', 'Presenting need');
   await page.fill('.modal input[name=expires_at]', '2027-09-30');
   for (const n of ['signed_on_paper', 'revocation_right_given', 'redisclosure_notice_given', 'refusal_consequences_given']) await page.check(`.modal input[name=${n}]`);
   await page.click('.modal button[type=submit]:has-text("Record consent")');
@@ -89,7 +92,7 @@ eq(prov.status, 201, 'a provider');
   ok(/Save a usual consent naming your referral partners/.test(await text(page)), 'Home asks an administrator to save a usual consent naming the referral partners');
   await page.click('.main button:has-text("Set up the usual consent")');
   await until(() => page.$('.modal [data-consent-template-form]'));
-  // 1.13.1: the partners are ticked from the directory, none for you (it used to pre-fill the first six
+  // 1.14.0: the partners are ticked from the directory, none for you (it used to pre-fill the first six
   // entries, 211 and a crisis line among them, into a recipient too long to save).
   const recipient = await page.inputValue('.modal textarea[name=recipient]');
   ok(!/including /.test(recipient), 'the recipient wording names no partner until one is ticked', recipient.slice(0, 120));

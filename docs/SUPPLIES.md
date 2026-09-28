@@ -48,6 +48,11 @@ transfers, adjustments, disposal). Finance and read-only accounts do not see the
 
 ## Visits hand supplies out
 
+**Hand out** on the Supplies page (and on each item's row) is the way to record supplies given on the street,
+to someone who gives no name: it opens the visit form preset to a naloxone distribution (or to outreach, for an
+item that is not naloxone), with the item on it and the site chosen above, and the client left optional. It is an
+ordinary visit, so the stock, the NDP log and the funder report count it like any other.
+
 The visit form lists the programme's usual items as rows with a − count + stepper; any other item is one choice
 away, and anonymous outreach contacts use the same list. The visit records every item handed out
 (`intervention_supplies`), the site the stock came from, and the **syringes and sharps brought back**: a count, or an
@@ -61,6 +66,13 @@ estimate from the container's volume at the programme's syringes-per-litre (Supp
 * **Never below zero.** A worker in the field does not stop because the books are behind. When a site's books hold
   less than was handed out, the rest is recorded as a **shortfall**: an adjustment that adds the missing stock,
   flagged for a supervisor (Home, and Supplies → History → *Shortfalls only*), and the draw-down against it.
+* **Kits and strips with no item behind them.** While the programme keeps no naloxone kit or fentanyl test strip
+  item, the visit form's *Supplies given* list still has a row for them (*not taken off stock*) and says, before the
+  visit is saved, that they count on the visit and in reports but come off no stock; someone with `supplies:manage`
+  on a copy that owns its configuration (`GET /api/supplies/catalog` `can_configure`) gets **Add naloxone kits and
+  test strips** right there, which adds the items and moves what was entered onto them. The list is the one place
+  kits are entered whenever the programme keeps any item; the two plain number fields appear only when it keeps
+  none. The toast after saving stays as a fallback (1.14.0).
 * **The naloxone and test strip counts every report reads** (`interventions.naloxone_kits`,
   `interventions.fentanyl_strips`) are the sums of the visit's naloxone and fentanyl test strip items. A request that
   sends only the counts (the API, a spreadsheet import, a device on an older kernel) still works: the counts move the
@@ -71,7 +83,7 @@ estimate from the container's volume at the programme's syringes-per-litre (Supp
 
 ## Syringe services summary
 
-Supplies → *Syringe services report* (and Reports → Harm-reduction reporting): for a period, participants served,
+Supplies → *SSP report* (the syringe services program report; and Reports → Harm-reduction reporting): for a period, participants served,
 contacts (visits and anonymous outreach at which supplies were handed out or sharps brought back), syringes
 distributed and returned and the returns per syringe distributed, sharps containers, naloxone by product, fentanyl
 and xylazine test strips, the other supplies, and referrals made, by month and by site, as CSV or Excel

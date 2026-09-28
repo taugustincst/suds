@@ -7,7 +7,7 @@ const auth = require('../server/auth');
 before(async () => { await H.start(); });
 after(() => H.stop());
 
-test('migration 46 created user_permission_overrides', async () => {
+test('migration 48 created user_permission_overrides', async () => {
   const t = H.db.one(`SELECT name FROM sqlite_master WHERE type='table' AND name='user_permission_overrides'`);
   assert.ok(t, 'user_permission_overrides table exists');
   // The overrides table references users(id): use a real user so the foreign key holds.

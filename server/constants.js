@@ -88,7 +88,7 @@ module.exports = {
     detox_withdrawal_mgmt: 'Detox / Withdrawal Management', emergency_dept: 'Emergency Department', street: 'Street / Outdoor', ids_documents: 'IDs and Documents',
     pregnancy_parenting: 'Pregnancy and Parenting', phones_communication: 'Phones and Communication', food_basic_needs: 'Food and Basic Needs',
     // Codes the generic wording printed as "Opioids Fentanyl", "Court Probation", "Ems", "Va", "Crisis 24 7",
-    // "Non Binary" and "Readonly" (the third UX review, 1.13.1). Exports' labels come from here too.
+    // "Non Binary" and "Readonly" (the third UX review, 1.14.0). Exports' labels come from here too.
     opioids_fentanyl: 'Opioids (fentanyl)', opioids_heroin: 'Opioids (heroin)', opioids_rx: 'Opioids (prescription)',
     court_probation: 'Court / probation', ems: 'EMS', va: 'VA', non_binary: 'Non-binary', transgender_female: 'Transgender female', transgender_male: 'Transgender male',
     buprenorphine_xr: 'Buprenorphine XR', naltrexone_xr: 'Naltrexone XR', naltrexone_oral: 'Naltrexone (oral)', doubled_up: 'Doubled up',

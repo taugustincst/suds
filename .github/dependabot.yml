@@ -27,7 +27,7 @@ updates:
         patterns: ['*']
   # The workflows use no marketplace actions today; this is there for the day one is added. It does not see
   # the exact Node 24 the node24 job pins in ci.yml (NODE24_VERSION and NODE24_SHA256 are env values, not an
-  # action): bump those by hand, monthly with the npm group above (docs/RELEASE.md, "Bumping the pinned Node 24").
+  # action): bump those by hand, monthly with the npm group above (docs/RELEASE.md, "Bumping the pinned Node versions").
   - package-ecosystem: github-actions
     directory: /
     schedule:

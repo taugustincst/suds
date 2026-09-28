@@ -13,7 +13,36 @@ export function openTimeForm(values, { clientId, clientDisplay, onDone } = {}) {
     if (isNew) await post('/api/time', d); else await put(`/api/time/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast('Time saved', 'ok'); m.close(); onDone && onDone();
   } });
+  if (isNew) overlapHint(f);
   const m = modal(isNew ? 'Log time' : 'Edit time entry', f);
+}
+// A visit logs its own time entry ("Also log this as a time entry"), so time typed in by hand for the same day
+// (and client) may be the same work twice. Said before saving, never a block: a second session with the
+// same person is real time too. Reads the day's visit-logged entries (GET /api/time?source=visit).
+function overlapHint(f) {
+  const hint = h('div', { class: 'banner warn small span hidden', role: 'status', 'data-time-overlap': '' });
+  f.querySelector('[data-field="minutes"]').closest('.form-grid').append(hint);
+  let seq = 0;
+  const check = async () => {
+    const mine = ++seq; const day = f.inputs.work_date.value; const client = f.inputs.client_id?.value || '';
+    const worker = f.inputs.user_id?.value || state.user.id;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) { hint.classList.add('hidden'); return; }
+    let rows = [];
+    try { rows = (await get(`/api/time?source=visit&from=${day}&to=${day}&limit=100${can('time:all') ? `&user_id=${encodeURIComponent(worker)}` : ''}`, { quiet: true })).rows || []; } catch { rows = []; }
+    if (mine !== seq) return;
+    rows = rows.filter(r => r.source === 'visit' && r.user_id === worker);
+    const same = client ? rows.filter(r => r.client_id === client) : rows;
+    const whose = worker === state.user.id ? 'your' : `${(state.users.find(u => u.id === worker) || {}).display_name || 'this worker'}'s`;
+    if (!same.length) { hint.classList.add('hidden'); hint.dataset.timeOverlap = ''; hint.textContent = ''; return; }
+    const mins = same.reduce((n, r) => n + (r.minutes || 0), 0);
+    hint.dataset.timeOverlap = String(same.length);
+    hint.textContent = `${fmt.mins(mins)} of ${whose} time on ${fmt.date(day)} was already logged by ${same.length === 1 ? 'a visit' : `${same.length} visits`}${client ? ' with this client' : ''}. Log this only if it is different time, or it counts twice.`;
+    hint.classList.remove('hidden');
+  };
+  // A client chosen from the search list sets its value without a change event, so a click is checked too.
+  const soon = () => setTimeout(check, 0);
+  f.addEventListener('change', soon); f.addEventListener('click', (e) => { if (e.target.closest('[data-field="client_id"]')) setTimeout(check, 50); });
+  check();
 }
 const statusBadge = (r) => {
   const s = r.status || 'draft';
@@ -30,7 +59,7 @@ export function timeTable(rows, { showClient = true, onChange } = {}) {
     { label: 'Category', render: r => fmt.label(r.category, 'TIME_CATEGORIES') }, { label: 'Minutes', key: 'minutes', num: true }, { label: 'Billable', render: r => r.billable ? badge('Yes', 'ok') : '' }, { label: 'Fund', render: r => r.funding_source || '—' },
     // Another worker's description is not sent to a role without access to client records (it can name the
     // client); the cell says so rather than looking empty.
-    { label: 'Description', render: r => h('span', { class: 'small' }, r.description || (r.description_withheld ? h('span', { class: 'muted' }, 'Not shown to your role') : ''), r.intervention_id ? h('span', { class: 'muted' }, ' (from visit)') : r.call_id ? h('span', { class: 'muted' }, ' (from call)') : null) },
+    { label: 'Description', render: r => h('span', { class: 'small' }, r.description || (r.description_withheld ? h('span', { class: 'muted' }, 'Not shown to your role') : ''), (r.source || (r.intervention_id ? 'visit' : r.call_id ? 'call' : '')) === 'visit' ? h('span', { class: 'muted', 'data-time-source': 'visit' }, ' (from visit)') : (r.source === 'call' || r.call_id) ? h('span', { class: 'muted', 'data-time-source': 'call' }, ' (from call)') : null) },
     { label: 'Status', render: r => statusBadge(r) },
     { label: '', render: r => {
       const mine = r.user_id === state.user.id;

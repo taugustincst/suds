@@ -131,7 +131,7 @@ port — not per path. At `<github-username>.github.io/<repository-name>/` every
 same owner (`<github-username>.github.io/<anything>/`) is the same origin: a script on any of them could read
 this app's IndexedDB database and caches or frame it as same-origin. The records are encrypted at rest on the
 device, sealed with the device password (above), and the service worker reads and deletes only its own caches, within
-its own path (1.13.1, `test/sw-phi.test.js`), but that does not make a shared origin a boundary. For real
+its own path (1.14.0, `test/sw-phi.test.js`), but that does not make a shared origin a boundary. For real
 records, publish SUDS on this device at an origin nothing else uses: a custom domain for the Pages site
 (Settings → Pages → *Custom domain*, e.g. `suds.county.example`), a repository named
 `<github-username>.github.io` with no other sites under that owner, or a county web server host name of its

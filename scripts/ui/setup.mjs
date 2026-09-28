@@ -58,7 +58,7 @@ eq((await offlineField())?.value, 'no', 'a hand-picked answer is not overwritten
 eq(await page.$eval('select[name=programme_profile]', e => e.value).catch(() => null), 'harm_reduction', 'the wizard asks what kind of programme this is and defaults to harm reduction & outreach');
 // The programme's main fund (optional) becomes the default for new visits.
 ok(await page.$('input[name=main_fund_name]'), 'the wizard asks for the programme\'s main funding source');
-// 1.13.1: what kind of funding it is. The placeholder's example is settlement money, and a fund named as
+// 1.14.0: what kind of funding it is. The placeholder's example is settlement money, and a fund named as
 // settlement money is taken to be that (it used to be created as "other", and never reached the settlement
 // report); settlement money is also asked its allowable use.
 ok(await page.$('select[name=main_fund_type]'), 'the wizard asks what kind of funding it is');
@@ -86,7 +86,11 @@ ok(await page.$('.layout'), 'the administrator signs in over HTTPS at the new ad
 {
   const me = await page.evaluate(() => fetch('/api/auth/me', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()));
   eq(me.programme && me.programme.profile, 'harm_reduction', 'the new install is a harm-reduction programme');
-  eq(Object.values((me.programme && me.programme.modules) || { x: true }).some(Boolean), false, 'with every clinical module switched off');
+  // The clinical modules; SUPRT-A and publication releases (1.14.0) are programme modules too, but not clinical:
+  // publication releases are on by default, SUPRT-A only with a SOR grant fund.
+  const mods = (me.programme && me.programme.modules) || { careplan: true };
+  eq(['careplan', 'assessments', 'caloms', 'fhir', 'handoff'].some(k => mods[k]), false, 'with every clinical module switched off');
+  eq(mods.publication, true, 'and publication releases on, as a new install starts');
   const funds = await page.evaluate(() => fetch('/api/budget/funds', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()));
   const main = (funds.funds || []).find(f => f.name === 'County opioid settlement allocation');
   ok(main, 'the main funding source named in the wizard exists', JSON.stringify(funds).slice(0, 200));
@@ -121,7 +125,7 @@ ok(!/Set the opioid-settlement category/.test(await page.textContent('#app')), '
 await page.goto(after + '/#/admin?tab=system'); await settle(page);
 const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.click('text=Download encrypted backup')]);
 ok(/\.enc$|\.db/.test(dl.suggestedFilename()), 'the first encrypted backup downloads', dl.suggestedFilename());
-// The key backup asks the administrator to prove it is them with every download (1.13.1: the password or
+// The key backup asks the administrator to prove it is them with every download (1.14.0: the password or
 // authenticator code, even this soon after signing in): the server refuses a session alone.
 await page.click('text=Download key backup');
 const keyDialog = page.getByRole('dialog', { name: 'Download the key backup' });

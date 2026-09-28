@@ -39,25 +39,43 @@ route('client', async (r) => {
   // one still opens it, so a record made before a module was switched off can be read.
   const shows = (mod, k) => moduleOn(mod) || tab === k;
   // The everyday sections first, in the order a visit is worked (and the same on every width): what
-  // happened, what was written, what is owed, whether it may be shared, where they were sent. Consents used to
-  // sit under "More" at 1280 px while Problems and Care plan took the room.
-  const tabs = [['overview', 'Overview'], ['interventions', `Visits (${c.counts.interventions})`], ['notes', `Notes (${c.counts.notes})`], ['tasks', `To-dos (${c.counts.open_tasks})`], ['consents', 'Consents'], ['referrals', `Referrals (${c.counts.referrals})`], ['calls', `Calls (${c.counts.calls})`], ['timeline', 'Timeline'], can('careplan:read') && shows('careplan', 'problems') ? ['problems', 'Problems'] : null, can('careplan:read') && shows('careplan', 'careplan') ? ['careplan', 'Care plan'] : null, can('assessments:read') && shows('assessments', 'assessments') ? ['assessments', 'Assessments'] : null, shows('suprt', 'suprt') ? ['suprt', 'SUPRT-A'] : null, ['forms', `Forms (${c.counts.forms || 0})`], ['episodes', 'Episodes'], ['requests', 'Requests'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team']].filter(Boolean);
+  // happened, what was written, what is owed, whether it may be shared, where they were sent. Those six are
+  // always in the strip; everything else is under its More menu, on every screen (up to 18 tabs used to fill
+  // a desktop strip). Timeline is not a tab of its own: the Overview ends with the recent activity, and
+  // "All activity" opens the whole of it at the same address as before (client/:id/timeline).
+  // A module's tab (care plan, assessments, SUPRT-A) shows when the programme uses the module and this record
+  // has something in it or the reader may add to it; an address that names one still opens it.
+  const n = (k) => Number((c.counts && c.counts[k]) || 0);
+  const moduleTab = (mod, k, label, readable, writable, count) => (tab === k || (moduleOn(mod) && readable && (writable || count > 0)) ? [k, label] : null);
+  const tabs = [['overview', 'Overview'], ['interventions', `Visits (${c.counts.interventions})`], ['notes', `Notes (${c.counts.notes})`], ['tasks', `To-dos (${c.counts.open_tasks})`], ['consents', 'Consents'], ['referrals', `Referrals (${c.counts.referrals})`],
+    ['calls', `Calls (${c.counts.calls})`],
+    moduleTab('careplan', 'problems', 'Problems', can('careplan:read'), can('careplan:write'), n('problems')),
+    moduleTab('careplan', 'careplan', 'Care plan', can('careplan:read'), can('careplan:write'), n('goals')),
+    moduleTab('assessments', 'assessments', 'Assessments', can('assessments:read'), can('assessments:write'), n('assessments')),
+    moduleTab('suprt', 'suprt', 'SUPRT-A', can('clients:read'), can('clients:write'), n('suprt')),
+    ['forms', `Forms (${c.counts.forms || 0})`], ['episodes', 'Episodes'], ['requests', 'Requests'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team'],
+    tab === 'timeline' ? ['timeline', 'All activity'] : null].filter(Boolean);
   // What can be added to this record. On a wide screen each is its own button; on a phone (styles.css,
   // .client-actions) they fold into one "Add…" button that opens the same list, so the section tabs are not
   // pushed below the fold by a wall of buttons.
   function actionBar() {
     const acts = [
-      can('interventions:write') ? ['+ Visit', 'Visit', () => openInterventionForm(null, ctxOpts), { primary: true }] : null,
+      can('interventions:write') ? ['+ Log a visit', 'Log a visit', () => openInterventionForm(null, ctxOpts), { primary: true }] : null,
       can('interventions:write') && c.counts.interventions ? ['↻ Repeat last visit', 'Repeat last visit', () => openRepeatInterventionForm(id, disp, refresh), { title: 'Prefill from their most recent visit — same type, location and supplies, with today\'s date and a blank summary' }] : null,
       can('calls:write') ? ['+ Call', 'Call', () => openCallForm(null, ctxOpts)] : null,
       can('calls:write') ? ['+ Text', 'Text message', () => openCallForm(null, { ...ctxOpts, method: 'text' })] : null,
       (can('notes:admin:write') || can('notes:clinical:write')) ? ['+ Note', 'Note', () => openNoteForm(null, ctxOpts)] : null,
       can('tasks:write') ? ['+ To-do', 'To-do', () => openTaskForm(null, ctxOpts)] : null,
+      // The referral form, opened for this client (its consents are loaded for them).
+      can('referrals:write') ? ['+ Make a referral', 'Make a referral', () => openReferralForm(null, ctxOpts)] : null,
     ].filter(Boolean);
     const edit = can('clients:write') ? () => openClientForm(c, refresh) : null;
+    // A record just made with Quick add (clients.js, state.quickAdded) also offers "Add details": the rest of the
+    // intake, in the same sections as the full form, whenever the worker has it — until it is saved once.
+    const details = () => (edit && state.quickAdded === id ? h('button', { class: 'btn', 'data-client-add-details': '1', onClick: () => openClientForm(c, () => { state.quickAdded = null; refresh(); }) }, 'Add details') : null);
     const wide = h('div', { class: 'row client-actions wide' },
       acts.map(([text, , fn, o = {}]) => h('button', { class: `btn${o.primary ? ' primary' : ''}`, title: o.title || null, onClick: fn }, text)),
-      edit ? h('button', { class: 'btn', onClick: edit }, 'Edit') : null);
+      details(), edit ? h('button', { class: 'btn', onClick: edit }, 'Edit') : null);
     if (!acts.length) return wide;
     // The phone's version: a disclosure (not an ARIA menu), so it is a button and a list of buttons to a
     // screen reader and Tab walks through it. Escape or a click elsewhere closes it.
@@ -71,7 +89,7 @@ route('client', async (r) => {
       if (open) list.querySelector('button')?.focus();
     };
     addBtn.addEventListener('click', () => setOpen(list.classList.contains('hidden')));
-    const narrow = h('div', { class: 'client-actions narrow' }, h('div', { class: 'row' }, addBtn, edit ? h('button', { class: 'btn', onClick: edit }, 'Edit') : null), list);
+    const narrow = h('div', { class: 'client-actions narrow' }, h('div', { class: 'row' }, addBtn, details(), edit ? h('button', { class: 'btn', onClick: edit }, 'Edit') : null), list);
     narrow.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !list.classList.contains('hidden')) { e.stopPropagation(); setOpen(false); addBtn.focus(); } });
     const onDoc = (e) => { if (!narrow.isConnected) { document.removeEventListener('click', onDoc); return; } if (!narrow.contains(e.target)) setOpen(false); };
     document.addEventListener('click', onDoc);
@@ -85,7 +103,7 @@ route('client', async (r) => {
         // A safety plan on file is worth seeing before anything else on a bad day; the chip opens it.
         c.safety_plan ? h('button', { class: 'chip', type: 'button', 'data-safety-plan': c.safety_plan.id, title: 'Open the safety plan', onClick: async () => (await import('./notes.js')).openNote(c.safety_plan.id, { onChange: refresh }) }, `🛟 Safety plan on file (${fmt.date(c.safety_plan.occurred_at)})`) : null].filter(Boolean).map(x => h('li', {}, x)))),
       actionBar()),
-    // On a phone the strip leads with the sections used every day; the rest are under More.
+    // The strip holds the sections used every day; the rest are under More.
     tabStrip(tabs, tab, (k) => nav(`client/${id}/${k}`), { label: 'Client record sections', core: ['overview', 'interventions', 'notes', 'tasks', 'consents', 'referrals'] }),
     body);
 
@@ -104,11 +122,24 @@ route('client', async (r) => {
       can('calls:write') && c.ok_to_text !== 0 ? h('button', { class: 'btn sm', type: 'button', 'data-text': phone, onClick: () => logAfter('text') }, '💬 Text') : null);
   };
 
+  // Everything in date order: visits, calls, notes, referrals, to-dos, as the timeline API gives them.
+  const timelineList = (events) => h('ul', { class: 'timeline' }, events.map(e => h('li', { class: e.kind }, h('div', { class: 't' }, e.at ? fmt.dt(e.at) : '', e.worker ? ` · ${e.worker}` : ''),
+    h('div', { class: 'h' }, e.kind === 'note' ? h('a', { href: '#', onClick: async (ev) => { ev.preventDefault(); (await import('./notes.js')).openNote(e.id, { onChange: refresh }); } }, e.title) : e.title, ' ', e.meta?.status ? badge(fmt.label(e.meta.status), statusKind(e.meta.status)) : null, e.meta?.outcome ? badge(e.meta.outcome_label || fmt.label(e.meta.outcome), statusKind(e.meta.outcome)) : null, e.meta?.duration ? h('span', { class: 'muted small' }, ` ${fmt.mins(e.meta.duration)}`) : null, e.meta?.crisis ? badge('Crisis', 'danger') : null),
+    e.detail ? h('div', { class: 'd' }, String(e.detail).slice(0, 300)) : null)));
+  // The Overview's last section: the most recent activity, and a link to all of it (the Timeline tab that was).
+  const RECENT = 8;
+  const recentActivity = async () => {
+    let events = [];
+    try { ({ events } = await get(`/api/clients/${id}/timeline`)); } catch { return null; }
+    return h('section', { class: 'card', 'data-recent-activity': '1', style: { gridColumn: '1 / -1' } },
+      h('div', { class: 'card-head' }, h('h2', {}, 'Recent activity'), events.length > RECENT ? h('a', { href: `#/client/${id}/timeline`, 'data-all-activity-link': '1' }, `All activity (${events.length})`) : null),
+      events.length ? timelineList(events.slice(0, RECENT)) : h('p', { class: 'muted' }, 'No activity yet.'));
+  };
   const T = {
     async overview() {
       const age = c.dob ? Math.floor((Date.now() - Date.parse(c.dob)) / (365.25 * 86400000)) : null;
       // Problem list, care plan reviews, latest ASAM and outcome trends (CalAIM), for the roles that may see them.
-      const clinical = await (await import('./clinical.js')).overviewCard(id, { refresh });
+      const [clinical, activity] = await Promise.all([(await import('./clinical.js')).overviewCard(id, { refresh }), recentActivity()]);
       return h('div', { class: 'grid cols-2' }, clinical,
         h('div', { class: 'card' }, h('h2', {}, 'Identity & contact'), kv([['Name', `${c.first_name} ${c.last_name}${c.preferred_name ? ` ("${c.preferred_name}")` : ''}`], ['DOB', c.dob ? `${fmt.date(c.dob)} (${age})` : null], ['Gender / pronouns', [c.gender && fmt.label(c.gender), c.pronouns].filter(Boolean).join(' · ')], ['Phone', c.phone || c.alt_phone ? h('div', { class: 'row', style: { gap: '.5rem' } }, phoneRow(c.phone), c.alt_phone ? h('span', {}, h('span', { class: 'muted small' }, 'alt: '), phoneRow(c.alt_phone)) : null) : null], ['Email', c.email ? h('a', { href: `mailto:${c.email}` }, c.email) : null], ['Address', mapLink([c.address, c.city, c.zip].filter(Boolean).join(', '))], ['Language', c.preferred_language], ['Contact rules', [c.ok_to_text ? 'OK to text' : null, c.ok_to_voicemail ? 'OK to voicemail' : null, c.contact_preferences].filter(Boolean).join(' · ') || 'Not recorded — ask before texting or leaving a voicemail'], ['Emergency contact', linkifyPhones(c.emergency_contact)], ['Housing', c.housing_status && fmt.label(c.housing_status)], ['Insurance', [c.insurance && fmt.label(c.insurance), c.medicaid_id && `ID ${c.medicaid_id}`].filter(Boolean).join(' · ')], ['Veteran', c.veteran ? 'Yes' : 'No']])),
         h('div', { class: 'card' }, h('h2', {}, 'Substance use & clinical'), kv([['Primary substance', fmt.label(c.primary_substance, 'SUBSTANCES')], ['Secondary', c.secondary_substances], ['Route', c.route_of_use && fmt.label(c.route_of_use)], ['ASAM level', c.asam_level], ['MAT', [c.mat_status && fmt.label(c.mat_status), c.mat_medication && fmt.label(c.mat_medication)].filter(Boolean).join(' — ')], ['Overdose history', c.overdose_history ? `Yes${c.last_overdose_date ? ', last ' + fmt.date(c.last_overdose_date) : ''}` : 'No'], ['Naloxone', c.naloxone_provided ? `Provided${c.naloxone_last_date ? ' ' + fmt.date(c.naloxone_last_date) : ''}` : 'Not provided'], ['Co-occurring MH', c.co_occurring_mh ? 'Yes' : 'No'], ['Justice involved', c.justice_involved ? 'Yes' : 'No'], ['Pregnant / parenting', c.pregnant_or_parenting ? 'Yes' : 'No'], ['Goals', c.goals]])),
@@ -116,7 +147,8 @@ route('client', async (r) => {
           ['Time until engaged', c.days_to_engagement === null ? (c.referral_date || c.engagement_date ? h('span', { class: 'muted' }, 'needs both dates') : null) : flag(`${c.days_to_engagement} day${Math.abs(c.days_to_engagement) === 1 ? '' : 's'}`, c.days_to_engagement < 0, 'engagement date is before the referral date')],
           ['Episode', c.open_episode ? h('a', { href: `#/client/${id}/episodes` }, 'Open — ', c.counts.episodes > 1 ? `${c.counts.episodes} episodes` : 'first episode') : c.counts.episodes ? h('a', { href: `#/client/${id}/episodes`, style: { color: 'var(--warn)' } }, 'Discharged — re-admit on the Episodes tab') : h('a', { href: `#/client/${id}/episodes`, style: { color: 'var(--warn)' } }, 'None open — start one on the Episodes tab')],
           ['Discharge', c.discharge_date ? `${fmt.date(c.discharge_date)} — ${c.discharge_reason ? (/^[a-z_]+$/.test(c.discharge_reason) ? fmt.label(c.discharge_reason, 'DISCHARGE_REASONS') : c.discharge_reason) : ''}` : null], ['Care team', c.assignments.filter(a => !a.end_date).map(a => `${a.display_name} (${fmt.label(a.role_on_case)})`).join(', ') || 'Unassigned'], c.part2 && c.part2.program ? ['Part 2 notice', c.part2.notice ? h('span', { 'data-notice-given': '1' }, `Given ${fmt.date(c.part2.notice.given_at)}${c.part2.notice.acknowledged ? ', acknowledged' : ''}`) : h('a', { href: `#/client/${id}/consents`, 'data-notice-missing': '1', style: { color: 'var(--warn)' } }, 'Not recorded — record it on the Consents tab')] : null, ['Active consents', c.active_consents.length ? c.active_consents.map(x => `${fmt.label(x.type)}${x.recipient ? ' → ' + x.recipient : ''}`).join('; ') : h('span', { style: { color: 'var(--warn)' } }, 'None on file')]])),
-        h('div', { class: 'grid cols-4', style: { gridColumn: '1 / -1' } }, stat('Visits', c.counts.interventions, '', `client/${id}/interventions`), stat('Calls', c.counts.calls, '', `client/${id}/calls`), stat('Service time', fmt.mins(c.counts.minutes), '', `client/${id}/time`), stat('Open to-dos', c.counts.open_tasks, c.counts.open_tasks ? 'warn' : '', `client/${id}/tasks`), can('budget:read') ? stat('Assistance spent', fmt.money(c.counts.spent), '', `client/${id}/budget`) : null, stat('Referrals', c.counts.referrals, '', `client/${id}/referrals`)));
+        h('div', { class: 'grid cols-4', style: { gridColumn: '1 / -1' } }, stat('Visits', c.counts.interventions, '', `client/${id}/interventions`), stat('Calls', c.counts.calls, '', `client/${id}/calls`), stat('Service time', fmt.mins(c.counts.minutes), '', `client/${id}/time`), stat('Open to-dos', c.counts.open_tasks, c.counts.open_tasks ? 'warn' : '', `client/${id}/tasks`), can('budget:read') ? stat('Assistance spent', fmt.money(c.counts.spent), '', `client/${id}/budget`) : null, stat('Referrals', c.counts.referrals, '', `client/${id}/referrals`)),
+        activity);
     },
     async problems() { return (await import('./clinical.js')).problemsTab(id, { refresh }); },
     async careplan() { return (await import('./clinical.js')).carePlanTab(id, { refresh, clientDisplay: disp }); },
@@ -124,10 +156,8 @@ route('client', async (r) => {
     async suprt() { return (await import('./suprt.js')).suprtTab(id, { refresh, clientDisplay: disp }); },
     async timeline() {
       const { events } = await get(`/api/clients/${id}/timeline`);
-      if (!events.length) return h('div', { class: 'empty' }, 'No activity yet.');
-      return h('div', { class: 'card' }, h('ul', { class: 'timeline' }, events.map(e => h('li', { class: e.kind }, h('div', { class: 't' }, e.at ? fmt.dt(e.at) : '', e.worker ? ` · ${e.worker}` : ''),
-        h('div', { class: 'h' }, e.kind === 'note' ? h('a', { href: '#', onClick: async (ev) => { ev.preventDefault(); (await import('./notes.js')).openNote(e.id, { onChange: refresh }); } }, e.title) : e.title, ' ', e.meta?.status ? badge(fmt.label(e.meta.status), statusKind(e.meta.status)) : null, e.meta?.outcome ? badge(e.meta.outcome_label || fmt.label(e.meta.outcome), statusKind(e.meta.outcome)) : null, e.meta?.duration ? h('span', { class: 'muted small' }, ` ${fmt.mins(e.meta.duration)}`) : null, e.meta?.crisis ? badge('Crisis', 'danger') : null),
-        e.detail ? h('div', { class: 'd' }, String(e.detail).slice(0, 300)) : null))));
+      return h('div', { 'data-all-activity': '1' }, h('p', {}, h('a', { href: `#/client/${id}/overview` }, '← Overview')), h('h2', {}, 'All activity'),
+        events.length ? h('div', { class: 'card' }, timelineList(events)) : h('div', { class: 'empty' }, 'No activity yet.'));
     },
     async interventions() { const d = await get(`/api/interventions?client_id=${id}&limit=500`); return interventionTable(d.rows, { showClient: false, onChange: refresh }); },
     async calls() { const d = await get(`/api/calls?client_id=${id}&limit=500`); return callTable(d.rows, { showClient: false, onChange: refresh }); },
@@ -146,7 +176,7 @@ route('client', async (r) => {
       } }, 'Emergency access to clinical notes') : null;
       return h('div', {}, !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are hidden from your role. ', breakGlass) : null, noteTable(d.rows, { showClient: false, onChange: refresh }), h('div', { id: 'breakglass-notes', class: 'mt' }));
     },
-    async referrals() { const d = await get(`/api/referrals?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, ctxOpts) }, '+ Referral') : null), referralTable(d.rows, { showClient: false, onChange: refresh })); },
+    async referrals() { const d = await get(`/api/referrals?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, ctxOpts) }, '+ Make a referral') : null), referralTable(d.rows, { showClient: false, onChange: refresh })); },
     async tasks() { const d = await get(`/api/tasks?client_id=${id}&limit=500`); return taskTable(d.rows, { showClient: false, onChange: refresh }); },
     async time() { const d = await get(`/api/time?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('time:write') ? h('button', { class: 'btn primary', onClick: () => openTimeForm(null, ctxOpts) }, '+ Log time') : null), timeTable(d.rows, { showClient: false, onChange: refresh })); },
     async budget() { const d = await get(`/api/budget/expenditures?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('budget:write') ? h('button', { class: 'btn primary', onClick: () => openExpenditureForm(null, ctxOpts) }, '+ Record client assistance') : null, h('span', { class: 'muted' }, `Total approved: ${fmt.money(c.counts.spent)}`)), expenditureTable(d.rows, { showClient: false, onChange: refresh })); },

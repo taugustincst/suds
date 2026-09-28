@@ -2,6 +2,142 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.14.1 — 2026-09-28
+
+A fix release from the retest of 1.14.0 on the live site. No migration, permission or route.
+
+- **Home no longer blanks while it refreshes.** Home's 90-second refresh redrew the whole page, which showed
+  "Loading…" with no heading until the figures came back, and each redraw started another refresh timer
+  without stopping the last, so refreshes multiplied the longer Home stayed open. There is now one timer, and a
+  refresh builds the new Home first and swaps it in whole, only while nobody is working in the page.
+- The sign-in page's line reads "…with the privacy that substance-use records need".
+- The phone/tablet page offers **Open SUDS** once; the notice that records stay on the device no longer
+  repeats the link.
+
+## 1.14.0 — 2026-09-27
+
+**Released under a policy exception.** 1.14.0 is a feature release one day after 1.13.0, where the release
+policy allows one a month (docs/RELEASE.md). The owner approved the exception so that the findings of the four
+reviews of 1.13.0 (frontline, security, engineering, market) and of a usability evaluation ship together, with
+the market gaps they named. The release gate now checks the monthly limit, so this exception is recorded, not
+an oversight.
+
+**Upgrade notes for administrators.** Four migrations run on start (schema 43 → 47), after the usual
+pre-migration snapshot, which is now encrypted like a backup once the upgrade succeeds and deleted after 14 days:
+44 adds SUPRT-A records; 45 moves supplies from one number per item to items, sites, lots and a stock ledger
+(each 1.13 count becomes an opening balance at the Main office); 46 fills in a missing search index for sample
+clients' preferred names; 47 adds indexes (the first start takes a few seconds longer on a large database).
+The first start also compacts the database once, so values encrypted by earlier upgrades are not left in its
+free pages. New permissions: `reports:funder` (finance, supervisor, administrator), `supplies:read`,
+`supplies:receive` (navigator, clinician) and `supplies:*` (supervisor, administrator). Setting a supply count
+now needs a supervisor or administrator. Downloading the key backup asks for the password or authenticator code
+every time. Turning two-step verification off needs a current code.
+
+### Frontline
+
+- Home and the Reports dashboard now count visits recorded with no client — community naloxone distribution and street outreach. They used to leave them out, so an anonymous hand-out of ten kits appeared as two kits on Home while the funder report and NDP log said twelve. A supervisor's or administrator's visits, kits and test strips now match the funder report for the same period. A navigator's figures are their caseload's visits plus the anonymous outreach they logged themselves.
+- The program's usual consent (Home → Finish setting up) now lets the administrator tick referral partners from the resource directory. Nothing is ticked in advance and crisis lines are not offered; ticked partners are remembered when the consent is reopened. It previously pre-filled six arbitrary directory entries, including 211 and 988, into a recipient too long to save. A consent's recipient can now be up to 2,000 characters. Form errors now say what to change in plain words ("… is too long: keep it under 2,000 characters") instead of "Validation failed: … max length 300".
+- The setup wizard now asks what kind of funding the main fund is. For opioid settlement money it also asks the allowable use and California High Impact Abatement Activity, so the fund appears in the opioid settlement report. Previously every wizard fund was created as "other". When no fund is settlement money, or nothing was spent in the period, the settlement report now says so on the Reports page and in the file, instead of producing a header row with nothing under it.
+- The overdose list now shows the naloxone doses that were recorded, and "given, doses not recorded" when none were entered. It used to show "1 dose" where the reports counted 0. The confirmation message now includes the doses, and a new overdose event starts on the worker's default fund, as a visit does.
+- Home's setup checklist now has "Add your supplies": one click adds Naloxone kit and Fentanyl test strips to Supplies, and Supplies offers the same when they are missing. A visit that hands out kits or strips when the cupboard has no item for them now says they were not taken off Supplies, instead of silently leaving the count unchanged.
+- Coded choices now read as words everywhere, exports included: "Court / probation", "EMS", "VA", "Opioids (fentanyl)", "Buprenorphine XR", "Non-binary", "24/7 crisis", "Co-occurring", "Read-only", "SOR grant", "SAMHSA". Patient-rights requests are now called client rights requests.
+- A production server no longer offers "Load sample data" on Home; it remains under Settings › Program. The audit-anchor finding is now a plain sentence at the top of an administrator's Home, saying what is wrong, who fixes it and where the steps are, with a link to Security status. It is amber, turns red if an audit check has failed, and cannot be dismissed.
+- A new account that must change its password no longer triggers a series of refused requests on the password page. "+ Log" now includes "Overdose or reversal". Home's activity card is headed for the role viewing it: finance and read-only no longer see "What you have been doing" over the program's visits. Countersigning several notes has a "Select all" checkbox.
+
+### Usability: forms
+
+- Recording a visit is a field note. The visit form shows what every visit has: who (optional for anonymous outreach and naloxone distribution), what was done, when, where and how, the supplies given and a short summary. Outcome & follow-up, Syringe services, Funding & cost, Time, Recorded by and Add a note are folded sections, opened from their headings with a mouse or the keyboard. A section opens by itself when it holds something or a field in it needs fixing, and otherwise stays as you last left it; folded, it says what it holds. A cost with no budget line is caught in the form. Nothing was removed.
+- A new visit starts where your last one did. Your last visit's type, location and modality fill a new visit. Until you have one, the program's default location is used.
+- The time a visit logs is visible, and not counted twice. "Also log this as a time entry" says what it adds ("adds 20 min of direct service to your time"). It is on the first time, because supervisors approve hours from these entries, and then keeps your last choice. Logging time by hand for a day and client a visit already covered says so before you save. Time entries now carry where they came from (visit, call or manual) in the API, so lists can mark them.
+- A visit's note in the same dialog. "Add a note" in the visit form writes the note the summary cannot hold. It is saved with the visit in one step, as a draft on the client's record linked to the visit, with the Note form's permissions, formats, Part 2 flag, encryption and audit. If the note is refused, nothing is saved.
+- Supplies with no item are said up front. When Supplies has no naloxone kit or fentanyl test strip item, the visit form says so before saving: the kits count on the visit and in reports but come off no stock. A supervisor or administrator can add the items right there. Kits are always entered in the one "Supplies given" list; the plain number fields appear only when the program keeps no supply items at all.
+- New client is Quick add. "+ New client" asks for the name (or the name they go by), and a date of birth or phone if given. It creates the record and opens it, where "Add details" carries on with the rest of the intake. "Full intake" opens the whole form with what you typed. When an earlier discharged record is offered for re-admission, the reason is asked for in the same dialog. It needs 8 characters, not 15: that was the break-glass minimum, a different act. The offer rules and the supervisor's review are unchanged.
+- A referral stays in one dialog. Recording a consent that names the provider, or adding a provider not in the directory, is now a step of the referral dialog, never a second dialog on top; Escape goes back. A new referral asks for its outcome and barrier only when it is entered as already over; otherwise they are recorded with "Record outcome".
+- A consent asks what it covers once. The ticked categories are what a consent covers: SUDS enforces them, and they are written into the consent as its scope. Anything else the signed form says goes in an optional note marked "not enforced". What is enforced is unchanged, and no existing consent was changed.
+- Referrals in and out. A client's intake asks "Who referred them to us"; the Referrals page is "Referrals we make".
+- Save stays on screen. In every dialog, at every width, the row with Save and Cancel stays at the bottom of the screen while the dialog is longer than it. Tab and screen-reader order are unchanged.
+
+### Usability: navigation and wording
+
+- Reports, the funder report, Funding & spending, State reporting and SUPRT-A now say what they are working out while they load ("Checking small counts before the release is shown…") instead of a bare "Loading…". The funder report's submission is read from one snapshot of the data, as a publication release already was, so a visit saved while it runs can no longer appear in one table and not the next. (A reported 4–6 s load could not be reproduced: at seed size these pages open in under 0.4 s, and at 20,000 clients in about half a second.)
+- The sidebar puts each role's daily pages first. A navigator's main list now includes Waitlist. The funder report is under their More menu, run for their own caseload, where it used to be missing. State reporting (CalOMS Tx and the county EHR hand-off) and SUPRT-A have their own menu entries whenever the program uses those modules.
+- Every screen uses the same words for the same action: "Log a visit", "Make a referral", "Clients", and "To-dos for today" on Home. + Log and the client record's buttons both offer "Make a referral", which opens the referral form for that client with their consents.
+- The client record shows the six sections used on every visit (Overview, Visits, Notes, To-dos, Consents, Referrals) on every screen size, with the rest under More. Care plan, Assessments and SUPRT-A tabs appear only when the module is on and the client has something in it or you can add to it. The Timeline tab is now "Recent activity" at the end of the Overview, and "All activity" opens the full history.
+- The first-sign-in welcome is a single card on Home instead of a five-step dialog covering it, so a new worker can log a visit straight away. "Got it" puts it away, and "Help" at the foot of the menu brings it back.
+- Your own overdue to-dos are counted in one place, the bell, and listed under To-dos for today. A supervisor's Home still shows the team's count, now labelled as such.
+- Supplies has a "Hand out" button, on the page and on each item, for supplies given on the street. It opens the visit form as a naloxone distribution (or outreach for other supplies) with the item already on it, and the client optional. Home's "Naloxone kits given" now opens the visits that handed out kits, of any visit type, and those visits add up to the number shown.
+- On a phone, tab strips that scroll sideways show a chevron on the side with more tabs, and the Supplies tab now reads "SSP report" instead of being cut off. The top bar's client-list shortcut now says "Clients", and the to-do bell's count stays inside the bell.
+
+### Supplies and syringe services
+
+- Supplies are kept by item, site and lot. An item has a category, and naloxone items record the product. Sites can be the office, a van, a drop-in or a partner site. Lots carry a lot number and an expiry date. Stock received, moved between sites, adjusted with a reason and disposed of is recorded in an append-only ledger, and what is on hand is its sum. Each count from 1.13 is carried in as an opening balance at the Main office.
+- A visit or an anonymous outreach contact can record any item handed out, with the program's usual items one tap away. Stock is drawn from the visit's site, earliest expiry first. When the books hold less than was handed out, the difference is recorded as a flagged shortfall for a supervisor rather than the count going below zero. The naloxone and test-strip counts every report reads are now the sums of the visit's items; figures for visits recorded before 1.14 do not change.
+- Visits record syringes and sharps returned, counted or estimated from the container's volume. A new syringe services summary gives participants, contacts, syringes out and back, the return ratio, sharps containers, naloxone by product, test strips and referrals, as CSV or Excel. Counts of people are small-cell suppressed.
+- Expired and expiring lots, low stock and shortfalls appear on Home for supervisors and administrators. The NDP day log now names the naloxone product where the visit recorded it.
+- Navigators and clinicians see the stock and record deliveries at their site. Items, sites, transfers, adjustments and disposal are for supervisors and administrators. Setting a count through the older supply routes now needs a supervisor or administrator.
+- A device syncs supplies. Deliveries and counts recorded offline are checked at the office, and a visit's draw-down is worked out there once. The device's own draw-down shows correct stock in the field until the office's figures arrive.
+
+### Reporting
+
+- Finance can now write the funder report. A finance account runs the program's own submission of the funder report, the NDP log and the opioid settlement report: exact counts, for any date range or a single funding source. It still cannot open a client record, make an identified export or run an internal report, and its Home and Reports screens still show small counts as "<11". Before this, a small organisation's grants or finance person needed the supervisor role, which opens every client record. Each run is audited with who ran it, the purpose, the fund and the period.
+- Publication releases can be switched off. Settings › Program › Modules › Publication releases is on by default. An administrator can switch it off while the program waits for an outside review of the small-cell method. Publication runs and their files are then refused with a message explaining why. Submissions to funders carry on, and read-only accounts are told they have nothing to run until releases are switched back on.
+- SUPRT-A for State Opioid Response programs. Programs with a SOR grant funding source get SAMHSA's SUPRT-A record (baseline, reassessment, annual assessment and closeout) on each client's SUPRT-A tab. Answers SUDS already holds are filled in, and follow-ups due appear on the To-dos page. The SUPRT-A page shows completion rates and makes a file for entry into SPARS. That file names clients, so it needs each client's consent naming SAMHSA (or an evaluation approval on file) and is written to each client's accounting of disclosures. It uses SUDS's own item names and must be checked against the current SUPRT handbook; SUDS does not reproduce SUPRT-C.
+- Settlement spending for DHCS or your county. The opioid settlement report can be downloaded in the DHCS settlement expenditure layout: one row per activity, with categories, amounts and people served filled in and the narrative left for the program to write. It can also be downloaded in a county's own template, which finance or an administrator sets up by listing the county's columns, with no code needed.
+
+### Security
+
+- Returning clients at intake: The intake duplicate check no longer offers a discharged record the worker cannot open when only the phone number matches. The surname and date of birth must match, and the offer says only that an earlier record exists and that a supervisor will review it: no client code, and not when or why the person was discharged. Each offer puts a review task on the record for a supervisor. The check is limited to 60 per worker in 15 minutes and every check is audited. Before this, typing phone numbers into a new-client form could reveal who had been discharged and why.
+- Continue where you left off: The Home page's list of drafts and to-dos due today now leaves out clients the person can no longer open. Before, after an assignment ended, it still showed the client's name and to-do titles.
+- Exports and unlinked records: Exports of calls, visits, to-dos and overdose events now follow the rule the screens already followed: a record with no client belongs to the worker who made it, or to a role that sees everyone. Before, a navigator's export could include another worker's crisis call that the screen refused to open.
+- Time descriptions: Finance and other roles without access to client records now see another worker's time as category, fund and minutes, without the free-text description, which can name the client. Expense descriptions stay visible to finance, which approves spending by them, and the expense form now reminds staff not to name a client there.
+- Password change and two-step verification: Wrong current passwords when changing a password or turning two-step verification off now count toward the account lockout and are audited, as they are at sign-in. Turning two-step verification off also needs a current code from the authenticator app. Before, these screens took unlimited guesses.
+- Key backup: Downloading the encryption key backup now asks for the password or authenticator code every time, even just after signing in. Administrators who sign in through single sign-on confirm with the county sign-in, which covers one download.
+- Plaintext left on disk after upgrades: SUDS now erases deleted data from the database file as it goes. After an upgrade that encrypted a field, it compacts the file so the old unencrypted values do not remain, and does this once on the first start of this release. The copy of the database taken before an upgrade is now encrypted like a backup once the upgrade has succeeded, and deleted after 14 days. Before, values encrypted by earlier upgrades could still be read from the file and from those copies.
+- SUDS on this device, shared web addresses: The offline copy of the app now reads and clears only its own stored files, never those of other sites on the same web address (it used to delete other sites' caches on activate). The documentation recommends giving SUDS on this device a web address of its own, such as a custom domain, because browsers share stored data between sites on the same address.
+- Publication releases: If one publication release check runs too long, only that release is refused. Others requested at the same time are no longer failed with it.
+- The database a browser restore replaces is now kept encrypted like a backup (`suds.db.before-restore-<time>.enc`, opened with `node scripts/backup.js --restore`) and deleted after 14 days; copies an earlier version left in plaintext are sealed on the next start. Up to 1.13.0 it stayed beside the live database in plaintext.
+
+### Sync
+
+- Each table's write rules are now written once and enforced both by the office's screens and API and by a device's sync. Before, the sync code repeated each rule by hand and had drifted from the routes. Adding a rule to a table's rules file now applies it on both.
+- A device's sync can no longer do what its user couldn't do in the app. It can't edit or delete another worker's visit, call, time entry, to-do, referral, expense, draft note or assessment, rewrite a court order or a Part 2 notice, change a signed note, or lift a client's legal hold. Work that belongs to a worker's own action still syncs: a discharge closing the client's to-dos and ending the care team, or recording a referral's outcome.
+- Values the office would reject over the API are now rejected from devices too: unknown categories, out-of-range numbers, missing required fields, a cost without its budget line, a referral citing another client's consent, over-allocated budget lines. Work recorded offline that the office now rejects only because its lists, modules or fund periods changed while the phone was out is kept, shown on the device's sync screen, and recorded in the audit log for the office to review.
+- An addendum written on a device now marks the signed note "amended" at the office, as it does in the office app. A disclosure recorded on a device is checked against the same consent rules as one recorded at the office, and flagged to the office if its basis can't be confirmed.
+- Patient-rights (client rights) requests need the patient-requests permission to sync, the same one the office app needs.
+- A large sync from a device is faster: a 10,000-row upload uses about a third less server time than in 1.13.0.
+- SUPRT-A assessments recorded on a device pass the same checks as ones recorded at the office. Answers the instrument doesn't ask are refused. An assessment recorded while the module was on, dated ahead, or completed with answers missing is kept and flagged for the office to review. A device can't delete an assessment already sent in a SPARS file, and the client ID, grant and site in its answers are always the office's.
+- Stock movements recorded on a device are held to what the Supplies page requires: damaged, expired or lost stock is only taken off, and a fund is named only on a purchase. A delivery to an item or site the office has since retired is kept and flagged.
+- On a new program's Home page, "Add naloxone kits and test strips" adds the two standard supply items.
+
+### Performance
+
+- A device's first sync is much faster and a fraction of the download. The office server used to read every row of the caseload again on each page, and when newly assigned clients arrived it looked them up again for every table. A 2,000-client caseload took 19 seconds and 80 MB, and held the server for up to 4 seconds at a time. The server now finds where each page ends from its indexes and reads only the rows it sends: 5.5 seconds, 5 MB on the network, and no page holds the server for more than a quarter of a second. A sync with nothing new takes 23 ms instead of 160.
+- Large answers from the office server are compressed. JSON answers of 1 kB or more are sent compressed (brotli, else gzip) whenever the browser or device says it can take them. That cuts a sync, the Supplies page and the lists to a tenth or less of what crossed the network. The compression runs off the server's main thread. Exports and file downloads are sent exactly as before.
+- SUDS opens faster on a phone. The sign-in page used to download all 900 kB of the app first. It now loads the sign-in page and Home up front and fetches every other page the first time it is opened, compressed. The browser keeps the app's files and checks they are current rather than downloading them again. On a phone over a mobile connection the sign-in page is usable in 1.5 seconds instead of 5.8, and a return visit downloads 8 kB instead of 954. Signing in now draws Home once (it drew it twice), and Home asks for everything at once, so an administrator's Home appears in 2.2 seconds instead of 9.2.
+- Home and the Reports dashboard are four times faster with a large program: 0.4 seconds instead of 1.6 for a fiscal year at 20,000 clients, holding up other people's requests for at most 0.15 seconds instead of 0.36. The figures are unchanged.
+- The Supplies page and the supply alerts on Home open in a tenth of the time with a large stock ledger (37 ms instead of 306 at 50,000 entries). Saving a visit that hands out supplies takes half as long.
+- The notes list, the visits list, deep pages of the client list and long client timelines are 3–12 times faster at 20,000 clients and 200,000 notes. With 50 people working at once the office server handles 48% more requests, and typical waits fall by a third to a half.
+- For administrators: the upgrade adds indexes (migration 47), so the first start after it takes a few seconds longer on a large database (9 seconds at 20,000 clients, mostly the usual pre-migration snapshot). The app's own code files and icons are now sent Cache-Control: no-cache with an ETag instead of no-store, so browsers revalidate them rather than download them each time. They contain no client information. Pages, the service worker, version.json and every API answer stay no-store.
+- For maintainers: scripts/bench/run.js seeds a 20,000-client program and measures the server, and scripts/bench/frontend.mjs measures a phone's first load (docs/PERFORMANCE.md).
+
+### Engineering
+
+- Small funds combined. A publication release now lists every fund that served fewer people than the threshold together in one row, "Other funds (n combined)". The row shows how many funds it holds and their staff hours; their people and services are withheld, as 1.13.0 already hid them. A year with 60, 80 or 120 small funds used to be refused because the check ran out of budget; it now publishes in a fraction of a second. The check's work budget now also counts the work of setting up each question and has been re-measured: 400 million units, about 2 to 7 seconds of one core.
+- Reports no longer freeze the server. The publication release reads the database from one consistent snapshot in steps, so other users' requests keep being answered. A release that was already worked out is served without reading anything again, until the data changes. At 20,000 clients the longest pause fell from 0.6–1.5 s to 0.1–0.2 s, and a repeat request takes about 15 ms. The monthly report reads a month at a time (0.3 s → under 0.05 s). The opioid settlement report's services query is ten times faster with many settlement funds.
+- Feature releases are checked too. The release workflow now refuses a minor or major release less than 28 days after the previous feature release, unless an administrator gives a policy exception. `policy_exception` is the new name for `allow_patch_changes`, which still works, and its reason is printed at the top of the release notes.
+- Node 22 pinned. CI and the release run an exact, checksum-verified Node 22 release, as the Node 24 job already did. The deployment guide gives the plan for Node 22's end of life (30 April 2027): move to Node 24 LTS.
+- Sample data search fix: preferred-name search index now written (and backfilled by migration 46 if done).
+- Tests. Upgrade tests now use 1.13.0 and 1.11.0 databases with rows in every encrypted table. The browser-kernel parity tests now also cover the dashboard, a publication release and a full sync round trip.
+- Idle keep-alive connections kept 65 s.
+
+### Known limits
+
+- The SUPRT-A items and variable names and the DHCS settlement layout were built from published summaries; the
+  official SUPRT handbook and the DHCS reporting form could not be read from the build environment. Both exports
+  say "check against the current handbook / form", and should be checked before a program relies on them.
+- On a device (SUDS on this device, or a phone's copy), the publication release check still runs on the page's
+  own thread (ADR-0009); the office server runs it in a worker.
+
 ## 1.13.0 — 2026-09-26
 
 - A request that reaches the on-device database after it has locked (sign-out, idle, or a report still running) is answered as signed out and sends the person to sign-in, instead of logging an error.
@@ -105,7 +241,7 @@ From a second hands-on frontline review of 1.12.4.
   bump it). The WebKit job reports two service-worker cache checks that Playwright's WebKit on Linux cannot
   reproduce as skipped, with their diagnostics; iPhone offline-after-update is on the real-device checklist.
 - **Docs.** The architecture overview describes the code after 1.12.4; RELEASE.md gives the browser suite's
-  real size (30 scripts).
+  real size (31 scripts).
 
 ### Security
 
