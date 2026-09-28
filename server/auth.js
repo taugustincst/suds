@@ -87,11 +87,11 @@ const PERMS = {
                'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*'],
   // Front-line staff hold export:read so the Export buttons on their own screens work; without
   // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
-  clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
-               'notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
+  clinician:  ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
+               'budget:read','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
                'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','assessments:*','court-orders:read','agreements:read','supplies:read','supplies:receive'],
-  navigator:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:*','referrals:*','tasks:*',
-               'budget:read','budget:write','notes:admin:read','notes:admin:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
+  navigator:  ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','resources:*','referrals:*','tasks:*',
+               'budget:read','budget:write','notes:admin:read','notes:admin:write','notes:clinical:read','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
                'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','court-orders:read','agreements:read','supplies:read','supplies:receive'],
   // finance sees money, not people: export:read without export:identified means every export it can run
   // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.

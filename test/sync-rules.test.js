@@ -36,7 +36,7 @@ before(async () => {
   }
   C.admin = H.client(); await C.admin.login('admin', 'AdminPassw0rd!x');
   U.admin = H.db.one(`SELECT id FROM users WHERE username='admin'`).id;
-  H.db.run(`UPDATE users SET is_active=0 WHERE id=?`, (H.makeUser('rules_gone', 'navigator')).id);
+  H.db.run(`UPDATE users SET is_active=0 WHERE id=?`, (H.makeCaseloadUser('rules_gone', 'navigator')).id);
   U.gone = H.db.one(`SELECT id FROM users WHERE username='rules_gone'`).id;
   // Shared reference data the rows point at.
   X.resource = randomUUID(); H.db.run(`INSERT INTO resources(id,name,category) VALUES(?,?,?)`, X.resource, 'County OTP', 'mat_otp');

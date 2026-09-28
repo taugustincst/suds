@@ -141,7 +141,7 @@ test('API: a publication release\'s file is exported only once its review is con
 
 test('API: a navigator\'s caseload run counts the caseload\'s overdoses and people per fund, not the programme\'s', async () => {
   // January 2024: two clients, one on the navigator's caseload, each with an overdose; one community event.
-  H.makeUser('prnav', 'navigator'); const nav = H.client(); await nav.login('prnav', 'StaffPassw0rd!x');
+  H.makeCaseloadUser('prnav', 'navigator'); const nav = H.client(); await nav.login('prnav', 'StaffPassw0rd!x');
   const navId = H.db.one(`SELECT id FROM users WHERE username='prnav'`).id;
   const fund = (await admin.post('/api/budget/funds', { name: 'Jan fund', fiscal_year_start: '2023-07-01', fiscal_year_end: '2024-06-30', total_amount: 10 })).data.id;
   const ids = [];

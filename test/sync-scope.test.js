@@ -30,7 +30,7 @@ const onCaseload = (uid) => new Set(H.db.all(`SELECT client_id FROM assignments 
 before(async () => {
   await H.start();
   require('../server/config').localModeEnabled = true;
-  aId = H.makeUser('scopea', 'navigator').id; bId = H.makeUser('scopeb', 'navigator').id;
+  aId = H.makeCaseloadUser('scopea', 'navigator').id; bId = H.makeCaseloadUser('scopeb', 'navigator').id;
   const supId = H.makeUser('scopesup', 'supervisor').id;
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   navA = H.client(); await navA.login('scopea', 'StaffPassw0rd!x');

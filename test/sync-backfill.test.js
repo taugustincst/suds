@@ -51,7 +51,7 @@ function oldClient(visits, notes) {
 before(async () => {
   await H.start();
   require('../server/config').localModeEnabled = true;
-  aId = H.makeUser('bfa', 'navigator').id; bId = H.makeUser('bfb', 'navigator').id;
+  aId = H.makeCaseloadUser('bfa', 'navigator').id; bId = H.makeCaseloadUser('bfb', 'navigator').id;
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   navA = H.client(); await navA.login('bfa', 'StaffPassw0rd!x');
 });
@@ -92,7 +92,7 @@ test('a sync cut short mid-backfill (an older kernel stops after so many pages) 
 });
 
 test('a bulk caseload transfer of many clients is paged too, and every moved client arrives whole', async () => {
-  const cId = H.makeUser('bfc', 'navigator').id;
+  const cId = H.makeCaseloadUser('bfc', 'navigator').id;
   const navC = H.client(); await navC.login('bfc', 'StaffPassw0rd!x');
   const moved = [];
   for (let i = 0; i < 40; i++) moved.push(oldClient(30, 3));

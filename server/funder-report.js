@@ -71,7 +71,9 @@ function publicationOffMessage(user) {
  * How this run counts, and what it is for. Unless the request says (purpose=), a role that may run reports
  * that are not for publication (reports:internal: supervisor, administrator) or that writes the funder report
  * (reports:funder: finance too) gets the programme's own submission to its funder - what a funder asks for -
- * and any other role a publication release when the run could be one (release above), else an internal run.
+ * a role that may run internal reports of what it can open (auth.reportRunAllowed: a navigator or clinician) an
+ * internal run, and any other role (read-only) a publication release when the run could be one (release
+ * above), else an internal run.
  * Publication is something a supervisor asks for (purpose=publication: "Prepare a publication release"), with
  * its review before sharing, and only while publication releases are switched on (module 'publication'). A
  * submission counts exactly for a role that holds reports:exact, or reports:funder, unless counts=suppressed is
@@ -83,7 +85,11 @@ function countingMode(ctx, period = { from: '', to: '' }, opts = {}) {
   const asked = ctx.query.get('purpose');
   const internalOk = auth.hasPerm(ctx.user, 'reports:internal');
   const funderOk = auth.hasPerm(ctx.user, 'reports:funder');
-  const purpose = asked || (internalOk || funderOk ? 'submission' : rel.publishable ? 'publication' : 'internal');
+  // A role that may run internal reports of what it can see (a navigator or clinician, who from 1.16.0 sees the
+  // whole programme with clients:all, or their caseload when denied it) keeps an internal first run, as it had
+  // when it was always caseload-scoped: a publication release is something a supervisor asks for, and the
+  // default only for a role that can run nothing else (read-only).
+  const purpose = asked || (internalOk || funderOk ? 'submission' : !rel.publishable || auth.reportRunAllowed(ctx.user, { caseloadScoped: true }) ? 'internal' : 'publication');
   if (!PURPOSES.includes(purpose)) throw badRequest('purpose must be publication (a release to publish or share), submission (the program\'s own report to its funder) or internal');
   // Exact counts: reports:exact for any run that is not for publication; reports:funder for a submission.
   const exactOk = auth.hasPerm(ctx.user, 'reports:exact') || (funderOk && purpose === 'submission');

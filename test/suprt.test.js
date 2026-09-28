@@ -243,7 +243,7 @@ test('an assessment is corrected with PUT and a draft removed with DELETE; roles
     assert.equal((await c.post(`/api/clients/${clientId}/suprt`, { assessment_type: 'annual', assessment_date: '2026-08-01' })).status, 403);
   }
   // A worker whose caseload the client is not on cannot read or change it.
-  H.makeUser('snav2', 'navigator'); const nav2 = H.client(); await nav2.login('snav2', 'StaffPassw0rd!x');
+  H.makeCaseloadUser('snav2', 'navigator'); const nav2 = H.client(); await nav2.login('snav2', 'StaffPassw0rd!x');
   assert.equal((await nav2.get(`/api/clients/${clientId}/suprt`)).status, 403);
   assert.equal((await nav2.put(`/api/suprt/${draft}`, { status: 'draft' })).status, 403);
   assert.ok(!(await nav2.get('/api/suprt/due')).data.rows.some(x => x.client_id === clientId), 'nor see it on its to-do list');

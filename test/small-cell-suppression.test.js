@@ -378,7 +378,7 @@ test('NDP log and settlement report: publication only for the whole programme an
   const own = (await sup.get(`/api/reports/naloxone-ndp?${MARCH}${EXACT}`)).data;
   assert.ok(own.rows.every(x => /^\d{4}-\d{2}-\d{2}$/.test(x.date)));
   // A navigator's caseload-scoped run is never a publication release.
-  H.makeUser('scnav', 'navigator'); const nav = H.client(); await nav.login('scnav', 'StaffPassw0rd!x');
+  H.makeCaseloadUser('scnav', 'navigator'); const nav = H.client(); await nav.login('scnav', 'StaffPassw0rd!x');
   const n = (await nav.get(`/api/reports/naloxone-ndp?${MARCH}`)).data;
   assert.equal(n.suppression.purpose, 'internal'); assert.ok(n.release.not_publishable.some(x => /caseload/i.test(x)));
 });

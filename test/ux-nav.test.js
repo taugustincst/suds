@@ -18,7 +18,7 @@ let admin, nav, ro, clientId;
 const at = () => new Date(Date.now() - 3600000).toISOString();
 before(async () => {
   await H.start();
-  H.makeUser('navux', 'navigator'); H.makeUser('roux', 'readonly');
+  H.makeCaseloadUser('navux', 'navigator'); H.makeUser('roux', 'readonly');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   nav = H.client(); await nav.login('navux', PW);
   ro = H.client(); await ro.login('roux', PW);

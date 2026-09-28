@@ -16,7 +16,7 @@ let navA, navB, sup, navBId, oldId, oldCode;
 const person = { first_name: 'Ondine', last_name: 'Phonecheck', dob: '1975-04-04', phone: '555-313-2020' };
 before(async () => {
   await H.start();
-  H.makeUser('ro_navA', 'navigator'); navBId = H.makeUser('ro_navB', 'navigator').id; H.makeUser('ro_sup', 'supervisor');
+  H.makeCaseloadUser('ro_navA', 'navigator'); navBId = H.makeCaseloadUser('ro_navB', 'navigator').id; H.makeUser('ro_sup', 'supervisor');
   navA = H.client(); await navA.login('ro_navA', 'StaffPassw0rd!x');
   navB = H.client(); await navB.login('ro_navB', 'StaffPassw0rd!x');
   sup = H.client(); await sup.login('ro_sup', 'StaffPassw0rd!x');

@@ -10,7 +10,7 @@ let supId, navId, nav2Id, traineeId, clientId;
 
 before(async () => {
   await H.start();
-  H.makeUser('wsup', 'supervisor'); H.makeUser('wnav', 'navigator'); H.makeUser('wnav2', 'navigator'); H.makeUser('wtrainee', 'clinician');
+  H.makeUser('wsup', 'supervisor'); H.makeCaseloadUser('wnav', 'navigator'); H.makeCaseloadUser('wnav2', 'navigator'); H.makeUser('wtrainee', 'clinician');
   supId = H.db.one(`SELECT id FROM users WHERE username='wsup'`).id;
   navId = H.db.one(`SELECT id FROM users WHERE username='wnav'`).id;
   nav2Id = H.db.one(`SELECT id FROM users WHERE username='wnav2'`).id;

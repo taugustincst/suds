@@ -47,9 +47,9 @@ function unzip(buf) {
 before(async () => {
   await H.start();
   sup = H.client(); H.makeUser('co_sup', 'supervisor'); await sup.login('co_sup', 'StaffPassw0rd!x');
-  clinId = H.makeUser('co_clin', 'clinician').id; clin = H.client(); await clin.login('co_clin', 'StaffPassw0rd!x');
+  clinId = H.makeCaseloadUser('co_clin', 'clinician').id; clin = H.client(); await clin.login('co_clin', 'StaffPassw0rd!x');
   fin = H.client(); H.makeUser('co_fin', 'finance'); await fin.login('co_fin', 'StaffPassw0rd!x');
-  nav = H.client(); H.makeUser('co_nav', 'navigator'); await nav.login('co_nav', 'StaffPassw0rd!x');
+  nav = H.client(); H.makeCaseloadUser('co_nav', 'navigator'); await nav.login('co_nav', 'StaffPassw0rd!x');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
 });
 after(async () => { await H.stop(); });

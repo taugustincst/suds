@@ -116,9 +116,12 @@ module.exports = define({
   afterApply(row, o, c) {
     if (c.existing) return;
     // The office's own auto-assignment for a client created in the field, unless the device is sending the one
-    // it made (server/rules/assignments.js), in which case that row is the assignment.
+    // it made (server/rules/assignments.js), in which case that row is the assignment. A navigator or clinician
+    // is assigned whether or not they are caseload-scoped, as POST /api/clients does: from 1.16.0 they hold
+    // clients:all, and the assignment is what keeps the client on their caseload (and in reach) if the
+    // programme later holds them to it.
     const own = (c.session.state.assignments || {}).selfForClient;
-    if (auth.caseloadRestricted(c.user) && !(own && own.get(row.id))) db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require('../crypto').uuid(), row.id, c.user.id, 'primary', (row.intake_date || db.now()).slice(0, 10), c.user.id);
+    if ((auth.caseloadRestricted(c.user) || ['navigator', 'clinician'].includes(c.user.role)) && !(own && own.get(row.id))) db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require('../crypto').uuid(), row.id, c.user.id, 'primary', (row.intake_date || db.now()).slice(0, 10), c.user.id);
     // A person entered on a phone may already be on the office books under another spelling. The row still
     // lands (the worker cannot check from the field), but a supervisor is told to look.
     flagPossibleDuplicate(c.user, row, o.client_code, c.session.warnings);

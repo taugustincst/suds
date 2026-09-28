@@ -14,7 +14,7 @@ let nav1, nav2, nav1Id, mine, theirs, kept;
 const today = new Date().toISOString().slice(0, 10);
 before(async () => {
   await H.start();
-  nav1Id = H.makeUser('mc_nav1', 'navigator').id; H.makeUser('mc_nav2', 'navigator');
+  nav1Id = H.makeCaseloadUser('mc_nav1', 'navigator').id; H.makeCaseloadUser('mc_nav2', 'navigator');
   nav1 = H.client(); await nav1.login('mc_nav1', 'StaffPassw0rd!x');
   nav2 = H.client(); await nav2.login('mc_nav2', 'StaffPassw0rd!x');
   mine = (await nav1.post('/api/clients', { first_name: 'Jamie', last_name: 'Endedassign', dob: '1990-01-01' })).data.id;

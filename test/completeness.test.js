@@ -13,10 +13,10 @@ const config = require('../server/config');
 let admin, sup, nav, fin, ro, nav2, navId;
 before(async () => {
   await H.start();
-  navId = H.makeUser('cmpnav', 'navigator').id;
+  navId = H.makeCaseloadUser('cmpnav', 'navigator').id;
   H.makeUser('cmpsup', 'supervisor');
   H.makeUser('cmpfin', 'finance');
-  H.makeUser('cmpro', 'readonly'); H.makeUser('cmpnav2', 'navigator');
+  H.makeUser('cmpro', 'readonly'); H.makeCaseloadUser('cmpnav2', 'navigator');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   sup = H.client(); await sup.login('cmpsup', 'StaffPassw0rd!x');
   nav = H.client(); await nav.login('cmpnav', 'StaffPassw0rd!x');
@@ -206,7 +206,7 @@ test('episodes, overdose events, client forms and disclosures export as single t
 // 1.14.0 (security review of 1.13.0, finding 5): the password alone no longer turns it off; a current
 // authenticator code is needed too, and failures count toward the lockout (test/in-session-guessing.test.js).
 test('POST /api/auth/mfa/disable needs the password and a current code, is refused where the role requires MFA, and is audited', async () => {
-  const u = H.makeUser('cmpmfa', 'navigator');
+  const u = H.makeCaseloadUser('cmpmfa', 'navigator');
   const c = H.client(); await c.login(u.username, u.password);
   const setup = await c.post('/api/auth/mfa/setup', {});
   const { totp } = require('../server/crypto');

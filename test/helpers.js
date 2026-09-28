@@ -62,6 +62,24 @@ function makeUser(username, role, password = 'StaffPassw0rd!x') {
 }
 
 /**
+ * Deny `perms` to a user with per-user overrides (1.15.0, server/auth.js effectivePerms), as an administrator
+ * does under Settings -> Users & permissions -> Permissions.
+ */
+function deny(user, ...perms) {
+  for (const p of perms) db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason) VALUES(?,?,'deny','test: caseload-scoped worker') ON CONFLICT(user_id, permission) DO UPDATE SET mode='deny'`, user.id, p);
+  return user;
+}
+/**
+ * A navigator or clinician held to their caseload, as both roles were by default before 1.16.0: clients:all
+ * denied, and for a navigator notes:clinical:read too. From 1.16.0 that is how a programme keeps a worker
+ * caseload-scoped, so the tests of caseload scoping use it.
+ */
+function makeCaseloadUser(username, role, password) {
+  const u = makeUser(username, role, password);
+  return deny(u, 'clients:all', ...(role === 'navigator' ? ['notes:clinical:read'] : []));
+}
+
+/**
  * Register a QSOA, research or audit/evaluation approval (server/disclosure.js: the non-consent bases rest on
  * one whose organisation is the recipient) through `c`, a supervisor's or administrator's client. Returns its id.
  */
@@ -83,4 +101,4 @@ function asAttacker(fn) {
   }
 }
 
-module.exports = { start, stop, client, makeUser, agreement, db, asAttacker };
+module.exports = { start, stop, client, makeUser, makeCaseloadUser, deny, agreement, db, asAttacker };

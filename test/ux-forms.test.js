@@ -16,7 +16,7 @@ const today = new Date().toISOString().slice(0, 10);
 const count = (sql, ...p) => db.one(sql, ...p).n;
 before(async () => {
   await H.start();
-  navUser = H.makeUser('uf_nav', 'navigator'); H.makeUser('uf_sup', 'supervisor'); H.makeUser('uf_clin', 'clinician');
+  navUser = H.makeCaseloadUser('uf_nav', 'navigator'); H.makeUser('uf_sup', 'supervisor'); H.makeUser('uf_clin', 'clinician');
   nav = H.client(); await nav.login('uf_nav', 'StaffPassw0rd!x');
   sup = H.client(); await sup.login('uf_sup', 'StaffPassw0rd!x');
   clin = H.client(); await clin.login('uf_clin', 'StaffPassw0rd!x');
@@ -103,7 +103,7 @@ test('time entries say where they came from, and the list filters on it', async 
   const forNav = (await sup.get(`/api/time?from=${today}&to=${today}&source=visit&user_id=${navUser.id}`)).data.rows;
   assert.ok(forNav.length >= 1 && forNav.every(r => r.user_id === navUser.id));
   // A worker without time:all still sees only their own time, whatever user_id they ask for.
-  const other = H.makeUser('uf_nav2', 'navigator'); const nav2 = H.client(); await nav2.login('uf_nav2', 'StaffPassw0rd!x');
+  const other = H.makeCaseloadUser('uf_nav2', 'navigator'); const nav2 = H.client(); await nav2.login('uf_nav2', 'StaffPassw0rd!x');
   assert.equal((await nav2.get(`/api/time?from=${today}&to=${today}&user_id=${navUser.id}`)).data.rows.length, 0);
   assert.ok(other.id);
 });
@@ -118,8 +118,8 @@ test('the supplies catalog says whether the visit form may offer to add the stan
 
 test('a re-admission reason needs 8 characters, not 15', async () => {
   const person = { first_name: 'Ivo', last_name: 'Backagain', dob: '1975-11-12' };
-  const a = H.makeUser('uf_navA', 'navigator'); const navA = H.client(); await navA.login('uf_navA', 'StaffPassw0rd!x');
-  const b = H.makeUser('uf_navB', 'navigator'); const navB = H.client(); await navB.login('uf_navB', 'StaffPassw0rd!x');
+  const a = H.makeCaseloadUser('uf_navA', 'navigator'); const navA = H.client(); await navA.login('uf_navA', 'StaffPassw0rd!x');
+  const b = H.makeCaseloadUser('uf_navB', 'navigator'); const navB = H.client(); await navB.login('uf_navB', 'StaffPassw0rd!x');
   const c = await navA.post('/api/clients', { ...person, intake_date: '2021-02-01' });
   const ep = db.one(`SELECT id FROM episodes WHERE client_id=? AND status='open'`, c.data.id);
   assert.equal((await navA.post(`/api/episodes/${ep.id}/close`, { discharge_reason: 'lost_contact', closed_at: '2022-03-01' })).status, 200);

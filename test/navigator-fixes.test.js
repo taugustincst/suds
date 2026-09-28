@@ -9,7 +9,7 @@ const H = require('./helpers');
 let admin, nav, sup, fin, ro, navId, supId;
 before(async () => {
   await H.start();
-  navId = H.makeUser('nfnav', 'navigator').id;
+  navId = H.makeCaseloadUser('nfnav', 'navigator').id;
   supId = H.makeUser('nfsup', 'supervisor').id;
   H.makeUser('nffin', 'finance'); H.makeUser('nfro', 'readonly');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
@@ -140,7 +140,7 @@ test('an author can ask a supervisor to co-sign a note, which puts it in the que
   assert.equal((await sup.get('/api/supervision/queue')).data.awaiting_cosignature.some(x => x.id === signed.data.id), false, 'then it leaves the queue');
   assert.equal((await nav.post(`/api/notes/${signed.data.id}/request-cosign`, {})).status, 400, 'a countersigned note needs no further review');
   // only the author (or a manager) may ask
-  const other = H.client(); H.makeUser('nfnav2', 'navigator'); await other.login('nfnav2', 'StaffPassw0rd!x');
+  const other = H.client(); H.makeCaseloadUser('nfnav2', 'navigator'); await other.login('nfnav2', 'StaffPassw0rd!x');
   await sup.post(`/api/clients/${c}/assignments`, { user_id: H.db.one(`SELECT id FROM users WHERE username='nfnav2'`).id, role_on_case: 'secondary' });
   assert.equal((await other.post(`/api/notes/${draft.data.id}/request-cosign`, {})).status, 403);
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='note.cosign.requested' AND entity_id=?`, signed.data.id));

@@ -16,7 +16,9 @@ before(async () => {
   require('../server/config').localModeEnabled = true;
   ({ encrypt: enc, decrypt: dec } = require('../server/crypto'));
   for (const [k, role] of [['nav', 'navigator'], ['nav2', 'navigator'], ['sup', 'supervisor'], ['clin', 'clinician']]) {
-    const u = H.makeUser(`fix_${k}`, role); U[k] = u.id;
+    // The owner rules under test ("its author's, or a manager's") are for a worker without clients:all: from
+    // 1.16.0 that is a navigator or clinician the programme holds to their caseload (a per-user deny).
+    const u = role === 'supervisor' ? H.makeUser(`fix_${k}`, role) : H.makeCaseloadUser(`fix_${k}`, role); U[k] = u.id;
     C[k] = H.client(); await C[k].login(u.username, u.password);
   }
 });
@@ -168,7 +170,7 @@ test('a disclosure recorded on a device on a basis the office cannot confirm is 
 
 test('an outcome measure keeps its instrument; an assessment is its assessor\'s or a supervisor\'s', async () => {
   const cid = client('clin', 'nav');
-  const clin2 = H.makeUser('fix_clin2', 'clinician'); H.db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date) VALUES(?,?,?,?,?)`, randomUUID(), cid, clin2.id, 'secondary', day(-1));
+  const clin2 = H.makeCaseloadUser('fix_clin2', 'clinician'); H.db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date) VALUES(?,?,?,?,?)`, randomUUID(), cid, clin2.id, 'secondary', day(-1));
   const c2 = H.client(); await c2.login(clin2.username, clin2.password);
   const m = randomUUID();
   const row = { id: m, client_id: cid, instrument: 'phq9', administered_at: day(0), administered_by: U.clin, responses_enc: '[0,0,0,0,0,0,0,0,0]', total_score: 0 };

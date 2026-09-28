@@ -25,7 +25,7 @@ let sup, nav, navId, supId;
 before(async () => {
   await H.start();
   supId = H.makeUser('flt_sup', 'supervisor').id;
-  navId = H.makeUser('flt_nav', 'navigator').id;
+  navId = H.makeCaseloadUser('flt_nav', 'navigator').id;
   const recent = new Date(Date.now() - 3 * 86400000).toISOString();
   const old = new Date(Date.now() - 90 * 86400000).toISOString();
   const soon = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
