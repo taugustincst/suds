@@ -85,6 +85,7 @@ module.exports = (r) => {
               const enc = M.encryptFields(rec); enc.full_name_idx = blindIndex((rec.last_name || '') + (rec.first_name || ''));
               const cols = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id, intake_date: rec.intake_date || now.slice(0, 10) };
               for (const f of M.PLAIN_FIELDS) if (rec[f] !== undefined && rec[f] !== null) cols[f] = rec[f];
+              if (cols.risk_level === undefined) cols.risk_level = null; // not assessed, not the schema's 'moderate'
               const keys = Object.keys(cols).filter(k => cols[k] !== undefined);
               db.run(`INSERT INTO clients(${keys.join(',')}) VALUES(${keys.map(() => '?').join(',')})`, ...keys.map(k => cols[k]));
               if (auth.caseloadRestricted(ctx.user) || ['navigator', 'clinician'].includes(ctx.user.role)) db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid(), id, ctx.user.id, 'primary', cols.intake_date, ctx.user.id);
