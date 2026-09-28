@@ -109,7 +109,7 @@ under **Can't sign in?**, and what each does to the records:
 screen (*Download as a text file*, *Print*, and a required *I have saved my recovery code* box before going
 on). The device administrator can make a new one under **This device → Recovery code**, after typing their
 password again; the new code replaces the old one at once. This device says whether a code exists and when it
-was made — never the code. A device set up before 1.15 has no code: Home asks its administrator to make one
+was made — never the code. A device set up before 1.15.1 has no code: Home asks its administrator to make one
 at every sign-in until they do (the prompt can be dismissed until the next sign-in; navigators are not asked).
 
 Using it (**Can't sign in? → Use your recovery code**): the code (capitals, spaces and dashes do not matter),
@@ -238,7 +238,7 @@ fully offline, a reload, installability), `scripts/ui/signup.mjs` (Sign up and L
 second account's caseload, sign-ups off, backup → erase → restore, wrong passphrase, tampered file, the backup
 reminder) and `scripts/ui/device-recovery.mjs` (the recovery code at set-up, *Can't sign in?*, a wrong and a
 right code, the old password and the used code refused, a new code from This device, the prompt on a device
-set up before 1.15) are the automated checks for this build; all run in `scripts/ui/run-all.sh`.
+set up before 1.15.1) are the automated checks for this build; all run in `scripts/ui/run-all.sh`.
 `test/device-recovery.test.js` runs the same recovery through the kernel in `npm test`.
 
 ## What the browser kernel is built from

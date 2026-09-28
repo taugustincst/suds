@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date recorded:** 2026-09-25 (encryption at rest on the device; supersedes the "keys beside the data" design
-  of local mode 1.1.0–1.11.0); amended 2026-09-28 (the owner's recovery code, 1.15)
+  of local mode 1.1.0–1.11.0); amended 2026-09-28 (the owner's recovery code, 1.15.1)
 
 ## Context
 
@@ -80,7 +80,7 @@ does not store is the password its people type.
   are outside SUDS's reach. The column keys are not rotated (the image that holds their ciphertext is sealed
   under the new DEK).
 
-- **Recovery code (1.15).** A device's owner who forgot the device administrator's password, with no other
+- **Recovery code (1.15.1).** A device's owner who forgot the device administrator's password, with no other
   account able to sign in (and sign-ups needing someone to vouch, or turned off), had no way back to the
   records but a backup. The records are encrypted under the DEK and the DEK only under account passwords, so
   nothing can let anyone in without a secret they hold, and the project refuses a shared or stock password. So
@@ -93,7 +93,7 @@ does not store is the password its people type.
   same vault write. The code is shown once and stored nowhere; the wrap keeps `created_at` and `saved_at` (the
   owner ticked *I have saved my recovery code*). Made by `POST /api/local/recovery` (the device administrator
   only, after `auth.confirmPassword`) at first-run set-up — the page asks for it right after the first account
-  is created — and on **This device**; a device set up before 1.15 has none, and Home asks its administrator
+  is created — and on **This device**; a device set up before 1.15.1 has none, and Home asks its administrator
   for one at every sign-in until it has a saved code. Used on the locked sign-in page (`POST /api/local/recover`:
   `lockedAnswer` checks the shape and the password policy first, then tries the code with `tryUnwrap`'s
   back-off, capped at ten wrong codes per page load, and unlocks; the route then sets the device
@@ -125,7 +125,7 @@ does not store is the password its people type.
   weak password is guessable offline at the PBKDF2 rate (the device's `failed_attempts` lockout cannot run
   while the database is sealed; the kernel only slows repeated misses). The password policy (12+ characters,
   mixed) is the real protection.
-- **A forgotten password is unrecoverable** without the recovery code (1.15), another account on the device
+- **A forgotten password is unrecoverable** without the recovery code (1.15.1), another account on the device
   that can sign in (and resets it as device administrator — the new password is wrapped then), or a backup.
   The sign-in page's *Can't sign in?* lists the three ways, and which keep the records. A lost recovery code
   and a forgotten password together, with no other account and no backup, still lose the records: that is the
@@ -165,7 +165,7 @@ refused and slowed and capped, a new code replacing the old, only the device adm
 when the old one is gone, no code in the audit log or the store, and no such routes on an office server);
 browser `scripts/ui/device-recovery.mjs` (the code shown once at set-up, the required checkbox, the downloaded
 file, *Can't sign in?*, a wrong and the right code, the old password and the used code refused, a new code from
-This device, the prompt on a device set up before 1.15); browser `scripts/ui/device-encryption.mjs` (raw IndexedDB holds
+This device, the prompt on a device set up before 1.15.1); browser `scripts/ui/device-encryption.mjs` (raw IndexedDB holds
 no name, plaintext column or SQLite header; no key material in `localStorage`; locked after reload; wrong
 password; second account; password change; ~5 MB save timings; migration from a plaintext store; after a
 restore, the stored image and column keys stop opening with the key in the backup at the first sign-in, and the

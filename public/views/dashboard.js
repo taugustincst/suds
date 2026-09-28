@@ -112,7 +112,7 @@ async function drawHome(r) {
   if (supplies) alerts.push(...supplies.alerts);
   // The on-device app keeps its records nowhere else: a week without a backup is worth a word on Home.
   const backupReminder = await backupReminderCard();
-  // A device whose administrator has no recovery code yet (set up before 1.15, or the code never confirmed saved).
+  // A device whose administrator has no recovery code yet (set up before 1.15.1, or the code never confirmed saved).
   const recoveryPrompt = await recoveryPromptCard();
   // Empty program: offer sample data (office admins, or anyone on a phone-only copy)
   let sample = null;

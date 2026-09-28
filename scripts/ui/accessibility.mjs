@@ -259,7 +259,7 @@ async function prepareOffice() {
   const { ctx, page } = await newPage(CONFIGS[0]); watch(page, 'prepare');
   const P = 'prepare';
   const must = (r, what) => { ok(r.status >= 200 && r.status < 300, `${P}: ${what}`, r.status >= 300 ? r : undefined); return r.data || {}; };
-  // An access request waiting for an administrator (Settings → Users & roles), sent the way Sign up sends it.
+  // An access request waiting for an administrator (Settings → Users & permissions), sent the way Sign up sends it.
   await page.goto(office + '/#/login'); await page.waitForSelector('input[name=username]');
   must(await api(page, 'POST', '/api/auth/signup', { display_name: 'Riley Request', username: `riley${Date.now().toString(36)}`, password: 'Request2026!!x', reason: 'New outreach worker' }), 'an access request is waiting');
   const ids = new Set();

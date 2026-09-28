@@ -1,6 +1,6 @@
 'use strict';
 // Sign up on the office server: POST /api/auth/signup creates a request that cannot sign in until an
-// administrator approves it (Settings -> Users & roles -> Access requests), and the self_signup setting.
+// administrator approves it (Settings -> Users & permissions -> Access requests), and the self_signup setting.
 process.env.SIGNUP_RATE_LIMIT = '8';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');

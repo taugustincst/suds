@@ -630,6 +630,20 @@ const migrations = [
     for (const old of ['idx_intervention_supplies_client', 'idx_supply_ledger_stock', 'idx_notes_client', 'idx_assign_user']) d.exec(`DROP INDEX IF EXISTS ${old}`);
     createIndexesFromSchema(d, safeSchema(), PERF_INDEXES_47);
   },
+  // 48: per-user permission overrides — grants and denies on top of the role's PERMS
+  // (server/auth.js effectivePerms). One row per (user, permission); mode says which.
+  (d) => {
+    d.exec(`CREATE TABLE IF NOT EXISTS user_permission_overrides (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      permission TEXT NOT NULL,
+      mode TEXT NOT NULL CHECK (mode IN ('grant','deny')),
+      reason TEXT NOT NULL,
+      granted_by TEXT REFERENCES users(id),
+      granted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+      PRIMARY KEY (user_id, permission)
+    )`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id)`);
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

@@ -35,6 +35,27 @@ only in the browser kernel, and one command-line script.
   verification, ends the account's sessions and writes `admin.reset_cli` to the audit log. Having a shell on the
   server is the proof of ownership; there is still no shared or stock administrator password.
 
+## 1.15.0 — 2026-09-28
+
+**Released under a policy exception.** 1.15.0 is a feature release one day after 1.14.0, where the release
+policy allows one a month (docs/RELEASE.md). The owner approved the exception: the admin-managed per-user
+permission overrides below are finished, reviewed and regression-tested, and a patch release cannot carry
+them — they add schema migration 48 and five new API routes.
+
+- **Per-user permission overrides.** The six fixed roles stay as defaults. An admin can now grant or revoke a
+  single permission for one user, see their effective permissions with provenance (role / granted / denied),
+  and every change is audit-logged with the reason, grantor and timestamp. Deny always wins, nobody can edit
+  their own permissions, privileged grants stay admin-only, and reasons need at least 10 characters.
+- **Deny-aware enforcement everywhere.** Effective permissions are recomputed on every request, on the server
+  and in the browser kernel alike; the app's `can()` matches the server's deny ordering.
+- **Mid-session refresh.** A signed-in user picks up permission changes from their profile without signing out
+  and back in; `GET /api/me` serves the effective snapshot.
+- "Users & roles" is now **Users & permissions**; per-user overrides are documented in
+  `docs/security/IDENTITY.md`.
+- The schema moves to version 48 (`user_permission_overrides`).
+
+Note: overrides are not synced between the office server and devices — that sync needs its own design.
+
 ## 1.14.1 — 2026-09-28
 
 A fix release from the retest of 1.14.0 on the live site. No migration, permission or route.

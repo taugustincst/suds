@@ -147,3 +147,75 @@ test('the device database is really sql.js behind the shim, sealed in the store 
   assert.ok(sealed && sealed.iv instanceof Uint8Array && sealed.ct instanceof Uint8Array && sealed.ct.length > 4096, 'as a sealed image (local/vault.js)');
   assert.ok(!Buffer.from(sealed.ct).includes('SQLite format 3'), 'and not in the clear');
 });
+
+test('the device kernel enforces permission grants and denies exactly like the office server', async () => {
+  // The kernel bundles server/auth.js with the Task 2-4 permission work. The bundle exports only start()
+  // (no direct handle on its auth module) and the device keeps its own database, so the brief's sketch of
+  // seeding H.db and calling the kernel's hasPerm cannot work: instead this drives a grant/deny round-trip
+  // through each side's REST API and requires identical enforcement answers.
+  const step = async (name, d, o, expected) => {
+    assert.equal(d.status, expected, `device ${name}: ${JSON.stringify(d.data)}`);
+    assert.equal(o.status, expected, `office ${name}: ${JSON.stringify(o.data)}`);
+    assert.equal(d.status, o.status, `device and office agree on ${name}`);
+  };
+
+  // Device: first account if this test runs alone, otherwise the earlier test's admin. (Signup does not
+  // sign in, so an explicit login follows either way; the kernel keeps the session token in memory and
+  // re-login switches which user subsequent handle() calls act as.)
+  const su = await kernelCall('POST', '/api/local/signup', { display_name: 'Perm Admin', username: 'permadmin', password: 'PermAdminPassw0rd!x', role: 'admin', storage_ack: true });
+  const deviceAdmin = su.status === 200 ? { username: 'permadmin', password: 'PermAdminPassw0rd!x' } : { username: 'parity', password: 'ParityPassw0rd!x' };
+  assert.equal((await kernelCall('POST', '/api/auth/login', deviceAdmin)).status, 200, 'device admin login');
+  // Office: the test server's admin.
+  const admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
+
+  // A navigator on each side. Accounts created via POST /api/users must change their password before
+  // doing anything else (must_change_password=1), so both navigators change it first, identically.
+  const navBody = { username: 'permnav', display_name: 'Perm Nav', role: 'navigator', password: 'PermNavPassw0rd!x' };
+  const dNav = await kernelCall('POST', '/api/users', navBody);
+  assert.equal(dNav.status, 201, `device create navigator: ${JSON.stringify(dNav.data)}`);
+  const oNav = await admin.post('/api/users', navBody);
+  assert.equal(oNav.status, 201, `office create navigator: ${JSON.stringify(oNav.data)}`);
+  const navOffice = H.client(); await navOffice.login('permnav', 'PermNavPassw0rd!x');
+  assert.equal((await kernelCall('POST', '/api/auth/login', { username: 'permnav', password: 'PermNavPassw0rd!x' })).status, 200, 'device navigator login');
+  const pwBody = { current_password: 'PermNavPassw0rd!x', new_password: 'PermNavPassw0rd!y' };
+  assert.equal((await navOffice.post('/api/auth/password', pwBody)).status, 200, 'office password change');
+  assert.equal((await kernelCall('POST', '/api/auth/password', pwBody)).status, 200, 'device password change');
+  const navCreds = { username: 'permnav', password: 'PermNavPassw0rd!y' };
+
+  // The break-glass queue is closed to the navigator before the grant, on both sides.
+  await step('break-glass before grant',
+    await kernelCall('GET', '/api/supervision/breakglass'),
+    await navOffice.get('/api/supervision/breakglass'), 403);
+
+  // Grant audit:read to the navigator on each side; the queue opens on both.
+  const grantBody = { permission: 'audit:read', mode: 'grant', reason: 'kernel parity check reviews break-glass queue' };
+  assert.equal((await kernelCall('POST', '/api/auth/login', deviceAdmin)).status, 200, 'device admin re-login');
+  assert.equal((await kernelCall('POST', `/api/users/${dNav.data.id}/permissions`, grantBody)).status, 200, 'device grant');
+  assert.equal((await admin.post(`/api/users/${oNav.data.id}/permissions`, grantBody)).status, 200, 'office grant');
+  assert.equal((await kernelCall('POST', '/api/auth/login', navCreds)).status, 200, 'device navigator re-login');
+  await step('break-glass after grant',
+    await kernelCall('GET', '/api/supervision/breakglass'),
+    await navOffice.get('/api/supervision/breakglass'), 200);
+
+  // The client list is open before the deny, then closed by it, on both sides.
+  await step('clients before deny',
+    await kernelCall('GET', '/api/clients'),
+    await navOffice.get('/api/clients'), 200);
+  const denyBody = { permission: 'clients:read', mode: 'deny', reason: 'kernel parity check denies client reads' };
+  assert.equal((await kernelCall('POST', '/api/auth/login', deviceAdmin)).status, 200, 'device admin re-login');
+  assert.equal((await kernelCall('POST', `/api/users/${dNav.data.id}/permissions`, denyBody)).status, 200, 'device deny');
+  assert.equal((await admin.post(`/api/users/${oNav.data.id}/permissions`, denyBody)).status, 200, 'office deny');
+  assert.equal((await kernelCall('POST', '/api/auth/login', navCreds)).status, 200, 'device navigator re-login');
+  await step('clients after deny',
+    await kernelCall('GET', '/api/clients'),
+    await navOffice.get('/api/clients'), 403);
+
+  // Revoke the deny on each side; the client list opens again on both.
+  assert.equal((await kernelCall('POST', '/api/auth/login', deviceAdmin)).status, 200, 'device admin re-login');
+  assert.equal((await kernelCall('DELETE', `/api/users/${dNav.data.id}/permissions/clients:read`)).status, 200, 'device revoke');
+  assert.equal((await admin.del(`/api/users/${oNav.data.id}/permissions/clients:read`)).status, 200, 'office revoke');
+  assert.equal((await kernelCall('POST', '/api/auth/login', navCreds)).status, 200, 'device navigator re-login');
+  await step('clients after revoke',
+    await kernelCall('GET', '/api/clients'),
+    await navOffice.get('/api/clients'), 200);
+});

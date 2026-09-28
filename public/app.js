@@ -611,7 +611,7 @@ export const clientStatus = (c) => { const s = c && typeof c.status === 'string'
 export const statusKind = (s) => ({ active: 'ok', admitted: 'ok', completed: 'ok', done: 'ok', signed: 'ok', approved: 'ok', reimbursed: 'ok', reached: 'ok', replied: 'ok',
   waitlist: 'warn', pending: 'warn', waitlisted: 'warn', scheduled: 'info', contacted: 'info', accepted: 'info', in_progress: 'info', open: 'info', draft: 'warn', amended: 'purple', staged: 'warn', committed: 'ok',
   inactive: '', closed: '', cancelled: '', discarded: '', rejected: 'danger', deceased: 'danger', no_show: 'danger', declined_by_client: 'danger', declined_by_provider: 'danger', critical: 'danger', high: 'warn', urgent: 'danger', crisis_escalated: 'danger', no_reply: 'warn', sent: 'info', undeliverable: 'danger', opted_out: 'danger' }[s] || '');
-export const can = (perm) => { const u = state.user; if (!u) return false; const p = u.permissions || []; if (p.includes(perm)) return true; const [ns] = perm.split(':'); if (p.includes(`${ns}:*`)) return true; if (perm.endsWith(':read') && p.includes(perm.replace(/:read$/, ':write'))) return true; return false; };
+export const can = (perm) => { const u = state.user; if (!u) return false; const deny = u.denied_permissions || []; if (deny.includes(perm)) return false; const [ns] = perm.split(':'); if (deny.includes(`${ns}:*`)) return false; if (perm.endsWith(':read') && deny.includes(perm.replace(/:read$/, ':write'))) return false; const p = u.permissions || []; if (p.includes(perm)) return true; if (p.includes(`${ns}:*`)) return true; if (perm.endsWith(':read') && p.includes(perm.replace(/:read$/, ':write'))) return true; return false; };
 
 // ---------- forms ----------
 // fields: [{name,label,type:'text|number|date|datetime|select|textarea|checkbox|client|user|resource|fund', options, list, required, value, span, help, min, max, step}]
@@ -1102,6 +1102,15 @@ export function tabStrip(tabs, active, onPick, { label = 'Sections', core = null
     // after every visible tab in the strip, so the strip still reads in order. (It used to be moved before
     // More whether or not it had been swapped, so Overview, the first tab, was shown last, after Forms.)
     if (overflow.includes(activeIdx) && overflow[0] > 0) { overflow[overflow.indexOf(activeIdx)] = overflow[0] - 1; }
+    // The swapped-in tab can be wider than the one it replaced (at 200% text "Assistance $" is), so check the
+    // row again and move tabs before it under More until it fits: the strip must never run past the screen
+    // (WCAG 1.4.10 reflow).
+    const shownWidth = () => widths.reduce((a, w, i) => a + (overflow.includes(i) ? 0 : w), 0);
+    while (shownWidth() > limit) {
+      const drop = buttons.map((_, i) => i).filter(i => !overflow.includes(i) && i !== activeIdx).pop();
+      if (drop === undefined) break;
+      overflow.push(drop);
+    }
     for (const i of overflow.sort((a, b) => a - b)) { buttons[i].hidden = true; menu.append(menuItem(i)); }
     moreText(overflow.length);
   }
@@ -1702,6 +1711,15 @@ export async function loadSession() {
     }
   } catch { state.user = null; }
 }
+/** Re-read the signed-in user's permission snapshot without signing out (an administrator may have
+ *  changed it mid-session). On failure the stale snapshot stays; the server enforces regardless. */
+export async function refreshPermissions() {
+  try {
+    const me = await get('/api/me', { quiet: true });
+    state.user = { ...state.user, permissions: me.permissions, denied_permissions: me.denied_permissions, caseload_restricted: me.caseload_restricted };
+    render();
+  } catch { /* stay on the stale snapshot; the server still enforces */ }
+}
 export async function loadRefData() {
   // Not fatal: an account that must change its password first is refused nearly everything, and the one
   // page it may use has to render regardless.
@@ -1720,7 +1738,7 @@ window.__suds = { downloadCsv: (...a) => downloadCsv(...a) };
 // Stamped by scripts/build-local.js from package.json. The two kernel assets are requested with it as a
 // version query so the browser may keep them for good (server/http.js serves `?v=` as immutable) while a
 // new release, with a new version, is a new URL. public/sw.js caches the same URLs for offline starts.
-const SUDS_VERSION = '1.14.1';
+const SUDS_VERSION = '1.15.0';
 
 // ---------- build stamp ----------
 // Which build is this? A tester reporting "still broken" after a release needs to be able to say, and so

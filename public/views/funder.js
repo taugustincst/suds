@@ -34,7 +34,7 @@ export function isPublishablePeriod(from, to) {
  * run publication releases only.
  */
 export function mayRunInternalReports({ caseloadScoped = true } = {}) {
-  return can('reports:internal') || (can('clients:read') && (caseloadScoped || can('clients:all')));
+  return can('reports:internal') || (can('clients:read') && (caseloadScoped || !state.user.caseload_restricted));
 }
 /**
  * Whether this role runs the program's own submission to its funder (server/auth.js submissionRunAllowed):
