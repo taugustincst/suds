@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.15.2 — 2026-09-28
 
 Fixes from a UI evaluation of all six roles (about 120 pages). No migration, no new permission, no change to
 which roles hold a permission, and no new route: a reminder is an ordinary to-do (`POST /api/tasks`).
