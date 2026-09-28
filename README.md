@@ -33,7 +33,7 @@ and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How
 
 The sign-in page has two options, **Log in** and **Sign up** (link straight to either with `#/login?mode=login` or `#/login?mode=signup`).
 
-* **Office server:** *Sign up* asks for an account — your name, a username, the password you choose and a line about your role. An administrator approves it under **Settings → Users & roles → Access requests** and chooses your role; then you *Log in*. Administrators can turn Sign up off; the page then says to ask them.
+* **Office server:** *Sign up* asks for an account — your name, a username, the password you choose and a line about your role. An administrator approves it under **Settings → Users & permissions → Access requests** and chooses your role; then you *Log in*. Administrators can turn Sign up off; the page then says to ask them.
 * **On this device:** the first *Sign up* creates your account and makes you the person who manages the device, once you confirm you understand where the records are kept. Anyone else sharing the device can *Sign up* for their own account (they see only their own clients) until you turn sign-ups off.
 
 ## At a glance

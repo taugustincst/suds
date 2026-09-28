@@ -87,7 +87,7 @@ async function openUserForm(values, onDone) {
   } });
   const m = modal(isNew ? 'New user' : `Edit ${values.display_name}`, f, { wide: true });
   // Admin-managed per-user permission overrides, below the account fields. Additive: the role select above
-  // stays as-is. Only someone with users:manage gets here (the Users & roles tab is theirs alone).
+  // stays as-is. Only someone with users:manage gets here (the Users & permissions tab is theirs alone).
   if (can('users:manage')) {
     const permBox = h('div', { id: 'user-perm-section', 'data-perm-section': '1' });
     m.el.append(permBox);
@@ -371,7 +371,7 @@ route('admin', async (r) => {
         // threshold, and how many doses a distributed naloxone kit holds (the NDP log).
         // Opened when the funder report's "no default funding source" warning links here (section=reporting).
         { type: 'section', label: 'Reporting', hint: 'default fund, small cells, naloxone doses', collapsible: true, heading: true, open: r.query.get('section') === 'reporting' },
-        { name: 'default_fund_id', label: 'Default funding source for new visits', type: 'select', placeholder: '— none —', options: (state.funds || []).map(f => ({ value: f.id, label: f.name })), span: true, help: 'Pre-filled on the visit form, and charged when the worker does not choose a fund. A worker\'s own default (Users & roles → Edit) comes first.' },
+        { name: 'default_fund_id', label: 'Default funding source for new visits', type: 'select', placeholder: '— none —', options: (state.funds || []).map(f => ({ value: f.id, label: f.name })), span: true, help: 'Pre-filled on the visit form, and charged when the worker does not choose a fund. A worker\'s own default (Users & permissions → Edit) comes first.' },
         { name: 'small_cell_threshold', label: 'Small-cell threshold (funder, NDP and settlement reports)', type: 'number', min: 2, max: 50, step: 1, value: s.small_cell_threshold || '11', help: 'Every count of people (or of overdoses and reversals) under this is shown as "<N", with another figure hidden beside it wherever it could be worked out from a total, unless a supervisor, an administrator or finance runs the report with exact counts for the program\'s own submission. Read-only accounts run publication releases only.' },
         { name: 'naloxone_doses_per_kit', label: 'Naloxone doses per kit (NDP log)', type: 'number', min: 1, max: 20, step: 1, value: s.naloxone_doses_per_kit || '2' },
         // Scheduled server backups belong to the office server. A device copy has no backup schedule and no
@@ -491,8 +491,8 @@ route('admin', async (r) => {
   const pending = full && !state.local ? await get('/api/users/access-requests', { quiet: true }).then(x => x.requests.length).catch(() => 0) : 0;
   let tabs = !full ? [['caseload', 'Move a caseload'], ...(can('audit:read') ? [['audit', 'Audit log']] : [])]
     // "Programme", not a second "Settings" inside Settings: the programme's name, profile, modules and policies.
-    : state.local ? [['users', 'Users & roles'], ['settings', 'Program'], ['caseload', 'Move a caseload'], ['audit', 'Audit log']]
-    : [['users', pending ? `Users & roles (${pending})` : 'Users & roles'], ['settings', 'Program'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups'], ['security', 'Security status']];
+    : state.local ? [['users', 'Users & permissions'], ['settings', 'Program'], ['caseload', 'Move a caseload'], ['audit', 'Audit log']]
+    : [['users', pending ? `Users & permissions (${pending})` : 'Users & permissions'], ['settings', 'Program'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups'], ['security', 'Security status']];
   // Moving a caseload needs assignments:manage; a role that manages users without it does not get a tab
   // whose form it could not submit (the deactivate dialog tells it a supervisor must move the clients).
   if (!can('assignments:manage')) tabs = tabs.filter(([k]) => k !== 'caseload');

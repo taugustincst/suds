@@ -25,7 +25,7 @@ module.exports = (r) => {
 
   // ---- Sign up: ask for an account ----
   // On the office server "Sign up" is a request, never an account: the row it creates cannot sign in until
-  // an administrator approves it (Settings -> Users & roles -> Access requests), choosing the role then.
+  // an administrator approves it (Settings -> Users & permissions -> Access requests), choosing the role then.
   // The programme can switch the form off (Settings -> self_signup); it is on unless someone turns it off.
   const signupEnabled = () => db.getSetting('self_signup', '1') !== '0';
   // Unauthenticated, so everything here is public: whether the form is open, and the programme's contact
