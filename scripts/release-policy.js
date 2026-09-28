@@ -7,6 +7,7 @@
 //   node scripts/release-policy.js [--version 1.12.5] [--previous v1.12.4 [--previous-ref <commit>]] [--next-ref <commit>] [--now <ISO date>] [--notes-out file]
 //   RELEASE_POLICY_EXCEPTION="<reason>" node scripts/release-policy.js ...   # an explicit, recorded policy exception
 //   ALLOW_PATCH_CHANGES="<reason>" ...                                      # the same (its name before 1.14.0)
+//   PATCH_MAX_ADDED_LINES=<n> node scripts/release-policy.js ...            # another patch size limit for this run
 //
 // It compares the tree being released (the working directory) with the previous release tag (the highest
 // vX.Y.Z tag below the version in package.json, unless --previous names one), both loaded the same way:
@@ -20,8 +21,8 @@
 //   * size        — for a patch bump only: the lines added outside docs, tests and generated files
 //                   (`git diff --numstat` against the previous tag); more than PATCH_MAX_ADDED_LINES is a
 //                   feature in a fix release's clothing (patchSize, below)
-// For a patch bump any addition, or a diff larger than PATCH_MAX_ADDED_LINES, fails the check. For a major or minor bump any addition is allowed, but the
-// previous feature release (the newest vX.Y.0 tag below the version, dated by its tag - its commit's date for
+// For a patch bump any addition, or a diff larger than PATCH_MAX_ADDED_LINES, fails the check. For a major or
+// minor bump any addition is allowed, but the previous feature release (the newest vX.Y.0 tag below the version, dated by its tag - its commit's date for
 // a lightweight tag) must be at least FEATURE_INTERVAL_DAYS old. Either failure passes only with a policy
 // exception: RELEASE_POLICY_EXCEPTION (release.yml's `policy_exception` input; ALLOW_PATCH_CHANGES and
 // `allow_patch_changes`, its earlier name, still work) gives the reason, and the reason and the list of what it
@@ -29,8 +30,8 @@
 //
 // The previous tag's tree is read with `git archive` into a temporary directory and its modules are loaded
 // in a child process with a test environment and an in-memory database: nothing is opened or written.
-// `bumpKind`, `diffSurfaces`, `previousFeatureTag`, `localRoutes`, `patchSize` and `decide` are pure (decide takes the clock as `now`) and
-// tested in test/release-policy.test.js.
+// `bumpKind`, `diffSurfaces`, `previousFeatureTag`, `localRoutes`, `patchSize` and `decide` are pure (decide
+// takes the clock as `now`) and tested in test/release-policy.test.js.
 
 const fs = require('node:fs');
 const os = require('node:os');

@@ -55,7 +55,7 @@ jobs:
       # A patch bump may not add a migration, permission or route, and a minor or major bump may not come within
       # 28 days of the previous feature release (scripts/release-policy.js compares with the previous release
       # tags and their dates). The exception arrives through the environment, never pasted into the script.
-      - name: Release policy (patch releases add no migration, permission or route; feature releases at most every 28 days)
+      - name: Release policy (patch releases add no migration, permission or route, device routes included, and at most 1,500 lines; feature releases at most every 28 days)
         working-directory: src
         env:
           RELEASE_POLICY_EXCEPTION: ${{ github.event.inputs.policy_exception }}
