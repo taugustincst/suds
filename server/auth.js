@@ -108,14 +108,45 @@ const PERMS = {
   readonly:   ['clients:list-deidentified','resources:read','reports:read','users:read','forms:read','documents:read'],
 };
 
+const { isKnownPermission } = require('./permissions');
+
+// The role's defaults, as a fresh array the caller may mutate.
+function rolePerms(role) { return [...(PERMS[role] || [])]; }
+
+// A user's effective permissions: role defaults plus grants, minus denies.
+// Returns { allow, deny }. Deny always wins — including across wildcards and the
+// write-implies-read rule — so hasPerm checks deny first. Memoized on the user object;
+// resolveSession builds a fresh user object per request, so this is per-request only.
+function effectivePerms(user) {
+  if (!user) return { allow: [], deny: [] };
+  if (user._effectivePerms) return user._effectivePerms;
+  const allow = new Set(rolePerms(user.role));
+  const deny = new Set();
+  if (user.id) {
+    try {
+      const rows = db.all(`SELECT permission, mode FROM user_permission_overrides WHERE user_id=?`, user.id);
+      for (const r of rows) {
+        if (!isKnownPermission(r.permission)) continue; // defensive: ignore hand-edited typos
+        if (r.mode === 'deny') { allow.delete(r.permission); deny.add(r.permission); }
+        else { allow.add(r.permission); }
+      }
+    } catch (e) { /* table missing on databases that have not run migration 46 yet */ }
+  }
+  const out = { allow: [...allow].sort(), deny: [...deny].sort() };
+  user._effectivePerms = out;
+  return out;
+}
+
 function hasPerm(user, perm) {
   if (!user) return false;
-  const perms = PERMS[user.role] || [];
-  if (perms.includes(perm)) return true;
-  const [ns] = perm.split(':');
-  if (perms.includes(`${ns}:*`)) return true;
-  // 'x:*' grants covers x:read and x:write; 'x:write' implies 'x:read'
-  if (perm.endsWith(':read') && perms.includes(perm.replace(/:read$/, ':write'))) return true;
+  const { allow, deny } = effectivePerms(user);
+  if (deny.includes(perm)) return false;
+  const ns = perm.split(':')[0];
+  if (deny.includes(`${ns}:*`)) return false;
+  if (perm.endsWith(':read') && deny.includes(perm.slice(0, -5) + ':write')) return false;
+  if (allow.includes(perm)) return true;
+  if (allow.includes(`${ns}:*`)) return true;
+  if (perm.endsWith(':read') && allow.includes(perm.slice(0, -5) + ':write')) return true;
   return false;
 }
 
@@ -573,9 +604,10 @@ function verifyMfa(ctx, code) {
 }
 
 function publicUser(u) {
-  const perms = PERMS[u.role] || [];
+  const eff = effectivePerms(u);
   return { id: u.id, username: u.username, display_name: u.display_name, email: u.email, title: u.title, role: u.role,
-    mfa_enabled: !!u.mfa_enabled, must_change_password: !!u.must_change_password, permissions: perms,
+    mfa_enabled: !!u.mfa_enabled, must_change_password: !!u.must_change_password, permissions: eff.allow,
+    denied_permissions: eff.deny,
     mfa_required: policy().mfaRequiredRoles.includes(u.role), mfa_setup_deadline: mfaDeadline(u), caseload_restricted: caseloadRestricted(u) };
 }
 
@@ -588,5 +620,5 @@ function passwordPolicy(pw) {
   return errors;
 }
 
-module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
+module.exports = { auditUsername, policy, PERMS, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
   createSession, markReauth, noteSsoProof, reauthStatus, verifySigner, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
