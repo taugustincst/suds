@@ -258,12 +258,26 @@ const DHCS_FIELDS = [
   { key: 'approved_amount', label: 'Amount expended ($, approved or reimbursed)', filled: true },
   { key: 'pending_amount', label: 'Amount pending approval ($)', filled: true },
   { key: 'expenditures', label: 'Expenditures (count)', filled: true },
-  { key: 'services', label: 'Services charged to the fund (count, whole fund)', filled: true },
-  { key: 'people_served', label: 'People served by the fund\'s services (whole fund; 10 or fewer not reported)', filled: true },
+  // Per activity (1.16.0): a visit is charged to a fund, and a fund's services belong to the activity of its own
+  // category and HIAA (Funding: the fund's settlement use), so that row carries them and a row the fund's
+  // spending alone reaches (an expenditure given another category) carries none. The fund's whole count used
+  // to be repeated on every one of its rows, so adding the column up counted people several times.
+  { key: 'services', label: 'Services under this activity (count: visits charged to the fund, on the row of the fund\'s own category)', filled: true },
+  { key: 'people_served', label: 'People served under this activity (counted once; 10 or fewer not reported)', filled: true },
   { key: 'outcomes', label: 'Outcomes and narrative (to complete)', filled: false },
 ];
+// More that a county template may ask for, per row (1.16.0), from what SUDS records against a fund: naloxone kits
+// and test strips on the fund's visits and reversals charged to it. Not on the DHCS form, so only the county
+// template offers them. Reversals are events involving people: 10 or fewer are not reported, as people are.
+const EXTRA_FIELDS = [
+  { key: 'naloxone_kits', label: 'Naloxone kits distributed under this activity', filled: true },
+  { key: 'fentanyl_strips', label: 'Fentanyl test strips distributed under this activity', filled: true },
+  { key: 'reversals', label: 'Naloxone reversals reported under this activity (10 or fewer not reported)', filled: true },
+];
 const DHCS_KEYS = DHCS_FIELDS.map(f => f.key);
-const DHCS_NOTE = 'Laid out after the fields of the DHCS California Opioid Settlement Expenditure Reporting Form as SUDS understands them from DHCS\'s published guide (one row per activity: a settlement fund and the Exhibit E category and HIAA its spending went to). It is not the DHCS form, which is completed online: copy each row into it, and write the columns marked "to complete". Check the categories against the agreement governing each fund.';
+const SOURCE_FIELDS = [...DHCS_FIELDS, ...EXTRA_FIELDS];
+const SOURCE_KEYS = SOURCE_FIELDS.map(f => f.key);
+const DHCS_NOTE = 'Laid out after the fields of the DHCS California Opioid Settlement Expenditure Reporting Form as SUDS understands them from DHCS\'s published guide (one row per activity: a settlement fund and the Exhibit E category and HIAA its spending went to). Services and people served are on the row of the activity they fall under: the fund\'s own category and HIAA (the category set on the funding source), since a visit is charged to a fund, not to one of its expenditures. It is not the DHCS form, which is completed online: copy each row into it, and write the columns marked "to complete". Check the categories against the agreement governing each fund.';
 /** DHCS: do not report a number of people of 10 or fewer. */
 const dhcsPeople = (v) => (typeof v === 'number' && v > 0 && v <= 10 ? '10 or fewer' : v);
 
@@ -272,19 +286,25 @@ const dhcsPeople = (v) => (typeof v === 'number' && v > 0 && v <= 10 ? '10 or fe
  * People per fund are counts of people: protected like people per allowable use in a suppressed run, and
  * under DHCS's own rule in every run.
  */
-function dhcsRows(ctx, { from, to, ts, tsP }, sc) {
-  const isFund = `(f.source_type='opioid_settlement' OR f.settlement_use IS NOT NULL OR f.settlement_hiaa IS NOT NULL)`;
-  const funds = db.all(`SELECT f.id, f.name, f.grant_number, f.settlement_use, f.settlement_hiaa FROM funding_sources f WHERE ${isFund} ORDER BY f.name`);
+function dhcsRows(ctx, { from, to, ts, tsP }, sc, { fundType = null } = {}) {
+  // fundType: a county template whose rows are one per fund of another type (a SABG template: state_block_grant),
+  // rather than one per settlement activity. The same fields, with the settlement-only ones left blank.
+  const other = !!fundType && fundType !== 'opioid_settlement';
+  const isFund = other ? `f.source_type=?` : `(f.source_type='opioid_settlement' OR f.settlement_use IS NOT NULL OR f.settlement_hiaa IS NOT NULL)`;
+  const fp = other ? [fundType] : [];
+  const funds = db.all(`SELECT f.id, f.name, f.grant_number, f.settlement_use, f.settlement_hiaa, f.is_active FROM funding_sources f WHERE ${isFund} ORDER BY f.name`, ...fp);
   const exps = db.all(`SELECT e.amount, e.status, COALESCE(e.settlement_use, f.settlement_use) AS use_code, COALESCE(e.settlement_hiaa, f.settlement_hiaa) AS hiaa_code, f.id AS fund_id
-    FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE ${isFund} AND e.spent_at BETWEEN ? AND ? AND e.status IN ('pending','approved','reimbursed')`, from, to);
-  const svc = new Map(db.all(`SELECT i.funding_source_id fid, COUNT(*) services, COUNT(DISTINCT CASE WHEN c.deleted_at IS NULL THEN i.client_id END) people
-    FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts('i.occurred_at')} GROUP BY i.funding_source_id`, ...tsP).map(x => [x.fid, x]));
+    FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE ${isFund} AND e.spent_at BETWEEN ? AND ? AND e.status IN ('pending','approved','reimbursed')`, ...fp, from, to);
+  const svc = new Map(db.all(`SELECT i.funding_source_id fid, COUNT(*) services, COUNT(DISTINCT CASE WHEN c.deleted_at IS NULL THEN i.client_id END) people, COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips
+    FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts('i.occurred_at')} GROUP BY i.funding_source_id`, ...fp, ...tsP).map(x => [x.fid, x]));
+  const rev = new Map(db.all(`SELECT o.funding_source_id fid, COUNT(*) n FROM overdose_events o JOIN funding_sources f ON f.id=o.funding_source_id WHERE ${isFund} AND ${ts('o.occurred_at')} AND (o.naloxone_used=1 OR o.kind='reversal') AND o.survived=1 GROUP BY o.funding_source_id`, ...fp, ...tsP).map(x => [x.fid, x.n]));
   let people = funds.map(f => (svc.get(f.id) || { people: 0 }).people);
   if (!sc.exact) {
     const served = FR.servedCount(ts, tsP);
     people = SC.noLonely(SC.star({ total: served, subsets: people.map(n => Math.min(n, served)) }, { ...sc, fixedTotal: true }).subsets);
   }
   const peopleOf = new Map(funds.map((f, i) => [f.id, dhcsPeople(people[i])]));
+  const reversalsOf = (id) => dhcsPeople(SC.cell(rev.get(id) || 0, sc));
   const org = db.getSetting('org_name', '') || '';
   const rows = new Map();
   const key = (fid, use, hiaa) => `${fid}|${use}|${hiaa}`;
@@ -292,21 +312,33 @@ function dhcsRows(ctx, { from, to, ts, tsP }, sc) {
     const k = key(f.id, use, hiaa);
     if (!rows.has(k)) {
       rows.set(k, { period: `${from} to ${to}`, settlement: TO_COMPLETE, fund_type: TO_COMPLETE, fund_name: f.name, grant_number: f.grant_number || '', activity_name: TO_COMPLETE, activity_description: TO_COMPLETE,
-        exhibit_e_schedule: USE_LABEL[use]?.schedule || 'Uncategorised: choose the Exhibit E category in SUDS (Funding)', exhibit_e_category: USE_LABEL[use]?.label || 'No settlement category recorded',
-        hiaa: HIAA_LABEL[hiaa] || 'No High Impact Abatement Activity recorded', hiaa_rationale: TO_COMPLETE, funded_organization: org,
-        approved_amount: 0, pending_amount: 0, expenditures: 0, services: (svc.get(f.id) || { services: 0 }).services, people_served: peopleOf.get(f.id), outcomes: TO_COMPLETE, _fund: f.id, _use: use, _hiaa: hiaa });
+        exhibit_e_schedule: other ? '' : USE_LABEL[use]?.schedule || 'Uncategorised: choose the Exhibit E category in SUDS (Funding)', exhibit_e_category: other ? '' : USE_LABEL[use]?.label || 'No settlement category recorded',
+        hiaa: other ? '' : HIAA_LABEL[hiaa] || 'No High Impact Abatement Activity recorded', hiaa_rationale: TO_COMPLETE, funded_organization: org,
+        approved_amount: 0, pending_amount: 0, expenditures: 0, services: 0, people_served: 0, naloxone_kits: 0, fentanyl_strips: 0, reversals: 0, outcomes: TO_COMPLETE, _fund: f.id, _use: use, _hiaa: hiaa });
     }
     return rows.get(k);
   };
+  const ownUse = (f) => (other ? 'fund' : f.settlement_use && USE_LABEL[f.settlement_use] ? f.settlement_use : 'uncategorised');
+  const ownHiaa = (f) => (other ? 'fund' : f.settlement_hiaa && HIAA_LABEL[f.settlement_hiaa] ? f.settlement_hiaa : 'uncategorised');
   const byId = new Map(funds.map(f => [f.id, f]));
   for (const e of exps) {
-    const use = e.use_code && USE_LABEL[e.use_code] ? e.use_code : 'uncategorised'; const hiaa = e.hiaa_code && HIAA_LABEL[e.hiaa_code] ? e.hiaa_code : 'uncategorised';
-    const r = rowFor(byId.get(e.fund_id), use, hiaa);
+    const f = byId.get(e.fund_id);
+    const use = other ? 'fund' : e.use_code && USE_LABEL[e.use_code] ? e.use_code : 'uncategorised'; const hiaa = other ? 'fund' : e.hiaa_code && HIAA_LABEL[e.hiaa_code] ? e.hiaa_code : 'uncategorised';
+    const r = rowFor(f, use, hiaa);
     if (e.status === 'pending') r.pending_amount += e.amount; else r.approved_amount += e.amount;
     r.expenditures += 1;
   }
-  // A fund that provided services but spent nothing in the period still has an activity to report: its own category.
-  for (const f of funds) if (svc.has(f.id) && ![...rows.values()].some(r => r._fund === f.id)) rowFor(f, f.settlement_use && USE_LABEL[f.settlement_use] ? f.settlement_use : 'uncategorised', f.settlement_hiaa && HIAA_LABEL[f.settlement_hiaa] ? f.settlement_hiaa : 'uncategorised');
+  // What the fund's visits did (and the reversals charged to it) is the activity of the fund's own category: that
+  // row carries it, made if the fund's spending went only to other categories or it spent nothing in the period.
+  for (const f of funds) {
+    const v = svc.get(f.id); const n = rev.get(f.id) || 0;
+    if (!v && !n) continue;
+    const r = rowFor(f, ownUse(f), ownHiaa(f));
+    if (v) Object.assign(r, { services: v.services, people_served: peopleOf.get(f.id), naloxone_kits: v.kits, fentanyl_strips: v.strips });
+    if (n) r.reversals = reversalsOf(f.id);
+  }
+  // A fund of another type with nothing in the period is still listed while it is active (a template asks for each).
+  if (other) for (const f of funds) if (f.is_active) rowFor(f, 'fund', 'fund');
   return [...rows.values()].map(r => ({ ...r, approved_amount: money(r.approved_amount), pending_amount: money(r.pending_amount) }))
     .sort((a, b) => a.fund_name.localeCompare(b.fund_name) || a._use.localeCompare(b._use) || a._hiaa.localeCompare(b._hiaa))
     .map(({ _fund, _use, _hiaa, ...r }) => r);
@@ -332,11 +364,15 @@ function checkCountyLayout(v) {
     if (!label || label.length > 100) throw badRequest(`Column ${i + 1} needs a heading of at most 100 characters`, { fields: { [`columns.${i}.label`]: 'is required' } });
     if (seen.has(label.toLowerCase())) throw badRequest(`Two columns are headed "${label}"`, { fields: { [`columns.${i}.label`]: 'must be unique' } });
     seen.add(label.toLowerCase());
-    if (![...DHCS_KEYS, 'blank', 'text'].includes(source)) throw badRequest(`Column "${label}": its source must be one of ${[...DHCS_KEYS, 'blank', 'text'].join(', ')}`, { fields: { [`columns.${i}.source`]: 'is not a field SUDS fills' } });
+    if (![...SOURCE_KEYS, 'blank', 'text'].includes(source)) throw badRequest(`Column "${label}": its source must be one of ${[...SOURCE_KEYS, 'blank', 'text'].join(', ')}`, { fields: { [`columns.${i}.source`]: 'is not a field SUDS fills' } });
     const text = source === 'text' ? String((c && c.text) || '').slice(0, 200) : undefined;
     return { label, source, ...(source === 'text' ? { text } : {}) };
   });
-  return { name, columns };
+  // Its rows (1.16.0): one per settlement activity (the default), or one per fund of another type, so a county's
+  // SABG or SOR template is matched the same way.
+  const fundType = v.fund_type === undefined || v.fund_type === null || v.fund_type === '' || v.fund_type === 'opioid_settlement' ? null : String(v.fund_type);
+  if (fundType && !C.FUNDING_TYPES.includes(fundType)) throw badRequest(`Rows must be settlement activities or the funds of one type: ${C.FUNDING_TYPES.join(', ')}`, { fields: { fund_type: 'is not a funding type' } });
+  return { name, columns, ...(fundType ? { fund_type: fundType } : {}) };
 }
 /** The DHCS rows as a county template's columns. */
 function countyRows(layout, rows) {
@@ -348,7 +384,8 @@ function countyRows(layout, rows) {
 /** Settings for the county template: read (budget:read) and set (budget:manage: finance, supervisors, administrators). */
 function layoutRoutes(r) {
   r.get('/api/reports/settlement-layout', auth.requireAuth, auth.requirePerm('budget:read'), () => ({
-    dhcs_fields: DHCS_FIELDS, sources: [...DHCS_FIELDS.map(f => ({ value: f.key, label: f.label })), { value: 'blank', label: 'Blank (the program writes it)' }, { value: 'text', label: 'Fixed text (the same on every row)' }],
+    fund_types: [{ value: '', label: 'One row per settlement activity (fund, Exhibit E category and HIAA)' }, ...C.FUNDING_TYPES.filter(t => t !== 'opioid_settlement').map(t => ({ value: t, label: `One row per ${(C.CODE_LABELS && C.CODE_LABELS[t]) || t.replace(/_/g, ' ')} fund` }))],
+    dhcs_fields: DHCS_FIELDS, sources: [...SOURCE_FIELDS.map(f => ({ value: f.key, label: f.label })), { value: 'blank', label: 'Blank (the program writes it)' }, { value: 'text', label: 'Fixed text (the same on every row)' }],
     county: countyLayout(), dhcs_note: DHCS_NOTE }));
   r.put('/api/reports/settlement-layout', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     const body = ctx.body || {};
@@ -402,17 +439,17 @@ function routes(r, range) {
     if (layout) {
       if (d.suppression.purpose === 'publication') throw require('./http').badRequest('The DHCS and county layouts are the program\'s own report, not a publication release: your role can run only publication releases of this report.');
       const sc = { threshold: d.suppression.threshold, exact: d.suppression.mode === 'exact' };
-      const rows = dhcsRows(ctx, rg, sc);
       const county = layout === 'county' ? countyLayout() : null;
+      const rows = dhcsRows(ctx, rg, sc, { fundType: county && county.fund_type });
       const t = county ? countyRows(county, rows) : { columns: DHCS_FIELDS.map(f => ({ key: f.key, label: f.label })), rows };
       audit.log({ user: ctx.user, action: 'report.opioid_settlement.export', ip: ctx.ip, details: { from: d.from, to: d.to, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv', layout, rows: rows.length } });
       const title = county ? `County template: ${county.name}` : 'DHCS settlement expenditure layout';
       const toComplete = county ? county.columns.filter(c => c.source === 'blank' || (DHCS_FIELDS.find(f => f.key === c.source) || {}).filled === false).map(c => c.label) : DHCS_FIELDS.filter(f => !f.filled).map(f => f.label);
       const body = xlsx ? S.writeWorkbook([{ name: county ? 'County template' : 'DHCS layout', columns: t.columns, rows: t.rows }, aboutSheet(ctx, [
-        { k: 'Report', v: `Opioid settlement expenditures: ${title}` }, { k: 'Period', v: `${d.from} to ${d.to}` }, { k: 'Layout', v: county ? `${county.name}, as mapped in SUDS (Reports \u203a County template) from the DHCS layout's fields. Check it against the county's current template.` : DHCS_NOTE },
+        { k: 'Report', v: county && county.fund_type ? `${title}: one row per ${county.fund_type.replace(/_/g, ' ')} fund` : `Opioid settlement expenditures: ${title}` }, { k: 'Period', v: `${d.from} to ${d.to}` }, { k: 'Layout', v: county ? `${county.name}, as mapped in SUDS (Reports \u203a County template) from the DHCS layout's fields. Check it against the county's current template.` : DHCS_NOTE },
         { k: 'Filled by SUDS', v: 'Period, funding source, grant number, Exhibit E schedule and category, HIAA, the receiving organization (this program), amounts, expenditures, services and people served.' },
         { k: 'For the program to write', v: toComplete.join('; ') || 'Nothing' },
-        { k: 'People served', v: 'People served by the fund\'s services, counted once each; a number of 10 or fewer is not reported (DHCS asks that none be).' },
+        { k: 'People served', v: 'People served under each activity (the visits charged to the fund, on the row of the fund\'s own category), counted once each; a number of 10 or fewer is not reported (DHCS asks that none be). A fund\'s other rows carry its spending only.' },
         { k: 'Sources and verification', v: d.source_note }, ...purposeRows(d), { k: 'Counts', v: d.counting_statement }])]) : S.toCsv(t.rows, t.columns);
       return send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-opioid-settlement-${layout === 'county' ? 'county-template' : 'dhcs-layout'}-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? 'xlsx' : 'csv'}`,
         classification: `${title} (check against the current ${county ? 'county template' : 'DHCS reporting form'}; columns marked to complete are for the program). Aggregate, no client information.` });
@@ -432,4 +469,4 @@ function routes(r, range) {
   });
 }
 
-module.exports = { ndp, settlement, settlementFigures, distributionRows, ndpPublished, ndpSettings, header, routes, layoutRoutes, dhcsRows, countyRows, checkCountyLayout, countyLayout, DHCS_FIELDS, DHCS_NOTE, dhcsPeople, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
+module.exports = { ndp, settlement, settlementFigures, distributionRows, ndpPublished, ndpSettings, header, routes, layoutRoutes, dhcsRows, countyRows, checkCountyLayout, countyLayout, DHCS_FIELDS, EXTRA_FIELDS, DHCS_NOTE, dhcsPeople, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };

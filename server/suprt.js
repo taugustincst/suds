@@ -68,11 +68,25 @@ const CLOSEOUT_REASONS = [
   { value: 'moved', label: 'Moved away' }, { value: 'declined_services', label: 'Declined further services' },
   { value: 'deceased', label: 'Deceased' }, { value: 'other', label: 'Other' },
 ];
+// Coded demographics (1.16.0): the client record's own codes, each with its label, so the form offers a list
+// rather than a text box holding "doubled_up". SUPRT-A's own answer codes must still be checked against the
+// codebook (docs/compliance/SUPRT.md): these are SUDS's.
+const coded = (pairs) => pairs.map(([value, label]) => ({ value, label }));
+const GENDER = coded([['female', 'Female'], ['male', 'Male'], ['non_binary', 'Non-binary'], ['transgender_female', 'Transgender female'], ['transgender_male', 'Transgender male'], ['other', 'Another gender'], ['declined', 'Declined to answer'], ['unknown', "Don't know / not recorded"]]);
+const HOUSING = coded([['stable', 'Stable housing'], ['doubled_up', 'Staying with others (doubled up)'], ['shelter', 'Shelter'], ['unsheltered', 'Unsheltered (street, car, encampment)'], ['transitional', 'Transitional housing'], ['sober_living', 'Sober living / recovery residence'], ['incarcerated', 'Incarcerated'], ['treatment_facility', 'Treatment facility'], ['unknown', "Don't know / not recorded"]]);
+const INSURANCE = coded([['medicaid', 'Medicaid (Medi-Cal)'], ['medicare', 'Medicare'], ['private', 'Private insurance'], ['uninsured', 'Uninsured'], ['va', 'VA / military'], ['pending', 'Application pending'], ['unknown', "Don't know / not recorded"]]);
+const ROUTE = coded([['oral', 'Oral'], ['smoked', 'Smoked'], ['snorted', 'Snorted'], ['injected', 'Injected'], ['multiple', 'More than one route'], ['unknown', "Don't know / not recorded"]]);
 const SUPRT_C = [{ value: 'completed', label: 'Completed' }, { value: 'declined', label: 'Offered and declined' }, { value: 'not_offered', label: 'Not offered or not able to complete' }];
 
 // source: 'record' — pre-filled from the client record (editable); 'setting' — from Settings (the programme's
 // grant and site IDs); 'assessment' — the assessment's own type and date; 'asked' — the interview form.
-// required: the assessment cannot be marked complete without it.
+// required: the assessment cannot be marked complete without it. Every question in a section the assessment
+// point asks (B-D at baseline, reassessment and annual; E at the follow-ups; F at a baseline without SUPRT-C) is
+// required (1.16.0): a baseline could be saved "complete" with its screenings, diagnoses and crisis questions
+// blank. Each such question has a "don't know / not recorded" or "not screened" answer, so an honest complete
+// record is always possible. Free text (which medication, the ICD-10 codes, race and ethnicity, language) and
+// the date of birth are not required. This is SUDS's reading of what the handbook requires: check it against
+// the current SUPRT-A handbook.
 const ITEMS = [
   { key: 'A_client_id', section: 'A', label: 'Client ID (the SUDS client code, not a name)', type: 'text', at: ALL, source: 'record', readonly: true, required: true },
   { key: 'A_grant_id', section: 'A', label: 'Grant ID', type: 'text', at: ALL, source: 'setting', readonly: true },
@@ -83,31 +97,31 @@ const ITEMS = [
   { key: 'A_suprt_c', section: 'A', label: 'Client questionnaire (SUPRT-C) at this assessment', type: 'choice', options: SUPRT_C, at: NOT_CLOSEOUT, source: 'asked', required: true, help: 'SUDS does not hold the questionnaire itself: it is completed with SAMHSA\'s own form. Demographics are asked here only when it was not completed.' },
   { key: 'A_closeout_reason', section: 'A', label: 'Reason for closeout', type: 'choice', options: CLOSEOUT_REASONS, at: ['closeout'], source: 'record', required: true, help: 'Pre-filled from the discharge reason, where one is recorded.' },
   { key: 'A_last_service_date', section: 'A', label: 'Date of last service', type: 'date', at: ['closeout'], source: 'record', required: true },
-  { key: 'B_primary_substance', section: 'B', label: 'Primary substance', type: 'choice', options: C.SUBSTANCES.map(v => ({ value: v, label: v })), at: NOT_CLOSEOUT, source: 'record' },
-  { key: 'B_route_of_use', section: 'B', label: 'Usual route of use', type: 'text', at: NOT_CLOSEOUT, source: 'record' },
-  { key: 'B_overdose_ever', section: 'B', label: 'Ever had an overdose', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'record' },
-  { key: 'B_overdose_since_last', section: 'B', label: 'Overdose since the last assessment (at baseline: in the 30 days before it)', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'record' },
-  { key: 'B_moud', section: 'B', label: 'Receiving medication for opioid use disorder (MOUD)', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'record' },
+  { key: 'B_primary_substance', section: 'B', label: 'Primary substance', type: 'choice', options: C.SUBSTANCES.map(v => ({ value: v, label: v })), at: NOT_CLOSEOUT, source: 'record', required: true },
+  { key: 'B_route_of_use', section: 'B', label: 'Usual route of use', type: 'choice', options: ROUTE, at: NOT_CLOSEOUT, source: 'record', required: true },
+  { key: 'B_overdose_ever', section: 'B', label: 'Ever had an overdose', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'record', required: true },
+  { key: 'B_overdose_since_last', section: 'B', label: 'Overdose since the last assessment (at baseline: in the 30 days before it)', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'record', required: true },
+  { key: 'B_moud', section: 'B', label: 'Receiving medication for opioid use disorder (MOUD)', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'record', required: true },
   { key: 'B_moud_medication', section: 'B', label: 'Which medication', type: 'text', at: NOT_CLOSEOUT, source: 'record' },
-  { key: 'B_co_occurring_mh', section: 'B', label: 'Co-occurring mental health condition', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'record' },
-  { key: 'B_crisis_since_last', section: 'B', label: 'Behavioral health crisis, or a crisis response requested, since the last assessment (at baseline: in the 30 days before it)', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'asked' },
-  { key: 'B_residential_tx_since_last', section: 'B', label: 'Residential substance use disorder treatment since the last assessment (at baseline: in the 30 days before it)', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'asked' },
-  { key: 'C_substance_use_screen', section: 'C', label: 'Substance use screening result', type: 'choice', options: SCREEN, at: NOT_CLOSEOUT, source: 'record', help: 'From the latest DAST-10 or AUDIT-C in SUDS, where one was given.' },
-  { key: 'C_mental_health_screen', section: 'C', label: 'Mental health screening result', type: 'choice', options: SCREEN, at: NOT_CLOSEOUT, source: 'record', help: 'From the latest PHQ-9 or GAD-7 in SUDS, where one was given.' },
-  { key: 'C_suicide_risk_screen', section: 'C', label: 'Suicide risk screening result', type: 'choice', options: SCREEN, at: NOT_CLOSEOUT, source: 'record', help: 'From PHQ-9 item 9, where a PHQ-9 was given; otherwise ask.' },
-  { key: 'C_trauma_screen', section: 'C', label: 'Trauma screening result', type: 'choice', options: SCREEN, at: NOT_CLOSEOUT, source: 'asked' },
+  { key: 'B_co_occurring_mh', section: 'B', label: 'Co-occurring mental health condition', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'record', required: true },
+  { key: 'B_crisis_since_last', section: 'B', label: 'Behavioral health crisis, or a crisis response requested, since the last assessment (at baseline: in the 30 days before it)', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'asked', required: true },
+  { key: 'B_residential_tx_since_last', section: 'B', label: 'Residential substance use disorder treatment since the last assessment (at baseline: in the 30 days before it)', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'asked', required: true },
+  { key: 'C_substance_use_screen', section: 'C', label: 'Substance use screening result', type: 'choice', options: SCREEN, at: NOT_CLOSEOUT, source: 'record', help: 'From the latest DAST-10 or AUDIT-C in SUDS, where one was given.', required: true },
+  { key: 'C_mental_health_screen', section: 'C', label: 'Mental health screening result', type: 'choice', options: SCREEN, at: NOT_CLOSEOUT, source: 'record', help: 'From the latest PHQ-9 or GAD-7 in SUDS, where one was given.', required: true },
+  { key: 'C_suicide_risk_screen', section: 'C', label: 'Suicide risk screening result', type: 'choice', options: SCREEN, at: NOT_CLOSEOUT, source: 'record', help: 'From PHQ-9 item 9, where a PHQ-9 was given; otherwise ask.', required: true },
+  { key: 'C_trauma_screen', section: 'C', label: 'Trauma screening result', type: 'choice', options: SCREEN, at: NOT_CLOSEOUT, source: 'asked', required: true },
   { key: 'D_icd10_codes', section: 'D', label: 'Current diagnoses (ICD-10-CM codes, as made by a clinician)', type: 'text', at: NOT_CLOSEOUT, source: 'record', help: 'The ICD-10 codes on the client\'s active problem list.' },
-  { key: 'D_oud', section: 'D', label: 'Opioid use disorder diagnosis (F11)', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'record' },
-  { key: 'D_stimulant_use_disorder', section: 'D', label: 'Stimulant use disorder diagnosis (F14, F15)', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'record' },
-  ...SERVICE_CATEGORIES.map(([k, label]) => ({ key: `E_${k}`, section: 'E', label, type: 'choice', options: YES_NO, at: FOLLOW, source: 'record' })),
+  { key: 'D_oud', section: 'D', label: 'Opioid use disorder diagnosis (F11)', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'record', required: true },
+  { key: 'D_stimulant_use_disorder', section: 'D', label: 'Stimulant use disorder diagnosis (F14, F15)', type: 'choice', options: YES_NO, at: NOT_CLOSEOUT, source: 'record', required: true },
+  ...SERVICE_CATEGORIES.map(([k, label]) => ({ key: `E_${k}`, section: 'E', label, type: 'choice', options: YES_NO, at: FOLLOW, source: 'record', required: true })),
   { key: 'F_date_of_birth', section: 'F', label: 'Date of birth', type: 'date', at: ['baseline'], source: 'record', demographics: true },
-  { key: 'F_gender', section: 'F', label: 'Gender', type: 'text', at: ['baseline'], source: 'record', demographics: true },
+  { key: 'F_gender', section: 'F', label: 'Gender', type: 'choice', options: GENDER, at: ['baseline'], source: 'record', demographics: true, required: true },
   { key: 'F_race', section: 'F', label: 'Race (codes)', type: 'text', at: ['baseline'], source: 'record', demographics: true },
   { key: 'F_ethnicity', section: 'F', label: 'Ethnicity', type: 'text', at: ['baseline'], source: 'record', demographics: true },
   { key: 'F_language', section: 'F', label: 'Preferred language', type: 'text', at: ['baseline'], source: 'record', demographics: true },
-  { key: 'F_veteran', section: 'F', label: 'Veteran', type: 'choice', options: YES_NO, at: ['baseline'], source: 'record', demographics: true },
-  { key: 'F_housing', section: 'F', label: 'Housing status', type: 'text', at: ['baseline'], source: 'record', demographics: true },
-  { key: 'F_insurance', section: 'F', label: 'Health insurance', type: 'text', at: ['baseline'], source: 'record', demographics: true },
+  { key: 'F_veteran', section: 'F', label: 'Veteran', type: 'choice', options: YES_NO, at: ['baseline'], source: 'record', demographics: true, required: true },
+  { key: 'F_housing', section: 'F', label: 'Housing status', type: 'choice', options: HOUSING, at: ['baseline'], source: 'record', demographics: true, required: true },
+  { key: 'F_insurance', section: 'F', label: 'Health insurance', type: 'choice', options: INSURANCE, at: ['baseline'], source: 'record', demographics: true, required: true },
 ];
 const ITEM = Object.fromEntries(ITEMS.map(i => [i.key, i]));
 /** The items asked at this assessment point (demographics only when SUPRT-C was not completed). */
@@ -208,12 +222,15 @@ function derive(clientId, { type, date, since = null }) {
   }
   if (type !== 'closeout') {
     a.B_primary_substance = c.primary_substance || null;
-    a.B_route_of_use = c.route_of_use || null;
+    a.B_route_of_use = c.route_of_use && ITEM.B_route_of_use.options.some(o => o.value === c.route_of_use) ? c.route_of_use : null;
     const odEver = db.one(`SELECT COUNT(*) n FROM overdose_events WHERE client_id=? AND substr(occurred_at,1,10) <= ?`, clientId, date).n;
-    a.B_overdose_ever = c.overdose_history || odEver ? 'yes' : 'no';
+    // Only what the record says (1.16.0): an overdose on file is a yes; "no" only when someone recorded that
+    // there has never been one. A question nobody asked (NULL) is left for the interview, not read as "no".
+    const neverOd = c.overdose_history === 0 && !c.last_overdose_date;
+    a.B_overdose_ever = c.overdose_history || odEver ? 'yes' : neverOd ? 'no' : null;
     const odSince = db.one(`SELECT COUNT(*) n FROM overdose_events WHERE client_id=? AND substr(occurred_at,1,10) > ? AND substr(occurred_at,1,10) <= ?`, clientId, from, date).n;
     const lastOd = c.last_overdose_date && c.last_overdose_date > from && c.last_overdose_date <= date;
-    a.B_overdose_since_last = odSince || lastOd ? 'yes' : 'no';
+    a.B_overdose_since_last = odSince || lastOd ? 'yes' : neverOd && !odEver ? 'no' : null;
     a.B_moud = c.mat_status ? (c.mat_status === 'active' ? 'yes' : 'no') : null;
     a.B_moud_medication = c.mat_status === 'active' ? c.mat_medication || null : null;
     a.B_co_occurring_mh = yn(c.co_occurring_mh);
@@ -242,13 +259,14 @@ function derive(clientId, { type, date, since = null }) {
   }
   if (type === 'baseline') {
     a.F_date_of_birth = dec(c.dob_enc);
-    a.F_gender = c.gender || null;
+    const inList = (key, v) => (v && ITEM[key].options.some(o => o.value === v) ? v : null);
+    a.F_gender = inList('F_gender', c.gender);
     a.F_race = c.race_codes || null;
     a.F_ethnicity = c.race_ethnicity || null;
     a.F_language = c.preferred_language || null;
     a.F_veteran = yn(c.veteran);
-    a.F_housing = c.housing_status || null;
-    a.F_insurance = c.insurance || null;
+    a.F_housing = inList('F_housing', c.housing_status);
+    a.F_insurance = inList('F_insurance', c.insurance);
   }
   const answers = {}; const derived = [];
   for (const [k, v] of Object.entries(a)) if (v !== null && v !== undefined && v !== '' && ITEM[k] && ITEM[k].at.includes(type)) { answers[k] = String(v); if (ITEM[k].source !== 'asked') derived.push(k); }
@@ -272,7 +290,7 @@ function cleanAnswers(type, input) {
     if (it.type === 'date' && (!DAY.test(s) || !Number.isFinite(Date.parse(s)))) { errors[k] = 'must be a date (YYYY-MM-DD)'; continue; }
     out[k] = s;
   }
-  const missing = itemsFor(type, out).filter(i => i.required && !out[i.key]).map(i => i.key);
+  const missing = itemsFor(type, out).filter(i => (i.required || (i.key === 'B_moud_medication' && out.B_moud === 'yes')) && !out[i.key]).map(i => i.key);
   return { answers: out, errors, missing };
 }
 

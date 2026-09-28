@@ -84,11 +84,13 @@ function reference(user) {
       by_week: rows(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i WHERE ${ts('i.occurred_at')} AND ${vs.sql} GROUP BY k ORDER BY k`, ...tsP, ...vs.params),
       by_worker: rows(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id WHERE ${ts('i.occurred_at')} AND ${vs.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...vs.params),
     },
+    // Calls are scoped as visits are since 1.16.0 (a caseload-scoped worker's Calls tile counted the whole
+    // programme's): the 1.13 queries with the visits' scope on calls.
     calls: {
-      total: one(`SELECT COUNT(*) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n, minutes: one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n,
-      crisis: one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts('started_at')}`, ...tsP).n, by_outcome: rows(`SELECT outcome k, COUNT(*) n FROM calls WHERE ${ts('started_at')} GROUP BY outcome ORDER BY n DESC`, ...tsP),
-      by_direction: rows(`SELECT direction k, COUNT(*) n FROM calls WHERE ${ts('started_at')} GROUP BY direction`, ...tsP),
-      texts: one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts('started_at')}`, ...tsP).n,
+      total: one(`SELECT COUNT(*) n FROM calls i WHERE ${ts('started_at')} AND ${vs.sql}`, ...tsP, ...vs.params).n, minutes: one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls i WHERE ${ts('started_at')} AND ${vs.sql}`, ...tsP, ...vs.params).n,
+      crisis: one(`SELECT COUNT(*) n FROM calls i WHERE crisis=1 AND ${ts('started_at')} AND ${vs.sql}`, ...tsP, ...vs.params).n, by_outcome: rows(`SELECT outcome k, COUNT(*) n FROM calls i WHERE ${ts('started_at')} AND ${vs.sql} GROUP BY outcome ORDER BY n DESC`, ...tsP, ...vs.params),
+      by_direction: rows(`SELECT direction k, COUNT(*) n FROM calls i WHERE ${ts('started_at')} AND ${vs.sql} GROUP BY direction`, ...tsP, ...vs.params),
+      texts: one(`SELECT COUNT(*) n FROM calls i WHERE method='text' AND ${ts('started_at')} AND ${vs.sql}`, ...tsP, ...vs.params).n,
     },
   };
 }

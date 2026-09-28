@@ -2,6 +2,9 @@ import { h, route, get, post, put, del, state, form, modal, toast, table, fmt, c
 
 export function openTimeForm(values, { clientId, clientDisplay, onDone } = {}) {
   const C = state.constants; const isNew = !values;
+  // New time is charged to the worker's default fund (or the programme's), as a new visit is (1.16.0).
+  const defaultFund = state.defaultFundId && state.funds?.some(x => x.id === state.defaultFundId) ? state.defaultFundId : '';
+  const seed = values || (defaultFund && can('budget:read') ? { funding_source_id: defaultFund } : {});
   const f = form([
     { name: 'work_date', label: 'Date', type: 'date', required: true, value: values?.work_date || fmt.today() }, { name: 'minutes', label: 'Minutes', type: 'number', min: 1, max: 1440, step: 1, required: true },
     { name: 'category', label: 'Category', type: 'select', list: 'TIME_CATEGORIES', value: 'direct_service', noBlank: true, required: true },
@@ -9,7 +12,7 @@ export function openTimeForm(values, { clientId, clientDisplay, onDone } = {}) {
     can('budget:read') ? { name: 'funding_source_id', label: 'Charge to fund', type: 'fund' } : null, { name: 'billable', label: 'Billable', type: 'checkbox' },
     { name: 'description', label: 'Description', span: true, help: 'What the time was for. Managers who approve time without access to client records see only the category, fund and minutes.' },
     can('time:all') ? { name: 'user_id', label: 'Worker', type: 'user', value: values?.user_id || state.user.id } : null,
-  ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Log time' : 'Save', draftKey: isNew ? 'time:new' : `time:${values.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
+  ].filter(Boolean), { values: seed, submitText: isNew ? 'Log time' : 'Save', draftKey: isNew ? 'time:new' : `time:${values.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
     // The same day and client as time a visit or call already logged: asked once more before saving (the
     // notice above said so already), never refused, since a second session with the same person is real time.
     if (isNew && d.client_id) await overlap.check();
@@ -76,20 +79,23 @@ export function timeTable(rows, { showClient = true, onChange } = {}) {
     { label: '', render: r => {
       const mine = r.user_id === state.user.id;
       const locked = r.status === 'approved';
+      // Every row's buttons say which entry they act on (a screen reader's button list is otherwise "Approve,
+      // Approve, Approve"): "Reopen 2h 30m on 28 Sep 2026 for Maria Rivera".
+      const what = `${fmt.mins(r.minutes)} on ${fmt.date(r.work_date)}${mine ? '' : ` for ${r.worker}`}`;
       return h('div', { class: 'row nowrap' },
         // Submitted or approved time is a claim someone else has acted on; editing it silently would
         // undermine the approval it already carries.
-        can('time:write') && (mine || can('time:all')) && !locked ? h('button', { class: 'btn sm', onClick: () => openTimeForm(r, { onDone: onChange }) }, 'Edit') : null,
-        mine && (r.status === 'draft' || r.status === 'rejected') ? h('button', { class: 'btn sm primary', onClick: async () => {
+        can('time:write') && (mine || can('time:all')) && !locked ? h('button', { class: 'btn sm', 'aria-label': `Edit ${what}`, onClick: () => openTimeForm(r, { onDone: onChange }) }, 'Edit') : null,
+        mine && (r.status === 'draft' || r.status === 'rejected') ? h('button', { class: 'btn sm primary', 'aria-label': `Submit ${what}`, onClick: async () => {
           try { await post(`/api/time/${r.id}/submit`, {}); toast('Submitted for approval', 'ok'); onChange && onChange(); }
           catch (e) { toast(e.message, 'error'); }
         } }, 'Submit') : null,
         can('time:approve') && r.status === 'submitted' && !mine ? h('div', { class: 'row nowrap' },
-          h('button', { class: 'btn sm primary', onClick: async () => { try { await post(`/api/time/${r.id}/approve`, { decision: 'approved' }); toast('Approved', 'ok'); onChange && onChange(); } catch (e) { toast(e.message, 'error'); } } }, 'Approve'),
-          h('button', { class: 'btn sm', onClick: async () => { const why = await confirmDialog('Return this entry', 'Send it back to the worker to correct?', { okText: 'Return', requireReason: true }); if (!why) return; try { await post(`/api/time/${r.id}/approve`, { decision: 'rejected', note: why }); toast('Returned', 'ok'); onChange && onChange(); } catch (e) { toast(e.message, 'error'); } } }, 'Return')) : null,
+          h('button', { class: 'btn sm primary', 'aria-label': `Approve ${what}`, onClick: async () => { try { await post(`/api/time/${r.id}/approve`, { decision: 'approved' }); toast('Approved', 'ok'); onChange && onChange(); } catch (e) { toast(e.message, 'error'); } } }, 'Approve'),
+          h('button', { class: 'btn sm', 'aria-label': `Return ${what}`, onClick: async () => { const why = await confirmDialog('Return this entry', 'Send it back to the worker to correct?', { okText: 'Return', requireReason: true }); if (!why) return; try { await post(`/api/time/${r.id}/approve`, { decision: 'rejected', note: why }); toast('Returned', 'ok'); onChange && onChange(); } catch (e) { toast(e.message, 'error'); } } }, 'Return')) : null,
         // Approved time is locked (nobody edits or deletes it); a supervisor reopens it by returning it with a reason.
-        can('time:approve') && locked && !mine ? h('button', { class: 'btn sm', 'data-time-reopen': '', onClick: async () => { const why = await confirmDialog('Reopen this entry', 'Approved time cannot be changed. Return it to the worker to correct and resubmit?', { okText: 'Reopen', requireReason: true }); if (!why) return; try { await post(`/api/time/${r.id}/approve`, { decision: 'rejected', note: why }); toast('Reopened for correction', 'ok'); onChange && onChange(); } catch (e) { toast(e.message, 'error'); } } }, 'Reopen') : null,
-        can('time:write') && (mine || can('time:all')) && !locked ? h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this entry', onClick: async () => { if (await confirmDialog('Delete entry', 'Delete this time entry?', { danger: true, okText: 'Delete' })) { try { await del(`/api/time/${r.id}`); toast('Entry deleted', 'ok'); onChange && onChange(); } catch (e) { toast(e.message, 'error'); } } } }, '✕') : null);
+        can('time:approve') && locked && !mine ? h('button', { class: 'btn sm', 'data-time-reopen': '', 'aria-label': `Reopen ${what}`, onClick: async () => { const why = await confirmDialog('Reopen this entry', 'Approved time cannot be changed. Return it to the worker to correct and resubmit?', { okText: 'Reopen', requireReason: true }); if (!why) return; try { await post(`/api/time/${r.id}/approve`, { decision: 'rejected', note: why }); toast('Reopened for correction', 'ok'); onChange && onChange(); } catch (e) { toast(e.message, 'error'); } } }, 'Reopen') : null,
+        can('time:write') && (mine || can('time:all')) && !locked ? h('button', { class: 'btn sm ghost', 'aria-label': `Delete ${what}`, onClick: async () => { if (await confirmDialog('Delete entry', 'Delete this time entry?', { danger: true, okText: 'Delete' })) { try { await del(`/api/time/${r.id}`); toast('Entry deleted', 'ok'); onChange && onChange(); } catch (e) { toast(e.message, 'error'); } } } }, '✕') : null);
     } },
   ].filter(Boolean), rows, { empty: 'No time entries.' });
 }
@@ -100,7 +106,8 @@ route('time', async (r) => {
   const fromI = h('input', { type: 'date', value: from }), toI = h('input', { type: 'date', value: to });
   const total = sum.by_category.reduce((s, x) => s + x.minutes, 0);
   return h('div', {},
-    pageHead('My time',
+    // Someone who sees everyone's time (time:all) is not looking at "My time".
+    pageHead(can('time:all') ? 'Staff time' : 'My time',
       can('time:write') ? h('button', { class: 'btn primary', onClick: () => openTimeForm(null, { onDone: refresh }) }, '+ Log time') : null,
       // Nobody submits a fortnight of time one row at a time.
       can('time:write') ? h('button', { class: 'btn', onClick: async () => {

@@ -133,7 +133,7 @@ function createHandler() {
       ctx.params = m.params;
 
       // Global API rate limit
-      if (!rateLimit(`api:${ctx.ip}`, 600, 60_000)) throw new HttpError(429, 'Too many requests');
+      if (!rateLimit(`api:${ctx.ip}`, config.apiRateLimit, 60_000)) throw new HttpError(429, 'Too many requests');
 
       ctx.user = auth.resolveSession(ctx);
 

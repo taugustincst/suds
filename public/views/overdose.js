@@ -30,7 +30,7 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
     { name: 'substances', label: 'Substances involved', placeholder: 'e.g. fentanyl, benzodiazepines' },
     // A reversal is a naloxone reversal: choosing it ticks this box, and the server records it so either way
     // (an unticked reversal used to be saved and then counted nowhere).
-    { name: 'naloxone_used', label: 'Naloxone was given', type: 'checkbox', help: 'A reversal means naloxone was given, so choosing "Reversal" above ticks this and it is counted as a naloxone reversal.' },
+    { name: 'naloxone_used', label: 'Naloxone was given', type: 'checkbox', help: `A reversal means naloxone was given, so choosing "${fmt.label('reversal', 'OVERDOSE_KINDS')}" above ticks this and it is counted as a naloxone reversal.` },
     { name: 'naloxone_doses', label: 'Doses given', type: 'number', min: 0, max: 20 },
     { name: 'administered_by', label: 'Given by', type: 'select', list: 'ADMINISTERED_BY' },
     { name: 'ems_called', label: 'EMS was called', type: 'checkbox' },

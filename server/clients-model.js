@@ -9,6 +9,14 @@ const PLAIN_FIELDS = ['city', 'zip', 'gender', 'pronouns', 'race_ethnicity', 'pr
   'discharge_date', 'discharge_reason', 'referral_source', 'referral_date', 'engagement_date', 'primary_substance', 'secondary_substances', 'route_of_use', 'asam_level', 'mat_status', 'mat_medication',
   'overdose_history', 'last_overdose_date', 'naloxone_provided', 'naloxone_last_date', 'risk_level', 'justice_involved', 'pregnant_or_parenting', 'co_occurring_mh',
   'race_codes', 'ok_to_text', 'ok_to_voicemail'];
+// Yes/no questions somebody has to ask (1.16.0): their columns default to 0 in the schema, so a client created
+// without them read as "No" (not a veteran, no overdose history) and SUPRT-A pre-filled "no". A new record that
+// does not answer one stores NULL — "Not asked" on screen — like risk_level's "Not assessed". Rows recorded
+// before this are left as they are. (naloxone_provided and the two contact permissions are facts or consents
+// the programme itself records, so 0 stays their honest default.)
+const UNASKED_FIELDS = ['veteran', 'overdose_history', 'justice_involved', 'pregnant_or_parenting', 'co_occurring_mh'];
+/** On a new client row: every unasked yes/no question not given is NULL, not the schema's 0. */
+function unaskedAsNull(cols) { for (const f of UNASKED_FIELDS) if (cols[f] === undefined) cols[f] = null; return cols; }
 
 /** Whole days between referral and engagement, or null while either date is missing. Left negative rather
  *  than hidden if the dates are entered out of order — that is itself worth someone noticing. */
@@ -173,4 +181,4 @@ function summary(row, opts) {
   return o;
 }
 
-module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes, nameParts, searchPartTokens };
+module.exports = { ENC_FIELDS, PLAIN_FIELDS, UNASKED_FIELDS, unaskedAsNull, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes, nameParts, searchPartTokens };

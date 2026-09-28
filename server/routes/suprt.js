@@ -113,8 +113,8 @@ function derivedKeys(clientId, type, date, answers, exceptId) {
 }
 
 /** The clients a role's due list and completion rates cover: SUPRT clients within the caseload it can open. */
-function scopedClients(ctx, { mine = false } = {}) {
-  const cf = auth.caseloadFilter(ctx.user, 'c.id');
+function scopedClients(ctx, { mine = false, whole = false } = {}) {
+  const cf = whole ? { sql: '1=1', params: [] } : auth.caseloadFilter(ctx.user, 'c.id');
   const mineSql = mine ? ` AND c.id IN (SELECT client_id FROM assignments WHERE user_id=? AND ${auth.activeAssignment()})` : '';
   return db.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND c.merged_into IS NULL AND ${cf.sql}${mineSql}
       AND (c.id IN (SELECT client_id FROM suprt_assessments) OR c.id IN (SELECT i.client_id FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id WHERE f.source_type='sor_grant'))
@@ -215,14 +215,23 @@ module.exports = (r) => {
 
   // Completion rates per period: of the assessments due in the period whose window has closed (or that were
   // done), how many were done within their window. Counts of the caseload a role can open.
-  r.get('/api/suprt/completion', auth.requireAuth, auth.requirePerm('clients:read'), (ctx) => {
+  // Whoever writes the funder report (reports:funder: finance) reads the rates too (1.16.0): counts of the whole
+  // programme's assessments, no client data, as its funder report is. Anyone else needs clients:read and counts
+  // the caseload they can open.
+  r.get('/api/suprt/completion', auth.requireAuth, (ctx) => {
+    const clientLevel = auth.hasPerm(ctx.user, 'clients:read');
+    if (!clientLevel && !auth.submissionRunAllowed(ctx.user)) {
+      audit.log({ user: ctx.user, action: 'authz.denied', ip: ctx.ip, success: false, details: { perms: ['clients:read|reports:funder'], path: ctx.path } });
+      throw require('../http').forbidden();
+    }
+    const whole = !clientLevel;
     const on = S.today();
     const to = ctx.query.get('to') || on; const from = ctx.query.get('from') || S.addDays(to, -89);
     if (!DAY.test(from) || !DAY.test(to)) throw badRequest('from and to must be dates (YYYY-MM-DD)');
     const blank = () => ({ due: 0, done_in_window: 0, done_outside_window: 0, missed: 0, still_open: 0 });
     const by = Object.fromEntries(['reassessment', 'annual', 'closeout'].map(t => [t, blank()]));
     let baselines = 0; let baselinesOwed = 0;
-    for (const c of scopedClients(ctx)) {
+    for (const c of scopedClients(ctx, { whole })) {
       const rows = assessmentsOf(c.id);
       baselines += rows.filter(x => x.status === 'complete' && x.assessment_type === 'baseline' && x.assessment_date >= from && x.assessment_date <= to).length;
       const cy = cycleOf(c, rows, on);
@@ -235,7 +244,7 @@ module.exports = (r) => {
     }
     const rate = (b) => { const settled = b.due - b.still_open; return settled ? Math.round(1000 * b.done_in_window / settled) / 10 : null; };
     const total = Object.values(by).reduce((t, b) => { for (const k of Object.keys(t)) t[k] += b[k]; return t; }, blank());
-    audit.log({ user: ctx.user, action: 'suprt.completion', ip: ctx.ip, details: { from, to } });
+    audit.log({ user: ctx.user, action: 'suprt.completion', ip: ctx.ip, details: { from, to, whole_programme: whole || undefined } });
     return { from, to, today: on, baselines_recorded: baselines, baselines_owed: baselinesOwed,
       by_type: Object.entries(by).map(([type, b]) => ({ type, label: S.TYPE_LABEL[type], ...b, rate: rate(b) })), total: { ...total, rate: rate(total) },
       note: 'Rate: done within the window, of those due in the period whose window has closed or that were done. Still open are not counted yet.' };

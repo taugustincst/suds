@@ -120,6 +120,22 @@ module.exports = (r) => {
     return t;
   }
 
+  // Returned or reopened time is the worker's to correct, and they are told (1.16.0): a to-do on their list,
+  // due now so the bell shows it, saying which day and how long, who returned it and why. The reason can name a
+  // client, so it is encrypted like every to-do's text; the audit entry says only that a to-do was raised.
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const day = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : d; };
+  const mins = (n) => { const h = Math.floor((n || 0) / 60), m = (n || 0) % 60; return h ? `${h}h${m ? ` ${m}m` : ''}` : `${m}m`; };
+  function tellWorker(ctx, workerId, entries, note, reopened) {
+    if (!workerId || !entries.length) return null;
+    const what = entries.length === 1 ? `your time for ${day(entries[0].work_date)} (${mins(entries[0].minutes)})` : `${entries.length} of your time entries (${entries.map(e => day(e.work_date)).filter((x, i, a) => a.indexOf(x) === i).slice(0, 3).join(', ')}${entries.length > 3 ? '…' : ''})`;
+    const title = `Correct ${what}: ${reopened ? 'reopened' : 'returned'} by ${ctx.user.display_name || 'your supervisor'}`;
+    const desc = `${reopened ? 'Reopened' : 'Returned'}: ${note}\nOpen My time, correct ${entries.length === 1 ? 'the entry' : 'them'} and submit again.`;
+    const id = require('../crypto').uuid();
+    db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, null, workerId, ctx.user.id, encrypt(title), encrypt(desc), db.now(), 'high');
+    return id;
+  }
+
   r.post('/api/time/:id/submit', auth.requireAuth, auth.requirePerm('time:write'), (ctx) => {
     const t = loadEntry(ctx, ctx.params.id);
     if (t.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) throw forbidden('Only the worker can submit their own time');
@@ -150,14 +166,15 @@ module.exports = (r) => {
     // The reviewer's note can name the client ("J. was seen Tuesday"): encrypted, and not in the audit entry.
     const note = v.note ? encrypt(v.note) : null;
     db.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db.now(), note, db.now(), t.id);
-    audit.log({ user: ctx.user, action: `time.${v.decision}`, entity: 'time_entry', entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes, note_recorded: v.note ? true : undefined, reopened: reopening || undefined } });
+    const task = v.decision === 'rejected' ? tellWorker(ctx, t.user_id, [t], v.note, reopening) : null;
+    audit.log({ user: ctx.user, action: `time.${v.decision}`, entity: 'time_entry', entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes, note_recorded: v.note ? true : undefined, reopened: reopening || undefined, task: task || undefined } });
     return { ok: true };
   });
 
   r.post('/api/time/approve-batch', auth.requireAuth, auth.requirePerm('time:approve'), (ctx) => {
     const v = validate(ctx.body, { ids: { type: 'array', required: true, maxLen: 500 }, decision: { type: 'string', required: true, enum: ['approved', 'rejected'] }, note: { type: 'string', maxLen: 500 } });
     if (v.decision === 'rejected' && !v.note) throw badRequest(NO_REASON);
-    let n = 0; const skipped = [];
+    let n = 0; const skipped = []; const byWorker = new Map(); const tasks = [];
     db.transaction(() => {
       for (const id of v.ids) {
         const t = db.one(`SELECT * FROM time_entries WHERE id=?`, id);
@@ -166,9 +183,12 @@ module.exports = (r) => {
         if (t.status !== 'submitted') { skipped.push({ id, reason: 'not awaiting approval' }); continue; }
         db.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db.now(), v.note ? encrypt(v.note) : null, db.now(), t.id);
         n++;
+        if (v.decision === 'rejected') { if (!byWorker.has(t.user_id)) byWorker.set(t.user_id, []); byWorker.get(t.user_id).push(t); }
       }
+      // One to-do per worker for what was returned to them.
+      for (const [worker, entries] of byWorker) { const id = tellWorker(ctx, worker, entries, v.note, false); if (id) tasks.push(id); }
     });
-    audit.log({ user: ctx.user, action: `time.${v.decision}.batch`, ip: ctx.ip, details: { count: n, skipped: skipped.length } });
+    audit.log({ user: ctx.user, action: `time.${v.decision}.batch`, ip: ctx.ip, details: { count: n, skipped: skipped.length, tasks: tasks.length || undefined } });
     return { ok: true, [v.decision]: n, skipped };
   });
 };

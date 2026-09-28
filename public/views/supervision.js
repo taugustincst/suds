@@ -210,12 +210,22 @@ route('supervision', async (r) => {
         refresh();
       } catch (e) { toast(e.message, 'error'); }
     };
+    // Each row's checkbox, so "Select all" can tick them; and each row's buttons named for the entry they act on
+    // ("Approve 2h 30m on 28 Sep 2026 for Maria Rivera"), not a column of identical "Approve"s (1.16.0).
+    const boxes = [];
+    const what = (r) => `${fmt.mins(r.minutes)} on ${fmt.date(r.work_date)} for ${r.worker}`;
+    const selectAll = h('input', { type: 'checkbox', id: 'time-select-all', 'data-time-select-all': '1', onChange: (e) => {
+      for (const b of boxes) { b.box.checked = e.target.checked; if (e.target.checked) selected.add(b.id); else selected.delete(b.id); }
+      announce(`${selected.size} selected`);
+    } });
+    const syncAll = () => { selectAll.checked = boxes.length > 0 && boxes.every(b => b.box.checked); selectAll.indeterminate = !selectAll.checked && boxes.some(b => b.box.checked); };
     page.append(h('section', { class: 'card' },
       h('div', { class: 'card-head' }, h('h2', {}, 'Staff time waiting for approval'),
         badge(q.time_totals ? `${plural(q.time_totals.entries, 'entry', 'entries')} · ${hoursOf(q.time_totals.minutes)}` : '0', rows.length ? 'warn' : 'ok')),
       rows.length ? h('div', {},
+        h('label', { class: 'check', for: 'time-select-all' }, selectAll, `Select all (${rows.length})`),
         table([
-          { label: '', render: r => h('input', { type: 'checkbox', 'aria-label': `Select ${r.worker}, ${fmt.date(r.work_date)}`, onChange: (e) => { e.stopPropagation(); if (e.target.checked) selected.add(r.id); else selected.delete(r.id); announce(`${selected.size} selected`); } }) },
+          { label: '', render: r => { const box = h('input', { type: 'checkbox', 'aria-label': `Select ${what(r)}`, 'data-time-select': r.id, onChange: (e) => { e.stopPropagation(); if (e.target.checked) selected.add(r.id); else selected.delete(r.id); syncAll(); announce(`${selected.size} selected`); } }); boxes.push({ id: r.id, box }); return box; } },
           { label: 'Worker', key: 'worker' },
           { label: 'Date', render: r => fmt.date(r.work_date) },
           { label: 'Minutes', key: 'minutes', num: true },
@@ -223,8 +233,8 @@ route('supervision', async (r) => {
           { label: 'Client', render: clientCell },
           { label: 'Fund', render: r => r.funding_source || '—' },
           { label: '', render: r => h('div', { class: 'row' },
-            h('button', { class: 'btn sm primary', onClick: (e) => { e.stopPropagation(); decide('approved', [r.id]); } }, 'Approve'),
-            h('button', { class: 'btn sm', onClick: (e) => { e.stopPropagation(); decide('rejected', [r.id]); } }, 'Return')) },
+            h('button', { class: 'btn sm primary', 'aria-label': `Approve ${what(r)}`, onClick: (e) => { e.stopPropagation(); decide('approved', [r.id]); } }, 'Approve'),
+            h('button', { class: 'btn sm', 'aria-label': `Return ${what(r)}`, onClick: (e) => { e.stopPropagation(); decide('rejected', [r.id]); } }, 'Return')) },
         ], rows, { rowLabel: (r) => `${r.worker}, ${fmt.date(r.work_date)}, ${r.minutes} minutes` }),
         h('div', { class: 'btn-row' },
           h('button', { class: 'btn primary', onClick: () => decide('approved', [...selected]) }, 'Approve selected'),

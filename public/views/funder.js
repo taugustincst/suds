@@ -196,8 +196,13 @@ route('funder', async (r) => {
           : 'The submission workbook: this report as it is on screen, with an About sheet. Send this one to your funder.')),
       h('li', {}, h('button', { class: 'btn', 'data-funder-export': 'csv', 'aria-describedby': 'funder-dl-csv', onClick: () => review.download(`/api/reports/funder/export?${qs}`, downloadCsv) }, 'CSV'),
         h('span', { class: 'small', id: 'funder-dl-csv', 'data-funder-export-help': 'csv' }, 'The same figures as plain rows, for a funder portal or data system that asks you to upload a file.')),
-      h('li', {}, h('button', { class: 'btn', 'data-funder-export': 'workbook', 'aria-describedby': 'funder-dl-workbook', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Export everything to Excel'),
+      // The program's own record-level workbook is for internal checking: it is not offered beside a publication
+      // release, whose files go out only after the review above (1.16.0). It stays on the submission run.
+      publishable ? null : h('li', {}, h('button', { class: 'btn', 'data-funder-export': 'workbook', 'aria-describedby': 'funder-dl-workbook', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Export everything to Excel'),
         h('span', { class: 'small', id: 'funder-dl-workbook', 'data-funder-export-help': 'workbook' }, 'Every program sheet for the period, for your own checking and analysis. Not for sending: it is not the report.'))),
+    // Harm reduction programmes also report their syringe services: the summary, aggregate only, for a role that
+    // writes the funder report but has no Supplies page (1.16.0).
+    can('reports:funder') && !can('supplies:read') ? h('p', { class: 'small', 'data-ssp-link': '1' }, 'Syringe services program: ', h('a', { href: '#/ssp' }, 'the syringe services summary for your funder'), ' (participants, contacts, syringes and naloxone; no client details).') : null,
     publishable || !pubOn || !submissionOk ? null : h('p', { class: 'small muted' }, 'To publish or share figures beyond your funder, prepare a publication release (below) and export that instead.')) : null;
   return h('div', {},
     pageHead('Funder report'),

@@ -55,7 +55,7 @@ async function provisioningCard() {
     } catch (e) { toast(e.message, 'error'); }
   };
   const revoke = async (t) => { try { await del(`/api/admin/scim/tokens/${t.id}`); toast('Token revoked', 'ok'); box.replaceWith(await provisioningCard()); } catch (e) { toast(e.message, 'error'); } };
-  box.append(h('h2', {}, 'Provisioning (SCIM) and deprovisioning'),
+  box.append(...[h('h2', {}, 'Provisioning (SCIM) and deprovisioning'),
     h('p', { class: 'small muted' }, 'Entra ID or Okta can create, update and deactivate SUDS accounts through SCIM 2.0 at ', h('code', {}, '/scim/v2'), '. Group-to-role mapping and the role for everyone else are under Settings → Security policy. A provisioned account signs in through single sign-on; it has no SUDS password.'),
     tok ? table([
       { label: 'Token', render: (t) => h('div', {}, h('b', {}, t.name), h('div', { class: 'small muted mono' }, `${t.prefix}…`)) },
@@ -75,7 +75,7 @@ async function provisioningCard() {
         { label: 'Next run', render: (u) => u.days_unseen >= dep.days ? badge('Will be disabled', 'danger') : badge('Within 7 days', 'warn') },
       ], [...dep.due, ...dep.soon]) : null,
       dep.recent.length ? h('details', {}, h('summary', {}, `Disabled in the last 90 days (${dep.recent.length})`),
-        table([{ label: 'When', render: (x) => fmt.dt(x.at) }, { label: 'Account', render: (x) => x.username || x.user_id }, { label: 'Why', render: (x) => x.reason || '' }], dep.recent)) : null) : null);
+        table([{ label: 'When', render: (x) => fmt.dt(x.at) }, { label: 'Account', render: (x) => x.username || x.user_id }, { label: 'Why', render: (x) => x.reason || '' }], dep.recent)) : null) : null].filter(Boolean));
   return box;
 }
 

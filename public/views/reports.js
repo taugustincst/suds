@@ -194,6 +194,8 @@ async function openCountyTemplate() {
   const rows = cur.columns.length ? cur.columns.map(c => ({ ...c })) : [{ label: '', source: 'exhibit_e_category' }];
   const list = h('div', { 'data-county-columns': '1' });
   const nameI = h('input', { type: 'text', id: 'county-template-name', value: cur.name, maxlength: 100, required: true, 'aria-required': 'true' });
+  // Its rows: settlement activities, or one per fund of another type (a county's SABG template), 1.16.0.
+  const rowsI = h('select', { id: 'county-template-rows', 'data-county-rows': '1', 'aria-describedby': 'county-template-rows-help' }, (d.fund_types || []).map(o => h('option', { value: o.value, selected: o.value === (cur.fund_type || '') }, o.label)));
   const err = h('div', { class: 'banner danger hidden', role: 'alert', tabindex: '-1' });
   const draw = () => {
     list.replaceChildren(...rows.map((c, i) => {
@@ -220,9 +222,11 @@ async function openCountyTemplate() {
     h('p', { class: 'small muted' }, 'Match your county\'s subrecipient report without code: name it, then give each of its columns in order, and say what SUDS fills it with. Columns SUDS cannot fill are left blank for you to write. Check the result against the county\'s current template.'),
     err,
     h('div', { class: 'field' }, h('label', { for: 'county-template-name' }, 'Template name *'), nameI),
+    d.fund_types ? h('div', { class: 'field' }, h('label', { for: 'county-template-rows' }, 'Rows'), rowsI,
+      h('div', { class: 'help', id: 'county-template-rows-help' }, 'Settlement activities for an opioid settlement report; one row per fund of a type for another county template, such as a block grant (SABG) report. The settlement-only columns are then left blank.')) : null,
     list,
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn', type: 'button', onClick: () => { rows.push({ label: '', source: 'blank' }); draw(); list.lastElementChild?.querySelector('input')?.focus(); } }, '+ Add a column'),
       d.county ? h('button', { class: 'btn ghost', type: 'button', onClick: () => save(null) }, 'Remove the template') : null,
-      h('button', { class: 'btn primary', type: 'button', 'data-county-template-save': '1', onClick: () => save({ name: nameI.value, columns: rows }) }, 'Save template'))), { wide: true });
+      h('button', { class: 'btn primary', type: 'button', 'data-county-template-save': '1', onClick: () => save({ name: nameI.value, columns: rows, fund_type: rowsI.value || null }) }, 'Save template'))), { wide: true });
 }

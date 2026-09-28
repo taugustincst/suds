@@ -279,6 +279,8 @@ module.exports = (r) => {
     // Risk is somebody's judgement, never a default (QA 1.15.3): the column's schema DEFAULT 'moderate' stored
     // every client created without one as Moderate. Not given means not assessed (NULL, shown "Not assessed").
     if (cols.risk_level === undefined) cols.risk_level = null;
+    // So is a yes/no question nobody asked (veteran, overdose history…): NULL, "Not asked", not the schema's 0.
+    M.unaskedAsNull(cols);
     const keys = Object.keys(cols).filter(k => cols[k] !== undefined);
     let episodeId = null;
     db.transaction(() => {

@@ -167,7 +167,12 @@ module.exports = (r) => {
       .map(a => ({ ...a, content: decrypt(a.content_enc), reason: a.reason_enc ? decrypt(a.reason_enc) : null, content_enc: undefined, reason_enc: undefined }));
     const event = access === 'breakglass' ? recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) }) : null;
     audit.log({ user: ctx.user, action: access === 'breakglass' ? 'note.view.breakglass' : 'note.view', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === 'breakglass' ? { reason_recorded: true, breakglass_event: event } : { kind: n.kind } });
-    return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
+    // Whose note it is, for the viewer's link to the record (1.16.0): the client code always, the name only for a
+    // reader who may open that record (a break-glass reader sees the code). Read as part of this audited view.
+    const cl = n.client_id ? db.one(`SELECT c.id AS client_id, c.client_code, ${require('../client-name').SELECT} FROM clients c WHERE c.id=?`, n.client_id) : null;
+    const who = cl ? require('../client-name').withClientName(ctx, cl) : null;
+    const client = who ? { client_code: who.client_code, client_name: access === 'breakglass' || !auth.canAccessClient(ctx.user, n.client_id) ? null : who.client_name } : {};
+    return { note: { ...present(n), ...client, ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
   });
 
   r.put('/api/notes/:id', auth.requireAuth, (ctx) => {
@@ -232,7 +237,9 @@ module.exports = (r) => {
     const identity = await verifyIdentity(ctx);
     const hash = sha256(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ''}`);
     db.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db.now(), ctx.user.id, hash, db.now(), n.id);
-    audit.log({ user: ctx.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash, cosign_required: !!n.cosign_required, identity } });
+    // The supervisor's "Finish and sign your note" reminder has done its job (server/rules/notes.js).
+    const reminders = require('../rules/notes').closeSignReminders(ctx.user.id, n.id, n.client_id);
+    audit.log({ user: ctx.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash, cosign_required: !!n.cosign_required, identity, reminders_closed: reminders.length ? reminders : undefined } });
     return { ok: true, signature_hash: hash, awaiting_cosign: !!n.cosign_required };
   });
 

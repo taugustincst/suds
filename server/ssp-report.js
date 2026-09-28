@@ -22,11 +22,19 @@ const { badRequest, forbidden } = require('./http');
 const TEMPLATE_NOTE = 'The layout follows what a CDPH-authorized syringe services program reports, as SUDS understands it (contacts, participants, syringes distributed and returned, sharps containers, naloxone and test strips, referrals). It is not an official template: check it against your current reporting requirements before submitting it.';
 const RETURNS_NOTE = 'Syringes returned are counted, or estimated from the volume of the sharps container brought back (Supplies settings: syringes per litre). The estimated part is shown separately.';
 
+/**
+ * A run by a role that writes the funder report (reports:funder: finance) without client-level access (1.16.0):
+ * the programme's own submission, aggregate counts of the whole programme, as its funder report is. Nothing
+ * client-level is in the summary, so it follows the funder report's rule (routes/reports.js requireReportRun).
+ */
+const funderOnly = (user) => !auth.reportRunAllowed(user, { caseloadScoped: true }) && auth.submissionRunAllowed(user);
+
 /** This run's counting mode: never a publication release; the program's submission for a role that may run one. */
 function counting(ctx, period) {
   if (ctx.query.get('purpose') === 'publication') throw badRequest('The syringe services summary is the program\'s own submission (or internal), not a publication release. Run it without purpose=publication.');
+  if (funderOnly(ctx.user) && ctx.query.get('purpose') && ctx.query.get('purpose') !== 'submission') throw forbidden('Your role runs the syringe services summary as the program\'s own submission to its funder (purpose=submission). Internal runs are for staff who work with clients, supervisors and administrators.');
   const q = new URLSearchParams(ctx.query);
-  if (!q.get('purpose')) q.set('purpose', auth.hasPerm(ctx.user, 'reports:internal') ? 'submission' : 'internal');
+  if (!q.get('purpose')) q.set('purpose', auth.hasPerm(ctx.user, 'reports:internal') || funderOnly(ctx.user) ? 'submission' : 'internal');
   const c = FR.countingMode({ ...ctx, query: q }, period);
   return { counting: c, sc: { threshold: c.threshold, exact: c.mode === 'exact' } };
 }
@@ -41,7 +49,8 @@ function monthReader() {
 
 /** The period's true figures. */
 function figures(ctx, { ts, tsP }) {
-  const cf = auth.caseloadFilter(ctx.user, 'c.id');
+  // The funder-report role counts the whole programme, as its funder report does; anyone else what they may see.
+  const cf = funderOnly(ctx.user) ? { sql: '1=1', params: [] } : auth.caseloadFilter(ctx.user, 'c.id');
   const scope = `(i.client_id IS NULL OR ${cf.sql})`;
   const activity = `(EXISTS (SELECT 1 FROM intervention_supplies l WHERE l.intervention_id=i.id) OR i.syringes_returned > 0 OR i.naloxone_kits > 0 OR i.fentanyl_strips > 0)`;
   const visits = db.all(`SELECT i.id, i.client_id, i.occurred_at, i.supply_site_id, i.naloxone_kits, i.fentanyl_strips, i.syringes_returned, i.returns_estimated, c.deleted_at
@@ -96,7 +105,7 @@ async function build(ctx, range) {
   // People: participants served, and the people referred among them (a subset, so its complement is protected
   // too); the referrals themselves are one person's each.
   const s = SC.star({ total: t.participants, subsets: [t.people_referred] }, sc);
-  const scoped = auth.caseloadRestricted(ctx.user);
+  const scoped = auth.caseloadRestricted(ctx.user) && !funderOnly(ctx.user);
   return {
     from, to, template_note: TEMPLATE_NOTE, returns_note: RETURNS_NOTE,
     suppression: FR.suppressionOf(c), release: c.release, counting_statement: FR.countingStatement(c),
@@ -149,9 +158,9 @@ function sheets(d, ctx) {
 
 /** Who may run it: a role that may run a report that is not a publication release, counting what it may see. */
 function allowed(ctx) {
-  if (auth.reportRunAllowed(ctx.user, { caseloadScoped: true })) return;
-  audit.log({ user: ctx.user, action: 'authz.denied', ip: ctx.ip, success: false, details: { perms: ['reports:internal'], path: ctx.path } });
-  throw forbidden('The syringe services summary counts participants and is the program\'s own submission, so it is run by staff who work with clients, supervisors and administrators.');
+  if (auth.reportRunAllowed(ctx.user, { caseloadScoped: true }) || auth.submissionRunAllowed(ctx.user)) return;
+  audit.log({ user: ctx.user, action: 'authz.denied', ip: ctx.ip, success: false, details: { perms: ['reports:internal|reports:funder'], path: ctx.path } });
+  throw forbidden('The syringe services summary counts participants and is the program\'s own submission, so it is run by staff who work with clients, supervisors, administrators and whoever writes the funder report.');
 }
 
 function routes(r, range) {

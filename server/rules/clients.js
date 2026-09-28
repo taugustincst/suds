@@ -107,6 +107,9 @@ module.exports = define({
   normalise(row, c) {
     // Not sent means not written: the office's value (or, on a new record, the column's default) stands.
     for (const [cols, may] of GUARDED) if (!may(c.user)) for (const col of cols) row[col] = c.existing ? undefined : DEFAULTS[col];
+    // A new client that does not answer a yes/no question somebody has to ask (veteran, overdose history…) has
+    // not been asked it: NULL, as POST /api/clients stores it, not the schema's 0 (1.16.0).
+    if (!c.existing) require('../clients-model').unaskedAsNull(row);
     return null;
   },
   // A client that arrives with no creator was created by whoever is sending it (POST /api/clients records the

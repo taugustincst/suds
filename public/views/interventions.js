@@ -65,7 +65,7 @@ function supplyPicker(cat, { lines = [], counts = {}, siteId = null, isNew = tru
   // it (recorded before items existed) is shown on its category's usual item, as the server reads it.
   for (const it of cat.items.filter(i => i.quick)) addRow(it);
   const byId = new Map(cat.items.map(i => [i.id, i]));
-  for (const l of lines) { const it = byId.get(l.item_id) || { id: l.item_id, name: l.item, unit: l.unit || 'each', category: l.category }; addRow(it, '', { removable: !it.quick }).input.value = String(l.quantity); }
+  for (const l of lines) { const it = byId.get(l.item_id) || { id: l.item_id, name: l.item, unit: l.unit || 'each', category: l.category }; addRow(it, '', { removable: !it.quick }).input.value = l.quantity === '' ? '' : String(l.quantity); }
   for (const [category, col] of Object.entries(COUNTED)) {
     const have = lines.filter(l => l.category === category).reduce((n, l) => n + l.quantity, 0);
     const d = defaultOf(cat, category);
@@ -132,7 +132,12 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   // The items this program hands out (none: the two counts as number fields, as before items existed).
   let cat = can('interventions:write') ? await supplyCatalog() : null;
   const kept = new Set((cat ? cat.items : []).map(i => i.category));
-  const src = values || template || preset || {};
+  // A repeated visit carries what kind of visit it was, never how much of anything (1.16.0): the supply lines
+  // stay on the form (the same items, so they are one tap away) but every quantity starts empty, and the two
+  // counts and a direct cost start at nothing — a copied quantity nobody changed was drawn from stock and
+  // counted in reports as handed out again. The form says so, and whose visit it was copied from.
+  const repeatOf = template ? { ...template, supplies: (template.supplies || []).map(l => ({ ...l, quantity: '' })), naloxone_kits: 0, fentanyl_strips: 0, cost: null } : null;
+  const src = values || repeatOf || preset || {};
   let picker = null; let pickerRebuilt = false;
   const makePicker = (c, opts) => supplyPicker(c, { siteId: src.supply_site_id, isNew, onAddStandard: addStandard, ...opts });
   if (cat && cat.items.length) picker = makePicker(cat, { lines: src.supplies || [], counts: src });
@@ -140,7 +145,7 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   // `values` (the `form()` helper's lookup for a field's starting value) wins over a field's own `value`
   // default, so the parts of the template we do NOT want carried over — when it happened, how long it
   // took, what was written up — have to be scrubbed from the seed itself, not overridden per-field below.
-  const seed = values || (template ? { ...template, occurred_at: new Date().toISOString(), duration_minutes: 30, summary: '', follow_up_due: '', user_id: undefined, syringes_returned: null, returns_estimated: 0, sharps_returned_litres: null } : preset ? { ...preset } : {});
+  const seed = values || (repeatOf ? { ...repeatOf, occurred_at: new Date().toISOString(), duration_minutes: 30, summary: '', follow_up_due: '', user_id: undefined, syringes_returned: null, returns_estimated: 0, sharps_returned_litres: null } : preset ? { ...preset } : {});
   // A new visit is charged to the worker's default fund (or the programme's) unless they choose another, so it
   // is not left out of the funder report's "By funding source"; a repeated visit keeps the fund it had.
   const defaultFund = state.defaultFundId && state.funds?.some(x => x.id === state.defaultFundId) ? state.defaultFundId : '';
@@ -247,6 +252,16 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   } });
   // The picker sits with the everyday fields, before the summary.
   if (picker) f.querySelector('[data-field="summary"]').before(picker.el);
+  // Repeat last visit: what was copied, from whose visit, and that the quantities were not.
+  if (repeatOf) {
+    const mine = template.user_id && state.user && template.user_id === state.user.id;
+    const whose = mine ? 'your visit' : `${template.worker ? `${template.worker}'s` : 'another worker\'s'} visit`;
+    f.querySelector('[data-field="client_id"]').before(h('div', { class: 'banner info small span', role: 'note', 'data-repeat-note': mine ? 'mine' : 'other' },
+      h('b', {}, `Copied from ${whose} on ${fmt.date(template.occurred_at)}: `),
+      'what was done, where and how, and the funding. ',
+      h('b', {}, 'Supplies start at zero'), ' — enter what you handed out today. The date, duration, summary and follow-up are new too.',
+      mine ? '' : ' This visit is recorded as yours.'));
+  }
   // Kits and strips the programme keeps no item for: added to Supplies from here in one click, and the picker
   // rebuilt with what was already entered, now drawn from the new items.
   async function addStandard(names, btn) {

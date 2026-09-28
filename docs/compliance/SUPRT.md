@@ -62,8 +62,8 @@ it); **asked** means the worker asks the client or checks the record; **setting*
 | | `A_closeout_reason` (closeout) | Record: the last closed episode's discharge reason, else the client's (*lost contact* → *no contact*). Required. |
 | | `A_last_service_date` (closeout) | Record: the last visit on or before the closeout. Required. |
 | B. Behavioral health history | `B_primary_substance`, `B_route_of_use` | Record. |
-| | `B_overdose_ever` | Record: the overdose-history flag or any overdose event. |
-| | `B_overdose_since_last` | Record: an overdose event (or the last-overdose date) since the last assessment; at baseline, in the 30 days before it. |
+| | `B_overdose_ever` | Record: the overdose-history flag or any overdose event is *yes*; *no* only when the record says the question was asked and answered no. Since 1.16.0 a client created without the answer has none ("Not asked"), and it is left for the interview, not pre-filled *no*. |
+| | `B_overdose_since_last` | Record: an overdose event (or the last-overdose date) since the last assessment; at baseline, in the 30 days before it. *No* only when the record says there has never been one; otherwise asked. |
 | | `B_moud`, `B_moud_medication` | Record: MAT status *active*, and the medication. |
 | | `B_co_occurring_mh` | Record. |
 | | `B_crisis_since_last`, `B_residential_tx_since_last` | Asked. |
@@ -73,12 +73,19 @@ it); **asked** means the worker asks the client or checks the record; **setting*
 | | `C_trauma_screen` | Asked. |
 | D. Diagnoses | `D_icd10_codes`, `D_oud` (F11), `D_stimulant_use_disorder` (F14, F15) | Record: the ICD-10 codes on the active problem list (Care plan module), as a clinician recorded them. |
 | E. Services received (reassessment, annual, closeout) | `E_case_management`, `E_peer_recovery_support`, `E_harm_reduction`, `E_naloxone`, `E_moud`, `E_treatment_referral`, `E_screening_assessment`, `E_crisis_services`, `E_housing_support`, `E_employment_education`, `E_benefits_enrollment`, `E_transportation`, `E_justice_services`, `E_family_support` | Record: the visit types since the last assessment, grouped by SUDS (naloxone also from kits given; treatment referral also from referrals; MOUD from active MAT or a referral to an OTP or OBOT). SUPRT-A's own services list may split or name these differently: check the codebook. |
-| F. Demographics (baseline, only when SUPRT-C was not completed) | `F_date_of_birth`, `F_gender`, `F_race`, `F_ethnicity`, `F_language`, `F_veteran`, `F_housing`, `F_insurance` | Record. SUDS's own codes (race as CalOMS/OMB codes); SPARS's categories must be checked. |
+| F. Demographics (baseline, only when SUPRT-C was not completed) | `F_date_of_birth`, `F_gender`, `F_race`, `F_ethnicity`, `F_language`, `F_veteran`, `F_housing`, `F_insurance` | Record. SUDS's own codes (race as CalOMS/OMB codes); SPARS's categories must be checked. Gender, housing and insurance are chosen from lists with labels (1.16.0), not typed as codes; a value on the client record that is not on the list is not pre-filled. The veteran answer is pre-filled only when the record has one. |
 
 The form (client record → **SUPRT-A** tab) groups the items by section, says under each pre-filled answer that it
 came from the record, and asks the rest; it is one column on a phone. The saved record says which answers were
 the record's own (`derived_keys`). An assessment can be saved as a draft; it is *complete* only when the required
-items are answered.
+items are answered. Since 1.16.0 every question in a section the assessment point asks is required (B-D at a
+baseline, reassessment or annual assessment; E at the follow-ups; F at a baseline without SUPRT-C), except free text
+(which medication, ICD-10 codes, race, ethnicity, language) and the date of birth; the medication is required when
+MOUD is *yes*. Each required question offers *Don't know / not recorded* or *Not screened*, so an honest complete
+record is always possible. Saving as complete with anything missing is refused, naming each missing question
+(and a device's push of one is flagged for the office). This is SUDS's reading of what the handbook requires:
+**verify it against the current SUPRT-A handbook.** When the programme's grant ID is not set, the form says so
+and links to where it is set (SUPRT-A page › Settings).
 
 ## Storage, permissions and the to-do list
 
@@ -90,7 +97,9 @@ items are answered.
 * Who: whoever may read a client's record (`clients:read`, caseload-scoped) reads its SUPRT-A; whoever may
   change it (`clients:write`) records it. The to-do list (`GET /api/suprt/due`, on the To-dos page and the
   SUPRT-A page) and the completion rates (`GET /api/suprt/completion`) cover the caseload the role can open: a
-  worker's own clients, a supervisor's team (with who has each client). Finance and read-only see neither.
+  worker's own clients, a supervisor's team (with who has each client). Finance (`reports:funder`, without
+  `clients:read`) reads the completion rates of the whole programme since 1.16.0 — counts only, as its funder
+  report is — and not the to-do list. Read-only sees neither.
 * **Module switch.** SUPRT-A is a programme module (`server/programme.js`, key `suprt`): on by default for a
   programme with a funding source of type *SOR grant*, off otherwise, and switchable in Settings › Program ›
   Modules. Switched off, new records and the SPARS file are refused (403); what was recorded stays readable.
