@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.15.3 — 2026-09-29
 
 Fixes from QA of 1.15.2. No migration, no new permission, no change to which roles hold a permission, and no new
 route.
