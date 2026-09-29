@@ -2,6 +2,22 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Documentation
+
+- **Go-to-market strategy for 1.17.0** (`docs/market/`). New: `STRATEGY.md` (the owner's strategy: segments, the
+  create / capture / defend wedges, sequencing with the AI documentation copilot first, the forward-deployed
+  (FDE) delivery model, built vs planned stated exactly, risks and metrics), `PRICING-OPTIONS.md` (pricing models
+  for the owner to decide, with a worksheet; nothing decided, no competitor prices) and `DATA-NETWORK.md` (the
+  de-identified outcomes dataset and the referral network as a design, not built, with the HIPAA §164.514, 42 CFR
+  Part 2 §2.52–§2.54 and California analysis and what counsel must review). Positioning now leads with the Part 2
+  layer beside the EHR, field-ready outreach and funder outcomes (`POSITIONING.md`, the pack's `README.md`, the
+  top-level README); `PILOT-KIT.md` adds a county pilot delivered with the FDE service; the buyer guides, the
+  pricing hypothesis and `docs/PLATFORM.md` say what is planned (the copilot is planned for 1.17.0 and is
+  office-server only). The CalOMS extract is described as checked by SUDS's own edits and still to be verified
+  against the DHCS data dictionary; SUDS does not submit to DHCS.
+
 ## 1.16.4 — 2026-09-29
 
 ### Security

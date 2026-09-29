@@ -89,6 +89,12 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
   20,000 clients). Deny *See every client* to anyone whose device should hold only their caseload, before it
   first syncs; turn local mode off where no documented field-work need exists.
 - Data classification by table: [docs/HIPAA.md](../HIPAA.md), *Data classification inside the database*.
+- **Planned for 1.17.0, not in any released version: the AI documentation copilot** ([STRATEGY.md](STRATEGY.md),
+  *Create 1*). If released as designed it adds one outbound flow, from the office server (never a device or SUDS
+  on this device) to an AI provider the programme chooses: off by default; cannot be enabled until the programme
+  records a BAA and a Part 2 QSOA with that provider; the identifiers SUDS holds for the client are removed before
+  sending, but the remaining free text may still identify someone, so treat the provider as receiving PHI; the
+  result is a draft a person edits and signs. Review it in your risk register before enabling it.
 
 ## Security controls and evidence
 
@@ -130,7 +136,7 @@ it from the same evidence and will not answer "yes" to a control that is not in 
 
 | Need | How |
 | --- | --- |
-| County EHR (SmartCare, Netsmart…) | Encounter hand-off export of services the EHR needs to record or bill ([docs/SCOPE.md](../SCOPE.md)); FHIR R4 read API and bulk export with Part 2 consent enforcement ([docs/integration/FHIR.md](../integration/FHIR.md)) |
+| County EHR (SmartCare, Netsmart…) | SUDS sits beside the EHR as the Part 2-controlled record of outreach, navigation and referral work, not in place of it. Encounter hand-off export of services the EHR needs to record or bill ([docs/SCOPE.md](../SCOPE.md)); FHIR R4 read API and bulk export with Part 2 consent enforcement ([docs/integration/FHIR.md](../integration/FHIR.md)) |
 | State reporting | CalOMS Tx extract for the county's submission ([docs/compliance/CALOMS.md](../compliance/CALOMS.md)); built, but the layout and code sets are NOT verified against the DHCS data dictionary; do not submit until verified with DHCS/county |
 | Identity | OIDC single sign-on |
 | Existing spreadsheets | Excel/CSV import with templates and validation ([docs/USER_GUIDE.md](../USER_GUIDE.md), *Importing spreadsheets*) |

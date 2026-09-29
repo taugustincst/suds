@@ -1,8 +1,9 @@
 # SUDS — SUD Navigator Services Tracker
 
-**The operations system for harm-reduction and outreach programmes, prevention-funded outreach included —
-outreach encounters, naloxone and supply distribution, and grant/funder reporting — with privacy controls built to
-support 42 CFR Part 2.**
+**Privacy controls built to support 42 CFR Part 2, for the outreach and harm-reduction work that happens beside an
+EHR — or without one: field-ready outreach (named or anonymous, on a phone, offline where the programme allows),
+naloxone and supply distribution, and outcome reporting to the people who fund it, opioid-settlement funders
+included.**
 
 SUDS is for community-based organisations and county programmes doing outreach, harm reduction, naloxone and
 test-strip distribution and prevention-funded outreach, usually on opioid-settlement, SOR / Naloxone Distribution

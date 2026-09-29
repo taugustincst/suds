@@ -2,11 +2,12 @@
 
 For the people selling, buying and approving SUDS. The short version:
 
-> **The operations system for harm-reduction and outreach programmes, prevention-funded outreach included —
-> outreach encounters, naloxone and supply distribution, and grant/funder reporting — with privacy controls built
-> to support 42 CFR Part 2.**
+> **Privacy controls built to support 42 CFR Part 2, for the outreach and harm-reduction work that happens beside
+> an EHR — or without one: field-ready outreach (named or anonymous, on a phone, offline where the programme
+> allows), naloxone and supply distribution, and outcome reporting to the people who fund it, opioid-settlement
+> funders included.**
 > For community-based organisations funded by opioid-settlement, SOR / Naloxone Distribution Project and SABG
-> prevention money spent on outreach and distribution, and for the counties that sponsor them. SABG
+> prevention money spent on outreach and distribution, and for the counties that fund and sponsor them. SABG
 > primary-prevention (PPSDS) reporting is not supported. Clinical modules (care plan, assessments, CalOMS Tx,
 > FHIR, EHR hand-off) are optional, for programmes that need them. It is not an EHR, does not bill, and is not a
 > hosted service today.
@@ -16,10 +17,21 @@ commit to the compliance and security work (B), or cut the EHR-adjacent framing 
 workflow (C). The owner chose **B and C together**: do the work, and aim it at harm-reduction outreach, supply
 and grant reporting. [EVALUATION-RESPONSE.md](EVALUATION-RESPONSE.md) answers each point with its status.
 
+**Go-to-market for 1.17.0 (29 September 2026).** The owner's strategy builds on that choice
+([STRATEGY.md](STRATEGY.md)): *create* an AI documentation copilot (**planned for 1.17.0**, the first build),
+settlement tracking with funder-facing outcome views, and a real street-outreach mode; *capture* the Part 2 layer
+beside any EHR, CalOMS automation as a county wedge, a cross-organisation referral network and low pricing; and
+*defend* with county contracts, the referral network, a de-identified outcomes dataset and the deployment service
+(the forward-deployed, or FDE, model: cheap software, paid implementation). Only the parts marked *built* in
+STRATEGY.md exist; the rest is planned, and the organisational items below remain the critical path.
+
 ## Index
 
 | Document | For | What it covers |
 | --- | --- | --- |
+| [STRATEGY.md](STRATEGY.md) | Owner, partners, sponsors | The 1.17.0 go-to-market strategy: segments, wedges, sequencing (copilot first), the FDE model, built vs planned, risks, metrics |
+| [PRICING-OPTIONS.md](PRICING-OPTIONS.md) | Owner | Pricing models to decide between (per active user, per organisation, county site licence, FDE services, support tiers), with a worksheet; nothing decided |
+| [DATA-NETWORK.md](DATA-NETWORK.md) | Owner, counsel, county privacy | The outcomes dataset and referral network as moats: a design (not built) with the HIPAA, Part 2 and California analysis and what counsel must review |
 | [POSITIONING.md](POSITIONING.md) | Everyone | Category, buyer order, core vs optional modules, the boundary, key messages, objection handling |
 | [BUYER-GUIDE-PROGRAM.md](BUYER-GUIDE-PROGRAM.md) | Programme directors | Outreach, supplies and funder reporting in SUDS, a day in the life, what we need from you |
 | [BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md) | IT partners, county IT, security, privacy | Deployment options, identity, data flows, controls with evidence, questionnaire, accessibility, integration, support |
@@ -44,7 +56,7 @@ The product documentation these point to: [README](../../README.md) · [PLATFORM
 | Phase | Goal | Done when |
 | --- | --- | --- |
 | **1. Become sellable** | Legal entity, insurance, counsel-reviewed templates; release gate and recovery drill evidenced; independent penetration test; harm-reduction reports checked against real funder templates | Vendor to-do items 1–5 done; pen test report in hand |
-| **2. Three pilot CBOs** | Small/mid harm-reduction or prevention CBOs with an IT partner or a county sponsor; measured pilots ([PILOT-KIT.md](PILOT-KIT.md)); pricing tested ([templates/PRICING.md](templates/PRICING.md)) | Three pilots evaluated with measured baselines; at least two signed case studies; pricing hypotheses updated with what was learned |
+| **2. Three pilot CBOs** | Small/mid harm-reduction or prevention CBOs with an IT partner or a county sponsor — preferably 2–3 CBOs under one sponsoring county, with paid implementation (the FDE service); measured pilots ([PILOT-KIT.md](PILOT-KIT.md)); pricing tested ([templates/PRICING.md](templates/PRICING.md), [PRICING-OPTIONS.md](PRICING-OPTIONS.md)) | Three pilots evaluated with measured baselines; at least two signed case studies; pricing hypotheses updated with what was learned |
 | **3. County sponsorship** | Counties sponsor or host CBO instances; respond to RFIs; decide on vendor hosting from measured support hours ([HOSTING.md](HOSTING.md)) | One county sponsoring more than one CBO; hosting decision recorded |
 | **Later** | Direct county department sales, CMAS, CalMHSA channel, SOC 2 | Only after the above |
 
@@ -101,7 +113,9 @@ Software cannot close these. Suggested timeline from the start of Phase 1.
 | BAA/QSOA and DPA templates reviewed by vendor counsel | Vendor / company | Month 1–2 | Drafts in [templates/](templates/) |
 | Support (business hours) and SLA template reviewed by counsel | Vendor / company | Month 1–2 | Realistic small-vendor template drafted |
 | Vendor-hosted environment ([HOSTING.md](HOSTING.md) checklist) | Vendor / company | After 3 pilots measure support hours | Planned — not offered |
-| Pricing validated with 3 pilot customers | Vendor / company | Phase 2 | Unvalidated hypothesis ([templates/PRICING.md](templates/PRICING.md)) |
+| Pricing validated with 3 pilot customers | Vendor / company | Phase 2 | Unvalidated hypothesis ([templates/PRICING.md](templates/PRICING.md)); models to decide in [PRICING-OPTIONS.md](PRICING-OPTIONS.md) |
+| Counsel: the AI copilot's data flow — BAA and Part 2 QSOA terms for an AI provider; what "identifiers removed" may be called; SUD counseling notes excluded or not | Vendor / company counsel | Before any pilot turns the copilot on (planned for 1.17.0) | Not started |
+| Counsel and a county: data stewardship for pooled outcomes and the referral-link design ([DATA-NETWORK.md](DATA-NETWORK.md), *What counsel must review*) | Vendor / company counsel, county | Before any pooled figure or referral link | Not started (design only) |
 | Independent penetration test, findings remediated | Vendor / company | Month 2–4 | Not started |
 | SOC 2 Type 1 | Vendor / company | Month 4–8 | Readiness self-assessment in `docs/security/` |
 | SOC 2 Type 2 | Vendor / company | Month 10–18 | Not started |
@@ -120,5 +134,10 @@ Software cannot close these. Suggested timeline from the start of Phase 1.
 - Legal templates are drafts for counsel; pricing is an unvalidated hypothesis; the SLA is a template.
 - Never claim a time saving, a report "in minutes" or any outcome that a pilot has not measured.
 - Never describe SUDS as hosted, or promise 24×7 support or an uptime figure, until [HOSTING.md](HOSTING.md) says it is offered.
-- Lead with outreach, supplies and funder reporting; clinical modules are optional, not the pitch.
+- Lead with the Part 2 layer beside the EHR, field-ready outreach and funder outcomes; clinical modules are
+  optional, not the pitch.
+- Never present a planned capability as available: the AI copilot (planned for 1.17.0 until that release is
+  tagged), the county funder view, the street-outreach mode, referral links and the outcomes dataset are planned
+  ([STRATEGY.md](STRATEGY.md), *Built vs planned, exactly*). Say "SUDS's own checks" for the CalOMS extract, never
+  "validated" or "submission-ready" without "to verify against the DHCS data dictionary".
 - Keep this pack in step with the product: when a workstream changes status, update the scorecard.
