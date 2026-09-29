@@ -294,10 +294,10 @@ test('migration 46: a preferred name with no search index gets one; a written in
 // The --rich fixtures (1.11.0, and 1.13.0: schema 43, the last release before 1.14.0's migrations 44 to 46, so
 // it is the starting point they are tested from) hold several rows in every table with an encrypted
 // column, NULLs and text in other scripts among them: every value must still decrypt, to what it was, and every
-// blind index must still match, after the upgrade. 1.15.3 (schema 48, --rich) is the newest starting point: every
-// migration after it is tested from a database a 1.15.x release wrote, and until one is added it pins that such a
-// database opens as the current schema, structurally identical to a fresh install, with every value readable.
-for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql', 'release-v1.15.3.sql']) {
+// blind index must still match, after the upgrade. 1.15.3 (schema 48, --rich) is the starting point of 1.16.0's
+// defaults; 1.16.4 (schema 48, --rich, made from 6491308, the released commit) is the newest: the release before
+// 1.17.0, whose migrations 49 to 55 and first-start data logic are tested from a database it wrote (below, too).
+for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql', 'release-v1.15.3.sql', 'release-v1.16.4.sql']) {
   const sql = fs.readFileSync(path.join(__dirname, 'fixtures', fixture), 'utf8');
   const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
   test(`a SUDS ${expect.version} database (schema ${expect.schema_version}) upgrades to the current schema with its records intact`, () => {
@@ -432,3 +432,61 @@ for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.
     }
   });
 }
+
+// 1.17.0's first start on a 1.16.4 database (engineering review of the 1.17.0 candidate, M3): beyond the schema, the
+// data logic that runs once. The least-privilege default is recorded off (an upgrade changes nobody's access), the
+// permission overrides are as they were, the retention pass clears the text of an import item already filed as a
+// note (and keeps the staged ones'), and migration 55 gives every existing CalOMS submission its defaults (produced,
+// by hand). Then the database is structurally what a fresh install is.
+test('SUDS 1.17.0\'s first start on a 1.16.4 database: caseload default off, access unchanged, filed import text cleared, CalOMS submissions defaulted', () => {
+  const { decrypt } = require('../server/crypto');
+  const sql = fs.readFileSync(path.join(__dirname, 'fixtures', 'release-v1.16.4.sql'), 'utf8');
+  const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
+  assert.equal(expect.version, '1.16.4'); assert.equal(expect.schema_version, 48);
+  const st = expect.state;
+  assert.ok(st && st.overrides.length && st.committed_import_item && st.staged_import_items.length && st.caloms_submissions.length, 'the fixture holds the state checked here');
+  const fdir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-first-start-1.16.4-'));
+  const fpath = path.join(fdir, 'suds.db');
+  const d = new DatabaseSync(fpath);
+  d.exec(sql);
+  assert.equal(d.prepare(`SELECT value FROM settings WHERE key='caseload_hold_new_staff'`).get(), undefined, '1.16.4 had no such setting');
+  const usersBefore = d.prepare(`SELECT id, role, access_status FROM users ORDER BY id`).all().map((r) => ({ ...r }));
+  const overridesBefore = d.prepare(`SELECT user_id, permission, mode, reason FROM user_permission_overrides ORDER BY user_id, permission`).all().map((r) => ({ ...r }));
+  const stagedBefore = Object.fromEntries(d.prepare(`SELECT id, content_enc FROM import_items WHERE status='staged'`).all().map((r) => [r.id, r.content_enc]));
+  assert.ok(decrypt(d.prepare(`SELECT content_enc FROM import_items WHERE id=?`).get(st.committed_import_item).content_enc).length > 0, 'the filed item still holds its text before the upgrade');
+  d.close();
+  require('../server/db').close();
+  try {
+    require('../server/db').open(fpath);
+    assert.equal(db().getSetting('schema_version'), String(require('../server/db').LATEST_SCHEMA_VERSION));
+    assertSameShape(schemaShape(db().get()), freshShape(), '1.16.4 (first start)');
+    // The least-privilege default: off, recorded once, so no account is held to its caseload by the upgrade.
+    assert.equal(db().getSetting('caseload_hold_new_staff'), '0');
+    assert.equal(require('../server/caseload-default').enabled(), false);
+    assert.deepEqual(db().all(`SELECT id, role, access_status FROM users ORDER BY id`).map((r) => ({ ...r })), usersBefore, 'every account keeps its role and status');
+    assert.deepEqual(db().all(`SELECT user_id, permission, mode, reason FROM user_permission_overrides ORDER BY user_id, permission`).map((r) => ({ ...r })), overridesBefore, 'and its permission overrides: none added, none removed');
+    // A first start that runs again (a restart) changes nothing more.
+    require('../server/db').close(); require('../server/db').open(fpath);
+    assert.equal(db().getSetting('caseload_hold_new_staff'), '0');
+    // Migration 55: every existing submission was produced by hand.
+    for (const id of st.caloms_submissions) {
+      const r = db().one(`SELECT status, origin, provider_id, record_ids, uploaded_at, uploaded_by, dhcs_reference FROM caloms_submissions WHERE id=?`, id);
+      assert.deepEqual({ ...r }, { status: 'produced', origin: 'manual', provider_id: null, record_ids: null, uploaded_at: null, uploaded_by: null, dhcs_reference: null }, `submission ${id}`);
+    }
+    assert.equal(db().one(`SELECT COUNT(*) n FROM caloms_submission_events`).n, 0);
+    assert.equal(db().one(`SELECT COUNT(*) n FROM referral_links`).n, 0);
+    // The retention pass (the server's housekeeping runs it once a day, first at start): the filed item's text goes.
+    db().run(`DELETE FROM settings WHERE key='client_retention_ran_at'`);
+    const R = require('../server/retention');
+    R.runIfDue();
+    const filed = db().one(`SELECT content_enc, title_enc, metadata_enc, status FROM import_items WHERE id=?`, st.committed_import_item);
+    assert.deepEqual({ ...filed }, { content_enc: '', title_enc: null, metadata_enc: null, status: 'committed' }, 'the text of an item filed as a note is cleared');
+    for (const [id, enc] of Object.entries(stagedBefore)) assert.equal(db().one(`SELECT content_enc FROM import_items WHERE id=?`, id).content_enc, enc, 'a staged item keeps its text');
+    assert.ok(db().one(`SELECT 1 FROM audit_log WHERE action='import.committed_text_cleared'`), 'and it is audited');
+    assert.equal(require('../server/audit').verifyChain().ok, true, 'the audit chain verifies');
+  } finally {
+    require('../server/db').close();
+    require('../server/db').open(dbPath);
+    fs.rmSync(fdir, { recursive: true, force: true });
+  }
+});
