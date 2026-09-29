@@ -776,7 +776,9 @@ const DEGRADE_BUDGET_MIN = 2e6;
  * rule against the method as well.
  * Refused, never published unverified: when a table to withhold is one of model.keep (the headline, people
  * served), when the degraded release does not pass either, or when the budget runs out.
- * Returns { status, withheldTables, degraded, verified, unprotected, outOfBudget, backstop, headline, steps,
+ * Tables a published rule withholds (model.preWithhold) are withheld from the start (ruled), and the check counts
+ * only worlds for which the rules decide the same.
+ * Returns { status, withheldTables, degraded, ruled, verified, unprotected, outOfBudget, backstop, headline, steps,
  * rounds }. Deterministic: the budget is counted in solver work, so the answer depends on the figures alone,
  * except when the wall-clock backstop (timeLimitMs) stops it (backstop true).
  */
@@ -787,6 +789,13 @@ function protect(model, T, { budget = 4000, stepLimit = STEP_LIMIT, timeLimitMs 
   const keep = new Set(model.keep || []);
   const byId = new Map(model.vars.map((v, i) => [v.id, i]));
   const derivedById = new Map((model.derived || []).map(d => [d.id, d]));
+  // Published rules (model.preWithhold: [{ table, when(vals) }]): tables withheld from the start whenever the
+  // figures meet a stated condition, before any check. For a table whose check fails expensively (every
+  // candidate world tried) the degrade step below cannot afford to rediscover it, since it runs the whole
+  // check again for each world (docs/architecture/ADR-0009, "Withheld by rule").
+  const rules = model.preWithhold || [];
+  const pre = (vals) => rules.filter(r => r.when(vals)).map(r => r.table).sort();
+  const cellsOf = (tables) => new Set(model.vars.map((v, i) => (tables.includes(v.table) ? i : -1)).filter(i => i >= 0));
   const neighbours = (i) => { const out = []; for (const k of model.cons) if (k.terms.some(([j]) => j === i)) for (const [j] of k.terms) if (j !== i) out.push(j); return out; };
   // The published tables a count that could not be shown protected is in: its own, or for a count printed
   // nowhere, those of the counts it is worked out from (or tied to), the headline last.
@@ -800,11 +809,15 @@ function protect(model, T, { budget = 4000, stepLimit = STEP_LIMIT, timeLimitMs 
   // The full release for one world: its suppression and check, and what the degrade step would withhold
   // ({ res, forced }: forced null when it would refuse instead, [] when it passes).
   const full = (vals, first, known = null) => {
-    const base = known || a.run(vals, []);
+    const p = pre(vals); const pk = p.join('|');
+    const base = known || a.run(vals, p);
     const { world, ...out } = base;
     let res = out;
     if (base.verified && consistency) {
-      const c = a.consistent(base, []);
+      // With published rules, a world counts only if the rules decide the same for it (the attacker knows them):
+      // a check of a dozen cells, not an audit; the counts worked out from a table they withhold are held to the
+      // rule against the method, as in a degraded release.
+      const c = a.consistent(base, p, rules.length ? { validate: (v) => pre(v).join('|') === pk, derived: p.length ? cellsOf(p) : null } : {});
       res = { ...out, verified: c.ok, unprotected: c.unprotected, gaveUp: c.gaveUp, consistency: { worlds: c.worlds, tried: c.tried }, ...(first && debug ? { G: c.G } : {}) };
     }
     if (res.verified) return { res, forced: [] };
@@ -812,9 +825,10 @@ function protect(model, T, { budget = 4000, stepLimit = STEP_LIMIT, timeLimitMs 
     const done = new Set(res.withheldTables);
     const more = [...new Set(res.unprotected.flatMap(tablesFor))].filter(t => !done.has(t)).sort();
     if (!more.length || more.some(t => keep.has(t))) return { res: { ...res, headline: more.some(t => keep.has(t)) }, forced: null };
-    return { res, forced: more };
+    return { res, forced: [...new Set([...p, ...more])].sort() };
   };
-  const stats = (res, forced, rounds) => ({ headline: false, ...res, degraded: forced, outOfBudget: meter.over, backstop: meter.backstop, steps: meter.steps, rounds });
+  const stats = (res, forced, rounds) => ({ headline: false, ...res, degraded: forced.filter(t => !ruled.includes(t)), ruled, outOfBudget: meter.over, backstop: meter.backstop, steps: meter.steps, rounds });
+  const ruled = pre(values);
   const first = full(values, true);
   if (!first.forced || !first.forced.length) return stats(first.res, [], 1);
   // Degrade once: the tables withheld from the start, and checked again (see above). A world counts as one
@@ -823,7 +837,7 @@ function protect(model, T, { budget = 4000, stepLimit = STEP_LIMIT, timeLimitMs 
   const forced = first.forced; const key = forced.join('|');
   const memo = new Map();
   const sameFailure = (vals) => {
-    const r = a.run(vals, []);
+    const r = a.run(vals, pre(vals));
     const printout = `${r.verified}|${r.withheldTables.join('|')}|${r.status.map((x, i) => (x === 'vis' ? vals[i] : x)).join(',')}`;
     if (!memo.has(printout)) { const f = full(vals, false, r); memo.set(printout, !!f.forced && f.forced.join('|') === key); }
     return memo.get(printout);
@@ -836,8 +850,7 @@ function protect(model, T, { budget = 4000, stepLimit = STEP_LIMIT, timeLimitMs 
   const { world, ...out } = base;
   let res = out;
   if (base.verified) {
-    const inForced = new Set(model.vars.map((v, i) => (forced.includes(v.table) ? i : -1)).filter(i => i >= 0));
-    const c = a.consistent(base, forced, { validate: sameFailure, derived: inForced });
+    const c = a.consistent(base, forced, { validate: sameFailure, derived: cellsOf(forced) });
     res = { ...out, verified: c.ok, unprotected: c.unprotected, gaveUp: c.gaveUp, consistency: { worlds: c.worlds, tried: c.tried }, ...(debug ? { G: c.G } : {}) };
   }
   if (meter.over && !meter.backstop && meter.limit < whole) { meter.over = false; res = { ...res, verified: false }; }

@@ -5,6 +5,8 @@ const fs = require('node:fs');
 const zlib = require('node:zlib');
 const esbuild = require('esbuild');
 const root = path.join(__dirname, '..');
+// Built from the repository root whatever the shell's directory: esbuild's module comments are relative to it.
+process.chdir(root);
 // The browser has no filesystem, so it reads the schema from a generated JS copy. Regenerate it here so a
 // schema change can never ship to local-mode devices as a stale duplicate.
 require('./gen-schema-text.js');

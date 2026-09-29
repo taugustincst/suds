@@ -89,7 +89,7 @@ function timedOut(id) {
   for (const qid of queued) dispatch(qid);
   w.terminate().catch(() => {});
   console.warn(`[suds] a publication release audit did not answer within ${Math.round(backstopMs / 1000)} s; its worker was stopped and the release refused${queued.length ? ` (${queued.length} other audit(s) moved to a new worker)` : ''}`);
-  p.resolve({ refused: { out_of_budget: true, backstop: true, message: RA.refusalMessage({ backstop: true }) } });
+  p.resolve({ refused: { out_of_budget: true, backstop: true, message: RA.refusalMessage({ backstop: true }, ((p.msg.inputs.domains && p.msg.inputs.domains.months) || []).length) } });
 }
 /** The audit of one release's figures, off the main thread where there is one. */
 function runAudit(inputs, T) {
@@ -115,7 +115,10 @@ function audited(inputs, T) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.p;
   const p = runAudit(inputs, T).then((r) => {
-    if (r.refused && r.refused.backstop) console.warn(`[suds] a publication release (${inputs.domains.months[0] || ''} to ${inputs.domains.months[inputs.domains.months.length - 1] || ''}) was refused: its audit ran past the wall-clock backstop`);
+    const period = `${inputs.domains.months[0] || ''} to ${inputs.domains.months[inputs.domains.months.length - 1] || ''}`;
+    if (r.refused && r.refused.backstop) console.warn(`[suds] a publication release (${period}) was refused: its audit ran past the wall-clock backstop`);
+    // Figures of the audit's own work only (no count of people): what support needs to see why a period was refused.
+    else if (r.refused && r.refused.out_of_budget) console.warn(`[suds] a publication release (${period}) was refused: its audit reached its budget (${JSON.stringify(r.audit || {})})`);
     return r;
   });
   // A refusal by the wall-clock backstop says how busy the machine was, not what the figures are: not kept.

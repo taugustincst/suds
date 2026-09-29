@@ -83,9 +83,29 @@ suppression and check are run, once per printout), withheld cells of T or more m
 counts worked out from the withheld tables' cells are held to the rule against the method. The release is refused
 (422) when a table to withhold is the headline, when the degraded release fails, or when the budget runs out.
 
+**Withheld by rule** (1.16.1; `release-audit.js` `buildModel` `preWithhold`, `sdc.js` `protect`). The degrade
+step validates each witness world by running that world's full release, check included; when the full release's
+check fails expensively (every candidate world tried), each validation costs about as much as the first round, and
+the degrade step, which shares the first round's budget, cannot finish. A 2,000-client year was refused this way
+(the per-month overdose events not reversed were 1, 2 and 3; 206 million units for the first round, the rest of
+the budget less than one validation; raising the budget fourfold did not help). So a table known to fail that way
+is withheld **from the start by a published rule**: in a period with at least 12T overdose events, the events by
+month (`overdose.by_month.n`) whenever a month has 1 to T-1 events or 1 to T-1 not reversed. The rule reads figures
+the release does not print, but the attacker knows it: the check counts only worlds for which the rule decides the
+same (a dozen comparisons per world, not an audit), and the counts worked out from the table's cells are held to
+the rule against the method, as in a degraded release. It reads a month's events as well as what was not
+reversed, so that it not firing never says a small month's events were all reversed; below 12T events (every
+family the pattern attacker enumerates) it never fires and the check settles the months itself, as before. That
+year now publishes in about 77 million units with only that table withheld; a 20,000-client year is unchanged.
+A rule-withheld table reads "Too few people to show it without giving someone away", like one the suppression
+withholds. The general hazard remains for any other table whose check fails expensively: its fix is another rule
+of this kind, found by the benchmark (`scripts/bench/run.js`), not a larger budget.
+
 **Determinism.** The audit's budget is counted in solver work (tableau cells touched, and since 1.14.0 the
 constraint terms scanned to find each problem, which with many funds took as long as the solving; `STEP_LIMIT` =
-400 million per release, the degrade step its own share), so what is published depends on the figures alone.
+400 million per release, the degrade step included: its share is at most eight times the first round's work
+plus 2 million, out of what the first round left, not a budget of its own), so what is published depends on the
+figures alone.
 Measured in 1.14.0 (4-core cloud container, Node 22, one core, warmed up): 60 to 200 million units a second
 across the tests' releases and a 20,000-client benchmark, so the budget is about 2 to 7 seconds; 1.13.0's 200
 million, counting the solving only, was 0.6 to 1.2 seconds rather than the "few seconds" its comment claimed. A
@@ -108,14 +128,18 @@ second generated bundle (built, committed and served beside `public/local/kernel
 worker under the kernel's version, and a fallback when it cannot start: considered for 1.14.0 and deferred,
 because the release's generated files are rebuilt outside the change that would add it and an unbuilt bundle
 would fail only on devices. What bounds it meanwhile: a device holds one browser's records, and with small
-funds combined even a 120-fund year audits in tens of millions of units (well under a second); the budget's
-worst case, a few seconds of a busy page, is the limit.
+funds combined even a 120-fund year audits in tens of millions of units (well under a second). The budget's worst
+case is not "a few seconds": 400 million units are 2 to 7 seconds of a server-class core, and more on a phone (the
+2,000-client year that 1.16.0 refused held the page for about 7 s on such a core before refusing); the backstop is
+60 s.
 
 ## Consequences
 
 - A supervisor's first click is the submission, exact; publication is an explicit step with a review confirmation.
-- In the reviewer's simulation (8 seeds per size, quarter and month) no release of 40 to 200 people is refused
+- In the reviewer's simulation (8 seeds per size, quarter and month) no release of 40 to 200 people was refused
   (1.12.4: 7 of 8 at 60, 6 of 8 at 80 per quarter); the random "realistic" property programmes refuse about 1 in 70.
+  That is not a guarantee: the benchmark's 2,000-client year was refused whole until 1.16.1 (above, *Withheld by
+  rule*), and a table whose check fails expensively can still exhaust the budget.
 - A year for 5,000 people costs about 17 million units of work (4% of the budget; the release 0.6 to 0.9 s); while
   it runs the event loop is held only for the read's phases (0.1 to 0.2 s at 20,000 clients, 1.14.0; 0.6 to 1.5 s
   before, the whole read at once).

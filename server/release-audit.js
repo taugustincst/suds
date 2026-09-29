@@ -267,8 +267,20 @@ function buildModel({ funder: raw, perFund, settlement }, T) {
   h.d.forEach((d, m) => { soft([[d, 1], [h.r[m], -1]], '>='); soft([[d, 1], [h.r[m], -DOSES_MAX]], '<='); mirror.push([h.r[m], d]); });
   soft([[Dall, 1], [Dr, -1]], '>='); soft([[Dall, 1], [E, -DOSES_MAX]], '<='); soft([[Dall, 1], [Dr, -1], [E, -DOSES_MAX], [R, DOSES_MAX]], '<=');
   mirror.push([R, Dr], [R, Dall], [E, Dall]);
+  // A published rule (server/sdc.js protect; ADR-0009, "Withheld by rule"): in a period with at least 12T overdose
+  // events, the events by month are withheld from the start whenever a month has 1 to T-1 events, or 1 to T-1
+  // not reversed. Those are small counts worked out from printed ones (beside the reversals by month), which at
+  // that size the check against the method can show protected only by trying every candidate world: too slow
+  // for the degrade step to redo for each world it tries, so a 2,000-client year was refused whole (1.16.0).
+  // The rule reads the months' events too, so that it not firing never says a month's small events were all
+  // reversed. Below 12T events the check settles the months itself, cheaply, as before 1.16.1.
+  const small = (x) => x >= 1 && x < T;
+  const preWithhold = [{ table: 'overdose.by_month.n', when: (vals) => vals[E] >= 12 * T && h.n.some((n, m) => small(vals[n]) || small(vals[n] - vals[h.r[m]])) }];
   // The headline, and the counts a reader takes as bounding it, hidden whenever it is (server/sdc.js run).
-  return { model: { vars, cons, derived, mirror, watch, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] }, h };
+  const model = { vars, cons, derived, mirror, watch, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] };
+  // Not enumerable: the model goes back from the audit worker, and a function cannot be posted.
+  Object.defineProperty(model, 'preWithhold', { value: preWithhold });
+  return { model, h };
 }
 
 // FNV-1a (64-bit, as two 32-bit halves): a digest that runs the same in Node and in the browser kernel.
@@ -306,13 +318,16 @@ function withheldReasons(tables, degraded = []) {
   return [...tables].sort().map(t => ({ table: t, label: TABLE_LABEL[t] || t, reason: d.has(t) ? 'check' : 'protect', why: WITHHELD_WHY[d.has(t) ? 'check' : 'protect'] }));
 }
 
-/** Why a release was refused, for the person who asked for it. */
-function refusalMessage(r) {
+/** Why a release was refused, for the person who asked for it. months: how many months the period is. */
+function refusalMessage(r, months = 0) {
   const why = r.backstop ? 'the check of this period\'s figures ran past the server\'s time limit'
     : r.outOfBudget ? 'the check of this period\'s figures reached its limit before it could finish'
     : r.headline ? 'the number of people served could not be shown without giving someone away'
     : 'the check could not confirm that every small count in it is protected';
-  return `This period cannot be published: ${why}, so no publication release was made. Publish a longer standard period (a quarter or a year). The program's own submission to its funder, which is not for publication, is unaffected.`;
+  // A year is the longest standard period: asking for a longer one cannot help.
+  const next = months >= 12 ? 'A year is the longest standard period: tell whoever supports your SUDS server which period was refused (the server log records the check\'s figures).'
+    : `Publish a longer standard period (${months >= 3 ? 'a year' : 'a quarter or a year'}).`;
+  return `This period cannot be published: ${why}, so no publication release was made. ${next} The program's own submission to its funder, which is not for publication, is unaffected.`;
 }
 
 /**
@@ -333,7 +348,7 @@ function protectFigures(inputs, T, { strict = false, budget, stepLimit, timeLimi
   const { status, withheldTables } = audit;
   const stats = { steps: audit.steps, rounds: audit.rounds, degraded: audit.degraded };
   if (!audit.verified) {
-    return { refused: { out_of_budget: audit.outOfBudget, backstop: audit.backstop, headline: audit.headline, unprotected: audit.unprotected.length, message: refusalMessage(audit) }, withheld_tables: withheldTables, status, model, audit: stats };
+    return { refused: { out_of_budget: audit.outOfBudget, backstop: audit.backstop, headline: audit.headline, unprotected: audit.unprotected.length, message: refusalMessage(audit, (inputs.domains?.months || []).length) }, withheld_tables: withheldTables, status, model, audit: stats };
   }
   const show = (i) => (status[i] === 'vis' ? model.vars[i].value : status[i] === 'pri' ? SC.primary(T) : status[i] === 'sec' ? SC.SECONDARY : SC.WITHHELD);
   const gone = new Set(withheldTables);

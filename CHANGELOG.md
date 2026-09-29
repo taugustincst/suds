@@ -119,6 +119,51 @@ than before.
   minor gets security fixes for 30 days after the next minor; best effort, one maintainer.
 - POSITIONING.md no longer calls supplies a "cupboard" (items, sites and lots), nor does the permission catalog.
 
+### Engineering
+
+Fixes from the engineering and release-process review of 1.16.0. No migration, no new permission, no new route.
+
+- **A programme's year can be published again when a few months' overdoses were almost all reversed.** A
+  2,000-person programme's fiscal-year publication release was refused whole: three months had 1, 2 and 3
+  overdose events not reversed. The disclosure check had to try every candidate for those months, and the step
+  that withholds a table instead of refusing ran out of budget re-running that check. Now, in a period with at
+  least 12 × the threshold of overdose events, **Overdoses by month** is withheld from the start by a published
+  rule whenever a month has 1 to T−1 events, or 1 to T−1 not reversed. The rest is published as before. That year
+  now publishes in under a second with only that table withheld. A 20,000-client year is unchanged, and smaller
+  periods are checked as before (docs/architecture/ADR-0009, *Withheld by rule*; docs/HIPAA.md).
+- **A refused year says what to do.** The refusal told someone who had asked for a fiscal year to "publish a
+  longer standard period". For a year it now says a year is the longest standard period and to tell whoever
+  supports the server which period was refused; for a quarter it suggests a year. A refusal because the check ran
+  out of budget is now logged on the server with the check's work (steps, rounds, tables withheld), as a refusal
+  by the time limit was.
+- **The web app (SUDS on this device) is published only from a release, with the owner's approval.** A bare `v*`
+  tag push or a `release` event published it beside the release workflow rather than after it, so a tag whose
+  gate failed, or that nobody approved, still reached the public site. A dispatch on a branch published
+  unreleased code. `web-app.yml` now runs only when dispatched on a `v*` tag, and only if that tag's GitHub Release
+  exists at the same commit. It runs in the `release` environment.
+- **A published release's files are never replaced.** The release workflow refuses a version already tagged at
+  another commit. When the GitHub Release exists, it no longer uploads over its zip and checksum (it did, with
+  `--clobber`). Before, running the workflow on `main` after a release, without bumping the version, replaced the
+  published zip and checksum with ones built from a different commit.
+- **The release gate does not trust the commit it judges.** It runs `main`'s copy of `release-gate.js` and
+  `release-policy.js` against the released tree, so a commit cannot relax the checks that release it. It refuses a
+  commit that is not on `main`, whatever the policy exception. The 28-day feature-release check now fails when the
+  previous feature release's date cannot be read (it only warned). Its refusal gives the exact time (after 1.16.0:
+  2026-10-27 03:16 UTC).
+- **One list of the permissions that widen reading.** `server/permissions.js` `READ_SCOPE_PERMS` and
+  `CASELOAD_PERMS` replace hand-kept copies in the sync scope key, the device sign-up's caseload hold and the
+  benchmark. A test checks that every permission the sync pull asks about is in the list or comes from a table.
+- **The browser kernel builds to the same bytes anywhere.** It now builds through a worktree's symlinked
+  `node_modules`, and from any directory. 1.16.0's release commit had to be rebuilt for this.
+- **Browser suite:** the unsent-visit checks wait for the draft to be kept, not a fixed 700 ms. The accessibility
+  reflow checks wait for the resized layout to settle, not 150 ms, which is the likely cause of an intermittent
+  reflow failure.
+- **Docs:** RELEASE.md records 1.15.0's policy exception, has a table of every exception, and corrects what it
+  said about 1.15.1. The architecture overview no longer says a sync tombstone of shared data needs `clients:all`
+  (it needs `records:manage-others`). ADR-0009 no longer claims the degrade step has a budget of its own or that
+  no programme's release is refused. PERFORMANCE.md calls the 2,000-client refusal the defect it was. HANDOFF.md
+  gives the right end of the feature freeze.
+
 ## 1.16.0 — 2026-09-29
 
 ### Roles and permissions

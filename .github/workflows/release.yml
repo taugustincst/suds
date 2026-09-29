@@ -47,22 +47,29 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Check out the gate script at the commit being released
-        run: git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      # The gate's own scripts are main's copy, not the released commit's (1.16.1): a commit that trims
+      # REQUIRED_JOBS or lifts a policy limit, with the tests that pin them, could otherwise release itself.
+      # History without file contents (--filter=blob:none), so the policy can ask whether the commit is on main.
+      - name: Check out the commit being released, and main's copy of the gate scripts
+        run: |
+          git clone --quiet --filter=blob:none --no-checkout "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
+          cd src
+          git fetch --quiet origin "${GITHUB_SHA}" '+refs/heads/main:refs/remotes/origin/main' '+refs/tags/v*:refs/tags/v*'
+          git checkout --quiet "${GITHUB_SHA}"
+          mkdir -p "$RUNNER_TEMP/main"
+          git archive origin/main scripts/release-gate.js scripts/release-policy.js | tar -x -C "$RUNNER_TEMP/main"
       - name: CI passed for this exact commit
-        working-directory: src
-        run: node scripts/release-gate.js "${GITHUB_SHA}"
+        run: node "$RUNNER_TEMP/main/scripts/release-gate.js" "${GITHUB_SHA}"
       # A patch bump may not add a migration, permission or route, and a minor or major bump may not come within
       # 28 days of the previous feature release (scripts/release-policy.js compares with the previous release
-      # tags and their dates). The exception arrives through the environment, never pasted into the script.
-      - name: Release policy (patch releases add no migration, permission or route, device routes included, and at most 1,500 lines; feature releases at most every 28 days)
-        working-directory: src
+      # tags and their dates). Whatever the exception, the commit must be on main, and a version already tagged
+      # at another commit is refused (--sha, --main). The exception arrives through the environment, never
+      # pasted into the script.
+      - name: Release policy (patch releases add no migration, permission or route, device routes included, and at most 1,500 lines; feature releases at most every 28 days; the commit is on main and its version not released at another commit)
         env:
           RELEASE_POLICY_EXCEPTION: ${{ github.event.inputs.policy_exception }}
           ALLOW_PATCH_CHANGES: ${{ github.event.inputs.allow_patch_changes }}
-        run: |
-          git fetch --quiet --depth 1 origin '+refs/tags/v*:refs/tags/v*'
-          node scripts/release-policy.js
+        run: node "$RUNNER_TEMP/main/scripts/release-policy.js" --root src --sha "${GITHUB_SHA}" --main origin/main
   # The `release` environment: once the owner adds a required reviewer to it (GitHub -> Settings ->
   # Environments -> release; docs/RELEASE.md, "Owner control over releases"), this job waits for that person's
   # approval before anything is tested, packaged or published, however the workflow was started. Without the
@@ -133,19 +140,32 @@ jobs:
           # A policy exception (already checked in the gate) is stated at the top of the notes, with its reason.
           # The tags and their dates are needed for the feature-release interval, as in the gate.
           git fetch --quiet --depth 1 origin '+refs/tags/v*:refs/tags/v*' || true
-          node scripts/release-policy.js --notes-out "$RUNNER_TEMP/policy-notes.md"
+          # A version already tagged at another commit is never released again (the gate refused it too).
+          at="$(git rev-parse -q --verify "refs/tags/$ver^{commit}" || true)"
+          if [ -n "$at" ] && [ "$at" != "$(git rev-parse HEAD)" ]; then echo "::error::$ver is already tagged at $at, not this commit"; exit 1; fi
+          # main's copy of the policy script, as in the gate.
+          git show origin/main:scripts/release-policy.js > "$RUNNER_TEMP/release-policy.js"
+          node "$RUNNER_TEMP/release-policy.js" --root . --notes-out "$RUNNER_TEMP/policy-notes.md"
           if [ -s "$RUNNER_TEMP/policy-notes.md" ]; then notes="$(cat "$RUNNER_TEMP/policy-notes.md")"$'\n\n'"${notes}"; fi
           # Who released it: the account that pushed the tag or dispatched the workflow (and, on a re-run, who re-ran it).
           by="Released by @${RELEASE_ACTOR} (${GITHUB_EVENT_NAME}, run ${GITHUB_RUN_ID})"
           if [ -n "${RELEASE_TRIGGERING_ACTOR}" ] && [ "${RELEASE_TRIGGERING_ACTOR}" != "${RELEASE_ACTOR}" ]; then by="${by}, re-run by @${RELEASE_TRIGGERING_ACTOR}"; fi
           notes="${notes:-See CHANGELOG.md}"$'\n\n'"---"$'\n'"${by}."
-          if gh release view "$ver" >/dev/null 2>&1; then gh release upload "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --clobber; else
+          # A published file is never replaced (until 1.16.1 a re-run uploaded over them, so a later commit's
+          # zip and checksum could overwrite a release's): a re-run of this commit's release adds only what is missing.
+          if gh release view "$ver" >/dev/null 2>&1; then
+            have="$(gh release view "$ver" --json assets --jq '.assets[].name')"
+            n=0; for f in "suds-$ver.zip" "suds-$ver.zip.sha256"; do printf '%s\n' "$have" | grep -qxF "$f" && n=$((n + 1)); done
+            if [ "$n" = 2 ]; then echo "The release $ver already has its zip and checksum; nothing is replaced."
+            elif [ "$n" = 0 ]; then gh release upload "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256"
+            else echo "::error::The release $ver has only one of its zip and checksum; fix it by hand rather than pair a new file with a published one"; exit 1; fi
+          else
             gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --target "$(git rev-parse HEAD)" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}"; fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$ver"
       # Only after the tests passed and the release exists. A release (or tag) this workflow creates with
-      # GITHUB_TOKEN starts no other workflow, so the web app publish is asked for explicitly. A tag a person pushed
-      # also starts web-app.yml directly; its concurrency group runs the two one after the other, and the
-      # second simply republishes the same tag.
+      # GITHUB_TOKEN starts no other workflow, so the web app publish is asked for explicitly: this dispatch, on
+      # the release tag, is the only way web-app.yml runs besides a person republishing a released tag (since
+      # 1.16.1 a tag push no longer starts it), and it checks the GitHub Release exists at the tag's commit.
       - name: Publish the web app for this release
         working-directory: src
         run: |

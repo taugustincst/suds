@@ -43,7 +43,7 @@ test('waits while CI for the commit is still running; a later successful re-run 
 
 test('release.yml runs the gate before building anything, and the node24 job is required in ci.yml', () => {
   const rel = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8');
-  assert.match(rel, /node scripts\/release-gate\.js/);
+  assert.match(rel, /node "\$RUNNER_TEMP\/main\/scripts\/release-gate\.js"/);
   assert.match(rel, /needs: gate/);
   const ci = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'ci.yml'), 'utf8');
   const node24 = ci.slice(ci.indexOf('\n  node24:'), ci.indexOf('\n  dr-drill:'));
@@ -144,4 +144,14 @@ test('CODEOWNERS names the owner for the release machinery and the security-crit
     assert.deepEqual(owners[p], ['@taugustincst'], `${p} is owned by @taugustincst`);
   }
   for (const p of Object.keys(owners)) assert.ok(fs.existsSync(path.join(root, p)), `${p} exists (a renamed file would silently lose its owner)`);
+});
+
+test('the kernel builds to the same bytes from a worktree with a symlinked node_modules, or from another directory (1.16.1)', () => {
+  // esbuild writes each module's path as a comment: 1.16.0's release commit carried a kernel built through a
+  // symlinked node_modules, and the release had to be rebuilt from the main checkout.
+  const root = path.join(__dirname, '..');
+  const o = require('../scripts/kernel-build-options').kernelBuildOptions(path.join(root, 'public', 'local', 'kernel.js'));
+  assert.equal(o.preserveSymlinks, true);
+  assert.equal(o.absWorkingDir, root);
+  assert.match(fs.readFileSync(path.join(root, 'scripts', 'build-local.js'), 'utf8'), /\nprocess\.chdir\(root\);\n/);
 });

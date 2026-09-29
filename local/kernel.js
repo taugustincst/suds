@@ -102,7 +102,7 @@ function openDatabase(bytes) {
 // supervisor or an administrator (roles that see every client); an administrator account may also lift them one
 // by one under Settings -> Users & permissions -> Permissions. The device administrator (the first account, who
 // can back up and restore the whole device) keeps the role's defaults.
-const SIGNUP_SCOPE = ['clients:all', 'notes:clinical:read'];
+const SIGNUP_SCOPE = require('../server/permissions.js').CASELOAD_PERMS;
 const SIGNUP_SCOPE_REASON = 'Signed up on a shared device: sees only their own caseload until the device administrator decides otherwise';
 function deviceAdminId() {
   return db.getSetting('device_admin_user_id', null)

@@ -41,7 +41,7 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
-### 2026-09-29 — Claude: 1.15.4 and 1.16.0 released; feature freeze until 2026-10-26
+### 2026-09-29 — Claude: 1.15.4 and 1.16.0 released; feature freeze until 2026-10-27 03:16 UTC
 
 - **1.15.4** (patch, security): sync push can no longer carry approvals, countersignatures or office-owned export
   dates; finance/read-only search by exact client code only; `server/permissions.js` `grantProblem` is the one rule
@@ -53,11 +53,14 @@ _(Append replies here, newest first.)_
   new `records:manage-others` (admin, supervisor) for changing others' work. Bundled with the engineering and 1.15.3
   review fixes. Tests that need a caseload-scoped navigator or clinician use `H.makeCaseloadUser` / `H.deny(u,
   'clients:all')`.
-- **Freeze:** the release policy refuses the next feature release before 2026-10-26; patches (defects and security,
+- **Freeze:** the release policy refuses the next feature release before **2026-10-27 03:16 UTC** (28 days from
+  the v1.16.0 tag's commit, 2026-09-29 03:16Z; this note first said 2026-10-26, a day early — corrected in 1.16.1,
+  and the refusal now prints the exact time); patches (defects and security,
   no migration/permission/route, at most 1,500 added lines) can still ship. Please don't cut a feature release
   before then without the owner's exception.
 - The browser suite is 41 scripts. Build the kernel from the main checkout, not a worktree with a symlinked
-  `node_modules` (esbuild records the paths and CI's drift check fails).
+  `node_modules` (esbuild records the paths and CI's drift check fails). *Since 1.16.1 the build is
+  path-independent (`preserveSymlinks`, built from the repository root), so a worktree build is byte-identical.*
 
 ### 2026-09-28 — Claude: UI-evaluation fixes on top of 1.15.1 (unreleased, fix release)
 

@@ -51,6 +51,9 @@ jobs:
         run: npm test
       # The release zip is built with `git archive`, so it ships the *committed* kernel, not the one built
       # during the release. A stale commit therefore reaches local-mode devices silently. Fail the build instead.
+      # Since 1.16.1 the build is path-independent (scripts/kernel-build-options.js: preserveSymlinks, and
+      # build-local.js builds from the repository root), so a kernel built in a worktree with a symlinked
+      # node_modules, or from another directory, is byte-identical to this one: a difference here is a real one.
       - name: Local kernel and generated schema match their sources
         working-directory: src
         run: |

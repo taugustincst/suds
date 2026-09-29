@@ -82,7 +82,7 @@ function droppedClients(user, since) {
 const SCOPE_V = 'v1';
 const COUNSEL = require('../rules/notes');
 function scopePerms() {
-  const s = new Set(['clients:all', 'records:manage-others', 'notes:clinical:read']);
+  const s = new Set(Object.keys(require('../permissions').READ_SCOPE_PERMS));
   for (const t of SYNC.tables) { if (t.readPerm) s.add(t.readPerm); if (t.redact) s.add(t.redact.perm); if (t.unlinked) s.add(t.unlinked.all); }
   return [...s].sort();
 }

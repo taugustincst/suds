@@ -112,9 +112,16 @@ The longest hold, 210–322 ms, is the reading of the year's figures on the main
 not the audit; for comparison the fiscal-year Home dashboard held it 157–194 ms in the same run. On the small
 programme (`--small`: 2,000 clients, the same seed's shape) the fiscal-year release was refused with a 422 after
 7.7 s: its disclosure check reached its work limit (server/sdc.js `STEP_LIMIT`) before it finished, and the
-release refused rather than publishing unchecked figures (its message asks for a longer standard period). That
-is the check's designed failure mode, not a crash, but it means the benchmark's small programme cannot publish a
-year at all; recorded here so a change to the limit, or to the audit's cost, shows up.
+release refused rather than publishing unchecked figures (its message asked for a longer standard period, for a
+year). That was a defect, not the check's designed failure mode: a whole-programme year could not be published.
+Its cause: three months with 1, 2 and 3 overdose events not reversed made the first round's check try every
+candidate world (206 million units), and the degrade step, which re-runs that check for each world it tries, had
+less than one such run left of the budget. Since 1.16.1 that table (overdose events by month) is withheld by a
+published rule whose decision is checked per world in a few operations (docs/architecture/ADR-0009, *Withheld by
+rule*): the same figures publish in about 0.7 s and 77 million units, with only that table withheld
+(`test/fixtures/release-small-programme.json`, `test/publication-release-perf.test.js`); the 20,000-client year is
+unchanged (1,953 units). A refusal for want of budget is now logged with the audit's work (steps, rounds, tables
+degraded), as a backstop refusal was.
 
 Server, same run (for the record; the load makes these slower than the table above): Home dashboard, fiscal
 year, administrator 385–500 / 157–194 ms; start-up 365 ms, 81 MB; 50 navigators for 20 s: 100 requests/s, p50/p95
