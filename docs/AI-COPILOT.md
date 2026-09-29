@@ -327,8 +327,10 @@ parsing prose.
 
 * Streaming the draft as it is written.
 * An "AI-assisted" flag on assessments and care plan entries themselves (the audit shows the use).
-* Binding a draft to a note not yet saved (a server-issued draft id the note's first save must carry); today the
-  server sets the mark only for a draft asked for in a saved note.
+* Keeping a pending draft across a server restart. Since 1.17.1 a draft asked for before the note is saved is
+  remembered for its author and client, and the next note they write for that client is marked AI-assisted by
+  the server; that memory is held in the server process for 120 minutes, so a restart in between forgets it
+  (a server-issued draft id stored with the note would not).
 * Masking names SUDS does not hold (other people in the text) and other date forms near the date of birth.
 * Drafting from an audio recording (only text is accepted).
 * A per-programme model allow-list or per-person caps.

@@ -55,8 +55,9 @@ on-device app and later installs an office server re-enters (or imports, `IMPORT
    protected by the device backups its users download; the first-run Sign up states this once and asks the
    person to confirm it. It never syncs with an office server: its **This device** page says so and sends
    nothing. (`ALLOW_STATIC_SYNC` is a no-op kept for compatibility.) It is always local (it has no server
-   whose setting could apply), and it is republished only when a release is cut, never from an unreleased
-   push to `main`. Until 1.9.4 it was a demonstration with a permanent banner; the banner is gone.
+   whose setting could apply), and it is republished only for a release, never from an unreleased push to
+   `main`: normally by the tagged release's web-app workflow, and for 1.16.4, 1.17.0 and 1.17.1 by a direct push
+   of the stamped release's build to `gh-pages` at the owner's request (docs/RELEASE.md, exceptions ledger). Until 1.9.4 it was a demonstration with a permanent banner; the banner is gone.
 
 ## Retiring an existing phone-app install
 

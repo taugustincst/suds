@@ -6,7 +6,7 @@ These are the questions county IT typically sends, pre-answered. They follow the
 
 **How to check them.** Every answer cites the file, test or document that shows it.
 
-**Checked against:** 1.17.0 (the stamp commit `485548c`, 29 September 2026; live on GitHub Pages; its tag is pending the owner). The SBOM linked below is 1.16.4's until it is regenerated for 1.17.0.
+**Checked against:** 1.17.0 (the stamp commit `485548c`, 29 September 2026; live on GitHub Pages; its tag is pending the owner). The SBOM linked below describes 1.17.0.
 
 **Markers used in the answers:**
 

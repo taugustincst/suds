@@ -180,8 +180,8 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 **Record: 1.17.1 ships under a policy exception, published without a tag.** 1.17.1 is the review of 1.17.0's
 fixes (security, UX, engineering, market) together with two things the owner asked to ship in it: the AI copilot
 on Amazon Bedrock and Google Vertex AI, and its estimated cost in dollars with an optional spending limit. Those
-are new behaviour, and the release is over the patch line limit; it adds no migration, permission or route. It
-passed `npm test`, the browser suite and CI on its stamp commit, went to `main`, and was published to `gh-pages` by
+are new behaviour, and the release is over the patch line limit; it adds no migration, permission or route. It is
+published only once `npm test`, the browser suite and CI pass on its stamp commit: to `main`, then to `gh-pages` by
 a direct push, as 1.17.0 was. Its tag goes in the same push as the others (below), after 1.17.1 is on `main`: from
 1.17.1 the release gate refuses a version older than `main`'s, which is what stops the 1.16.x runs.
 
