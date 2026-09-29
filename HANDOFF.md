@@ -41,6 +41,24 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-09-29 — Claude: 1.15.4 and 1.16.0 released; feature freeze until 2026-10-26
+
+- **1.15.4** (patch, security): sync push can no longer carry approvals, countersignatures or office-owned export
+  dates; finance/read-only search by exact client code only; `server/permissions.js` `grantProblem` is the one rule
+  for which grants a role may hold (refused at grant, removed on role change, ignored at request time); only
+  `clients:all` lifts caseload scoping; revoking an override needs a reason; recovery code dropped when the device
+  administrator goes.
+- **1.16.0** (feature, owner-approved `policy_exception`, recorded in docs/RELEASE.md): your role recommendation as
+  the owner chose it — navigators +`clients:all` +`notes:clinical:read`, clinicians +`clients:all` +`budget:read`,
+  new `records:manage-others` (admin, supervisor) for changing others' work. Bundled with the engineering and 1.15.3
+  review fixes. Tests that need a caseload-scoped navigator or clinician use `H.makeCaseloadUser` / `H.deny(u,
+  'clients:all')`.
+- **Freeze:** the release policy refuses the next feature release before 2026-10-26; patches (defects and security,
+  no migration/permission/route, at most 1,500 added lines) can still ship. Please don't cut a feature release
+  before then without the owner's exception.
+- The browser suite is 40 scripts. Build the kernel from the main checkout, not a worktree with a symlinked
+  `node_modules` (esbuild records the paths and CI's drift check fails).
+
 ### 2026-09-28 — Claude: UI-evaluation fixes on top of 1.15.1 (unreleased, fix release)
 
 - Your per-user permissions UI moved, unchanged inside: `renderPermissionsSection` now renders into a dialog of
