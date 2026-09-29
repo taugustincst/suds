@@ -56,7 +56,7 @@ An optional module, **off by default** and **office server only**, that drafts d
   (a navigator drafts administrative notes, care plan and CalOMS suggestions, not clinical notes or assessments, as each draft also needs the permission
   to write what it drafts); not administrators; never grantable to finance or read-only.
 - **Provider call** with Node's built-in `fetch` (no new dependency): the Messages API with structured outputs,
-  cached system instructions, a 90-second timeout, and for the default model effort `medium` and the provider's
+  cached system instructions, a 180-second timeout, and for the default model effort `medium` and the provider's
   refusal fallback. Timeouts, rate limits, provider outages, refusals and unreadable answers are said in words
   and leave the form unchanged; each call is audited (`ai.draft`: who, client, feature, model, token counts,
   identifiers replaced — never the text) and counted in `ai_usage`. One person may ask for 12 drafts a minute.
@@ -67,8 +67,8 @@ An optional module, **off by default** and **office server only**, that drafts d
   Migration 49 is a documented no-op and 52 is reserved for the publication-release change (no-op until then).
 - Tests: `test/ai-copilot.test.js` (permission, gating, attestation, the request body, de-identification, audit,
   usage and cap, provider failures against a local fake provider, a draft never saved or signed). Browser script
-  `scripts/ui/r10-ai.mjs` against a fake provider, with axe on the panels, dialogs and the Settings tab (the suite
-  is now 50 scripts). Docs: `docs/AI-COPILOT.md`; HIPAA, Part 2, architecture, data lifecycle, deployment, user
+  `scripts/ui/r10-ai.mjs` against a fake provider, with axe on the panels, dialogs and the Settings tab (one of
+  the suite's 51 scripts). Docs: `docs/AI-COPILOT.md`; HIPAA, Part 2, architecture, data lifecycle, deployment, user
   guide and buyer guides updated.
 
 ### Access
@@ -172,7 +172,7 @@ A feature release item (1.17.0): migration 51, one new table, two new columns, n
   `report.prevention.export`).
 - Docs: the buyer guides, POSITIONING, SCOPE, the market scorecard (the SABG primary-prevention row now says
   exactly what exists and what does not), PILOT-KIT Q0, PROCUREMENT, HIPAA data classification and the USER_GUIDE.
-  Browser script `scripts/ui/r10-prev.mjs` (the suite is 50 scripts); API tests in `test/prevention.test.js`.
+  Browser script `scripts/ui/r10-prev.mjs` (one of the suite's 51 scripts); API tests in `test/prevention.test.js`.
 
 **Not in this change:** a PPSDS-shaped export (needs the DHCS PPSDS data dictionary); an evidence-based programme
 field and attendance by demographic group (only if the dictionary asks for them); anonymous participants in a
@@ -270,7 +270,7 @@ Two features for 1.17.0. No migration and no new permission; three new routes (`
   as pure functions), `test/settlement-outcomes.test.js` (the routes, roles, counting and files),
   `test/outreach.test.js` (contacts, stock, the shift summary, reports), `test/outreach-device.test.js` and
   `test/outreach-kernel-sync.test.js` (the browser kernel with no office, and a device that syncs with one), and the
-  browser script `scripts/ui/r10-outreach.mjs` (in the suite, now 50 scripts).
+  browser script `scripts/ui/r10-outreach.mjs` (one of the suite's 51 scripts).
 
 ### Privacy
 
@@ -356,8 +356,8 @@ messages. No migration, permission or route.
 - **AI copilot provider calls** (M4, `server/ai-copilot.js`). A failed call (rate limited, unavailable, timed out,
   refused as a request) is recorded and shown but **no longer counts against the monthly cap**, which counts drafts
   the provider returned (including one it declined or cut off). A 400 or 404 says the provider refused the request
-  and to check the model setting (a 413 says to shorten the text), not "shorten the text". The deadline is 180 s (it
-  was 90 s, for a non-streamed request of up to 16,000 output tokens from a model that always thinks), and it covers
+  and to check the model setting (a 413 says to shorten the text), not "shorten the text". The deadline is 180 s (a
+  non-streamed request of up to 16,000 output tokens from a model that always thinks), and it covers
   **one retry** after a 429, 5xx or 529 or a failed connection, after the provider's `retry-after` when that is at
   most 10 s. Settings shows failed calls apart from drafts used.
 - **The settings check warns rather than fails until its token exists** (M6). With only the workflow's own token, a

@@ -12,7 +12,7 @@
 //   * producing it (POST /api/caloms/submissions/:id/produce, export:identified) is the disclosure, as a
 //     submission produced by hand always was: those exact bytes are accounted per client under the
 //     state-reporting basis and its records' extracted_at is stamped. It is refused if any record in it was
-//     changed, deleted or sent in another file since it was prepared — then a new one is prepared;
+//     changed or deleted since it was prepared, or was already sent in another file — then a new one is prepared;
 //   * the submission log (caloms_submission_events): prepared, produced, each download, the upload a person
 //     records (with the DHCS portal's reference), a discarded file.
 const db = require('./db');
@@ -58,15 +58,23 @@ function prepare({ from, to, providerId = null, origin = 'scheduled', user = nul
   return { id, from, to, provider_id: providerId, clients: x.clientIds.length, counts: x.counts, held_back: x.excluded, sha256: hash, file_name: fileName };
 }
 
-/** A file the scheduled run already prepared for this period and provider, not yet produced or discarded. */
+/**
+ * A file the scheduled run already made for this period and provider: one still waiting to be produced, one that
+ * was produced, or one a person discarded (1.17.1; engineering review of 1.17.0, M1: only a waiting file counted,
+ * so a provider's file produced or discarded while another provider's failed was prepared again on the next pass).
+ * A discarded file counts on purpose: a person decided against it, and the schedule does not silently make the
+ * same month's file again; *Check and prepare* (a manual run) makes a new one when it is wanted. A waiting file
+ * whose bytes went with a purged client does not count: nothing is left to produce, so it is prepared again.
+ */
 function alreadyPrepared(from, to, providerId) {
-  return db.one(`SELECT id FROM caloms_submissions WHERE period_from=? AND period_to=? AND origin='scheduled' AND status='prepared' AND file_enc IS NOT NULL AND provider_id IS ? ORDER BY created_at LIMIT 1`, from, to, providerId);
+  return db.one(`SELECT id FROM caloms_submissions WHERE period_from=? AND period_to=? AND origin='scheduled' AND provider_id IS ?
+    AND ((status='prepared' AND file_enc IS NOT NULL) OR status IN ('produced','discarded')) ORDER BY created_at LIMIT 1`, from, to, providerId);
 }
 
 /**
  * The whole run for one period: full validation, then one prepared file (or one per provider). The scheduled run
  * is idempotent per (period, provider) (engineering review of the 1.17.0 candidate, L2): a provider whose file the
- * schedule already prepared, and that is still waiting to be produced, is not prepared again, and a provider whose
+ * schedule already made - waiting, produced or discarded (alreadyPrepared) - is not prepared again, and a provider whose
  * file could not be prepared (an error) leaves the run incomplete, so the next hourly pass tries that provider
  * again - and only that one - instead of the month counting as done or every file being prepared twice.
  */

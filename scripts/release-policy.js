@@ -226,12 +226,28 @@ function maintBranch(version, mainVersion) {
   return v[0] < m[0] || (v[0] === m[0] && v[1] < m[1]) ? `maint/${v[0]}.${v[1]}` : null;
 }
 /**
- * Whether `version` is on the newest release line (1.17.0): no vX.Y.Z tag above it. A maintenance release (1.16.5
+ * Whether `version` is on the newest release line (1.17.0): no vX.Y.Z tag above it, and (1.17.1) not below
+ * `newest`, the highest version known otherwise: package.json's version on main. A maintenance release (1.16.5
  * after 1.17.0) is not: the release job does not mark it the repository's Latest release, and does not publish the
- * web app from it (the public URL would go back to the older minor).
+ * web app from it (the public URL would go back to the older minor). The tags alone are not enough (engineering
+ * review of 1.17.0, H1): 1.17.0 was stamped on main and published before it had a tag, so v1.16.4, tagged later,
+ * had no tag above it.
  */
-function isLatest(tags, version) {
+function isLatest(tags, version, newest = null) {
+  if (parseVersion(newest) && compareVersions(newest, version) > 0) return false;
   return !tags.some((t) => parseVersion(t) && compareVersions(t, version) > 0);
+}
+/**
+ * The refusal for a release older than the newest (isLatest false) run by a release.yml that predates
+ * --latest-out (1.17.1; H1): v1.16.3's and v1.16.4's copies run main's copy of this script in their gate, then
+ * publish the GitHub Release (GitHub makes it Latest) and dispatch their own web-app.yml, which has no
+ * newest-release check, so the public URL would go back to 1.16.4 and lock out every device whose database 1.17.0
+ * migrated. null when there is nothing to refuse.
+ */
+function olderReleaseProblem({ version, tags, newest = null, latestOut = false }) {
+  if (latestOut || isLatest(tags, version, newest)) return null;
+  const above = [newest, ...tags].filter((t) => parseVersion(t) && compareVersions(t, version) > 0).sort(compareVersions).pop();
+  return `${version} is older than the newest release (${String(above).replace(/^v/, '')}), and this tag's release.yml predates --latest-out: it would mark ${version} Latest and publish its web app over the newer one`;
 }
 /**
  * The released commit should be the version-stamp commit, the one that set package.json's version (1.16.2;
@@ -307,6 +323,15 @@ function measureSize(from, to) {
   return patchSize(out);
 }
 
+function listTags() {
+  return execFileSync('git', ['tag', '-l', 'v*'], { cwd: ROOT, encoding: 'utf8' }).split('\n').map((s) => s.trim()).filter(Boolean);
+}
+/** package.json's version on --main (release.yml: origin/main), or null without --main or when it cannot be read. */
+function mainVersionOf(git) {
+  if (!arg('--main')) return null;
+  try { return JSON.parse(git('show', `${arg('--main')}:package.json`)).version; } catch { return null; }
+}
+
 function arg(name) { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; }
 
 function main() {
@@ -330,15 +355,30 @@ function main() {
     const bad = commitProblems({ version, sha: arg('--sha'), tagSha, onMain, mainRef: arg('--main'), tag: arg('--tag') || null, maint });
     for (const b of bad) console.log(`::error::Release refused: ${b}.`);
     if (bad.length) return 1;
+    // An older release run by a workflow that cannot honour --latest-out (1.17.1; H1): refused unless excepted.
+    const older = olderReleaseProblem({ version, tags: listTags(), newest: mainVersionOf(git), latestOut: !!arg('--latest-out') });
+    if (older && !(process.env.RELEASE_POLICY_EXCEPTION || process.env.ALLOW_PATCH_CHANGES || '').trim()) {
+      console.log(`::error::Release refused: ${older}. The tag still counts as a release for the policy; to make its GitHub Release anyway, run the workflow on the tag with policy_exception, then reject its web-app publish (docs/RELEASE.md).`);
+      return 1;
+    }
+    if (older) {
+      const msg = `${older}. Released under the policy exception: reject the web-app publish run for v${version} in the release environment, then mark the newest release Latest again (gh release edit <newest tag> --latest)`;
+      console.log(`::warning::${msg}.`);
+      if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Do not approve the web app for v${version}\n${msg}.\n`);
+    }
     let stampSha = null; try { stampSha = git('log', '-1', '--format=%H', '-G', '^\\s*"version":', arg('--sha'), '--', 'package.json') || null; } catch { stampSha = null; }
     const w = stampWarning({ version, sha: arg('--sha'), stampSha });
     if (w) console.log(`::warning::${w}.`);
     if (w && process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, stampSummary(w));
   }
-  const tags = execFileSync('git', ['tag', '-l', 'v*'], { cwd: ROOT, encoding: 'utf8' }).split('\n').map((s) => s.trim()).filter(Boolean);
+  const tags = listTags();
   // --latest-out <file>: "true" on the newest release line, "false" for a maintenance release (1.17.0), which the
-  // release job then neither marks Latest nor publishes to the web app.
-  if (arg('--latest-out')) fs.writeFileSync(arg('--latest-out'), String(isLatest(tags, version)));
+  // release job then neither marks Latest nor publishes to the web app. Since 1.17.1 main's package.json counts as
+  // well as the tags (isLatest).
+  if (arg('--latest-out')) {
+    const git = (...a) => execFileSync('git', a, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    fs.writeFileSync(arg('--latest-out'), String(isLatest(tags, version, mainVersionOf(git))));
+  }
   // For a maintenance release previousTag() is already the one below it on its own line (1.16.5 -> v1.16.4, not
   // v1.17.0), so the patch rules and the size limit apply to the backport alone.
   const prev = arg('--previous') || previousTag(tags, version);
@@ -373,4 +413,4 @@ function main() {
 if (require.main === module) {
   try { process.exitCode = main(); } catch (e) { console.log(`::error::The release policy check could not run: ${e.message}`); process.exitCode = 1; }
 }
-module.exports = { parseVersion, compareVersions, bumpKind, previousTag, maintBranch, isLatest, previousFeatureTag, FEATURE_INTERVAL_DAYS, PATCH_MAX_ADDED_LINES, SIZE_EXEMPT, patchSize, sizeViolation, localRoutes, LOCAL_ROUTE_FILES, diffSurfaces, violations, decide, commitProblems, stampWarning, stampSummary, tagDate, surface, extractRef, measureSize };
+module.exports = { parseVersion, compareVersions, bumpKind, previousTag, maintBranch, isLatest, olderReleaseProblem, previousFeatureTag, FEATURE_INTERVAL_DAYS, PATCH_MAX_ADDED_LINES, SIZE_EXEMPT, patchSize, sizeViolation, localRoutes, LOCAL_ROUTE_FILES, diffSurfaces, violations, decide, commitProblems, stampWarning, stampSummary, tagDate, surface, extractRef, measureSize };

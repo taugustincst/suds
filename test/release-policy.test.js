@@ -241,6 +241,8 @@ test('the deploy key is read only by a publish job that runs no third-party code
   const allowed = [
     '          git --git-dir=tag.git fetch -q --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${GITHUB_SHA}"\n',
     '          node tag/scripts/release-site-check.js tag site\n',
+    // 1.17.1 (H1): the tag's own version check against gh-pages' version.json, read with gh api (no fetch).
+    '          node tag/scripts/pages-version-check.js "${GITHUB_REF_NAME}" "$RUNNER_TEMP/pages-version.json"\n',
   ];
   let rest = publish.replace(/^\s*#.*$/gm, '');
   for (const a of allowed) { assert.ok(rest.includes(a), `the publish job has ${a.trim()}`); rest = rest.replace(a, ''); }
@@ -480,6 +482,63 @@ test('release-policy.js --sha --main --maint, end to end in a scratch repository
     git('update-ref', 'refs/remotes/origin/maint/1.17', 'HEAD');
     const own = policy('--sha', m117, '--main', 'origin/main', '--maint', 'origin/maint', '--tag', 'v1.17.1');
     assert.equal(own.status, 1); assert.match(own.stdout, /is not on origin\/main: only a commit merged to it is released/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an older version is never Latest, even when no tag above it exists yet: main\'s version counts (1.17.1, H1)', () => {
+  // 1.17.0 was stamped on main and published to gh-pages before it had a tag; v1.16.3 and v1.16.4 were tagged after.
+  const tags = ['v1.16.2', 'v1.16.3', 'v1.16.4'];
+  assert.equal(P.isLatest(tags, '1.16.4'), true, 'by the tags alone it looked newest: the defect');
+  assert.equal(P.isLatest(tags, '1.16.4', '1.17.0'), false, 'main is at 1.17.0');
+  assert.equal(P.isLatest(tags, '1.16.3', '1.17.0'), false);
+  assert.equal(P.isLatest(tags, '1.17.0', '1.17.0'), true, 'main\'s own version is the newest');
+  assert.equal(P.isLatest(tags, '1.17.1', '1.17.0'), true, 'a newer version than main\'s (never on main) is not held back by it');
+  assert.equal(P.isLatest([...tags, 'v1.17.0'], '1.16.4', null), false, 'the tags still count without main');
+  assert.equal(P.isLatest(tags, '1.16.4', 'garbage'), true, 'an unreadable main version is ignored, the tags decide');
+  // A release.yml without --latest-out (v1.16.3's, v1.16.4's) would mark it Latest and publish its web app.
+  assert.match(P.olderReleaseProblem({ version: '1.16.4', tags, newest: '1.17.0' }), /^1\.16\.4 is older than the newest release \(1\.17\.0\), and this tag's release\.yml predates --latest-out/);
+  assert.equal(P.olderReleaseProblem({ version: '1.16.4', tags, newest: '1.17.0', latestOut: true }), null, 'a workflow that reads --latest-out handles it');
+  assert.equal(P.olderReleaseProblem({ version: '1.17.0', tags, newest: '1.17.0' }), null);
+  assert.match(P.olderReleaseProblem({ version: '1.16.3', tags: [...tags, 'v1.17.0'], newest: null }), /newest release \(1\.17\.0\)/);
+});
+
+test('release-policy.js --sha --main, end to end: a v1.16.4 tagged after an untagged 1.17.0 on main is not Latest, and an old release.yml is refused', () => {
+  const os = require('node:os');
+  const { execFileSync, spawnSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-latest-'));
+  const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', ...a], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const write = (f, s) => { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), s); };
+  const tree = (version) => {
+    write('package.json', JSON.stringify({ name: 'x', version }) + '\n');
+    write('server/db.js', 'module.exports = { LATEST_SCHEMA_VERSION: 48 };\n');
+    write('server/auth.js', "module.exports = { PERMS: { admin: ['a:read'] } };\n");
+    write('server/app.js', 'module.exports = { ROUTE_MODULES: [] };\n');
+  };
+  const commit = (msg) => { git('add', '-A'); git('commit', '-q', '-m', msg); return git('rev-parse', 'HEAD'); };
+  const policy = (env, ...a) => spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'release-policy.js'), '--root', dir, ...a], { encoding: 'utf8', env: { PATH: process.env.PATH, ...env } });
+  try {
+    git('init', '-q', '-b', 'main');
+    tree('1.16.4'); const v1164 = commit('Release 1.16.4');
+    tree('1.17.0'); commit('Release 1.17.0');   // stamped and published, not tagged
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    git('tag', 'v1.16.4', v1164);
+    git('checkout', '-q', v1164);   // the gate runs in the tag's tree
+    const latest = path.join(dir, '.latest');
+    const now = policy({}, '--sha', v1164, '--main', 'origin/main', '--tag', 'v1.16.4', '--latest-out', latest);
+    assert.equal(now.status, 0, now.stdout + now.stderr);
+    assert.equal(fs.readFileSync(latest, 'utf8'), 'false', 'main is at 1.17.0: v1.16.4 is neither Latest nor published to the web app');
+    // v1.16.4's own release.yml passes no --latest-out: refused, unless a policy exception says to make its release.
+    const old = policy({}, '--sha', v1164, '--main', 'origin/main', '--tag', 'v1.16.4');
+    assert.equal(old.status, 1, old.stdout);
+    assert.match(old.stdout, /::error::Release refused: 1\.16\.4 is older than the newest release \(1\.17\.0\)/);
+    const exc = policy({ RELEASE_POLICY_EXCEPTION: 'a GitHub Release for the 1.16.4 tag' }, '--sha', v1164, '--main', 'origin/main', '--tag', 'v1.16.4');
+    assert.equal(exc.status, 0, exc.stdout);
+    assert.match(exc.stdout, /::warning::1\.16\.4 is older[^\n]*reject the web-app publish run for v1\.16\.4/);
+    // main's own version is Latest.
+    git('checkout', '-q', 'main'); git('tag', 'v1.17.0', 'origin/main');
+    const top = policy({}, '--sha', git('rev-parse', 'origin/main'), '--main', 'origin/main', '--tag', 'v1.17.0', '--latest-out', latest);
+    assert.equal(top.status, 0, top.stdout + top.stderr);
+    assert.equal(fs.readFileSync(latest, 'utf8'), 'true');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

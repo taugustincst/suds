@@ -12,6 +12,12 @@ const auth = require('../auth');
 const { define, refuse, flag, notPermitted } = require('./core');
 
 const isYes = (v) => v === true || v === 1 || v === '1' || v === 'true';
+// Shared with POST /api/notes/:id/sign and PUT /api/notes/:id (1.17.1; engineering review of 1.17.0, L2), so the
+// REST routes and sync push accept the same review statement and keep the AI-assisted mark the same way.
+/** The author's statement that they reviewed AI-drafted text, as the sign route and a push both read it. */
+const aiReviewed = (v) => isYes(v);
+/** AI-assisted stays AI-assisted: once the stored note has the mark, a later save cannot take it off. */
+const keepAiAssisted = (value, existing) => (existing && Number(existing.ai_assisted) ? 1 : value);
 const parseList = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
 // Everything about a signed note stays as signed, except asking a supervisor to look at it (request-cosign).
 const SIGNED_KEEPS = ['kind', 'format', 'title_enc', 'content_enc', 'structured_enc', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'problem_ids',
@@ -124,7 +130,7 @@ module.exports = define({
     }
     // An AI-assisted note is signed only with its author's statement that they reviewed the drafted text, over sync
     // as over REST (security review of 1.17.0, L1): the device sends it with the row (local/sync.js).
-    if (c.via === 'sync' && signs(row, c) && ai && !isYes(c.statements && c.statements.ai_reviewed)) {
+    if (c.via === 'sync' && signs(row, c) && ai && !aiReviewed(c.statements && c.statements.ai_reviewed)) {
       out.push(refuse('needs the author\'s review statement: this note includes text drafted by the AI copilot', { message: 'This note includes text drafted by the AI copilot. Confirm you have reviewed and corrected it before signing.', fields: { ai_reviewed: 'confirm you reviewed the AI-drafted text' } }));
     }
     // Only the person who wrote a note signs it, and only they (POST /api/notes/:id/sign): on push, the syncing user
@@ -148,7 +154,7 @@ module.exports = define({
     const asserted = COSIGN.some(k => has(row[k]) && String(row[k]) !== String((e && e[k]) ?? '')) || (has(row.cosign_note_enc) && String(row.cosign_note_enc) !== String((e && c.was('cosign_note_enc')) ?? ''));
     if (e) {
       row.kind = e.kind; // a note's kind is decided when it is written (no route changes it)
-      if (Number(e.ai_assisted)) row.ai_assisted = 1; // AI-assisted stays AI-assisted
+      row.ai_assisted = keepAiAssisted(row.ai_assisted, e); // AI-assisted stays AI-assisted
       if (e.status !== 'draft') for (const col of SIGNED_KEEPS) row[col] = col.endsWith('_enc') ? undefined : e[col];
       // Asking for a review is the author's (POST /api/notes/:id/request-cosign), or records:manage-others'
       // (security review of 1.16.0, L2); nor is it asked again of a note already countersigned.
@@ -198,7 +204,7 @@ module.exports = define({
 });
 module.exports.closeSignReminders = closeSignReminders;
 module.exports.reissueAddenda = reissueAddenda;
-Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts });
+Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts, aiReviewed, keepAiAssisted });
 
 /**
  * Who may read a SUD counseling note (42 CFR §2.11), restricted by design from 1.16.1 (the owner's decision): its

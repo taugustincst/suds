@@ -58,7 +58,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 ### Access control, MFA and SSO
 
 - **Documents:** [IDENTITY.md](../security/IDENTITY.md); [QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md) #17–#24.
-- **Tests:** `auth-permissions`, `role-expansion`, `user-permissions`, `deidentified-roles`, `mfa-grace`, `mfa-enrol-hardening`, `in-session-guessing`, `signer-hardening`, `oidc`, `oidc-reauth`, `idp-lifecycle`, `scim`, `security-1154` to `security-1164`.
+- **Tests:** `auth-permissions`, `role-expansion`, `user-permissions`, `deidentified-roles`, `mfa-grace`, `mfa-enrol-hardening`, `in-session-guessing`, `signer-hardening`, `oidc`, `oidc-reauth`, `idp-lifecycle`, `scim`, `security-1154` to `security-1164`, `security-1170`.
 - **CI:** `test`; `browser` (`permissions-admin`, `signup`).
 - **Status:** In place, with caveats. Least privilege is the default for a new install and a setting an upgraded office turns on (*New navigators and clinicians start held to their caseload*, 1.17.0; `least-privilege-default`, `least-privilege-sso`, `least-privilege-device`); an upgraded office that leaves it off keeps navigators and clinicians seeing every client. The client record keeps a revision history with revert from 1.17.0 (`client-revisions`), at the office only.
 
@@ -115,7 +115,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 ### 42 CFR Part 2 and disclosures
 
 - **Documents:** [../compliance/PART2.md](../compliance/PART2.md); [../HIPAA.md](../HIPAA.md); [ADR-0004](../architecture/ADR-0004-disclosure-gate.md); [../integration/FHIR.md](../integration/FHIR.md).
-- **Tests:** `part2`, `disclosure-gates`, `counseling-notes`, `fhir`, `fhir-oracle`, `fhir-hardening`, `compliance`, `witness-metadata-privacy`.
+- **Tests:** `part2`, `part2-layer` (1.17.0), `referral-links` (secure referral links, 1.17.0; [REFERRAL-LINKS.md](../security/REFERRAL-LINKS.md)), `disclosure-gates`, `counseling-notes`, `fhir`, `fhir-oracle`, `fhir-hardening`, `compliance`, `witness-metadata-privacy`.
 - **CI:** `test`.
 - **Status:** Addressed in software. **Owner-pending:** counsel review of consent and notice wording, and an independent Part 2 review.
 
@@ -170,7 +170,7 @@ These close review questions that software cannot. The status of each is on the 
    - immutable releases, with older releases' checksums recorded;
    - stale branches deleted;
    - CodeQL, secret scanning and push protection.
-2. **Tag the released versions.** 1.16.3 (`fc5e9d7`) and 1.16.4 (`6491308`, live on GitHub Pages) are released but not tagged (HANDOFF.md, *Release waiting*; docs/RELEASE.md, *Record: 1.16.4 published without a tag*): `git fetch origin && git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3" && git tag -a v1.16.4 6491308 -m "SUDS 1.16.4" && git push origin v1.16.3 v1.16.4`. The 1.16.4 SBOM describes `6491308`. 1.17.0 (`485548c`) is untagged too (`git tag -a v1.17.0 485548c -m "SUDS 1.17.0"`); its SBOM describes that commit.
+2. **Tag the released versions.** 1.16.3 (`fc5e9d7`), 1.16.4 (`6491308`) and 1.17.0 (`485548c`, live on GitHub Pages) are released but not tagged (HANDOFF.md, *Release waiting*; docs/RELEASE.md, *Record: 1.16.4 published without a tag*). All three go in **one** push, never 1.16.x alone, which would publish 1.16.4 over 1.17.0: `git fetch origin && git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3" && git tag -a v1.16.4 6491308 -m "SUDS 1.16.4" && git tag -a v1.17.0 485548c -m "SUDS 1.17.0" && git push origin v1.16.3 v1.16.4 v1.17.0`, then follow what RELEASE.md says each run does. The 1.16.4 SBOM describes `6491308`; the 1.17.0 SBOM describes `485548c`.
 3. **Vulnerability disclosure.** Turn on private vulnerability reporting, add a `SECURITY.md`, and name a security contact `[owner to complete]`.
 4. **Licence file.** `package.json` says MIT; add the `LICENSE` file `[owner to complete]`.
 5. **Organisation** `[owner to complete]`:

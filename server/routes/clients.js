@@ -589,7 +589,10 @@ module.exports = (r) => {
     }
     require('../crud').assertFresh(ctx, row, 'client');
     const body = Object.fromEntries(changes.map(ch => [ch.field, ch.before]));
-    const v = validate(body, Object.fromEntries(changes.map(ch => [ch.field, { ...shape[ch.field], required: false }])), { partial: true, existing: row });
+    // A list value retired since the change is still the value the revision recorded, so it may be put back (1.17.1;
+    // engineering review of 1.17.0, L1): `existing` also offers each field's recorded `before` (from the stored
+    // revision, never from the request), as an edit accepts the value a record already holds.
+    const v = validate(body, Object.fromEntries(changes.map(ch => [ch.field, { ...shape[ch.field], required: false }])), { partial: true, existing: { ...row, ...body } });
     // A name cannot be put back to nothing: the record needs one (the form's own rule).
     for (const f of ['first_name', 'last_name']) if (f in v && !v[f]) throw badRequest('This change cannot be put back: it would leave the client without a name. Edit the record instead.');
     const done = updateClient(ctx, row, v, { reverts: rev.id });

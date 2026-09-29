@@ -12,8 +12,9 @@
 //     search is), so the SSP summary counts unique codes without decrypting one;
 //   * it is never printed in a report, never in a de-identified export (a random per-file reference stands in
 //     for it there), and never in a publication release.
-// Written the same way by every door: the visit routes (server/routes/interventions.js), sync push
-// (server/rules/interventions.js, server/sync-tables.js importRow) and key rotation (scripts/rotate-index-key.js).
+// Written the same way by every door, through server/rules/interventions.js participantCode: the visit routes
+// (server/routes/interventions.js), sync push (server/rules/interventions.js normalise, server/sync-tables.js
+// importRow), and key rotation (scripts/rotate-index-key.js).
 const { blindIndex } = require('./crypto');
 
 const MIN = 4;

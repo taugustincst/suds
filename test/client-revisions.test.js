@@ -138,6 +138,31 @@ test('a revert blocked by a later change names the field, and the other fields c
   assert.equal((await C.primary.post(`/api/clients/${id}/history/${bad}/revert`, { fields: ['last_name'] })).status, 400);
 });
 
+test('a list value retired since the change can still be put back: it is the value the revision recorded (1.17.1, L1)', async () => {
+  const id = await newClient({ primary_substance: 'xylazine' });
+  const rev = (await C.primary.put(`/api/clients/${id}`, { primary_substance: 'alcohol' })).data.revision;
+  assert.ok(rev);
+  // The programme retires the earlier choice after the change.
+  assert.equal((await C.admin.put('/api/admin/lists/SUBSTANCES/entries/xylazine', { hidden: true })).status, 200);
+  try {
+    assert.equal((await C.primary.put(`/api/clients/${id}`, { primary_substance: 'xylazine' })).status, 400, 'a retired value is not chosen anew');
+    const back = await C.primary.post(`/api/clients/${id}/history/${rev}/revert`, {});
+    assert.equal(back.status, 200, JSON.stringify(back.data));
+    assert.equal((await C.primary.get(`/api/clients/${id}`)).data.client.primary_substance, 'xylazine');
+    // Whatever the revision recorded is what goes back, even a value the list never offered (an older release's code).
+    H.db.run(`INSERT INTO client_revisions(id,client_id,changed_by,via,changes_enc) VALUES(?,?,?,?,?)`, 'rev-unknown-substance', id, U.primary, 'rest', crypto.encrypt(JSON.stringify({ primary_substance: { before: 'not_a_substance', after: 'xylazine' } })));
+    const odd = await C.primary.post(`/api/clients/${id}/history/rev-unknown-substance/revert`, {});
+    assert.equal(odd.status, 200, JSON.stringify(odd.data));
+    // A request cannot smuggle a value in: the body names fields, never values.
+    const rev2 = (await C.primary.put(`/api/clients/${id}`, { primary_substance: 'cocaine' })).data.revision;
+    const smuggle = await C.primary.post(`/api/clients/${id}/history/${rev2}/revert`, { fields: ['primary_substance'], primary_substance: 'nonsense' });
+    assert.equal(smuggle.status, 200);
+    assert.equal((await C.primary.get(`/api/clients/${id}`)).data.client.primary_substance, 'not_a_substance', 'the recorded before, not the request');
+  } finally {
+    await C.admin.put('/api/admin/lists/SUBSTANCES/entries/xylazine', { hidden: false });
+  }
+});
+
 test('revert follows the record\'s own rules: a name is never put back to nothing', async () => {
   const id = await newClient({ preferred_name: null });
   const rev = (await C.primary.put(`/api/clients/${id}`, { preferred_name: 'Ree' })).data.revision;

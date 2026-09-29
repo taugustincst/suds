@@ -13,7 +13,8 @@ name: Web app
 # → pick the tag). Until 1.16.1 a bare v* tag push and a `release` event started it too, beside release.yml
 # rather than after it, so a tag whose gate failed or that nobody approved still reached the public URL, and a
 # dispatch on a branch published unreleased code. Now it runs only on a v* tag whose GitHub Release exists at
-# this very commit, and the publish waits in the `release` environment for the owner's approval.
+# this very commit, and the publish waits in the `release` environment for the owner's approval. Since 1.17.1 it
+# also refuses a version older than the version.json gh-pages serves (scripts/pages-version-check.js).
 #
 # Two jobs since 1.16.3 (engineering review of 1.16.2, M2). `build` runs everything third-party (npm ci,
 # Playwright and its apt packages, the provider pictures) with a read-only token, no environment and no secret,
@@ -66,6 +67,17 @@ jobs:
       # The token is dropped from the clone's remote once it has fetched (it is read-only here anyway).
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}" && git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
+      # Never over a newer web app (1.17.1; engineering review of 1.17.0, H1): the newest-tag check above reads tags,
+      # and 1.17.0 was pushed to gh-pages before it had one, so an older tag could look newest. A device database a
+      # newer release migrated is refused by an older kernel (server/db.js), so going back would lock users out.
+      # gh-pages' own version.json decides (scripts/pages-version-check.js; the same version is a republish).
+      - name: Not older than the web app gh-pages serves
+        run: |
+          rm -f "$RUNNER_TEMP/pages-version.json"
+          if live="$(gh api -H 'Accept: application/vnd.github.raw' "repos/${GITHUB_REPOSITORY}/contents/version.json?ref=gh-pages" 2>"$RUNNER_TEMP/pages-version.err")"; then printf '%s' "$live" > "$RUNNER_TEMP/pages-version.json"
+          elif grep -q 'HTTP 404' "$RUNNER_TEMP/pages-version.err"; then echo "gh-pages serves no version.json (or there is no gh-pages branch yet)."
+          else echo "::error::Could not read version.json from gh-pages:"; cat "$RUNNER_TEMP/pages-version.err"; exit 1; fi
+          node src/scripts/pages-version-check.js "${GITHUB_REF_NAME}" "$RUNNER_TEMP/pages-version.json"
       # The build also downloads each starter-directory provider's picture into _site/region-pictures/ (the
       # runner has internet access; a phone's browser cannot fetch them from the providers' sites itself).
       # Best effort: a provider site that fails is left out, and the step summary says how many made it.
@@ -179,8 +191,16 @@ jobs:
           cd "$RUNNER_TEMP"
           git init -q --bare tag.git
           git --git-dir=tag.git fetch -q --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${GITHUB_SHA}"
-          mkdir tag && git --git-dir=tag.git archive "${GITHUB_SHA}" public server/csp.js scripts/build-static-site.js scripts/static-site-security.js scripts/release-site-check.js | tar -x -C tag
+          mkdir tag && git --git-dir=tag.git archive "${GITHUB_SHA}" public server/csp.js scripts/build-static-site.js scripts/static-site-security.js scripts/release-site-check.js scripts/pages-version-check.js | tar -x -C tag
           node tag/scripts/release-site-check.js tag site
+      # Again after the approval (1.17.1; H1), with the tag's own check: gh-pages may have moved on meanwhile.
+      - name: Still not older than the web app gh-pages serves
+        run: |
+          rm -f "$RUNNER_TEMP/pages-version.json"
+          if live="$(gh api -H 'Accept: application/vnd.github.raw' "repos/${GITHUB_REPOSITORY}/contents/version.json?ref=gh-pages" 2>"$RUNNER_TEMP/pages-version.err")"; then printf '%s' "$live" > "$RUNNER_TEMP/pages-version.json"
+          elif grep -q 'HTTP 404' "$RUNNER_TEMP/pages-version.err"; then echo "gh-pages serves no version.json (or there is no gh-pages branch yet)."
+          else echo "::error::Could not read version.json from gh-pages:"; cat "$RUNNER_TEMP/pages-version.err"; exit 1; fi
+          node tag/scripts/pages-version-check.js "${GITHUB_REF_NAME}" "$RUNNER_TEMP/pages-version.json"
       # Only a job that waited for the owner's approval in the `release` environment can read PAGES_PUBLISH_KEY. The
       # summary names the credential that pushed. Without the secret the workflow token pushes, but only while
       # gh-pages has no ruleset: once it has one the token is refused (GH013), so the run stops here and says why.

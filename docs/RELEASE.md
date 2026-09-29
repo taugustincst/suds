@@ -39,9 +39,9 @@ Rules for every release:
 
 | Line | Gets | For how long |
 | --- | --- | --- |
-| **The latest minor** (today 1.16.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
-| **The previous minor** (today 1.15.x) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below) | **30 days** after the next minor's release date, then none |
-| Anything older | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
+| **The latest minor** (today 1.17.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
+| **The previous minor** (today 1.16.x, until 30 days after 1.17.0's release date: the date of its tag) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below) | **30 days** after the next minor's release date, then none |
+| Anything older (today 1.15.x and before: once 1.17.0 was released, 1.15.x stopped being the previous minor, whatever was left of its 30 days after 1.16.0) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
@@ -177,12 +177,13 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.17.0 | monthly limit (a feature release inside 1.16.0's 28 days); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner approved shipping 1.17.0 with an exception once green, and asked for it to be deployed to Pages; the stamp commit passed `npm test`, the full browser suite in both orders and CI | owner (a request, no workflow record; *Record: 1.17.0*, below) |
 
 **Record: 1.17.0 ships under a policy exception, published without a tag.** 1.17.0 is a feature release (migrations
-49–55, new permissions and routes: the AI documentation copilot, client revision history, the least-privilege default,
+49–55, one new permission, `ai:draft`, and new routes: the AI documentation copilot, client revision history, the least-privilege default,
 SSP participant codes and prevention events, the Part 2 layer, CalOMS automation, secure referral links, settlement
 outcomes and street outreach, the publication change) inside the 28 days after 1.16.0, which the policy refuses on its
 own. The owner approved it as a recorded exception ("ship 1.17 with an exception when it's green"; "merge and deploy to
 pages when green"). Like 1.16.4 it was published to GitHub Pages by pushing the stamp commit's verified build to
-`gh-pages`; `v1.17.0`, its GitHub Release and zip wait for the owner's tag (after `v1.16.3` and `v1.16.4`). The next
+`gh-pages`; `v1.17.0`, its GitHub Release and zip wait for the owner's tag, pushed together with `v1.16.3` and
+`v1.16.4` (below: a 1.16.x tag pushed alone would publish 1.16.x over 1.17.0). The next
 feature release waits 28 days from 1.17.0.
 
 **Record: 1.16.4 published without a tag.** The released 1.16.4 is `6491308` ("Release 1.16.4", on `main`, CI green
@@ -195,18 +196,45 @@ stamped and never published on its own. **Neither is tagged, and until both are,
 previous release" measures from `v1.16.2`:** the release policy for 1.17.0 (the feature interval, which does not
 change: 1.16.0 is the previous feature release) and for any 1.16.x patch (whose size and surface would be counted from
 `v1.16.2`: 1.16.3 and 1.16.4 alone count 1,137 of the 1,500 lines), `scripts/migration-order.js`'s baseline, and
-*Backports* step B, whose `git rev-parse 'v1.16.4^{commit}'` fails without the tag. The owner's commands, from any
-clone (never an assistant's):
+*Backports* step B, whose `git rev-parse 'v1.16.4^{commit}'` fails without the tag.
+
+**Tag 1.16.3, 1.16.4 and 1.17.0 in one push, never 1.16.x alone** (engineering review of 1.17.0, H1). 1.17.0 is on
+`gh-pages` with no tag, so a `v1.16.4` pushed on its own is the newest release tag there is. Its own `release.yml`
+(the copy at the tag is what runs) makes its GitHub Release, which GitHub marks Latest, and dispatches its own
+`web-app.yml`, which has no newest-release check at all: once approved, it force-pushes the 1.16.4 site over 1.17.0.
+A device whose database 1.17.0 migrated (schema 55) is then refused by the 1.16.4 kernel (`server/db.js`: "created by
+a newer version of SUDS"), and everyone using SUDS on this device is locked out until 1.17.0 is published again.
+The owner's commands, from any clone (never an assistant's), once 1.17.1's fixes are on `main` (the third line
+checks it):
 ```bash
 git fetch origin
-git merge-base --is-ancestor fc5e9d7 origin/main && git merge-base --is-ancestor 6491308 origin/main && echo "both on main"
+for c in fc5e9d7 6491308 485548c; do git merge-base --is-ancestor $c origin/main || echo "$c is NOT on main"; done
+git show origin/main:scripts/release-policy.js | grep -q olderReleaseProblem && echo "main refuses an older release's old workflow"
 git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3"
 git tag -a v1.16.4 6491308 -m "SUDS 1.16.4"
-git push origin v1.16.3 v1.16.4
+git tag -a v1.17.0 485548c -m "SUDS 1.17.0"
+git push origin v1.16.3 v1.16.4 v1.17.0
 ```
-Each tag starts `release.yml` for its version, which makes the GitHub Release with its zip after the owner's approval
-(1.16.3's is not Latest and publishes no web app; 1.16.4's web-app publish republishes what `gh-pages` already
-serves). Tag both **before** 1.17.0 is tagged.
+If 1.17.1 is stamped by then, tag it too (`git tag -a v1.17.1 <stamp sha> -m "SUDS 1.17.1"`) and add `v1.17.1` to
+the same push; tagged later, it goes out like any release. What each tag then does:
+
+* **`v1.16.3` and `v1.16.4`: their release runs stop at the gate, as they should.** Their `release.yml` copies
+  predate `--latest-out`, and `main`'s copy of `scripts/release-policy.js`, which their gate runs, refuses a version
+  older than `main`'s `package.json` from such a workflow (`olderReleaseProblem`, since 1.17.1). The tags alone do
+  what they are for: the release policy, `scripts/migration-order.js` and *Backports* measure from them. A GitHub
+  Release for either is optional: *Run workflow* on the tag with `policy_exception` set to the reason, approve its
+  release job, then **reject the `Web app` run it starts for that tag** in the `release` environment (that
+  `web-app.yml` would publish 1.16.x), and put Latest back with `gh release edit v1.17.0 --latest`. If the tags are
+  pushed before 1.17.1's gate is on `main`, nothing in their workflows stops them: reject their release approvals
+  and any `Web app` run for `v1.16.3` or `v1.16.4`.
+* **`v1.17.0`: its gate fails the feature interval** (inside 1.16.0's 28 days: the recorded exception above), so
+  *Run workflow* on `v1.17.0` with `policy_exception` set to that reason. While `main`'s `package.json` still says
+  1.17.0, its release is Latest and its `Web app` run republishes 1.17.0, the build `gh-pages` already serves:
+  approve it (once 1.17.1 is stamped, 1.17.0 is neither Latest nor published, and 1.17.1's release is both). Since 1.17.1 `web-app.yml` also refuses
+  any version older than the `version.json` on `gh-pages` (`scripts/pages-version-check.js`), before the build and
+  again after the approval; the tags before 1.17.1 carry copies without that check, hence the rule above.
+
+Afterwards, check that the public URL's `version.json` reads the newest version and that the Latest release is it.
 
 **Owner decisions inside a patch (not policy exceptions).** The policy checks a patch's surface (migrations,
 permissions, routes, size), not what its code does, so a patch can change behaviour without breaking a rule. That
@@ -397,12 +425,12 @@ the previous minor was a promise the machinery could not keep. Since 1.17.0:
 * **The policy compares it with its own line.** The previous tag is the highest one below the version, so 1.16.5 is
   measured against `v1.16.4`, not `v1.17.0`: no migration, permission or route, and at most 1,500 counted lines,
   exactly as for any patch.
-* **It is not the newest release.** The gate says so (`--latest-out`, `isLatest`: a `vX.Y.Z` tag above it exists),
+* **It is not the newest release.** The gate says so (`--latest-out`, `isLatest`: a `vX.Y.Z` tag above it exists, or, since 1.17.1, `main`'s `package.json` names a newer version),
   and the release job then publishes the GitHub Release with `--latest=false` (GitHub would otherwise mark the newest
   *made* release Latest, and "latest" downloads would go back to 1.16) and does **not** start the web-app publish:
   SUDS on this device stays on the newest minor. `web-app.yml` refuses on its own any tag that is not the newest
   release tag, before it builds and again after the approval, so a *Run workflow* on an older tag cannot roll the
-  public URL back either.
+  public URL back either, and since 1.17.1 it also refuses a version older than the `version.json` `gh-pages` serves (`scripts/pages-version-check.js`: 1.17.0 was published before it had a tag).
 * **The workflow at the tag decides** (*What running main's copy guarantees*, above): a tag on `maint/1.16` runs
   `maint/1.16`'s `release.yml`. A branch made from `v1.16.4` carries 1.16.4's, which does not pass `--maint` and is
   refused as "not on main"; so the first pull request into a new maintenance branch brings the release workflows up
@@ -418,8 +446,8 @@ A. *Settings, once* (step 2 of *Owner: repository settings* covers them): `maint
 
 B. *When a new minor is released* (1.17.0's tag pushed and its release published), make the previous minor's branch
    from its last tag, then bring its release workflows up to `main`'s. **This needs the `v1.16.4` tag**, which does
-   not exist yet (*Record: 1.16.4 published without a tag*, above: `git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3" &&
-   git tag -a v1.16.4 6491308 -m "SUDS 1.16.4" && git push origin v1.16.3 v1.16.4`); until it does, the first line
+   not exist yet (*Record: 1.16.4 published without a tag*, above: pushed in one push with `v1.17.0`, never
+   alone); until it does, the first line
    below fails, and a 1.16.5 would be measured against `v1.16.2`:
    ```bash
    git fetch origin --tags
