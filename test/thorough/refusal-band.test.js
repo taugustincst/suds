@@ -1,7 +1,9 @@
 'use strict';
 // Which fiscal years a publication release refuses (engineering reviews of 1.16.2, M4, and 1.16.3, M3). The
-// benchmark's 2,000-client year (test/fixtures/release-small-programme.json) is refused for want of budget since
-// 1.16.2 withdrew 1.16.1's withholding rule. This sweep scales that year's overdose figures (T = 11, 12 months) and
+// benchmark's 2,000-client year (test/fixtures/release-small-programme.json) was refused for want of budget from
+// 1.16.2 (which withdrew 1.16.1's withholding rule) to 1.16.4; since 1.17.0 no publication release prints the overdose
+// events by month (docs/architecture/ADR-0009, "Events by month: not published") and it publishes, in a fraction of a
+// percent of the budget. This sweep scales that year's overdose figures (T = 11, 12 months) and
 // moves each month's events and reversals at random (seeded, so the run is the same every time), and holds each
 // release to two things:
 //   * a refusal is whole: nothing is printed (no funder report, NDP log or settlement figures), with the year's
@@ -10,10 +12,11 @@
 // It records which years were refused and why (for want of budget, or because the release with tables withheld
 // still failed its check), with their overdose events. It pins no band: 1.16.3's docs said "about 110 to 240
 // events, everything outside publishes", and months varied a little more (events and reversals moved on their own
-// by up to 3 or 4) were refused at 87 to 99 events for budget and 301 to 341 for a failed check (docs/PERFORMANCE.md,
-// *Which programmes are refused*). Units of work are counted, not time, so the result does not depend on the
-// machine; the time backstop is set out of the way. About 6 minutes: CI's thorough-sdc job (scripts/test-thorough.js
-// SDC_SWEEPS).
+// by up to 3 or 4) were refused at 87 to 99 events for budget and 301 to 341 for a failed check. 1.16.4 refused 34
+// of these 114 years (26 for budget, 87 to 237 events; 8 for a failed check, 301 to 341); 1.17.0 refuses 4
+// (docs/PERFORMANCE.md, *Which programmes are refused*). The test holds that to at most 10, a tripwire, not a band.
+// Units of work are counted, not time, so the result does not depend on the machine; the time backstop is set out
+// of the way. About a minute (1.16.4: about 6 to 20): CI's thorough-sdc job (scripts/test-thorough.js SDC_SWEEPS).
 const { test } = require('node:test');
 const assert = require('node:assert');
 const RA = require('../../server/release-audit');
@@ -64,7 +67,7 @@ function* programmes() {
 }
 
 test('fiscal years of scaled programmes: a refusal is whole, and which years are refused is recorded', { skip: !process.env.SUDS_THOROUGH && 'thorough only (SUDS_THOROUGH=1)' }, () => {
-  const refused = { budget: [], check: [] }; let published = 0; let all = 0;
+  const refused = { budget: [], check: [] }; let published = 0; let all = 0; let benchmark = null;
   for (const [label, f] of programmes()) {
     const E = f.inputs.funder.overdose.events; const at = `${label} E=${E}`; all++;
     const p = RA.protectFigures({ ...f.inputs, perFund: new Map(f.inputs.perFund) }, f.T, { timeLimitMs: 10 * 60 * 1000 });
@@ -80,9 +83,13 @@ test('fiscal years of scaled programmes: a refusal is whole, and which years are
       for (const t of p.withheld_tables) assert.ok(['protect', 'check'].includes(reasons.get(t)), `${at}: ${t} withheld with a reason (${reasons.get(t)})`);
       published++;
     }
+    if (label === 'seed=7 k=1 r=0') benchmark = p.refused ? 'refused' : 'published';
     if (process.env.SUDS_PERF_VERBOSE) console.log(`[band] ${at} ${p.refused ? `refused (${p.refused.out_of_budget ? 'budget' : 'check'})` : 'published'} ${p.audit.steps} units, withheld ${JSON.stringify(p.withheld_tables)}`);
   }
   const range = (xs) => (xs.length ? `${Math.min(...xs)} to ${Math.max(...xs)}` : 'none');
   console.log(`[band] ${all - published} of ${all} refused: ${refused.budget.length} for want of budget (overdose events ${range(refused.budget)}), ${refused.check.length} for a failed check (${range(refused.check)})`);
-  assert.ok(refused.budget.includes(base.inputs.funder.overdose.events), 'the benchmark year itself (200 events) is refused for want of budget, as test/publication-release-perf.test.js says');
+  // The benchmark year itself publishes (test/publication-release-perf.test.js), and so do most of the years 1.16.4
+  // refused: a tripwire on how many are refused (1.17.0: 4 of 114; 1.16.4: 34), not a band.
+  assert.equal(benchmark, 'published', 'the benchmark year (seed=7 k=1 r=0, 200 events) publishes');
+  assert.ok(all - published <= 10, `${all - published} of ${all} refused (1.17.0 measured 4; 1.16.4 refused 34)`);
 });

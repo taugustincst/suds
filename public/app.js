@@ -2311,6 +2311,8 @@ async function startLocalKernel(force) {
   const k = await import(`./local/kernel.js?v=${SUDS_VERSION}`);
   await k.start({
     wasmUrl: new URL(`./local/sql-wasm.wasm?v=${SUDS_VERSION}`, location.href).href,
+    // A publication release's audit runs in this Web Worker, off the page's thread (local/audit-runner.js).
+    auditWorkerUrl: new URL(`./local/audit-worker.js?v=${SUDS_VERSION}`, location.href).href,
     force,
     onLockLost: showPausedScreen,
     // A device that has stopped being able to save is not a console message; the person using it needs

@@ -216,10 +216,12 @@ function modelOf(pub, truth, T, { symbolic = false } = {}) {
   // Overdose events, by month, in the funder report and again in the NDP log.
   const E = V('E', f.overdose.events); const R = V('R', f.overdose.reversals); const F = V('F', f.overdose.fatal); const C = V('C', f.overdose.community_reported);
   const ndpRows = pub.ndp.rows.filter(x => x.entry === 'reversal');
-  const monthsGone = !f.overdose.by_month.length && gone.has('overdose.by_month.n') && gone.has('overdose.by_month.reversals');
+  // Since 1.17.0 a publication release's months print their reversals only (the events by month are not published):
+  // the months' events are then unprinted counts here, tied to the reversals and the total as they truly are.
+  const monthsGone = !f.overdose.by_month.length && (gone.has('overdose.by_month.n') || !f.overdose.by_month.some(m => 'n' in m)) && gone.has('overdose.by_month.reversals');
   const ndpGone = !ndpRows.length && gone.has('overdose.by_month.reversals');
   const truthMonths = od.by_month.map(m => m.month);
-  const fl = list(f.overdose.by_month.map(m => m.month), f.overdose.by_month.some(m => m.n === 0), dom.months, monthsGone, truthMonths);
+  const fl = list(f.overdose.by_month.map(m => m.month), f.overdose.by_month.some(m => m.n === 0 || m.reversals === 0), dom.months, monthsGone, truthMonths);
   const nl = list(ndpRows.map(x => x.date), ndpRows.some(x => x.reversals === 0), dom.months, ndpGone, truthMonths);
   const months = [...new Set([...fl.keys, ...nl.keys, ...(monthsGone || ndpGone ? truthMonths : [])])].sort();
   const n = (m) => V(`n:${m}`); const r = (m) => V(`r:${m}`); const d = (m) => V(`d:${m}`, undefined, false);

@@ -30957,6 +30957,24 @@ var require_sdc = __commonJS({
           }
           return false;
         };
+        const widen = (q, a, b, lo, hi, x) => {
+          const inside = (v) => v >= lo && v <= hi && v >= x - 2 * T && v <= x + 2 * T;
+          for (let v = a - 1; b - a < P2 && inside(v) && !meter.over; v--) {
+            if (witness(q, v, 8)) a = v;
+            else if (inside(v - 1) && !meter.over && witness(q, v - 1, 8)) {
+              a = v - 1;
+              v--;
+            } else break;
+          }
+          for (let v = b + 1; b - a < P2 && inside(v) && !meter.over; v++) {
+            if (witness(q, v, 8)) b = v;
+            else if (inside(v + 1) && !meter.over && witness(q, v + 1, 8)) {
+              b = v + 1;
+              v++;
+            } else break;
+          }
+          return [a, b];
+        };
         const unprotected = [];
         for (const q of w.quantities(S)) {
           if (meter.over) break;
@@ -30977,8 +30995,7 @@ var require_sdc = __commonJS({
                 b = Math.max(b, y);
               }
             }
-            for (let v = a - 1; b - a < P2 && v >= T && v >= x - 2 * T && !meter.over && witness(q, v, 8); v--) a = v;
-            for (let v = b + 1; b - a < P2 && v <= x + 2 * T && !meter.over && witness(q, v, 8); v++) b = v;
+            [a, b] = widen(q, a, b, T, Infinity, x);
             ok = b - a >= P2;
           } else if (q.kind === "pri" || q.kind === "cond" && (!q.derived || checkDerived && q.terms.some(([i]) => checkDerived.has(i)))) {
             const t = q.kind === "pri" || w.reaches(w.problem(S, q.terms)) ? w.targets(S, q) : [];
@@ -31001,8 +31018,7 @@ var require_sdc = __commonJS({
             const found = G.map((vals) => valueOf(vals, q.terms));
             let a = Math.min(x, ...found);
             let b = Math.max(x, ...found);
-            for (let v = a - 1; b - a < P2 && v >= lo && v >= x - 2 * T && !meter.over && witness(q, v, 8); v--) a = v;
-            for (let v = b + 1; b - a < P2 && v <= hi && v <= x + 2 * T && !meter.over && witness(q, v, 8); v++) b = v;
+            [a, b] = widen(q, a, b, lo, hi, x);
             ok = b - a >= P2;
           }
           if (!ok) unprotected.push(q.id);
@@ -31278,18 +31294,12 @@ var require_release_audit = __commonJS({
       const R = h.R = v("overdose.reversals", od.reversals, { total: true, table: "overdose.reversals" });
       const F = h.F = v("overdose.fatal", od.fatal, { table: "overdose.fatal" });
       const Cm = h.C = v("overdose.community_reported", od.community_reported, { table: "overdose.community_reported" });
-      h.n = od.by_month.map((x) => v(`overdose.${x.month}.events`, x.n, { table: "overdose.by_month.n" }));
       h.r = od.by_month.map((x) => v(`overdose.${x.month}.reversals`, x.reversals, { table: "overdose.by_month.reversals" }));
       h.by = od.by_administered_by.map((x) => v(`overdose.by.${x.k}`, x.n, { table: "overdose.by_administered_by" }));
-      rel([...h.n.map((i) => [i, 1]), [E, -1]], "=");
       rel([...h.r.map((i) => [i, 1]), [R, -1]], "=");
       rel([...h.by.map((i) => [i, 1]), [R, -1]], "=");
-      present(h.n, fixed.months);
+      rel([[R, 1], [E, -1]], "<=");
       present(h.by, fixed.by);
-      h.n.forEach((n, m) => {
-        rel([[h.r[m], 1], [n, -1]], "<=");
-        derived.push({ id: `overdose.${od.by_month[m].month}.not_reversed`, terms: [[n, 1], [h.r[m], -1]] });
-      });
       rel([[F, 1], [E, -1]], "<=");
       rel([[Cm, 1], [E, -1]], "<=");
       soft([[F, 1], [R, 1], [E, -1]], "<=");
@@ -31345,13 +31355,17 @@ var require_release_audit = __commonJS({
       "overdose.reversals": "Reversals",
       "overdose.fatal": "Fatal overdoses",
       "overdose.community_reported": "Overdoses reported from the community",
-      "overdose.by_month.n": "Overdoses by month",
       "overdose.by_month.reversals": "Reversals by month (and the NDP log's reversals)",
       "overdose.by_administered_by": "Who gave the naloxone",
       "ndp.by_month.reversal_doses": "Naloxone doses used in reversals, by month",
       "ndp.reversal_doses": "Naloxone doses used in reversals",
       "overdose.naloxone_doses": "Naloxone doses used"
     };
+    var NOT_PUBLISHED = [{
+      table: "overdose.by_month.n",
+      label: "Overdose events by month",
+      why: "A publication release gives the period's overdose events as totals and the reversals by month. The events by month are left out of every publication release: beside the reversals by month they would show each month's events that were not reversed, often a handful, and checking that took most periods past what the check can afford. The program's own submission to its funder still has them."
+    }];
     var WITHHELD_WHY = {
       protect: "Too few people to show it without giving someone away.",
       check: "The automatic check could not confirm that its small counts are protected, so it was left out and the rest of the release was checked again without it."
@@ -31393,8 +31407,8 @@ var require_release_audit = __commonJS({
       const od = raw.overdose;
       const disGone = gone.has("episodes.by_discharge_reason");
       const byGone = gone.has("overdose.by_administered_by");
-      const monthsGone = gone.has("overdose.by_month.n") && gone.has("overdose.by_month.reversals");
       const revGone = gone.has("overdose.by_month.reversals");
+      const monthsGone = revGone;
       if (disGone) withheld.push("by_discharge_reason");
       if (byGone) withheld.push("by_administered_by");
       if (monthsGone) withheld.push("by_month");
@@ -31422,9 +31436,8 @@ var require_release_audit = __commonJS({
           community_reported: show(h.C),
           naloxone_doses: show(h.Dall),
           by_month: monthsGone ? [] : od.by_month.map((x, m) => {
-            const n = show(h.n[m]);
             const r = show(h.r[m]);
-            return { month: x.month, n, reversals: r, ...typeof n === "number" && typeof r === "number" ? {} : { suppressed: true } };
+            return { month: x.month, reversals: r, ...typeof r === "number" ? {} : { suppressed: true } };
           }),
           by_administered_by: byGone ? [] : od.by_administered_by.map((x, i) => SC.withCell(x, "n", show(h.by[i])))
         },
@@ -31437,7 +31450,7 @@ var require_release_audit = __commonJS({
       const id = digest(JSON.stringify(model.vars.map((x, i) => x.published ? [x.id, show(i)] : null).filter(Boolean)));
       return { funder, uses, ndp, withheld_tables: withheldTables, withheld_reasons: withheldReasons(withheldTables, audit3.degraded), id, status, model, audit: stats };
     }
-    module.exports = { protectFigures, buildModel, prepare, digest, monthsOf, withheldReasons, refusalMessage, TABLE_LABEL, HEADLINE, AUDIT_BACKSTOP_MS };
+    module.exports = { protectFigures, buildModel, prepare, digest, monthsOf, withheldReasons, refusalMessage, TABLE_LABEL, NOT_PUBLISHED, HEADLINE, AUDIT_BACKSTOP_MS };
   }
 });
 
@@ -31857,7 +31870,7 @@ var require_harm_reduction_reports = __commonJS({
       }));
       r.get("/api/reports/naloxone-ndp", auth3.requireAuth, auth3.requirePerm("reports:read"), async (ctx) => {
         const d = await ndp(ctx, range(ctx));
-        audit3.log({ user: ctx.user, action: "report.naloxone_ndp", ip: ctx.ip, details: { from: d.from, to: d.to, rows: d.rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
+        audit3.log({ user: ctx.user, action: "report.naloxone_ndp", ip: ctx.ip, details: { from: d.from, to: d.to, rows: d.rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose, ...FR.releaseAuditDetails(d) } });
         return d;
       });
       r.get("/api/reports/naloxone-ndp/export", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("export:read"), async (ctx) => {
@@ -31865,7 +31878,7 @@ var require_harm_reduction_reports = __commonJS({
         const xlsx = ctx.query.get("format") === "xlsx";
         const rows = ndpRows(d);
         FR.requirePublicationReview(ctx, d, "naloxone-ndp");
-        audit3.log({ user: ctx.user, action: "report.naloxone_ndp.export", ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv" } });
+        audit3.log({ user: ctx.user, action: "report.naloxone_ndp.export", ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv", ...FR.releaseAuditDetails(d) } });
         const body = xlsx ? S.writeWorkbook([{ name: "NDP log", columns: ndpColumns(d), rows }, aboutSheet(ctx, [
           { k: "Report", v: "Naloxone distribution and reversal log (NDP-style)" },
           { k: "Template", v: d.template_note },
@@ -31881,7 +31894,7 @@ var require_harm_reduction_reports = __commonJS({
       });
       r.get("/api/reports/opioid-settlement", auth3.requireAuth, auth3.requirePerm("budget:read"), async (ctx) => {
         const d = withNote(await settlement(ctx, range(ctx)));
-        audit3.log({ user: ctx.user, action: "report.opioid_settlement", ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
+        audit3.log({ user: ctx.user, action: "report.opioid_settlement", ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode, purpose: d.suppression.purpose, ...FR.releaseAuditDetails(d) } });
         return d;
       });
       r.get("/api/reports/opioid-settlement/export", auth3.requireAuth, auth3.requirePerm("budget:read"), auth3.requirePerm("export:read"), async (ctx) => {
@@ -31921,7 +31934,7 @@ var require_harm_reduction_reports = __commonJS({
           });
         }
         FR.requirePublicationReview(ctx, d, "opioid-settlement");
-        audit3.log({ user: ctx.user, action: "report.opioid_settlement.export", ip: ctx.ip, details: { from: d.from, to: d.to, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv" } });
+        audit3.log({ user: ctx.user, action: "report.opioid_settlement.export", ip: ctx.ip, details: { from: d.from, to: d.to, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv", ...FR.releaseAuditDetails(d) } });
         const detailCols = [["schedule", "Schedule"], ["use_label", "Category"], ["hiaa_label", "High Impact Abatement Activity"], ["approved_amount", "Approved or reimbursed ($)"], ["pending_amount", "Pending ($)"], ["expenditures", "Expenditures"]].map(([key, label]) => ({ key, label }));
         const body = xlsx ? S.writeWorkbook([
           aboutSheet(ctx, [
@@ -32014,7 +32027,7 @@ var require_publication_release = __commonJS({
       worker = w;
       return w;
     }
-    var auditStats = { worker: 0, inline: 0 };
+    var auditStats = { worker: 0, inline: 0, device: 0 };
     function dispatch(id) {
       const p = pending.get(id);
       if (!p) return;
@@ -32035,13 +32048,33 @@ var require_publication_release = __commonJS({
       w.terminate().catch(() => {
       });
       console.warn(`[suds] a publication release audit did not answer within ${Math.round(backstopMs / 1e3)} s; its worker was stopped and the release refused${queued.length ? ` (${queued.length} other audit(s) moved to a new worker)` : ""}`);
-      p.resolve({ refused: { out_of_budget: true, backstop: true, message: RA.refusalMessage({ backstop: true }, (p.msg.inputs.domains && p.msg.inputs.domains.months || []).length) } });
+      p.resolve(backstopRefusal(p.msg.inputs));
+    }
+    function backstopRefusal(inputs) {
+      return { refused: { out_of_budget: true, backstop: true, message: RA.refusalMessage({ backstop: true }, (inputs.domains && inputs.domains.months || []).length) } };
+    }
+    var deviceRunner = null;
+    function setDeviceAuditRunner(fn) {
+      deviceRunner = typeof fn === "function" ? fn : null;
+      clearCache();
+    }
+    function inlineAudit(inputs, T, opts) {
+      auditStats.inline++;
+      return new Promise((resolve2) => require_spreadsheet().defer(resolve2)).then(() => RA.protectFigures(inputs, T, opts));
     }
     function runAudit(inputs, T) {
       const opts = { ...auditOptions };
       if (inline()) {
-        auditStats.inline++;
-        return new Promise((resolve2) => require_spreadsheet().defer(resolve2)).then(() => RA.protectFigures(inputs, T, opts));
+        if (!deviceRunner) return inlineAudit(inputs, T, opts);
+        auditStats.device++;
+        return deviceRunner(inputs, T, opts).catch((e) => {
+          if (e && e.code === "SUDS_NO_WORKER") return inlineAudit(inputs, T, opts);
+          if (e && e.code === "SUDS_AUDIT_BACKSTOP") {
+            console.warn("[suds] a publication release audit did not answer within the backstop on this device; its worker was stopped and the release refused");
+            return backstopRefusal(inputs);
+          }
+          throw e;
+        });
       }
       auditStats.worker++;
       return new Promise((resolve2, reject) => {
@@ -32094,7 +32127,26 @@ var require_publication_release = __commonJS({
       return JSON.stringify([out2, [ts.n, ts.u]]);
     }
     var released = /* @__PURE__ */ new Map();
+    function refusalDetails(p) {
+      const r = p.refused || {};
+      return {
+        reason: r.backstop ? "backstop" : r.out_of_budget ? "budget" : r.headline ? "headline" : "unprotected",
+        unprotected: r.unprotected || 0,
+        withheld: p.withheld_tables || [],
+        ...p.audit ? { steps: p.audit.steps, rounds: p.audit.rounds } : {}
+      };
+    }
     async function release(ctx, range, counting) {
+      try {
+        return await releaseOf(ctx, range, counting);
+      } catch (e) {
+        if (e && e.status === 422 && e.extra && e.extra.code === "publication_refused") {
+          require_audit().log({ user: ctx.user, action: "report.publication.refused", ip: ctx.ip, success: false, details: { path: ctx.path, from: range.from, to: range.to, threshold: counting.threshold, ...e.refusal || refusalDetails({}) } });
+        }
+        throw e;
+      }
+    }
+    async function releaseOf(ctx, range, counting) {
       const T = counting.threshold;
       const read = await db3.readSnapshot(async (canYield) => {
         const key = JSON.stringify([T, range.from, range.to, dataVersion()]);
@@ -32140,8 +32192,12 @@ var require_publication_release = __commonJS({
       const HR = require_harm_reduction_reports();
       const T = counting.threshold;
       const p = await audited({ funder: raw, perFund, settlement: settle, domains }, T);
-      if (p.refused) throw new HttpError3(422, p.refused.message, { code: "publication_refused", ...p.refused.backstop ? { backstop: true } : {} });
-      const rel = { ...counting.release, id: p.id, reports: ["funder", "naloxone-ndp", "opioid-settlement"], withheld: p.withheld_tables, withheld_reasons: p.withheld_reasons };
+      if (p.refused) {
+        const e = new HttpError3(422, p.refused.message, { code: "publication_refused", ...p.refused.backstop ? { backstop: true } : {} });
+        e.refusal = refusalDetails(p);
+        throw e;
+      }
+      const rel = { ...counting.release, id: p.id, reports: ["funder", "naloxone-ndp", "opioid-settlement"], withheld: p.withheld_tables, withheld_reasons: p.withheld_reasons, not_published: RA.NOT_PUBLISHED };
       const withRelease = (d) => ({ ...d, release: rel });
       const { fundKeys, ...s } = settle;
       return {
@@ -32156,7 +32212,7 @@ var require_publication_release = __commonJS({
         ndp: withRelease(HR.ndpPublished(range, counting, dist, p.ndp, ndpSettings))
       };
     }
-    module.exports = { release, runAudit, auditStats, dataVersion, VERSION_TABLES, setAuditOptions, clearCache, _setWorkerForTests, protectFigures: RA.protectFigures, buildModel: RA.buildModel, prepare: RA.prepare, digest: RA.digest, monthsOf: RA.monthsOf, AUDIT_BACKSTOP_MS: RA.AUDIT_BACKSTOP_MS };
+    module.exports = { release, runAudit, auditStats, setDeviceAuditRunner, dataVersion, VERSION_TABLES, setAuditOptions, clearCache, _setWorkerForTests, protectFigures: RA.protectFigures, buildModel: RA.buildModel, prepare: RA.prepare, digest: RA.digest, monthsOf: RA.monthsOf, AUDIT_BACKSTOP_MS: RA.AUDIT_BACKSTOP_MS };
   }
 });
 
@@ -32243,6 +32299,11 @@ var require_funder_report = __commonJS({
         throw new HttpError3(428, `Before exporting a publication release, review its withheld and small figures and confirm it: "${REVIEW_CONFIRMATION}" (reviewed=1). Small cells are screened automatically, which is a conservative default, not a guarantee or an expert determination.`, { code: "publication_review_required" });
       }
       require_audit().log({ user: ctx.user, action: "report.publication.reviewed", ip: ctx.ip, details: { report, release_id: d.release ? d.release.id : null, from: d.from, to: d.to, confirmation: REVIEW_CONFIRMATION } });
+    }
+    function releaseAuditDetails(d) {
+      const r = d && d.release;
+      if (!r || !r.id || !d.suppression || d.suppression.purpose !== "publication") return {};
+      return { release_id: r.id, withheld: (r.withheld_reasons || []).map((w) => ({ table: w.table, reason: w.reason })) };
     }
     var PUBLICATION_GUIDANCE = "Before publishing: publish each standard period once, after its data are complete, and never two periods that overlap or where one contains the other (a quarter and the year that contains it): two such releases, or the same period run again after late entries, can be subtracted from each other to reveal a small group, which suppression within one release cannot prevent. Review the withheld and suppressed tables before release. This suppression is a conservative automated default, not a statistical expert determination (45 CFR 164.514(b)(1)).";
     function countingStatement(s) {
@@ -32612,6 +32673,8 @@ var require_funder_report = __commonJS({
         { k: "Purpose", v: d.suppression.purpose === "publication" ? `${PUBLICATION_LABEL} (whole program, one standard period)` : d.suppression.purpose === "submission" ? "The program's own submission to its funder, not for publication" : "Internal, not for publication" },
         { k: "Counts", v: d.counting_statement },
         ...d.suppression.purpose === "publication" ? [{ k: "Before publishing", v: PUBLICATION_GUIDANCE }] : [],
+        // What no publication release prints, whatever the figures (server/release-audit.js NOT_PUBLISHED).
+        ...d.suppression.purpose === "publication" ? (d.release && d.release.not_published || []).map((x) => ({ k: "Not in a publication release", v: `${x.label}. ${x.why}` })) : [],
         ...d.caseload_scope_note ? [{ k: "Scope", v: d.caseload_scope_note }] : [],
         { k: "Classification", v: "Aggregate counts: no names, client codes or dates of service." },
         { k: "Generated", v: db3.now() },
@@ -32668,7 +32731,7 @@ var require_funder_report = __commonJS({
         csvColumns: long
       };
     }
-    module.exports = { RUN_LABEL, publicationOn, publicationOffMessage, build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, foldFunds, settlementKeyOf, FUND_FOLD_ID, FUND_FOLD_KEEP, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };
+    module.exports = { releaseAuditDetails, RUN_LABEL, publicationOn, publicationOffMessage, build, figures, runSync, runAsync, header, withCell, sheets, suppress, countingMode, countingStatement, suppressionOf, standardPeriod, release, overdoseFigures, overdoseProtect, servedCount, SMALL_CELL_DEFAULT, FOLD_KEEP, FOLDED, foldOf, foldFunds, settlementKeyOf, FUND_FOLD_ID, FUND_FOLD_KEEP, PUBLICATION_GUIDANCE, PUBLICATION_LABEL, REVIEW_CONFIRMATION, requirePublicationReview };
   }
 });
 
@@ -33797,7 +33860,7 @@ var require_reports = __commonJS({
       });
       r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), requireReportRun({ caseloadScoped: true, fund: true }), async (ctx) => {
         const out2 = await FR.build(ctx, range(ctx));
-        audit3.log({ user: ctx.user, action: "report.funder", ip: ctx.ip, details: { from: out2.from, to: out2.to, funding_source_id: out2.funding_source_id || void 0, served: out2.unduplicated.served, counts: out2.suppression.mode, purpose: out2.suppression.purpose } });
+        audit3.log({ user: ctx.user, action: "report.funder", ip: ctx.ip, details: { from: out2.from, to: out2.to, funding_source_id: out2.funding_source_id || void 0, served: out2.unduplicated.served, counts: out2.suppression.mode, purpose: out2.suppression.purpose, ...FR.releaseAuditDetails(out2) } });
         return out2;
       });
       r.get("/api/reports/funder/export", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("export:read"), requireReportRun({ caseloadScoped: true, fund: true }), async (ctx) => {
@@ -33810,7 +33873,7 @@ var require_reports = __commonJS({
         const mode = d.suppression.mode === "exact" ? "exact-counts" : d.suppression.purpose === "publication" ? "publication-screened-review-before-sharing" : "internal-suppressed";
         const filename = `suds-funder-report-${d.from}_${d.to}-${mode}.${xlsx ? "xlsx" : "csv"}`;
         const body = xlsx ? S.writeWorkbook(sh.workbook) : S.toCsv(sh.csv, sh.csvColumns);
-        audit3.log({ user: ctx.user, action: "report.funder.export", ip: ctx.ip, details: { from: d.from, to: d.to, funding_source_id: d.funding_source_id || void 0, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv" } });
+        audit3.log({ user: ctx.user, action: "report.funder.export", ip: ctx.ip, details: { from: d.from, to: d.to, funding_source_id: d.funding_source_id || void 0, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv", ...FR.releaseAuditDetails(d) } });
         ctx.res.writeHead(200, {
           "Content-Type": xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8",
           "Content-Disposition": `attachment; filename="${filename}"`,
@@ -45267,7 +45330,7 @@ var require_db = __commonJS({
         d.exec(m[0]);
         createIndexesFromSchema(d, schemaText, ["idx_interventions_participant", "idx_prevention_events_date", "idx_prevention_events_user", "idx_prevention_events_updated"]);
       },
-      // 52: reserved for the 1.17.0 publication-release change, which may need a migration here; a no-op until then
+      // 52: reserved in 1.17.0 for the publication-release change, which needed no schema change: a no-op
       //     (and a documented no-op if it ships without one), so that the copilot below keeps number 53.
       (d) => {
       },
@@ -46727,7 +46790,104 @@ function plaintextLeft(entries2) {
   return entries2.filter(([, v]) => isPlainSqlite(v)).map(([k]) => k);
 }
 
+// local/audit-runner.js
+init_globals_inject();
+var noWorker = (why) => Object.assign(new Error(`the publication audit cannot run in a Web Worker here (${why})`), { code: "SUDS_NO_WORKER" });
+function auditRunner(url, { WorkerCtor = globalThis.Worker, backstopMs = 75e3, startMs = 1e4 } = {}) {
+  let worker = null;
+  let seq = 0;
+  let broken = typeof WorkerCtor !== "function" || !url ? "no Web Worker" : null;
+  const pending = /* @__PURE__ */ new Map();
+  const settle = (id, how, value) => {
+    const p = pending.get(id);
+    if (!p) return;
+    pending.delete(id);
+    clearTimeout(p.timer);
+    p[how](value);
+  };
+  const failAll = (w, err2) => {
+    for (const [id, p] of [...pending]) if (p.w === w) settle(id, "reject", err2);
+  };
+  const drop = (w) => {
+    if (worker === w) worker = null;
+    try {
+      w.terminate();
+    } catch {
+    }
+  };
+  function spawn() {
+    let w;
+    try {
+      w = new WorkerCtor(url, { name: "suds-publication-audit" });
+    } catch (e) {
+      broken = `it could not be started: ${e && e.message}`;
+      return null;
+    }
+    w.suds = { ready: false, startTimer: null };
+    w.suds.startTimer = setTimeout(() => {
+      if (w.suds.ready) return;
+      broken = "it did not start";
+      drop(w);
+      failAll(w, noWorker(broken));
+    }, startMs);
+    w.onmessage = (ev) => {
+      const d = ev && ev.data || {};
+      if (d.ready) {
+        w.suds.ready = true;
+        clearTimeout(w.suds.startTimer);
+        return;
+      }
+      const p = pending.get(d.id);
+      if (!p || p.w !== w) return;
+      if (d.error) settle(d.id, "reject", new Error(d.error));
+      else settle(d.id, "resolve", d.result);
+    };
+    w.onerror = (ev) => {
+      if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
+      clearTimeout(w.suds.startTimer);
+      drop(w);
+      if (!w.suds.ready) {
+        broken = "its script did not load";
+        failAll(w, noWorker(broken));
+      } else failAll(w, new Error("the publication audit worker stopped"));
+    };
+    worker = w;
+    return w;
+  }
+  function dispatch(id) {
+    const p = pending.get(id);
+    if (!p) return;
+    const w = worker || (broken ? null : spawn());
+    if (!w) {
+      settle(id, "reject", noWorker(broken));
+      return;
+    }
+    p.w = w;
+    clearTimeout(p.timer);
+    p.timer = setTimeout(() => {
+      if (!pending.has(id)) return;
+      const others = [...pending].filter(([qid, q]) => qid !== id && q.w === w).map(([qid]) => qid);
+      settle(id, "reject", Object.assign(new Error("the publication audit did not answer in time"), { code: "SUDS_AUDIT_BACKSTOP" }));
+      drop(w);
+      for (const qid of others) dispatch(qid);
+    }, backstopMs);
+    try {
+      w.postMessage(p.msg);
+    } catch (e) {
+      settle(id, "reject", e);
+    }
+  }
+  const run2 = (inputs, T, opts = {}) => new Promise((resolve2, reject) => {
+    const id = ++seq;
+    pending.set(id, { resolve: resolve2, reject, timer: null, w: null, msg: { id, inputs, T, opts } });
+    dispatch(id);
+  });
+  run2.stats = () => ({ broken, running: pending.size, started: !!(worker && worker.suds.ready) });
+  return run2;
+}
+
 // local/kernel.js
+var import_publication_release = __toESM(require_publication_release());
 init_aes();
 var import_app = __toESM(require_app2());
 var routeLoaders = {
@@ -47194,8 +47354,9 @@ async function lockedAnswer(method, path, body) {
   }
   return refused(401, "This device is locked. Sign in to continue.");
 }
-async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLost2, force } = {}) {
+async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLockLost: onLockLost2, force } = {}) {
   await sqlite_default.init(wasmUrl);
+  if (auditWorkerUrl) import_publication_release.default.setDeviceAuditRunner(auditRunner(auditWorkerUrl));
   if (onLockLost2) sqlite_default.onLockLost(onLockLost2);
   const locked = await sqlite_default.acquireLock({ force: !!force });
   if (!locked) {

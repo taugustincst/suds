@@ -72,15 +72,14 @@ does not certify anything. Not available in SUDS on this device. ([docs/AI-COPIL
   person confirms they reviewed the withheld and small figures; it is a conservative screen, not a guarantee or
   an expert determination. **A whole publication release can also be refused**, not a table withheld: when the
   check cannot finish within its work limit, or cannot confirm the release even with tables withheld, nothing is
-  published. In sampled programmes, fiscal years with from under 100 to over 300 overdose events were refused,
-  whatever the settings or budget, and no size is guaranteed to publish. What decides it is your programme's own
-  overdose events (how many months have few events, or few not reversed), not how many clients it serves: a
-  syringe services programme with many overdoses can be refused with far fewer clients than the benchmark's one
-  overdose per ten people served. A refusal is whole and safe, and the exact *submission* to the funder is
-  unaffected. The year's quarters may be tried instead, each checked on its own (and never beside the year), but
-  they are no sure way round: in a sweep of 18 seeded programmes, 28 of 72 quarters were refused, and every
-  refused year had at least one quarter refused too. A sound, cheaper check for that table is planned for a
-  feature release ([docs/PERFORMANCE.md](../PERFORMANCE.md), *Which programmes are refused*). Two releases for nested periods (a quarter and its year) can still be subtracted from each other,
+  published. No size is guaranteed to publish. Until 1.16.4 most fiscal years of programmes with about 90 to 340
+  overdose events were refused; since 1.17.0 a publication release gives overdose events as totals for the period
+  and reversals by month, not the events by month (those stay in the exact *submission*), and in the same sweeps 4 of
+  114 scaled fiscal years were refused (1.16.4: 34), none of 18 seeded years (1.16.4: 6) and 11 of their 72 quarters
+  (1.16.4: 28; 3 quarters 1.16.4 published are among the 11). What decides it is your programme's own overdose
+  figures (small counts of reversals by month), not how many clients it serves. A refusal is whole and safe, and
+  the exact *submission* to the funder is unaffected; the year's quarters may be tried instead, each checked on its
+  own (and never beside the year) ([docs/PERFORMANCE.md](../PERFORMANCE.md), *Which programmes are refused*). Two releases for nested periods (a quarter and its year) can still be subtracted from each other,
   so publish one period per funder cycle ([docs/HIPAA.md](../HIPAA.md#small-cells-in-aggregate-reports)).
   (Only the funder report, the naloxone log and the settlement report suppress small cells; the other reports
   show exact counts.)

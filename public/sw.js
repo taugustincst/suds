@@ -5,7 +5,7 @@ const VERSION = 'suds-shell-1.16.4';
 // them). The versioned URL is what app.js requests, so the cache key matches without a second download.
 const KERNEL_VERSION = VERSION.replace(/^suds-shell-/, '');
 const SHELL = ['./', 'index.html', 'styles.css', 'main.js', 'app.js', 'qr.js', 'get-app.html', 'get-app.js', 'accessibility.html', 'accessibility.js', 'favicon.svg', 'manifest.webmanifest', 'manifest-local.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
-  `local/kernel.js?v=${KERNEL_VERSION}`, `local/sql-wasm.wasm?v=${KERNEL_VERSION}`,
+  `local/kernel.js?v=${KERNEL_VERSION}`, `local/sql-wasm.wasm?v=${KERNEL_VERSION}`, `local/audit-worker.js?v=${KERNEL_VERSION}`,
   ...['login', 'dashboard', 'clients', 'client', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'imports', 'reports', 'admin', 'profile', 'setup', 'forms', 'documents', 'dataimport', 'local', 'supervision', 'episodes', 'overdose', 'funder', 'supplies', 'lists', 'caloms', 'clinical', 'security', 'compliance', 'part2', 'suprt', 'history', 'prevention', 'ai', 'outreach', 'settlement'].map(v => `views/${v}.js`)];
 // Each shell file is fetched on its own: addAll() fails the whole install if one file is missing (a server
 // with local mode switched off answers 404 for local/*), which used to leave nothing cached at all.

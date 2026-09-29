@@ -7,9 +7,10 @@
 // audits each with release-audit.js protectFigures at the default threshold. It holds every release to what
 // refusal-band.test.js does (a refusal is whole: nothing printed, with its own period's message; a published
 // release withheld nothing but by the check) and records how many years and quarters are refused and why
-// (docs/PERFORMANCE.md, *Which programmes are refused*: for 1.16.4, 28 of 72 quarters). Units of work are counted,
-// not time; the time backstop is set out of the way. Bounded to 18 programmes (90 audits, about 4 minutes): CI's
-// thorough-sdc job (scripts/test-thorough.js SDC_SWEEPS).
+// (docs/PERFORMANCE.md, *Which programmes are refused*: 1.16.4 refused 6 of the 18 years and 28 of the 72 quarters;
+// 1.17.0, which leaves the events by month out of every release, none of the years and 11 of the quarters). Units of
+// work are counted, not time; the time backstop is set out of the way. Bounded to 18 programmes (90 audits, about 3
+// minutes; 1.16.4 about 4 to 9): CI's thorough-sdc job (scripts/test-thorough.js SDC_SWEEPS).
 const { test } = require('node:test');
 const assert = require('node:assert');
 require('../helpers'); // the test environment (an in-memory database, test keys), before any server module
@@ -84,13 +85,15 @@ test('quarters of seeded fiscal years, read for the quarter: each refusal is who
     + `${quarters.filter((q) => q.refused).length} of ${quarters.length} quarters refused ${JSON.stringify(count(quarters))}; `
     + `of the refused years' ${ofRefused.length} quarters, ${ofRefused.filter((q) => q.refused).length} refused ${JSON.stringify(count(ofRefused))}; `
     + `${allFour} of ${refusedYears.length} refused years had all four quarters publish`);
-  // The benchmark's own year (docs/PERFORMANCE.md): refused for want of budget, and its first quarter refused too,
-  // for a finding (the release with the events by month withheld still failed its check), not for budget.
+  // The benchmark's own year (docs/PERFORMANCE.md) publishes since 1.17.0 (1.16.x refused it for want of budget),
+  // and so do three of its quarters; its last (36 events) is refused, for a finding (the release with its overdose
+  // tables withheld still failed its check), not for budget. 1.16.4 refused its first quarter instead.
   const bench = years.find((y) => y.clients === 2000 && y.seed === 7);
-  assert.equal(bench.E, 200); assert.equal(bench.refused, 'budget');
-  assert.deepEqual(bench.quarters.map((q) => q.refused), ['unprotected', null, null, null]);
-  // What the docs state (measured for 1.16.4): quarters are no sure way round a refused year. A quarter of a refused
-  // year can be refused too, like the benchmark's first quarter. Recorded, not pinned: how many are refused.
-  assert.ok(refusedYears.length > 0, 'some years are refused');
-  assert.ok(ofRefused.some((q) => q.refused), 'a quarter of a refused year can be refused too (the docs say so)');
+  assert.equal(bench.E, 200); assert.equal(bench.refused, null);
+  assert.deepEqual(bench.quarters.map((q) => q.refused), [null, null, null, 'unprotected']);
+  // What the docs state (measured for 1.17.0): no year of these is refused, and some quarters are, none for budget; a
+  // tripwire on how many (1.17.0: 0 years, 11 quarters; 1.16.4: 6 and 28), not a band.
+  assert.ok(refusedYears.length <= 2, `${refusedYears.length} years refused`);
+  const refusedQuarters = quarters.filter((q) => q.refused);
+  assert.ok(refusedQuarters.length > 0 && refusedQuarters.length <= 16, `${refusedQuarters.length} quarters refused`);
 });

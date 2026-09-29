@@ -19,10 +19,12 @@ const { spawnSync } = require('node:child_process');
 const root = path.join(__dirname, '..');
 /**
  * The SDC sweeps: the full-size disclosure property tests (test/publication-release*.test.js), since 1.16.3 the
- * fiscal-year refusals (test/thorough/refusal-band.test.js: 114 audits, about 6 minutes), and since 1.16.4 the
- * quarters of seeded years (test/thorough/refusal-quarters.test.js: 90 audits, about 4 minutes).
+ * fiscal-year refusals (test/thorough/refusal-band.test.js: 114 audits, about 6 minutes until 1.16.4, about 1 since
+ * 1.17.0 left the events by month out of publication releases), and since 1.16.4 the quarters of seeded years
+ * (test/thorough/refusal-quarters.test.js: 90 audits, about 4 minutes, 3 since 1.17.0). 1.17.0 adds the attacker's
+ * month families (test/publication-release-months.test.js, a file of its own so that it runs beside the others).
  */
-const SDC_SWEEPS = ['test/publication-release.test.js', 'test/publication-release-funds.test.js', 'test/thorough/refusal-band.test.js', 'test/thorough/refusal-quarters.test.js'];
+const SDC_SWEEPS = ['test/publication-release.test.js', 'test/publication-release-funds.test.js', 'test/publication-release-months.test.js', 'test/thorough/refusal-band.test.js', 'test/thorough/refusal-quarters.test.js'];
 function thoroughFiles(part) {
   const t = path.join(root, 'test');
   const withMode = fs.readdirSync(t).filter((f) => f.endsWith('.test.js') && fs.readFileSync(path.join(t, f), 'utf8').includes('SUDS_THOROUGH')).map((f) => `test/${f}`);

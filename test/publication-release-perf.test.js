@@ -169,8 +169,7 @@ test('a year with 60 funds (120 in the thorough run), most of them small: the sm
     assert.ok(!p.refused, `${q}: ${JSON.stringify(p.refused)}`);
     // The headline is published; nothing is withheld but, at most, the fund tables.
     assert.equal(typeof p.funder.unduplicated.served, 'number');
-    // (and the overdose events by month, by the published rule when a month has 1 to T-1 events or not reversed: 1.16.1)
-    assert.ok(p.withheld_tables.every(x => ['by_funding_source', 'settlement.services_by_use', 'overdose.by_month.n'].includes(x)), `${q}: withheld ${p.withheld_tables}`);
+    assert.ok(p.withheld_tables.every(x => ['by_funding_source', 'settlement.services_by_use'].includes(x)), `${q}: withheld ${p.withheld_tables}`);
     // Every small fund is in the combined row, which prints no count of people or services.
     const row = p.funder.by_funding_source.find(f => f.combined);
     assert.ok(smallFunds > 10 && row && row.funds_combined === smallFunds, `${q}: ${smallFunds} small funds, combined ${row && row.funds_combined}`);
@@ -191,23 +190,28 @@ test('a year with 60 funds (120 in the thorough run), most of them small: the sm
   }
 });
 
-test('a year of a 2,000-client programme is refused whole within the budget, as in 1.16.0 (1.16.2 withdrew 1.16.1\'s rule)', () => {
+test('a year of a 2,000-client programme publishes, cheaply (1.17.0: the events by month are not in a publication release; 1.16.0 to 1.16.4 refused it)', () => {
   // The benchmark's small programme (test/fixtures/release-small-programme.json): three months with 1, 2 and 3
-  // overdose events not reversed. The check fails for the months after trying every candidate world, and the
-  // degrade step, which re-runs that check for each world it tries, runs out of budget. 1.16.1 published it by
-  // withholding the events by month by a rule whose check leaked (test/publication-release.test.js, "the
-  // reviewer's case against 1.16.1's rule"); checked soundly the rule cost more than the budget here too, so it
-  // was withdrawn. A refusal is safe; raising the budget fourfold does not help (docs/PERFORMANCE.md).
+  // overdose events not reversed. While the release printed the events by month beside the reversals by month,
+  // each month's events not reversed was a count of its own; the check failed for the months after trying every
+  // candidate world, and the degrade step, which re-runs that check for each world it tries, ran out of budget (about
+  // 400 million units, 9 s here). 1.16.1 withheld the months by a rule whose check leaked; 1.16.2 withdrew it and
+  // refused the year. Since 1.17.0 no publication release prints the events by month (a choice of method, the same
+  // for every period: ADR-0009, "Events by month: not published"), and the year publishes in a fraction of a
+  // percent of the budget, with the reversals by month (the NDP log's) and the year's totals.
   const RA = require('../server/release-audit');
   const { T, inputs } = require('./fixtures/release-small-programme.json');
   const p = RA.protectFigures({ ...inputs, perFund: new Map(inputs.perFund) }, T);
-  assert.ok(p.refused, 'refused');
-  assert.equal(p.refused.out_of_budget, true);
-  assert.equal(p.funder, undefined, 'nothing printed');
-  assert.equal(p.audit.rounds, 2);
-  assert.deepEqual(p.audit.degraded, ['overdose.by_month.n'], 'the degrade step found the table, and could not afford to check without it');
-  assert.ok(p.audit.steps <= SDC.STEP_LIMIT * 1.01, `the audit took ${p.audit.steps} of ${SDC.STEP_LIMIT} units of work`);
-  assert.match(p.refused.message, /A year is the longest standard period/);
+  assert.ok(!p.refused, JSON.stringify(p.refused));
+  assert.equal(p.audit.rounds, 1, 'nothing to degrade');
+  assert.deepEqual(p.withheld_tables, []);
+  assert.ok(p.audit.steps < SDC.STEP_LIMIT / 100, `the audit took ${p.audit.steps} of ${SDC.STEP_LIMIT} units of work`);
+  const od = p.funder.overdose;
+  assert.equal(od.events, 200); assert.equal(typeof od.reversals, 'number');
+  assert.equal(od.by_month.length, 12);
+  assert.ok(od.by_month.every(m => !('n' in m)), 'no events by month');
+  assert.deepEqual(p.ndp.rows.map(r => r.reversals), od.by_month.map(m => m.reversals), 'the NDP log\'s reversals by month are the funder report\'s');
+  assert.ok(!p.model.vars.some(v => v.table === 'overdose.by_month.n'), 'not in the model either: nothing prints them');
 });
 
 test('a refusal for want of budget is logged with the audit\'s work, and a refused year is not told to publish a longer period (1.16.1)', async () => {

@@ -409,13 +409,13 @@ function routes(r, range) {
 
   r.get('/api/reports/naloxone-ndp', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
     const d = await ndp(ctx, range(ctx));
-    audit.log({ user: ctx.user, action: 'report.naloxone_ndp', ip: ctx.ip, details: { from: d.from, to: d.to, rows: d.rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
+    audit.log({ user: ctx.user, action: 'report.naloxone_ndp', ip: ctx.ip, details: { from: d.from, to: d.to, rows: d.rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose, ...FR.releaseAuditDetails(d) } });
     return d;
   });
   r.get('/api/reports/naloxone-ndp/export', auth.requireAuth, auth.requirePerm('reports:read'), auth.requirePerm('export:read'), async (ctx) => {
     const d = await ndp(ctx, range(ctx)); const xlsx = ctx.query.get('format') === 'xlsx'; const rows = ndpRows(d);
     FR.requirePublicationReview(ctx, d, 'naloxone-ndp');
-    audit.log({ user: ctx.user, action: 'report.naloxone_ndp.export', ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv' } });
+    audit.log({ user: ctx.user, action: 'report.naloxone_ndp.export', ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv', ...FR.releaseAuditDetails(d) } });
     const body = xlsx ? S.writeWorkbook([{ name: 'NDP log', columns: ndpColumns(d), rows }, aboutSheet(ctx, [
       { k: 'Report', v: 'Naloxone distribution and reversal log (NDP-style)' }, { k: 'Template', v: d.template_note }, { k: 'Period', v: `${d.from} to ${d.to}` }, { k: 'County', v: d.county || '' },
       { k: 'Doses per kit', v: `${d.doses_per_kit} (Settings: naloxone doses per kit)` }, { k: 'Totals', v: `${d.totals.kits} kits, ${d.totals.doses} doses distributed (${d.totals.community_kits} kits to anonymous community members); ${d.totals.reversals} reversals reported` },
@@ -426,7 +426,7 @@ function routes(r, range) {
 
   r.get('/api/reports/opioid-settlement', auth.requireAuth, auth.requirePerm('budget:read'), async (ctx) => {
     const d = withNote(await settlement(ctx, range(ctx)));
-    audit.log({ user: ctx.user, action: 'report.opioid_settlement', ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
+    audit.log({ user: ctx.user, action: 'report.opioid_settlement', ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode, purpose: d.suppression.purpose, ...FR.releaseAuditDetails(d) } });
     return d;
   });
   r.get('/api/reports/opioid-settlement/export', auth.requireAuth, auth.requirePerm('budget:read'), auth.requirePerm('export:read'), async (ctx) => {
@@ -455,7 +455,7 @@ function routes(r, range) {
         classification: `${title} (check against the current ${county ? 'county template' : 'DHCS reporting form'}; columns marked to complete are for the program). Aggregate, no client information.` });
     }
     FR.requirePublicationReview(ctx, d, 'opioid-settlement');
-    audit.log({ user: ctx.user, action: 'report.opioid_settlement.export', ip: ctx.ip, details: { from: d.from, to: d.to, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv' } });
+    audit.log({ user: ctx.user, action: 'report.opioid_settlement.export', ip: ctx.ip, details: { from: d.from, to: d.to, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv', ...FR.releaseAuditDetails(d) } });
     const detailCols = [['schedule', 'Schedule'], ['use_label', 'Category'], ['hiaa_label', 'High Impact Abatement Activity'], ['approved_amount', 'Approved or reimbursed ($)'], ['pending_amount', 'Pending ($)'], ['expenditures', 'Expenditures']].map(([key, label]) => ({ key, label }));
     const body = xlsx ? S.writeWorkbook([
       aboutSheet(ctx, [{ k: 'Report', v: 'Opioid settlement expenditures by allowable use' }, { k: 'Period', v: `${d.from} to ${d.to}` }, { k: 'Funds', v: d.funds.map(f => f.name).join('; ') || 'No settlement funds' }, ...(d.note ? [{ k: 'Note', v: d.note }] : []),

@@ -31,4 +31,17 @@ function kernelBuildOptions(outfile) {
   };
 }
 
-module.exports = { kernelBuildOptions };
+/**
+ * esbuild options that write the publication audit's Web Worker (local/audit-worker.js) to `outfile`: the audit
+ * alone (server/release-audit.js, server/sdc.js and what they read, no database), as a classic worker script,
+ * which every browser the web app supports can start (local/audit-runner.js).
+ */
+function auditWorkerBuildOptions(outfile) {
+  return {
+    entryPoints: [path.join(root, 'local', 'audit-worker.js')],
+    bundle: true, format: 'iife', platform: 'browser', target: ['es2022'], outfile, sourcemap: false, minify: false, logLevel: 'warning',
+    absWorkingDir: root, preserveSymlinks: true,
+  };
+}
+
+module.exports = { kernelBuildOptions, auditWorkerBuildOptions };

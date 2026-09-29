@@ -127,7 +127,7 @@ function localRoutes(sources) {
   return [...out].sort();
 }
 /** The kernel files whose own routes count (local/*.js; the shims register none). */
-const LOCAL_ROUTE_FILES = ['local/kernel.js', 'local/sync.js', 'local/backup.js', 'local/vault.js'];
+const LOCAL_ROUTE_FILES = ['local/kernel.js', 'local/sync.js', 'local/backup.js', 'local/vault.js', 'local/audit-runner.js', 'local/audit-worker.js'];
 const ageText = (ms) => (ms < 48 * 3600e3 ? `${Math.max(0, Math.round(ms / 3600e3))} hours` : `${Math.floor(ms / 86400e3)} days`);
 
 /**

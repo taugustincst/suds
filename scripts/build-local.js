@@ -15,13 +15,15 @@ fs.mkdirSync(out, { recursive: true });
 (async () => {
 // The bundling options are shared with test/kernel-parity.test.js (scripts/kernel-build-options.js).
 await esbuild.build(require('./kernel-build-options').kernelBuildOptions(path.join(out, 'kernel.js')));
+// The Web Worker a device audits a publication release in (local/audit-worker.js, local/audit-runner.js).
+await esbuild.build(require('./kernel-build-options').auditWorkerBuildOptions(path.join(out, 'audit-worker.js')));
 for (const f of ['sql-wasm.wasm']) fs.copyFileSync(path.join(root, 'node_modules', 'sql.js', 'dist', f), path.join(out, f));
 // Precompressed copies for server/http.js to serve with Content-Encoding (a phone on a slow connection
 // downloads a quarter of the bytes). Both are deterministic for the same input — Node's gzip writes no
 // mtime — so the committed files only change when the kernel does, and CI's drift check stays meaningful.
 // Written only when the bytes differ, so an unchanged build leaves the files' mtimes alone.
 const writeIfChanged = (file, bytes) => { if (!fs.existsSync(file) || !fs.readFileSync(file).equals(bytes)) fs.writeFileSync(file, bytes); };
-for (const f of ['kernel.js', 'sql-wasm.wasm']) {
+for (const f of ['kernel.js', 'sql-wasm.wasm', 'audit-worker.js']) {
   const src = fs.readFileSync(path.join(out, f));
   writeIfChanged(path.join(out, f + '.gz'), zlib.gzipSync(src, { level: 9 }));
   writeIfChanged(path.join(out, f + '.br'), zlib.brotliCompressSync(src, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: src.length } }));
@@ -39,5 +41,5 @@ for (const f of ['kernel.js', 'sql-wasm.wasm']) {
   writeIfChanged(path.join(root, 'public', 'version.json'), Buffer.from(JSON.stringify({ version }) + '\n'));
 }
 const kb = (f) => (fs.statSync(path.join(out, f)).size / 1024).toFixed(0) + ' KB';
-console.log(`local kernel written to public/local/ (kernel.js ${kb('kernel.js')}, gzip ${kb('kernel.js.gz')}, brotli ${kb('kernel.js.br')}; sql-wasm.wasm ${kb('sql-wasm.wasm')}, gzip ${kb('sql-wasm.wasm.gz')}, brotli ${kb('sql-wasm.wasm.br')})`);
+console.log(`local kernel written to public/local/ (kernel.js ${kb('kernel.js')}, gzip ${kb('kernel.js.gz')}, brotli ${kb('kernel.js.br')}; sql-wasm.wasm ${kb('sql-wasm.wasm')}, gzip ${kb('sql-wasm.wasm.gz')}, brotli ${kb('sql-wasm.wasm.br')}; audit-worker.js ${kb('audit-worker.js')})`);
 })().catch((e) => { console.error(e.message || e); process.exit(1); });

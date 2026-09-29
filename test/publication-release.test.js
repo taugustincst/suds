@@ -569,18 +569,18 @@ test('the headline is never hidden beside figures that bound it: new admissions 
 });
 
 test('degrade, not refuse: a table the check cannot show protected is withheld with its reason, and the rest of the release is published', () => {
-  const { _about, ...spec } = require('./fixtures/degraded-release.json');
+  const { _about, T, ...spec } = require('./fixtures/degraded-release.json');
   const prog = figuresOf(spec);
-  const x = publish(prog, 5);
+  const x = publish(prog, T);
   assert.ok(!x.p.refused, JSON.stringify(x.p.refused));
-  assert.deepEqual(x.p.audit.degraded, ['overdose.reversals']);
-  const why = x.p.withheld_reasons.find(r => r.table === 'overdose.reversals');
-  assert.equal(why.reason, 'check'); assert.equal(why.label, 'Reversals'); assert.match(why.why, /could not confirm/);
-  assert.equal(x.pub.funder.overdose.reversals, 'withheld');
+  assert.deepEqual(x.p.audit.degraded, ['by_funding_source']);
+  const why = x.p.withheld_reasons.find(r => r.table === 'by_funding_source');
+  assert.equal(why.reason, 'check'); assert.equal(why.label, 'People and services by funding source'); assert.match(why.why, /could not confirm/);
+  assert.ok(x.pub.funder.by_funding_source.every(f => f.clients_served === 'withheld'), JSON.stringify(x.pub.funder.by_funding_source));
   assert.ok(x.pub.funder.demographics.by_gender.length > 0, 'the rest is published');
-  assert.deepEqual(attack(x.pub, x.truth, 5), []);
+  assert.deepEqual(attack(x.pub, x.truth, T), []);
   // Without the degrade step the same figures are refused whole (1.12.4).
-  const whole = publish(prog, 5, { degrade: false });
+  const whole = publish(prog, T, { degrade: false });
   assert.ok(whole.p.refused, 'refused without it');
   // The withholding depends on figures the release does not print, so the degraded release is checked against
   // worlds that would have been degraded the same way (server/sdc.js protect): in the two-month family below
