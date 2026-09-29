@@ -807,7 +807,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       case 'date': input = h('input', { type: 'date', name: f.name, required: !!f.required, value: v ? String(v).slice(0, 10) : '', min: f.min || DATE_MIN, max: f.max || DATE_MAX }); break;
       case 'number': input = h('input', { type: 'number', name: f.name, required: !!f.required, value: v ?? '', min: f.min, max: f.max, step: f.step ?? 'any', placeholder: f.placeholder || '' }); break;
       case 'client': input = clientPicker(f.name, v, f); break;
-      case 'user': input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, f.placeholder || '—'), state.users.filter(u => u.is_active !== 0).map(u => h('option', { value: u.id, selected: u.id === v }, `${u.display_name} (${fmt.label(u.role)})`))); break;
+      case 'user': input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, f.placeholder || '—'), state.users.filter(u => u.is_active !== 0 && (!f.exceptRoles || !f.exceptRoles.includes(u.role) || u.id === v)).map(u => h('option', { value: u.id, selected: u.id === v }, `${u.display_name} (${fmt.label(u.role)})`))); break;
       case 'fund': { const inactive = v && !state.funds.some(x => x.id === v) ? (state.allFunds || []).find(x => x.id === v) : null; input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, '—'), state.funds.map(x => h('option', { value: x.id, selected: x.id === v }, x.name)), inactive ? h('option', { value: inactive.id, selected: true }, `${inactive.name} (inactive)`) : null); break; }
       case 'password': input = h('input', { type: 'password', name: f.name, required: !!f.required, autocomplete: f.autocomplete || 'current-password' }); break;
       // A phone number field brings up the dial pad on a phone, not the full keyboard.
@@ -1355,9 +1355,9 @@ export function kv(pairs) { return h('dl', { class: 'kv' }, pairs.filter(p => p)
 // are hidden, these say why, in the same words on every screen.
 /** May the signed-in person change a record owned by any of `ids`? */
 export const mayChange = (...ids) => !!state.user && (ids.some(x => x && x === state.user.id) || can('records:manage-others'));
-/** The actions cell of a row whose Edit and Delete are hidden. */
-export const viewOnly = (name, { verb = 'Recorded by', more = '' } = {}) =>
-  h('span', { class: 'small muted', 'data-view-only': '1' }, `${verb} ${name || 'another worker'} — view only${more}`);
+/** The actions cell of a row whose Edit and Delete are hidden. `short`: the row's Worker column already says whose it is. */
+export const viewOnly = (name, { verb = 'Recorded by', more = '', short = false } = {}) =>
+  h('span', { class: 'small muted', 'data-view-only': '1' }, short ? `View only${more}` : `${verb} ${name || 'another worker'} — view only${more}`);
 /** At the top of a record opened read-only: who it belongs to, and who can change it. */
 export const ownedNotice = (name, { verb = 'Recorded by', noun = '' } = {}) =>
   h('p', { class: 'banner info small', 'data-owned-notice': '1' }, `${verb} ${name || 'another worker'}. Only they or a supervisor or administrator can change it${noun ? `; you can add your own ${noun} for this client` : ''}.`);
@@ -1375,8 +1375,19 @@ export const ROLE_SUMMARY = {
   readonly: 'Read-only — reports and de-identified lists; cannot open client records',
   admin: 'Administrator — users, settings and audit; every client, no clinical notes · can change other workers\' records',
 };
-/** The role choices for a select, in the usual order (or only `only`). */
-export const roleOptions = (only = Object.keys(ROLE_SUMMARY)) => only.map(value => ({ value, label: ROLE_SUMMARY[value] }));
+/** The role choices for a select, in the usual order (or only `only`): the name alone, as a closed select cut the
+ *  summary off ("Navigator — sees and updat"); roleSummary() shows the chosen one's in full under it. */
+export const roleOptions = (only = Object.keys(ROLE_SUMMARY)) => only.map(value => ({ value, label: ROLE_SUMMARY[value].split(' — ')[0] }));
+/** Under a form's role select: the chosen role's whole summary, kept in step with the choice and read with the select. */
+export function roleSummary(f, name = 'role') {
+  const sel = f.inputs && f.inputs[name]; if (!sel) return f;
+  const id = `${sel.id}-role`;
+  const box = h('div', { class: 'help', id, 'data-role-summary': '1' });
+  const paint = () => { box.textContent = ROLE_SUMMARY[sel.value] || 'Choose a role to see what it can open and change.'; };
+  sel.after(box); sel.setAttribute('aria-describedby', `${id} ${sel.getAttribute('aria-describedby') || ''}`.trim());
+  sel.addEventListener('change', paint); paint();
+  return f;
+}
 export function pageHead(title, ...actions) {
   const r = parseHash(); const item = NAV.find(n => n.name === r.name);
   return h('div', { class: 'topbar' }, h('div', { class: 'row', style: { gap: '.4rem' } }, h('h1', {}, title), item?.help ? helpTip(item.help) : null), h('div', { class: 'row' }, actions));
@@ -1559,13 +1570,16 @@ function maybeNotify(rows) {
 // five-step dialog over the whole of Home on first sign-in, which stood between a new worker and logging
 // their first visit; now it is one card that sits beside everything else, put away with "Got it", and
 // shown again from Help at the foot of the menu (#/dashboard?welcome=1).
+// Only the tips this person can act on (r7 L8): Finance and Read-only open no client record and log nothing with + Log.
 export function welcomeSteps() {
+  const logs = ['interventions:write', 'overdose:write', 'calls:write', 'notes:admin:write', 'notes:clinical:write', 'tasks:write', 'referrals:write', 'time:write', 'clients:write'].some(p => can(p));
   return [
-    ['Start with Home', 'Home shows what needs attention today: to-dos due, clients you have not contacted in a while, and drafts you started on another device.'],
-    ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) logs a visit, call, note, to-do, referral or time in a few taps. A visit goes on your time sheet when you tick "Also log this as a time entry".'],
-    ['Find anyone fast', 'Use the search box at the top with a last name, phone number or client code. Open a client to see their story: the Overview ends with their recent activity, and the tabs hold their visits, notes, to-dos, consents and referrals.'],
+    can('clients:read') ? ['Start with Home', 'Home shows what needs attention today: to-dos due, clients you have not contacted in a while, and drafts you started on another device.']
+      : ['Start with Home', 'Home shows the program\'s figures at a glance, and links to the pages your role uses.'],
+    logs ? ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) logs a visit, call, note, to-do, referral or time in a few taps. A visit goes on your time sheet when you tick "Also log this as a time entry".'] : null,
+    can('clients:read') ? ['Find anyone fast', 'Use the search box at the top with a last name, phone number or client code. Open a client to see their story: the Overview ends with their recent activity, and the tabs hold their visits, notes, to-dos, consents and referrals.'] : null,
     ['Look for the ? marks', 'Every page has a ? that explains it in plain language. You cannot break anything: records are never truly deleted and every change is logged.'],
-  ];
+  ].filter(Boolean);
 }
 export function welcomeIntro() {
   return `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS keeps your program's outreach, visits, naloxone and supplies, referrals and follow-ups in one place, with the privacy that substance-use records need. ${window.SUDS_STATIC_HOST
@@ -2080,7 +2094,9 @@ export async function loadSession() {
       const collapse = () => { prefs.set('mfa_banner_collapsed', true); prefs.flush(); const bar = document.querySelector('.appbar'); if (bar && !bar.querySelector('[data-mfa-link]')) bar.insertBefore(mfaLink(), bar.querySelector('.bell-wrap')?.nextSibling || null); };
       const el = prefs.get('mfa_banner_collapsed') ? null : banner(`Two-step verification required ${when}.`, 'warn', { id: 'mfa-required', compact: true, announceText: full, onDismiss: collapse });
       if (el) {
-        el.firstChild.append(h('span', { class: 'sr-only' }, ' After that, SUDS will not let you in until it is done.'));
+        // On a phone the words shorten to one line beside Set up, and still say by when (r7 L10).
+        el.firstChild.replaceChildren(h('span', { class: 'mfa-long' }, 'Two-step verification required'), h('span', { class: 'mfa-short' }, '2-step due'), ` ${when}.`,
+          h('span', { class: 'sr-only' }, ' After that, SUDS will not let you in until it is done.'));
         el.insertBefore(h('a', { href: '#/profile?mfa=1', class: 'btn sm primary', 'data-mfa-setup': '1' }, 'Set up'), el.lastChild);
       }
     }

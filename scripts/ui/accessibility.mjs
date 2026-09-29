@@ -307,6 +307,8 @@ async function prepareOffice() {
     else must(await api(page, 'POST', `/api/clients/${id}/episodes`, { opened_at: day(-20), caloms: { provider_id: '123456', answers: CALOMS_ADMISSION } }), 'an episode with its CalOMS admission');
   }
   const [cid] = ids;
+  // A community naloxone distribution with no client (1.16.2): Visits drew it as an empty link to #/client/null.
+  must(await api(page, 'POST', '/api/interventions', { type: 'naloxone_distribution', occurred_at: new Date().toISOString(), naloxone_kits: 2 }), 'an anonymous naloxone distribution');
   must(await api(page, 'POST', '/api/complaints', { client_id: cid, received_at: day(-4), channel: 'in_person', complainant: 'client', summary: 'My information went to my employer' }), 'a privacy complaint');
   const inc = must(await api(page, 'POST', '/api/incidents', { title: 'Misdirected fax', discovered_at: day(-2), description: 'A referral fax went to the wrong clinic', affected_count: 1 }), 'an incident');
   must(await api(page, 'POST', `/api/incidents/${inc.id}/clients`, { client_ids: [cid] }), 'with an affected client linked');

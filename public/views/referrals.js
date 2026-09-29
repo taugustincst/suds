@@ -248,18 +248,23 @@ export async function openOutcomeForm(r, onDone) {
 
 export function referralTable(rows, { showClient = true, onChange } = {}) {
   return table([
-    { label: 'Date', render: r => fmt.date(r.referred_at) }, showClient ? { label: 'Client', render: r => (can('clients:read') ? h('span', {}, h('a', { href: `#/client/${r.client_id}` }, r.client_name || r.client_code), r.client_name ? h('span', { class: 'small muted nowrap' }, ` ${r.client_code}`) : null) : h('span', { class: 'mono' }, r.client_code)) } : null,
+    { label: 'Date', render: r => h('span', { class: 'nowrap' }, fmt.date(r.referred_at)) }, showClient ? { label: 'Client', render: r => (can('clients:read') ? h('span', {}, h('a', { href: `#/client/${r.client_id}` }, r.client_name || r.client_code), r.client_name ? h('span', { class: 'small muted nowrap' }, ` ${r.client_code}`) : null) : h('span', { class: 'mono' }, r.client_code)) } : null,
     { label: 'Resource', render: r => h('div', {}, r.resource_name, h('div', { class: 'small muted' }, fmt.label(r.resource_category), r.resource_phone ? ` · ${r.resource_phone}` : '')) },
-    { label: 'Status', render: r => badge(fmt.label(r.status, 'REFERRAL_STATUSES'), statusKind(r.status)) }, { label: 'Urgency', render: r => r.urgency !== 'routine' ? badge(fmt.label(r.urgency), 'danger') : '' },
-    { label: 'Appt', render: r => r.appointment_at ? fmt.dt(r.appointment_at) : '—' }, // "Consent on file" only when a live Part 2 consent names this provider (server/routes/referrals.js
+    // Urgency, the appointment and the barrier sit under the status (1.16.2): in columns of their own the
+    // action buttons ended past the right-hand edge of a 1280 px window.
+    { label: 'Status', render: r => h('div', {}, badge(fmt.label(r.status, 'REFERRAL_STATUSES'), statusKind(r.status)), r.urgency && r.urgency !== 'routine' ? [' ', badge(fmt.label(r.urgency), 'danger')] : null,
+      r.appointment_at ? h('div', { class: 'small' }, `Appt ${fmt.dt(r.appointment_at)}`) : null, r.barrier && r.barrier !== 'none' ? h('div', { class: 'small muted' }, `Barrier: ${fmt.label(r.barrier)}`) : null) },
+    // "Consent on file" only when a live Part 2 consent names this provider (server/routes/referrals.js
     // withConsentOnFile): a general release, or a consent naming someone else, does not let the referral share.
-    { label: 'Consent', render: r => r.consent_revoked ? badge('Consent revoked', 'danger') : r.consent_on_file ? badge('Consent on file', 'ok') : badge('No Part 2 consent', 'warn') }, { label: 'Barrier', render: r => r.barrier && r.barrier !== 'none' ? fmt.label(r.barrier) : '' }, { label: 'Worker', key: 'worker' },
+    { label: 'Consent', render: r => r.consent_revoked ? badge('Consent revoked', 'danger') : r.consent_on_file ? badge('Consent on file', 'ok') : badge('No Part 2 consent', 'warn') }, { label: 'Worker', key: 'worker' },
     { label: 'Outcome', render: r => (r.outcome_recorded_at ? badge('Recorded', 'ok') : badge('Not yet', 'warn')) },
-    // "Edit" as on every other list (it said "Update"); a colleague's referral says whose it is.
-    { label: '', render: r => can('referrals:write') ? h('div', {}, h('div', { class: 'row nowrap' },
+    // "Edit" as on every other list (it said "Update"). On a colleague's referral anyone may still record the
+    // outcome, so the line says that rather than "view only" beside a working button.
+    { label: '', render: r => can('referrals:write') ? h('div', {}, h('div', { class: 'row' },
       !r.outcome_recorded_at ? h('button', { class: 'btn sm primary', onClick: () => openOutcomeForm(r, onChange) }, 'Record outcome') : null,
       mayChange(r.user_id) ? h('button', { class: 'btn sm', onClick: () => openReferralForm(r, { onDone: onChange }) }, 'Edit') : null, mayChange(r.user_id) ? h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this referral', onClick: async () => { if (await confirmDialog('Delete referral', 'Delete this referral?', { danger: true, okText: 'Delete' })) { await del(`/api/referrals/${r.id}`); onChange && onChange(); } } }, '✕') : null),
-      mayChange(r.user_id) ? null : viewOnly(r.worker)) : null },
+      mayChange(r.user_id) ? null : r.outcome_recorded_at ? viewOnly(null, { short: true })
+        : h('span', { class: 'small muted', 'data-view-only': '1' }, `You can record the outcome; only ${r.worker || 'the worker who made it'} or a supervisor can change the referral.`)) : null },
   ].filter(Boolean), rows, { empty: 'No referrals.' });
 }
 route('referrals', async (r) => {

@@ -10483,7 +10483,7 @@ var require_permissions = __commonJS({
       ["audit:read", "Read the audit log", "Tamper-evident audit trail and the break-glass review queue."],
       ["apikeys:manage", "Manage API keys", "Intake API keys and FHIR client registrations."],
       ["clients:read", "Open client records", "Identified client data: every client with clients:all, otherwise only the clients assigned to them."],
-      ["clients:write", "Edit client records", "Create and edit identified client records. Shared: anyone who sees a client may update it, and the client's primary worker is notified when someone else does."],
+      ["clients:write", "Edit client records", "Create and edit identified client records. Shared: anyone who sees a client may update it, and the client's primary worker is told which fields changed when someone not on the care team does."],
       ["clients:all", "See every client", "Every client, not only their caseload (navigators, clinicians, supervisors and administrators by default from 1.16.0), to read and add their own work to, with whole-program reports and synced devices. Deny it to hold a person to their caseload."],
       ["records:manage-others", "Manage other workers' records", "Change or delete another worker's visits, calls, referrals, overdose reports, to-dos, care-plan goals, assessments and draft notes; record work under another worker's name; remove a client record; see other workers' staged imports. Supervisors and administrators."],
       ["clients:list-deidentified", "List de-identified clients", "Client codes only, never names or identifiers."],
@@ -10495,7 +10495,7 @@ var require_permissions = __commonJS({
       ["time:write", "Log time", "Create and edit own time entries."],
       ["time:all", "See all time entries", "Every worker's time entries, any range or fund."],
       ["time:approve", "Approve time", "Approve or reject others' time entries."],
-      ["resources:*", "Resource directory (all)", "Create, edit and publish community resources."],
+      ["resources:*", "Resource directory (read, add, edit)", "Create, edit and publish community resources."],
       ["resources:read", "Read the resource directory", "Community resources and referral targets."],
       ["referrals:*", "Referrals (read, make, change own)", "Make referrals and record their outcomes; edit and delete their own. Another worker's need Manage other workers' records."],
       ["tasks:*", "To-dos (read, add, change own)", "Create, assign and complete to-dos; edit and delete the ones assigned to or made by them. Others' need Manage other workers' records."],
@@ -10509,8 +10509,8 @@ var require_permissions = __commonJS({
       ["notes:clinical:write", "Write clinical notes", "Create and sign clinical notes."],
       ["notes:clinical:breakglass", "Clinical notes via break-glass", "Open a clinical note only with a written reason; audited and queued for supervisor review."],
       ["notes:cosign", "Countersign notes", "Countersign trainee notes."],
-      ["consents:*", "Consents (all)", "Record, edit and revoke Part 2 consents and disclosures."],
-      ["imports:*", "Data imports (all)", "Run and review bulk imports."],
+      ["consents:*", "Consents (read, record, revoke)", "Record, edit and revoke Part 2 consents and disclosures."],
+      ["imports:*", "Data imports (run and review)", "Run and review bulk imports."],
       ["graph:import", "Import from OneNote", "Fetch the shared OneNote notebook."],
       ["reports:read", "Read reports", "Run aggregate reports."],
       ["reports:internal", "Run internal reports", "Identified/caseload reports for program use (never publication)."],
@@ -10519,25 +10519,25 @@ var require_permissions = __commonJS({
       ["assignments:manage", "Manage caseloads", "Assign workers to clients and move caseloads between workers."],
       ["export:read", "Export data", "De-identified (Safe Harbor) exports of the clients they can see (their caseload without clients:all)."],
       ["export:identified", "Export identified data", "Exports with names, dates of birth, addresses. Never held with a de-identified role."],
-      ["forms:*", "Forms (all)", "Manage the form library and client forms."],
+      ["forms:*", "Forms (read and manage)", "Manage the form library and client forms."],
       ["forms:read", "Read the form library", "Blank form templates."],
       ["forms:write", "Manage form templates", "Upload and edit form templates."],
-      ["episodes:*", "Episodes (all)", "Open, edit and close treatment episodes."],
+      ["episodes:*", "Episodes (read, open, close)", "Open, edit and close treatment episodes; a discharge or re-admission by the client's care team, the person who opened it, or a supervisor."],
       ["overdose:*", "Overdose events (read, record, change own)", "Record overdose and reversal events; edit and delete their own. Another worker's need Manage other workers' records."],
       ["documents:read", "Read documents", "Program documents."],
       ["documents:write", "Manage documents", "Upload and organize program documents."],
       ["disclosures:override", "Override disclosure basis", "Record a disclosure on supervisor-override or other non-consent bases."],
-      ["patient-requests:*", "Client rights requests (all)", "Handle access/amendment/accounting requests."],
-      ["careplan:*", "Care plans (all)", "Problem list and care coordination plans."],
+      ["patient-requests:*", "Client rights requests (read and handle)", "Handle access/amendment/accounting requests."],
+      ["careplan:*", "Care plans (read, add, change own)", "Problem list and care coordination plans. A goal's or step's wording, and deleting it, belong to the person who added it; another worker's need Manage other workers' records."],
       ["careplan:read", "Read care plans", "View care plans and problem lists."],
-      ["assessments:*", "Assessments (all)", "ASAM assessments and scored screenings."],
-      ["complaints:*", "Grievances (all)", "Record and resolve client grievances."],
-      ["incidents:*", "Incidents (all)", "Record and review incidents."],
-      ["court-orders:*", "Court orders (all)", "Record and manage court orders."],
+      ["assessments:*", "Assessments (read, record, change own)", "ASAM assessments and scored screenings; an ASAM assessment is changed by the person who completed it, or with Manage other workers' records."],
+      ["complaints:*", "Grievances (read, record, resolve)", "Record and resolve client grievances."],
+      ["incidents:*", "Incidents (read, record, review)", "Record and review incidents."],
+      ["court-orders:*", "Court orders (read and manage)", "Record and manage court orders."],
       ["court-orders:read", "Read court orders", "View court orders."],
-      ["agreements:*", "Agreements (all)", "Data-sharing and disclosure agreements."],
+      ["agreements:*", "Agreements (read and manage)", "Data-sharing and disclosure agreements."],
       ["agreements:read", "Read agreements", "View agreements."],
-      ["supplies:*", "Supplies (all)", "Items, sites, transfers, adjustments, disposal."],
+      ["supplies:*", "Supplies (read and manage)", "Items, sites, transfers, adjustments, disposal."],
       ["supplies:read", "See supply stock", "Stock on hand by site and lot."],
       ["supplies:receive", "Receive supply deliveries", "Record stock that arrived at a site."]
     ];
@@ -32808,7 +32808,8 @@ var require_interventions2 = __commonJS({
         clientRequired: false,
         dateCol: "occurred_at",
         joins: "JOIN users u ON u.id=interventions.user_id LEFT JOIN clients c ON c.id=interventions.client_id LEFT JOIN funding_sources f ON f.id=interventions.funding_source_id",
-        select: "interventions.*, u.display_name AS worker, c.client_code, f.name AS funding_source",
+        // The client's name beside the code, as Calls and To-dos have it (withClientName: the code alone for a role without clients:read).
+        select: `interventions.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${require_client_name().SELECT}`,
         // shape (supplies and returns included), owner and canEdit: server/rules/interventions.js (crud.js reads them from there).
         filters: (ctx, where, params) => {
           const t = ctx.query.get("type");
@@ -32819,7 +32820,7 @@ var require_interventions2 = __commonJS({
           if (ctx.query.get("funding") === "none") where.push("interventions.funding_source_id IS NULL");
           if (ctx.query.get("naloxone") === "1") where.push("interventions.naloxone_kits > 0");
         },
-        afterLoad: (ctx, row) => withLines(decodeSummary(row)),
+        afterLoad: (ctx, row) => withLines(decodeSummary(require_client_name().withClientName(ctx, row))),
         beforeInsert: (ctx, v) => {
           planNote(ctx, v);
           v._log_time = v.log_time;

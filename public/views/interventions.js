@@ -153,7 +153,11 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   // A new visit (not a repeat, which has its own) starts where this worker's last one was: same type, place
   // and way of meeting, while those are still on the programme's lists.
   if (!values && !template) {
-    const last = prefs.get(VISIT_LAST, null) || {};
+    let last = prefs.get(VISIT_LAST, null);
+    // Nothing logged through this form yet (a new browser, or visits that came in by sync or import): where this
+    // worker's own latest visit was, not always the office (r7 L4).
+    if (!last) { try { const { rows } = await get('/api/interventions?mine=1&limit=1', { quiet: true }); if (rows && rows[0]) last = { location: rows[0].location, modality: rows[0].modality }; } catch { /* the programme default */ } }
+    last = last || {};
     // A preset (Supplies' Hand out) says what kind of visit this is; the last visit only fills what it leaves open.
     if (usable('INTERVENTION_TYPES', last.type) && !(preset && preset.type)) seed.type = last.type;
     if (usable('LOCATIONS', last.location) && !(preset && preset.location)) seed.location = last.location;
@@ -428,7 +432,7 @@ export function openVisitView(r, { onChange } = {}) {
   const body = h('div', { 'data-visit-view': r.id },
     mine || !can('interventions:write') ? null : ownedNotice(r.worker, { noun: 'visit' }),
     kv([['When', fmt.dt(r.occurred_at)],
-      ['Client', r.client_id ? h('a', { href: `#/client/${r.client_id}`, onClick: () => m.close() }, r.client_code) : 'No client (community)'],
+      ['Client', r.client_id ? h('a', { href: `#/client/${r.client_id}`, onClick: () => m.close() }, clientText(r)) : 'Anonymous (no client record)'],
       ['What was done', fmt.label(r.type, 'INTERVENTION_TYPES')], ['Where & how', `${fmt.label(r.location, 'LOCATIONS')} · ${fmt.label(r.modality, 'MODALITIES')}`],
       ['Duration', fmt.mins(r.duration_minutes)], ['Supplies', suppliesOf(r).filter(Boolean).length ? suppliesOf(r) : 'None'],
       ['Outcome', r.outcome ? fmt.label(r.outcome, 'OUTCOMES') : null], r.stage_of_change ? ['Stage of change', fmt.label(r.stage_of_change)] : null,
@@ -444,18 +448,26 @@ export function openVisitView(r, { onChange } = {}) {
 
 // Where and how, and the summary, sit under the type rather than in columns of their own: at 1280 px the
 // Edit column used to end past the window's edge, and the summary squeezed to a narrow column of six lines.
+// The client as every list shows them: the name where this person may see it, with the code; a visit with no
+// client (a kit handed to someone who gave no name) says so in words rather than as an empty link.
+const clientText = (r) => (r.client_name ? `${r.client_name} (${r.client_code})` : r.client_code);
 export function interventionTable(rows, { showClient = true, onChange } = {}) {
+  const type = r => fmt.label(r.type, 'INTERVENTION_TYPES');
   return table([
     { label: 'Date', render: r => h('span', { class: 'nowrap' }, fmt.dt(r.occurred_at)) },
-    showClient ? { label: 'Client', render: r => h('a', { href: `#/client/${r.client_id}`, onClick: e => e.stopPropagation() }, r.client_code) } : null,
+    showClient ? { label: 'Client', render: r => (r.client_id ? h('a', { href: `#/client/${r.client_id}`, onClick: e => e.stopPropagation() }, r.client_name || r.client_code, r.client_name ? h('div', { class: 'muted small mono' }, r.client_code) : null) : h('span', { class: 'muted', 'data-anonymous': '1' }, 'Anonymous')) } : null,
     { label: 'Type & summary', render: r => h('div', {}, fmt.label(r.type, 'INTERVENTION_TYPES'), h('div', { class: 'small muted' }, `${fmt.label(r.location, 'LOCATIONS')} · ${fmt.label(r.modality, 'MODALITIES')}`),
       r.summary ? h('div', { class: 'small' }, r.summary.length > 120 ? `${r.summary.slice(0, 120)}…` : r.summary) : null) },
     { label: 'Duration', render: r => fmt.mins(r.duration_minutes), num: true },
     { label: 'Outcome', render: r => r.outcome ? badge(fmt.label(r.outcome, 'OUTCOMES'), statusKind(r.outcome)) : '—' },
     { label: 'Supplies', render: suppliesOf },
     { label: 'Worker', key: 'worker' },
-    { label: '', render: r => !can('interventions:write') ? null : mayChange(r.user_id) ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: (e) => { e.stopPropagation(); openInterventionForm(r, { onDone: onChange }); } }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this visit', onClick: (e) => { e.stopPropagation(); deleteVisit(r, onChange); } }, '✕')) : viewOnly(r.worker) },
-  ].filter(Boolean), rows, { onRow: (r) => openVisitView(r, { onChange }), empty: 'Nothing recorded yet. Use + Log › Log a visit for a visit, screening, warm handoff or other service.' });
+    { label: '', render: r => !can('interventions:write') ? null : mayChange(r.user_id) ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: (e) => { e.stopPropagation(); openInterventionForm(r, { onDone: onChange }); } }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this visit', onClick: (e) => { e.stopPropagation(); deleteVisit(r, onChange); } }, '✕')) : viewOnly(null, { short: true }) },
+  ].filter(Boolean), rows, { onRow: (r) => openVisitView(r, { onChange }), empty: 'Nothing recorded yet. Use + Log › Log a visit for a visit, screening, warm handoff or other service.',
+    // On a phone, two lines a visit (as Calls and To-dos): who and what, then when, what was handed out and by whom.
+    compact: { primary: r => [h('span', {}, showClient ? (r.client_id ? r.client_name || r.client_code : 'Anonymous') : type(r)), showClient ? badge(type(r), 'info') : null],
+      secondary: r => [h('span', {}, fmt.dt(r.occurred_at)), ...suppliesOf(r).flat().filter(x => x && typeof x !== 'string'), r.worker ? h('span', {}, `by ${r.worker}`) : null],
+      onTap: (r) => openVisitView(r, { onChange }) } });
 }
 
 route('interventions', async (r) => {

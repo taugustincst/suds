@@ -493,6 +493,9 @@ details.section > summary .summary-heading { display: inline; font-size: 1rem; m
 #banners > .banner > button, #banners > .banner > a.btn { flex: 0 0 auto; }
 #banners > .banner.compact { align-items: center; margin-bottom: 0; padding: .25rem .6rem; }
 @media (max-width: 600px) { #banners > .banner { padding: .45rem .75rem; font-size: .88rem; } .client-record .badge { font-size: .72rem; } }
+/* The two-step verification reminder (app.js loadSession): one short line on a phone, the deadline kept. */
+.mfa-short { display: none; }
+@media (max-width: 600px) { #banners > .banner.compact[data-banner="mfa-required"] { padding-top: 0; padding-bottom: 0; } [data-banner="mfa-required"] .mfa-long { display: none; } [data-banner="mfa-required"] .mfa-short { display: inline; } }
 
 /* ---- Supplies given on a visit (views/interventions.js supplyPicker): each item a row with a − count +
    stepper, one tap each; the name wraps, the stepper keeps its place, nothing scrolls sideways at 320px. ---- */
