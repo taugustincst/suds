@@ -109,10 +109,14 @@ inside `sameFailure` does): with the gate lowered it still leaked at T = 3 in th
 R=0+0 printed alone), because each of those worlds' own releases is in turn checked the stricter way. A rule's decision
 depends on the figures, so a sound check of it is a fixed point over worlds' releases, which the audit cannot
 afford. **So 1.16.2 publishes no rule**: `buildModel` returns no `preWithhold`, `server/sdc.js` `protect` is
-1.16.0's, and a year like the benchmark's is refused whole again (refusal is always safe). Measured on scaled
-copies of that year at T = 11 (docs/PERFORMANCE.md, *Which programmes are refused*), a year with about 110 to 240
-overdose events can be refused (sampled: 23 of 84 refused, with 113 to 237 events; 1.16.2 said 126 to 237, from a
-sweep that missed the lower edge; `test/thorough/refusal-band.test.js` now records it). A release 1.16.1 published with the events by month withheld by the rule is not
+1.16.0's, and a year like the benchmark's is refused whole again (refusal is always safe). No size of programme
+is guaranteed to publish (docs/PERFORMANCE.md, *Which programmes are refused*): on scaled copies of that year at
+T = 11, 34 of 114 were refused, 26 for want of budget with 87 to 237 overdose events and 8 because the release with
+the events by month withheld still failed its check, with 301 to 341 (1.16.2 and 1.16.3 stated a band of about 110
+to 240 from sweeps that moved each month's events and reversals together; moved independently, refusals fell
+outside it on both sides). Quarters of seeded years, each read for itself, were refused too: 28 of 72, and every
+refused year had at least one refused quarter (`test/thorough/refusal-band.test.js` and `refusal-quarters.test.js`
+record both). A release 1.16.1 published with the events by month withheld by the rule is not
 verified (docs/HIPAA.md). A rule that reads only a printed figure (withhold the months whenever the period has 12T
 events) was tried too, and leaked the same way at 36 events: a world counted for the printout was refused by its
 own check. A future rule of this kind needs a check whose witness worlds are shown to publish the same by their own
@@ -158,7 +162,8 @@ case is not "a few seconds": 400 million units are 2 to 7 seconds of a server-cl
 - In the reviewer's simulation (8 seeds per size, quarter and month) no release of 40 to 200 people was refused
   (1.12.4: 7 of 8 at 60, 6 of 8 at 80 per quarter); the random "realistic" property programmes refuse about 1 in 70.
   That is not a guarantee: the benchmark's 2,000-client year is refused whole (above, *Withheld by rule*), and so
-  is a table whose check fails expensively wherever it exhausts the budget: 17 of 60 scaled copies of that year.
+  is a table whose check fails expensively wherever it exhausts the budget, or fails even with tables withheld:
+  34 of 114 scaled copies of that year, and 28 of 72 quarters of seeded years (*Withheld by rule*).
 - A year for 5,000 people costs about 17 million units of work (4% of the budget; the release 0.6 to 0.9 s); while
   it runs the event loop is held only for the read's phases (0.1 to 0.2 s at 20,000 clients, 1.14.0; 0.6 to 1.5 s
   before, the whole read at once).

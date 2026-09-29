@@ -93,6 +93,45 @@ Fixes to the release process from the engineering review of 1.16.3. No migration
   releases wait for the owner until a backup releaser is named. A CHANGELOG date is the stamp's date; the release
   date is the tag's. HANDOFF.md has a *Release waiting* note: 1.16.3 at `fc5e9d7` awaits the owner's tag.
 
+### Documentation
+
+- **A refused quarter no longer sends the person back to the year (market review of 1.16.3, finding 1).** A refused
+  year's message offered its quarters, and a refused quarter's said "publish a longer standard period (a year)":
+  year, quarters, year. Each now has its own step. A year's says its quarters *may be tried*, each checked on its
+  own and possibly refused too, never beside the year. A quarter's says its year may be tried once it has ended,
+  unless the year was refused too or another quarter of it is already published; otherwise the quarter cannot be
+  published in this version. Both now say whom to tell: whoever supports the programme's SUDS (IT partner or
+  county), or, for a programme with no one, the SUDS issue tracker (the period and the message only, never a
+  client's details). The funder submission is unaffected, as before. The `protectFigures` docstring names all four
+  ways a release is refused (headline, budget, backstop, and a release that fails its check with tables withheld).
+- **No refusal band is quoted any more (engineering review of 1.16.3, M3).** 1.16.2 and 1.16.3 said a fiscal year
+  with about 110 to 240 overdose events can be refused, and everything outside publishes. With each month's events
+  and reversals moved independently, the review found refusals at 87 to 99 events (budget) and 301 to 341 (a
+  failed check). PERFORMANCE.md, ADR-0009, HIPAA.md, the user guide and the buyer pack now say refusals were seen
+  from under 100 to over 300 events in sampled programmes, that no size is guaranteed to publish, and that a
+  refusal is always whole and safe.
+- **"Quarters can be published instead" is replaced by what was measured.** Of 18 seeded programmes, 6 years and 28
+  of 72 quarters were refused, and every refused year had at least one quarter refused too (PERFORMANCE.md, *Which
+  programmes are refused*). BUYER-GUIDE-PROGRAM, BUYER-GUIDE-IT, the market scorecard and security questionnaire
+  #16 now say quarters may be tried and are no sure way round. BUYER-GUIDE-PROGRAM also says a programme's own
+  overdose events decide it, not its client count: a syringe services programme with many overdoses can be
+  refused with far fewer clients.
+- Questionnaire #37 points at the owner's CodeQL setting (RELEASE.md, step 8), not yet turned on. A CodeQL
+  workflow was not added: uploading results needs a write-scoped token, and the owner's default setup needs no
+  workflow at all.
+- EVALUATION-RESPONSE's status line says "through 1.16.3" and no longer points at an *Unreleased* section.
+
+### Engineering
+
+- **Quarters are measured (`test/thorough/refusal-quarters.test.js`, CI's `thorough-sdc` job).** 18 programmes
+  seeded as the benchmark's is (1,100 to 2,600 clients, three seeds each); each fiscal year and each quarter is read
+  as a publication release reads it, every table for that period, and audited. Every refusal is checked to be whole
+  (nothing printed) with its own period's message; published releases withhold only by the check. The counts are
+  recorded, not pinned. About 4 minutes.
+- **The fiscal-year sweep (`test/thorough/refusal-band.test.js`) adds the 1.16.3 review's runs** (events and
+  reversals moved independently by up to 3 or 4; 114 years, 34 refused), accepts a refusal for a failed check as
+  well as for budget, still requires every refusal to be whole, and no longer fails when refusals leave a band.
+
 ## 1.16.3 — 2026-09-29
 
 ### Engineering

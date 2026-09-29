@@ -49,13 +49,16 @@ CalOMS Tx, and the county EHR hand-off. Most harm-reduction programmes will not 
   automatic check cannot confirm is withheld and listed with the reason, and the file downloads only after the
   person confirms they reviewed the withheld and small figures; it is a conservative screen, not a guarantee or
   an expert determination. **A whole publication release can also be refused**, not a table withheld: when the
-  check cannot finish within its work limit, nothing is published. Measured for 1.16.2 and 1.16.3, a fiscal year
-  with about 110 to 240 overdose events (sampled, not a guarantee: roughly a programme serving 1,100 to 2,400
-  people a year at one overdose per ten people served) can be refused, whatever the settings or budget; smaller
-  and larger programmes publish. What to do instead: the exact *submission* to the funder is unaffected; publish
-  the year's quarters instead, each checked on its own (and then not the year as well). A sound, cheaper check
-  for that table is planned for a feature release ([docs/PERFORMANCE.md](../PERFORMANCE.md), *Which programmes
-  are refused*). Two releases for nested periods (a quarter and its year) can still be subtracted from each other,
+  check cannot finish within its work limit, or cannot confirm the release even with tables withheld, nothing is
+  published. In sampled programmes, fiscal years with from under 100 to over 300 overdose events were refused,
+  whatever the settings or budget, and no size is guaranteed to publish. What decides it is your programme's own
+  overdose events (how many months have few events, or few not reversed), not how many clients it serves: a
+  syringe services programme with many overdoses can be refused with far fewer clients than the benchmark's one
+  overdose per ten people served. A refusal is whole and safe, and the exact *submission* to the funder is
+  unaffected. The year's quarters may be tried instead, each checked on its own (and never beside the year), but
+  they are no sure way round: in a sweep of 18 seeded programmes, 28 of 72 quarters were refused, and every
+  refused year had at least one quarter refused too. A sound, cheaper check for that table is planned for a
+  feature release ([docs/PERFORMANCE.md](../PERFORMANCE.md), *Which programmes are refused*). Two releases for nested periods (a quarter and its year) can still be subtracted from each other,
   so publish one period per funder cycle ([docs/HIPAA.md](../HIPAA.md#small-cells-in-aggregate-reports)).
   (Only the funder report, the naloxone log and the settlement report suppress small cells; the other reports
   show exact counts.)

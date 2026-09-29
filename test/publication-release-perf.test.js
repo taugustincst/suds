@@ -225,10 +225,23 @@ test('a refusal for want of budget is logged with the audit\'s work, and a refus
   assert.ok(lines.some(l => /a publication release \(2025-07 to 2026-06\) was refused: its audit reached its budget \(\{"steps":\d+,"rounds":\d/.test(l)), lines.join('\n'));
   const RA = require('../server/release-audit');
   assert.match(RA.refusalMessage({ outOfBudget: true }, 1), /Publish a longer standard period \(a quarter or a year\)/);
-  assert.match(RA.refusalMessage({ outOfBudget: true }, 3), /Publish a longer standard period \(a year\)/);
-  // 1.16.3: a refused year says what the person can do, not only whom to tell.
+  // 1.16.3: a refused year says what the person can do, not only whom to tell. 1.16.4 (market review of 1.16.3): it
+  // does not promise the quarters will publish, and a refused quarter no longer sends the person back to the year it
+  // came from without an end: each message has the step after it, and whom to tell.
   const year = RA.refusalMessage({ outOfBudget: true }, 12);
-  assert.match(year, /You can publish its four quarters instead/);
-  assert.match(year, /do not publish this year as well/);
-  assert.match(year, /submission to its funder, which is not for publication, is unaffected/);
+  assert.match(year, /Its four quarters may be tried instead/);
+  assert.match(year, /each is checked on its own and may be refused too/);
+  assert.ok(!/You can publish its four quarters/.test(year), 'the year does not promise its quarters publish');
+  assert.match(year, /Never publish a quarter beside its year/);
+  assert.match(year, /If the quarters are refused as well, this year cannot be published in this version of SUDS/);
+  const quarter = RA.refusalMessage({}, 3);
+  assert.match(quarter, /the check could not confirm that every small count in it is protected/);
+  assert.ok(!/Publish a longer standard period/.test(quarter), 'a refused quarter is not simply told to publish the year');
+  assert.match(quarter, /Its fiscal year may be tried instead once the year has ended, unless the year was refused too or another quarter of it is already published/);
+  assert.match(quarter, /Otherwise this quarter cannot be published in this version of SUDS/);
+  for (const m of [year, quarter]) {
+    assert.match(m, /tell whoever supports your SUDS \(your IT partner or county\)/);
+    assert.match(m, /https:\/\/github\.com\/taugustincst\/suds\/issues \(the period and this message only, never a client's details\)/);
+    assert.match(m, /submission to its funder, which is not for publication, is unaffected/);
+  }
 });
