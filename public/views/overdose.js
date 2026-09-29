@@ -1,6 +1,6 @@
 // Overdose and reversal events. Every SUD funder asks for these counts, and a community reversal reported
 // by an outreach worker — with nobody identified — is exactly the kind a program most needs to record.
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, discardDraft, listEntries } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, discardDraft, listEntries, kv, mayChange, ownedNotice } from '../app.js';
 
 // "Where" is the visit form's Location list, so the NDP log counts reversals and distribution by the same
 // sites. An event recorded when it was free text keeps its words, shown as typed.
@@ -68,18 +68,30 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
   });
   const kindI = f.inputs.kind; const naloxoneI = f.inputs.naloxone_used;
   if (kindI && naloxoneI) kindI.addEventListener('change', () => { if (kindI.value === 'reversal') naloxoneI.checked = true; });
-  const remove = row ? h('div', { class: 'btn-row', style: { justifyContent: 'flex-start', marginTop: '.5rem' } },
-    h('button', { type: 'button', class: 'btn danger', onClick: async () => {
-      const fatal = row.kind === 'fatal' && row.client_id;
-      const ok = await confirmDialog('Delete this event?', fatal
-        ? 'The event is removed from the counts, and the client is no longer recorded as deceased: their status goes back to what it was before this event and the episode it closed is reopened.'
-        : 'The event is removed from the overdose and reversal counts. This cannot be undone.', { danger: true, okText: 'Delete event' });
-      if (!ok) return;
-      await del(`/api/overdose-events/${row.id}`); discardDraft(`overdose:${row.id}`);
-      toast('Event deleted', 'ok'); m.close(); onDone && onDone();
-    } }, 'Delete event')) : null;
-  const m = modal(row ? 'Edit overdose event' : 'Record an overdose or reversal', h('div', {}, f, remove), { wide: true });
+  // Delete sits in the form's own button row, on the left. In a row of its own after the form it was the
+  // dialog's last row as well, so it stuck to the bottom of a phone's screen on top of Save (styles.css).
+  if (row) f.querySelector(':scope > .btn-row').prepend(h('button', { type: 'button', class: 'btn danger', style: { marginRight: 'auto' }, onClick: async () => {
+    const fatal = row.kind === 'fatal' && row.client_id;
+    const ok = await confirmDialog('Delete this event?', fatal
+      ? 'The event is removed from the counts, and the client is no longer recorded as deceased: their status goes back to what it was before this event and the episode it closed is reopened.'
+      : 'The event is removed from the overdose and reversal counts. This cannot be undone.', { danger: true, okText: 'Delete event' });
+    if (!ok) return;
+    await del(`/api/overdose-events/${row.id}`); discardDraft(`overdose:${row.id}`);
+    toast('Event deleted', 'ok'); m.close(); onDone && onDone();
+  } }, 'Delete event'));
+  const m = modal(row ? 'Edit overdose event' : 'Record an overdose or reversal', f, { wide: true });
   return m;
+}
+
+/** Another worker's event, read-only: it is theirs, or a supervisor's, to change (server/rules/overdose_events.js). */
+export function openOverdoseView(r) {
+  const yes = (v) => (v ? 'Yes' : 'No');
+  return modal(`${fmt.label(r.kind, 'OVERDOSE_KINDS')} on ${fmt.date(r.occurred_at)}`, h('div', { 'data-overdose-view': r.id },
+    ownedNotice(r.reporter, { verb: 'Reported by' }),
+    kv([['When', fmt.dt(r.occurred_at)], ['Who', r.client_code || 'Community report'], ['What happened', fmt.label(r.kind, 'OVERDOSE_KINDS')], ['Substances', r.substances],
+      ['Naloxone', naloxoneText(r)], ['Given by', r.administered_by ? fmt.label(r.administered_by, 'ADMINISTERED_BY') : null], ['EMS called', yes(r.ems_called)],
+      ['Taken to hospital', yes(r.hospitalized)], ['Survived', yes(r.survived)], ['Where', [where(r.location_type), r.city].filter(Boolean).join(', ') || null],
+      r.funding_source ? ['Funding source', r.funding_source] : null, ['Notes', r.notes ? h('div', { style: { whiteSpace: 'pre-wrap' } }, r.notes) : null], ['Reported by', r.reporter]])), { wide: true });
 }
 
 route('overdose', async () => {
@@ -104,7 +116,8 @@ route('overdose', async () => {
       { label: 'Where', render: r => [where(r.location_type), r.city].filter(Boolean).join(', ') || '—' },
       { label: 'Reported by', render: r => r.reporter || '—' },
     ], rows, {
-      onRow: can('overdose:write') ? (r) => openOverdoseForm(r, { onDone: refresh }) : null,
+      // Every row opens: an event of your own (or anyone's, for a supervisor) as its form, another worker's to read.
+      onRow: (r) => (can('overdose:write') && mayChange(r.reported_by) ? openOverdoseForm(r, { onDone: refresh }) : openOverdoseView(r)),
       rowLabel: (r) => `${fmt.label(r.kind, 'OVERDOSE_KINDS')} on ${fmt.date(r.occurred_at)}${r.client_code ? ` for ${r.client_code}` : ''}`,
     }) : emptyState('No events recorded', can('overdose:write') ? 'Record an overdose or a naloxone reversal here — including ones involving people who are not clients.' : 'Navigators, clinicians, supervisors and administrators record overdoses and naloxone reversals here — including ones involving people who are not clients.',
       can('overdose:write') ? h('button', { class: 'btn primary', 'data-empty-action': 'overdose', onClick: () => openOverdoseForm(null, { onDone: refresh }) }, 'Record an event') : null),

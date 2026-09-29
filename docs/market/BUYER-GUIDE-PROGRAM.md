@@ -2,7 +2,8 @@
 
 For the director of a harm-reduction, outreach or prevention programme — usually a community-based
 organisation funded by opioid-settlement money, SOR / the Naloxone Distribution Project, or SABG prevention
-funds, and usually not billing Medi-Cal. It explains what SUDS does for outreach, supplies and funder reporting,
+funds, and usually not billing Medi-Cal. (SABG primary-prevention reporting — group and community events with
+attendance, PPSDS — is not supported: see [POSITIONING.md](POSITIONING.md), *"Prevention", precisely*.) It explains what SUDS does for outreach, supplies and funder reporting,
 what a day looks like, and what we need from you. The companion guide for your IT partner or county IT is
 [BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md); who runs the server is in [HOSTING.md](HOSTING.md).
 
@@ -22,7 +23,7 @@ grey cases (Part 2 records, CalOMS, DMC).
 | **Naloxone and supplies** | Supplies kept by **item, site and lot** (1.14.0): naloxone by product, fentanyl test strips, syringes, sharps containers and whatever else you list; sites for the office, a van, a drop-in or a partner; lot numbers and expiry dates. Deliveries, moves between sites, counts and disposal are recorded in a stock ledger. Each visit or anonymous outreach contact draws the items it hands out from its site, earliest expiry first; expiring lots, low stock and shortfalls show on Home. A repeated visit copies what kind of visit it was, never the quantities. Syringes and sharps brought back are recorded too, counted or estimated from the container ([docs/SUPPLIES.md](../SUPPLIES.md)). |
 | **Grants and budget** | Funding sources (opioid settlement, SOR, SABG, county…), budget lines, burn rate against time elapsed, client assistance (bus passes, IDs, motel nights) charged to the right line, staff time by funding source. |
 | **Approvals** | Expenditure approval (pending → approved/rejected → reimbursed) and time approval, with separation of duties: nobody approves their own. |
-| **Caseload** | For people you do follow: each worker sees their own clients, sorted by risk and last contact; Home shows overdue follow-ups, no contact in 30 days, consents expiring. Caseload transfer when someone leaves. |
+| **Caseload** | For people you do follow: each worker's own clients, sorted by risk and last contact (by default navigators and clinicians can open every client, for coverage, and change only their own work — client records are shared, and the primary worker is notified when someone else updates one; the programme can hold a person to their caseload — see *Who sees which clients* in [POSITIONING.md](POSITIONING.md)); Home shows overdue follow-ups, no contact in 30 days, consents expiring. Caseload transfer when someone leaves. |
 | **Referrals and resources** | A community resource directory with verification dates (older than six months is flagged); referrals from pending to admitted/completed, warm hand-off, barriers, days-to-admit, automatic follow-up — and a consent check before a client is named to an outside agency. |
 | **Consent and privacy** | Consents built to the 42 CFR Part 2 standard, with every element the rule requires, releases of information, revocations, and an accounting of disclosures you can print for the participant ([docs/HIPAA.md](../HIPAA.md), [docs/compliance/PART2.md](../compliance/PART2.md)). |
 | **Getting data in** | Import clients, resources, visits, calls, time, to-dos and expenditures from your Excel or CSV files, with automatic column matching and row-by-row checks ([docs/IMPORTS.md](../IMPORTS.md)). |

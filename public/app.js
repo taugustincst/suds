@@ -110,8 +110,16 @@ export function fieldProblem(label, msg) {
 }
 /** A column name as a person would say it, for a field message with no form label: "client_id" → "Client". */
 const fieldName = (k) => { const s = String(k).replace(/_(id|enc)$/, '').replace(/_/g, ' '); return s.charAt(0).toUpperCase() + s.slice(1); };
-function apiError(status, data) {
+// The server's refusal of a change to someone else's record (server/rules/shared.js ownedBy, crud.js), said
+// with who can help. The spending approver's refusal uses the same words, so budget paths keep theirs.
+const OWNED_REFUSALS = {
+  'You cannot edit this record': 'Only the person who recorded this, or a supervisor or administrator, can change it. Add your own record instead, or ask them.',
+  'You cannot delete this record': 'Only the person who recorded this, or a supervisor or administrator, can delete it. Ask them or a supervisor.',
+  'Only the author can edit a draft': 'Only the author of this draft, or a supervisor or administrator, can change, sign or delete it. Ask them to finish it, or ask a supervisor.',
+};
+function apiError(status, data, path = '') {
   let msg = (data && data.error) || `Request failed (${status})`;
+  if (status === 403 && OWNED_REFUSALS[msg] && !String(path).startsWith('/api/budget')) msg = OWNED_REFUSALS[msg];
   // A bare "Validation failed" in a toast said nothing a person could act on: name what needs changing.
   if (msg === VALIDATION_FAILED && data && data.fields && typeof data.fields === 'object') msg = `${CHECK_ANSWERS}: ${Object.entries(data.fields).map(([k, m]) => fieldProblem(fieldName(k), m)).join('; ')}`;
   const err = new Error(msg); err.status = status; err.data = data; return err;
@@ -172,7 +180,7 @@ async function apiCall(method, path, body, opts) {
     // The enrolment deadline passed (possibly mid-session): go to enrolment, rather than failing every page.
     if (r.status === 403 && data && data.mfaSetupRequired && !location.hash.startsWith('#/profile')) location.hash = '#/profile?mfa=1';
     if (r.status === 409 && data && data.frozen) showPausedScreen();
-    if (r.status >= 400) throw apiError(r.status, data);
+    if (r.status >= 400) throw apiError(r.status, data, path);
     return data;
   }
   let payload;
@@ -194,7 +202,7 @@ async function apiCall(method, path, body, opts) {
   if (res.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) { location.hash = '#/mfa'; } else { state.user = null; render(); toast('Session expired. Please sign in again.', 'error'); } }
   if (res.status === 403 && data && data.passwordChangeRequired) { location.hash = '#/profile?force=1'; }
   if (res.status === 403 && data && data.mfaSetupRequired && !location.hash.startsWith('#/profile')) { location.hash = '#/profile?mfa=1'; }
-  if (!res.ok) throw apiError(res.status, data);
+  if (!res.ok) throw apiError(res.status, data, path);
   return data;
 }
 export const get = (p, o) => api('GET', p, undefined, o), post = (p, b, o) => api('POST', p, b, o), put = (p, b, o) => api('PUT', p, b, o), del = (p, b, o) => api('DELETE', p, b, o);
@@ -1337,6 +1345,36 @@ export function stat(label, value, kind = '', href = null, title = 'Open') {
   return href && reachable(href) ? h('a', { class: `card stat link ${kind}`, href: href.startsWith('#') ? href : '#/' + href, title }, body) : h('div', { class: `card stat ${kind}` }, body);
 }
 export function kv(pairs) { return h('dl', { class: 'kv' }, pairs.filter(p => p).map(([k, v]) => [h('dt', {}, k), h('dd', {}, v ?? '—')])); }
+
+// ---- Whose record is this ----
+// Navigators and clinicians see every client and add their own work to any of them, but a visit, call,
+// referral, overdose report, to-do or draft note is changed or deleted only by the person it belongs to, or by
+// someone holding records:manage-others (supervisors and administrators; server/rules/*). Where Edit and Delete
+// are hidden, these say why, in the same words on every screen.
+/** May the signed-in person change a record owned by any of `ids`? */
+export const mayChange = (...ids) => !!state.user && (ids.some(x => x && x === state.user.id) || can('records:manage-others'));
+/** The actions cell of a row whose Edit and Delete are hidden. */
+export const viewOnly = (name, { verb = 'Recorded by', more = '' } = {}) =>
+  h('span', { class: 'small muted', 'data-view-only': '1' }, `${verb} ${name || 'another worker'} — view only${more}`);
+/** At the top of a record opened read-only: who it belongs to, and who can change it. */
+export const ownedNotice = (name, { verb = 'Recorded by', noun = '' } = {}) =>
+  h('p', { class: 'banner info small', 'data-owned-notice': '1' }, `${verb} ${name || 'another worker'}. Only they or a supervisor or administrator can change it${noun ? `; you can add your own ${noun} for this client` : ''}.`);
+
+// ---- What each role is for ----
+// One summary per role, used wherever a role is chosen (New and Edit user, approving an access request, the
+// device's first account) and at the top of the Permissions dialog: what it sees, what it records, and whether
+// it can change other workers' records. Client records themselves are shared: anyone who sees a client may update
+// it, and the primary worker is told. The permissions themselves are server/auth.js PERMS.
+export const ROLE_SUMMARY = {
+  navigator: 'Navigator — sees and updates every client; reads clinical notes except SUD counseling notes · records visits, calls, referrals, admin notes and spending · changes only their own work',
+  clinician: 'Clinician — sees and updates every client, and sees the budget · records visits, calls, referrals, clinical and admin notes (no spending) · changes only their own work',
+  supervisor: 'Supervisor — sees every client and all notes · countersigns, approves time and spending · can change other workers\' records',
+  finance: 'Finance — budget, time and aggregate reports; client codes only, no client records',
+  readonly: 'Read-only — reports and de-identified lists; cannot open client records',
+  admin: 'Administrator — users, settings and audit; every client, no clinical notes · can change other workers\' records',
+};
+/** The role choices for a select, in the usual order (or only `only`). */
+export const roleOptions = (only = Object.keys(ROLE_SUMMARY)) => only.map(value => ({ value, label: ROLE_SUMMARY[value] }));
 export function pageHead(title, ...actions) {
   const r = parseHash(); const item = NAV.find(n => n.name === r.name);
   return h('div', { class: 'topbar' }, h('div', { class: 'row', style: { gap: '.4rem' } }, h('h1', {}, title), item?.help ? helpTip(item.help) : null), h('div', { class: 'row' }, actions));

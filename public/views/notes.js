@@ -13,13 +13,13 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   let fmtSel, structuredBox, contentArea;
   const f = form([
     { name: 'client_id', label: 'Client', type: 'client', required: true, value: clientId || values?.client_id, display: clientDisplay },
-    { name: 'kind', label: 'Note type', type: 'select', options: kinds.map(k => ({ value: k, label: k === 'clinical' ? 'Clinical (restricted to clinical roles)' : 'Administrative / contact' })), value: kind || values?.kind || kinds[0], noBlank: true, required: true },
+    { name: 'kind', label: 'Note type', type: 'select', options: kinds.map(k => ({ value: k, label: k === 'clinical' ? 'Clinical (not shown to finance or read-only)' : 'Administrative / contact' })), value: kind || values?.kind || kinds[0], noBlank: true, required: true },
     { name: 'format', label: 'Format', type: 'select', list: 'NOTE_FORMATS', value: prefill?.format || 'narrative', noBlank: true }, { name: 'occurred_at', label: 'Date of service', type: 'datetime', required: true, value: values?.occurred_at || new Date().toISOString() },
     { name: 'title', label: 'Title', span: true, value: prefill?.title }, { name: 'content', label: 'Narrative', type: 'textarea', span: true, rows: 10, required: true, value: prefill?.content },
     { name: 'part2_protected', label: 'Contains 42 CFR Part 2 protected SUD information', type: 'checkbox', value: values ? values.part2_protected : true },
     // 42 CFR §2.11: a clinician's own analysis of a counselling session, kept apart from the rest of the record
     // and disclosed only under a consent for counseling notes alone. Only clinical notes can be one.
-    ...(can('notes:clinical:write') ? [{ name: 'counseling_note', label: 'SUD counseling note (§2.11) — needs its own consent before it can be shared', type: 'checkbox', value: values ? values.counseling_note : false, help: 'Clinical notes only. Not covered by a treatment/payment/operations consent or any general Part 2 consent.' }] : []),
+    ...(can('notes:clinical:write') ? [{ name: 'counseling_note', label: 'SUD counseling note (§2.11) — needs its own consent before it can be shared', type: 'checkbox', value: values ? values.counseling_note : false, help: 'Clinical notes only. Read only by you, a co-signer and clinical staff (not navigators). Not covered by a treatment/payment/operations consent or any general Part 2 consent.' }] : []),
     { name: 'cosign_requested', label: 'Request supervisor co-sign / review', type: 'checkbox', help: 'Puts this note in the supervisor queue once it is signed — for a difficult contact, a safety concern, or anything you want a second pair of eyes on.' },
   ], { values: values || {}, submitText: 'Save draft', onCancel: () => m.close(), onSubmit: async (d) => {
     const andSign = signAfter; signAfter = false;
@@ -142,6 +142,8 @@ export async function openNote(id, { onChange } = {}) {
     n.problems && n.problems.length ? h('div', { class: 'small mt', 'data-note-problems-view': '1' }, h('b', {}, 'Addresses: '), n.problems.map(p => p.problem || 'a problem on the list').join('; ')) : null,
     n.structured ? h('div', { class: 'mt' }, Object.entries(n.structured).map(([k, v]) => v ? h('div', { class: 'mb' }, h('b', {}, sectionLabel(n.format, k)), h('div', { style: { whiteSpace: 'pre-wrap' } }, v)) : null)) : h('pre', { class: 'note mt' }, n.content),
     n.structured && n.content ? h('details', { class: 'mt' }, h('summary', { class: 'muted small' }, 'Narrative text'), h('pre', { class: 'note' }, n.content)) : null,
+    // A colleague's draft shows only Print: say why, and what can be done about it.
+    writable && n.status === 'draft' && !mine && !can('records:manage-others') ? h('p', { class: 'banner info small', 'data-owned-notice': '1' }, `Draft by ${n.author || 'another worker'}, not yet signed. Only the author, or a supervisor or administrator, can finish, sign or delete it: send them a reminder or ask a supervisor.`) : null,
     n.addenda.length ? h('div', { class: 'mt' }, h('h3', { class: 'eyebrow' }, 'Addenda'), n.addenda.map(a => h('div', { class: 'list-item' }, h('div', { class: 'small muted' }, `${fmt.dt(a.created_at)} · ${a.author}${a.reason ? ' · ' + a.reason : ''}`), h('div', { style: { whiteSpace: 'pre-wrap' } }, a.content)))) : null,
     h('div', { class: 'btn-row' },
       writable && n.status === 'draft' && (mine || can('records:manage-others')) ? h('button', { class: 'btn', onClick: () => { m.close(); openNoteForm(n, { onDone: onChange }); } }, 'Edit draft') : null,
@@ -233,6 +235,8 @@ function addAddendum(n, done) {
   const f = form([{ name: 'reason', label: 'Reason (e.g. late entry, correction)' }, { name: 'content', label: 'Addendum', type: 'textarea', required: true, span: true }], { submitText: 'Add addendum', onCancel: () => m.close(), onSubmit: async (d) => { await post(`/api/notes/${n.id}/addenda`, d); toast('Addendum added', 'ok'); m.close(); done(); } });
   const m = modal('Add addendum', f);
 }
+/** For someone who reads clinical notes but does not write them: SUD counseling notes are not listed (server/routes/notes.js). */
+export const counselingHidden = () => (can('notes:clinical:read') && !can('notes:clinical:write') ? h('div', { class: 'banner small', 'data-counseling-hidden': '1' }, 'SUD counseling notes are visible only to their author, the co-signer and clinical staff, so they are not listed here.') : null);
 export function noteTable(rows, { showClient = true, onChange } = {}) {
   // The client code used to be a real <a> inside a cell of a row that is itself a keyboard-focusable
   // "button" (table()'s onRow) — a link nested inside a button, which is invalid and leaves a screen
@@ -261,6 +265,6 @@ route('notes', async (r) => {
   return h('div', {},
     pageHead('Notes', (can('notes:admin:write') || can('notes:clinical:write')) ? h('button', { class: 'btn primary', onClick: () => openNoteForm(null, { onDone: refresh }) }, '+ New note') : null, can('imports:write') ? h('a', { class: 'btn', href: '#/imports' }, 'Import from Pocket AI / OneNote') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sSel), h('div', { class: 'field' }, h('label', {}, 'Type'), kSel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(`notes?status=${status}&kind=${kind}${mine ? '' : '&mine=1'}`) }, 'My notes')),
-    !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are visible only to clinical roles and supervisors.') : null,
+    !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are visible only to clinical roles and supervisors.') : counselingHidden(),
     pagedList({ first: data, url: `/api/notes${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => noteTable(rows, { onChange: refresh }), summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} notes`) }));
 });

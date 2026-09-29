@@ -1,4 +1,4 @@
-import { h, route, api, get, post, put, del, state, form, modal, toast, table, badge, flag, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs, moduleOn } from '../app.js';
+import { h, route, api, get, post, put, del, state, form, modal, toast, table, badge, flag, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs, moduleOn, roleOptions, ROLE_SUMMARY } from '../app.js';
 import { qrSvg } from '../qr.js';
 import { listsTab } from './lists.js';
 import { securityTab, drillCard } from './security.js';
@@ -37,7 +37,7 @@ async function openUserForm(values, onDone) {
   if (!isNew && !state.local) deviceCount = await get('/api/admin/devices', { quiet: true }).then(r => r.devices.filter(d => d.user_id === values.id && !d.revoked_at).length).catch(() => 0);
   const f = form([
     { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+' }, { name: 'display_name', label: 'Display name', required: true }, { name: 'email', label: 'Email' }, { name: 'title', label: 'Job title' },
-    { name: 'role', label: 'Role', type: 'select', required: true, options: [['navigator', 'Navigator — all clients, admin notes, reads clinical notes, referrals, budget entry'], ['clinician', 'Clinician — all clients, clinical notes, sees the budget'], ['supervisor', 'Supervisor — all clients, all notes, approvals, audit'], ['finance', 'Finance — budget & de-identified data only'], ['readonly', 'Read-only — reports and de-identified lists; cannot open client records'], ['admin', 'Administrator — users, settings, audit (no clinical notes)']].map(([v, l]) => ({ value: v, label: l })) },
+    { name: 'role', label: 'Role', type: 'select', required: true, options: roleOptions(), help: 'Only supervisors and administrators change or delete other workers\' records; everyone else changes their own.' },
     { name: 'hourly_cost', label: 'Loaded hourly cost ($, for budget)', type: 'number', min: 0, step: 0.01 }, { name: 'is_active', label: 'Active', type: 'checkbox', value: values ? values.is_active : true },
     { name: 'supervisor_id', label: 'Supervisor', type: 'select', placeholder: '— none —', options: state.users.filter(u => u.is_active !== 0 && ['supervisor', 'admin'].includes(u.role) && u.id !== values?.id).map(u => ({ value: u.id, label: u.display_name })), help: 'Whose Supervision page their unfinished work shows on.' },
     (state.funds || []).length ? { name: 'default_fund_id', label: 'Default funding source for their visits', type: 'select', placeholder: '— the program default —', options: state.funds.map(f => ({ value: f.id, label: f.name })), help: 'Pre-filled on the visit form; they can still choose another.' } : null,
@@ -153,13 +153,13 @@ async function renderPermissionsSection(box, userId) {
   const label = (n) => permCatalogLabel(byName, n);
   const refresh = () => renderPermissionsSection(box, userId);
 
-  // The role baseline: what this person's role gives them, grouped by namespace.
-  // 1.16.0 widened the navigator and clinician baselines; say so where an administrator decides whether a
-  // person keeps them, and how to hold someone to their caseload instead.
-  const widened = { navigator: 'Since 1.16.0 a navigator sees every client (See every client) and reads clinical notes, SUD counseling notes included, without writing them (Read clinical notes). They add their own work to any client but do not change other workers\' records (Manage other workers\' records is for supervisors and administrators).',
-    clinician: 'Since 1.16.0 a clinician sees every client (See every client) and the budget (See the budget), without recording spending. They add their own work to any client but do not change other workers\' records (Manage other workers\' records is for supervisors and administrators).' }[data.role];
-  box.append(h('h3', {}, `Role baseline — ${fmt.label(data.role)}`),
-    widened ? h('p', { class: 'small muted', 'data-perm-role-note': data.role }, `${widened} To hold this person to their own caseload, deny See every client below (clients:all)${data.role === 'navigator' ? '; to keep clinical notes from them, deny Read clinical notes (notes:clinical:read)' : ''}. Their devices follow at their next sync.`) : null,
+  // The role baseline: what this person's role gives them, grouped by namespace. For a navigator or clinician,
+  // what they see and change by default, and how to hold them to their caseload instead.
+  const widened = { navigator: 'A navigator sees every client (See every client) and reads clinical notes without writing them (Read clinical notes); SUD counseling notes stay with their author, the co-signer and clinical staff.',
+    clinician: 'A clinician sees every client (See every client) and the budget (See the budget), without recording spending.' }[data.role];
+  const own = ' They add their own work to any client and change only their own visits, calls, notes, referrals and to-dos: changing or deleting another worker\'s (Manage other workers\' records) is for supervisors and administrators. Client records are shared: they may update any client they see, and the client\'s primary worker is notified.';
+  box.append(h('h3', {}, `Role baseline — ${fmt.label(data.role)}`), ROLE_SUMMARY[data.role] ? h('p', { class: 'small', 'data-perm-role-summary': data.role }, ROLE_SUMMARY[data.role]) : null,
+    widened ? h('p', { class: 'small muted', 'data-perm-role-note': data.role }, `${widened}${own} To hold this person to their own caseload, deny See every client below (clients:all)${data.role === 'navigator' ? '; to keep clinical notes from them, deny Read clinical notes (notes:clinical:read)' : ''}. Their devices follow at their next sync.`) : null,
     h('div', { 'data-perm-baseline': '1' }, permNamespaceGroups(data.role_permissions || []).map(([ns, names]) =>
       h('details', {}, h('summary', {}, `${ns} (${names.length})`),
         h('ul', {}, names.map((n) => h('li', {}, label(n), h('code', { class: 'small muted' }, ` ${n}`))))))));
@@ -548,7 +548,7 @@ async function accessRequestsCard(onDone) {
   const { requests } = await get('/api/users/access-requests', { quiet: true }).catch(() => ({ requests: [] }));
   const approve = (q) => {
     const f = form([
-      { name: 'role', label: 'Role', type: 'select', required: true, options: [['navigator', 'Navigator'], ['clinician', 'Clinician'], ['supervisor', 'Supervisor'], ['finance', 'Finance'], ['readonly', 'Read-only'], ['admin', 'Administrator']].map(([value, label]) => ({ value, label })) },
+      { name: 'role', label: 'Role', type: 'select', required: true, options: roleOptions(), help: 'Only supervisors and administrators change or delete other workers\' records.' },
       { name: 'supervisor_id', label: 'Supervisor (optional)', type: 'select', placeholder: '— none —', options: state.users.filter(u => u.is_active !== 0 && ['supervisor', 'admin'].includes(u.role)).map(u => ({ value: u.id, label: u.display_name })) },
       { name: 'title', label: 'Job title (optional)' },
     ], { submitText: 'Approve', onCancel: () => m.close(), onSubmit: async (d) => {

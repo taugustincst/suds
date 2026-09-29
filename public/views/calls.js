@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, contactLinks, kv } from '../app.js';
+import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, contactLinks, kv, mayChange, ownedNotice, viewOnly } from '../app.js';
 
 // prefill: starting values for a new record (the number just dialled from a client's page) -- unlike
 // `values`, it does not make this an edit.
@@ -34,24 +34,39 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone, 
   }
   const m = modal(isNew ? (isText ? 'Log text message' : 'Log call') : `Edit ${noun}`, f, { wide: true });
 }
+const deleteCall = async (r, onChange, m) => { if (await confirmDialog(r.method === 'text' ? 'Delete text' : 'Delete call', 'Delete this contact record?', { danger: true, okText: 'Delete' })) { await del(`/api/calls/${r.id}`); if (m) m.close(); onChange && onChange(); } };
+const mayEditCall = (r) => can('calls:write') && mayChange(r.user_id);
+/** A call or text to read in full (the list cuts its summary): Edit and Delete for its worker or a supervisor. */
+export function openCallView(r, { onChange } = {}) {
+  const outcomes = r.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES';
+  const m = modal(r.method === 'text' ? 'Text message' : 'Phone call', h('div', { 'data-call-view': r.id },
+    mayEditCall(r) || !can('calls:write') ? null : ownedNotice(r.worker, { noun: r.method === 'text' ? 'text' : 'call' }),
+    kv([['When', fmt.dt(r.started_at)], ['Client', r.client_name || r.client_code || '—'], ['Direction', r.direction === 'inbound' ? 'In' : 'Out'],
+      ['Who', [fmt.label(r.contact_type, 'CALL_CONTACT_TYPES'), r.contact_name].filter(Boolean).join(' · ')], ['Phone', r.phone ? contactLinks(r.phone) : null],
+      ['Minutes', String(r.duration_minutes ?? 0)], ['Outcome', fmt.label(r.outcome, outcomes)], ['Flags', [r.crisis ? 'Crisis' : null, r.follow_up_needed ? `Follow-up${r.follow_up_due ? ` by ${fmt.date(r.follow_up_due)}` : ''}` : null].filter(Boolean).join(' · ') || null],
+      ['Purpose', r.purpose], ['Summary', r.summary ? h('div', { style: { whiteSpace: 'pre-wrap' } }, r.summary) : null], ['Worker', r.worker]]),
+    mayEditCall(r) ? h('div', { class: 'btn-row' },
+      h('button', { type: 'button', class: 'btn danger', style: { marginRight: 'auto' }, onClick: () => deleteCall(r, onChange, m) }, r.method === 'text' ? 'Delete text' : 'Delete call'),
+      h('button', { type: 'button', class: 'btn primary', onClick: () => { m.close(); openCallForm(r, { onDone: onChange }); } }, 'Edit')) : null), { wide: true });
+  return m;
+}
 export function callTable(rows, { showClient = true, onChange } = {}) {
   return table([
     { label: 'When', render: r => h('span', { class: 'nowrap' }, fmt.dt(r.started_at)) },
-    showClient ? { label: 'Client', render: r => r.client_id ? h('a', { href: `#/client/${r.client_id}` }, r.client_name || r.client_code, r.client_name ? h('div', { class: 'muted small mono' }, r.client_code) : null) : h('span', { class: 'muted' }, r.contact_name || '—') } : null,
+    showClient ? { label: 'Client', render: r => r.client_id ? h('a', { href: `#/client/${r.client_id}`, onClick: e => e.stopPropagation() }, r.client_name || r.client_code, r.client_name ? h('div', { class: 'muted small mono' }, r.client_code) : null) : h('span', { class: 'muted' }, r.contact_name || '—') } : null,
     { label: 'How', render: r => r.method === 'text' ? badge('💬 Text', 'purple') : badge('☎ Call', 'info') },
-    { label: 'Dir', render: r => r.direction === 'inbound' ? '⇦ In' : '⇨ Out' }, { label: 'Who', render: r => [fmt.label(r.contact_type, 'CALL_CONTACT_TYPES'), r.contact_name ? h('div', { class: 'small muted' }, r.contact_name) : null, r.phone ? h('div', { class: 'small' }, contactLinks(r.phone)) : null] },
+    { label: 'Dir', render: r => r.direction === 'inbound' ? '⇦ In' : '⇨ Out' }, { label: 'Who', render: r => [fmt.label(r.contact_type, 'CALL_CONTACT_TYPES'), r.contact_name ? h('div', { class: 'small muted' }, r.contact_name) : null, r.phone ? h('div', { class: 'small', onClick: e => e.stopPropagation() }, contactLinks(r.phone)) : null] },
     { label: 'Min', render: r => r.duration_minutes, num: true }, { label: 'Outcome', render: r => badge(fmt.label(r.outcome, r.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES'), statusKind(r.outcome)) },
     { label: 'Flags', render: r => [r.crisis ? badge('Crisis', 'danger') : null, r.follow_up_needed ? [' ', badge('Follow-up', 'warn')] : null] },
     { label: 'Purpose / summary', render: r => h('span', { class: 'small' }, r.purpose || '', r.summary ? h('div', { class: 'muted' }, r.summary.slice(0, 140)) : null) }, { label: 'Worker', key: 'worker' },
-    { label: '', render: r => (r.user_id === state.user.id || can('records:manage-others')) && can('calls:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openCallForm(r, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': r.method === 'text' ? 'Delete this text' : 'Delete this call', onClick: async () => { if (await confirmDialog(r.method === 'text' ? 'Delete text' : 'Delete call', 'Delete this contact record?', { danger: true, okText: 'Delete' })) { await del(`/api/calls/${r.id}`); onChange && onChange(); } } }, '✕')) : null },
+    { label: '', render: r => !can('calls:write') ? null : mayEditCall(r) ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: (e) => { e.stopPropagation(); openCallForm(r, { onDone: onChange }); } }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': r.method === 'text' ? 'Delete this text' : 'Delete this call', onClick: (e) => { e.stopPropagation(); deleteCall(r, onChange); } }, '✕')) : viewOnly(r.worker) },
   ].filter(Boolean), rows, { empty: 'No calls yet. Use + Log → Phone call after each call, even if it went to voicemail.',
     rowLabel: r => `${r.method === 'text' ? 'Text' : 'Call'} ${fmt.dt(r.started_at)}${r.client_name ? ', ' + r.client_name : ''}`,
     compact: { primary: r => [h('span', {}, showClient && r.client_id ? (r.client_name || r.client_code) : (r.contact_name || fmt.label(r.contact_type, 'CALL_CONTACT_TYPES'))), r.method === 'text' ? badge('💬 Text', 'purple') : badge('☎ Call', 'info')],
       secondary: r => [h('span', {}, fmt.dt(r.started_at)), badge(fmt.label(r.outcome, r.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES'), statusKind(r.outcome)), r.crisis ? badge('Crisis', 'danger') : null, r.follow_up_needed ? badge('Follow-up', 'warn') : null],
-      onTap: r => {
-        if ((r.user_id === state.user.id || can('records:manage-others')) && can('calls:write')) { openCallForm(r, { onDone: onChange }); return; }
-        modal(r.method === 'text' ? 'Text message' : 'Phone call', kv([['When', fmt.dt(r.started_at)], ['Client', r.client_name || r.client_code || '—'], ['Who', [fmt.label(r.contact_type, 'CALL_CONTACT_TYPES'), r.contact_name].filter(Boolean).join(' · ')], ['Phone', contactLinks(r.phone)], ['Outcome', fmt.label(r.outcome, r.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES')], ['Purpose', r.purpose], ['Summary', r.summary], ['Worker', r.worker]]));
-      } } });
+      // On a phone your own call opens straight into its form; anyone else's to read, with who can change it.
+      onTap: r => (mayEditCall(r) ? openCallForm(r, { onDone: onChange }) : openCallView(r, { onChange })) },
+    onRow: r => openCallView(r, { onChange }) });
 }
 route('calls', async (r) => {
   const crisis = r.query.get('crisis') === '1', fu = r.query.get('follow_up') === '1', mine = r.query.get('mine') === '1';

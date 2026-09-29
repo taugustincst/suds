@@ -50,8 +50,14 @@ process and one SQLite database per programme; a second process is refused
   has linked; it never creates or promotes accounts ([docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Single sign-on*).
 - **Local accounts** where SSO is not used: scrypt password hashing, 12-character policy, lockout, rate limiting.
 - **MFA** (TOTP) required for every role by default, with a configurable grace period.
-- **Role-based access** (navigator, clinician, supervisor, finance, readonly, admin) with caseload scoping;
-  clinical notes restricted to clinical roles; administrator access to clinical notes only via audited
+- **Role-based access** (navigator, clinician, supervisor, finance, readonly, admin). **Role defaults since
+  1.16.0:** navigators and clinicians see every client, and navigators read clinical notes without writing
+  them. From 1.16.1 SUD counseling notes are readable only by their author, the co-signer and staff who write clinical notes (clinicians, supervisors). Client records are shared: anyone who sees a client may update it, and the client's
+  primary worker is notified when someone else does. Only supervisors and administrators change or delete other
+  workers' visits, calls, notes, referrals and to-dos. Least privilege is **not** the default: a programme holds a person to their own caseload with a
+  per-user deny of *See every client* (`clients:all`), and keeps clinical notes from a navigator with a deny of
+  *Read clinical notes* — set before that person's data is imported or their device first syncs. Finance and
+  read-only see client codes, never client records. Administrator access to clinical notes only via audited
   break-glass, reviewed by a supervisor.
 - **Account requests** (Sign up) wait for administrator approval and can be turned off.
 - **Sessions**: 15-minute idle timeout (configurable, max 60), 12-hour absolute limit.
@@ -74,8 +80,13 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
   administrator configures (listed above). Nothing polls for updates.
 - **Where PHI lives:** only in the SUDS database and its encrypted backups. Logs and audit details never
   contain names or note text.
-- **Local mode** (offline copy on a device) is **off by default** and should stay off unless a documented
-  field-work need exists ([docs/PLATFORM.md](../PLATFORM.md)).
+- **Local mode** (offline copy on a device) is off unless the setup wizard or IT turns it on. The wizard
+  **recommends it for a harm-reduction & outreach programme** (field work without signal) and not for a
+  treatment-adjacent one; `LOCAL_MODE_ENABLED` overrides the answer ([docs/INSTALL.md](../INSTALL.md), Step 4;
+  [docs/PLATFORM.md](../PLATFORM.md)). A device holds every record its user may see: **under the 1.16.0 role
+  defaults that is the whole programme, clinical notes included** (about 460 MB of JSON on first sync at
+  20,000 clients). Deny *See every client* to anyone whose device should hold only their caseload, before it
+  first syncs; turn local mode off where no documented field-work need exists.
 - Data classification by table: [docs/HIPAA.md](../HIPAA.md), *Data classification inside the database*.
 
 ## Security controls and evidence

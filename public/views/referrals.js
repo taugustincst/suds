@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions } from '../app.js';
+import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, mayChange, viewOnly } from '../app.js';
 // A court order is recorded, and disclosed under, on the client's Consents tab (it has to name the order),
 // so it is not one of the bases offered here. A referral may rest only on the client's consent (which must
 // name the provider), a medical emergency, a court order or a supervisor's justified override — never a
@@ -255,9 +255,11 @@ export function referralTable(rows, { showClient = true, onChange } = {}) {
     // withConsentOnFile): a general release, or a consent naming someone else, does not let the referral share.
     { label: 'Consent', render: r => r.consent_revoked ? badge('Consent revoked', 'danger') : r.consent_on_file ? badge('Consent on file', 'ok') : badge('No Part 2 consent', 'warn') }, { label: 'Barrier', render: r => r.barrier && r.barrier !== 'none' ? fmt.label(r.barrier) : '' }, { label: 'Worker', key: 'worker' },
     { label: 'Outcome', render: r => (r.outcome_recorded_at ? badge('Recorded', 'ok') : badge('Not yet', 'warn')) },
-    { label: '', render: r => can('referrals:write') ? h('div', { class: 'row nowrap' },
+    // "Edit" as on every other list (it said "Update"); a colleague's referral says whose it is.
+    { label: '', render: r => can('referrals:write') ? h('div', {}, h('div', { class: 'row nowrap' },
       !r.outcome_recorded_at ? h('button', { class: 'btn sm primary', onClick: () => openOutcomeForm(r, onChange) }, 'Record outcome') : null,
-      (r.user_id === state.user.id || can('records:manage-others')) ? h('button', { class: 'btn sm', onClick: () => openReferralForm(r, { onDone: onChange }) }, 'Update') : null, (r.user_id === state.user.id || can('records:manage-others')) ? h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this referral', onClick: async () => { if (await confirmDialog('Delete referral', 'Delete this referral?', { danger: true, okText: 'Delete' })) { await del(`/api/referrals/${r.id}`); onChange && onChange(); } } }, '✕') : null) : null },
+      mayChange(r.user_id) ? h('button', { class: 'btn sm', onClick: () => openReferralForm(r, { onDone: onChange }) }, 'Edit') : null, mayChange(r.user_id) ? h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this referral', onClick: async () => { if (await confirmDialog('Delete referral', 'Delete this referral?', { danger: true, okText: 'Delete' })) { await del(`/api/referrals/${r.id}`); onChange && onChange(); } } }, '✕') : null),
+      mayChange(r.user_id) ? null : viewOnly(r.worker)) : null },
   ].filter(Boolean), rows, { empty: 'No referrals.' });
 }
 route('referrals', async (r) => {

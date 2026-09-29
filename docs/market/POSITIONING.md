@@ -10,8 +10,8 @@ these programmes do every day and that no EHR does well:
 
 1. **Outreach encounters** — contacts in the street, at an encampment, a syringe-services site or a
    post-overdose visit, with a named client or with nobody named at all; follow-ups and referrals that close.
-2. **Naloxone and supply distribution** — a supply cupboard (naloxone kits, fentanyl test strips and whatever
-   other items the programme lists) drawn down by each encounter, including anonymous community distribution, with
+2. **Naloxone and supply distribution** — supplies kept by item, site and lot (naloxone kits, fentanyl test
+   strips and whatever other items the programme lists), drawn down by each encounter, including anonymous community distribution, with
    stock counts and reversals reported.
 3. **Grant and funder reporting** — unduplicated people served by funding source and period, supply and
    naloxone figures, expenditures against budget lines with approvals, staff time by grant.
@@ -20,11 +20,18 @@ It does this with privacy controls built to the **42 CFR Part 2** standard (cons
 a disclosure gate and accounting, field-level encryption of identifiers and notes, an append-only audit log),
 so a programme whose records *are* Part 2 records has software support for the controls the rule calls for (its own policies, training, agreements and counsel's review are the rest), and one whose records are not gets the same care. Whether a programme's own records and workflows meet Part 2 is for its counsel to confirm; the control matrix (docs/compliance/PART2.md) has not had an independent legal review.
 
+**"Prevention", precisely.** SUDS serves harm-reduction, outreach and navigation work, including
+prevention-funded outreach and naloxone / supply distribution. It does **not** support SABG **primary-prevention**
+reporting: it has no model for group or community events with attendance, CSAP strategy, IOM category
+(universal, selective, indicated) or evidence-based programme, and no export for DHCS's primary-prevention data
+system (confirm the current system and data dictionary with DHCS). A primary-prevention set-aside provider cannot
+report its main activity from SUDS today; say so ([README.md](README.md), *Readiness scorecard*).
+
 ## Who it is for, in order
 
 | Order | Buyer | Why them |
 | --- | --- | --- |
-| **1** | **Small and mid-sized harm-reduction and prevention CBOs** (roughly 3–40 staff) funded by **opioid-settlement** allocations, **SOR** / the **Naloxone Distribution Project**, or **SABG prevention** funds — running today on spreadsheets, shared drives and paper sign-out sheets | The pain (quarter-end reporting, supply counts, anonymous contacts) is theirs daily; the buyer is the programme director; the purchase is small enough for a programme budget |
+| **1** | **Small and mid-sized harm-reduction and prevention CBOs** (roughly 3–40 staff) funded by **opioid-settlement** allocations, **SOR** / the **Naloxone Distribution Project**, or **SABG prevention** funds spent on outreach and distribution (not primary-prevention reporting) — running today on spreadsheets, shared drives and paper sign-out sheets | The pain (quarter-end reporting, supply counts, anonymous contacts) is theirs daily; the buyer is the programme director; the purchase is small enough for a programme budget |
 | **2** | **Their IT partner** (a managed-IT provider, a fiscal sponsor's IT, or a staff member who runs servers) | Today SUDS is self-hosted, so every CBO customer needs one; they are the gate, not the champion |
 | **3** | **Counties, as sponsors of CBO pilots** — a county SUD / behavioral-health or public-health department that funds CBOs and wants consistent, privacy-safe outcome data from them | A county can host a CBO's instance or fund the pilot; selling SUDS *to* a county as a department system is a later, slower sale (procurement 6–24+ months) and is not the first market |
 
@@ -40,7 +47,7 @@ The pitch is the three jobs above. Everything else is there for programmes that 
 | Core (every programme) | Optional modules (programmes that need them) |
 | --- | --- |
 | Outreach encounters, calls and texts, anonymous contacts, overdose and reversal events | Care plan, problem list, six-dimension assessment (ASAM-aligned; the ASAM Criteria are not included), PHQ-9 / GAD-7 / AUDIT-C, optional DAST-10 |
-| Supply cupboard and naloxone / test-strip distribution | Clinical notes (SOAP/DAP/BIRP/GIRP) with signature and countersignature |
+| Supplies by item, site and lot; naloxone / test-strip distribution | Clinical notes (SOAP/DAP/BIRP/GIRP) with signature and countersignature |
 | Referrals with consent check, warm hand-off and loop closure; verified resource directory | CalOMS Tx capture and extract (**not verified against the DHCS data dictionary**; do not submit until verified) |
 | Funding sources, budget lines, expenditures and approvals, staff time by grant | FHIR R4 read API and the county EHR encounter hand-off |
 | Funder report; naloxone distribution log in the style of the DHCS Naloxone Distribution Project; opioid-settlement expenditure report by allowable-use category (**each to be checked against the funder's current template**) | County forms library |
@@ -62,8 +69,8 @@ not delete records.
 
 ## Where it sits next to an EHR
 
-Where a CBO or county programme also has an EHR, SUDS holds the work around it: anonymous outreach, the supply
-cupboard, the resource directory, grant budgets and funder reports. If some services must also be in the EHR,
+Where a CBO or county programme also has an EHR, SUDS holds the work around it: anonymous outreach, supplies
+and stock, the resource directory, grant budgets and funder reports. If some services must also be in the EHR,
 SUDS produces a consent-gated hand-off file or FHIR feed instead of double entry. Most harm-reduction CBOs have
 no EHR at all; for them SUDS is the programme record.
 
@@ -73,7 +80,7 @@ no EHR at all; for them SUDS is the programme record.
 
 1. *Outreach you can count.* Log a contact in the field — named or anonymous — on a phone, even offline where the
    programme allows it; it counts in the funder report.
-2. *Supplies you can account for.* Every kit handed out comes off the cupboard; stock-outs and reversals are
+2. *Supplies you can account for.* Every kit handed out comes off the stock of the site it left from; stock-outs and reversals are
    visible before the funder asks.
 3. *Funder reports from the records you already keep.* Unduplicated people served by funding source and period,
    with small-cell suppression. **How much time this saves is not yet measured** — the pilot measures it
@@ -104,6 +111,20 @@ no EHR at all; for them SUDS is the programme record.
 Keep it for billable treatment and the clinical record. SUDS is for the outreach, supply and grant work that
 lives in spreadsheets today. Where a service must also appear in the EHR, SUDS hands it over rather than asking
 staff to double-enter.
+
+**"Who sees which clients? Can a navigator read everything?"**
+By default (since 1.16.0), yes to seeing: navigators and clinicians can open every client, for coverage and
+on-call work, and navigators read clinical notes without writing them. SUD counseling notes are readable only by their author, the co-signer and staff who write clinical notes (clinicians, supervisors). Client records are shared:
+anyone who sees a client may update it, and the client's primary worker is notified when someone else does.
+Each person changes only their own visits, calls, notes, referrals and to-dos; changing or deleting another
+worker's is for supervisors and administrators. Finance and read-only see client codes, never client records. A programme
+that wants least privilege holds a person to their own caseload with a per-user deny of *See every client*, and
+keeps clinical notes from a navigator with a deny of *Read clinical notes* (Settings → Users & permissions →
+Permissions; each deny needs a reason and is audited). Set these **before** that person's records are imported
+and before their device first syncs: a device holds whatever its user may see. There is no programme-wide
+"start everyone scoped" switch yet, so each person is set individually ([PILOT-KIT.md](PILOT-KIT.md), week −1).
+Whether that internal-use limit on SUD counseling notes meets the programme's own reading of 42 CFR §2.31(b) is a
+question for its counsel ([docs/compliance/PART2.md](../compliance/PART2.md)).
 
 **"Who runs the server?"**
 Today, your IT partner or a sponsoring county — not the vendor. SUDS makes that job small (one process, built-in
