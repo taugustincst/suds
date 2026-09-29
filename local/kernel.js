@@ -242,7 +242,7 @@ async function replaceRecoveryCode() {
   const wrap = await vault.wrapRecovery(dek, code, theVault.salt);
   const replaced = !!vault.recoveryWrap(theVault);
   const next = vault.withRecovery(theVault, wrap);
-  delete next.recovery_dropped_at;
+  delete next.recovery_dropped_at; delete next.recovery_dropped_reason;
   await saveVault(next);
   return { code, created_at: wrap.created_at, replaced };
 }
@@ -274,13 +274,38 @@ function idleCheck() {
 }
 
 /**
+ * The recovery code is the device administrator's. When that account is deactivated or removed (by another
+ * administrator here, or by the office in a sync), whoever held the code -- the person who has just lost their
+ * access -- could still open every record with it and make themselves a new administrator account. So the code
+ * stops working at once (its wrap goes, security review of 1.15.3, L1), and the administrator who made the change
+ * becomes the one who manages the device, and is asked (Home, This device) to make a new code. A sync or anyone
+ * else leaves the device with nobody managing it until an administrator signs in here and deactivates or changes
+ * nothing more: the code is gone either way. Audited, never the code.
+ */
+async function retireRecoveryIfAdminGone(ctx) {
+  const adminId = db.getSetting('device_admin_user_id', null);
+  if (!adminId) return;
+  const admin = db.one(`SELECT id, is_active FROM users WHERE id=?`, adminId);
+  if (admin && admin.is_active) return;
+  const actor = ctx && ctx.user && ctx.user.id !== adminId && auth.hasPerm(ctx.user, 'users:manage') ? ctx.user : null;
+  if (actor) db.setSetting('device_admin_user_id', actor.id);
+  if (!vault.recoveryWrap(theVault)) return;
+  const next = vault.withRecovery(theVault, null);
+  next.recovery_dropped_at = new Date().toISOString(); next.recovery_dropped_reason = 'device_admin_changed';
+  await saveVault(next);
+  audit.log({ user: actor ? { id: actor.id, username: actor.username } : { username: 'device' }, action: 'device.recovery_code.dropped',
+    details: { reason: admin ? 'device_admin_deactivated' : 'device_admin_removed', new_device_admin: actor ? actor.id : null } });
+}
+
+/**
  * Keep the wraps in step with the accounts after a change: a wrap whose account was removed or deactivated
  * goes (never the last one); one whose username changed gets the new lookup name; an account merged into
  * an office account by a sync (new id, same username) keeps its wrap under the new id. The sign-in page's
  * hints are refreshed too.
  */
-async function reconcileVault() {
+async function reconcileVault(ctx = null) {
   if (phase !== 'open' || !vault.hasAccounts(theVault)) return;
+  await retireRecoveryIfAdminGone(ctx);
   const users = db.all(`SELECT id, username, is_active FROM users`);
   const byId = new Map(users.map(u => [u.id, u]));
   const byName = new Map(); for (const u of users) byName.set(await vault.nameHash(theVault.salt, u.username), u);
@@ -536,7 +561,14 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
   // ---- the owner's recovery code (local/vault.js; docs/architecture/ADR-0008-device-encryption.md) ----
   // Whether the device has one and when it was made (never the code: it is not stored), and whether its maker
   // said they saved it. Home and This device ask the device administrator to make one until both are true.
-  const recoveryInfo = () => { const w = vault.recoveryWrap(theVault); return { exists: !!w, created_at: w ? w.created_at : null, saved: !!(w && w.saved_at) }; };
+  // dropped: when the last code stopped working without a new one being made (a restore, or the device
+  // administrator changing: retireRecoveryIfAdminGone), so the prompt can say why a code is needed again.
+  const recoveryInfo = () => {
+    const w = vault.recoveryWrap(theVault);
+    const out = { exists: !!w, created_at: w ? w.created_at : null, saved: !!(w && w.saved_at) };
+    if (!w && theVault && theVault.recovery_dropped_at) out.dropped = { at: theVault.recovery_dropped_at, reason: theVault.recovery_dropped_reason || 'restore' };
+    return out;
+  };
   const mayManageRecovery = (ctx) => {
     auth.requireAuth(ctx);
     if (!isDeviceAdmin(ctx.user)) throw new HttpError(403, 'Only the person who manages this device can make its recovery code.');
@@ -564,8 +596,9 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
   // ctx.recoveryProven); on a device that is open anyway (after a restore, before anyone signs in) the code is
   // checked here. Sets the device administrator's new password, clears their lockout and two-step
   // verification on this device, wraps the device key for the new password, replaces the code that was used
-  // with a new one (returned once, to be shown once) and signs them in. With no device administrator left
-  // (removed or deactivated), the username given becomes a new administrator account that manages the device.
+  // with a new one (returned once, to be shown once) and signs them in. With no device administrator account
+  // left at all, the username given becomes a new administrator account that manages the device (and gets a new
+  // code at once). A deactivated administrator's code does not work (retireRecoveryIfAdminGone).
   router.post('/api/local/recover', async (ctx) => {
     const v = validate(ctx.body, { code: { type: 'string', required: true, maxLen: 200 }, username: { type: 'string', maxLen: 60 }, password: { type: 'string', required: true, maxLen: 500 }, display_name: { type: 'string', maxLen: 120 } });
     const pre = recoveryRequestProblem(v);
@@ -581,7 +614,13 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
     const typed = (v.username || '').trim();
     const adminId = deviceAdminId();
     let target = adminId ? db.one(`SELECT id, username, is_active, password_hash, mfa_enabled, locked_until FROM users WHERE id=?`, adminId) : null;
-    if (target && (!target.is_active || /^scrypt\$0\$/.test(target.password_hash))) target = null;
+    // A code whose administrator was deactivated is not a way back in for them (L1): retireRecoveryIfAdminGone
+    // drops it when that happens; this is the backstop, for a device where it has not run yet.
+    if (target && !target.is_active) {
+      await retireRecoveryIfAdminGone(null);
+      throw new HttpError(403, 'The account that managed this device has been deactivated, so its recovery code no longer works. An administrator who uses this device can sign in and make a new one; otherwise restore a backup.', { recoveryRetired: true });
+    }
+    if (target && /^scrypt\$0\$/.test(target.password_hash)) target = null;
     let created = false;
     const hash = await hashPasswordAsync(v.password);
     if (target) {
@@ -730,7 +769,7 @@ async function afterSuccess(method, path, body, ctx, result) {
   try {
     if (PASSWORD_PATHS.test(path)) await afterPasswordEvent(method, path, body, ctx, result);
     if (method === 'POST' && path === '/api/auth/logout') await lockDevice();
-    else if (method !== 'GET' && /^\/api\/(users|local|admin|auth)(\/|$)/.test(path)) await reconcileVault();
+    else if (method !== 'GET' && /^\/api\/(users|local|admin|auth)(\/|$)/.test(path)) await reconcileVault(ctx);
   } catch (e) { reportError(e); }
 }
 

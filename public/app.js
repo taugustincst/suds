@@ -497,13 +497,14 @@ function watchDialogs(root) {
   dialogWatch = new MutationObserver(syncInertBehindDialogs);
   dialogWatch.observe(root, { childList: true });
 }
-export function confirmDialog(title, message, { danger = false, okText = 'Confirm', cancelText = 'Cancel', requireReason = false, minLength = 0 } = {}) {
+export function confirmDialog(title, message, { danger = false, okText = 'Confirm', cancelText = 'Cancel', requireReason = false, minLength = 0, maxLength = 0, reasonLabel = null, reasonHint = null } = {}) {
   return new Promise((resolve) => {
     let reason; let answered = false;
     // Closed with ✕ or Escape is a Cancel: whoever waits on the answer (a form's Save) is not left hanging.
     const answer = (v) => { if (!answered) { answered = true; resolve(v); } };
     const err = h('div', { class: 'err', role: 'alert' });
-    const m = modal(title, h('div', {}, h('p', {}, message), requireReason ? h('div', { class: 'field' }, h('label', {}, `Reason (recorded in audit log${minLength ? `, at least ${minLength} characters` : ''})`), reason = h('input', { required: true, minLength: minLength || null }), err) : null,
+    const rid = 'confirm-reason-' + Math.random().toString(36).slice(2, 9);
+    const m = modal(title, h('div', {}, h('p', {}, message), requireReason ? h('div', { class: 'field' }, h('label', { for: rid }, reasonLabel || `Reason (recorded in audit log${minLength ? `, at least ${minLength} characters` : ''})`), reason = h('input', { id: rid, required: true, minLength: minLength || null, maxLength: maxLength || null }), reasonHint ? h('div', { class: 'small muted' }, reasonHint) : null, err) : null,
       h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: () => { m.close(); answer(null); } }, cancelText), h('button', { class: `btn ${danger ? 'danger' : 'primary'}`, onClick: () => {
         if (requireReason) {
           const text = reason.value.trim();
@@ -663,8 +664,34 @@ export const can = (perm) => { const u = state.user; if (!u) return false; const
 // route change and an idle sign-out within the same tab, which is what was actually being lost; a reload or
 // a closed tab loses it, as it always has. The drafts belong to the person who typed them: signing in as
 // anyone else in the same tab starts with none (they used to be offered to the next person at the screen).
-const draftMap = new Map(); let draftOwner = null;
-function claimDrafts() { const uid = state.user && state.user.id; if (!uid) return false; if (draftOwner !== uid) { draftMap.clear(); draftOwner = uid; } return true; }
+// Not for ever, though (security review of 1.15.3, L3): a tab left signed out on a shared screen held what was
+// typed for as long as it stayed open. An explicit sign-out clears the drafts at once; after an idle sign-out (or
+// a session that expired) they are kept for DRAFT_KEEP_SIGNED_OUT_MS, then cleared, and the person who comes back
+// later starts afresh.
+export const DRAFT_KEEP_SIGNED_OUT_MS = 15 * 60000;
+// draftEpoch: which clearing a form was built after. A form built before the drafts were cleared never writes
+// one again (a save still queued, or a change event from a field left behind, would otherwise put back what
+// Sign out just cleared as soon as the same person signed in).
+const draftMap = new Map(); let draftOwner = null; let signedOutAt = 0; let draftEpoch = 0;
+function dropDrafts() { draftMap.clear(); draftOwner = null; signedOutAt = 0; draftEpoch++; document.querySelectorAll('#banners [data-resume-draft]').forEach(b => b.remove()); }
+/** Signed out without saying so (idle, or the session expired): the drafts' clock starts. */
+function noteSignedOut() { if (!signedOutAt) signedOutAt = Date.now(); }
+/** Clear the drafts once they have been kept signed out for long enough. `now` is for tests. Returns whether it did. */
+export function expireSignedOutDrafts(now = Date.now()) {
+  if (state.user || !signedOutAt) return false;
+  if (now - signedOutAt < DRAFT_KEEP_SIGNED_OUT_MS) return false;
+  dropDrafts(); return true;
+}
+/** How many drafts this tab holds in memory, whoever they belong to (a count only: for the sign-out checks). */
+export function heldDraftCount() { return draftMap.size; }
+function claimDrafts() {
+  const uid = state.user && state.user.id; if (!uid) return false;
+  // Back after too long (a background tab's timers may not have run): nothing kept.
+  if (signedOutAt && Date.now() - signedOutAt >= DRAFT_KEEP_SIGNED_OUT_MS) dropDrafts();
+  signedOutAt = 0;
+  if (draftOwner !== uid) { draftMap.clear(); draftOwner = uid; }
+  return true;
+}
 const drafts = {
   get size() { return claimDrafts() ? draftMap.size : 0; },
   has: (k) => claimDrafts() && draftMap.has(k),
@@ -742,8 +769,8 @@ export const NOT_SAVED = Symbol('not saved');
 export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCancel, cancelText = 'Cancel', extra, draftKey, resume = null } = {}) {
   const inputs = {}; const sections = {};
   // Whose form this is: a save still queued when they sign out must not land in the next person's drafts.
-  const formOwner = state.user && state.user.id;
-  const mine = () => !!state.user && state.user.id === formOwner;
+  const formOwner = state.user && state.user.id; const formEpoch = draftEpoch;
+  const mine = () => !!state.user && state.user.id === formOwner && draftEpoch === formEpoch;
   const grid = h('div', { class: 'form-grid' });
   let target = grid;
   for (const f of fields) {
@@ -1355,7 +1382,8 @@ export function globalSearch() {
   // It finds programs in the resource directory too (1.15.3), so it says so where the reader may see them.
   const what = can('resources:read') ? 'Find a client or resource' : 'Find a client';
   const listId = `gsearch-results-${Math.random().toString(36).slice(2, 7)}`;
-  const input = h('input', { type: 'search', placeholder: `${what}: name, code or exact phone…`, 'aria-label': what, 'aria-controls': listId, 'data-global-search': '1' });
+  // A de-identified role finds clients by code only (the server matches nothing else for it: 1.15.4).
+  const input = h('input', { type: 'search', placeholder: can('clients:read') ? `${what}: name, code or exact phone…` : 'Find a client by code…', 'aria-label': what, 'aria-controls': listId, 'data-global-search': '1' });
   const list = h('div', { class: 'card tight hidden search-results', id: listId, role: 'region', 'aria-label': 'Search results' });
   // What was found is said out loud (WCAG 4.1.3, 1.16.0): "3 clients and 1 resource found" or "No match", in a
   // polite live region, and Down arrow moves into the results (Up and Down move through them, Escape returns).
@@ -1903,7 +1931,10 @@ function mobileBar(r, side) {
 function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; prefs.set('theme', next); applyTheme(); }
 try { const cached = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); if (cached.theme) document.documentElement.dataset.theme = cached.theme; } catch {}
 
-export async function logout() { await prefs.flush(); try { await post('/api/auth/logout', {}); } catch {} state.user = null; state.mfaPending = false; document.querySelectorAll('#banners [data-banner="mfa-required"]').forEach(b => b.remove());
+// `idle`: signed out for inactivity, when what was being typed is kept for a while (DRAFT_KEEP_SIGNED_OUT_MS);
+// choosing Sign out clears it from memory at once.
+export async function logout({ idle = false } = {}) { await prefs.flush(); try { await post('/api/auth/logout', {}); } catch {} state.user = null; state.mfaPending = false; document.querySelectorAll('#banners [data-banner="mfa-required"]').forEach(b => b.remove());
+  if (idle) noteSignedOut(); else dropDrafts();
   // nav() to a new address renders through the hash change; rendering here as well drew the sign-in page twice.
   document.querySelectorAll('#banners [data-resume-draft]').forEach(b => b.remove());
   const from = location.hash; nav('login'); if (location.hash === from) render(); }
@@ -1955,7 +1986,7 @@ function touch() { lastActivity = Date.now(); }
 function startIdleWatch() {
   clearInterval(idleTimer);
   idleTimer = setInterval(() => {
-    if (!state.user) return;
+    if (!state.user) { noteSignedOut(); expireSignedOutDrafts(); return; }
     const idleMs = Date.now() - lastActivity; const limit = state.idleMinutes * 60000;
     let w = document.getElementById('idle-warn');
     // WCAG 2.2.1: warned a minute ahead, with one obvious way to stay — a button (any key or tap works too).
@@ -1969,9 +2000,10 @@ function startIdleWatch() {
     if (idleMs <= limit - 60000 && w) w.remove();
     if (idleMs > limit) {
       if (w) w.remove();
-      logout();
-      // Anything half-typed is kept in memory, so say so rather than letting it look like lost work.
-      toast(drafts.size ? 'Signed out due to inactivity. What you had typed is kept — reopen the form after signing in.' : 'Signed out due to inactivity', 'error');
+      // Anything half-typed is kept in memory for a while, so say so rather than letting it look like lost work.
+      const kept = drafts.size;
+      logout({ idle: true });
+      toast(kept ? `Signed out due to inactivity. What you had typed is kept for ${DRAFT_KEEP_SIGNED_OUT_MS / 60000} minutes — sign in again and reopen the form.` : 'Signed out due to inactivity', 'error');
     }
   }, 5000);
 }
@@ -2038,7 +2070,7 @@ window.__suds = { downloadCsv: (...a) => downloadCsv(...a) };
 // Stamped by scripts/build-local.js from package.json. The two kernel assets are requested with it as a
 // version query so the browser may keep them for good (server/http.js serves `?v=` as immutable) while a
 // new release, with a new version, is a new URL. public/sw.js caches the same URLs for offline starts.
-const SUDS_VERSION = '1.15.3';
+const SUDS_VERSION = '1.15.4';
 
 // ---------- build stamp ----------
 // Which build is this? A tester reporting "still broken" after a release needs to be able to say, and so

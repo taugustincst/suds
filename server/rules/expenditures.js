@@ -1,13 +1,14 @@
 'use strict';
 // The rules for expenditures, for /api/budget/expenditures (crud.js) and sync push. Spending is recorded against
 // an active fund, inside its period, on a line of that fund; it is its submitter's (or an approver's) to change
-// while pending. Approval is budget:approve's, done at the office (POST .../approve and its state machine): a
-// device records spending as pending and never approves it or rewrites a ruling.
+// while pending. Approval is budget:approve's, done at the office (POST .../approve and its state machine, which
+// refuses your own): a device records spending as pending and never approves, rejects or reimburses it, whoever
+// holds it (security review of 1.15.3, H1: an approver's device approved the approver's own spending).
 const db = require('../db');
 const auth = require('../auth');
 const C = require('../constants');
 const { define, refuse, flag, notPermitted } = require('./core');
-const { periodProblem } = require('./shared');
+const { periodProblem, officeRuling } = require('./shared');
 
 const SETTLEMENT = { settlement_use: { type: 'string', enum: C.SETTLEMENT_USES.map(x => x.code) }, settlement_hiaa: { type: 'string', enum: [...C.SETTLEMENT_HIAA.map(x => x.code), 'none'] } };
 const APPROVAL = ['status', 'approved_by', 'approved_at', 'approval_note_enc'];
@@ -26,8 +27,9 @@ module.exports = define({
   },
   owner: { col: 'user_id', all: 'clients:all' },
   editableBy: (user, row) => (row.status === 'pending' && (row.user_id === user.id || auth.hasPerm(user, 'budget:approve')) ? null : notPermitted('You cannot edit this record')),
-  // An approver's ruling made offline (approve, reject, reimburse) is theirs to send, whatever the item's status.
-  othersMayChange: (existing, row, changed, c) => auth.hasPerm(c.user, 'budget:approve') && changed.every(col => APPROVAL.includes(col)),
+  // A push that only asks for a ruling (approve, reject, reimburse) reaches normalise, which keeps the office's
+  // and flags the ask, whatever the item's status and whoever sent it.
+  othersMayChange: (existing, row, changed) => changed.every(col => APPROVAL.includes(col)),
   // Money that has moved keeps its record: only a pending item is deleted, by its submitter or an approver.
   deletableBy: (user, row) => (row.status !== 'pending' ? 'skip' : row.user_id === user.id || auth.hasPerm(user, 'budget:approve') ? null : notPermitted('You cannot delete this record')),
   check(row, c) {
@@ -42,11 +44,7 @@ module.exports = define({
     return [periodProblem(f, row.spent_at !== undefined ? row.spent_at : e.spent_at, 'Expenditure date'),
       lineId && !db.one(`SELECT 1 FROM budget_lines WHERE id=? AND funding_source_id=?`, lineId, f.id) ? refuse('has a value the office does not accept (its budget line belongs to another fund)', { message: 'Budget line does not belong to fund' }) : null];
   },
-  normalise(row, c) {
-    const e = c.existing;
-    if (!e) { row.status = 'pending'; row.approved_by = null; row.approved_at = null; }
-    else if (!auth.hasPerm(c.user, 'budget:approve')) { row.status = e.status; row.approved_by = e.approved_by; row.approved_at = e.approved_at; row.approval_note_enc = undefined; }
-    return null;
-  },
+  // The status is the office's from the start (pending) to the end (reimbursed): shared.js officeRuling.
+  normalise: (row, c) => officeRuling(row, c, { what: 'spending', rulings: ['approved', 'rejected', 'reimbursed'], cols: ['approved_by', 'approved_at'], enc: ['approval_note_enc'], initial: () => 'pending' }),
 });
 module.exports.SETTLEMENT = SETTLEMENT;

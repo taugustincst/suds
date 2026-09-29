@@ -75,3 +75,15 @@ test('a sync round trip: what the office holds reaches the device, what the devi
   assert.equal(dn.release.id, dp.release.id); assert.equal(on.release.id, op.release.id);
   assert.deepEqual(strip(dn), strip(on), 'the NDP log of the release');
 });
+
+test('on a device that syncs with an office, rulings are refused up front: approvals and countersignatures are the office\'s (1.15.4, H1)', async () => {
+  // Sync never carries a ruling to the office (server/rules/shared.js officeRuling), so making one on the device
+  // would look done and be undone at the next sync. The routes say so instead.
+  for (const [p, body] of [['/api/time/any-id/approve', { decision: 'approved' }], ['/api/time/approve-batch', { ids: ['any-id'], decision: 'approved' }],
+    ['/api/budget/expenditures/any-id/approve', { status: 'approved' }], ['/api/notes/any-id/cosign', {}]]) {
+    const r = await device('POST', p, body);
+    assert.equal(r.status, 403, `${p}: ${JSON.stringify(r.data)}`);
+    assert.equal(r.data.rulingAtOffice, true, p);
+    assert.match(r.data.error, /office SUDS/);
+  }
+});

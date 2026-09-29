@@ -216,8 +216,14 @@ module.exports = (r) => {
     const scope = v.client_ids && v.client_ids.length
       ? { sql: `AND a.client_id IN (${v.client_ids.map(() => '?').join(',')})`, params: v.client_ids }
       : { sql: '', params: [] };
-    const open = db.all(`SELECT a.* FROM assignments a JOIN clients c ON c.id=a.client_id
+    const held = db.all(`SELECT a.* FROM assignments a JOIN clients c ON c.id=a.client_id
       WHERE a.user_id=? AND (a.end_date IS NULL OR a.end_date >= ?) AND a.ended_at IS NULL AND c.deleted_at IS NULL ${scope.sql}`, from.id, when, ...scope.params);
+    // Moving a client is putting someone on their care team, so it is for clients the actor can reach, or anyone
+    // with clients:all (server/rules/assignments.js; security review of 1.15.3, M1): without it, "move a
+    // caseload" to oneself would undo a deny of clients:all. The others stay where they are, counted, not named.
+    const reach = auth.hasPerm(ctx.user, 'clients:all') ? () => true : (id) => auth.canAccessClient(ctx.user, id);
+    const open = held.filter(a => reach(a.client_id));
+    const outOfReach = held.length - open.length;
 
     let moved = 0; let tasks = 0; const skipped = [];
     db.transaction(() => {
@@ -242,8 +248,8 @@ module.exports = (r) => {
         if (!v.client_ids || !v.client_ids.length) tasks += db.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS NULL`, to.id, db.now(), from.id).changes;
       }
     });
-    audit.log({ user: ctx.user, action: 'caseload.transfer', entity: 'user', entityId: from.id, ip: ctx.ip, details: { to: to.id, clients: moved, tasks, skipped: skipped.length, effective_date: when } });
-    return { ok: true, transferred: moved, tasks_reassigned: tasks, skipped, from: from.display_name, to: to.display_name };
+    audit.log({ user: ctx.user, action: 'caseload.transfer', entity: 'user', entityId: from.id, ip: ctx.ip, details: { to: to.id, clients: moved, tasks, skipped: skipped.length, not_on_caseload: outOfReach || undefined, effective_date: when } });
+    return { ok: true, transferred: moved, tasks_reassigned: tasks, skipped, not_on_caseload: outOfReach, from: from.display_name, to: to.display_name };
   });
 
   // The reasons a discharge may give now, in the programme's order, and their wording (Settings → Lists).

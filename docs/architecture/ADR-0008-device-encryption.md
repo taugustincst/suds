@@ -2,7 +2,8 @@
 
 - **Status:** accepted
 - **Date recorded:** 2026-09-25 (encryption at rest on the device; supersedes the "keys beside the data" design
-  of local mode 1.1.0–1.11.0); amended 2026-09-28 (the owner's recovery code, 1.15.1)
+  of local mode 1.1.0–1.11.0); amended 2026-09-28 (the owner's recovery code, 1.15.1; the code follows the
+  device administrator, 1.15.4)
 
 ## Context
 
@@ -100,11 +101,25 @@ does not store is the password its people type.
   administrator's new password with `hashPasswordAsync`, clears its lockout, failed attempts and two-step
   verification on the device, re-wraps the DEK for the new password, replaces the code with a new one returned
   once, audits `device.recovered` (who, method, whether a lockout or two-step verification was cleared — never
-  the code) and signs them in). If the device administrator's account is gone or inactive, the username given
-  becomes a new administrator account and the device administrator. `reconcileVault` keeps the recovery wrap
-  (it belongs to no account), backups do not carry it (`backupRecord`), and the key rotation after a restore
-  drops one made before it (`recovery_dropped_at`; the `device.key_rotated` entry says so), after which Home
-  asks for a new one.
+  the code) and signs them in). If the device administrator's account no longer exists, the username given
+  becomes a new administrator account and the device administrator (with a new code at once). `reconcileVault`
+  keeps the recovery wrap (it belongs to no account), backups do not carry it (`backupRecord`), and the key
+  rotation after a restore drops one made before it (`recovery_dropped_at`; the `device.key_rotated` entry says
+  so), after which Home asks for a new one.
+  **The code follows the device administrator (1.15.4).** The code is the device administrator's; the person
+  holding it may be the one who has just lost their access. Up to 1.15.3 an administrator who deactivated the
+  device administrator left that person's code working, and it made them a new administrator account
+  (security review of 1.15.3, L1). Now, when the device administrator's account is deactivated or removed
+  (here, or by the office in a sync), `retireRecoveryIfAdminGone` drops the recovery wrap at once
+  (`recovery_dropped_at`, `recovery_dropped_reason: device_admin_changed`; audited `device.recovery_code.dropped`,
+  never the code), the administrator who made the change becomes the device administrator, and Home and This
+  device ask them for a new code (`recovery.dropped` in `GET /api/local/device` says why). `POST
+  /api/local/recover` refuses a deactivated administrator's code as a backstop. Dropping the wrap does not
+  re-key the device: a copy of the store taken while the old code was valid still opens with it, as a copy
+  taken before any password change opens with the old password; the defence against copies is keeping the
+  code off the device. The code screen now offers **Print it** first and **Save to another device (as a
+  file)**, saying to put the file on a USB stick or another computer (or move it there and delete it here):
+  a file left on the device sits next to the records it opens.
   **Threat model.** Whoever holds the code can open every record on the device, like a password that belongs
   to nobody and never expires: it is kept apart from the device (paper in a locked place, a password manager),
   and the screen and the downloaded file say so. Against a copied store its 140 bits under PBKDF2 are beyond

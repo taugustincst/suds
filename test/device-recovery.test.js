@@ -3,7 +3,8 @@
 // code"): the browser kernel bundled from the current sources and run in Node (test/fixtures/kernel-harness.js).
 // Set a device up, make its code, lock it, get back in with the code (the records open, the old password and
 // the used code stop working), wrong codes refused and slowed, a new code replacing the old one, only the
-// device administrator making one, a device whose administrator is gone, and the code never in the audit log
+// device administrator making one, a device whose administrator is deactivated (the code stops working and the
+// administrator who took over makes a new one: 1.15.4), and the code never in the audit log
 // or anything stored. The routes are the kernel's alone: an office server answers 404 (the last test).
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
@@ -146,24 +147,37 @@ test('a new code replaces the old one; recovery clears a lockout and two-step ve
   await signOut();
 });
 
-test('with the device administrator gone, recovery makes a new administrator account', async () => {
-  // The owner makes the navigator an administrator, who then deactivates the owner's account.
+test('the device administrator deactivated: their code stops working, and the administrator who did it is asked for a new one (1.15.4, L1)', async () => {
+  // The owner makes the navigator an administrator, who then deactivates the owner's account: someone who has
+  // just lost their access must not keep a key to every record here (security review of 1.15.3, L1).
   await signIn('owner', PW);
   const navRow = expect(await call('GET', '/api/local/accounts'), 200, 'accounts').rows.find(u => u.username === 'nav');
   expect(await call('PUT', `/api/local/accounts/${navRow.id}`, { role: 'admin' }), 200, 'promote');
   await signOut();
   await signIn('nav', NAV_PW);
+  assert.equal(expect(await call('GET', '/api/local/device'), 200, 'device').device_admin, false, 'not yet the device administrator');
   expect(await call('PUT', `/api/users/${ownerId}`, { is_active: false }), 200, 'deactivate the owner');
+  const dev = expect(await call('GET', '/api/local/device'), 200, 'device');
+  assert.equal(dev.device_admin, true, 'the administrator who deactivated them now manages the device');
+  assert.equal(dev.recovery.exists, false, 'the old code is gone');
+  assert.equal(dev.recovery.dropped.reason, 'device_admin_changed', 'and the device says why');
+  expect(await call('GET', '/api/local/status'), 200, 'status');
   await signOut();
-  const code = codes[codes.length - 1];
-  const noName = await recover({ code, password: PW2 });
-  assert.equal(noName.status, 400); assert.equal(noName.data.usernameRequired, true, 'a username for the new administrator is asked for');
-  const taken = await recover({ code, username: 'nav', password: PW2 });
-  assert.equal(taken.status, 400, 'an existing username is not taken over');
-  const r = expect(await recover({ code, username: 'newboss', password: PW2, display_name: 'New Boss' }), 200, 'recover with a new account');
-  assert.equal(r.account, 'created'); assert.equal(r.user.username, 'newboss'); assert.equal(r.user.role, 'admin');
+  assert.equal(expect(await call('GET', '/api/local/status'), 200, 'status').recovery, false, 'the sign-in page offers no recovery code');
+  const old = await recover({ code: codes[codes.length - 1], username: 'takeover', password: PW2, display_name: 'Former owner' });
+  assert.equal(old.status, 404, `the deactivated owner's code opens nothing (${JSON.stringify(old.data)})`);
+  assert.equal(old.data.noRecoveryCode, true);
+  assert.equal(L.phase(), 'locked');
+  // The new administrator makes a new code (Home prompts them), which works for them.
+  await signIn('nav', NAV_PW);
+  const made = expect(await call('POST', '/api/local/recovery', { password: NAV_PW }), 200, 'a new code');
+  assert.equal(made.replaced, false, 'there was none left to replace');
+  codes.push(made.code);
+  assert.equal(expect(await call('GET', '/api/local/device'), 200, 'device').recovery.dropped, undefined, 'the reason goes once a new code is made');
+  await signOut();
+  const r = expect(await recover({ code: made.code, username: 'nav', password: PW2 }), 200, 'the new administrator recovers with it');
+  assert.equal(r.account, 'reset'); assert.equal(r.user.username, 'nav');
   codes.push(r.recovery_code);
-  assert.equal(expect(await call('GET', '/api/local/device'), 200, 'device').device_admin, true, 'the new account manages the device');
   expect(await call('GET', `/api/clients/${clientId}`), 200, 'and the records are there');
 });
 
@@ -172,7 +186,10 @@ test('the audit log records who recovered and how, and no code appears in it or 
   const recovered = log.filter(x => x.action === 'device.recovered');
   assert.equal(recovered.length, 3, 'each recovery is audited');
   assert.ok(recovered.every(x => x.details.method === 'recovery_code'));
-  assert.deepStrictEqual(recovered.map(x => x.details.account).sort(), ['created', 'reset', 'reset']);
+  assert.deepStrictEqual(recovered.map(x => x.details.account).sort(), ['reset', 'reset', 'reset']);
+  const dropped = log.filter(x => x.action === 'device.recovery_code.dropped');
+  assert.equal(dropped.length, 1, 'the code dropped when the device administrator was deactivated is audited');
+  assert.equal(dropped[0].details.reason, 'device_admin_deactivated'); assert.equal(dropped[0].username, 'nav');
   assert.ok(recovered.some(x => x.details.mfa_cleared === true && x.details.lockout_cleared === true), 'clearing two-step verification and a lockout is recorded');
   assert.ok(log.some(x => x.action === 'device.recovery_code.created' && x.details.replaced === false && x.username === 'owner'), 'making a code is audited, with who');
   assert.ok(log.some(x => x.action === 'device.recovery_code.failed' && x.success === 0), 'a wrong password when making one is audited');

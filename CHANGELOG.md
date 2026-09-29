@@ -91,6 +91,74 @@ existing `GET /api/reports/ssp`. One new setting: `API_RATE_LIMIT`.
   independent statistical review first); SSP participants from anonymous contacts (no field holds a participant
   code; adding one is a schema change); the SUPRT-A codebook and SPARS batch file, and the official NDP and SSP
   templates (not available to check against); people trained (SUDS does not record training).
+## 1.15.4 — 2026-09-29
+
+### Security
+
+Fixes from an independent security review of 1.15.3, for the 1.15.4 security release. No migration, no new
+permission, no change to which roles hold a permission, and no new route.
+
+**Advisory:** SUDS 1.15.3 and earlier are affected. H1, H2 and the self-assignment in M1 affect every release up to
+and including 1.15.3; the permission-override findings (M1, M2, L2) affect 1.15.0–1.15.3; the recovery code (L1)
+affects 1.15.1–1.15.3. Upgrade to 1.15.4.
+
+- **H1 (High) — a device could approve time and spending, its owner's own included.** Sync push kept the status a
+  device sent for a time entry, so a navigator's phone could push its own hours as *approved*, and a supervisor's
+  could approve the supervisor's own; an approver's device could approve (or reimburse) the approver's own
+  expenditure, which `POST /api/budget/expenditures/:id/approve` refuses. Rulings are now the office's alone, in
+  the rules both doors share (`server/rules/shared.js` `officeRuling`, used by `server/rules/time_entries.js` and
+  `server/rules/expenditures.js`): a push may submit time (draft → submitted, and resubmit time it was shown
+  returned) and keeps everything else about the status, approver, date and note as the office has it. A ruling
+  in a pushed row is not applied and not silently dropped: the row lands without it and is **flagged** to the
+  device's sync screen and the audit trail (`sync.conflict`, `flagged: "ruling"`). The same holds for a note's
+  countersignature (never taken from a device, now flagged) and for whether a note needs one: a trainee's device
+  could push `cosign_required = 0` and escape countersigning; it now comes from the author's account, as over
+  REST. On a device that syncs with an office, the approve, approve-batch, expenditure-approve and countersign
+  routes answer 403 *done on the office SUDS* up front. The other columns that record the office's own acts were
+  checked: a CalOMS record's extract date could be cleared by a push (putting the record in the next DHCS extract
+  again) or set; it is now the office's, like a SUPRT-A assessment's SPARS export date, and a device that asserts
+  either is flagged (`flagged: "office_mark"`). Note signatures (the author's own), referral outcomes (anyone on
+  the caseload, as over REST) and the accounting of disclosures (append-only) take nothing more from a device
+  than their REST routes do.
+- **H2 (High) — a de-identified role could find out whether a named person is a client.** Finance and read-only
+  accounts could search `GET /api/clients?q=` by name, date of birth or phone (including `rank=1`), and a match
+  told them that person is a client — without showing a name, but 42 CFR Part 2 protects the fact itself. For a
+  role without `clients:read`, `q` now matches an exact client code only; anything else finds nobody, in the same
+  shape as no match, and the search box says to search by code. Every client search is audited by the field it
+  looked in (`searched`: name, dob, phone or client_code; `search_refused` for a de-identified identifier search),
+  never by what was typed.
+- **M1 (Medium) — permission overrides broke caseload scoping.** Holding `clients:list-deidentified` exempted
+  anyone from caseload scoping, so a navigator granted it saw every client's record; finance or read-only could be
+  granted `clients:read` or `export:identified`; and `assignments:manage` let its holder put themselves on any
+  client, which undid a deny of `clients:all`. Caseload scoping now follows `clients:all` alone (a de-identified
+  account, which can open no record, is the only one not held to a caseload), so denying `clients:all` puts a
+  person back on their caseload in lists, records, search, exports, sync pull, the dashboard and reports. One rule
+  (`server/permissions.js` `grantProblem`) refuses, at grant time, `clients:read`, `clients:write` or
+  `export:identified` to a de-identified role and `clients:list-deidentified` to a role that opens records, and
+  `auth.effectivePerms` ignores such a grant at every request, so an older row does nothing (Users & permissions
+  marks it *No effect*). Adding (or ending) a care-team assignment needs a client the actor can reach, or
+  `clients:all`, at both doors (`server/rules/assignments.js`), and **Move a caseload** moves only such clients
+  (the rest are counted as `not_on_caseload`, not named). `assignments:manage`, `clients:read` and `clients:list-deidentified` are rated
+  *sensitive* in the permission catalog (risk labels only).
+- **M2 (Medium) — privileged grants survived a role change, so a demoted account could promote itself.** An
+  administrator granted `users:manage` and then made a navigator kept the grant, and could set their own role back
+  to administrator. Grants a role may not hold are now ignored at every request (`effectivePerms`) and removed
+  when the role changes (each audited as `user.permission.revoke`, `cause: "role_change"`), and nobody can change
+  their own role (`PUT /api/users/:id`), up or down.
+- **L1 (Low) — the recovery code outlived the device administrator.** On SUDS on this device, deactivating the
+  person who manages the device left their recovery code working, and it made them a new administrator account.
+  Now the code stops working the moment that account is deactivated or removed (audited
+  `device.recovery_code.dropped`), the administrator who made the change becomes the one who manages the device,
+  and Home and **This device** ask them to make a new code. The code screen offers **Print it** first and
+  **Save to another device (as a file)**, and says to keep the file off the device.
+- **L2 (Low) — override hygiene.** An override's reason is 10 to 300 characters, the form says to keep client
+  details out of it, and the audit log records its length and SHA-256, not its words. Revoking an override needs a reason
+  (`DELETE /api/users/:id/permissions/:permission` with `{ reason }`; the Revoke dialog asks). A deny is audited as
+  `user.permission.deny` (it was logged as a grant). `npm run reset-admin` removes a deny of `users:manage` on the
+  account it resets and says so, and says first, plainly, when it reactivates a deactivated administrator.
+- **L3 (Low) — unsent visit drafts stayed in a signed-out tab's memory.** Choosing **Sign out** now clears
+  what was being typed at once (and a form left open before it cannot put it back when the same person signs in
+  again); after a sign-out for inactivity it is kept for 15 minutes for the same person to resume, then cleared.
 
 ## 1.15.3 — 2026-09-29
 

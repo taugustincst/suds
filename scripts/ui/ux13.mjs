@@ -230,25 +230,44 @@ try {
     await page.waitForTimeout(700);
     await closeModals(page);
     ok(await page.evaluate(() => !Object.keys(localStorage).some(k => /draft/i.test(k) || /ux13 unsent/.test(localStorage.getItem(k) || ''))), 'nothing of it is in browser storage (memory only, as every draft)');
-    // Signed out and back in (an idle sign-out keeps it in memory): offered at the top of the page.
-    await page.evaluate(async () => (await import('./app.js')).logout());
+    // Signed out for inactivity and back in (an idle sign-out keeps it in memory for a while): offered at the top.
+    await page.evaluate(async () => (await import('./app.js')).logout({ idle: true }));
     await signIn(page, 'mrivera', PW);
     ok(await page.$('#banners [data-resume-draft="intervention:new"]'), 'back in, the same person is asked "Resume your unsent visit?" at the top');
     await page.click('#banners [data-resume-draft-discard="intervention:new"]'); await settle(page);
     await openVisit(page);
     ok(!(await page.$('.modal [data-resume-question]')), 'Discard drops it: the next visit starts fresh');
+    await page.fill('.modal textarea[name=summary]', 'ux13 unsent visit, kept a while');
+    await page.waitForTimeout(700);
+    await closeModals(page);
+    // Not for ever (1.15.4, L3): signed out for inactivity for longer than drafts are kept, it is cleared.
+    const held = () => page.evaluate(async () => (await import('./app.js')).heldDraftCount());
+    await page.evaluate(async () => (await import('./app.js')).logout({ idle: true }));
+    ok(await held() >= 1, 'an idle sign-out keeps the draft in memory');
+    eq(await page.evaluate(async () => { const a = await import('./app.js'); return a.expireSignedOutDrafts(Date.now() + a.DRAFT_KEEP_SIGNED_OUT_MS - 60000); }), false, 'for the time drafts are kept');
+    eq(await page.evaluate(async () => { const a = await import('./app.js'); return a.expireSignedOutDrafts(Date.now() + a.DRAFT_KEEP_SIGNED_OUT_MS + 1000); }), true, 'and clears it once the tab has been signed out longer');
+    eq(await held(), 0, 'nothing of it is left in memory');
+    await signIn(page, 'mrivera', PW);
+    ok(!(await page.$('#banners [data-resume-draft]')), 'so the same person signing in later is not offered it', { held: await held() });
+    await openVisit(page);
+    ok(!(await page.$('.modal [data-resume-question]')), 'nor asked about it in the visit form');
     await page.fill('.modal textarea[name=summary]', 'ux13 someone else must not see this');
     await page.waitForTimeout(700);
     await closeModals(page);
     // Someone else signing in at the same screen gets neither the question nor the draft.
-    await page.evaluate(async () => (await import('./app.js')).logout());
+    await page.evaluate(async () => (await import('./app.js')).logout({ idle: true }));
     await signIn(page, 'jwalker', PW);
     ok(!(await page.$('#banners [data-resume-draft]')), 'another person signing in on the same tab is not offered it');
     await openVisit(page);
     ok(!(await page.$('.modal [data-resume-question]')), 'nor asked about it in the visit form');
     eq(await page.inputValue('.modal textarea[name=summary]'), '', 'and it is not filled in');
+    await page.fill('.modal textarea[name=summary]', 'ux13 typed by the second person');
+    await page.waitForTimeout(700);
     await closeModals(page);
+    ok(await held() >= 1, 'what the second person typed is kept while they are signed in');
+    // Choosing Sign out clears it at once (1.15.4, L3).
     await page.evaluate(async () => (await import('./app.js')).logout());
+    eq(await held(), 0, 'choosing Sign out clears what was typed from memory at once');
     await signIn(page, 'mrivera', PW);
     ok(!(await page.$('#banners [data-resume-draft]')), 'and it is gone for its author too once someone else signed in there');
   }

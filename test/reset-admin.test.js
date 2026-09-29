@@ -54,9 +54,34 @@ test('reset-admin gives a locked-out administrator a temporary password, clears 
     assert.equal(u.sessions, 0, 'every session it had is ended');
     assert.equal(u.audit.length, 1, 'audited once');
     assert.equal(u.audit[0].username, 'cli');
-    assert.deepStrictEqual(JSON.parse(u.audit[0].details), { username: 'boss', mfa_cleared: true, lockout_cleared: true, reactivated: false });
+    assert.deepStrictEqual(JSON.parse(u.audit[0].details), { username: 'boss', mfa_cleared: true, lockout_cleared: true, reactivated: false, users_manage_deny_cleared: false });
+    assert.doesNotMatch(r.stdout, /reactivated|deny/i, 'nothing said about what did not happen');
     assert.ok(!JSON.stringify(u.audit).includes(pw), 'never the password');
     const again = node(['scripts/reset-admin.js', 'boss']);
     assert.notEqual((/\n {4}(\S+)\n/.exec(again.stdout) || [])[1], pw, 'a new random password each time');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('reset-admin says loudly when it reactivates a deactivated administrator, and clears a deny of users:manage on that account (1.15.4, L2)', () => {
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-reset-admin-'));
+  const env2 = { SUDS_DATA_DIR: dir2, SUDS_DB_PATH: path.join(dir2, 'suds.db') };
+  const inDb2 = (code) => { const r = node(['-e', `const db = require('./server/db'); db.open(); const out = (() => { ${code} })(); db.close(); process.stdout.write(JSON.stringify(out ?? null));`], env2); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  try {
+    assert.equal(node(['scripts/create-admin.js'], { ...env2, SUDS_ADMIN_USERNAME: 'gone', SUDS_ADMIN_PASSWORD: 'Original-Pass-2026!' }).status, 0);
+    // Deactivated (they left), and with users:manage denied: a reset used to bring the account back silently,
+    // and back without the power to manage users -- so the person resetting could not fix anything either.
+    inDb2(`const u = db.one("SELECT id FROM users WHERE username='gone'"); db.run("UPDATE users SET is_active=0 WHERE id=?", u.id);
+      db.run("INSERT INTO user_permission_overrides(user_id, permission, mode, reason) VALUES(?, 'users:manage', 'deny', 'left the organisation')", u.id);
+      db.run("INSERT INTO user_permission_overrides(user_id, permission, mode, reason) VALUES(?, 'audit:read', 'deny', 'kept as it was')", u.id);`);
+    const r = node(['scripts/reset-admin.js', 'gone'], env2);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /WARNING.*was deactivated.*is active again/s, 'the reactivation is said first and plainly');
+    assert.match(r.stdout, /deactivate it again under Settings/);
+    assert.match(r.stdout, /users:manage.*denied.*removed/s, 'and the cleared deny is said');
+    const after = inDb2(`const u = db.one("SELECT * FROM users WHERE username='gone'"); return { active: u.is_active, overrides: db.all("SELECT permission, mode FROM user_permission_overrides WHERE user_id=? ORDER BY permission", u.id), audit: db.all("SELECT details FROM audit_log WHERE action='admin.reset_cli'") };`);
+    assert.equal(after.active, 1);
+    assert.deepStrictEqual(after.overrides, [{ permission: 'audit:read', mode: 'deny' }], 'only the users:manage deny is removed');
+    const d = JSON.parse(after.audit[0].details);
+    assert.equal(d.reactivated, true); assert.equal(d.users_manage_deny_cleared, true);
+  } finally { fs.rmSync(dir2, { recursive: true, force: true }); }
 });

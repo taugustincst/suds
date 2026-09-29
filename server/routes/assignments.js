@@ -28,6 +28,8 @@ module.exports = (r) => {
   });
   r.post('/api/assignments/:id/end', auth.requireAuth, auth.requirePerm('assignments:manage'), (ctx) => {
     const a = db.one(`SELECT * FROM assignments WHERE id=?`, ctx.params.id); if (!a) throw notFound();
+    // The same reach as adding one (server/rules/assignments.js): a client this person can open, or clients:all.
+    if (!auth.hasPerm(ctx.user, 'clients:all')) auth.assertClientAccess(ctx, a.client_id);
     // ended_at, not just end_date: the worker loses the client now rather than at the end of the day.
     db.run(`UPDATE assignments SET end_date=date('now'), ended_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), a.id);
     audit.log({ user: ctx.user, action: 'assignment.end', entity: 'assignment', entityId: a.id, clientId: a.client_id, ip: ctx.ip });
