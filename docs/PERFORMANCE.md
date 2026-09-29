@@ -161,6 +161,18 @@ most 10 of the 114 years; at most 2 of the 18 years and 16 of the 72 quarters), 
 1.16.3 stated a band ("about 110 to 240 events") from a narrower sweep, and the engineering review of 1.16.3 (M3)
 found refusals outside it on both sides; 1.16.4 measured the table above's left column.
 
+**On a device, the audit runs in a Web Worker (1.17.0).** The browser kernel answers the app's requests on the
+page's own thread, and until 1.17.0 it audited a publication release there too, holding a phone for up to the
+backstop. It now hands the audit to a Web Worker (`local/audit-runner.js`; ADR-0009, *Where it runs*), so what stays on
+the page's thread is the read of the figures, as on the server. The cost is one more file: `public/local/audit-worker.js`,
+the audit alone, 111 kB (30 kB gzipped, 26 kB with Brotli), built by `npm run build:local` beside the kernel and
+precached by the service worker under the kernel's version (`public/sw.js`), so it is fetched once per release, with
+the kernel, and works offline. The worker is started on the first audit of a session, not at load. Audits are handed
+to it one at a time, and its backstop is 75 s (the server's 60 s: a phone does the same work more slowly; the budget
+in units of work, not the clock, decides what is published). Where no worker can start, the audit runs on the page as
+before. The server offload is checked with a deliberately heavy audit (about 30 million units): in the worker the
+event loop was held about 50 ms, inline about 440 ms, on the development container (`test/publication-release-perf.test.js`).
+
 Server, same run (for the record; the load makes these slower than the table above): Home dashboard, fiscal
 year, administrator 385–500 / 157–194 ms; start-up 365 ms, 81 MB; 50 navigators for 20 s: 100 requests/s, p50/p95
 ms list 715/1,262, client 432/620, timeline 345/799, save 310/892; 163 MB.
