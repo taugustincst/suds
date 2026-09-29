@@ -226,4 +226,9 @@ test('a refusal for want of budget is logged with the audit\'s work, and a refus
   const RA = require('../server/release-audit');
   assert.match(RA.refusalMessage({ outOfBudget: true }, 1), /Publish a longer standard period \(a quarter or a year\)/);
   assert.match(RA.refusalMessage({ outOfBudget: true }, 3), /Publish a longer standard period \(a year\)/);
+  // 1.16.3: a refused year says what the person can do, not only whom to tell.
+  const year = RA.refusalMessage({ outOfBudget: true }, 12);
+  assert.match(year, /You can publish its four quarters instead/);
+  assert.match(year, /do not publish this year as well/);
+  assert.match(year, /submission to its funder, which is not for publication, is unaffected/);
 });

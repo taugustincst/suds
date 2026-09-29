@@ -17,8 +17,11 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const root = path.join(__dirname, '..');
-/** The SDC attacker sweeps: the full-size disclosure property tests (test/publication-release*.test.js). */
-const SDC_SWEEPS = ['test/publication-release.test.js', 'test/publication-release-funds.test.js'];
+/**
+ * The SDC sweeps: the full-size disclosure property tests (test/publication-release*.test.js), and since 1.16.3 the
+ * fiscal-year refusal band (test/thorough/refusal-band.test.js: about 84 audits, a few minutes).
+ */
+const SDC_SWEEPS = ['test/publication-release.test.js', 'test/publication-release-funds.test.js', 'test/thorough/refusal-band.test.js'];
 function thoroughFiles(part) {
   const t = path.join(root, 'test');
   const withMode = fs.readdirSync(t).filter((f) => f.endsWith('.test.js') && fs.readFileSync(path.join(t, f), 'utf8').includes('SUDS_THOROUGH')).map((f) => `test/${f}`);
