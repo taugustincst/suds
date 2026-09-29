@@ -1,8 +1,10 @@
 name: Web app
 # Publishes the standalone, browser-only build (scripts/build-static-site.js) to GitHub Pages: a public
 # URL that needs no office server, no Node process and no database — everything runs in the visitor's own
-# browser. Uses no marketplace actions: the site is pushed to a gh-pages branch with plain git and Pages
-# is enabled with `gh api`, both already on the hosted runner.
+# browser. The site is pushed to a gh-pages branch with plain git and Pages is enabled with `gh api`, both
+# already on the hosted runner. The only actions used are GitHub's own artifact pair
+# (actions/upload-artifact, actions/download-artifact), pinned to a commit, to hand the built site from the
+# build job to the publish job; no marketplace action runs.
 #
 # Published on releases only, never on a push to main: the web app is a public URL, and unreleased code does
 # not belong on one (docs/WEB_APP.md, "When it is published"). Its only trigger is a dispatch on a release
@@ -10,28 +12,37 @@ name: Web app
 # approval and the GitHub Release, and the product owner can republish a released tag by hand (Run workflow
 # → pick the tag). Until 1.16.1 a bare v* tag push and a `release` event started it too, beside release.yml
 # rather than after it, so a tag whose gate failed or that nobody approved still reached the public URL, and a
-# dispatch on a branch published unreleased code. Now the job runs only on a v* tag whose GitHub Release
-# exists at this very commit, and waits in the `release` environment for the owner's approval.
+# dispatch on a branch published unreleased code. Now it runs only on a v* tag whose GitHub Release exists at
+# this very commit, and the publish waits in the `release` environment for the owner's approval.
+#
+# Two jobs since 1.16.3 (engineering review of 1.16.2, M2). `build` runs everything third-party (npm ci,
+# Playwright and its apt packages, the provider pictures) with a read-only token, no environment and no secret,
+# and hands over the site as an artifact. `publish` runs on a fresh runner in the `release` environment: it checks
+# out nothing, installs nothing and builds nothing; it unpacks the artifact (plain files and directories only,
+# no .git), commits it with git's own configuration and hooks switched off, and pushes it to gh-pages with the
+# deploy key PAGES_DEPLOY_KEY, a secret of that environment that only this job reads (docs/RELEASE.md, "Owner:
+# repository settings", step 6). With the owner's gh-pages ruleset only a deploy key may update gh-pages, so an
+# older ref's copy of this workflow (no environment, no key) is refused. The run summary says which credential
+# pushed.
 on:
   workflow_dispatch: {}
 # Two dispatches for the same version publish one at a time rather than racing two force-pushes to gh-pages.
 concurrency:
   group: web-app-pages
   cancel-in-progress: false
+# Each job asks for its own scopes.
 permissions:
-  contents: write
-  # The dedicated scope for standing Pages up and deploying to it; contents: write alone was not enough
-  # ("Resource not accessible by integration" from the Pages API).
-  pages: write
-  id-token: write
+  contents: read
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    # The owner's approval, as for the release itself (docs/RELEASE.md, "Owner control over releases").
-    environment: release
+    permissions:
+      contents: read
     env:
       GH_TOKEN: ${{ github.token }}
+    outputs:
+      site_sha256: ${{ steps.pack.outputs.sha256 }}
     steps:
       - name: Only a released tag, at the commit its GitHub Release names
         run: |
@@ -40,8 +51,9 @@ jobs:
           [ "$draft" = "false" ] || { echo "::error::The GitHub Release ${GITHUB_REF_NAME} is a draft"; exit 1; }
           at="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}" --jq .sha)"
           [ "$at" = "${GITHUB_SHA}" ] || { echo "::error::${GITHUB_REF_NAME} is at ${at}, not ${GITHUB_SHA}"; exit 1; }
+      # The token is dropped from the clone's remote once it has fetched (it is read-only here anyway).
       - name: Check out
-        run: git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+        run: git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}" && git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
       # The build also downloads each starter-directory provider's picture into _site/region-pictures/ (the
       # runner has internet access; a phone's browser cannot fetch them from the providers' sites itself).
       # Best effort: a provider site that fails is left out, and the step summary says how many made it.
@@ -73,32 +85,93 @@ jobs:
           for i in $(seq 1 40); do curl -sf http://127.0.0.1:8877/ >/dev/null && break; sleep 0.5; done
           SUDS_STATIC_URL=http://127.0.0.1:8877 node scripts/ui/static-site.mjs
           kill "$(cat /tmp/static.pid)" 2>/dev/null || true
-      # With the `gh-pages` ruleset the owner sets up (docs/RELEASE.md, "Owner: repository settings", step 5), only
-      # the deploy key may update gh-pages, and its private half is a secret of the `release` environment: a job
-      # that did not wait for the owner's approval in that environment (an older ref's copy of this workflow) cannot
-      # read it, and its push with the workflow token is refused. Without the secret, the token pushes, as before.
+      # One archive (hidden files and all), with its checksum as a job output the publish job checks.
+      - name: Pack the site for the publish job
+        id: pack
+        run: |
+          tar -C src/_site -cf "$RUNNER_TEMP/site.tar" .
+          echo "sha256=$(sha256sum "$RUNNER_TEMP/site.tar" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Hand the site to the publish job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: site
+          path: ${{ runner.temp }}/site.tar
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # The owner's approval, as for the release itself (docs/RELEASE.md, "Owner control over releases").
+    environment: release
+    permissions:
+      # contents: write only for the push with the workflow token when there is no deploy key and no ruleset.
+      contents: write
+      # The dedicated scope for standing Pages up; contents: write alone was not enough ("Resource not
+      # accessible by integration" from the Pages API).
+      pages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # Again after the approval, which may have come much later.
+      - name: Still a released tag, at the commit its GitHub Release names
+        run: |
+          case "${GITHUB_REF}" in refs/tags/v*) ;; *) echo "::error::The web app is published from a release tag only, not ${GITHUB_REF}"; exit 1;; esac
+          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft | grep -qx false || { echo "::error::There is no published GitHub Release ${GITHUB_REF_NAME}"; exit 1; }
+          at="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}" --jq .sha)"
+          [ "$at" = "${GITHUB_SHA}" ] || { echo "::error::${GITHUB_REF_NAME} is at ${at}, not ${GITHUB_SHA}"; exit 1; }
+      - name: Take the site the build job checked
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: site
+          path: ${{ runner.temp }}/in
+      # The build job ran third-party code, so what it hands over is data, never something that runs here: plain
+      # files and directories only (no link, device or .git), no absolute or parent path, the checksum it reported.
+      - name: Unpack it (files and directories only)
+        env:
+          SITE_SHA256: ${{ needs.build.outputs.site_sha256 }}
+        run: |
+          cd "$RUNNER_TEMP"
+          echo "${SITE_SHA256}  in/site.tar" | sha256sum -c - || { echo "::error::The site archive is not the one the build job packed"; exit 1; }
+          odd="$(tar -tvf in/site.tar | awk '{ t = substr($1, 1, 1); if (t != "-" && t != "d") print }')"
+          [ -z "$odd" ] || { echo "::error::The site archive holds something other than files and directories:"; echo "$odd"; exit 1; }
+          if tar -tf in/site.tar | grep -Eq '(^|/)\.git(/|$)|(^|/)\.\.(/|$)|^/'; then echo "::error::The site archive holds a .git, parent or absolute path"; exit 1; fi
+          mkdir site && tar -xf in/site.tar -C site --no-same-owner --no-same-permissions
+      # Only a job that waited for the owner's approval in the `release` environment can read PAGES_DEPLOY_KEY. The
+      # summary names the credential that pushed. Without the secret the workflow token pushes, but only while
+      # gh-pages has no ruleset: once it has one the token is refused (GH013), so the run stops here and says why.
       - name: Publish to the gh-pages branch
-        working-directory: src
         env:
           PAGES_DEPLOY_KEY: ${{ secrets.PAGES_DEPLOY_KEY }}
         run: |
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
           if [ -n "${PAGES_DEPLOY_KEY}" ]; then
             install -m 700 -d "$HOME/.ssh" && printf '%s\n' "${PAGES_DEPLOY_KEY}" > "$RUNNER_TEMP/pages_key" && chmod 600 "$RUNNER_TEMP/pages_key"
             # github.com's host keys from the API (over TLS), not trusted on first use.
             gh api meta --jq '.ssh_keys[]' | sed 's/^/github.com /' > "$HOME/.ssh/known_hosts"
-            export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/pages_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+            export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/pages_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
             remote="git@github.com:${GITHUB_REPOSITORY}.git"
+            fp="$(ssh-keygen -y -f "$RUNNER_TEMP/pages_key" | ssh-keygen -lf - | awk '{ print $2 }')"
+            who="the deploy key PAGES_DEPLOY_KEY (${fp}; Settings > Deploy keys shows the same fingerprint)"
+          else
+            rules="$(gh api "repos/${GITHUB_REPOSITORY}/rules/branches/gh-pages" --jq 'length' 2>/dev/null || echo unknown)"
+            [ "$rules" = "0" ] || { echo "::error::PAGES_DEPLOY_KEY is not a secret of the release environment, and gh-pages is guarded by a ruleset (rules: ${rules}) that refuses the workflow token. Add the secret (docs/RELEASE.md, Owner: repository settings, step 6)."; exit 1; }
+            remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            who="the workflow token (GITHUB_TOKEN): there is no PAGES_DEPLOY_KEY and no gh-pages ruleset, so older refs can publish too (docs/RELEASE.md, step 6)"
+            echo "::warning::Publishing with ${who}."
           fi
-          cd _site
+          cd "$RUNNER_TEMP/site"
           git init -q
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config core.hooksPath /dev/null
           git checkout -q -b gh-pages
           touch .nojekyll  # Pages runs everything through Jekyll by default; this app needs none of that
           git add -A
           git commit -q -m "Deploy ${GITHUB_SHA}"
           git push -q --force "${remote}" gh-pages:gh-pages
+          rm -f "$RUNNER_TEMP/pages_key"
+          echo "### gh-pages" >> "$GITHUB_STEP_SUMMARY"
+          echo "Pushed ${GITHUB_REF_NAME} (${GITHUB_SHA}) with ${who}." | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Enable GitHub Pages, if it is not already
         run: |
           if gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1; then

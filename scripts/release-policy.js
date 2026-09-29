@@ -212,6 +212,14 @@ function stampWarning({ version, sha, stampSha = null }) {
   if (!stampSha || stampSha === sha) return null;
   return `${sha} is not the commit that set package.json's version to ${version} (${stampSha}): commits after the version stamp ship under notes written before them; release the stamp commit, or stamp again after the fix`;
 }
+/**
+ * The stamp warning as the run's summary shows it (1.16.3; engineering review of 1.16.2, L4): a `::warning::` is an
+ * annotation in the log, which the person approving the `release` environment does not open; the summary is on
+ * the page where they approve.
+ */
+function stampSummary(w) {
+  return w ? `### Check before approving: the released commit is not the version stamp\n\n> **Warning.** ${w}.\n\nApprove only if that is intended (docs/RELEASE.md, *The released commit is the version-stamp commit*), and say so in the release notes.\n` : '';
+}
 /** The date a tag was made (an annotated tag's own date; a lightweight tag's commit date), or null. */
 function tagDate(tag) {
   try { const d = execFileSync('git', ['for-each-ref', '--format=%(creatordate:iso-strict)', `refs/tags/${tag}`], { cwd: ROOT, encoding: 'utf8' }).trim(); return d || null; } catch { return null; }
@@ -286,6 +294,7 @@ function main() {
     let stampSha = null; try { stampSha = git('log', '-1', '--format=%H', '-G', '^\\s*"version":', arg('--sha'), '--', 'package.json') || null; } catch { stampSha = null; }
     const w = stampWarning({ version, sha: arg('--sha'), stampSha });
     if (w) console.log(`::warning::${w}.`);
+    if (w && process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, stampSummary(w));
   }
   const tags = execFileSync('git', ['tag', '-l', 'v*'], { cwd: ROOT, encoding: 'utf8' }).split('\n').map((s) => s.trim()).filter(Boolean);
   const prev = arg('--previous') || previousTag(tags, version);
@@ -320,4 +329,4 @@ function main() {
 if (require.main === module) {
   try { process.exitCode = main(); } catch (e) { console.log(`::error::The release policy check could not run: ${e.message}`); process.exitCode = 1; }
 }
-module.exports = { parseVersion, compareVersions, bumpKind, previousTag, previousFeatureTag, FEATURE_INTERVAL_DAYS, PATCH_MAX_ADDED_LINES, SIZE_EXEMPT, patchSize, sizeViolation, localRoutes, LOCAL_ROUTE_FILES, diffSurfaces, violations, decide, commitProblems, stampWarning, tagDate, surface, extractRef, measureSize };
+module.exports = { parseVersion, compareVersions, bumpKind, previousTag, previousFeatureTag, FEATURE_INTERVAL_DAYS, PATCH_MAX_ADDED_LINES, SIZE_EXEMPT, patchSize, sizeViolation, localRoutes, LOCAL_ROUTE_FILES, diffSurfaces, violations, decide, commitProblems, stampWarning, stampSummary, tagDate, surface, extractRef, measureSize };

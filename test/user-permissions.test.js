@@ -119,8 +119,12 @@ test('every permission that widens what a person may read is in READ_SCOPE_PERMS
   // redaction, unlinked.all), which the scope key adds by itself. Asked, not read from the source: every
   // hasPerm call a pull makes, by roles that take each branch (1.16.2; a regex over the file missed helpers).
   const fromTables = new Set(SYNC.tables.flatMap(t => [t.readPerm, t.redact && t.redact.perm, t.unlinked && t.unlinked.all].filter(Boolean)));
-  // The key's other parts, caseload= and counseling=, stand for what auth.caseloadRestricted and
-  // rules/notes readsCounseling ask: those count as keyed too.
+  // The key's other parts, caseload= and counseling=, carry the answers of auth.caseloadRestricted and rules/notes
+  // readsCounseling, whatever permissions those read, so a permission only they ask about needs no listing. Only
+  // readsCounseling's questions are recorded in `keyed` below: caseloadRestricted calls auth.js's own module-local
+  // hasPerm, which this spy on the export cannot see (engineering review of 1.16.2, L3; 1.16.2's comment said both
+  // were recorded). It asks clients:all, clients:read and clients:list-deidentified, and its caseload= answer is in
+  // the key itself, so nothing is lost; the pull's own calls through auth.js are likewise not in `asked`.
   const asked = new Set(); const keyed = new Set(); const real = auth.hasPerm;
   const COUNSEL = require('../server/rules/notes');
   const pullAs = async (role, ...denied) => {

@@ -35,7 +35,7 @@ async function nextCode(secret) {
     const cur = Math.floor(Date.now() / 30000);
     const want = Math.max(cur, (lastStep.get(secret) ?? -Infinity) + 1);
     if (want <= cur + 1) { lastStep.set(secret, want); return totp(secret, want * 30000); }
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 1000)); // intentional: waiting for the clock's next 30 s time-step, like the person
   }
 }
 // RFC 6238, the same arithmetic as server/crypto.js totp(), so the script can act as an authenticator app.
@@ -170,7 +170,7 @@ try {
     const s = dchen2;
     const mineOffice = (await officeJson(s, 'GET', '/api/clients?limit=1')).data.clients[0];
     await api(page, 'PUT', '/api/clients/' + mineOffice.id, { goals: 'device version', preferred_name: 'Dev' });
-    await new Promise(r => setTimeout(r, 1100));
+    await new Promise(r => setTimeout(r, 1100)); // intentional: the office edit must be stamped after the device's (later updated_at)
     await officeJson(s, 'PUT', '/api/clients/' + mineOffice.id, { goals: 'office version', preferred_name: 'Off' });
     await syncViaForm(page, { password: 'Navigator2026!!', code: await nextCode(mfaSecret) });
     await syncLog(page);

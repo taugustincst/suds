@@ -65,8 +65,9 @@ anything the table above keeps for feature releases:
 * more than **1,500 added lines** outside docs, tests and generated files (below, *Patch releases stay small*).
 
 A minor or major bump may add all of these; it is held to the cadence instead (below). When a release
-genuinely has to break the policy (a security fix that needs a route, say), run it from the Actions tab
-(*Run workflow*) with **`policy_exception`** set to the reason. The gate then passes with a warning, and the
+genuinely has to break the policy (a security fix that needs a route, say), push the tag as usual (its gate
+fails on the policy), then run the workflow again on **that tag** from the Actions tab (*Run workflow*, *Use
+workflow from* → the tag) with **`policy_exception`** set to the reason. The gate then passes with a warning, and the
 release job puts the reason and the list of exceptions at the top of the GitHub Release notes, where a county
 reviewing the release reads it. A tag push cannot carry an exception; an empty input is none. Until 1.14.0 the
 input was called `allow_patch_changes` and covered patch releases only; that name still works, with the same
@@ -179,12 +180,22 @@ is allowed when the owner decides it; it is recorded here so that "patch" keeps 
 | 1.16.2 | A publication release that 1.16.1 published by withholding the overdose events by month is refused whole again (1.16.1's rule leaked; ADR-0009) | a disclosure-control defect: refusal is safe | the owner, approving these notes |
 
 ## Cutting a release
+**A release is always a `v*` tag, pushed by the owner** (1.16.3). Every fix is merged to `main` and green first;
+then the version stamp goes to `main` (through a pull request once branch protection is on, *Owner: repository
+settings*, step 2), and once CI has passed on that stamp commit the owner tags it:
 ```bash
 git checkout main && git pull
 npm version 1.0.1 --no-git-tag-version   # bump, then add the CHANGELOG entry
-git commit -am "Release 1.0.1" && git push
-git tag v1.0.1 && git push origin v1.0.1
+git commit -am "Release 1.0.1" && git push   # (or a pull request); wait for CI on this commit to pass
+git tag v1.0.1 && git push origin v1.0.1      # the owner (the v* tag ruleset lets only the owner make release tags)
 ```
+Pushing the tag starts `release.yml`. *Run workflow* (Actions → *Release*) is only for running it again **on an
+existing `v*` tag** (*Use workflow from* → the tag; a retry after a flaky job, or with `policy_exception`); on a
+branch it is refused by the gate's first step. Until 1.16.2 releases were dispatched on a `release/v*` branch and
+the workflow created the tag itself with the workflow token; the owner's settings (the `release` environment
+limited to `v*` tags, and the tag ruleset whose only bypass is the owner) refuse both, after the approval, so the
+workflow now never creates a tag (`gh release create --verify-tag`) and no `release/v*` branch is made
+(*Release tags*, below).
 
 **The released commit is the version-stamp commit** (1.16.2). The commit tagged and released is the one that
 sets `package.json`'s version (the "Release x.y.z" commit above), and nothing comes after it: every fix, test fix
@@ -195,10 +206,11 @@ shipped. A fix needed after the stamp and before the tag means stamping again: p
 stamp commit on top (the next patch version, if the version line is to change; the gate recognises the stamp by
 the commit that last changed the `"version":` line). The gate checks it: `release-policy.js --sha` **warns**
 (`::warning::… is not the commit that set package.json's version …`) when the released commit is not the stamp,
-and **refuses** a pushed tag that is not `v<package.json version>` (until 1.16.2 only the release job, after the
-owner's approval, checked the tag). A warning, not a refusal, so that a reviewed exception stays possible: the
-owner decides, and says so in the notes.
-Pushing the tag runs `.github/workflows/release.yml` (or start it from the Actions tab with *Run workflow* → type `release`; it then creates the tag itself), which first passes the release gate (below), then re-runs the tests, packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release with the zip attached. As its last step it starts the web-app (GitHub Pages) workflow for the new tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. That dispatch is the web-app workflow's only trigger (since 1.16.1 a tag push or a `release` event no longer starts it): it runs only on a `v*` tag whose GitHub Release exists at that commit, and in the `release` environment, so the owner approves it too. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses marketplace actions, so they run under restrictive Actions policies.
+and **refuses** a tag that is not `v<package.json version>` (until 1.16.2 only the release job, after the
+owner's approval, checked the tag). The warning is also written to the run's summary (1.16.3), on the page where
+the owner approves the `release` environment, since an annotation in the log is easily missed. A warning, not a
+refusal, so that a reviewed exception stays possible: the owner decides, and says so in the notes.
+Pushing the tag runs `.github/workflows/release.yml`, which first passes the release gate (below), then re-runs the tests, packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release for the tag with the zip attached. As its last step it starts the web-app (GitHub Pages) workflow for the tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. That dispatch is the web-app workflow's only trigger (since 1.16.1 a tag push or a `release` event no longer starts it): it runs only on a `v*` tag whose GitHub Release exists at that commit, and its `publish` job waits in the `release` environment, so the owner approves it too. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses a marketplace action; the only actions used are GitHub's own `actions/upload-artifact` and `actions/download-artifact`, pinned to a commit, in `web-app.yml` (they run under the Actions policy *Allow actions created by GitHub*).
 
 ### Release gate
 QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` runs `scripts/release-gate.js` for the commit being released (`GITHUB_SHA`) before anything is built. It asks the GitHub API (with the workflow's own token — no marketplace action) for the runs of `ci.yml` on that exact commit, counts only `push` runs (a `pull_request` run tests a merge commit, not this one), and passes only when one of them **concluded success with the `test`, `thorough`, `thorough-sdc`, `browser`, `node24` and `dr-drill` jobs all successful** (with `SUDS_THOROUGH=1`, `thorough-sdc` runs the publication-release disclosure sweeps at full size — `npm test` runs a sample — and `thorough` the performance checks in `test/thorough/` and the other timing budgets, which `npm test` leaves out so a busy runner cannot flake it; `npm run test:thorough` runs both, `node scripts/test-thorough.js --part sdc|rest` either. Until 1.16.0 they were one job that took about 25 of its 30 minutes; the sweeps now have their own, with a 60-minute limit — measured alone on the development container they take about 27 minutes, everything else 17 seconds):
@@ -229,7 +241,8 @@ while the release waits for approval). Whatever the `policy_exception`, the gate
 * a version already tagged at another commit (`v<version>` exists and is not this commit): dispatching *Run
   workflow* on `main` after a release, with `package.json` not yet bumped, used to rebuild the zip and checksum
   from the new commit and upload them over the published ones (`--clobber`), and
-* since 1.16.2, a pushed tag that is not `v<package.json version>`; and it warns when the released commit is not
+* since 1.16.2, a tag that is not `v<package.json version>`, and since 1.16.3 any run that is not on a `v*` tag
+  (a *Run workflow* on a branch); and it warns, in the log and the run summary, when the released commit is not
   the version-stamp commit (*Cutting a release*, above).
 
 **What running main's copy guarantees, and what it does not** (engineering review of 1.16.1, M2). It guarantees
@@ -242,7 +255,7 @@ released commit's own edit of them, and the commit released is on that `main`. I
   `main` through review (branch protection with code-owner review, *Owner: repository settings*, step 2), and the
   `release` job waits for the owner's approval (step 1). The same holds for every **older ref**: an old tag or
   branch carries the workflow files of its day (the 18 tags v1.10.0 to v1.16.0 and the `release/v*` branches carry
-  a `web-app.yml` that publishes with no approval), which only repository settings can stop (step 5).
+  a `web-app.yml` that publishes with no approval), which only repository settings can stop (steps 5 and 6).
 * **The policy reads the released tree by running it.** `release-policy.js` learns the released commit's
   migrations, permissions and routes by `require`-ing its `server/db.js`, `server/auth.js`, `server/app.js` and
   route modules (`PROBE`), so a commit can understate its own surface (a route registered only when the probe is
@@ -292,8 +305,9 @@ on the GitHub settings below** (an assistant or a workflow cannot change reposit
 
 * **`environment: release`** on the `release` job in `release.yml`. The job then waits for a reviewer's
   approval, after the gate and before anything is tested, packaged or published, however it was started (a
-  tag push or *Run workflow*). Since 1.16.1 the web app's `deploy` job (`web-app.yml`) runs in the same
-  environment, so publishing SUDS on this device waits for the same approval (a second one, after the release).
+  tag push or *Run workflow* on the tag). Since 1.16.1 the web app's publish runs in the same environment (since
+  1.16.3 the `publish` job of `web-app.yml`, which builds nothing), so publishing SUDS on this device waits for the
+  same approval (a second one, after the release).
 * **`.github/CODEOWNERS`** names `@taugustincst` for the release machinery (`.github/`, `scripts/release-gate.js`,
   `scripts/release-policy.js`, `scripts/test-thorough.js`, `scripts/package.js`, their tests, this file) and for
   the modules that decide who may do what and what may leave the programme: `server/auth.js`,
@@ -306,7 +320,12 @@ on the GitHub settings below** (an assistant or a workflow cannot change reposit
 
 Everything in this section is a setting only the repository owner can change (GitHub → the repository →
 **Settings**); a workflow or an assistant cannot. Until each is done, the protection it names is **not in force**,
-whatever the workflow files say. Do them in this order; each ends with how to check it.
+whatever the workflow files say. Do them **in this order** (the rulesets of steps 2 and 3 before the deploy key
+of step 6, which can write any ref no ruleset guards); each ends with how to check it. They fit the release flow
+of *Cutting a release* (1.16.3): the owner pushes a `v*` tag at a green stamp commit on `main`, and *Run
+workflow* only re-runs an existing tag. (1.16.2's version of these steps did not: it opened the environment to
+`main` and restricted tag creation while releases were dispatched on `release/v*` branches and the workflow made
+the tag, so applying it would have stopped the next release after its approval.)
 
 **1. The `release` environment: the owner approves every release and every web-app publish.**
 Settings → **Environments** → **New environment** → name `release` (or open it, once a release has created it):
@@ -314,10 +333,11 @@ Settings → **Environments** → **New environment** → name `release` (or ope
   protection rules**;
 * tick **Prevent self-review** (the person who pushed the tag or dispatched the run cannot approve it; leave it
   off only while the owner is the sole releaser);
-* **Deployment branches and tags** → *Selected branches and tags* → **Add deployment branch or tag rule**: `main`
-  (Ref type: Branch, for *Run workflow*), then `v*` (Ref type: Tag). No other ref can then run a job in the
-  environment.
-* Check: release normally; the run stops at *Waiting for review: release needs approval* until approved.
+* **Deployment branches and tags** → *Selected branches and tags* → **Add deployment branch or tag rule**: `v*`
+  (Ref type: **Tag**), and nothing else. No branch can then run a job in the environment: not `main`, not a
+  `release/v*` or feature branch (the gate also refuses a run that is not on a `v*` tag).
+* Check: release normally (push the tag); the run stops at *Waiting for review: release needs approval* until
+  approved, and the gate job's summary on that page shows any stamp warning.
 
 **2. Branch protection on `main`: every change, the gate's own included, is reviewed.**
 Settings → **Rules** → **Rulesets** → **New ruleset** → **New branch ruleset** (or Settings → Branches → *Add
@@ -330,40 +350,75 @@ classic branch protection rule*): name `main`, Enforcement status **Active**, **
   `thorough`, `thorough-sdc`, `browser`, `node24` and `dr-drill` (the release gate's `REQUIRED_JOBS`; they are
   offered once they have run on a pull request);
 * **Bypass list**: leave it empty (classic: tick *Do not allow bypassing the above settings*), or the owner's own
-  pushes skip review; add *Repository admin* only if the owner accepts that.
-* Check: `git push origin HEAD:main` from a local commit is refused (`GH013`).
+  pushes skip review; add *Repository admin* only if the owner accepts that. Never add *Deploy keys* here.
+* Check: `git push origin HEAD:main` from a local commit is refused (`GH013`). The version stamp then reaches
+  `main` through a pull request like any other change.
 
 **3. A tag ruleset for `v*`: only the owner makes release tags.**
 Rulesets → **New ruleset** → **New tag ruleset**: name `release tags`, **Active**, *Add target* → *Include by
 pattern* `v*`; tick **Restrict creations**, **Restrict updates**, **Restrict deletions**; **Bypass list** →
-*Add bypass* → *Repository admin* (Always allow). Check: a collaborator's `git push origin v9.9.9` is refused.
+*Add bypass* → *Repository admin* (Always allow). Nothing else: not *Deploy keys*, not the GitHub Actions app (no
+workflow creates a tag since 1.16.3). A maintainer who is not an admin can then prepare the stamp but not tag it;
+add that account to the bypass list only if the owner wants it to release. Check: a collaborator's
+`git push origin v9.9.9` is refused; the owner's tag push starts the release.
 
-**4. The default Actions token is read-only.**
-Settings → **Actions** → **General** → *Workflow permissions*: **Read repository contents and packages
-permissions**, and untick **Allow GitHub Actions to create and approve pull requests** → Save. `release.yml` and
-`web-app.yml` ask for the write scopes they need themselves; every other workflow runs read-only.
+**4. The default Actions token is read-only, and only GitHub's own actions may run.**
+Settings → **Actions** → **General**:
+* *Actions permissions*: **Allow taugustincst, and select non-taugustincst, actions and reusable workflows** →
+  tick **Allow actions created by GitHub** and nothing else (`web-app.yml` uses `actions/upload-artifact` and
+  `actions/download-artifact`, pinned to a commit; no other action is used); tick **Require actions to be pinned to
+  a full-length commit SHA** where it is offered.
+* *Workflow permissions*: **Read repository contents and packages permissions**, and untick **Allow GitHub
+  Actions to create and approve pull requests** → Save. `release.yml` and `web-app.yml` ask for the write scopes
+  they need themselves; every other workflow runs read-only.
+* Check: the next CI run is green (it uses no action), and the next web-app publish passes its artifact steps.
 
-**5. Only an approved, released tag can publish the web app (engineering review of 1.16.1, H2).**
+**5. Immutable releases: a published zip and checksum can never be replaced (engineering review of 1.16.2, M3).**
+Settings → **General** → **Releases** → tick **Enable release immutability** (GitHub's *immutable releases*).
+From then on a published release's assets cannot be added, changed or deleted, and its tag cannot be moved or
+deleted, by anyone: the release page marks it *Immutable*, and a county's recorded checksum stays true. This is
+what stops the older refs: every tag from v1.1.0 to v1.15.4 (and its `release/v*` branch) carries a `release.yml`
+with *Run workflow*, no environment and `gh release upload --clobber`, which rebuilds that version's zip and
+checksum and uploads them over the published ones with no approval (the same source, new bytes, a new checksum);
+and any collaborator with write access can edit a release's files in the web page or the API, which no ruleset
+covers. Immutability refuses both. `release.yml` needs nothing more: it never replaces a published file, and makes
+the release in one step.
+* GitHub applies it to releases published **after** it is turned on. Check an older release's page (v1.16.2, say):
+  if it is not marked *Immutable*, its files can still be replaced as above. Record their checksums now, so a
+  replacement is noticed: `for t in $(gh release list --limit 100 --json tagName --jq '.[].tagName'); do gh release
+  download "$t" --pattern '*.sha256' --dir checksums --clobber; done`, and keep the folder.
+* Check: after the next release, its page shows *Immutable*, and `gh release upload v<version> some-file` is refused.
+
+**6. Only an approved, released tag can publish the web app (engineering review of 1.16.1, H2; of 1.16.2, M2).**
+**Do steps 2 and 3 first.** A deploy key with write access can push *every* branch and tag that no ruleset
+guards against it, `main` included; steps 2 and 3 are what keep it to `gh-pages`.
 Every ref made before 1.16.1 (the tags v1.10.0 to v1.16.0, the `release/v*` branches, older feature and
 Dependabot branches) carries a `web-app.yml` that force-pushes its own build to `gh-pages` on *Run workflow*,
 with no approval and no version check: anyone with write access could put an old, unfixed build, or unreleased
-code, on the public URL. A workflow file cannot fix old refs; this setting does. Since 1.16.2 `web-app.yml`
-pushes with a deploy key held as a secret of the `release` environment, so only a job that waited for the owner's
-approval in that environment (step 1: only on `main` or a `v*` tag) can read it, and a ruleset lets only that key
-update `gh-pages`:
-1. On your own machine: `ssh-keygen -t ed25519 -N '' -C 'suds gh-pages (release environment)' -f suds-pages`.
-2. Settings → **Deploy keys** → **Add deploy key**: title `gh-pages publish (release environment)`, key: the
-   contents of `suds-pages.pub`, tick **Allow write access** → Add key.
-3. Settings → **Environments** → `release` → **Environment secrets** → **Add environment secret**: name
-   `PAGES_DEPLOY_KEY`, value: the whole contents of `suds-pages` (the private key, with its BEGIN and END lines)
-   → Add secret. Then delete both files from your machine.
-4. Rulesets → **New ruleset** → **New branch ruleset**: name `gh-pages: release only`, **Active**, *Add target* →
+code, on the public URL. A workflow file cannot fix old refs; this setting does. Since 1.16.2 `web-app.yml` pushes
+with a deploy key held as a secret of the `release` environment, so only a job that waited for the owner's
+approval in that environment (step 1: only on a `v*` tag) can read it, and a ruleset lets only a deploy key
+update `gh-pages`. Since 1.16.3 the key is read only by the `publish` job, which runs no third-party code: it takes
+the site the `build` job built and checked (npm, Playwright and apt run there, with no environment and no secret),
+unpacks it as plain files, and pushes; its run summary says which credential pushed.
+1. Rulesets → **New ruleset** → **New branch ruleset**: name `gh-pages: release only`, **Active**, *Add target* →
    *Include by pattern* `gh-pages`; tick **Restrict updates**, **Restrict deletions**, **Block force pushes**
    (and **Restrict creations**); **Bypass list** → *Add bypass* → **Deploy keys** → *Always allow* (and
    *Repository admin* if the owner wants to repair the branch by hand). Do **not** add the GitHub Actions app.
+   The *Deploy keys* bypass admits **every** deploy key with write access, not one key: keep the key below the
+   only one (Settings → **Deploy keys** lists them; delete any other, or untick its write access).
+2. On your own machine: `ssh-keygen -t ed25519 -N '' -C 'suds gh-pages (release environment)' -f suds-pages`.
+3. Settings → **Deploy keys** → **Add deploy key**: title `gh-pages publish (release environment)`, key: the
+   contents of `suds-pages.pub`, tick **Allow write access** → Add key. Note the fingerprint GitHub shows.
+4. Settings → **Environments** → `release` → **Environment secrets** → **Add environment secret**: name
+   `PAGES_DEPLOY_KEY`, value: the whole contents of `suds-pages` (the private key, with its BEGIN and END lines)
+   → Add secret. Then delete both files from your machine. Never add it as a repository secret.
 5. Check it: Actions → *Web app* → **Run workflow** on an old tag (`v1.16.0`): its publish step must fail
    (`GH013`, the ruleset) and `gh-pages` must not change. Then release normally (or *Run workflow* on the current
-   release tag): after the approval, the publish succeeds and the site shows the released version.
+   release tag): after the approval, the publish succeeds, its summary reads "Pushed … with the deploy key
+   PAGES_DEPLOY_KEY (SHA256:…)" with the fingerprint from 3, and the site shows the released version. (Between
+   sub-steps 1 and 4 a publish stops with "PAGES_DEPLOY_KEY is not a secret of the release environment, and
+   gh-pages is guarded by a ruleset", which is expected.)
 
 The other way, which the review also offered: Settings → **Pages** → *Source*: **GitHub Actions**, with the
 `github-pages` environment given required reviewers and a `v*`-only deployment rule. Then pushes to `gh-pages`
@@ -371,14 +426,15 @@ publish nothing, but `web-app.yml` must first be changed to deploy through the P
 (`actions/upload-pages-artifact`, `actions/deploy-pages`); that is not done, so switching the source today would
 stop publishing. Use the deploy key above until then.
 
-**6. Delete stale branches.** List them: `git ls-remote --heads origin`. Delete every feature, `claude/…` and
-Dependabot branch that is merged or abandoned — at the time of the 1.16.1 review `feature/admin-managed-permissions`,
+**7. Delete stale branches.** List them: `git ls-remote --heads origin`. Delete every feature, `claude/…` and
+Dependabot branch that is merged or abandoned — at the time of the 1.16.2 review `feature/admin-managed-permissions`,
 `claude/perms-expansion-1.16.0-wip` and `dependabot/docker/node-26.10-alpine` (close its pull request; Dependabot
-opens a fresh one) — with `git push origin --delete <branch>`, and tick Settings → General → **Automatically
-delete head branches**. After step 5 the `release/v*` branches can no longer publish, and step 1 keeps them from
-running the `release` job, so they may stay (a zip of a release is also served from its tag).
+opens a fresh one) — and the `release/v*` branches, which are no longer made (1.16.3; a tag serves the same zip,
+*Release tags* below) and each carry the workflow files of their day, with `git push origin --delete <branch>`;
+and tick Settings → General → **Automatically delete head branches**. Steps 1, 5 and 6 already stop what those
+branches' workflows could publish; deleting them removes the rest.
 
-**7. Code scanning (optional).** Settings → **Code security** → *Code scanning* → **Set up** → **Default** →
+**8. Code scanning (optional).** Settings → **Code security** → *Code scanning* → **Set up** → **Default** →
 languages *JavaScript/TypeScript* and *GitHub Actions* → **Enable CodeQL**; on the same page turn on **Secret
 scanning** and **Push protection**. None of these changes what SUDS ships; they report.
 
@@ -404,10 +460,12 @@ Every QA pass starts by confirming what is being tested. On the pilot server aft
 ### Staged rollout
 Pilot group first; everyone else a week later, if the pilot reports nothing blocking. The cadence, and what "blocking" means, are in [ADOPTION.md](ADOPTION.md#3-staged-release-cadence).
 
-## Release branches (works without GitHub Actions)
-Every release also has a branch `release/v<version>` pointing at the released commit. GitHub serves a zip of any branch at
-`https://github.com/taugustincst/suds/archive/refs/heads/release/v<version>.zip`, and `git clone --branch release/v<version> …` checks it out.
-Create it with `git branch release/v1.0.1 main && git push origin release/v1.0.1`.
+## Release tags (works without GitHub Actions)
+Every release is a tag `v<version>` at the released commit. GitHub serves a zip of any tag at
+`https://github.com/taugustincst/suds/archive/refs/tags/v<version>.zip`, and `git clone --branch v<version> …` checks it out.
+Until 1.16.2 each release also had a branch `release/v<version>`; none is made since 1.16.3 (a branch can be moved,
+a protected tag cannot, and each old branch carries the workflow files of its day). Those that exist can be deleted
+(*Owner: repository settings*, step 7).
 
 ## How users get it
 - **Download:** the zip from the Releases page — unzip, then start the server (see `docs/INSTALL.md`; as a service per `docs/DEPLOYMENT.md`).

@@ -42,7 +42,9 @@ const saveInView = (page) => page.evaluate(() => {
 });
 const isOpen = (page, key) => page.$eval(`.modal details[data-section-key="${key}"]`, d => d.open).catch(() => null);
 const hint = (page, key) => page.$eval(`.modal details[data-section-key="${key}"] summary [data-section-hint]`, e => e.textContent).catch(() => '');
-const flushPrefs = (page) => page.evaluate(async () => { await new Promise(r => setTimeout(r, 900)); });
+// The remembered choices are saved after a debounce (public/app.js prefs.set), which counts as the page's work in
+// progress, so settle() waits for the save itself rather than 900 ms.
+const flushPrefs = (page) => settle(page);
 const openVisit = async (page, clientId) => {
   await page.evaluate(async (id) => (await import('./views/interventions.js')).openInterventionForm(null, { clientId: id, clientDisplay: 'the client' }), clientId);
   await page.waitForSelector('.modal select[name=type]'); await settle(page);

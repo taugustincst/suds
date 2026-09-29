@@ -110,8 +110,9 @@ R=0+0 printed alone), because each of those worlds' own releases is in turn chec
 depends on the figures, so a sound check of it is a fixed point over worlds' releases, which the audit cannot
 afford. **So 1.16.2 publishes no rule**: `buildModel` returns no `preWithhold`, `server/sdc.js` `protect` is
 1.16.0's, and a year like the benchmark's is refused whole again (refusal is always safe). Measured on scaled
-copies of that year at T = 11 (docs/PERFORMANCE.md, *Which programmes are refused*), 17 of 60 are refused, all
-with 126 to 237 overdose events. A release 1.16.1 published with the events by month withheld by the rule is not
+copies of that year at T = 11 (docs/PERFORMANCE.md, *Which programmes are refused*), a year with about 110 to 240
+overdose events can be refused (sampled: 23 of 84 refused, with 113 to 237 events; 1.16.2 said 126 to 237, from a
+sweep that missed the lower edge; `test/thorough/refusal-band.test.js` now records it). A release 1.16.1 published with the events by month withheld by the rule is not
 verified (docs/HIPAA.md). A rule that reads only a printed figure (withhold the months whenever the period has 12T
 events) was tried too, and leaked the same way at 36 events: a world counted for the printout was refused by its
 own check. A future rule of this kind needs a check whose witness worlds are shown to publish the same by their own

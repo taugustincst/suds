@@ -316,8 +316,9 @@ function refusalMessage(r, months = 0) {
     : r.outOfBudget ? 'the check of this period\'s figures reached its limit before it could finish'
     : r.headline ? 'the number of people served could not be shown without giving someone away'
     : 'the check could not confirm that every small count in it is protected';
-  // A year is the longest standard period: asking for a longer one cannot help.
-  const next = months >= 12 ? 'A year is the longest standard period: tell whoever supports your SUDS server which period was refused (the server log records the check\'s figures).'
+  // A year is the longest standard period: asking for a longer one cannot help. What can (1.16.3; market review of
+  // 1.16.2): its quarters, each checked on its own, published instead of the year and never beside it.
+  const next = months >= 12 ? 'A year is the longest standard period. You can publish its four quarters instead, each once its figures are complete (each quarter is checked on its own and is published or refused by itself); then do not publish this year as well, because a year and its quarters can be subtracted from each other. If a quarter is refused too, tell whoever supports your SUDS server which period was refused (the server log records the check\'s figures).'
     : `Publish a longer standard period (${months >= 3 ? 'a year' : 'a quarter or a year'}).`;
   return `This period cannot be published: ${why}, so no publication release was made. ${next} The program's own submission to its funder, which is not for publication, is unaffected.`;
 }
