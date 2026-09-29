@@ -210,8 +210,8 @@ test('a release is always of an existing v* tag: a branch is refused before anyt
 });
 test('the web app is published only by a dispatch on a released tag, after the owner\'s approval (1.16.1)', () => {
   const wa = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'web-app.yml'), 'utf8');
-  const on = wa.slice(wa.indexOf('\non:\n') + 1, wa.indexOf('\nconcurrency:'));
-  assert.deepEqual(on.split('\n').filter((l) => /^\s*[a-z_]+:/.test(l)).map((l) => l.trim()), ['on:', 'workflow_dispatch: {}'], 'no tag push, release event or push trigger');
+  // Read as data (scripts/workflow-yaml.js), not by slicing the text.
+  assert.deepEqual(require('../scripts/workflow-yaml').parse(wa).on, { workflow_dispatch: {} }, 'no tag push, release event or push trigger');
   const build = wa.slice(wa.indexOf('\n  build:'), wa.indexOf('\n  publish:'));
   const publish = wa.slice(wa.indexOf('\n  publish:'));
   assert.ok(build.length > 100 && publish.length > 100, 'a build job and a publish job (1.16.3)');
