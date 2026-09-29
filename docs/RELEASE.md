@@ -228,8 +228,9 @@ the same push; tagged later, it goes out like any release. What each tag then do
   pushed before 1.17.1's gate is on `main`, nothing in their workflows stops them: reject their release approvals
   and any `Web app` run for `v1.16.3` or `v1.16.4`.
 * **`v1.17.0`: its gate fails the feature interval** (inside 1.16.0's 28 days: the recorded exception above), so
-  *Run workflow* on `v1.17.0` with `policy_exception` set to that reason. Its release is Latest, and its `Web app`
-  run republishes 1.17.0, the build `gh-pages` already serves: approve it. Since 1.17.1 `web-app.yml` also refuses
+  *Run workflow* on `v1.17.0` with `policy_exception` set to that reason. While `main`'s `package.json` still says
+  1.17.0, its release is Latest and its `Web app` run republishes 1.17.0, the build `gh-pages` already serves:
+  approve it (once 1.17.1 is stamped, 1.17.0 is neither Latest nor published, and 1.17.1's release is both). Since 1.17.1 `web-app.yml` also refuses
   any version older than the `version.json` on `gh-pages` (`scripts/pages-version-check.js`), before the build and
   again after the approval; the tags before 1.17.1 carry copies without that check, hence the rule above.
 
