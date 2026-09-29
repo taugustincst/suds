@@ -170,8 +170,15 @@ function totpStep(secretB32, code, window = 1, time = Date.now()) {
   return found;
 }
 function verifyTotp(secretB32, code, window = 1, time = Date.now()) { return totpStep(secretB32, code, window, time) !== null; }
+// The enrolment QR code (public/qr.js) holds at most OTPAUTH_MAX bytes; the issuer (the programme's name) appears twice,
+// so a long name is shortened, from the end, until the link fits. Authenticator apps show only the start of it anyway.
+const OTPAUTH_MAX = 200;
 function otpauthUrl(secret, account, issuer = 'SUDS') {
-  return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
+  const url = (iss, acct) => `otpauth://totp/${encodeURIComponent(iss)}:${encodeURIComponent(acct)}?secret=${secret}&issuer=${encodeURIComponent(iss)}&algorithm=SHA1&digits=6&period=30`;
+  let iss = String(issuer || 'SUDS'); let acct = String(account);
+  while (Buffer.byteLength(url(iss, acct)) > OTPAUTH_MAX && [...iss].length > 8) iss = [...iss].slice(0, -1).join('').trimEnd();
+  while (Buffer.byteLength(url(iss, acct)) > OTPAUTH_MAX && [...acct].length > 8) acct = [...acct].slice(0, -1).join('');
+  return url(iss, acct);
 }
 
 /**
