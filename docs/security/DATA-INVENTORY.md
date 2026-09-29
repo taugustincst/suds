@@ -146,6 +146,12 @@ Every path by which record data leaves the office server's database, and what co
 | **FHIR R4 API and bulk export** to a registered recipient | Patient (names, date of birth, Medi-Cal ID, phones, email, address), EpisodeOfCare, Encounter, Consent (only consents covering this recipient), ServiceRequest, Task (title), Observation (risk, overdose), DocumentReference. DocumentReference covers signed notes, never SUD counseling notes, and **never note text**: the attachment says to request it under a consent | A FHIR client an administrator registers (`apikeys:manage`) with a recipient, aliases, purpose and scopes | `fhirCoverage` per client, per resource type: only clients whose consent covers the recipient and purpose. Part 2 security labels and the §2.32 notice on every response | Accounted (`recordFhir`) | `server/routes/fhir.js`, `server/fhir/`; [../integration/FHIR.md](../integration/FHIR.md) |
 | **Printed consent or form** (PDF) | The consent or form as the client signs it | Whoever may open the client's consents or forms | Printed PDFs carry the Part 2 / HIPAA handling notice | Audited as a view or print | `server/pdf.js`, `server/routes/forms.js` |
 
+### To a business associate (1.17.0)
+
+| Flow | What it carries | Who can start it | Gate | Record | Code |
+| --- | --- | --- | --- | --- | --- |
+| **AI documentation copilot**, from the office server to the AI provider's API over HTTPS (`api.anthropic.com`, or the gateway in `SUDS_AI_BASE_URL`). Off by default; never from a device or SUDS on this device | Only the text a person gives for one client (and, for care-plan suggestions, one chosen assessment and the active problems' wording), with that client's known identifiers replaced by placeholders and identifier-like patterns masked. **Still PHI and Part 2 information**: free text can still identify someone ([../AI-COPILOT.md](../AI-COPILOT.md), *Residual risk*) | `ai:draft` (clinicians, supervisors, navigators by default; never finance or read-only), with the permission to write what is drafted, on a client the person may see; 12 drafts a minute per person; a monthly cap per programme | An administrator records the programme's BAA with Part 2 QSOA terms and counsel's review, then switches it on; withdrawing the agreement switches it off. `ANTHROPIC_API_KEY` in the server environment only | Audited per call (`ai.draft`: who, client, feature, model, token counts, identifiers replaced; never the text); counted in `ai_usage` (no text, no client); a note with drafted text is marked `notes.ai_assisted` and needs the author's review statement to sign. Not an accounting-of-disclosures row: a business associate's use under the BAA/QSOA | `server/ai-copilot.js`, `server/ai-prompts.js`, `server/routes/ai.js`; `test/ai-copilot.test.js` |
+
 ### Aggregate reporting (no record-level data)
 
 | Flow | What it carries | Who | Control | Code |
@@ -177,6 +183,7 @@ Every path by which record data leaves the office server's database, and what co
 - the release feed (no data sent);
 - provider pictures (public websites; no PHI);
 - a syslog collector for audit anchors (no PHI).
+- the AI copilot's provider (PHI, above), only when the programme has recorded its agreement and switched it on (1.17.0).
 
 See [DATA-LIFECYCLE.md](DATA-LIFECYCLE.md).
 

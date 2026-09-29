@@ -20,8 +20,8 @@ Both are the same web application, and both are production:
 Either way, SUDS does not bill: no 837 or Drug Medi-Cal claims. Billed services are handed to the county EHR
 (`docs/SCOPE.md`); CalOMS Tx state reporting is collected and extracted in SUDS (`docs/compliance/CALOMS.md`).
 
-The AI documentation copilot planned for 1.17.0 ([market/STRATEGY.md](market/STRATEGY.md)) is office-server
-only: as designed it is off by default,
+The AI documentation copilot built for 1.17.0 ([AI-COPILOT.md](AI-COPILOT.md), [market/STRATEGY.md](market/STRATEGY.md)) is office-server
+only: it is off by default,
 runs from the office server after the programme records a BAA and QSOA with the AI provider, and is never offered
 in SUDS on this device or from a device's offline copy.
 

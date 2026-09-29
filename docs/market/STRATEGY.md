@@ -58,7 +58,7 @@ mapping awaits the DHCS data dictionary ([POSITIONING.md](POSITIONING.md), *The 
 
 ## Create
 
-### 1. AI documentation copilot (first build; planned for 1.17.0)
+### 1. AI documentation copilot (first build; built for 1.17.0, not yet released)
 
 **What it is to be.** A drafting assistant for SUD workflows: a worker's field note, a visit summary or a
 structured note becomes a draft the worker edits and signs. The owner's constraints, which are the design:
@@ -277,7 +277,7 @@ until counsel and one pilot have looked at it.
 | CalOMS Tx capture, checks and extract | **Built; layout not verified** against the DHCS data dictionary; SUDS does not submit |
 | Referrals with consent check and loop closure, inside one programme | **Built** |
 | Note import review queue (Pocket AI, OneNote) | **Built** |
-| AI documentation copilot | **Planned for 1.17.0** (in progress; not released) |
+| AI documentation copilot | **Built for 1.17.0**, not yet released ([docs/AI-COPILOT.md](../AI-COPILOT.md)); off by default |
 | Least-privilege default; client revision history | **Built for 1.17.0**, not yet released |
 | SABG primary-prevention events and their summary; anonymous SSP participant code | **Built for 1.17.0**, not yet released; no PPSDS file (the mapping awaits the DHCS data dictionary) |
 | Funder-facing outcome view across CBOs | **Planned**, not scheduled |

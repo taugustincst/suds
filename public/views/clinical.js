@@ -5,6 +5,7 @@
 // come from the server (GET /api/meta/constants, built from server/clinical.js), so the score shown while
 // the form is filled in is the one the server saves.
 import { h, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, confirmDialog, kv, emptyState, clear, flag, moduleOn } from '../app.js';
+import { asamCopilot, carePlanCopilot, mayUseAi } from './ai.js';
 
 const C = () => state.constants || {};
 // SUDS stores only the six dimension names and 0-4 ratings. The ASAM Criteria are copyrighted and "ASAM" is a
@@ -208,6 +209,8 @@ export async function carePlanTab(clientId, { refresh, clientDisplay } = {}) {
       h('div', {}, h('h2', {}, 'Care coordination plan'), h('div', { class: 'small muted' }, 'Goals in the client\'s own words, tied to the problem list, with the steps toward each one, who does them and by when. Set a review date and go over the plan with the client when it comes due.')),
       h('div', { class: 'row nowrap' },
         h('button', { class: 'btn sm', 'data-print-careplan': '1', onClick: () => printCarePlan(clientDisplay || '', problems, goals) }, 'Print'),
+        // Suggestions from the AI copilot (views/ai.js), added one at a time by the clinician; office server only.
+        writable && mayUseAi() && !state.local ? h('button', { class: 'btn sm', 'data-ai-careplan-open': '1', onClick: () => carePlanCopilot(clientId, { onChange: refresh }) }, 'Suggest with AI') : null,
         writable ? h('button', { class: 'btn sm primary', 'data-add-goal': '1', onClick: () => openGoalForm(clientId, null, active, { onDone: refresh }) }, '+ Goal') : null)),
       !goals.length ? emptyState('No goals yet', !writable ? 'The client\'s care team (a navigator or clinician who may edit the care plan) sets goals with the client.' : active.length ? 'Start with what the client most wants to change, in their words.' : 'Goals usually follow from the problem list — add problems first, then a goal for the ones the client wants to work on.',
         writable ? (active.length ? h('button', { class: 'btn primary', 'data-empty-action': 'goal', onClick: () => openGoalForm(clientId, null, active, { onDone: refresh }) }, '+ Add the first goal') : h('a', { class: 'btn primary', 'data-empty-action': 'problems', href: `#/client/${clientId}/problems` }, 'Go to the problem list')) : null) : null),
@@ -231,7 +234,10 @@ function openAsamForm(clientId, a, { onDone } = {}) {
     { name: 'discrepancy_notes', label: 'Discrepancy notes', type: 'textarea', rows: 2 },
     { name: 'summary', label: 'Summary', type: 'textarea', rows: 3, span: true });
   const values = a ? { ...a } : {};
+  let ai = { confirmed: () => true };
   const f = form(fields, { values, submitText: a ? 'Save assessment' : 'Save assessment', onCancel: () => m.close(), onSubmit: async (d) => {
+    // An AI draft is saved only once the clinician has reviewed every dimension and chosen its rating (views/ai.js).
+    if (!ai.confirmed()) throw new Error('The AI copilot drafted this assessment: tick "I have reviewed" under each dimension once you have checked its notes and chosen its rating.');
     const body = { assessed_at: d.assessed_at, recommended_loc: d.recommended_loc, actual_loc: d.actual_loc, discrepancy_reason: d.discrepancy_reason, discrepancy_notes: d.discrepancy_notes, summary: d.summary, dimension_notes: {} };
     for (const dm of dims) { body[`${dm.key}_rating`] = d[`${dm.key}_rating`] === null ? null : Number(d[`${dm.key}_rating`]); if (d[`note_${dm.key}`]) body.dimension_notes[dm.key] = d[`note_${dm.key}`]; }
     if (a) await put(`/api/asam/${a.id}`, { ...body, if_updated_at: a.updated_at });
@@ -239,6 +245,8 @@ function openAsamForm(clientId, a, { onDone } = {}) {
     if (a) toast('Assessment saved', 'ok');
     m.close(); onDone && onDone();
   } });
+  ai = asamCopilot({ clientId, form: f, dims });
+  if (ai.panel) f.querySelector('.form-grid').prepend(ai.panel);
   const m = modal(a ? 'Edit six-dimension assessment' : 'Six-dimension assessment (ASAM-aligned)', h('div', {},
     h('p', { class: 'small muted' }, 'Rate the risk in each of the six dimensions from 0 (none) to 4 (severe) and note what supports it. Use your program\'s own licensed ASAM Criteria materials for the rating definitions.'),
     h('p', { class: 'small muted', 'data-asam-notice': '1' }, ASAM_NOTICE), f), { wide: true });

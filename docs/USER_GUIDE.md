@@ -129,6 +129,26 @@ The **Supervision** page is the work waiting on a supervisor: notes to countersi
 * **Verify signature** on a signed note checks the note as it is stored now against what was signed: *Signature intact* means it is exactly as signed; *Changed after signing* means the stored note no longer matches — report it to your privacy officer. Click the signature hash to see it in full.
 * Do not put names or other identifiers in intervention *summary* fields — they are not encrypted. Use notes for anything sensitive.
 
+## AI documentation copilot (if your programme has switched it on)
+
+Some programmes turn on an AI copilot that drafts documentation for you to review (`docs/AI-COPILOT.md`). You
+see it as a folded **Draft with the AI copilot** section in the note form, the six-dimension assessment form and
+the CalOMS questions of an episode, and as **Suggest with AI** on a client's care plan.
+
+* Type or paste **your own** notes or transcript for **this** session and **this** client, then **Draft**. Never
+  paste another client's information. SUDS replaces this client's name, date of birth, phone, address and
+  other identifiers it holds before anything is sent, but anything else you type (other people's names,
+  places) is sent as written: leave out what the note does not need.
+* The draft goes into the form under **AI draft — review before signing**. Read every part against what
+  happened, correct it, and fill in anything marked `[needs clinician input]` or left as a placeholder such as
+  `[PHONE]`. The copilot can be wrong; you are the author.
+* Signing a note with AI-drafted text asks you to confirm you reviewed and corrected it; the note is recorded as
+  **AI-assisted**. In an assessment, choose each rating yourself and tick *I have reviewed* for every dimension.
+  Care plan suggestions are added one at a time, only when you click **Add**; CalOMS suggestions only when you
+  click **Apply**.
+* If the copilot is slow, busy or unavailable, your form is unchanged: write it yourself as usual. It is never
+  available in SUDS on this device.
+
 ## Consents (42 CFR Part 2)
 Your program is a **42 CFR Part 2** program: the client header says so, and the rules below are enforced — SUDS refuses what the rule does not allow and tells you why.
 

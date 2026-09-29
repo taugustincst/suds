@@ -138,10 +138,11 @@ test('every outbound fetch in server/ goes through the shared guard', () => {
   // A new fetch() of an address someone else supplies must use server/outbound.js. The ones listed here are
   // fixed, operator-configured or local: OneNote's Microsoft Graph (fixed hosts), the OIDC issuer (guarded
   // in oidc.js idpFetch), the DR drill's own local server, and region.js's reads of the static site's own
-  // bundled pictures (same origin, in the browser kernel only).
+  // bundled pictures (same origin, in the browser kernel only), and the AI copilot's provider endpoint (1.17.0,
+  // ai-copilot.js: SUDS_AI_BASE_URL from the server environment, https unless this machine; never user-supplied).
   const fs = require('node:fs'); const path = require('node:path');
   const root = path.join(__dirname, '..', 'server');
-  const allowed = new Set(['outbound.js', 'oidc.js', path.join('importers', 'onenote.js'), 'dr-drill-child.js', 'schema-text.js', 'region.js']);
+  const allowed = new Set(['outbound.js', 'oidc.js', path.join('importers', 'onenote.js'), 'dr-drill-child.js', 'schema-text.js', 'region.js', 'ai-copilot.js']);
   const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap(e => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
   const offenders = walk(root).filter(f => f.endsWith('.js')).filter(f => !allowed.has(path.relative(root, f)))
     .filter(f => /(^|[^\w.])fetch\s*\(|globalThis\.fetch/.test(fs.readFileSync(f, 'utf8').replace(/\/\/.*$/gm, '')));

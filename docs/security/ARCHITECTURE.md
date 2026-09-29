@@ -54,6 +54,7 @@
 | Server ⇄ identity provider | No | Authorization Code + PKCE; ID token RS256 verified against JWKS; issuer/audience/expiry/nonce checked | `server/oidc.js` |
 | Identified export / referral | Yes (a disclosure) | Consent / lawful basis checked; accounting-of-disclosure row written | `server/disclosure.js`, `server/exports.js` |
 | Server ⇄ local-mode device | Yes | HTTPS; scoped to what the user may see (the whole programme under the 1.16.0 role defaults, a caseload after a deny of `clients:all`); audited; revocable/wipeable device registry; off by default | `server/routes/sync.js`, `server/devices.js` |
+| Optional outbound: AI documentation copilot (off by default) | Yes: the session text a worker gives for one client, with that client's known identifiers replaced | Only after an administrator records the BAA/QSOA and switches it on; HTTPS from the server (never the browser); key only in the server environment; audited per call, never the text; monthly cap | `server/ai-copilot.js`, `server/routes/ai.js`, `docs/AI-COPILOT.md` |
 | Optional outbound: OneNote (Graph), update check, provider pictures | Graph: note text the user imports; others: no | Admin-configured only | `server/importers/`, `server/update.js`, `server/region-pictures.js` |
 
 ## Trust boundaries

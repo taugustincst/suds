@@ -104,10 +104,10 @@ function insertNote(ctx, v) {
   const id = uuid();
   const linked = problemIds(v.problem_ids, v.client_id) ?? null;
   const author = db.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
-  db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids,counseling_note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids,counseling_note,ai_assisted) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     id, v.client_id, ctx.user.id, v.kind, v.format || 'narrative', v.title ? encrypt(v.title) : null, encrypt(v.content), v.structured ? encrypt(JSON.stringify(v.structured)) : null, v.occurred_at,
-    v.intervention_id || null, v.call_id || null, v.part2_protected ?? 1, v.source || 'manual', v.source_ref || null, author?.requires_cosign ? 1 : 0, v.cosign_requested ? 1 : 0, linked, v.counseling_note ? 1 : 0);
-  audit.log({ user: ctx.user, action: 'note.create', entity: 'note', entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : undefined, counseling_note: v.counseling_note ? true : undefined, with_visit: v._with_visit ? true : undefined } });
+    v.intervention_id || null, v.call_id || null, v.part2_protected ?? 1, v.source || 'manual', v.source_ref || null, author?.requires_cosign ? 1 : 0, v.cosign_requested ? 1 : 0, linked, v.counseling_note ? 1 : 0, v.ai_assisted ? 1 : 0);
+  audit.log({ user: ctx.user, action: 'note.create', entity: 'note', entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : undefined, counseling_note: v.counseling_note ? true : undefined, with_visit: v._with_visit ? true : undefined, ai_assisted: v.ai_assisted ? true : undefined } });
   return id;
 }
 
@@ -186,10 +186,12 @@ module.exports = (r) => {
     if (n.status !== 'draft') throw badRequest('Signed notes cannot be edited; add an addendum instead');
     rules.assertEditable('notes', ctx, n); // a draft is its author's, or a manager's
     require('../crud').assertFresh(ctx, n, 'note');
-    const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids }, { partial: true, existing: n });
+    const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids, ai_assisted: shape.ai_assisted }, { partial: true, existing: n });
+    // AI-assisted stays AI-assisted (server/rules/notes.js): a later save cannot take the mark off.
+    if (v.ai_assisted !== undefined) v.ai_assisted = v.ai_assisted || Number(n.ai_assisted) ? 1 : 0;
     rules.assertWrite('notes', { id: n.id, ...rules.toColumns('notes', v) }, ctx, { existing: n });
     const sets = []; const params = [];
-    for (const k of ['format', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'cosign_requested']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
+    for (const k of ['format', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'cosign_requested', 'ai_assisted']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
     if (v.title !== undefined) { sets.push('title_enc=?'); params.push(v.title ? encrypt(v.title) : null); }
     if (v.content !== undefined) { sets.push('content_enc=?'); params.push(encrypt(v.content)); }
     const linked = problemIds(v.problem_ids, n.client_id);
@@ -242,12 +244,15 @@ module.exports = (r) => {
     // Only the person who wrote the note may sign it. A supervisor approving a trainee's work countersigns
     // (POST /cosign) — signing on their behalf would erase who actually provided the service.
     if (n.author_id !== ctx.user.id) throw forbidden('Only the author can sign a note. Supervisors countersign instead.');
+    // A note with AI-drafted text is signed only with the author's statement that they reviewed it (docs/AI-COPILOT.md).
+    const aiReviewed = ctx.body && (ctx.body.ai_reviewed === true || ctx.body.ai_reviewed === 1 || ctx.body.ai_reviewed === '1');
+    if (Number(n.ai_assisted) && !aiReviewed) throw badRequest('This note includes text drafted by the AI copilot. Confirm you have reviewed and corrected it before signing.', { ai_review_required: true, fields: { ai_reviewed: 'confirm you reviewed the AI-drafted text' } });
     const identity = await verifyIdentity(ctx);
     const hash = sha256(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ''}`);
     db.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db.now(), ctx.user.id, hash, db.now(), n.id);
     // The supervisor's "Finish and sign your note" reminder has done its job (server/rules/notes.js).
     const reminders = require('../rules/notes').closeSignReminders(ctx.user.id, n.id, n.client_id);
-    audit.log({ user: ctx.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash, cosign_required: !!n.cosign_required, identity, reminders_closed: reminders.length ? reminders : undefined } });
+    audit.log({ user: ctx.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash, cosign_required: !!n.cosign_required, identity, reminders_closed: reminders.length ? reminders : undefined, ai_assisted: Number(n.ai_assisted) ? true : undefined, ai_reviewed: Number(n.ai_assisted) ? true : undefined } });
     return { ok: true, signature_hash: hash, awaiting_cosign: !!n.cosign_required };
   });
 

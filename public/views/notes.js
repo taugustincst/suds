@@ -1,5 +1,6 @@
 import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv } from '../app.js';
 import { problemPicker } from './clinical.js';
+import { noteCopilot, aiDraftBanner } from './ai.js';
 
 export const SECTIONS = { SOAP: [['S', 'Subjective'], ['O', 'Objective'], ['A', 'Assessment'], ['P', 'Plan']], DAP: [['D', 'Data'], ['A', 'Assessment'], ['P', 'Plan']], BIRP: [['B', 'Behavior'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']], GIRP: [['G', 'Goal'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']],
   // Stanley-Brown style safety plan, as a structured note so it prints and reads the same for everyone.
@@ -30,7 +31,7 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
     // "Save & sign": the signature step opens straight from the editor, over it; the editor closes once the
     // note is signed (or stays, saved, if the signature is cancelled).
     // A cancelled signature leaves the saved draft: say so, or it turns up in Unsigned notes as a surprise (r9 L3).
-    if (andSign && noteId) { signNote({ id: noteId }, () => { m.close(); }, { onCancel: () => toast('Not signed: the note is saved as a draft. Sign it when it is complete.', 'ok') }); return; }
+    if (andSign && noteId) { signNote({ id: noteId, ai_assisted: aiAssisted }, () => { m.close(); }, { onCancel: () => toast('Not signed: the note is saved as a draft. Sign it when it is complete.', 'ok') }); return; }
     toast('Saved as a draft. Sign it when it is complete.', 'ok'); m.close(); onDone && onDone();
   } });
   // Only the author can sign (a supervisor editing someone else's draft countersigns later instead).
@@ -60,6 +61,8 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
     const structured = readStructured();
     // The problems ticked, once the list has loaded (never an empty list sent by a form that could not load it).
     if (problemBox.loaded) data.problem_ids = problemBox.read();
+    // Text the AI copilot drafted is in this note: it is marked AI-assisted, for good (docs/AI-COPILOT.md).
+    if (aiAssisted) data.ai_assisted = true;
     if (structured) { data.structured = structured; if (!data.content || data.content === autoText) data.content = Object.entries(structured).map(([k, v]) => `${sectionLabel(fmtSel.value, k)}: ${v}`).join('\n\n'); }
     if (!data.client_id || !data.content) { if (explicit) throw new Error('Choose a client and write something first'); return; }
     if (saving) { dirty = true; return; }
@@ -115,6 +118,24 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   }
   function readStructured() { const out = {}; let any = false; structuredBox.querySelectorAll('textarea[data-sec]').forEach(t => { out[t.dataset.sec] = t.value; if (t.value.trim()) any = true; }); return any ? out : null; }
   fmtSel.addEventListener('change', renderStructured); renderStructured();
+  // ---- the AI copilot (views/ai.js): a draft from the author's own session notes, put into the sections
+  // above for them to review. Marked "AI draft — review before signing" until they say they have.
+  let aiAssisted = !!(values && Number(values.ai_assisted)); let aiBanner = null;
+  const showAiBanner = (b) => { if (aiBanner) aiBanner.remove(); aiBanner = b; structuredBox.before(b); };
+  if (aiAssisted) showAiBanner(aiDraftBanner({ onReviewed: () => {} }));
+  const copilot = noteCopilot({
+    read: () => ({ client_id: f.inputs.client_id?.value || null, kind: f.inputs.kind.value, format: fmtSel.value, note_id: noteId }),
+    apply: (r) => {
+      if (r.structured) {
+        if (fmtSel.value !== r.format) { fmtSel.value = r.format; renderStructured(); }
+        structuredBox.querySelectorAll('textarea[data-sec]').forEach(t => { if (r.draft.sections[t.dataset.sec] !== undefined) { t.value = r.draft.sections[t.dataset.sec]; t.dispatchEvent(new Event('input', { bubbles: true })); } });
+      } else { contentArea.value = r.draft.narrative; contentArea.dataset.auto = '0'; contentArea.dispatchEvent(new Event('input', { bubbles: true })); }
+      aiAssisted = true;
+      showAiBanner(aiDraftBanner({ gaps: r.gaps, counts: r.identifiers_replaced, onReviewed: () => {} }));
+      scheduleSave();
+    },
+  });
+  if (copilot) (aiBanner || structuredBox).before(copilot);
   const m = modal(isNew ? 'New note' : 'Edit draft note', f, { wide: true });
   const origClose = m.close; m.close = () => { clearTimeout(asTimer); if (noteId && onDone) onDone(); origClose(); };
 }
@@ -149,12 +170,14 @@ export async function openNote(id, { onChange } = {}) {
   const mine = n.author_id === state.user.id;
   const writable = can(`notes:${n.kind}:write`);
   const body = h('div', {},
-    h('div', { class: 'row mb' }, badge(n.kind === 'clinical' ? 'Clinical' : 'Administrative', n.kind === 'clinical' ? 'purple' : 'info'), badge(fmt.label(n.status), statusKind(n.status)), badge(fmt.label(n.format, 'NOTE_FORMATS')), n.source !== 'manual' ? badge(`Imported: ${fmt.label(n.source)}`, 'warn') : null, n.part2_protected ? badge('42 CFR Part 2', 'danger') : null, n.counseling_note ? h('span', { 'data-counseling-note': '1' }, badge('SUD counseling note', 'purple')) : null,
+    h('div', { class: 'row mb' }, badge(n.kind === 'clinical' ? 'Clinical' : 'Administrative', n.kind === 'clinical' ? 'purple' : 'info'), badge(fmt.label(n.status), statusKind(n.status)), badge(fmt.label(n.format, 'NOTE_FORMATS')), n.source !== 'manual' ? badge(`Imported: ${fmt.label(n.source)}`, 'warn') : null, Number(n.ai_assisted) ? h('span', { 'data-ai-assisted': '1' }, badge('AI-assisted', 'info')) : null, n.part2_protected ? badge('42 CFR Part 2', 'danger') : null, n.counseling_note ? h('span', { 'data-counseling-note': '1' }, badge('SUD counseling note', 'purple')) : null,
       n.cosigned_at ? badge(`Countersigned by ${n.cosigner}`, 'ok') : n.cosign_requested ? badge('Review requested', 'warn') : n.cosign_required ? badge('Needs countersignature', 'warn') : null),
     // On paper the label travels with the page (42 CFR §2.32(a)(2)).
     n.part2_protected && state.constants?.PART2_NOTICE_SHORT ? h('div', { class: 'print-only small', 'data-part2-print': '1' }, `Protected by 42 CFR Part 2. ${state.constants.PART2_NOTICE_SHORT}`) : null,
     kv([['Client', n.client_id ? h('a', { href: `#/client/${n.client_id}`, 'data-note-client': n.client_code || '' }, n.client_name ? `${n.client_name} (${n.client_code})` : n.client_code ? `Client ${n.client_code}` : 'Open the client record') : null], ['Date of service', fmt.dt(n.occurred_at)], ['Author', n.author], n.signed_at ? ['Signed', `${fmt.dt(n.signed_at)} by ${n.signer}`] : null, n.signature_hash ? ['Signature hash', h('details', { class: 'sig-hash' }, h('summary', {}, h('code', {}, n.signature_hash.slice(0, 16) + '…'), ' ', h('span', { class: 'small muted' }, 'show full')), h('code', { class: 'sig-hash-full', style: { wordBreak: 'break-all' } }, n.signature_hash))] : null, ['Created', fmt.dt(n.created_at)]]),
     n.signature_hash ? verifyPanel(n, breakGlass) : null,
+    Number(n.ai_assisted) && n.status === 'draft' ? h('p', { class: 'banner warn small', 'data-ai-draft-banner': '1' }, h('strong', {}, 'AI draft — review before signing. '), 'Some of this note was drafted by the AI copilot. Read it against what happened and correct it before you sign.') : null,
+    Number(n.ai_assisted) && n.status !== 'draft' ? h('p', { class: 'small muted', 'data-ai-signed': '1' }, 'Some of this note was drafted with the AI copilot and reviewed by its author before signing.') : null,
     n.problems && n.problems.length ? h('div', { class: 'small mt', 'data-note-problems-view': '1' }, h('b', {}, 'Addresses: '), n.problems.map(p => p.problem || 'a problem on the list').join('; ')) : null,
     n.structured ? h('div', { class: 'mt' }, Object.entries(n.structured).map(([k, v]) => v ? h('div', { class: 'mb' }, h('b', {}, sectionLabel(n.format, k)), h('div', { style: { whiteSpace: 'pre-wrap' } }, v)) : null)) : h('pre', { class: 'note mt' }, n.content),
     n.structured && n.content ? h('details', { class: 'mt' }, h('summary', { class: 'muted small' }, 'Narrative text'), h('pre', { class: 'note' }, n.content)) : null,
@@ -244,9 +267,15 @@ export function ssoReauthNotice(query) {
   return !!r;
 }
 function signNote(n, done, { onCancel = null } = {}) {
+  // A note with AI-drafted text is signed only with the author's statement that they reviewed it (server/routes/notes.js).
+  const ai = !!Number(n.ai_assisted);
   return signatureDialog({ title: 'Electronic signature', submitText: 'Sign note',
     intro: h('p', { 'data-attestation': '1' }, 'By signing you attest that this documentation is accurate and complete. Signed notes cannot be edited or deleted; corrections are made by addendum.'),
-    send: (body) => post(`/api/notes/${n.id}/sign`, body), returnTo: `#/notes/${n.id}`,
+    fields: ai ? [{ name: 'ai_reviewed', label: 'Some of this note was drafted by the AI copilot. I have reviewed and corrected it, and it accurately records what happened.', type: 'checkbox', span: true }] : [],
+    send: (body) => {
+      if (ai && !body.ai_reviewed) { const e = new Error('Confirm you have reviewed the AI-drafted text before signing.'); e.data = { fields: { ai_reviewed: 'tick to confirm you reviewed the AI-drafted text' } }; throw e; }
+      return post(`/api/notes/${n.id}/sign`, body);
+    }, returnTo: `#/notes/${n.id}`,
     done: () => { toast('Note signed and locked', 'ok'); done(); }, onCancel });
 }
 function addAddendum(n, done) {

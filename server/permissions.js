@@ -12,7 +12,9 @@ const PRIVILEGED_PERMISSIONS = ['users:manage', 'settings:manage', 'apikeys:mana
 // records; clients:list-deidentified lists every client by code (security review of 1.15.3, M1);
 // records:manage-others (1.16.0) changes, deletes and records under the name of other workers' work.
 const SENSITIVE = new Set(['export:identified', 'clients:all', 'records:manage-others', 'disclosures:override', 'notes:clinical:breakglass', 'clients:merge', 'clients:legal-hold',
-  'assignments:manage', 'clients:read', 'clients:list-deidentified']);
+  'assignments:manage', 'clients:read', 'clients:list-deidentified',
+  // ai:draft (1.17.0) sends de-identified session text about a client to the AI provider (docs/AI-COPILOT.md).
+  'ai:draft']);
 
 // What opens a client's identity: a record (clients:write implies clients:read, auth.hasPerm), or a file of them.
 const IDENTIFYING = ['clients:read', 'clients:write', 'export:identified'];
@@ -35,6 +37,7 @@ function grantProblem(role, roleDefaults, permission) {
   const deidentified = defaults.includes('clients:list-deidentified') && !defaults.some(p => IDENTIFYING.includes(p));
   if (deidentified && IDENTIFYING.includes(permission)) return `A ${role} account knows clients by client code only (de-identified), so it cannot be granted "${permission}", which would let it identify them. If this person needs to open client records, give them a role that does.`;
   if (permission === 'records:manage-others' && !defaults.includes('clients:write')) return `"${permission}" can only be granted to a role that records client work (navigator, clinician, supervisor, administrator)`;
+  if (permission === 'ai:draft' && !defaults.includes('clients:write')) return `"${permission}" can only be granted to a role that documents client work (navigator, clinician, supervisor, administrator)`;
   if (permission === 'clients:list-deidentified' && defaults.some(p => IDENTIFYING.includes(p))) return `"clients:list-deidentified" is how a de-identified role (finance, read-only) lists clients by code. A ${role} already opens client records; to show them every client (not only their caseload), clients:all is the permission.`;
   return null;
 }
@@ -103,6 +106,7 @@ const DEFS = [
   ['supplies:*', 'Supplies (read and manage)', 'Items, sites, transfers, adjustments, disposal.'],
   ['supplies:read', 'See supply stock', 'Stock on hand by site and lot.'],
   ['supplies:receive', 'Receive supply deliveries', 'Record stock that arrived at a site.'],
+  ['ai:draft', 'Use the AI documentation copilot', 'Ask the AI copilot for a draft (progress note sections, assessment narratives, care plan and CalOMS suggestions) from text they give it, with identifiers replaced before it is sent. Only while an administrator has recorded the agreement with the provider and switched the copilot on. Clinicians, supervisors and navigators by default.'],
 ];
 
 const PERMISSION_CATALOG = DEFS.map(([name, label, description]) => ({

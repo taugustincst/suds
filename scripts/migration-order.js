@@ -107,6 +107,14 @@ const DEPENDENCY_CHANGES = [
       + 'index IF NOT EXISTS, and test/migrations.test.js upgrades the 1.6.1 fixture through migration 5 and 51 to the '
       + 'same structure as a fresh install.',
   },
+  {
+    dependency: 'schema.sql:table:notes', fingerprint: '80207d95d09290fa',
+    reason: '1.17.0 (migration 53, the AI copilot) adds notes.ai_assisted INTEGER NOT NULL DEFAULT 0. Additive: a '
+      + 'database that runs migration 5 or 19 now gets the column with every existing note at 0 (not drafted by the '
+      + 'copilot, which is true of every note written before it existed), and migration 53 adds it only when missing '
+      + '(addColumn); test/migrations.test.js upgrades the 1.6.1 fixture through them to the same structure as a '
+      + 'fresh install.',
+  },
 ];
 
 /** Tokens of JavaScript source, enough to tell code from strings, comments, templates and regular expressions. */

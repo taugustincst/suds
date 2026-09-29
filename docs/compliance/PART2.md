@@ -218,6 +218,19 @@ should look at `consent`, `qsoa`, `research`, `audit_evaluation`, `crime_on_prem
 * Record every privacy complaint under Complaints, tell the complainant they may also complain to HHS, and
   check no adverse action followed.
 
+## The AI documentation copilot (1.17.0, optional)
+
+The copilot (`docs/AI-COPILOT.md`) sends session text a worker gives it, with the client's identifiers
+replaced, to an AI provider to draft documentation. For a Part 2 programme the provider receives Part 2
+information and must be bound as a **qualified service organisation** (§2.11, §2.12(c)(4)): the administrator
+cannot switch the copilot on until they record an agreement with BAA and QSOA terms and counsel's review
+(Settings → AI copilot; audited as `ai.attestation.record`). This is a use by the programme's QSO, not a
+disclosure under a consent, so it writes no accounting-of-disclosures row; the audit log records each call
+(`ai.draft`). Counseling notes (§2.11): the copilot drafts only in the author's own note from text the author
+gives it; it never reads or sends another note, a colleague's or anyone's counseling note, and a signed note
+cannot be redrafted. Masking identifiers reduces what is sent but does not make the text non-identifying. The
+copilot never runs on a device.
+
 ## What the programme must supply
 
 * Consent, notice and revocation **wording** approved by counsel; staff **training** on Part 2 and the 2024

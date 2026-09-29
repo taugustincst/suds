@@ -118,6 +118,13 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 - **CI:** `test`.
 - **Status:** Addressed in software. **Owner-pending:** counsel review of consent and notice wording, and an independent Part 2 review.
 
+### AI documentation copilot (1.17.0, optional)
+
+- **Documents:** [../AI-COPILOT.md](../AI-COPILOT.md) (what is sent, the residual risk, what is recorded); [DATA-INVENTORY.md](../security/DATA-INVENTORY.md) section 5; [THREAT-MODEL.md](../security/THREAT-MODEL.md).
+- **Tests:** `ai-copilot`, `ssrf`, `role-expansion`; browser `r10-ai` (against a local fake provider).
+- **CI:** `test`; `browser` (`r10-ai`).
+- **Status:** Off by default; not yet in a released version. **Programme-pending:** a BAA with Part 2 QSOA terms with the AI provider, and counsel's review, before it is switched on.
+
 ### De-identification and publication
 
 - **Documents:** [../HIPAA.md](../HIPAA.md), *Small cells*; [ADR-0009](../architecture/ADR-0009-publication-release.md); [../PERFORMANCE.md](../PERFORMANCE.md).

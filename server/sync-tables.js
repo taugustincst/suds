@@ -134,14 +134,15 @@ module.exports = {
   // stays at the office. A device's own edits are recorded there when its push lands (server/rules/clients.js
   // afterApply, via 'sync'); a device that syncs with an office keeps none and says the history is at the office
   // (server/client-revisions.js keptHere). SUDS on this device, with no office, keeps its own.
-  server_only: ['breakglass_events', 'complaints', 'privacy_incidents', 'privacy_incident_clients', 'fhir_jwt_assertions', 'caloms_submissions', 'client_revisions'],
+  // ai_usage counts the AI copilot's calls for the programme's monthly cap (server/ai-copilot.js); a device has no copilot.
+  server_only: ['breakglass_events', 'complaints', 'privacy_incidents', 'privacy_incident_clients', 'fhir_jwt_assertions', 'caloms_submissions', 'client_revisions', 'ai_usage'],
   // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
   // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
   // list against the schema, so a table with PHI is always either synchronised or deliberately kept apart.
   unsynced_enc: {
     breakglass_events: ['reason_enc'], complaints: ['summary_enc', 'resolution_enc'],
     privacy_incidents: ['title_enc', 'description_enc', 'risk_nature_enc', 'risk_recipient_enc', 'risk_acquired_enc', 'risk_mitigation_enc', 'determination_reason_enc'],
-    privacy_incident_clients: ['client_name_enc'], fhir_jwt_assertions: [], caloms_submissions: ['file_enc'], client_revisions: ['changes_enc'],
+    privacy_incident_clients: ['client_name_enc'], fhir_jwt_assertions: [], caloms_submissions: ['file_enc'], client_revisions: ['changes_enc'], ai_usage: [],
     idempotency_keys: ['response_enc'],
   },
   // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
@@ -170,7 +171,7 @@ module.exports = {
     ['care_plan_steps', 'owner_user_id'], ['care_plan_steps', 'created_by'], ['asam_assessments', 'assessed_by'], ['outcome_measures', 'administered_by'],
     ['caloms_records', 'created_by'], ['caloms_records', 'updated_by'], ['suprt_assessments', 'created_by'], ['suprt_assessments', 'updated_by'],
     ['court_orders', 'recorded_by'], ['part2_notices', 'given_by'], ['complaints', 'handled_by'], ['complaints', 'created_by'],
-    ['privacy_incidents', 'determined_by'], ['privacy_incidents', 'reported_by'], ['disclosure_agreements', 'created_by'], ['caloms_submissions', 'created_by'],
+    ['privacy_incidents', 'determined_by'], ['privacy_incidents', 'reported_by'], ['disclosure_agreements', 'created_by'], ['caloms_submissions', 'created_by'], ['ai_usage', 'user_id'],
     ['user_permission_overrides', 'user_id'], ['user_permission_overrides', 'granted_by'], ['client_revisions', 'changed_by'], ['prevention_events', 'user_id'],
   ],
 };

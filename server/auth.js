@@ -81,6 +81,12 @@ function ssoPolicy() {
 // reports:internal (no purpose=internal runs) nor reports:exact: the dashboard and monthly trends stay
 // masked for it (server/dashboard-mask.js reads reportRunAllowed, which it does not change), and it unlocks
 // no identified export and no client-level screen. Every such run is audited with the purpose, fund and period.
+// ai:draft (1.17.0, docs/AI-COPILOT.md) asks the AI documentation copilot for a draft: a progress note, the six
+// assessment dimensions, care plan suggestions, CalOMS answers. Held by the roles that write that documentation:
+// clinicians and supervisors, and navigators, whose notes are administrative (each draft also needs the
+// permission to write what it drafts: notes:<kind>:write, assessments:write, careplan:write, episodes:write).
+// Not administrators: they are not treating staff. The copilot itself is off until an administrator records
+// the programme's agreement with the provider and switches it on (server/ai-copilot.js).
 // supplies (docs/SUPPLIES.md): supplies:read is the stock on hand, by site and lot, and its history, for the
 // staff who hand supplies out; supplies:receive records stock that arrived (a delivery at their site), which
 // field staff do; supplies:manage is the rest of running the cupboard (items, sites, transfers between sites,
@@ -96,16 +102,16 @@ const PERMS = {
                'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
                'consents:*','imports:*','graph:import','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*',
-               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*'],
+               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*','ai:draft'],
   // Front-line staff hold export:read so the Export buttons on their own screens work; without
   // export:identified every file they can produce is de-identified (Safe Harbor), and caseload-scoped for a
   // person denied clients:all. budget:read (1.16.0): a clinician sees programme spending; no budget:write.
   clinician:  ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
                'budget:read','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
-               'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','assessments:*','court-orders:read','agreements:read','supplies:read','supplies:receive'],
+               'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','assessments:*','court-orders:read','agreements:read','supplies:read','supplies:receive','ai:draft'],
   navigator:  ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','notes:admin:read','notes:admin:write','notes:clinical:read','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
-               'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','court-orders:read','agreements:read','supplies:read','supplies:receive'],
+               'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','court-orders:read','agreements:read','supplies:read','supplies:receive','ai:draft'],
   // finance sees money, not people: export:read without export:identified means every export it can run
   // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
   // Its people counts are aggregate only: publication releases, and (reports:funder) the programme's own

@@ -19,7 +19,7 @@ workflow (C). The owner chose **B and C together**: do the work, and aim it at h
 and grant reporting. [EVALUATION-RESPONSE.md](EVALUATION-RESPONSE.md) answers each point with its status.
 
 **Go-to-market for 1.17.0 (29 September 2026).** The owner's strategy builds on that choice
-([STRATEGY.md](STRATEGY.md)): *create* an AI documentation copilot (**planned for 1.17.0**, the first build),
+([STRATEGY.md](STRATEGY.md)): *create* an AI documentation copilot (the first build: **built for 1.17.0, not yet released**),
 settlement tracking with funder-facing outcome views, and a real street-outreach mode; *capture* the Part 2 layer
 beside any EHR, CalOMS automation as a county wedge, a cross-organisation referral network and low pricing; and
 *defend* with county contracts, the referral network, a de-identified outcomes dataset and the deployment service
@@ -138,7 +138,7 @@ Software cannot close these. Suggested timeline from the start of Phase 1.
 - Never describe SUDS as hosted, or promise 24×7 support or an uptime figure, until [HOSTING.md](HOSTING.md) says it is offered.
 - Lead with the Part 2 layer beside the EHR, field-ready outreach and funder outcomes; clinical modules are
   optional, not the pitch.
-- Never present a planned capability as available: the AI copilot (planned for 1.17.0 until that release is
+- Never present a planned capability as available: the AI copilot (built for 1.17.0, but not available until that release is
   tagged), the county funder view, the street-outreach mode, referral links and the outcomes dataset are planned
   ([STRATEGY.md](STRATEGY.md), *Built vs planned, exactly*). Say "SUDS's own checks" for the CalOMS extract, never
   "validated" or "submission-ready" without "to verify against the DHCS data dictionary".

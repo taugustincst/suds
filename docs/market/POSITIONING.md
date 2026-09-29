@@ -21,7 +21,7 @@ Three leads, in this order, each stated no further than the software goes:
    planned, not built.
 
 What comes next, and what is only planned, is in [STRATEGY.md](STRATEGY.md): the AI documentation copilot is
-**planned for 1.17.0** (office server only, off by default, gated on a BAA and QSOA, identifiers removed before
+**built for 1.17.0, not yet released** (office server only, off by default, gated on a BAA and QSOA, identifiers removed before
 sending, drafts only, a person signs). Do not show or promise it before that release is tagged.
 
 ## Category
@@ -199,7 +199,7 @@ business-hours support and (when offered) hosting. The current hypothesis is fla
 the owner has not decided ([PRICING-OPTIONS.md](PRICING-OPTIONS.md)). Nothing is a quote.
 
 **"Will an AI read our clients' records?"**
-Not in any released version. An AI documentation copilot is planned for 1.17.0. As designed it runs only from an
+Not in any released version. An AI documentation copilot is built for 1.17.0 ([docs/AI-COPILOT.md](../AI-COPILOT.md)). It runs only from an
 office server, is off until an administrator turns it on, cannot be turned on until the programme records a BAA and
 a Part 2 QSOA with the AI provider, removes the identifiers SUDS holds before sending, and returns drafts that a
 person edits and signs. Removing known identifiers does not make free text de-identified (a note can still name a

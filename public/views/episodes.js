@@ -2,6 +2,7 @@
 // once stayed "active" forever, because there was no step that ended anything.
 import { h, route, get, pagedList, post, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, kv, flag } from '../app.js';
 import { calomsConfig, calomsFields, splitCaloms, calomsDefaults, calomsEpisodeDialog } from './caloms.js';
+import { calomsCopilot } from './ai.js';
 
 // The discharge reasons are a documentation list (Settings → Lists): offered and worded as the office set
 // them up, with a reason retired since an episode was closed still shown on that episode.
@@ -27,6 +28,7 @@ export async function episodesPanel(clientId, { onChange, client = null } = {}) 
       const { plain, caloms } = calOn ? splitCaloms(cal, 'admission', d) : { plain: d, caloms: null };
       await post(`/api/clients/${clientId}/episodes`, caloms ? { ...plain, caloms } : plain); toast('Episode opened', 'ok'); m.close(); onChange ? onChange() : nav(`client/${clientId}`);
     } });
+    if (calOn && !state.local) calomsCopilot({ clientId, form: f, type: 'admission' }); // suggestions from the AI copilot (views/ai.js)
     const m = modal('Start an episode of care', calOn ? h('div', {}, h('p', { class: 'small muted', 'data-caloms-admission': '1' }, 'This program reports CalOMS Tx: answer the CalOMS admission questions below. They are sent to the state (DHCS) in the monthly extract.'), f) : f, { wide: calOn });
   };
 
@@ -68,6 +70,7 @@ export async function episodesPanel(clientId, { onChange, client = null } = {}) 
       const code = (cal.from_suds.discharge_reason || {})[f.inputs.discharge_reason.value];
       if (code && !f.inputs.caloms_discharge_status.value) f.inputs.caloms_discharge_status.value = code;
     });
+    if (calOn && !state.local) calomsCopilot({ clientId, form: f, type: 'discharge' });
     const m = modal('Discharge from this episode', h('div', {},
       standing ? h('p', { class: 'small muted' }, 'This ends the assignments on this client and closes their open to-dos, so they stop appearing on everyone\'s overdue list. Their record stays exactly as it is.')
         : h('p', { class: 'banner info small', 'data-discharge-own-part': '1' }, others.length

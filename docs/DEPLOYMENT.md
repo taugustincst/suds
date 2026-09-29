@@ -26,6 +26,11 @@ website over HTTPS (public addresses only; redirects to this machine or a privat
 the server outbound HTTPS (port 443) to the providers' websites if you want it; without it the button reports
 "the computer running SUDS could not reach the internet" and every program keeps its generated card.
 
+The optional **AI documentation copilot** (off by default; `docs/AI-COPILOT.md`) calls the AI provider's API
+(`https://api.anthropic.com`, or `SUDS_AI_BASE_URL`) with `ANTHROPIC_API_KEY` from the service's environment,
+only after an administrator records the programme's BAA/QSOA with the provider and switches it on. Allow
+outbound HTTPS to that host if you use it.
+
 Behind a county web proxy, Node's built-in `fetch` ignores `HTTPS_PROXY` unless told to use it: set **both**
 `HTTPS_PROXY=http://proxy.example.gov:8080` and `NODE_USE_ENV_PROXY=1` in the service's environment (Node 22.21
 or newer; `NO_PROXY` is honoured too). A proxy that inspects HTTPS presents its own certificate, which Node

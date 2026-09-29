@@ -90,6 +90,13 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
 
 - **No third-party scripts, CDNs, analytics or telemetry.** The only outbound connections are ones an
   administrator configures (listed above). Nothing polls for updates.
+- **Optional AI documentation copilot (1.17.0, off by default):** when the programme records its BAA/QSOA with
+  the AI provider and switches it on, the office server (never the browser) sends session text a worker gives,
+  with that client's known identifiers replaced, to the provider's API over HTTPS (`api.anthropic.com`, or a
+  gateway set in `SUDS_AI_BASE_URL`). The key is `ANTHROPIC_API_KEY` in the server environment only; no SDK or
+  other package is added; each call is audited without its text and counted against a monthly cap. This is PHI
+  to a business associate: see [docs/AI-COPILOT.md](../AI-COPILOT.md) for exactly what is sent and the residual
+  risk.
 - **Where PHI lives:** only in the SUDS database and its encrypted backups. Logs and audit details never
   contain names or note text.
 - **Local mode** (offline copy on a device) is off unless the setup wizard or IT turns it on. The wizard
@@ -108,12 +115,10 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
   never printed in a report or exported (a per-file random reference stands in), and not in publication releases
   ([docs/SUPPLIES.md](../SUPPLIES.md), *Participant codes*). **Prevention events** (1.17.0) hold no person-level data:
   a headcount per event and free-text notes, which are encrypted.
-- **Planned for 1.17.0, not in any released version: the AI documentation copilot** ([STRATEGY.md](STRATEGY.md),
-  *Create 1*). If released as designed it adds one outbound flow, from the office server (never a device or SUDS
-  on this device) to an AI provider the programme chooses: off by default; cannot be enabled until the programme
-  records a BAA and a Part 2 QSOA with that provider; the identifiers SUDS holds for the client are removed before
-  sending, but the remaining free text may still identify someone, so treat the provider as receiving PHI; the
-  result is a draft a person edits and signs. Review it in your risk register before enabling it.
+- **The AI copilot's outbound flow (1.17.0, not yet in a released version)**, described above: it cannot be
+  enabled until the programme records a BAA and a Part 2 QSOA with the provider; the remaining free text may still
+  identify someone, so treat the provider as receiving PHI; the result is a draft a person edits and signs. Review
+  it in your risk register before enabling it ([STRATEGY.md](STRATEGY.md), *Create 1*).
 
 ## Security controls and evidence
 
