@@ -177,6 +177,8 @@ Residual risks a county should carry in its own risk register (§164.308(a)(1)).
 | tasks | encrypted title and description (details); plaintext dates, status, priority | description was plaintext until 1.9.3; migration 24 encrypts existing rows. De-identified exports never carry it |
 | overdose_events | encrypted substances and notes | |
 | interventions, time_entries, expenditures | plaintext operational fields linked by client_id | short summaries/descriptions should not contain identifiers — the UI says so |
+| interventions.participant_code_enc / _idx (1.17.0) | encrypted; HMAC blind index | an anonymous contact's SSP participant code, built from personal details: counted by its index, never printed or exported ([SUPPLIES.md](SUPPLIES.md), *Participant codes*) |
+| prevention_events (1.17.0) | notes_enc encrypted; the rest plaintext | group and community prevention events: a headcount per event, no client, no names |
 | consents, disclosures | encrypted recipient, purpose, scope / what, justification, signer's name, witness (migration 39) | disclosures record the court order, proceeding and counseling-note flags and the §2.32 notice version |
 | court_orders | encrypted court, case, recipient, purpose, scope | subpart E orders; synced to devices, never hard-deleted by sync |
 | part2_notices | encrypted notes | §2.22 notice given: date, method, version, acknowledgement |

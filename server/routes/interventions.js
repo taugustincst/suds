@@ -14,6 +14,7 @@ const SN = require('../supply-names');
 // What the visit form calls a count that no supply item took off (insertResult below).
 const UNTRACKED_NAMES = { naloxone_kits: 'Naloxone kit', fentanyl_strips: 'Fentanyl test strips' };
 const { localDate, cents } = require('./budget');
+const PC = require('../participant-code');
 
 // The date a service "happened on", for the grant it is charged to and the time sheet it lands on: the
 // calendar date in the organisation's time zone (config.orgTimezone), or the service_date the caller gave
@@ -73,11 +74,21 @@ function syncTimeEntry(ctx, row, prev) {
 // PHI field and decrypted on the way out.
 function encodeSummary(v) { if (v.summary !== undefined) { v.summary_enc = v.summary ? require('../crypto').encrypt(v.summary) : null; delete v.summary; } }
 function decodeSummary(row) {
-  let summary = null;
+  let summary = null; let code = null;
   // A value that cannot be decrypted (a row written before this column was encrypted, or one whose key has
   // been rotated away) must not take the whole list down with it.
   if (row.summary_enc) { try { summary = require('../crypto').decrypt(row.summary_enc); } catch { summary = '[could not be read]'; } }
-  return { ...row, summary, summary_enc: undefined };
+  if (row.participant_code_enc) { try { code = decrypt(row.participant_code_enc); } catch { code = '[could not be read]'; } }
+  return { ...row, summary, summary_enc: undefined, participant_code: code, participant_code_enc: undefined, participant_code_idx: undefined };
+}
+// An anonymous contact's SSP participant code (server/participant-code.js): stored as its program-wide form,
+// encrypted, with the blind index the SSP summary counts unique participants by. The table's rules have
+// already refused a malformed code, or one on a contact with a client.
+function encodeCode(v) {
+  if (v.participant_code === undefined) return;
+  const n = PC.normalise(v.participant_code);
+  v.participant_code_enc = n ? encrypt(n) : null; v.participant_code_idx = PC.index(n);
+  delete v.participant_code;
 }
 
 // ---- a note written with the visit (1.14.0) ----
@@ -159,7 +170,7 @@ module.exports = (r) => {
       if (ctx.query.get('naloxone') === '1') where.push('interventions.naloxone_kits > 0');
     },
     afterLoad: (ctx, row) => withLines(decodeSummary(require('../client-name').withClientName(ctx, row))),
-    beforeInsert: (ctx, v) => { planNote(ctx, v); v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); checkCostPermission(ctx, v);
+    beforeInsert: (ctx, v) => { planNote(ctx, v); v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); encodeCode(v); checkCostPermission(ctx, v);
       // Nobody chose a fund (the field was not on the form: a role not shown it, or an API client): the
       // worker's default fund, else the programme's. An explicit "none" (null) is left as chosen.
       if (!('funding_source_id' in v)) { const f = require('./budget').defaultFundFor(v.user_id || ctx.user.id); if (f) v.funding_source_id = f; }
@@ -168,7 +179,7 @@ module.exports = (r) => {
     beforeUpdate: (ctx, v, row) => {
       if (v.note !== undefined && v.note !== null) throw badRequest('A note is added to a visit when it is recorded. To write one about an existing visit, use + Note on the client record.');
       delete v.note;
-      delete v.log_time; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v);
+      delete v.log_time; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); encodeCode(v);
       checkCostPermission(ctx, v);
       planSupplies(ctx, v, row);
     },

@@ -67,11 +67,11 @@ function deidentifyRow(r) {
  * sheet of a workbook) and gets a different one in the next file. The ids are random and held in memory
  * only for the one request.
  */
-function pseudonymizer() {
+function pseudonymizer(prefix = 'R') {
   const ids = new Map(); const used = new Set();
   return (clientId) => {
     if (!clientId) return '';
-    if (!ids.has(clientId)) { let p; do p = `R-${randomBytes(5).toString('hex').toUpperCase()}`; while (used.has(p)); used.add(p); ids.set(clientId, p); }
+    if (!ids.has(clientId)) { let p; do p = `${prefix}-${randomBytes(5).toString('hex').toUpperCase()}`; while (used.has(p)); used.add(p); ids.set(clientId, p); }
     return ids.get(clientId);
   };
 }
@@ -131,6 +131,9 @@ function codeRows(kind, rows) {
 // A de-identified export carries only the columns listed here for its dataset; nothing else reaches the
 // file. Each column was checked against Safe Harbor's identifiers and for free text:
 //   record_id       random for each export (see pseudonymizer), never the client code or row id.
+//   participant_ref an anonymous contact's SSP participant code, replaced likewise by a reference random for each
+//                   export (P-…): contacts with the same code share it within the file. The code itself is
+//                   never exported, identified or not.
 //   dates           *_at, *_date, *_due: reduced to the year.
 //   zip             ZIP3, or 000 for a restricted area.
 //   age_band        bands, with everyone over 89 in 90+.
@@ -151,7 +154,7 @@ function codeRows(kind, rows) {
 // exported as they are.
 const DEID_COLUMNS = {
   clients: ['record_id', 'age_band', 'status', 'intake_date', 'discharge_date', 'discharge_reason', 'referral_source', 'referral_date', 'engagement_date', 'days_to_engagement', 'primary_substance', 'secondary_substances', 'asam_level', 'mat_status', 'mat_medication', 'risk_level', 'housing_status', 'insurance', 'overdose_history', 'naloxone_provided', 'naloxone_last_date', 'co_occurring_mh', 'justice_involved', 'pregnant_or_parenting', 'zip', 'gender'],
-  interventions: ['occurred_at', 'record_id', 'type', 'duration_minutes', 'modality', 'outcome', 'stage_of_change', 'naloxone_kits', 'fentanyl_strips', 'worker', 'funding_source', 'cost', 'follow_up_due'],
+  interventions: ['occurred_at', 'record_id', 'participant_ref', 'type', 'duration_minutes', 'modality', 'outcome', 'stage_of_change', 'naloxone_kits', 'fentanyl_strips', 'worker', 'funding_source', 'cost', 'follow_up_due'],
   calls: ['started_at', 'record_id', 'direction', 'contact_type', 'duration_minutes', 'outcome', 'crisis', 'follow_up_needed', 'follow_up_due', 'worker'],
   time: ['work_date', 'worker', 'record_id', 'category', 'minutes', 'billable', 'funding_source'],
   referrals: ['referred_at', 'record_id', 'resource', 'category', 'status', 'urgency', 'warm_handoff', 'appointment_at', 'admitted_at', 'closed_at', 'worker'],
@@ -206,6 +209,9 @@ function datasets(ctx, { from, to, ts, tsP, identified }) {
   // Free-text PHI is only ever decrypted for an identified export; otherwise it is marked redacted so the
   // reader knows something was there rather than assuming the field was empty.
   const phi = (v) => identified && v ? decrypt(v) : (v ? '[redacted]' : '');
+  // An anonymous contact's participant code goes out as a reference random for this file, identified or not:
+  // the code is built from personal details, and a count of unique participants needs only the reference.
+  const participantRef = pseudonymizer('P');
   const idCols = identified ? ['last_name', 'first_name', 'dob', 'phone', 'email', 'address'] : ['age_band'];
   const strip = (cols) => (identified ? cols : cols.filter(c => c !== 'city'));
   const D = {
@@ -213,8 +219,8 @@ function datasets(ctx, { from, to, ts, tsP, identified }) {
       rows: () => db.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code LIMIT ?`, ...cf.params, MAX_ROWS)
         .map(x => ({ ...M.decryptRow(x, { deidentify: !identified }), _client_id: x.id, age_band: identified ? undefined : ageBand(x.dob_enc ? decrypt(x.dob_enc) : null) }))
         .map(x => ({ ...x, days_to_engagement: M.daysToEngagement(x), goals: identified ? x.goals : (x.goals_enc ? '[redacted]' : ''), flags: identified ? x.flags : (x.flags_enc ? '[redacted]' : '') })) },
-    interventions: { label: 'Visits & services', columns: ['occurred_at', 'client_code', 'type', 'duration_minutes', 'location', 'modality', 'outcome', 'stage_of_change', 'naloxone_kits', 'fentanyl_strips', 'worker', 'funding_source', 'cost', 'summary', 'follow_up_due'],
-      rows: () => db.all(`SELECT i.*, c.client_code, i.client_id AS _client_id, u.display_name worker, f.name funding_source FROM interventions i LEFT JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE ${ts('i.occurred_at')} AND ${sc.interventions.sql} ORDER BY i.occurred_at LIMIT ?`, ...tsP, ...sc.interventions.params, MAX_ROWS).map(r => ({ ...r, summary: phi(r.summary_enc) })) },
+    interventions: { label: 'Visits & services', columns: ['occurred_at', 'client_code', 'participant_ref', 'type', 'duration_minutes', 'location', 'modality', 'outcome', 'stage_of_change', 'naloxone_kits', 'fentanyl_strips', 'worker', 'funding_source', 'cost', 'summary', 'follow_up_due'],
+      rows: () => db.all(`SELECT i.*, c.client_code, i.client_id AS _client_id, u.display_name worker, f.name funding_source FROM interventions i LEFT JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE ${ts('i.occurred_at')} AND ${sc.interventions.sql} ORDER BY i.occurred_at LIMIT ?`, ...tsP, ...sc.interventions.params, MAX_ROWS).map(r => ({ ...r, summary: phi(r.summary_enc), participant_ref: participantRef(r.participant_code_idx) })) },
     calls: { label: 'Calls', columns: ['started_at', 'client_code', 'direction', 'contact_type', 'contact_name', 'duration_minutes', 'outcome', 'crisis', 'purpose', 'summary', 'follow_up_needed', 'follow_up_due', 'worker'],
       rows: () => db.all(`SELECT ca.*, c.client_code, ca.client_id AS _client_id, u.display_name worker FROM calls ca LEFT JOIN clients c ON c.id=ca.client_id JOIN users u ON u.id=ca.user_id WHERE ${ts('ca.started_at')} AND ${sc.calls.sql} ORDER BY ca.started_at LIMIT ?`, ...tsP, ...sc.calls.params, MAX_ROWS).map(r => ({ ...r, contact_name: phi(r.contact_name_enc), summary: phi(r.summary_enc), purpose: phi(r.purpose_enc) })) },
     time: { label: 'Time', columns: ['work_date', 'worker', 'client_code', 'category', 'minutes', 'billable', 'funding_source', 'description'],

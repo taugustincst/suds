@@ -30,7 +30,7 @@ function rateLimitReset(key) { buckets.delete(key); }
 // fails loudly if it is missing a loader for one, so adding a route file cannot silently leave the feature
 // out of the local-mode kernel.
 const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
-  'interventions', 'overdose', 'calls', 'time', 'supervision', 'resources', 'referrals', 'tasks', 'budget', 'notes',
+  'interventions', 'overdose', 'prevention', 'calls', 'time', 'supervision', 'resources', 'referrals', 'tasks', 'budget', 'notes',
   'consents', 'patient-requests', 'part2', 'compliance', 'careplan', 'assessments', 'suprt', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors', 'fhir', 'scim'];
 
 // Not on a device: setup and app are office-server concerns (first-run wizard, connection info), sync is the

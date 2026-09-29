@@ -145,7 +145,7 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   // `values` (the `form()` helper's lookup for a field's starting value) wins over a field's own `value`
   // default, so the parts of the template we do NOT want carried over — when it happened, how long it
   // took, what was written up — have to be scrubbed from the seed itself, not overridden per-field below.
-  const seed = values || (repeatOf ? { ...repeatOf, occurred_at: new Date().toISOString(), duration_minutes: 30, summary: '', follow_up_due: '', user_id: undefined, syringes_returned: null, returns_estimated: 0, sharps_returned_litres: null } : preset ? { ...preset } : {});
+  const seed = values || (repeatOf ? { ...repeatOf, occurred_at: new Date().toISOString(), duration_minutes: 30, summary: '', follow_up_due: '', participant_code: '', user_id: undefined, syringes_returned: null, returns_estimated: 0, sharps_returned_litres: null } : preset ? { ...preset } : {});
   // A new visit is charged to the worker's default fund (or the programme's) unless they choose another, so it
   // is not left out of the funder report's "By funding source"; a repeated visit keeps the fund it had.
   const defaultFund = state.defaultFundId && state.funds?.some(x => x.id === state.defaultFundId) ? state.defaultFundId : '';
@@ -174,6 +174,10 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   const section = (key, label, hint) => ({ type: 'section', key, label, collapsible: true, heading: true, hint });
   const f = form([
     clientField,
+    // An anonymous contact's SSP participant code (1.17.0, server/participant-code.js): only where a contact can
+    // have no client, and only when it has none. Shown for outreach and community distribution (syncCodeField).
+    { name: 'participant_code', label: 'Participant code (no client record)', maxLen: 20,
+      help: 'Only for someone who gives no name: the code they build the same way every time, by your program\'s recipe (for example the first two letters of their mother\'s first name, their birth month and the last two digits of their birth year: MA0785). The SSP report counts different people by it without naming anyone. Stored encrypted.' },
     { name: 'type', label: 'What did you do?', type: 'select', list: 'INTERVENTION_TYPES', required: true },
     { name: 'occurred_at', label: 'Date & time', type: 'datetime', required: true, value: new Date().toISOString() },
     // Where and how (1.15.3): filled in from this worker's last visit, so on a new visit it is folded away with
@@ -222,6 +226,9 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
     if (can('budget:read') && Number(d.cost) > 0) { if (!d.funding_source_id) bad.funding_source_id = 'is required when there is a direct cost'; else if (!d.budget_line_id) bad.budget_line_id = 'is required when there is a direct cost, so it is deducted from the right allocation'; }
     const note = readNote(d);
     if (note && !d.client_id) bad.note_content = 'needs a client: choose the client above, or leave the note empty (outreach with no name has no record to put it on)';
+    // A contact with a client is counted by the client: a code is for an anonymous contact only.
+    if (d.client_id && d.participant_code && String(d.participant_code).trim()) bad.participant_code = 'is only for a contact with no client record: clear the code, or the client';
+    else if (d.participant_code && String(d.participant_code).replace(/[^a-z0-9]/gi, '').length < 4) bad.participant_code = 'must have at least 4 letters or digits';
     if (Object.keys(bad).length) { const e = new Error('Check the highlighted fields.'); e.data = { fields: bad }; throw e; }
     // Time is logged only from a duration someone looked at: with the prefilled 30 minutes untouched, Save asks
     // first, naming the minutes; "Change the duration" goes back to the field with nothing saved.
@@ -298,6 +305,11 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   };
   f.inputs.type.addEventListener('change', syncClientRequired);
   syncClientRequired();
+  // The participant code is offered only where a contact may have no client (or the visit already has a code).
+  const codeWrap = f.querySelector('[data-field="participant_code"]');
+  const syncCodeField = () => { if (codeWrap) codeWrap.hidden = !clientless(f.inputs.type.value) && !(values && values.participant_code); };
+  f.inputs.type.addEventListener('change', syncCodeField);
+  syncCodeField();
   if (can('budget:read')) {
     const fundSel = f.inputs.funding_source_id, lineSel = f.inputs.budget_line_id;
     const fillLines = () => { const fund = state.funds.find(x => x.id === fundSel.value); lineSel.replaceChildren(h('option', { value: '' }, '— none —'), ...flattenLines(fund ? fund.lines : []).map(l => h('option', { value: l.id, selected: l.id === seed.budget_line_id }, `${'— '.repeat(l._depth)}${l.label || fmt.label(l.category)} (${fmt.money(l.allocated_amount - l.subtree_spent)} left)`))); };
@@ -431,6 +443,7 @@ export function openVisitView(r, { onChange } = {}) {
     mine || !can('interventions:write') ? null : ownedNotice(r.worker, { noun: 'visit' }),
     kv([['When', fmt.dt(r.occurred_at)],
       ['Client', r.client_id ? h('a', { href: `#/client/${r.client_id}`, onClick: () => m.close() }, clientText(r)) : 'Anonymous (no client record)'],
+      !r.client_id && r.participant_code ? ['Participant code', r.participant_code] : null,
       ['What was done', fmt.label(r.type, 'INTERVENTION_TYPES')], ['Where & how', `${fmt.label(r.location, 'LOCATIONS')} · ${fmt.label(r.modality, 'MODALITIES')}`],
       ['Duration', fmt.mins(r.duration_minutes)], ['Supplies', suppliesOf(r).filter(Boolean).length ? suppliesOf(r) : 'None'],
       ['Outcome', r.outcome ? fmt.label(r.outcome, 'OUTCOMES') : null], r.stage_of_change ? ['Stage of change', fmt.label(r.stage_of_change)] : null,

@@ -49,8 +49,14 @@ module.exports = {
     // unlinked: a row with no client is outside caseload scoping, so it is its owners' (these columns) or a
     // holder of `all`'s -- over REST (crud.js) and by sync alike. Their free text (a caller's name and number,
     // an outreach summary, a bystander's overdose) can name someone.
-    { name: 'interventions', enc: ['summary_enc'], scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['user_id'], all: 'clients:all' }, writePerm: 'interventions:write', parent: ['clients', 'client_id'] },
+    // participant_code_enc: an anonymous contact's SSP participant code (server/participant-code.js); its blind
+    // index is recomputed by the receiver (importRow below), like a client's name indexes.
+    { name: 'interventions', enc: ['summary_enc', 'participant_code_enc'], scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['user_id'], all: 'clients:all' }, writePerm: 'interventions:write', parent: ['clients', 'client_id'] },
     { name: 'overdose_events', enc: ['notes_enc', 'substances_enc'], scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['reported_by'], all: 'clients:all' }, writePerm: 'overdose:write', parent: ['clients', 'client_id'] },
+    // Group and community prevention events (server/prevention.js): the programme's, with no client, so every
+    // device of someone who may read visits gets them (attendance is a headcount; nothing names a person). Written
+    // as visits are (interventions:write), each its worker's or a manager's to change (server/rules/prevention_events.js).
+    { name: 'prevention_events', enc: ['notes_enc'], scope: 'all', writePerm: 'interventions:write', readPerm: 'interventions:read' },
     { name: 'calls', enc: ['contact_name_enc', 'phone_enc', 'summary_enc', 'purpose_enc'], scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['user_id'], all: 'clients:all' }, writePerm: 'calls:write', parent: ['clients', 'client_id'] },
     { name: 'time_entries', enc: ['description_enc', 'approval_note_enc'], legacy: { description: 'description_enc', approval_note: 'approval_note_enc' }, scope: 'client-or-null', clientCol: 'client_id', unlinked: { owners: ['user_id'], all: 'time:all' }, writePerm: 'time:write', parent: ['clients', 'client_id'] },
     // A referral may cite the consent it was made under, so consents come first.
@@ -152,7 +158,7 @@ module.exports = {
     ['caloms_records', 'created_by'], ['caloms_records', 'updated_by'], ['suprt_assessments', 'created_by'], ['suprt_assessments', 'updated_by'],
     ['court_orders', 'recorded_by'], ['part2_notices', 'given_by'], ['complaints', 'handled_by'], ['complaints', 'created_by'],
     ['privacy_incidents', 'determined_by'], ['privacy_incidents', 'reported_by'], ['disclosure_agreements', 'created_by'], ['caloms_submissions', 'created_by'],
-    ['user_permission_overrides', 'user_id'], ['user_permission_overrides', 'granted_by'],
+    ['user_permission_overrides', 'user_id'], ['user_permission_overrides', 'granted_by'], ['prevention_events', 'user_id'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.
@@ -200,6 +206,8 @@ function importRow(t, r, existingCols) {
     if (r.dob_enc !== undefined) o.dob_idx = crypto.blindIndex(r.dob_enc || '');
     if (r.phone_enc !== undefined) o.phone_idx = crypto.blindIndex(String(r.phone_enc || '').replace(/\D/g, ''));
   }
+  // An anonymous contact's SSP participant code is counted by its blind index, under the receiver's own key.
+  if (t.name === 'interventions' && r.participant_code_enc !== undefined) o.participant_code_idx = require('./participant-code').index(r.participant_code_enc);
   return o;
 }
 

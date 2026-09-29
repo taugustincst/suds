@@ -112,6 +112,9 @@ module.exports = {
     // was: (not recorded in 1.13.0) -- new case (1.13.0 would have applied it); REST refuses this; so does push now
     "invalid: a cost on a line of another fund": { push: "rejected: has a value the office does not accept (its budget line belongs to another fund)", rest: 400 },
     "invalid: attributed to another worker": { push: "rejected: attributed to another user, which your role cannot do", rest: 201 },
+    // 1.17.0: new cases. An SSP participant code is for an anonymous contact only (server/participant-code.js).
+    "invalid: a participant code on a visit with a client": { push: "rejected: has a value the office does not accept (a participant code on a contact with a client)", rest: 400 },
+    "invalid: a participant code too short": { push: "rejected: has a value the office does not accept (participant code: must have at least 4 letters or digits)", rest: 400 },
     // was: push "rejected: not on caseload", rest 403 -- 1.16.0: a navigator holds clients:all, so nav2's client is not off their caseload; a navigator denied clients:all is refused as before (test/role-expansion.test.js)
     "client off the caseload": { push: "applied", rest: 201 },
     // was: push "applied", rest 403 -- REST's edit rule (the record's worker, or a manager) now applies to a device's edit
@@ -121,6 +124,20 @@ module.exports = {
     "another worker's record with no client": { push: "rejected: not permitted", rest: 403 },
     // was: push "deleted", rest 403 -- REST's DELETE rule (the record's worker, or a manager) now applies to a device's tombstone
     "another worker's record with no client: tombstone": { push: "rejected: not permitted", rest: 403 },
+    "role without permission (fin)": { push: "http 403", rest: 403 },
+    "tombstone": { push: "deleted", rest: 200 },
+    "device clock two hours fast": { push: "applied (office time)", rest: null },
+    "an older device edit": { push: "conflict", rest: 409 },
+  },
+  // 1.17.0: group and community prevention events (new table; no client, so no caseload or shared-client cases:
+  // another worker's event is covered by test/prevention.test.js).
+  prevention_events: {
+    "valid": { push: "applied", rest: 201 },
+    "invalid: strategy not a CSAP strategy": { push: "rejected: has a value the office does not accept (strategy: not one of the values it accepts)", rest: 400 },
+    "invalid: IOM category missing": { push: "rejected: is missing a required field (iom_category)", rest: 400 },
+    "invalid: attendance negative": { push: "rejected: has a value the office does not accept (attendance: min 0)", rest: 400 },
+    "invalid: a fund the office does not have": { push: "rejected: refers to a record the office server does not have (the funding source)", rest: 400 },
+    "invalid: attributed to another worker": { push: "rejected: attributed to another user, which your role cannot do", rest: 201 },
     "role without permission (fin)": { push: "http 403", rest: 403 },
     "tombstone": { push: "deleted", rest: 200 },
     "device clock two hours fast": { push: "applied (office time)", rest: null },

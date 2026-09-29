@@ -88,6 +88,10 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
   defaults that is the whole programme, clinical notes included** (about 460 MB of JSON on first sync at
   20,000 clients). Deny *See every client* to anyone whose device should hold only their caseload, before it
   first syncs; turn local mode off where no documented field-work need exists.
+- **Anonymous SSP participant codes (1.17.0)** are PHI-class: encrypted like names, counted by an HMAC blind index,
+  never printed in a report or exported (a per-file random reference stands in), and not in publication releases
+  ([docs/SUPPLIES.md](../SUPPLIES.md), *Participant codes*). **Prevention events** (1.17.0) hold no person-level data:
+  a headcount per event and free-text notes, which are encrypted.
 - Data classification by table: [docs/HIPAA.md](../HIPAA.md), *Data classification inside the database*.
 
 ## Security controls and evidence

@@ -651,6 +651,25 @@ const migrations = [
     )`);
     d.exec(`CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id)`);
   },
+  // 49: reserved for another 1.17.0 change developed on a parallel branch; its migration replaces this empty
+  //     entry when the branches are merged (ADR-0007, "Numbering across branches"). Nothing to do here.
+  () => {},
+  // 50: reserved likewise for a parallel 1.17.0 branch; replaced by that branch's migration on merge.
+  () => {},
+  // 51: prevention and syringe services (1.17.0). An anonymous contact's SSP participant code, encrypted, with its
+  //     blind index for counting unique participants (interventions.participant_code_enc/_idx), and group and
+  //     community prevention events (prevention_events, server/prevention.js). New columns and a new table:
+  //     nothing to backfill. Self-contained and idempotent (every step checks what is there), so it can be
+  //     renumbered beside the other 1.17.0 migrations.
+  (d) => {
+    addColumn(d, 'interventions', 'participant_code_enc', 'TEXT');
+    addColumn(d, 'interventions', 'participant_code_idx', 'TEXT');
+    const schemaText = safeSchema();
+    const m = schemaText.match(/CREATE TABLE IF NOT EXISTS prevention_events \([\s\S]*?\n\);/);
+    if (!m) throw new Error('migration 51: no definition for prevention_events in schema');
+    d.exec(m[0]);
+    createIndexesFromSchema(d, schemaText, ['idx_interventions_participant', 'idx_prevention_events_date', 'idx_prevention_events_user', 'idx_prevention_events_updated']);
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

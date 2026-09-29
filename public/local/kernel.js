@@ -7066,7 +7066,13 @@ CREATE TABLE IF NOT EXISTS interventions (
   supply_site_id TEXT,
   syringes_returned INTEGER NOT NULL DEFAULT 0,
   returns_estimated INTEGER NOT NULL DEFAULT 0,
-  sharps_returned_litres REAL
+  sharps_returned_litres REAL,
+  -- Anonymous syringe services participant code (migration 51, docs/SUPPLIES.md): on a contact with no client
+  -- record, the code the participant gives each time (built from details only they can reproduce), so the SSP
+  -- summary can count unique participants without anyone being identified. It is built from personal details,
+  -- so it is kept encrypted, and counted by its blind index (participant_code_idx, HMAC under the index key).
+  participant_code_enc TEXT,
+  participant_code_idx TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_interventions_client ON interventions(client_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_interventions_user ON interventions(user_id, occurred_at);
@@ -7079,6 +7085,34 @@ CREATE INDEX IF NOT EXISTS idx_interventions_updated ON interventions(updated_at
 CREATE INDEX IF NOT EXISTS idx_interventions_sync ON interventions(client_id, updated_at, user_id);
 -- The Home dashboard's pass over the period's visits (migration 47), read from the index alone.
 CREATE INDEX IF NOT EXISTS idx_interventions_dashboard ON interventions(occurred_at, client_id, user_id, type, duration_minutes, naloxone_kits, fentanyl_strips);
+-- The SSP summary's unique participants (migration 51): the period's coded anonymous contacts, from the index alone.
+CREATE INDEX IF NOT EXISTS idx_interventions_participant ON interventions(occurred_at, participant_code_idx) WHERE participant_code_idx IS NOT NULL;
+
+-- Group and community prevention events (migration 51; server/prevention.js): SABG primary prevention recorded as
+-- events, not as services to a person. Attendance is a headcount (how many people came or were reached), never
+-- a list of names: nothing here identifies anyone. The strategy (CSAP), population (IOM category), kind of event
+-- and audience are codes from Settings \u2192 Lists. The event is its worker's (user_id), or a manager's, to change.
+CREATE TABLE IF NOT EXISTS prevention_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  event_date TEXT NOT NULL,
+  title TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  strategy TEXT NOT NULL,
+  iom_category TEXT NOT NULL,
+  audience TEXT,
+  location TEXT,
+  hours REAL NOT NULL DEFAULT 0,
+  attendance INTEGER NOT NULL DEFAULT 0,
+  attendance_estimated INTEGER NOT NULL DEFAULT 0,
+  funding_source_id TEXT REFERENCES funding_sources(id),
+  notes_enc TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_prevention_events_date ON prevention_events(event_date, strategy, iom_category);
+CREATE INDEX IF NOT EXISTS idx_prevention_events_user ON prevention_events(user_id, event_date);
+CREATE INDEX IF NOT EXISTS idx_prevention_events_updated ON prevention_events(updated_at);
 
 CREATE TABLE IF NOT EXISTS calls (
   id TEXT PRIMARY KEY,
@@ -9322,7 +9356,16 @@ var require_constants = __commonJS({
       ASAM_DIMENSIONS: CL.ASAM_DIMENSIONS,
       ASAM_RATINGS: CL.ASAM_RATINGS,
       ASAM_DISCREPANCY_REASONS: CL.ASAM_DISCREPANCY_REASONS,
-      INSTRUMENTS: CL.INSTRUMENTS
+      INSTRUMENTS: CL.INSTRUMENTS,
+      // Group and community prevention events (server/routes/prevention.js, 1.17.0): SABG primary prevention.
+      // The six CSAP strategies and the three IOM population categories (universal split into direct and indirect,
+      // as SABG prevention reporting counts them) are national categories, so Settings → Lists can reword them
+      // but not add to them; the kind of event and the audience are the programme's own lists. A 'training' event's
+      // attendance is the "people trained" count (server/prevention.js), so that code cannot be retired.
+      PREVENTION_STRATEGIES: ["information_dissemination", "education", "alternatives", "problem_identification_referral", "community_based_process", "environmental"],
+      PREVENTION_IOM: ["universal_direct", "universal_indirect", "selective", "indicated"],
+      PREVENTION_EVENT_TYPES: ["presentation", "workshop", "training", "community_event", "media_campaign", "coalition_meeting", "alternative_activity", "screening_event", "policy_work", "other"],
+      PREVENTION_AUDIENCES: ["youth", "young_adults", "parents_families", "school_staff", "general_community", "older_adults", "health_providers", "first_responders", "employers", "faith_community", "other"]
     };
   }
 });
@@ -10704,6 +10747,71 @@ var require_options = __commonJS({
           other: "Other"
         },
         protect: { deceased: "marks the client deceased" }
+      },
+      // Prevention (1.17.0, server/prevention.js): the CSAP strategies and IOM categories are national categories
+      // the prevention activity summary totals by, so they can be reworded but not added to.
+      {
+        key: "PREVENTION_STRATEGIES",
+        group: "Prevention",
+        name: "Strategy (CSAP)",
+        codes: C.PREVENTION_STRATEGIES,
+        custom: false,
+        labels: {
+          information_dissemination: "Information dissemination",
+          education: "Education",
+          alternatives: "Alternatives",
+          problem_identification_referral: "Problem identification and referral",
+          community_based_process: "Community-based process",
+          environmental: "Environmental"
+        },
+        why: "The six CSAP prevention strategies: they can be reworded, but not added to, because the prevention activity summary totals by them."
+      },
+      {
+        key: "PREVENTION_IOM",
+        group: "Prevention",
+        name: "Population (IOM category)",
+        codes: C.PREVENTION_IOM,
+        custom: false,
+        labels: { universal_direct: "Universal (direct)", universal_indirect: "Universal (indirect)", selective: "Selective", indicated: "Indicated" },
+        why: "The Institute of Medicine population categories: they can be reworded, but not added to, because the prevention activity summary totals by them."
+      },
+      {
+        key: "PREVENTION_EVENT_TYPES",
+        group: "Prevention",
+        name: "Kind of event",
+        codes: C.PREVENTION_EVENT_TYPES,
+        labels: {
+          presentation: "Presentation",
+          workshop: "Workshop or class",
+          training: "Training",
+          community_event: "Community event",
+          media_campaign: "Media or social media campaign",
+          coalition_meeting: "Coalition or planning meeting",
+          alternative_activity: "Drug-free alternative activity",
+          screening_event: "Screening event",
+          policy_work: "Policy or environmental work",
+          other: "Other"
+        },
+        protect: { training: "its attendance is counted as people trained in the prevention activity summary" }
+      },
+      {
+        key: "PREVENTION_AUDIENCES",
+        group: "Prevention",
+        name: "Audience",
+        codes: C.PREVENTION_AUDIENCES,
+        labels: {
+          youth: "Youth (under 18)",
+          young_adults: "Young adults (18\u201325)",
+          parents_families: "Parents and families",
+          school_staff: "School staff",
+          general_community: "General community",
+          older_adults: "Older adults",
+          health_providers: "Health and social service providers",
+          first_responders: "First responders and law enforcement",
+          employers: "Employers and workplaces",
+          faith_community: "Faith communities",
+          other: "Other"
+        }
       }
     ];
     var BY_KEY = new Map(LISTS.map((l) => [l.key, l]));
@@ -11091,6 +11199,34 @@ var init_listener = __esm({
   }
 });
 
+// server/participant-code.js
+var require_participant_code = __commonJS({
+  "server/participant-code.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var { blindIndex: blindIndex2 } = require_crypto();
+    var MIN = 4;
+    var MAX = 20;
+    function normalise(code) {
+      if (code === null || code === void 0) return null;
+      const s = String(code).normalize("NFKD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      return s || null;
+    }
+    function problem(code) {
+      if (code === null || code === void 0 || String(code).trim() === "") return null;
+      const n = normalise(code);
+      if (!n || n.length < MIN) return `must have at least ${MIN} letters or digits`;
+      if (n.length > MAX) return `must have at most ${MAX} letters or digits`;
+      return null;
+    }
+    function index(code) {
+      const n = normalise(code);
+      return n ? blindIndex2(`ssp participant ${n}`) : null;
+    }
+    module.exports = { normalise, problem, index, MIN, MAX };
+  }
+});
+
 // server/sync-tables.js
 var require_sync_tables = __commonJS({
   "server/sync-tables.js"(exports, module) {
@@ -11144,8 +11280,14 @@ var require_sync_tables = __commonJS({
         // unlinked: a row with no client is outside caseload scoping, so it is its owners' (these columns) or a
         // holder of `all`'s -- over REST (crud.js) and by sync alike. Their free text (a caller's name and number,
         // an outreach summary, a bystander's overdose) can name someone.
-        { name: "interventions", enc: ["summary_enc"], scope: "client-or-null", clientCol: "client_id", unlinked: { owners: ["user_id"], all: "clients:all" }, writePerm: "interventions:write", parent: ["clients", "client_id"] },
+        // participant_code_enc: an anonymous contact's SSP participant code (server/participant-code.js); its blind
+        // index is recomputed by the receiver (importRow below), like a client's name indexes.
+        { name: "interventions", enc: ["summary_enc", "participant_code_enc"], scope: "client-or-null", clientCol: "client_id", unlinked: { owners: ["user_id"], all: "clients:all" }, writePerm: "interventions:write", parent: ["clients", "client_id"] },
         { name: "overdose_events", enc: ["notes_enc", "substances_enc"], scope: "client-or-null", clientCol: "client_id", unlinked: { owners: ["reported_by"], all: "clients:all" }, writePerm: "overdose:write", parent: ["clients", "client_id"] },
+        // Group and community prevention events (server/prevention.js): the programme's, with no client, so every
+        // device of someone who may read visits gets them (attendance is a headcount; nothing names a person). Written
+        // as visits are (interventions:write), each its worker's or a manager's to change (server/rules/prevention_events.js).
+        { name: "prevention_events", enc: ["notes_enc"], scope: "all", writePerm: "interventions:write", readPerm: "interventions:read" },
         { name: "calls", enc: ["contact_name_enc", "phone_enc", "summary_enc", "purpose_enc"], scope: "client-or-null", clientCol: "client_id", unlinked: { owners: ["user_id"], all: "clients:all" }, writePerm: "calls:write", parent: ["clients", "client_id"] },
         { name: "time_entries", enc: ["description_enc", "approval_note_enc"], legacy: { description: "description_enc", approval_note: "approval_note_enc" }, scope: "client-or-null", clientCol: "client_id", unlinked: { owners: ["user_id"], all: "time:all" }, writePerm: "time:write", parent: ["clients", "client_id"] },
         // A referral may cite the consent it was made under, so consents come first.
@@ -11311,7 +11453,8 @@ var require_sync_tables = __commonJS({
         ["disclosure_agreements", "created_by"],
         ["caloms_submissions", "created_by"],
         ["user_permission_overrides", "user_id"],
-        ["user_permission_overrides", "granted_by"]
+        ["user_permission_overrides", "granted_by"],
+        ["prevention_events", "user_id"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -11356,6 +11499,7 @@ var require_sync_tables = __commonJS({
         if (r.dob_enc !== void 0) o.dob_idx = crypto3.blindIndex(r.dob_enc || "");
         if (r.phone_enc !== void 0) o.phone_idx = crypto3.blindIndex(String(r.phone_enc || "").replace(/\D/g, ""));
       }
+      if (t.name === "interventions" && r.participant_code_enc !== void 0) o.participant_code_idx = require_participant_code().index(r.participant_code_enc);
       return o;
     }
     function upgradeLegacyRow(t, r) {
@@ -14675,6 +14819,7 @@ var require_interventions = __commonJS({
     var C = require_constants();
     var { define: define2, refuse, flag } = require_core();
     var { periodProblem, ownedBy } = require_shared();
+    var PC = require_participant_code();
     var serviceDate = (row) => row.service_date || require_budget().localDate(row.occurred_at);
     module.exports = define2({
       table: "interventions",
@@ -14708,6 +14853,9 @@ var require_interventions = __commonJS({
         syringes_returned: { type: "number", integer: true, min: 0, max: 1e5 },
         returns_estimated: { type: "boolean" },
         sharps_returned_litres: { type: "number", min: 0, max: 1e3 },
+        // An anonymous contact's SSP participant code (1.17.0, server/participant-code.js): stored encrypted, counted
+        // by its blind index, and only on a contact with no client record (check below).
+        participant_code: { type: "string", maxLen: 60 },
         // Request-only (1.14.0): a note written with the visit ({ kind, format, title, content, part2_protected, ... }),
         // created with it in one step and linked to it (routes/interventions.js; the note's own rules apply).
         note: { type: "object", sync: false }
@@ -14732,6 +14880,12 @@ var require_interventions = __commonJS({
           if (!site) out2.push(refuse("refers to a record the office server does not have (the supply site)", { message: "Validation failed", fields: { supply_site_id: "is not one of this program's supply sites in use" } }));
           else if (!site.is_active) out2.push(flag("was accepted, but the supply site it names is no longer in use at the office; the office will review it", { message: "Validation failed", fields: { supply_site_id: "is not one of this program's supply sites in use" }, code: "site_inactive" }));
         }
+        if (touched("participant_code_enc", "client_id")) {
+          const code = c.plain("participant_code_enc");
+          const bad = PC.problem(code);
+          if (bad) out2.push(refuse(`has a value the office does not accept (participant code: ${bad})`, { message: "Validation failed", fields: { participant_code: bad } }));
+          else if (PC.normalise(code) && val("client_id")) out2.push(refuse("has a value the office does not accept (a participant code on a contact with a client)", { message: "A participant code is for an anonymous contact. This visit has a client: remove the code, or the client.", fields: { participant_code: "is only for a contact with no client record" } }));
+        }
         if (touched("type", "client_id") && !val("client_id") && !C.CLIENTLESS_INTERVENTION_TYPES.includes(val("type"))) {
           out2.push(refuse(
             "is missing a required field (a client: only outreach and community naloxone distribution can be recorded without one)",
@@ -14750,6 +14904,12 @@ var require_interventions = __commonJS({
           } else if (line && !fund) out2.push(refuse("is missing a required field (the funding source of its budget line)", { message: "A funding source is required when a budget line is selected" }));
         }
         return out2;
+      },
+      // The code as stored, whoever typed it how (upper case, letters and digits): its blind index is worked out
+      // from this by sync-tables importRow, so "ab-07 85" on a phone and "AB0785" at the office count as one.
+      normalise(row) {
+        if (row.participant_code_enc !== void 0) row.participant_code_enc = PC.normalise(row.participant_code_enc);
+        return null;
       },
       // A visit that handed supplies out draws the office stock down once the whole batch has landed (finish), by the
       // difference from what the office already drew for it, so a re-sent row counts once.
@@ -14818,6 +14978,51 @@ var require_overdose_events = __commonJS({
       },
       owner: { col: "reported_by", all: "records:manage-others" },
       editableBy: ownedBy(["reported_by"], "records:manage-others")
+    });
+  }
+});
+
+// server/rules/prevention_events.js
+var require_prevention_events = __commonJS({
+  "server/rules/prevention_events.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var C = require_constants();
+    var { define: define2, refuse } = require_core();
+    var { ownedBy } = require_shared();
+    module.exports = define2({
+      table: "prevention_events",
+      fields: {
+        user_id: { type: "string" },
+        event_date: { type: "date", required: true },
+        title: { type: "string", required: true, maxLen: 200 },
+        event_type: { type: "string", required: true, list: "PREVENTION_EVENT_TYPES" },
+        // National categories (no programme additions, server/options.js): a code off them is refused, not flagged.
+        strategy: { type: "string", required: true, enum: C.PREVENTION_STRATEGIES, list: "PREVENTION_STRATEGIES" },
+        iom_category: { type: "string", required: true, enum: C.PREVENTION_IOM, list: "PREVENTION_IOM" },
+        audience: { type: "string", list: "PREVENTION_AUDIENCES" },
+        location: { type: "string", maxLen: 200 },
+        hours: { type: "number", min: 0, max: 1e3 },
+        attendance: { type: "number", integer: true, min: 0, max: 1e7 },
+        attendance_estimated: { type: "boolean" },
+        funding_source_id: { type: "string" },
+        // Free text, stored encrypted: what happened, in the worker's words (no names: the form says so).
+        notes: { type: "string", maxLen: 4e3 }
+      },
+      owner: { col: "user_id", all: "records:manage-others" },
+      editableBy: ownedBy(["user_id"], "records:manage-others", "This prevention event is another worker's: only they, or a supervisor, can change it"),
+      // The table is shared by every device (sync scope 'all'), where a deletion is otherwise a manager's: an event
+      // is also its own worker's to delete, from a device as over REST.
+      deletableBy: ownedBy(["user_id"], "records:manage-others", "This prevention event is another worker's: only they, or a supervisor, can delete it"),
+      check(row, c) {
+        const e = c.existing || {};
+        const fund = row.funding_source_id !== void 0 ? row.funding_source_id : e.funding_source_id;
+        if (row.funding_source_id !== void 0 && fund && fund !== e.funding_source_id && !db3.one(`SELECT 1 FROM funding_sources WHERE id=?`, fund)) {
+          return refuse("refers to a record the office server does not have (the funding source)", { message: "Validation failed", fields: { funding_source_id: "is not one of this program's funding sources" } });
+        }
+        return null;
+      }
     });
   }
 });
@@ -17677,6 +17882,7 @@ var require_rules = __commonJS({
       caloms_records: () => require_caloms_records(),
       interventions: () => require_interventions(),
       overdose_events: () => require_overdose_events(),
+      prevention_events: () => require_prevention_events(),
       calls: () => require_calls(),
       time_entries: () => require_time_entries(),
       consents: () => require_consents(),
@@ -22421,7 +22627,7 @@ var require_exports = __commonJS({
       }
       return o;
     }
-    function pseudonymizer() {
+    function pseudonymizer(prefix = "R") {
       const ids = /* @__PURE__ */ new Map();
       const used = /* @__PURE__ */ new Set();
       return (clientId) => {
@@ -22429,7 +22635,7 @@ var require_exports = __commonJS({
         if (!ids.has(clientId)) {
           let p;
           do
-            p = `R-${randomBytes3(5).toString("hex").toUpperCase()}`;
+            p = `${prefix}-${randomBytes3(5).toString("hex").toUpperCase()}`;
           while (used.has(p));
           used.add(p);
           ids.set(clientId, p);
@@ -22495,7 +22701,7 @@ var require_exports = __commonJS({
     }
     var DEID_COLUMNS = {
       clients: ["record_id", "age_band", "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "zip", "gender"],
-      interventions: ["occurred_at", "record_id", "type", "duration_minutes", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "follow_up_due"],
+      interventions: ["occurred_at", "record_id", "participant_ref", "type", "duration_minutes", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "follow_up_due"],
       calls: ["started_at", "record_id", "direction", "contact_type", "duration_minutes", "outcome", "crisis", "follow_up_needed", "follow_up_due", "worker"],
       time: ["work_date", "worker", "record_id", "category", "minutes", "billable", "funding_source"],
       referrals: ["referred_at", "record_id", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "worker"],
@@ -22546,6 +22752,7 @@ var require_exports = __commonJS({
       const scoped = (table, alias) => require_sync_tables().clientOrNullScope(table, ctx.user, alias, cf, auth3.hasPerm);
       const sc = { interventions: scoped("interventions", "i"), calls: scoped("calls", "ca"), tasks: scoped("tasks", "t"), overdose_events: scoped("overdose_events", "o") };
       const phi = (v) => identified && v ? decrypt3(v) : v ? "[redacted]" : "";
+      const participantRef = pseudonymizer("P");
       const idCols = identified ? ["last_name", "first_name", "dob", "phone", "email", "address"] : ["age_band"];
       const strip = (cols2) => identified ? cols2 : cols2.filter((c) => c !== "city");
       const D = {
@@ -22556,8 +22763,8 @@ var require_exports = __commonJS({
         },
         interventions: {
           label: "Visits & services",
-          columns: ["occurred_at", "client_code", "type", "duration_minutes", "location", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "summary", "follow_up_due"],
-          rows: () => db3.all(`SELECT i.*, c.client_code, i.client_id AS _client_id, u.display_name worker, f.name funding_source FROM interventions i LEFT JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE ${ts("i.occurred_at")} AND ${sc.interventions.sql} ORDER BY i.occurred_at LIMIT ?`, ...tsP, ...sc.interventions.params, MAX_ROWS).map((r) => ({ ...r, summary: phi(r.summary_enc) }))
+          columns: ["occurred_at", "client_code", "participant_ref", "type", "duration_minutes", "location", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "summary", "follow_up_due"],
+          rows: () => db3.all(`SELECT i.*, c.client_code, i.client_id AS _client_id, u.display_name worker, f.name funding_source FROM interventions i LEFT JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE ${ts("i.occurred_at")} AND ${sc.interventions.sql} ORDER BY i.occurred_at LIMIT ?`, ...tsP, ...sc.interventions.params, MAX_ROWS).map((r) => ({ ...r, summary: phi(r.summary_enc), participant_ref: participantRef(r.participant_code_idx) }))
         },
         calls: {
           label: "Calls",
@@ -30732,6 +30939,7 @@ var require_ssp_report = __commonJS({
     var N = require_supply_names();
     var { badRequest, forbidden } = require_http();
     var TEMPLATE_NOTE = "The layout follows what a CDPH-authorized syringe services program reports, as SUDS understands it (contacts, participants, syringes distributed and returned, sharps containers, naloxone and test strips, referrals). It is not an official template: check it against your current reporting requirements before submitting it.";
+    var PARTICIPANT_CODE_NOTE = "Participants served are clients with a record. Anonymous participants are counted separately, as the number of different participant codes given at anonymous contacts; anonymous contacts with no code are not counted as participants. The two are not added together: someone seen both as a client and anonymously would be counted twice. No participant code is printed.";
     var RETURNS_NOTE = "Syringes returned are counted, or estimated from the volume of the sharps container brought back (Supplies settings: syringes per litre). The estimated part is shown separately.";
     var funderOnly = (user) => !auth3.reportRunAllowed(user, { caseloadScoped: true }) && auth3.submissionRunAllowed(user);
     function counting(ctx, period) {
@@ -30762,7 +30970,7 @@ var require_ssp_report = __commonJS({
       const cf = funderOnly(ctx.user) ? { sql: "1=1", params: [] } : auth3.caseloadFilter(ctx.user, "c.id");
       const scope = `(i.client_id IS NULL OR ${cf.sql})`;
       const activity = `(EXISTS (SELECT 1 FROM intervention_supplies l WHERE l.intervention_id=i.id) OR i.syringes_returned > 0 OR i.naloxone_kits > 0 OR i.fentanyl_strips > 0)`;
-      const visits = db3.all(`SELECT i.id, i.client_id, i.occurred_at, i.supply_site_id, i.naloxone_kits, i.fentanyl_strips, i.syringes_returned, i.returns_estimated, c.deleted_at
+      const visits = db3.all(`SELECT i.id, i.client_id, i.occurred_at, i.supply_site_id, i.naloxone_kits, i.fentanyl_strips, i.syringes_returned, i.returns_estimated, i.participant_code_idx, c.deleted_at
     FROM interventions i LEFT JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${activity} AND ${scope}`, ...tsP, ...cf.params);
       const lines = db3.all(`SELECT l.intervention_id, l.quantity, l.untracked, it.id AS item_id, it.name, it.category, it.product, it.unit FROM intervention_supplies l
     JOIN supply_items it ON it.id=l.item_id JOIN interventions i ON i.id=l.intervention_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${scope}`, ...tsP, ...cf.params);
@@ -30774,6 +30982,8 @@ var require_ssp_report = __commonJS({
       }
       const sumCat = (ls, cat) => ls.filter((l) => l.category === cat).reduce((n, l) => n + l.quantity, 0);
       const participants = new Set(visits.filter((v) => v.client_id && !v.deleted_at).map((v) => v.client_id));
+      const coded = visits.filter((v) => !v.client_id && v.participant_code_idx);
+      const codes = new Set(coded.map((v) => v.participant_code_idx));
       const month = /* @__PURE__ */ new Map();
       const site = /* @__PURE__ */ new Map();
       const bucket = () => ({ contacts: 0, anonymous_contacts: 0, syringes_distributed: 0, syringes_returned: 0, naloxone_kits: 0 });
@@ -30822,7 +31032,7 @@ var require_ssp_report = __commonJS({
       const sites = new Map(db3.all(`SELECT id, name FROM supply_sites`).map((s) => [s.id, s.name]));
       const ratio = (r, d) => d ? Math.round(r / d * 100) / 100 : null;
       return {
-        totals: { ...t, participants: participants.size, referrals: ref.n, people_referred: ref.people, return_ratio: ratio(t.syringes_returned, t.syringes_distributed) },
+        totals: { ...t, participants: participants.size, anonymous_participants: codes.size, coded_contacts: coded.length, referrals: ref.n, people_referred: ref.people, return_ratio: ratio(t.syringes_returned, t.syringes_distributed) },
         by_month: [...month].sort(([a], [b]) => a.localeCompare(b)).map(([m, b]) => ({ month: m, ...b, return_ratio: ratio(b.syringes_returned, b.syringes_distributed) })),
         by_site: [...site].map(([id, b]) => ({ site_id: id || null, site: id ? sites.get(id) || "Unknown site" : "No site recorded", ...b, return_ratio: ratio(b.syringes_returned, b.syringes_distributed) })).sort((a, b) => a.site.localeCompare(b.site)),
         by_item: [...items.values()].map((x) => ({ ...x, category_label: N.labelOf(N.CATEGORIES, x.category) })).sort((a, b) => a.category_label.localeCompare(b.category_label) || a.item.localeCompare(b.item)),
@@ -30835,6 +31045,7 @@ var require_ssp_report = __commonJS({
       const f = figures(ctx, range);
       const t = f.totals;
       const s = SC.star({ total: t.participants, subsets: [t.people_referred] }, sc);
+      const anon = SC.cell(t.anonymous_participants, sc);
       const scoped = auth3.caseloadRestricted(ctx.user) && !funderOnly(ctx.user);
       return {
         from,
@@ -30845,7 +31056,8 @@ var require_ssp_report = __commonJS({
         release: c.release,
         counting_statement: FR.countingStatement(c),
         caseload_scope_note: scoped ? "Counts only your caseload and anonymous contacts: participants are clients on your caseload; contacts with no client (anonymous outreach) are the whole program's." : null,
-        totals: { ...t, participants: s.total, people_referred: s.subsets[0], referrals: SC.cell(t.referrals, sc) },
+        totals: { ...t, participants: s.total, anonymous_participants: anon, people_referred: s.subsets[0], referrals: SC.cell(t.referrals, sc) },
+        participant_code_note: PARTICIPANT_CODE_NOTE,
         by_month: f.by_month,
         by_site: f.by_site,
         by_item: f.by_item,
@@ -30862,8 +31074,9 @@ var require_ssp_report = __commonJS({
         { k: "Purpose", v: d.suppression.purpose === "submission" ? "The program's own submission, not for publication" : "Internal, not for publication" },
         { k: "Counts", v: d.counting_statement },
         { k: "Returns", v: d.returns_note },
+        { k: "Participant codes", v: d.participant_code_note },
         ...d.caseload_scope_note ? [{ k: "Scope", v: d.caseload_scope_note }] : [],
-        { k: "Classification", v: "Aggregate counts: no names, client codes or dates of service." },
+        { k: "Classification", v: "Aggregate counts: no names, client codes, participant codes or dates of service." },
         { k: "Generated", v: db3.now() },
         { k: "Generated by", v: ctx.user.display_name || ctx.user.username }
       ];
@@ -30871,8 +31084,10 @@ var require_ssp_report = __commonJS({
         ["People", "Participants served (unduplicated)", t.participants],
         ["People", "Participants referred to services", t.people_referred],
         ["People", "Referrals made", t.referrals],
+        ["People", "Anonymous participants (different participant codes)", t.anonymous_participants],
         ["Contacts", "Contacts (visits and outreach at which supplies were given or sharps returned)", t.contacts],
         ["Contacts", "Of those, anonymous", t.anonymous_contacts],
+        ["Contacts", "Of the anonymous contacts, with a participant code", t.coded_contacts],
         ["Syringe services", "Syringes distributed", t.syringes_distributed],
         ["Syringe services", "Syringes returned", t.syringes_returned],
         ["Syringe services", "Of those, estimated from container volume", t.syringes_returned_estimated],
@@ -30934,7 +31149,145 @@ var require_ssp_report = __commonJS({
         ctx.res.end(xlsx ? S.writeWorkbook(sh.workbook) : S.toCsv(sh.csv, sh.csvColumns));
       });
     }
-    module.exports = { build, figures, sheets, routes, TEMPLATE_NOTE };
+    module.exports = { build, figures, sheets, routes, TEMPLATE_NOTE, PARTICIPANT_CODE_NOTE };
+  }
+});
+
+// server/prevention.js
+var require_prevention = __commonJS({
+  "server/prevention.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var O = require_options();
+    var NAME = "Prevention activity summary";
+    var PPSDS_NOTE = "This is the program's own summary of its prevention events. It is not a PPSDS submission file: the mapping of these fields to the PPSDS data dictionary has not been done, and awaits the DHCS PPSDS data dictionary. Check the figures against your current SABG prevention reporting requirements before keying them.";
+    var COUNT_NOTE = "Attendance is the number of people who came to, or were reached by, each event (estimated where marked), added up across events: someone who came to two events is counted twice. People trained is the attendance of the period's training events.";
+    var round2 = (x) => Math.round(x * 100) / 100;
+    var empty = () => ({ events: 0, hours: 0, attendance: 0 });
+    var add = (b, e) => {
+      b.events++;
+      b.hours += Number(e.hours) || 0;
+      b.attendance += Number(e.attendance) || 0;
+    };
+    var fix = (b) => ({ ...b, hours: round2(b.hours) });
+    function figures({ from, to }) {
+      const events = db3.all(`SELECT event_type, strategy, iom_category, audience, hours, attendance, attendance_estimated FROM prevention_events WHERE event_date BETWEEN ? AND ?`, from, to);
+      const t = { ...empty(), attendance_estimated: 0, people_trained: 0, training_events: 0 };
+      const by = { strategy: /* @__PURE__ */ new Map(), iom: /* @__PURE__ */ new Map(), type: /* @__PURE__ */ new Map(), audience: /* @__PURE__ */ new Map(), cross: /* @__PURE__ */ new Map() };
+      const into = (m, k) => {
+        if (!m.has(k)) m.set(k, empty());
+        return m.get(k);
+      };
+      for (const e of events) {
+        add(t, e);
+        if (e.attendance_estimated) t.attendance_estimated += Number(e.attendance) || 0;
+        if (e.event_type === "training") {
+          t.training_events++;
+          t.people_trained += Number(e.attendance) || 0;
+        }
+        add(into(by.strategy, e.strategy), e);
+        add(into(by.iom, e.iom_category), e);
+        add(into(by.type, e.event_type), e);
+        add(into(by.audience, e.audience || ""), e);
+        add(into(by.cross, `${e.strategy}|${e.iom_category}`), e);
+      }
+      const listed = (key, m) => {
+        const codes = [...O.known(key)];
+        for (const k of m.keys()) if (k && !codes.includes(k)) codes.push(k);
+        return codes.map((code) => ({ code, label: O.labelOf(key, code), ...fix(m.get(code) || empty()) }));
+      };
+      const used = (key, m) => [...m].map(([code, b]) => ({ code: code || null, label: code ? O.labelOf(key, code) : "Not recorded", ...fix(b) })).sort((a, b) => b.attendance - a.attendance || a.label.localeCompare(b.label));
+      const iomCodes = listed("PREVENTION_IOM", by.iom).map((x) => x.code);
+      const cross = listed("PREVENTION_STRATEGIES", by.strategy).map((s) => ({
+        code: s.code,
+        label: s.label,
+        cells: Object.fromEntries(iomCodes.map((i) => [i, fix(by.cross.get(`${s.code}|${i}`) || empty())]))
+      }));
+      return {
+        totals: { ...fix(t) },
+        by_strategy: listed("PREVENTION_STRATEGIES", by.strategy),
+        by_iom: listed("PREVENTION_IOM", by.iom),
+        by_strategy_iom: cross,
+        iom_codes: iomCodes,
+        by_type: used("PREVENTION_EVENT_TYPES", by.type),
+        by_audience: used("PREVENTION_AUDIENCES", by.audience)
+      };
+    }
+    function build(range) {
+      const { from, to } = range;
+      return { name: NAME, from, to, ppsds_note: PPSDS_NOTE, count_note: COUNT_NOTE, ...figures(range) };
+    }
+    function sheets(d, ctx) {
+      const t = d.totals;
+      const about = [
+        { k: "Report", v: NAME },
+        { k: "Period", v: `${d.from} to ${d.to}` },
+        { k: "Program", v: db3.getSetting("org_name", "") || "" },
+        { k: "County", v: db3.getSetting("county_name", "") || "" },
+        { k: "Not a PPSDS file", v: d.ppsds_note },
+        { k: "Counts", v: d.count_note },
+        { k: "Classification", v: "Aggregate counts of group and community events: no names, no clients." },
+        { k: "Generated", v: db3.now() },
+        { k: "Generated by", v: ctx.user.display_name || ctx.user.username }
+      ];
+      const summary = [
+        ["Totals", "Prevention events", t.events],
+        ["Totals", "Hours of prevention activity", t.hours],
+        ["Totals", "Attendance (people reached)", t.attendance],
+        ["Totals", "Of that attendance, estimated", t.attendance_estimated],
+        ["Totals", "Training events", t.training_events],
+        ["Totals", "People trained", t.people_trained],
+        ...d.by_strategy.flatMap((s) => [[`Strategy (CSAP): ${s.label}`, "Events", s.events], [`Strategy (CSAP): ${s.label}`, "Hours", s.hours], [`Strategy (CSAP): ${s.label}`, "Attendance", s.attendance]]),
+        ...d.by_iom.flatMap((s) => [[`Population (IOM): ${s.label}`, "Events", s.events], [`Population (IOM): ${s.label}`, "Hours", s.hours], [`Population (IOM): ${s.label}`, "Attendance", s.attendance]])
+      ].map(([section, measure, value]) => ({ section, measure, value }));
+      const long = [{ key: "section", label: "Section" }, { key: "measure", label: "Measure" }, { key: "value", label: "Value" }];
+      const catCols = (first) => [{ key: "label", label: first }, { key: "events", label: "Events" }, { key: "hours", label: "Hours" }, { key: "attendance", label: "Attendance" }];
+      const iomLabels = Object.fromEntries(d.by_iom.map((x) => [x.code, x.label]));
+      const crossCols = [{ key: "label", label: "Strategy (CSAP)" }, ...d.iom_codes.map((c) => ({ key: c, label: `${iomLabels[c]}: attendance` }))];
+      const crossRows = d.by_strategy_iom.map((s) => ({ label: s.label, ...Object.fromEntries(d.iom_codes.map((c) => [c, s.cells[c].attendance])) }));
+      return {
+        workbook: [
+          { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: about },
+          { name: "Summary", columns: long, rows: summary },
+          { name: "By strategy", columns: catCols("Strategy (CSAP)"), rows: d.by_strategy },
+          { name: "By IOM category", columns: catCols("Population (IOM)"), rows: d.by_iom },
+          { name: "Strategy by IOM", columns: crossCols, rows: crossRows },
+          { name: "By kind of event", columns: catCols("Kind of event"), rows: d.by_type },
+          { name: "By audience", columns: catCols("Audience"), rows: d.by_audience }
+        ],
+        csv: [
+          ...about.map((x) => ({ section: "About", measure: x.k, value: x.v })),
+          ...summary,
+          ...d.by_strategy_iom.flatMap((s) => d.iom_codes.map((c) => ({ section: `Strategy by IOM: ${s.label}`, measure: `${iomLabels[c]}: attendance`, value: s.cells[c].attendance }))),
+          ...d.by_type.map((r) => ({ section: "Kind of event", measure: `${r.label}: attendance`, value: r.attendance }))
+        ],
+        csvColumns: long
+      };
+    }
+    function routes(r, range) {
+      r.get("/api/reports/prevention", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const d = build(range(ctx));
+        audit3.log({ user: ctx.user, action: "report.prevention", ip: ctx.ip, details: { from: d.from, to: d.to, events: d.totals.events } });
+        return d;
+      });
+      r.get("/api/reports/prevention/export", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("export:read"), (ctx) => {
+        const d = build(range(ctx));
+        const xlsx = ctx.query.get("format") === "xlsx";
+        const sh = sheets(d, ctx);
+        const S = require_spreadsheet();
+        audit3.log({ user: ctx.user, action: "report.prevention.export", ip: ctx.ip, details: { from: d.from, to: d.to, events: d.totals.events, format: xlsx ? "xlsx" : "csv" } });
+        ctx.res.writeHead(200, {
+          "Content-Type": xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="suds-prevention-activity-summary-${d.from}_${d.to}.${xlsx ? "xlsx" : "csv"}"`,
+          "X-SUDS-Export": "Prevention activity summary (not a PPSDS file; the PPSDS field mapping awaits the DHCS data dictionary). Aggregate, no names."
+        });
+        ctx.res.end(xlsx ? S.writeWorkbook(sh.workbook) : S.toCsv(sh.csv, sh.csvColumns));
+      });
+    }
+    module.exports = { build, figures, sheets, routes, NAME, PPSDS_NOTE };
   }
 });
 
@@ -31247,6 +31600,7 @@ var require_reports = __commonJS({
       require_harm_reduction_reports().routes(hrRouter, range);
       require_harm_reduction_reports().layoutRoutes(r);
       require_ssp_report().routes(r, range);
+      require_prevention().routes(r, range);
       r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("export:read"), async (ctx) => {
         const period = range(ctx);
         const { from, to } = period;
@@ -32876,6 +33230,7 @@ var require_interventions2 = __commonJS({
     var SN = require_supply_names();
     var UNTRACKED_NAMES = { naloxone_kits: "Naloxone kit", fentanyl_strips: "Fentanyl test strips" };
     var { localDate, cents } = require_budget();
+    var PC = require_participant_code();
     function serviceDate(v) {
       return v._service_date || localDate(v.occurred_at);
     }
@@ -32947,6 +33302,7 @@ var require_interventions2 = __commonJS({
     }
     function decodeSummary(row) {
       let summary = null;
+      let code = null;
       if (row.summary_enc) {
         try {
           summary = require_crypto().decrypt(row.summary_enc);
@@ -32954,7 +33310,21 @@ var require_interventions2 = __commonJS({
           summary = "[could not be read]";
         }
       }
-      return { ...row, summary, summary_enc: void 0 };
+      if (row.participant_code_enc) {
+        try {
+          code = decrypt3(row.participant_code_enc);
+        } catch {
+          code = "[could not be read]";
+        }
+      }
+      return { ...row, summary, summary_enc: void 0, participant_code: code, participant_code_enc: void 0, participant_code_idx: void 0 };
+    }
+    function encodeCode(v) {
+      if (v.participant_code === void 0) return;
+      const n = PC.normalise(v.participant_code);
+      v.participant_code_enc = n ? encrypt3(n) : null;
+      v.participant_code_idx = PC.index(n);
+      delete v.participant_code;
     }
     var notes = require_notes2();
     var NOTE_KEYS = ["kind", "format", "title", "content", "structured", "part2_protected", "counseling_note", "cosign_requested"];
@@ -33036,6 +33406,7 @@ var require_interventions2 = __commonJS({
           delete v.service_date;
           if (v.cost !== void 0 && v.cost !== null) v.cost = cents(v.cost);
           encodeSummary(v);
+          encodeCode(v);
           checkCostPermission(ctx, v);
           if (!("funding_source_id" in v)) {
             const f = require_budget().defaultFundFor(v.user_id || ctx.user.id);
@@ -33052,6 +33423,7 @@ var require_interventions2 = __commonJS({
           delete v.service_date;
           if (v.cost !== void 0 && v.cost !== null) v.cost = cents(v.cost);
           encodeSummary(v);
+          encodeCode(v);
           checkCostPermission(ctx, v);
           planSupplies(ctx, v, row);
         },
@@ -34009,6 +34381,69 @@ var require_patient_requests2 = __commonJS({
     };
     module.exports.KINDS = KINDS;
     module.exports.STATUSES = STATUSES;
+  }
+});
+
+// server/routes/prevention.js
+var require_prevention2 = __commonJS({
+  "server/routes/prevention.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crud = require_crud();
+    var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    function encodeNotes(v) {
+      if (v.notes !== void 0) {
+        v.notes_enc = v.notes ? encrypt3(v.notes) : null;
+        delete v.notes;
+      }
+    }
+    function decodeNotes(row) {
+      let notes = null;
+      if (row.notes_enc) {
+        try {
+          notes = decrypt3(row.notes_enc);
+        } catch {
+          notes = "[could not be read]";
+        }
+      }
+      return { ...row, notes, notes_enc: void 0 };
+    }
+    module.exports = (r) => {
+      crud.build(r, {
+        table: "prevention_events",
+        entity: "prevention_event",
+        base: "/api/prevention-events",
+        perm: "interventions",
+        dateCol: "event_date",
+        ownerCol: "user_id",
+        clientRequired: false,
+        hasClient: false,
+        joins: "JOIN users u ON u.id=prevention_events.user_id LEFT JOIN funding_sources f ON f.id=prevention_events.funding_source_id",
+        select: "prevention_events.*, u.display_name AS worker, f.name AS funding_source",
+        order: "prevention_events.event_date DESC, prevention_events.created_at DESC",
+        // shape, owner and canEdit: server/rules/prevention_events.js (crud.js reads them from there).
+        filters: (ctx, where, params) => {
+          for (const col of ["strategy", "iom_category", "event_type"]) {
+            const v = ctx.query.get(col);
+            if (v) {
+              where.push(`prevention_events.${col}=?`);
+              params.push(v);
+            }
+          }
+        },
+        beforeInsert: (ctx, v) => {
+          encodeNotes(v);
+          if (!("funding_source_id" in v)) {
+            const f = require_budget().defaultFundFor(v.user_id || ctx.user.id);
+            if (f) v.funding_source_id = f;
+          }
+        },
+        beforeUpdate: (ctx, v) => {
+          encodeNotes(v);
+        },
+        afterLoad: (ctx, row) => decodeNotes(row)
+      });
+    };
   }
 });
 
@@ -39858,6 +40293,7 @@ var init_ = __esm({
       "./routes/overdose.js": () => require_overdose(),
       "./routes/part2.js": () => require_part2(),
       "./routes/patient-requests.js": () => require_patient_requests2(),
+      "./routes/prevention.js": () => require_prevention2(),
       "./routes/referrals.js": () => require_referrals(),
       "./routes/regions.js": () => require_regions2(),
       "./routes/reports.js": () => require_reports(),
@@ -40018,6 +40454,7 @@ var require_app2 = __commonJS({
       "episodes",
       "interventions",
       "overdose",
+      "prevention",
       "calls",
       "time",
       "supervision",
@@ -42104,6 +42541,27 @@ var require_db = __commonJS({
       PRIMARY KEY (user_id, permission)
     )`);
         d.exec(`CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id)`);
+      },
+      // 49: reserved for another 1.17.0 change developed on a parallel branch; its migration replaces this empty
+      //     entry when the branches are merged (ADR-0007, "Numbering across branches"). Nothing to do here.
+      () => {
+      },
+      // 50: reserved likewise for a parallel 1.17.0 branch; replaced by that branch's migration on merge.
+      () => {
+      },
+      // 51: prevention and syringe services (1.17.0). An anonymous contact's SSP participant code, encrypted, with its
+      //     blind index for counting unique participants (interventions.participant_code_enc/_idx), and group and
+      //     community prevention events (prevention_events, server/prevention.js). New columns and a new table:
+      //     nothing to backfill. Self-contained and idempotent (every step checks what is there), so it can be
+      //     renumbered beside the other 1.17.0 migrations.
+      (d) => {
+        addColumn(d, "interventions", "participant_code_enc", "TEXT");
+        addColumn(d, "interventions", "participant_code_idx", "TEXT");
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS prevention_events \([\s\S]*?\n\);/);
+        if (!m) throw new Error("migration 51: no definition for prevention_events in schema");
+        d.exec(m[0]);
+        createIndexesFromSchema(d, schemaText, ["idx_interventions_participant", "idx_prevention_events_date", "idx_prevention_events_user", "idx_prevention_events_updated"]);
       }
     ];
     var PERF_INDEXES_47 = [
@@ -43535,6 +43993,7 @@ var routeLoaders = {
   episodes: () => Promise.resolve().then(() => __toESM(require_episodes2())),
   interventions: () => Promise.resolve().then(() => __toESM(require_interventions2())),
   overdose: () => Promise.resolve().then(() => __toESM(require_overdose())),
+  prevention: () => Promise.resolve().then(() => __toESM(require_prevention2())),
   calls: () => Promise.resolve().then(() => __toESM(require_calls2())),
   time: () => Promise.resolve().then(() => __toESM(require_time())),
   supervision: () => Promise.resolve().then(() => __toESM(require_supervision())),

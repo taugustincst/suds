@@ -11,7 +11,7 @@ extends it to 90 days so a full reporting cycle — a month-end and most of a qu
 
 | | |
 | --- | --- |
-| **Programme** | One non-billing programme: outreach, harm reduction, naloxone / supply distribution, prevention-funded outreach or navigation. Not a SABG primary-prevention provider whose main activity is group or community events: SUDS has no primary-prevention (PPSDS) reporting. Programme profile *Harm reduction & outreach* unless the programme needs the clinical modules. |
+| **Programme** | One non-billing programme: outreach, harm reduction, naloxone / supply distribution, prevention-funded outreach or navigation. A SABG primary-prevention provider may pilot its group and community events (recorded and summarised since 1.17.0), but SUDS produces no PPSDS file: it keeps keying PPSDS itself, from the prevention activity summary. Programme profile *Harm reduction & outreach* unless the programme needs the clinical modules. |
 | **Users** | N = 5–15: navigators / outreach workers, their supervisor, a programme lead (super-user), one finance user if budgets are in scope, one administrator. |
 | **Deployment** | Self-hosted by the programme's IT partner, or hosted by a sponsoring county ([HOSTING.md](HOSTING.md)). Vendor hosting is not offered. Local mode off unless a documented field need is agreed. |
 | **Data** | The pilot group's real caseload, supplies, resources, grants and budget. Parallel run with the existing spreadsheets for the first 30 days, then SUDS as the working record if the day-30 check-in agrees. |
@@ -25,8 +25,9 @@ Answer before signing. The outcome decides whether the pilot proceeds, and how.
 ```
 Q0. Is the programme's main reportable work SABG primary prevention (group or community events with
     attendance, CSAP strategy, IOM category)?
-    ├─ Yes ──> NOT ELIGIBLE for that work. SUDS has no primary-prevention model or PPSDS-shaped export;
-    │          keep reporting it the way you do now. Outreach and distribution alongside it can still pilot.
+    ├─ Yes ──> ELIGIBLE, with a limit: SUDS records the events (CSAP strategy, IOM category, hours,
+    │          attendance) and totals them, but produces no PPSDS file (its mapping awaits the DHCS
+    │          data dictionary): keep keying PPSDS yourself, from the prevention activity summary.
     └─ No ───> go to Q1.
 
 Q1. Does the programme bill Drug Medi-Cal (DMC / DMC-ODS) or any insurer for the services it would record?

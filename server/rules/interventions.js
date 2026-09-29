@@ -8,6 +8,7 @@ const auth = require('../auth');
 const C = require('../constants');
 const { define, refuse, flag } = require('./core');
 const { periodProblem, ownedBy } = require('./shared');
+const PC = require('../participant-code');
 
 // The date a service "happened on", for the grant it is charged to: the calendar date in the organisation's
 // time zone, or the service_date a REST caller gave explicitly.
@@ -30,6 +31,9 @@ module.exports = define({
     // the site they came from, and syringe services returns (docs/SUPPLIES.md).
     supplies: { type: 'array', maxLen: 50, sync: false }, supply_site_id: { type: 'string' },
     syringes_returned: { type: 'number', integer: true, min: 0, max: 100000 }, returns_estimated: { type: 'boolean' }, sharps_returned_litres: { type: 'number', min: 0, max: 1000 },
+    // An anonymous contact's SSP participant code (1.17.0, server/participant-code.js): stored encrypted, counted
+    // by its blind index, and only on a contact with no client record (check below).
+    participant_code: { type: 'string', maxLen: 60 },
     // Request-only (1.14.0): a note written with the visit ({ kind, format, title, content, part2_protected, ... }),
     // created with it in one step and linked to it (routes/interventions.js; the note's own rules apply).
     note: { type: 'object', sync: false },
@@ -58,6 +62,14 @@ module.exports = define({
       if (!site) out.push(refuse('refers to a record the office server does not have (the supply site)', { message: 'Validation failed', fields: { supply_site_id: 'is not one of this program\'s supply sites in use' } }));
       else if (!site.is_active) out.push(flag('was accepted, but the supply site it names is no longer in use at the office; the office will review it', { message: 'Validation failed', fields: { supply_site_id: 'is not one of this program\'s supply sites in use' }, code: 'site_inactive' }));
     }
+    // A participant code stands in for a client record on an anonymous contact: a contact with a client is
+    // counted by the client, so it carries no code (the form clears it when a client is chosen).
+    if (touched('participant_code_enc', 'client_id')) {
+      const code = c.plain('participant_code_enc');
+      const bad = PC.problem(code);
+      if (bad) out.push(refuse(`has a value the office does not accept (participant code: ${bad})`, { message: 'Validation failed', fields: { participant_code: bad } }));
+      else if (PC.normalise(code) && val('client_id')) out.push(refuse('has a value the office does not accept (a participant code on a contact with a client)', { message: 'A participant code is for an anonymous contact. This visit has a client: remove the code, or the client.', fields: { participant_code: 'is only for a contact with no client record' } }));
+    }
     // Anything else logged with no client is a visit nobody can find again on anyone's record.
     if (touched('type', 'client_id') && !val('client_id') && !C.CLIENTLESS_INTERVENTION_TYPES.includes(val('type'))) {
       out.push(refuse('is missing a required field (a client: only outreach and community naloxone distribution can be recorded without one)',
@@ -75,6 +87,12 @@ module.exports = define({
       } else if (line && !fund) out.push(refuse('is missing a required field (the funding source of its budget line)', { message: 'A funding source is required when a budget line is selected' }));
     }
     return out;
+  },
+  // The code as stored, whoever typed it how (upper case, letters and digits): its blind index is worked out
+  // from this by sync-tables importRow, so "ab-07 85" on a phone and "AB0785" at the office count as one.
+  normalise(row) {
+    if (row.participant_code_enc !== undefined) row.participant_code_enc = PC.normalise(row.participant_code_enc);
+    return null;
   },
   // A visit that handed supplies out draws the office stock down once the whole batch has landed (finish), by the
   // difference from what the office already drew for it, so a re-sent row counts once.

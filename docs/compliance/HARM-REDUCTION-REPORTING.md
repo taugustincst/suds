@@ -66,7 +66,10 @@ period: participants served (unduplicated clients with a contact), contacts (vis
 supplies were handed out or sharps brought back), syringes distributed and returned (counted, or estimated from the
 container's volume, shown separately) and the returns per syringe distributed, sharps containers, naloxone kits (by
 product), fentanyl and xylazine test strips, the other supplies by item, and referrals made for the participants;
-by month and by supply site. Participants, the people referred and the referrals are counts of people and are
+by month and by supply site. Since 1.17.0 it also counts **anonymous participants**: the different participant codes
+given at anonymous contacts (encrypted, counted by blind index, never printed; [SUPPLIES.md](../SUPPLIES.md#participant-codes-1170)),
+shown beside the participants served and never added to them, with the anonymous contacts that had a code.
+Participants, anonymous participants, the people referred and the referrals are counts of people and are
 suppressed as in section 1; supply and contact counts are exact. It is always the programme's own submission (or
 internal), never a publication release (`purpose=publication` is refused), so it is run by those who may run such a
 report (`reportRunAllowed`: supervisors and administrators, or a navigator or clinician for their own caseload and

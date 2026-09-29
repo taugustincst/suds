@@ -92,6 +92,32 @@ in the funder report; supply counts are not counts of people. It is the programm
 publication release. The layout follows what a CDPH-authorised SSP reports as SUDS understands it: check it against
 your current reporting requirements before submitting it.
 
+### Participant codes (1.17.0)
+
+Most syringe services contacts are anonymous, yet the programme has to say how many different people it served.
+A contact with no client record (outreach, community distribution) may carry the **participant code** the person
+builds the same way every time from details only they know — the programme's own recipe; the visit form suggests
+one (the first two letters of their mother's first name, their birth month and the last two digits of their birth
+year: `MA0785`). SUDS stores only the code, never the details, and treats it as what it is — built from personal
+details, so possibly identifying in a small community:
+
+- it is kept in one form (upper case, letters and digits: `ma-07 85` is `MA0785`), 4 to 20 characters;
+- it is **encrypted** (`interventions.participant_code_enc`) and counted by its **blind index**
+  (`participant_code_idx`, HMAC under the index key), so the summary counts different codes without decrypting one;
+  key rotation re-derives the index (`scripts/rotate-index-key.js`);
+- it is only for a contact with **no client**: a contact with a client is counted by the client, and a code on one
+  is refused (by the visit routes and by sync alike, `server/rules/interventions.js`);
+- the SSP summary shows **Anonymous participants** (different codes at the period's anonymous contacts) beside the
+  participants served (clients), never added to them — someone seen both as a client and anonymously would be
+  counted twice — under the same small-cell rule as the other counts of people, with the number of anonymous
+  contacts that had a code; anonymous contacts with no code are not counted as participants;
+- it is never printed in a report and never exported: a visits export, de-identified or identified, carries a
+  *participant reference* instead (`P-…`), random for each file, shared by contacts with the same code within it;
+- it is not part of any publication release.
+
+Codes collide (two people with the same recipe answers) and drift (someone gives a different month), so the count
+is an estimate of different people, as it is on paper.
+
 ## On a device
 
 Items, sites and the supply settings are the office's (pull-only). Stock received, moved, counted or disposed of on

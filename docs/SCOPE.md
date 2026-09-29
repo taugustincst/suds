@@ -5,8 +5,13 @@ outreach encounters (named or anonymous), naloxone and supply distribution, and 
 privacy controls built to support 42 CFR Part 2. Its users are community-based organisations and county programmes doing outreach, harm
 reduction, naloxone and test-strip distribution, prevention and navigation, funded by opioid-settlement money,
 SOR / the Naloxone Distribution Project, SABG prevention funds and similar grants. "Prevention" here means
-prevention-funded outreach and distribution: SABG primary-prevention reporting (group and community events with
-attendance, CSAP strategy, IOM category; DHCS's primary-prevention data system) is not supported.
+prevention-funded outreach and distribution, and, since 1.17.0, **group and community prevention events** (SABG
+primary prevention): each event's date, kind, CSAP strategy, IOM population category, audience, place, hours,
+attendance (a headcount, never names; marked when estimated) and fund, with a *prevention activity summary* by
+strategy and IOM category, including the people trained, as CSV or Excel. SUDS does **not** produce a PPSDS
+submission file: the mapping of its fields to DHCS's Primary Prevention SUD Data Service awaits the DHCS PPSDS data
+dictionary. It does not record an evidence-based programme's name or registry, attendance by demographic group, or
+who attended (no participant lists).
 
 ## Core and optional modules
 

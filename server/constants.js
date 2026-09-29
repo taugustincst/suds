@@ -167,4 +167,13 @@ module.exports = {
   Z_CODES: CL.Z_CODES, PROBLEM_STATUSES: CL.PROBLEM_STATUSES, PROBLEM_SOURCES: CL.PROBLEM_SOURCES, GOAL_STATUSES: CL.GOAL_STATUSES,
   STEP_OWNERS: CL.STEP_OWNERS, STEP_STATUSES: CL.STEP_STATUSES, ASAM_DIMENSIONS: CL.ASAM_DIMENSIONS, ASAM_RATINGS: CL.ASAM_RATINGS,
   ASAM_DISCREPANCY_REASONS: CL.ASAM_DISCREPANCY_REASONS, INSTRUMENTS: CL.INSTRUMENTS,
+  // Group and community prevention events (server/routes/prevention.js, 1.17.0): SABG primary prevention.
+  // The six CSAP strategies and the three IOM population categories (universal split into direct and indirect,
+  // as SABG prevention reporting counts them) are national categories, so Settings → Lists can reword them
+  // but not add to them; the kind of event and the audience are the programme's own lists. A 'training' event's
+  // attendance is the "people trained" count (server/prevention.js), so that code cannot be retired.
+  PREVENTION_STRATEGIES: ['information_dissemination', 'education', 'alternatives', 'problem_identification_referral', 'community_based_process', 'environmental'],
+  PREVENTION_IOM: ['universal_direct', 'universal_indirect', 'selective', 'indicated'],
+  PREVENTION_EVENT_TYPES: ['presentation', 'workshop', 'training', 'community_event', 'media_campaign', 'coalition_meeting', 'alternative_activity', 'screening_event', 'policy_work', 'other'],
+  PREVENTION_AUDIENCES: ['youth', 'young_adults', 'parents_families', 'school_staff', 'general_community', 'older_adults', 'health_providers', 'first_responders', 'employers', 'faith_community', 'other'],
 };
