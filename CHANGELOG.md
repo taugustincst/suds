@@ -2,6 +2,82 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Engineering
+
+Fixes from the engineering review of 1.16.2. No migration, no new permission, no new route.
+
+- **One way to release, and the owner's settings fit it (M1).** 1.16.0 to 1.16.2 were released by *Run workflow* on
+  a `release/v*` branch, and the workflow created the tag itself with the workflow token. The settings guide in
+  docs/RELEASE.md then limited the `release` environment to `main` and `v*` tags, and let only the owner create
+  `v*` tags: applied as written, the next release would have stopped after its approval. Now a release is always
+  a `v*` tag the owner pushes at the version-stamp commit on `main` once its CI is green; the release workflow
+  refuses a run on anything but a `v*` tag (its gate's first step), never creates a tag (`gh release create
+  --verify-tag`), and checks the tag against `package.json` on every run. *Run workflow* only re-runs an existing
+  tag (a retry, or with `policy_exception`). The guide limits the environment to `v*` tags only, no `release/v*`
+  branch is made any more (a tag serves the same zip; *Release tags*), and *Cutting a release* says so.
+- **The gh-pages deploy key is read only by a job that runs no third-party code (M2).** `web-app.yml` is two jobs:
+  `build` (no environment, no secret, a read-only token) runs `npm ci`, Playwright and its apt packages and builds
+  and checks the site; `publish` (the `release` environment) checks out nothing and installs nothing, takes the
+  site as an artifact (GitHub's own `actions/upload-artifact` and `actions/download-artifact`, pinned to a commit:
+  the only actions any workflow uses), checks its checksum and that it holds only files and directories (no link,
+  no `.git`, no parent or absolute path), commits it with git's global and system configuration and hooks off, and
+  pushes it with `PAGES_DEPLOY_KEY`. The run summary names the credential that pushed (the key, with its
+  fingerprint, or the workflow token), and without the key a guarded `gh-pages` fails with a message saying what
+  to add, not an opaque `GH013`. The guide now does the `main` and `v*` rulesets before the key (a write deploy key
+  can push every ref no ruleset guards), and says the rulesets' *Deploy keys* bypass admits every write deploy key,
+  so this must be the only one.
+- **Immutable releases (M3).** A new settings step turns on GitHub's release immutability, which stops anyone
+  replacing a published zip or checksum: every tag from v1.1.0 to v1.15.4 carries a `release.yml` whose *Run
+  workflow* rebuilt the zip and uploaded it over the published one (`--clobber`), with no approval, and a
+  collaborator could edit a release's files by hand. It applies to releases published after it is on; the guide
+  says how to record the older releases' checksums.
+- **The fiscal-year refusal band, corrected and tested (M4).** 1.16.2 said a year was refused with 126 to 237
+  overdose events and published with 125 or fewer; the reviewer's runs refused 125, 123 and 113. It is **about 110
+  to 240** (sampled; not a guarantee). `test/thorough/refusal-band.test.js` (CI's `thorough-sdc`) runs 84 scaled
+  programmes: 23 refused, with 113 to 237 events; it checks that every refusal publishes nothing and every
+  published release withheld only by its check, and fails when the band leaves 100 to 260. **Correction to the
+  1.16.2 notes** (Engineering, H1, "What changes for a programme"): the band there, 126 to 237 events, is 110 to 240,
+  and programmes of 110 to 125 events can be refused too. A refused year's message now says what to do (next
+  section).
+- **A flake in `npm test` (L1).** `test/release-worker-timeout.test.js` timed its first audit from the post, which
+  included starting the worker: under load its 400 ms backstop refused it. The worker is now started before
+  anything is timed, and the backstops leave room for the workers the queued audits move to.
+- **The fixed-wait lint sees `new Promise(r => setTimeout(r, N))` (L2)**, in the script or in the page. The waits it
+  found are replaced by `settle()` (ux13's two 1 s waits and ux-forms' 900 ms: a preference's debounced save counts
+  as the page's work) or say why they stay (`// intentional:`: device-audit waiting for the next TOTP step and for a
+  later timestamp; local-mode's slowed server and its proof that no second render lands); the allowlist entries
+  that remain give their reason.
+- **The stamp warning is in the run summary (L4)**, where the person approving the `release` environment sees it,
+  not only in the log.
+- **Docs drift (L8).** The architecture README's release-governance row and `web-app.yml`'s header describe the tag
+  check, the stamp warning, the deploy key and the two jobs.
+- **Not in this release:** a scheduled check that the owner's settings are in force (L5); recording the withheld
+  tables and the refusal reason in a publication release's audit entry; a sound, affordable check for the overdose
+  events by month (1.17.0 work). The owner's settings themselves are still the owner's to make: none is in force
+  until then.
+
+### Documentation
+
+- **The fiscal-year refusal band is in the buyer pack (market review of 1.16.2, finding 2).** BUYER-GUIDE-PROGRAM,
+  BUYER-GUIDE-IT, the market scorecard and its deferred table, and security questionnaire #16 now say that a whole
+  publication release can be refused (not a table withheld), for a fiscal year with about 110 to 240 overdose events,
+  and what to do: the exact funder submission is unaffected, and the year's quarters, each checked on its own, can
+  be published instead.
+- **The refusal message for a year says what to do.** It suggested only telling "whoever supports your SUDS server";
+  it now offers the year's four quarters, each once its figures are complete and each checked on its own, warns not
+  to publish the year beside them, and keeps the support step for a quarter that is refused too.
+- **Finding a 1.16.1 release made under the withdrawn rule (HIPAA.md).** Neither the audit log nor the exported files
+  say which tables a release withheld; the page did. HIPAA.md now says how to find one: list the publication releases
+  made while 1.16.1 was installed from the audit log, and check each period's exact figures against the rule's
+  condition (at least 12*T* overdose events and a month of 1 to *T*−1 events or not reversed); and what to do.
+- **A recovery drill on the released 1.16.2** (`docs/evidence/dr-drill-2026-09-29.md`): the development exercise at
+  20,000 clients, from the release's own files, passed 11/11 checks (drill RTO 3.8 s, host restore 4 s, RPO 7 s,
+  schema 48); still a development exercise, not a production drill.
+- EVALUATION-RESPONSE's status line reads "through 1.16.2"; the user guide's heading is "When someone not on the
+  care team changes your client's record".
+
 ## 1.16.2 — 2026-09-29
 
 ### Security
