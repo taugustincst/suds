@@ -1,0 +1,38 @@
+name: Repository settings
+# Checks, weekly and on demand, that the repository settings docs/RELEASE.md asks the owner to make are in force
+# ("Owner: repository settings", steps 1 to 7): the rulesets for main, maint/*, v* tags and gh-pages, the `release`
+# environment's reviewers and deployment refs, immutable releases, the default workflow token and allowed actions,
+# the deploy key and its secret, and stale release branches. It fails, with a table in the run summary, when a
+# setting is off or cannot be read (scripts/repo-settings-check.js; 1.17.0, engineering reviews of 1.16.1 M2,
+# 1.16.2 L5 and 1.16.3 L6). Uses no action and changes nothing: every request is a GET.
+#
+# The token is read-only either way. The workflow's own token reads the rulesets, the rules on a branch and the
+# environment, but not the admin-only settings (Actions permissions, deploy keys, secrets' names, immutable
+# releases), which then show as "cannot verify" and fail the run. A fine-grained token with read-only
+# Administration, Secrets, Environments, Actions and Metadata access to this repository only, stored as the secret
+# SETTINGS_READ_TOKEN of the `settings-check` environment (deployments from the default branch only), reads them
+# all (docs/RELEASE.md, step 9). No read-only token can see a ruleset's bypass list; those rows say "check by hand".
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: read
+  deployments: read
+jobs:
+  settings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Holds SETTINGS_READ_TOKEN, if the owner made one; limited to the default branch, so a branch's copy of this
+    # workflow never receives it. Without the secret the workflow's own read-only token is used.
+    environment: settings-check
+    steps:
+      - name: Check out
+        run: git clone --quiet --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --quiet --depth 1 origin "${GITHUB_SHA}" && git checkout --quiet "${GITHUB_SHA}" && git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
+      - name: Read the repository settings and compare them with docs/RELEASE.md
+        working-directory: src
+        env:
+          GH_TOKEN: ${{ secrets.SETTINGS_READ_TOKEN || github.token }}
+          SETTINGS_TOKEN_KIND: ${{ secrets.SETTINGS_READ_TOKEN != '' && 'SETTINGS_READ_TOKEN' || 'default workflow' }}
+        run: node scripts/repo-settings-check.js --repo "${GITHUB_REPOSITORY}"

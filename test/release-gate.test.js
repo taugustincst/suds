@@ -48,8 +48,10 @@ test('release.yml runs the gate before building anything, and the node24 job is 
   const ci = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'ci.yml'), 'utf8');
   const node24 = ci.slice(ci.indexOf('\n  node24:'), ci.indexOf('\n  dr-drill:'));
   assert.ok(node24.length > 10 && !/continue-on-error/.test(node24), 'node24 is not advisory');
-  for (const j of REQUIRED_JOBS) assert.match(ci, new RegExp(`\\n  ${j}:\\n`), `ci.yml has a ${j} job`);
-  assert.ok(!/\n\s+uses:/.test(ci) && !/\n\s+uses:/.test(rel), 'no marketplace (or any) actions');
+  // Read as data (scripts/workflow-yaml.js; test/workflow-yaml.test.js has the rest of the structural checks).
+  const Y = require('../scripts/workflow-yaml');
+  for (const j of REQUIRED_JOBS) assert.ok(Y.parse(ci).jobs[j], `ci.yml has a ${j} job`);
+  assert.ok(![...Y.steps(Y.parse(ci)), ...Y.steps(Y.parse(rel))].some(([, s]) => s.uses), 'no marketplace (or any) actions');
 });
 
 test('RELEASE.md gives the browser suite\'s real size, wherever it gives one', () => {

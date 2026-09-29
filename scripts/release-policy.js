@@ -8,6 +8,12 @@
 //   RELEASE_POLICY_EXCEPTION="<reason>" node scripts/release-policy.js ...   # an explicit, recorded policy exception
 //   ALLOW_PATCH_CHANGES="<reason>" ...                                      # the same (its name before 1.14.0)
 //   PATCH_MAX_ADDED_LINES=<n> node scripts/release-policy.js ...            # another patch size limit for this run
+//   ... --sha <commit> --main origin/main [--maint origin/maint] [--tag v1.16.5] [--latest-out file]   # as release.yml runs it
+//
+// Backports (1.17.0; docs/RELEASE.md, "Backports"): with --maint, a patch X.Y.z of a minor older than main's may be
+// a commit on origin/maint/X.Y instead of main (maintBranch); it is compared with the previous vX.Y.* tag like any
+// patch, and --latest-out says it is not the newest line (isLatest), so it is neither marked Latest nor published
+// to the web app.
 //
 // It compares the tree being released (the working directory) with the previous release tag (the highest
 // vX.Y.Z tag below the version in package.json, unless --previous names one), both loaded the same way:
@@ -192,15 +198,40 @@ function decide({ prevVersion, nextVersion, diff, override, feature = null, now 
  * What forbids releasing commit `sha` as `version`, whatever the exception (1.16.1): the version already tagged
  * at another commit (`tagSha`: what refs/tags/v<version> points at, null when there is no such tag; a re-run
  * would publish a different commit's zip under a released version), or a commit not on the default branch
- * (`onMain` false: a tag on a feature branch with green CI).
+ * (`onMain` false: a tag on a feature branch with green CI). `maint`: { ref, on } when the version is a patch of an
+ * older minor than main's (maintBranch): `ref` its remote maintenance branch (origin/maint/1.16), `on` whether the
+ * commit is on it; null otherwise.
  */
-function commitProblems({ version, sha, tagSha = null, onMain = true, mainRef = 'origin/main', tag = null }) {
+function commitProblems({ version, sha, tagSha = null, onMain = true, mainRef = 'origin/main', tag = null, maint = null }) {
   const out = [];
   if (tagSha && tagSha !== sha) out.push(`v${version} is already released at ${tagSha}, not ${sha}: bump the version`);
-  if (!onMain) out.push(`${sha} is not on ${mainRef}: only a commit merged to it is released`);
+  // Since 1.17.0 a patch of an older minor may be on its maintenance branch instead (`maint`, below).
+  if (!onMain && !(maint && maint.on)) {
+    out.push(maint ? `${sha} is not on ${mainRef} or ${maint.ref}: only a commit merged to one of them is released (a ${version} backport is merged to ${maint.ref} through a pull request)`
+      : `${sha} is not on ${mainRef}: only a commit merged to it is released`);
+  }
   // A pushed tag names the version it releases (1.16.2; the release job checked this only after the approval).
   if (tag && tag !== `v${version}`) out.push(`the tag ${tag} does not match package.json's version ${version}`);
   return out;
+}
+/**
+ * The maintenance branch a version may be released from instead of main (1.17.0; docs/RELEASE.md, "Backports"):
+ * `maint/X.Y` for a patch `X.Y.z` (z > 0) of a minor older than main's (`mainVersion`: package.json's version on
+ * main), else null. The first release of a minor (X.Y.0), and any version of main's own minor or a newer one,
+ * comes from main only.
+ */
+function maintBranch(version, mainVersion) {
+  const v = parseVersion(version); const m = parseVersion(mainVersion);
+  if (!v || !m || v[2] === 0) return null;
+  return v[0] < m[0] || (v[0] === m[0] && v[1] < m[1]) ? `maint/${v[0]}.${v[1]}` : null;
+}
+/**
+ * Whether `version` is on the newest release line (1.17.0): no vX.Y.Z tag above it. A maintenance release (1.16.5
+ * after 1.17.0) is not: the release job does not mark it the repository's Latest release, and does not publish the
+ * web app from it (the public URL would go back to the older minor).
+ */
+function isLatest(tags, version) {
+  return !tags.some((t) => parseVersion(t) && compareVersions(t, version) > 0);
 }
 /**
  * The released commit should be the version-stamp commit, the one that set package.json's version (1.16.2;
@@ -286,9 +317,17 @@ function main() {
   if (arg('--sha')) {
     const git = (...a) => execFileSync('git', a, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     let tagSha = null; try { tagSha = git('rev-parse', '-q', '--verify', `refs/tags/v${version}^{commit}`) || null; } catch { tagSha = null; }
-    let onMain = true;
-    if (arg('--main')) { try { git('merge-base', '--is-ancestor', arg('--sha'), arg('--main')); } catch { onMain = false; } }
-    const bad = commitProblems({ version, sha: arg('--sha'), tagSha, onMain, mainRef: arg('--main'), tag: arg('--tag') || null });
+    const on = (ref) => { try { git('merge-base', '--is-ancestor', arg('--sha'), ref); return true; } catch { return false; } };
+    const onMain = arg('--main') ? on(arg('--main')) : true;
+    // --maint <remote prefix> (release.yml: origin/maint): a patch of a minor older than main's may be on its
+    // maintenance branch instead (1.17.0; docs/RELEASE.md, "Backports"). main's version is read from main itself.
+    let maint = null;
+    if (arg('--maint') && arg('--main') && !onMain) {
+      let mainVersion = null; try { mainVersion = JSON.parse(git('show', `${arg('--main')}:package.json`)).version; } catch { mainVersion = null; }
+      const branch = maintBranch(version, mainVersion);
+      if (branch) { const ref = `${arg('--maint')}/${branch.slice('maint/'.length)}`; maint = { ref, on: on(ref) }; }
+    }
+    const bad = commitProblems({ version, sha: arg('--sha'), tagSha, onMain, mainRef: arg('--main'), tag: arg('--tag') || null, maint });
     for (const b of bad) console.log(`::error::Release refused: ${b}.`);
     if (bad.length) return 1;
     let stampSha = null; try { stampSha = git('log', '-1', '--format=%H', '-G', '^\\s*"version":', arg('--sha'), '--', 'package.json') || null; } catch { stampSha = null; }
@@ -297,6 +336,11 @@ function main() {
     if (w && process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, stampSummary(w));
   }
   const tags = execFileSync('git', ['tag', '-l', 'v*'], { cwd: ROOT, encoding: 'utf8' }).split('\n').map((s) => s.trim()).filter(Boolean);
+  // --latest-out <file>: "true" on the newest release line, "false" for a maintenance release (1.17.0), which the
+  // release job then neither marks Latest nor publishes to the web app.
+  if (arg('--latest-out')) fs.writeFileSync(arg('--latest-out'), String(isLatest(tags, version)));
+  // For a maintenance release previousTag() is already the one below it on its own line (1.16.5 -> v1.16.4, not
+  // v1.17.0), so the patch rules and the size limit apply to the backport alone.
   const prev = arg('--previous') || previousTag(tags, version);
   if (!prev) { console.log(`[release-policy] no release tag below ${version}; nothing to compare with`); return 0; }
   // --previous-ref: compare with a commit that has no tag yet (a dry run), under the version --previous names.
@@ -329,4 +373,4 @@ function main() {
 if (require.main === module) {
   try { process.exitCode = main(); } catch (e) { console.log(`::error::The release policy check could not run: ${e.message}`); process.exitCode = 1; }
 }
-module.exports = { parseVersion, compareVersions, bumpKind, previousTag, previousFeatureTag, FEATURE_INTERVAL_DAYS, PATCH_MAX_ADDED_LINES, SIZE_EXEMPT, patchSize, sizeViolation, localRoutes, LOCAL_ROUTE_FILES, diffSurfaces, violations, decide, commitProblems, stampWarning, stampSummary, tagDate, surface, extractRef, measureSize };
+module.exports = { parseVersion, compareVersions, bumpKind, previousTag, maintBranch, isLatest, previousFeatureTag, FEATURE_INTERVAL_DAYS, PATCH_MAX_ADDED_LINES, SIZE_EXEMPT, patchSize, sizeViolation, localRoutes, LOCAL_ROUTE_FILES, diffSurfaces, violations, decide, commitProblems, stampWarning, stampSummary, tagDate, surface, extractRef, measureSize };
