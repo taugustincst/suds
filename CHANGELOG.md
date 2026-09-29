@@ -57,6 +57,9 @@ meet. No migration; no new permission or route.
   months with 24 events, every split of events and reversals); a first run of the new outcome family, enumerated only
   two events past the sizes it checked, reported a suppressed total of 3 or 4 whose worlds, run further, include 6:
   the families are now enumerated three past (docs/architecture/ADR-0009, *Known limits*).
+  The month families run in a file of their own (`test/publication-release-months.test.js`, in `SDC_SWEEPS`) beside
+  the others; `node scripts/test-thorough.js --part sdc` took about 27 minutes here (the months file, 10 minutes, runs
+  beside the longest), inside the thorough-sdc job's 60.
 
 ## 1.16.4 — 2026-09-29
 
