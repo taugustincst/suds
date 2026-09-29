@@ -45331,7 +45331,7 @@ var require_db = __commonJS({
         createIndexesFromSchema(d, schemaText, ["idx_interventions_participant", "idx_prevention_events_date", "idx_prevention_events_user", "idx_prevention_events_updated"]);
       },
       // 52: reserved in 1.17.0 for the publication-release change, which needed no schema change: a no-op
-      //     (and a documented no-op if it ships without one), so that the copilot below keeps number 53.
+      //     It keeps its number so the copilot below keeps 53.
       (d) => {
       },
       // 53: the AI documentation copilot (docs/AI-COPILOT.md): notes.ai_assisted, set when a note's text was drafted
