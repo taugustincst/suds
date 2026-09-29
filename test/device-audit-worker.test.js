@@ -104,3 +104,55 @@ test('a worker that stops answering is stopped, and its release refused as by th
   assert.ok(r2.refused && r2.refused.backstop);
   assert.equal(made.length, 2, 'a new worker for the next audit');
 });
+
+test('audits wait their turn: the backstop counts an audit\'s own time, not the time it queued behind another', async () => {
+  // Engineering review of the 1.17.0 candidate, L1: the timer started when an audit was handed over, but a worker
+  // audits one at a time, so an audit queued behind a long one was refused having barely run.
+  const made = [];
+  class Slow {
+    constructor() { made.push(this); this.inFlight = 0; this.maxInFlight = 0; setImmediate(() => this.onmessage && this.onmessage({ data: { ready: true } })); }
+    postMessage(m) {
+      this.inFlight++; this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+      setTimeout(() => { this.inFlight--; if (!this.stopped) this.onmessage({ data: { id: m.id, result: { id: `r${m.id}` } } }); }, 70);
+    }
+    terminate() { this.stopped = true; }
+  }
+  const run = auditRunner('u', { WorkerCtor: Slow, backstopMs: 150 });
+  // Three together take 210 ms in all, each 70: every one answers, none refused.
+  const out = await Promise.all([1, 2, 3].map(() => run({}, 11)));
+  assert.deepEqual(out.map((r) => r.id), ['r1', 'r2', 'r3']);
+  assert.equal(made.length, 1, 'one worker');
+  assert.equal(made[0].maxInFlight, 1, 'handed over one at a time');
+  // One that really hangs is refused, and the one behind it runs on a new worker, with its own full backstop.
+  class HangFirst extends Slow { postMessage(m) { if (m.id === 1) return; super.postMessage(m); } }
+  made.length = 0;
+  const run2 = auditRunner('u', { WorkerCtor: HangFirst, backstopMs: 150 });
+  const [a, b] = await Promise.allSettled([run2({}, 11), run2({}, 11)]);
+  assert.equal(a.status, 'rejected'); assert.equal(a.reason.code, 'SUDS_AUDIT_BACKSTOP');
+  assert.equal(b.status, 'fulfilled'); assert.equal(b.value.id, 'r2');
+  assert.equal(made.length, 2); assert.ok(made[0].stopped);
+});
+
+test('a worker that did not start in time is tried once more, for the next audit; then the page is used for good', async () => {
+  const made = [];
+  class Silent { constructor() { made.push(this); } postMessage() {} terminate() { this.stopped = true; } }
+  const run = auditRunner('u', { WorkerCtor: Silent, startMs: 30 });
+  for (let k = 0; k < 3; k++) {
+    await assert.rejects(run({}, 11), (e) => e.code === 'SUDS_NO_WORKER');
+  }
+  assert.equal(made.length, 2, 'a second worker was tried, not a third');
+  assert.match(run.stats().broken, /did not start/);
+  // A slow start the first time, a quick one the second: the device keeps its worker.
+  made.length = 0; let n = 0;
+  class SlowThenQuick {
+    constructor() { made.push(this); const late = n++ === 0; setTimeout(() => { this.ready = true; if (this.onmessage) this.onmessage({ data: { ready: true } }); if (this.queued) this.answer(this.queued); }, late ? 100 : 1); }
+    // A worker answers only once its script has run: a message posted before is handled then.
+    answer(m) { setImmediate(() => { if (!this.stopped) this.onmessage({ data: { id: m.id, result: { id: 'ok' } } }); }); }
+    postMessage(m) { if (this.ready) this.answer(m); else this.queued = m; }
+    terminate() { this.stopped = true; }
+  }
+  const run2 = auditRunner('u', { WorkerCtor: SlowThenQuick, startMs: 30 });
+  await assert.rejects(run2({}, 11), (e) => e.code === 'SUDS_NO_WORKER');
+  assert.equal((await run2({}, 11)).id, 'ok');
+  assert.equal(run2.stats().broken, null);
+});

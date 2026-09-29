@@ -216,11 +216,19 @@ for about 7 s before refusing, longer on a phone). The worker is a second genera
 (built from `local/audit-worker.js` by `npm run build:local` beside the kernel, with its `.gz` and `.br`; the audit
 alone, about 110 kB; CI's drift check covers `public/local`, so an unbuilt worker fails CI, not devices), precached
 by the service worker under the kernel's version and started by `local/audit-runner.js`, which the kernel hands to
-`server/publication-release.js` (`setDeviceAuditRunner`; `public/app.js` passes its URL). One long-lived worker;
-an audit that does not answer within the backstop (75 s, as the server's) is refused and its worker stopped, and the
-audits queued on it start again on a new one. Where no worker can run - no Web Workers, the constructor throws, the
-script fails to load or does not say it started within 10 s - the audit runs on the page as before (after letting
-it paint once); once a worker has said it started, its audits are never run twice. The same code and the same
+`server/publication-release.js` (`setDeviceAuditRunner`; `public/app.js` passes its URL). One long-lived worker,
+handed one audit at a time (the next when the one before has answered), so that the backstop counts an audit's own
+time and not the time it waited behind another (until the review of the 1.17.0 candidate, L1, the timer started at
+dispatch and an audit queued behind a long one could be refused having barely run); an audit that does not answer
+within the backstop is refused and its worker stopped, and the next audit waiting starts on a new one. **The device's
+backstop is 75 s, the server's 60 s** (`server/release-audit.js` `AUDIT_BACKSTOP_MS`): a phone runs the same work
+more slowly, and the wall clock is only a guard, not what decides: the budget in units of work decides what is
+published, the same on both, so "a device's release is the office's" holds for every release either finishes within
+its clock, and a device refuses by its clock only a release that took it 75 s. Where no worker can run - no Web
+Workers, the constructor throws, the script fails to load or does not say it started within 10 s - the audit runs on
+the page as before (after letting it paint once); a worker that was only slow to start is tried once more, for the
+next audit, before the page is used for the rest of the session; once a worker has said it started, its audits are
+never run twice. The same code and the same
 budget run either way, so a device's release of some figures is the office's (`test/kernel-parity.test.js`); a
 lower on-device budget was considered and not taken, because it would make a device refuse what the office
 publishes. `test/device-audit-worker.test.js` runs the committed worker as a browser does and the runner with
