@@ -2,6 +2,56 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### AI documentation copilot
+
+An optional module, **off by default** and **office server only**, that drafts documentation for staff to review
+(`docs/AI-COPILOT.md`). A person always reviews and decides: the copilot never saves, signs or submits anything.
+
+- **What it drafts.** Progress notes: from the author's own session notes or transcript, the sections of a DAP,
+  SOAP, BIRP or GIRP note, or a narrative for the other formats (not a safety plan), in a folded "Draft with the AI
+  copilot" section of the note form. Six-dimension assessments: a narrative and a *suggested* 0–4 rating per
+  dimension; the clinician chooses each rating and must tick "reviewed" for all six before saving. Care plan:
+  problem, goal, objective and intervention suggestions from an assessment and/or notes, each added one at a time
+  through the ordinary care plan routes ("Suggest with AI"). CalOMS: suggested answers in the admission and
+  discharge dialogs, each applied only on **Apply** and checked against the CalOMS code sets (read-only use of
+  `server/caloms-spec.js`).
+- **Review before signing.** Drafts show under "AI draft — review before signing". A note with AI-drafted text is
+  marked `ai_assisted` (never cleared, kept as signed, shown as an **AI-assisted** badge), and signing it requires
+  the author's statement that they reviewed and corrected it (`ai_reviewed`; the `note.sign` audit entry records
+  both).
+- **Gating.** An administrator must first record the programme's agreement with the provider — who signed, the
+  date, the reference, and confirmation of a BAA with 42 CFR Part 2 QSOA terms and counsel's review — under
+  Settings → **AI copilot**, then switch it on (`POST|DELETE /api/ai/attestation`, `GET|PUT /api/ai/settings`;
+  audited). The provider key is `ANTHROPIC_API_KEY` in the server environment only. Model setting (default
+  `claude-opus-5-5`) and a monthly cap per programme (default 500). Withdrawing the agreement switches it off.
+  SUDS on this device and local mode have no copilot and say why (the route module is not in the kernel).
+- **What is sent.** Only the text given for one client (and, for care plan suggestions, the one assessment chosen
+  and the active problem wording), after the client's names, date of birth, phones, email, address, city, ZIP,
+  Medi-Cal number, emergency contact, client code and the author's name are replaced with placeholders and phone,
+  email, SSN, URL, street-address and long-number patterns are masked; names are put back on the server after.
+  Never another client's data or anyone else's notes; a signed note cannot be redrafted. Documented as not
+  de-identification, with the residual risks.
+- **Permission** `ai:draft` ("Use the AI documentation copilot"): clinicians, supervisors and navigators by default
+  (a navigator drafts administrative notes, care plan and CalOMS suggestions, not clinical notes or assessments, as each draft also needs the permission
+  to write what it drafts); not administrators; never grantable to finance or read-only.
+- **Provider call** with Node's built-in `fetch` (no new dependency): the Messages API with structured outputs,
+  cached system instructions, a 90-second timeout, and for the default model effort `medium` and the provider's
+  refusal fallback. Timeouts, rate limits, provider outages, refusals and unreadable answers are said in words
+  and leave the form unchanged; each call is audited (`ai.draft`: who, client, feature, model, token counts,
+  identifiers replaced — never the text) and counted in `ai_usage`. One person may ask for 12 drafts a minute.
+- **Prompts** in one module, `server/ai-prompts.js`: SUD-specific, draft only from what is given, never invent,
+  `[needs clinician input]` for gaps, person-first non-stigmatizing language, placeholders kept, the session text
+  treated as material rather than instructions.
+- **Migration 53**: `notes.ai_assisted`, and the `ai_usage` table (office server only, never synchronised).
+  Migrations 49–52 are placeholders for the other 1.17.0 changes, replaced when the branches are merged.
+- Tests: `test/ai-copilot.test.js` (permission, gating, attestation, the request body, de-identification, audit,
+  usage and cap, provider failures against a local fake provider, a draft never saved or signed). Browser script
+  `scripts/ui/r10-ai.mjs` against a fake provider, with axe on the panels, dialogs and the Settings tab (the suite
+  is now 45 scripts). Docs: `docs/AI-COPILOT.md`; HIPAA, Part 2, architecture, data lifecycle, deployment, user
+  guide and buyer guides updated.
+
 ## 1.16.4 — 2026-09-29
 
 ### Security

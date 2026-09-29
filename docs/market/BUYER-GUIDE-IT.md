@@ -79,6 +79,13 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
 
 - **No third-party scripts, CDNs, analytics or telemetry.** The only outbound connections are ones an
   administrator configures (listed above). Nothing polls for updates.
+- **Optional AI documentation copilot (1.17.0, off by default):** when the programme records its BAA/QSOA with
+  the AI provider and switches it on, the office server (never the browser) sends session text a worker gives,
+  with that client's known identifiers replaced, to the provider's API over HTTPS (`api.anthropic.com`, or a
+  gateway set in `SUDS_AI_BASE_URL`). The key is `ANTHROPIC_API_KEY` in the server environment only; no SDK or
+  other package is added; each call is audited without its text and counted against a monthly cap. This is PHI
+  to a business associate: see [docs/AI-COPILOT.md](../AI-COPILOT.md) for exactly what is sent and the residual
+  risk.
 - **Where PHI lives:** only in the SUDS database and its encrypted backups. Logs and audit details never
   contain names or note text.
 - **Local mode** (offline copy on a device) is off unless the setup wizard or IT turns it on. The wizard

@@ -23,10 +23,15 @@ export API_RATE_LIMIT=${API_RATE_LIMIT:-6000}
 # so the local-mode, sync and device scripts have a kernel to load. The first-run wizard's server below
 # clears it again, so the wizard asks the question the way a county sees it.
 export LOCAL_MODE_ENABLED=true
+# The AI documentation copilot (docs/AI-COPILOT.md) is driven by r10-ai.mjs against a fake provider that script
+# runs itself on SUDS_AI_FAKE_PORT: the office server is pointed at it, so no call ever leaves this machine. The
+# copilot stays off (no agreement recorded) for every other script.
+export SUDS_AI_FAKE_PORT=${SUDS_AI_FAKE_PORT:-$((PORT + 7))}
+export ANTHROPIC_API_KEY=suds-ui-fake-provider-key SUDS_AI_BASE_URL="http://127.0.0.1:$SUDS_AI_FAKE_PORT"
 # A server left over from an earlier run holds a port and the wizard then "cannot start" on it, which
 # looks like an app defect. Say what is actually wrong instead.
 STATIC_PORT=${STATIC_PORT:-8878}
-for p in "$PORT" "$SETUP_BOOT_PORT" "${SETUP_PORT:-8496}" "$STATIC_PORT" "${SUDS_UPGRADE_PORT:-8879}" "${SUDS_MULTITAB_PORT:-8881}"; do
+for p in "$PORT" "$SETUP_BOOT_PORT" "${SETUP_PORT:-8496}" "$STATIC_PORT" "${SUDS_UPGRADE_PORT:-8879}" "${SUDS_MULTITAB_PORT:-8881}" "$SUDS_AI_FAKE_PORT"; do
   if curl -sk -o /dev/null --max-time 2 "http://127.0.0.1:$p/" || curl -sk -o /dev/null --max-time 2 "https://127.0.0.1:$p/"; then
     echo "port $p is already in use (a server from an earlier run?). Stop it and start again." >&2; exit 2
   fi
@@ -86,7 +91,7 @@ fi
 fail=0; office_dirty=0; reset_secs=0; suite_start=$SECONDS
 rows=()
 failed=()
-for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-features local-mode multitab sync-two-way device-audit device-encryption device-recovery spreadsheets sample-data resource-profiles forms region dates setup setup-same-origin static-site qa-retest clinical-audit ux-polish signup load-review a11y-round4 caloms frontline frontline-review funder-reporting supplies programme suprt ux-nav ux-forms ui-eval ux13 r5 r6 r7 r8 r9 permissions-admin accessibility}; do
+for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-features local-mode multitab sync-two-way device-audit device-encryption device-recovery spreadsheets sample-data resource-profiles forms region dates setup setup-same-origin static-site qa-retest clinical-audit ux-polish signup load-review a11y-round4 caloms frontline frontline-review funder-reporting supplies programme suprt ux-nav ux-forms ui-eval ux13 r5 r6 r7 r8 r9 r10-ai permissions-admin accessibility}; do
   echo "=== $s"
   if [ ! -f "scripts/ui/$s.mjs" ]; then echo "FAILED: no such script scripts/ui/$s.mjs"; rows+=("$s|-|FAIL|0"); fail=1; continue; fi
   # A script that uses the office server starts from the seed, whatever ran before it.

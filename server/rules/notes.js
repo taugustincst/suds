@@ -14,7 +14,7 @@ const { define, refuse, flag, notPermitted } = require('./core');
 const parseList = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
 // Everything about a signed note stays as signed, except asking a supervisor to look at it (request-cosign).
 const SIGNED_KEEPS = ['kind', 'format', 'title_enc', 'content_enc', 'structured_enc', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'problem_ids',
-  'status', 'signed_by', 'signed_at', 'signature_hash', 'source', 'source_ref', 'import_item_id', 'deleted_at'];
+  'status', 'signed_by', 'signed_at', 'signature_hash', 'source', 'source_ref', 'import_item_id', 'deleted_at', 'ai_assisted'];
 
 /**
  * A supervisor's "Finish and sign your note" reminder (public/views/supervision.js puts a reference line naming
@@ -52,6 +52,9 @@ module.exports = define({
     source: { type: 'string', enum: ['manual', 'pocket_ai', 'onenote', 'import', 'api'] }, source_ref: { type: 'string', maxLen: 300 },
     // The problem-list entries this note addresses (CalAIM: a progress note ties the service to the problem list).
     problem_ids: { type: 'array', maxLen: 30, of: 'string', fromColumn: JSON.parse },
+    // Some of the text was drafted by the AI documentation copilot (docs/AI-COPILOT.md). Set by the author's
+    // editor when a draft is used; never cleared once set (normalise), and kept as signed.
+    ai_assisted: { type: 'boolean' },
   },
   tombstone: 'never',
   createdBy: ['author_id'],
@@ -94,6 +97,7 @@ module.exports = define({
     const asserted = COSIGN.some(k => has(row[k]) && String(row[k]) !== String((e && e[k]) ?? '')) || (has(row.cosign_note_enc) && String(row.cosign_note_enc) !== String((e && c.was('cosign_note_enc')) ?? ''));
     if (e) {
       row.kind = e.kind; // a note's kind is decided when it is written (no route changes it)
+      if (Number(e.ai_assisted)) row.ai_assisted = 1; // AI-assisted stays AI-assisted
       if (e.status !== 'draft') for (const col of SIGNED_KEEPS) row[col] = col.endsWith('_enc') ? undefined : e[col];
       // Asking for a review is the author's (POST /api/notes/:id/request-cosign), or records:manage-others'
       // (security review of 1.16.0, L2); nor is it asked again of a note already countersigned.

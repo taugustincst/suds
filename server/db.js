@@ -651,6 +651,25 @@ const migrations = [
     )`);
     d.exec(`CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id)`);
   },
+  // 49: reserved for another 1.17.0 change (a placeholder, replaced when the 1.17.0 branches are merged)
+  () => {},
+  // 50: reserved for another 1.17.0 change (a placeholder, replaced when the 1.17.0 branches are merged)
+  () => {},
+  // 51: reserved for another 1.17.0 change (a placeholder, replaced when the 1.17.0 branches are merged)
+  () => {},
+  // 52: reserved for another 1.17.0 change (a placeholder, replaced when the 1.17.0 branches are merged)
+  () => {},
+  // 53: the AI documentation copilot (docs/AI-COPILOT.md): notes.ai_assisted, set when a note's text was drafted
+  //     by the copilot and kept as signed, and ai_usage, one row per call to the AI provider (no text, no client)
+  //     for the programme's monthly cap. Self-contained and idempotent, so it can be renumbered.
+  (d) => {
+    addColumn(d, 'notes', 'ai_assisted', 'INTEGER NOT NULL DEFAULT 0');
+    const schemaText = safeSchema();
+    const m = schemaText.match(/CREATE TABLE IF NOT EXISTS ai_usage \([\s\S]*?\n\);/);
+    if (!m) throw new Error('migration 53: no definition for ai_usage in schema');
+    d.exec(m[0]);
+    createIndexesFromSchema(d, schemaText, ['idx_ai_usage_at']);
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

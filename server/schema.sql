@@ -557,7 +557,10 @@ CREATE TABLE IF NOT EXISTS notes (
   deleted_at TEXT,
   -- The problem-list entries this note addresses: a JSON array of problems.id (CalAIM progress notes tie
   -- each service to the problem list). Ids only, never the problem text.
-  problem_ids TEXT
+  problem_ids TEXT,
+  -- Some of the text was drafted by the AI documentation copilot (migration 53, server/ai-copilot.js, docs/AI-COPILOT.md)
+  -- and then reviewed by the author, who alone signs. Once set it is never cleared, and it is kept as signed.
+  ai_assisted INTEGER NOT NULL DEFAULT 0
 );
 -- A client's notes by date, and a caseload's notes list, read from the index alone (migration 47 widened idx_notes_client).
 CREATE INDEX IF NOT EXISTS idx_notes_list ON notes(client_id, occurred_at, kind, deleted_at, author_id);
@@ -1390,3 +1393,20 @@ CREATE INDEX IF NOT EXISTS idx_suprt_assessments_client ON suprt_assessments(cli
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_date ON suprt_assessments(assessment_date);
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_updated ON suprt_assessments(updated_at);
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_sync ON suprt_assessments(client_id, updated_at);
+
+-- The AI documentation copilot's calls to the AI provider (migration 53, server/ai-copilot.js): one row per call
+-- sent, for the programme's monthly cap and the administrator's usage figures. No text, no client: what was
+-- drafted, for which feature, by whom, with which model, how many tokens and how it ended. The audit entry
+-- (ai.draft) carries the client. Office server only, never synchronised (a device has no copilot).
+CREATE TABLE IF NOT EXISTS ai_usage (
+  id TEXT PRIMARY KEY,
+  at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  user_id TEXT REFERENCES users(id),
+  feature TEXT NOT NULL,
+  model TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  latency_ms INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_at ON ai_usage(at);

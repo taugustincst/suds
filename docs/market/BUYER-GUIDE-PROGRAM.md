@@ -36,6 +36,15 @@ needs its own ASAM licence to use them), PHQ-9 / GAD-7 / AUDIT-C and an optional
 administrator confirms your programme holds the rights to use it) ([docs/compliance/CALAIM.md](../compliance/CALAIM.md)),
 CalOMS Tx, and the county EHR hand-off. Most harm-reduction programmes will not need them.
 
+**AI documentation copilot (optional, 1.17.0; off by default).** On an office server, staff can ask an AI
+model to draft a progress note's sections from their own session notes, the six assessment dimensions from
+intake notes, care plan suggestions and CalOMS answers. It drafts only: a person reviews, corrects and signs,
+and signed notes record that they were AI-assisted. What it needs from you: your own **business associate
+agreement with Part 2 (QSOA) terms with the AI provider**, your **counsel's review**, and the provider's usage
+charges (your contract with the provider, not with SUDS). SUDS replaces the client's known identifiers before
+sending, but free text can still identify someone, and drafts can be wrong — it saves documentation time, it
+does not certify anything. Not available in SUDS on this device. ([docs/AI-COPILOT.md](../AI-COPILOT.md))
+
 ## Funder and grant reporting
 
 - **Funder report**: unduplicated people served (people, not services) by fiscal period and funding source;

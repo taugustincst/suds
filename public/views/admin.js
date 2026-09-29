@@ -3,6 +3,7 @@ import { qrSvg } from '../qr.js';
 import { listsTab } from './lists.js';
 import { securityTab, drillCard } from './security.js';
 import { instrumentsCard } from './clinical.js';
+import { aiSettingsTab } from './ai.js';
 
 /**
  * The key backup opens every backup of this database, so the server asks the administrator to prove it is
@@ -535,6 +536,8 @@ route('admin', async (r) => {
   if (can('settings:manage') || can('budget:manage')) tabs.splice(full ? 2 : tabs.length, 0, ['lists', 'Lists']);
   // FHIR clients (the county EHR reading SUDS over FHIR): an office-server feature, next to the intake keys.
   // Only while the FHIR module is on (Settings › Programme); switched off, the API answers nobody.
+  // The AI documentation copilot (docs/AI-COPILOT.md): an office-server module, off until its agreement is recorded.
+  if (full && !state.local && can('settings:manage')) { T.ai = () => aiSettingsTab(refresh); const at = tabs.findIndex(([k]) => k === 'security'); tabs.splice(at < 0 ? tabs.length : at, 0, ['ai', 'AI copilot']); }
   if (full && !state.local && can('apikeys:manage') && moduleOn('fhir')) { T.fhir = () => fhirClientsTab(refresh); const at = tabs.findIndex(([k]) => k === 'apikeys'); tabs.splice(at < 0 ? tabs.length : at + 1, 0, ['fhir', 'FHIR clients']); }
   const allowed = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
   body.append(await (T[allowed] || T[tabs[0][0]])());

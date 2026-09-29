@@ -152,6 +152,30 @@ Residual risks a county should carry in its own risk register (§164.308(a)(1)).
 | **On-device app: records in one browser** | SUDS on this device (GitHub Pages) keeps its records only in the browser that holds them, with the keys beside them. Clearing the browser's site data, a browser evicting storage, or a lost or broken device loses every record not in a backup; anyone who can use the browser profile can read them. The code is served from GitHub, with which there is no BAA (none is needed for code that never receives PHI), and a compromise of the repository or the Pages site could serve altered code. | First-run confirmation of where records are kept; encrypted device backups with a 7-day reminder; persistent-storage request and status; caseload scoping between accounts on one device. The county: decides whether the on-device app may hold client information at all, requires device passcode/disk encryption/MDM, sets a backup routine and where backup files are kept, records the GitHub hosting (or self-hosts the build), and prefers an office server where records must be shared or retained centrally. |
 | **Experimental runtime module** | `node:sqlite` is experimental in Node 22 and 24. | CI runs the suite on Node 24 in advance; migration plan in DEPLOYMENT.md ("Node.js support and the move to 24"). |
 
+## AI documentation copilot (optional; off by default)
+
+1.17.0 adds an optional AI copilot that drafts progress notes, assessment narratives, care plan and CalOMS
+suggestions for staff to review (`docs/AI-COPILOT.md`). Sending session text to an AI provider is a use of PHI
+by a **business associate** (§164.502(e), §164.504(e)), so:
+
+* It is **off** until an administrator records the programme's BAA with the provider (who signed, when, its
+  reference), with Part 2 QSOA terms and counsel's review, and switches it on; the provider key lives only in
+  the server's environment (`ANTHROPIC_API_KEY`). Withdrawing the agreement switches it off. Office server only:
+  SUDS on this device and local mode never call it.
+* **Minimum necessary:** only the text a worker gives for one client (and, for care plan suggestions, one
+  assessment of that client they choose) is sent; never another client's data or anyone else's notes.
+* Before sending, the identifiers SUDS holds for that client (names, date of birth, phones, email, address,
+  city, ZIP, Medi-Cal number, emergency contact, client code) and the author's name are replaced with
+  placeholders, and phone, email, SSN, URL, street-address and long-number patterns are masked. **This is not
+  Safe Harbor de-identification**: free text can still identify someone, and the text sent remains PHI. The
+  legal basis is the BAA, not the masking.
+* A person reviews every draft; nothing is saved or signed by the copilot. A note it helped with is marked
+  AI-assisted, and signing it needs the author's review statement.
+* Each call is audited (`ai.draft`: who, client, feature, model, token counts; never the text) and counted
+  against a monthly cap; prompts and drafts are never logged.
+* Add the provider to your risk register and your list of business associates; what the provider retains is
+  governed by your agreement with it.
+
 ## Organizational responsibilities (not provided by software)
 
 1. **Risk analysis and management** (§164.308(a)(1)) — document this deployment in your risk register, starting from *Risk register notes* above; the adoption plan (pilot, release cadence, drills, independent review) is [ADOPTION.md](ADOPTION.md).

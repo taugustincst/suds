@@ -188,6 +188,16 @@ const config = {
   // "Check for updates" (server/update.js). A GitHub releases API URL, e.g.
   // https://api.github.com/repos/<owner>/<repo>/releases/latest — or an internal mirror for an air-gapped county.
   updateFeedUrl: process.env.UPDATE_FEED_URL || '',
+  // The AI documentation copilot (docs/AI-COPILOT.md). Off unless an administrator records the programme's
+  // BAA/QSOA with the provider and switches it on (server/ai-copilot.js); even then it needs the provider's API
+  // key here, in the server's environment, never in the database or the browser. Read at each call, so a
+  // changed key needs no restart. SUDS_AI_BASE_URL points at another endpoint speaking the same Messages API
+  // (a test double, or a county's own gateway to the provider); it must be https unless it is this machine.
+  ai: {
+    get apiKey() { return process.env.ANTHROPIC_API_KEY || ''; },
+    get baseUrl() { return (process.env.SUDS_AI_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, ''); },
+    get timeoutMs() { const v = Number(process.env.SUDS_AI_TIMEOUT_MS || 90000); return Number.isFinite(v) && v >= 1000 ? v : 90000; },
+  },
   // Off by default: GET /api/metrics answers 404 unless this is set, and requires it as a bearer token
   // when it is (no PHI in it, but row counts and session activity are not for just anyone who can reach the
   // server). Lets a county's existing Prometheus/Grafana/etc. stack scrape SUDS without a new dependency.
