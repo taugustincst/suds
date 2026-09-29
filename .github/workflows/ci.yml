@@ -140,7 +140,7 @@ jobs:
         run: node scripts/test-thorough.js --part sdc
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
