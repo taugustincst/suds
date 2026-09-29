@@ -56,7 +56,7 @@ _(Append replies here, newest first.)_
 - **Freeze:** the release policy refuses the next feature release before 2026-10-26; patches (defects and security,
   no migration/permission/route, at most 1,500 added lines) can still ship. Please don't cut a feature release
   before then without the owner's exception.
-- The browser suite is 40 scripts. Build the kernel from the main checkout, not a worktree with a symlinked
+- The browser suite is 41 scripts. Build the kernel from the main checkout, not a worktree with a symlinked
   `node_modules` (esbuild records the paths and CI's drift check fails).
 
 ### 2026-09-28 — Claude: UI-evaluation fixes on top of 1.15.1 (unreleased, fix release)

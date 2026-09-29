@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv, mayChange, ownedNotice, viewOnly } from '../app.js';
 
 export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
   const isNew = !values;
@@ -12,6 +12,16 @@ export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
     toast('To-do saved', 'ok'); m.close(); onDone && onDone();
   } });
   const m = modal(isNew ? 'New to-do' : 'Edit to-do', f);
+}
+// A to-do is changed by whoever it is assigned to or made it, or someone who manages others' records
+// (server/rules/tasks.js editableBy); anyone who can write to-dos may still mark it done.
+const mayChangeTask = (t) => mayChange(t.assigned_to, t.created_by);
+/** Someone else's to-do on a phone, to read: it used to open as a form whose Save was then refused. */
+function openTaskView(t) {
+  modal('To-do', h('div', { 'data-task-view': t.id }, can('tasks:write') ? ownedNotice(t.assignee, { verb: 'Assigned to' }) : null,
+    kv([['To-do', t.title], ['Client', t.client_name || t.client_code || null], ['Due', t.due_at ? fmt.dt(t.due_at) : null], ['Priority', fmt.label(t.priority)], ['Status', fmt.label(t.status)],
+      ['Assigned to', t.assignee], ['Details', t.description ? h('div', { style: { whiteSpace: 'pre-wrap' } }, t.description) : null]]),
+    can('tasks:write') ? h('p', { class: 'small muted' }, 'You can still mark it done with its box in the list.') : null));
 }
 export function taskTable(rows, { showClient = true, onChange, bulk = false } = {}) {
   const overdue = t => t.due_at && ['open', 'in_progress'].includes(t.status) && fmt.isPast(t.due_at);
@@ -45,7 +55,8 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false } = 
   const toolbar = canBulk && bulkable.length ? h('div', { class: 'row mb', style: { alignItems: 'center', gap: '.6rem' } }, h('label', { class: 'check', style: { marginTop: 0 } }, selectAll, 'Select all'), countEl, markBtn) : null;
 
   const tbl = table([
-    { label: '', render: t => can('tasks:write') ? h('input', {
+    // Named columns ("Done", "Select"): two blank-headed boxes side by side were both read out as "Actions".
+    { label: 'Done', render: t => can('tasks:write') ? h('input', {
       type: 'checkbox', checked: t.status === 'done', title: 'Mark done',
       'aria-label': `Mark "${t.title}" ${t.status === 'done' ? 'not done' : 'done'}`,
       onChange: async (e) => {
@@ -62,14 +73,12 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false } = 
         } finally { e.target.disabled = false; }
       },
     }) : null },
-    canBulk ? { label: '', render: t => { if (t.status === 'done') return null; const box = h('input', { type: 'checkbox', 'aria-label': `Select "${t.title}"`, onChange: (e) => { if (e.target.checked) selected.add(t.id); else selected.delete(t.id); updateCount(); } }); boxes.set(t.id, box); return box; } } : null,
+    canBulk ? { label: 'Select', render: t => { if (t.status === 'done') return null; const box = h('input', { type: 'checkbox', 'aria-label': `Select "${t.title}"`, onChange: (e) => { if (e.target.checked) selected.add(t.id); else selected.delete(t.id); updateCount(); } }); boxes.set(t.id, box); return box; } } : null,
     { label: 'To-do', render: t => h('div', {}, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title), t.description ? h('div', { class: 'small muted' }, t.description.slice(0, 120)) : null) },
     showClient ? { label: 'Client', render: t => t.client_id ? h('a', { href: `#/client/${t.client_id}` }, t.client_name || t.client_code, t.client_name ? h('div', { class: 'muted small mono' }, t.client_code) : null) : '—' } : null,
     { label: 'Due', render: t => h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? fmt.dt(t.due_at) : '—', overdue(t) ? ' — overdue' : '') },
     { label: 'Priority', render: t => badge(fmt.label(t.priority), statusKind(t.priority)) }, { label: 'Status', render: t => badge(fmt.label(t.status), statusKind(t.status)) }, { label: 'Assignee', key: 'assignee' },
-    // A to-do is changed by whoever it is assigned to or made it, or someone who manages others' records
-    // (server/rules/tasks.js editableBy; 1.16.0: navigators and clinicians see every client's, not change them).
-    { label: '', render: t => can('tasks:write') && (t.assigned_to === state.user.id || t.created_by === state.user.id || can('records:manage-others')) ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openTaskForm(t, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this to-do', onClick: async () => { if (await confirmDialog('Delete to-do', 'Delete this to-do?', { danger: true, okText: 'Delete' })) { await del(`/api/tasks/${t.id}`); onChange && onChange(); } } }, '✕')) : null },
+    { label: '', render: t => !can('tasks:write') ? null : !mayChangeTask(t) ? viewOnly(t.assignee, { verb: 'Assigned to', more: '; you can mark it done' }) : h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openTaskForm(t, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this to-do', onClick: async () => { if (await confirmDialog('Delete to-do', 'Delete this to-do?', { danger: true, okText: 'Delete' })) { await del(`/api/tasks/${t.id}`); onChange && onChange(); } } }, '✕')) },
   ].filter(Boolean), rows, { empty: 'Nothing here. To-dos you add, and follow-ups from visits and calls, will show up in this list.',
     rowLabel: t => t.title,
     // The done box stays on the phone row: a to-do list you cannot tick off one-handed is not a to-do list.
@@ -82,7 +91,7 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false } = 
         finally { e.target.disabled = false; }
       } })) : null, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title)), badge(fmt.label(t.priority), statusKind(t.priority))],
       secondary: t => [showClient && t.client_id ? h('span', {}, t.client_name || t.client_code) : null, h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? (overdue(t) ? 'overdue · ' : 'due ') + fmt.dt(t.due_at) : 'no due date'), t.status === 'done' ? badge('Done', 'ok') : null],
-      onTap: t => can('tasks:write') ? openTaskForm(t, { onDone: onChange }) : null } });
+      onTap: t => (can('tasks:write') && mayChangeTask(t) ? openTaskForm(t, { onDone: onChange }) : openTaskView(t)) } });
   return toolbar ? h('div', {}, toolbar, tbl) : tbl;
 }
 route('tasks', async (r) => {

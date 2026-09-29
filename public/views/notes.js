@@ -142,6 +142,8 @@ export async function openNote(id, { onChange } = {}) {
     n.problems && n.problems.length ? h('div', { class: 'small mt', 'data-note-problems-view': '1' }, h('b', {}, 'Addresses: '), n.problems.map(p => p.problem || 'a problem on the list').join('; ')) : null,
     n.structured ? h('div', { class: 'mt' }, Object.entries(n.structured).map(([k, v]) => v ? h('div', { class: 'mb' }, h('b', {}, sectionLabel(n.format, k)), h('div', { style: { whiteSpace: 'pre-wrap' } }, v)) : null)) : h('pre', { class: 'note mt' }, n.content),
     n.structured && n.content ? h('details', { class: 'mt' }, h('summary', { class: 'muted small' }, 'Narrative text'), h('pre', { class: 'note' }, n.content)) : null,
+    // A colleague's draft shows only Print: say why, and what can be done about it.
+    writable && n.status === 'draft' && !mine && !can('records:manage-others') ? h('p', { class: 'banner info small', 'data-owned-notice': '1' }, `Draft by ${n.author || 'another worker'}, not yet signed. Only the author, or a supervisor or administrator, can finish, sign or delete it: send them a reminder or ask a supervisor.`) : null,
     n.addenda.length ? h('div', { class: 'mt' }, h('h3', { class: 'eyebrow' }, 'Addenda'), n.addenda.map(a => h('div', { class: 'list-item' }, h('div', { class: 'small muted' }, `${fmt.dt(a.created_at)} · ${a.author}${a.reason ? ' · ' + a.reason : ''}`), h('div', { style: { whiteSpace: 'pre-wrap' } }, a.content)))) : null,
     h('div', { class: 'btn-row' },
       writable && n.status === 'draft' && (mine || can('records:manage-others')) ? h('button', { class: 'btn', onClick: () => { m.close(); openNoteForm(n, { onDone: onChange }); } }, 'Edit draft') : null,
@@ -233,6 +235,8 @@ function addAddendum(n, done) {
   const f = form([{ name: 'reason', label: 'Reason (e.g. late entry, correction)' }, { name: 'content', label: 'Addendum', type: 'textarea', required: true, span: true }], { submitText: 'Add addendum', onCancel: () => m.close(), onSubmit: async (d) => { await post(`/api/notes/${n.id}/addenda`, d); toast('Addendum added', 'ok'); m.close(); done(); } });
   const m = modal('Add addendum', f);
 }
+/** For someone who reads clinical notes but does not write them: SUD counseling notes are not listed (server/routes/notes.js). */
+export const counselingHidden = () => (can('notes:clinical:read') && !can('notes:clinical:write') ? h('div', { class: 'banner small', 'data-counseling-hidden': '1' }, 'SUD counseling notes are visible only to their author, the co-signer and clinical staff, so they are not listed here.') : null);
 export function noteTable(rows, { showClient = true, onChange } = {}) {
   // The client code used to be a real <a> inside a cell of a row that is itself a keyboard-focusable
   // "button" (table()'s onRow) — a link nested inside a button, which is invalid and leaves a screen
@@ -261,6 +265,6 @@ route('notes', async (r) => {
   return h('div', {},
     pageHead('Notes', (can('notes:admin:write') || can('notes:clinical:write')) ? h('button', { class: 'btn primary', onClick: () => openNoteForm(null, { onDone: refresh }) }, '+ New note') : null, can('imports:write') ? h('a', { class: 'btn', href: '#/imports' }, 'Import from Pocket AI / OneNote') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sSel), h('div', { class: 'field' }, h('label', {}, 'Type'), kSel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(`notes?status=${status}&kind=${kind}${mine ? '' : '&mine=1'}`) }, 'My notes')),
-    !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are visible only to clinical roles and supervisors.') : null,
+    !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are visible only to clinical roles and supervisors.') : counselingHidden(),
     pagedList({ first: data, url: `/api/notes${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => noteTable(rows, { onChange: refresh }), summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} notes`) }));
 });

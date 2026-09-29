@@ -182,6 +182,8 @@ export async function carePlanTab(clientId, { refresh, clientDisplay } = {}) {
     h('div', { class: 'card-head' }, h('div', {},
       h('h3', { style: { margin: 0 } }, `“${g.goal}”`),
       h('div', { class: 'small muted' }, g.problem ? `Addresses: ${g.problem}` : 'Not tied to a problem', g.target_date ? ` · target ${fmt.date(g.target_date)}` : '', g.reviewed_at ? ` · last reviewed ${fmt.date(g.reviewed_at)}` : ''),
+      // Delete is hidden on a goal someone else added: say whose it is, and what to do instead.
+      writable && g.created_by !== state.user.id && !can('records:manage-others') ? h('div', { class: 'small muted', 'data-view-only': '1' }, `Added by ${g.created_by_name || 'another worker'}: only they or a supervisor can delete it. Mark it discontinued instead.`) : null,
       h('div', { class: 'row', style: { gap: '.3rem', marginTop: '.25rem' } }, badge(fmt.label(g.status), GOAL_STATUS_KIND[g.status]),
         g.review_date ? (g.review_overdue ? badge(`Review overdue (${fmt.date(g.review_date)})`, 'danger') : badge(`Review by ${fmt.date(g.review_date)}`, 'info')) : null)),
       writable ? h('div', { class: 'row nowrap' },

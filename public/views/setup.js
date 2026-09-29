@@ -2,7 +2,9 @@ import { h, route, get, post, state, form, toast, nav, render, loadSession, badg
 import { qrSvg } from '../qr.js';
 
 // The offline-copy question's advice for each programme profile.
-const OFFLINE_TRADEOFF = 'The copy is encrypted under each person\'s own password: if they forget it, anything on that device that has not been synced yet cannot be recovered, so staff should sync often. IT can change this later with LOCAL_MODE_ENABLED.';
+const OFFLINE_TRADEOFF = 'The copy is encrypted under each person\'s own password: if they forget it, anything on that device that has not been synced yet cannot be recovered, so staff should sync often. IT can change this later with LOCAL_MODE_ENABLED.' +
+  // What a copy holds (1.16.0 defaults): said here, where the choice is made, as the IT guide says it.
+  ' A copy holds every record its user may see: with the default roles, navigators and clinicians see every client, so each device holds the whole program\'s records, clinical notes included. To keep a device to one caseload, deny that person "See every client" (Settings → Users & permissions) before their device first syncs.';
 const OFFLINE = {
   harm_reduction: { value: 'yes', label: 'Allow staff to keep an offline copy on their devices? Recommended: Yes',
     options: [{ value: 'yes', label: 'Yes — outreach staff may keep an encrypted offline copy in their browser and sync it later (recommended for field work)' }, { value: 'no', label: 'No — staff use SUDS only while connected to this server' }],

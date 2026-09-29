@@ -327,7 +327,7 @@ route('supplies', async (r) => {
     h('div', { class: 'filters' },
       tab !== 'setup' && tab !== 'ssp' ? h('div', { class: 'field' }, h('label', {}, 'Site'), siteSel) : null,
       mySel && tab === 'stock' ? h('div', { class: 'field' }, h('label', {}, 'Your visits draw from'), mySel) : null),
-    pageTabs(tabs, tab, (k) => nav(`supplies?tab=${k}${siteId && k !== 'setup' && k !== 'ssp' ? `&site=${siteId}` : ''}`), { label: 'Supplies sections' }),
+    pageTabs(tabs, tab, (k) => nav(`supplies?tab=${k}${siteId && k !== 'setup' && k !== 'ssp' ? `&site=${siteId}` : ''}`), { label: 'Supplies sections', wrap: true }),
     body);
 });
 

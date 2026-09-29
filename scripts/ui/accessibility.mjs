@@ -437,6 +437,8 @@ const ROW_DIALOGS = [
   ['client/:client/assessments', '[data-asam]', 'an ASAM assessment'], ['client/:client/assessments', '[data-outcomes]', 'an outcome measure'],
   ['compliance?tab=complaints', '.card', 'a complaint'], ['compliance?tab=incidents', '.card', 'an incident'],
   ['supervision', '[data-section=cosign]', 'a note from the countersignature queue'],
+  // 1.16.1: a visit, a call and an overdose event open from their rows (read-only for another worker's).
+  ['interventions', '', 'a visit'], ['calls', '', 'a call'], ['overdose', '', 'an overdose event'],
 ];
 
 // What each pass checks beyond axe, so a matrix of 5 passes × 7 roles does not repeat the slow ones.

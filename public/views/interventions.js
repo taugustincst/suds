@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, listEntries, prefs, NOT_SAVED, offerResume, render } from '../app.js';
+import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, listEntries, prefs, NOT_SAVED, offerResume, render, kv, mayChange, ownedNotice, viewOnly } from '../app.js';
 import { flattenLines } from './budget.js';
 import { SECTIONS as NOTE_SECTIONS, sectionLabel } from './notes.js';
 
@@ -413,18 +413,49 @@ export async function openRepeatInterventionForm(clientId, clientDisplay, onDone
   openInterventionForm(null, { clientId, clientDisplay, onDone, template });
 }
 
+const suppliesOf = (r) => (r.supplies && r.supplies.length
+  ? r.supplies.map((x, i) => [i ? ' ' : null, badge(`${x.quantity} ${x.item}`, x.category === 'naloxone' ? 'ok' : 'info')])
+  : [r.naloxone_kits ? badge(`${r.naloxone_kits} naloxone`, 'ok') : null, r.fentanyl_strips ? [' ', badge(`${r.fentanyl_strips} FTS`, 'info')] : null]).concat(r.syringes_returned ? [' ', badge(`${r.syringes_returned} returned${r.returns_estimated ? ' (est.)' : ''}`, '')] : []);
+const deleteVisit = async (r, onChange, m) => { if (await confirmDialog('Delete visit', 'Delete this visit? This is logged.', { danger: true, okText: 'Delete' })) { await del(`/api/interventions/${r.id}`); toast('Deleted'); if (m) m.close(); onChange && onChange(); } };
+/**
+ * A visit to read in full, from any row of a visits list: a colleague's visit had nowhere to be read but the
+ * 120 characters of its summary the list shows (1.16.0 opened every client to navigators and clinicians, for
+ * coverage). The same list row carries every field, so nothing more is fetched. Edit and Delete are here for
+ * the person who recorded it, or a supervisor or administrator; for anyone else, who can change it.
+ */
+export function openVisitView(r, { onChange } = {}) {
+  const mine = can('interventions:write') && mayChange(r.user_id);
+  const body = h('div', { 'data-visit-view': r.id },
+    mine || !can('interventions:write') ? null : ownedNotice(r.worker, { noun: 'visit' }),
+    kv([['When', fmt.dt(r.occurred_at)],
+      ['Client', r.client_id ? h('a', { href: `#/client/${r.client_id}`, onClick: () => m.close() }, r.client_code) : 'No client (community)'],
+      ['What was done', fmt.label(r.type, 'INTERVENTION_TYPES')], ['Where & how', `${fmt.label(r.location, 'LOCATIONS')} · ${fmt.label(r.modality, 'MODALITIES')}`],
+      ['Duration', fmt.mins(r.duration_minutes)], ['Supplies', suppliesOf(r).filter(Boolean).length ? suppliesOf(r) : 'None'],
+      ['Outcome', r.outcome ? fmt.label(r.outcome, 'OUTCOMES') : null], r.stage_of_change ? ['Stage of change', fmt.label(r.stage_of_change)] : null,
+      r.follow_up_due ? ['Follow up on', fmt.date(r.follow_up_due)] : null, r.funding_source ? ['Funding source', r.funding_source] : null,
+      Number(r.cost) > 0 && can('budget:read') ? ['Direct cost', `$${Number(r.cost).toFixed(2)}`] : null,
+      ['Recorded by', r.worker], ['Summary', r.summary ? h('div', { style: { whiteSpace: 'pre-wrap' } }, r.summary) : null]]),
+    mine ? h('div', { class: 'btn-row' },
+      h('button', { type: 'button', class: 'btn danger', style: { marginRight: 'auto' }, onClick: () => deleteVisit(r, onChange, m) }, 'Delete visit'),
+      h('button', { type: 'button', class: 'btn primary', onClick: () => { m.close(); openInterventionForm(r, { onDone: onChange }); } }, 'Edit visit')) : null);
+  const m = modal(`${fmt.label(r.type, 'INTERVENTION_TYPES')} — ${fmt.date(r.occurred_at)}`, body, { wide: true });
+  return m;
+}
+
+// Where and how, and the summary, sit under the type rather than in columns of their own: at 1280 px the
+// Edit column used to end past the window's edge, and the summary squeezed to a narrow column of six lines.
 export function interventionTable(rows, { showClient = true, onChange } = {}) {
   return table([
     { label: 'Date', render: r => h('span', { class: 'nowrap' }, fmt.dt(r.occurred_at)) },
     showClient ? { label: 'Client', render: r => h('a', { href: `#/client/${r.client_id}`, onClick: e => e.stopPropagation() }, r.client_code) } : null,
-    { label: 'Type', render: r => fmt.label(r.type, 'INTERVENTION_TYPES') }, { label: 'Duration', render: r => fmt.mins(r.duration_minutes), num: true },
-    { label: 'Where', render: r => `${fmt.label(r.location, 'LOCATIONS')} · ${fmt.label(r.modality, 'MODALITIES')}` }, { label: 'Outcome', render: r => r.outcome ? badge(fmt.label(r.outcome, 'OUTCOMES'), statusKind(r.outcome)) : '—' },
-    { label: 'Supplies', render: r => (r.supplies && r.supplies.length
-      ? r.supplies.map((x, i) => [i ? ' ' : null, badge(`${x.quantity} ${x.item}`, x.category === 'naloxone' ? 'ok' : 'info')])
-      : [r.naloxone_kits ? badge(`${r.naloxone_kits} naloxone`, 'ok') : null, r.fentanyl_strips ? [' ', badge(`${r.fentanyl_strips} FTS`, 'info')] : null]).concat(r.syringes_returned ? [' ', badge(`${r.syringes_returned} returned${r.returns_estimated ? ' (est.)' : ''}`, '')] : []) },
-    { label: 'Worker', key: 'worker' }, { label: 'Summary', render: r => h('span', { class: 'small' }, (r.summary || '').slice(0, 120)) },
-    { label: '', render: r => (r.user_id === state.user.id || can('records:manage-others')) && can('interventions:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: (e) => { e.stopPropagation(); openInterventionForm(r, { onDone: onChange }); } }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this visit', onClick: async (e) => { e.stopPropagation(); if (await confirmDialog('Delete visit', 'Delete this visit? This is logged.', { danger: true, okText: 'Delete' })) { await del(`/api/interventions/${r.id}`); toast('Deleted'); onChange && onChange(); } } }, '✕')) : null },
-  ].filter(Boolean), rows, { empty: 'Nothing recorded yet. Use + Log › Log a visit for a visit, screening, warm handoff or other service.' });
+    { label: 'Type & summary', render: r => h('div', {}, fmt.label(r.type, 'INTERVENTION_TYPES'), h('div', { class: 'small muted' }, `${fmt.label(r.location, 'LOCATIONS')} · ${fmt.label(r.modality, 'MODALITIES')}`),
+      r.summary ? h('div', { class: 'small' }, r.summary.length > 120 ? `${r.summary.slice(0, 120)}…` : r.summary) : null) },
+    { label: 'Duration', render: r => fmt.mins(r.duration_minutes), num: true },
+    { label: 'Outcome', render: r => r.outcome ? badge(fmt.label(r.outcome, 'OUTCOMES'), statusKind(r.outcome)) : '—' },
+    { label: 'Supplies', render: suppliesOf },
+    { label: 'Worker', key: 'worker' },
+    { label: '', render: r => !can('interventions:write') ? null : mayChange(r.user_id) ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: (e) => { e.stopPropagation(); openInterventionForm(r, { onDone: onChange }); } }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this visit', onClick: (e) => { e.stopPropagation(); deleteVisit(r, onChange); } }, '✕')) : viewOnly(r.worker) },
+  ].filter(Boolean), rows, { onRow: (r) => openVisitView(r, { onChange }), empty: 'Nothing recorded yet. Use + Log › Log a visit for a visit, screening, warm handoff or other service.' });
 }
 
 route('interventions', async (r) => {

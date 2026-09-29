@@ -5,7 +5,7 @@ import { openCallForm, callTable } from './calls.js';
 import { openTimeForm, timeTable } from './time.js';
 import { openReferralForm, referralTable } from './referrals.js';
 import { openTaskForm, taskTable } from './tasks.js';
-import { openNoteForm, noteTable } from './notes.js';
+import { openNoteForm, noteTable, counselingHidden } from './notes.js';
 import { openExpenditureForm, expenditureTable } from './budget.js';
 import { openConsentForm, openDisclosureForm, part2Cards, part2Badge, consentTypeLabel, consentCategoriesLabel } from './part2.js';
 
@@ -106,13 +106,19 @@ route('client', async (r) => {
     document.addEventListener('click', onDoc);
     return h('div', { class: 'client-actions-wrap' }, wide, narrow);
   }
+  // Whose client this is, next to the name: covering for a colleague, the care team was far down Overview.
+  const primaryLine = () => {
+    const p = (c.assignments || []).find(a => a.role_on_case === 'primary' && !a.end_date);
+    return h('p', { class: 'small muted', 'data-primary-worker': p ? p.user_id : '' }, !p ? 'No primary worker assigned' : p.user_id === state.user.id ? 'Your client (you are the primary worker)' : `${p.display_name}'s client (primary worker)`);
+  };
   const body = h('div', {});
   const view = h('div', { class: 'client-record' },
     h('div', { class: 'topbar' }, h('div', {}, h('h1', {}, c.display_name, ' ', h('span', { class: 'muted', style: { fontWeight: 400, fontSize: '1rem' } }, c.client_code)),
       // A list, so a screen reader meets each badge on its own ("Status: Inactive") instead of one run of text.
       h('ul', { class: 'row badge-list', 'aria-label': 'Status and flags' }, ...[h('span', { class: `badge ${statusKind(clientStatus(c))}`, 'data-client-status': clientStatus(c) }, h('span', { class: 'sr-only' }, 'Status: '), fmt.label(clientStatus(c))), badge(`Risk: ${riskText(c.risk_level)}`, statusKind(c.risk_level)), c.primary_substance ? badge(fmt.label(c.primary_substance, 'SUBSTANCES')) : null, c.mat_status && c.mat_status !== 'none' ? badge(`MAT: ${fmt.label(c.mat_status)}`, 'purple') : null, c.overdose_history ? badge('OD history', 'danger') : null, c.naloxone_provided ? badge('Naloxone ✓', 'ok') : badge('No naloxone', 'warn'), c.flags ? h('span', { class: 'badge danger', 'data-client-flags': '1' }, h('span', { class: 'sr-only' }, 'Safety flags: '), `⚠ ${fmt.flags(c.flags)}`) : null, c.legal_hold ? badge('Legal hold', 'purple') : null, c.part2 && c.part2.program ? part2Badge() : null,
         // A safety plan on file is worth seeing before anything else on a bad day; the chip opens it.
-        c.safety_plan ? h('button', { class: 'chip', type: 'button', 'data-safety-plan': c.safety_plan.id, title: 'Open the safety plan', onClick: async () => (await import('./notes.js')).openNote(c.safety_plan.id, { onChange: refresh }) }, `🛟 Safety plan on file (${fmt.date(c.safety_plan.occurred_at)})`) : null].filter(Boolean).map(x => h('li', {}, x)))),
+        c.safety_plan ? h('button', { class: 'chip', type: 'button', 'data-safety-plan': c.safety_plan.id, title: 'Open the safety plan', onClick: async () => (await import('./notes.js')).openNote(c.safety_plan.id, { onChange: refresh }) }, `🛟 Safety plan on file (${fmt.date(c.safety_plan.occurred_at)})`) : null].filter(Boolean).map(x => h('li', {}, x))),
+        primaryLine()),
       actionBar()),
     // The strip holds the sections used every day; the rest are under More.
     tabStrip(tabs, tab, (k) => nav(`client/${id}/${k}`), { label: 'Client record sections', core: coreTabs() }),
@@ -215,7 +221,7 @@ route('client', async (r) => {
           const box = document.getElementById('breakglass-notes'); clear(box).append(h('h3', { class: 'eyebrow' }, 'Clinical notes (emergency access — logged)'), noteTable(cl.rows, { showClient: false, onChange: refresh }));
         } catch (e) { toast(e.message || 'Emergency access was refused', 'error'); }
       } }, 'Emergency access to clinical notes') : null;
-      return h('div', {}, !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are hidden from your role. ', breakGlass) : null, noteTable(d.rows, { showClient: false, onChange: refresh }), h('div', { id: 'breakglass-notes', class: 'mt' }));
+      return h('div', {}, !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are hidden from your role. ', breakGlass) : counselingHidden(), noteTable(d.rows, { showClient: false, onChange: refresh }), h('div', { id: 'breakglass-notes', class: 'mt' }));
     },
     async referrals() { const d = await get(`/api/referrals?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, ctxOpts) }, '+ Make a referral') : null), referralTable(d.rows, { showClient: false, onChange: refresh })); },
     async tasks() { const d = await get(`/api/tasks?client_id=${id}&limit=500`); return taskTable(d.rows, { showClient: false, onChange: refresh }); },

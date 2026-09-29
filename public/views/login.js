@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink } from '../app.js';
+import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions } from '../app.js';
 import { restoreBackupButton, requestPersistentStorage, showRecoveryCode, resetRecoveryPrompt } from './local.js';
 
 const OIDC_ERRORS = {
@@ -219,12 +219,9 @@ function firstRun() {
     // Asked for rather than assumed: a clinician set up as a navigator loses access to clinical notes,
     // including notes they wrote themselves, and only finds out when they try to open one.
     { name: 'role', label: 'Your role', type: 'select', noBlank: true, value: 'navigator', span: true,
-      options: [
-        { value: 'navigator', label: 'Navigator / peer support — outreach, referrals, case management' },
-        { value: 'clinician', label: 'Clinician — everything a navigator does, plus writing clinical notes' },
-        { value: 'supervisor', label: 'Supervisor — clinical notes, countersigning, approving time' },
-        { value: 'admin', label: 'Administrator — settings and user accounts' },
-      ],
+      // The same summaries as Settings → Users (app.js ROLE_SUMMARY). "Everything a navigator does, plus clinical
+      // notes" was not so: a navigator records spending and a clinician does not.
+      options: roleOptions(['navigator', 'clinician', 'supervisor', 'admin']),
       help: stat ? 'This decides what you can open. You manage this device whichever you choose.' : 'Use the same role you have on the office SUDS. This decides what you can open on this device.' },
     stat ? { name: 'storage_ack', label: 'I understand that my records are kept only in this browser, and that I need to download backups to keep them safe.', type: 'checkbox', span: true } : null,
   ].filter(Boolean), { submitText: stat ? 'Create account' : 'Start using SUDS', onSubmit: async (d) => {
