@@ -100,7 +100,10 @@ try {
     ok(/adds 30 minutes/.test(await page.textContent(`${top} p`)), 'naming the minutes', await page.textContent(`${top} p`).catch(() => ''));
     await page.click(`${top} .btn-row button:has-text("Change the duration")`); await settle(page);
     eq(await dialogs(page), 1, '"Change the duration" goes back to the visit, nothing saved');
-    ok(await page.evaluate(() => document.activeElement && document.activeElement.name === 'duration_minutes'), 'with the cursor in Duration');
+    // The form puts the cursor there on its next turn (after the dialog has handed focus back), so wait for it.
+    const inDuration = () => page.evaluate(() => document.activeElement && document.activeElement.name === 'duration_minutes');
+    ok(await until(inDuration, { timeout: 3000, every: 50 }), 'with the cursor in Duration',
+      await page.evaluate(() => { const a = document.activeElement; return a ? `${a.tagName} ${a.name || a.className || ''}` : 'none'; }));
     await page.fill('.modal input[name=duration_minutes]', '45');
     const resp = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/interventions');
     await save(page);
