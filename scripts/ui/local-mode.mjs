@@ -72,7 +72,7 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   await page.evaluate(() => {
     const L = window.SUDS_LOCAL; const handle = L.handle.bind(L); const app = document.getElementById('app'); let asked = 0;
     L.handle = (method, path, ...rest) => method === 'GET' && path.startsWith('/api/local/status') && asked++ > 0
-      ? new Promise(r => setTimeout(r, 800)).then(() => handle(method, path, ...rest)) : handle(method, path, ...rest);
+      ? new Promise(r => setTimeout(r, 800)).then(() => handle(method, path, ...rest)) : handle(method, path, ...rest); // intentional: the slow server under test, not a wait
     window.__signinScreens = [];
     new MutationObserver(() => window.__signinScreens.push({ forms: app.querySelectorAll('.login input[name=username]').length, resetLinks: [...app.querySelectorAll('a')].filter(a => a.textContent === 'Start over on this device').length }))
       .observe(app, { childList: true });
@@ -83,7 +83,7 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   // What a click on "Start over on this device" would land on a moment later (inside the slowed render's window).
   await new Promise(r => setTimeout(r, 250));
   const matchedFirst = await page.$eval('text=Start over on this device', el => el.tagName).catch(() => null);
-  await new Promise(r => setTimeout(r, 1200)); // long enough for a second, slowed render to land
+  await new Promise(r => setTimeout(r, 1200)); // intentional: long enough for a second, slowed render to land; proves none does
   const screens = await page.evaluate(() => window.__signinScreens);
   const shown = screens.findIndex(s => s.forms > 0);
   ok(shown >= 0 && screens.slice(shown).every(s => s.forms > 0 && s.resetLinks > 0), 'once the sign-in page is showing after Sign out, it is never blanked by a second render', screens);

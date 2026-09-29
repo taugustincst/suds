@@ -363,14 +363,14 @@ try {
     // The profile switch (WCAG 2.1.4): the single keys off, Ctrl+Enter still on.
     await go('profile');
     ok(await page.isChecked('[data-shortcuts-on]'), 'My profile has the switch, on by default');
+    // settle() waits out the preference's debounced save too (public/app.js prefs.set counts as activity).
     await page.uncheck('[data-shortcuts-on]'); await settle(page);
-    await page.waitForTimeout(1000);
     await go('dashboard');
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.keyboard.press('/'); await page.keyboard.press('n'); await settle(page);
     ok(await page.evaluate(() => !document.activeElement.matches('.gsearch input')) && !(await page.$('.modal')), 'switched off, "/" and "n" do nothing');
     await go('profile');
-    await page.check('[data-shortcuts-on]'); await page.waitForTimeout(1000);
+    await page.check('[data-shortcuts-on]'); await settle(page);
   }
 
   // ------------------------------------------------------------------------------------ 18: undo toasts

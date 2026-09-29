@@ -16,10 +16,16 @@ const PR = require('../server/publication-release');
 const keepAlive = setInterval(() => {}, 1000);
 after(() => { clearInterval(keepAlive); PR._setWorkerForTests({}); });
 
+// The backstop runs from the moment an audit is posted, and that includes starting a new worker when there is
+// none. Under load (the whole suite in parallel) a 400 ms backstop could expire while the first worker was still
+// starting, refusing "the audit before it" (engineering review of 1.16.2, L1). So the worker is started and has
+// answered once before anything is timed, and the backstops leave room for the new workers the audits queued
+// behind a hanging one are moved to (each of those starts inside a fresh backstop).
 test('a hanging audit is refused on its own; the audits queued behind it still get their answers', async () => {
-  PR._setWorkerForTests({ script: path.join(__dirname, 'fixtures', 'hanging-audit-worker.js'), backstop: 400 });
+  PR._setWorkerForTests({ script: path.join(__dirname, 'fixtures', 'hanging-audit-worker.js'), backstop: 1000 });
   const warn = console.warn; const warned = []; console.warn = (m) => warned.push(String(m));
   try {
+    assert.deepEqual(await PR.runAudit({ n: 0 }, 11), { echo: 0 }, 'the worker is up before the timed part');
     const first = PR.runAudit({ n: 1, delay: 10 }, 11);
     const hung = PR.runAudit({ hang: true }, 11);
     const behind = [PR.runAudit({ n: 2 }, 11), PR.runAudit({ n: 3 }, 11)];
@@ -36,9 +42,10 @@ test('a hanging audit is refused on its own; the audits queued behind it still g
 });
 
 test('two hanging audits are each refused, and the one after them is still answered', async () => {
-  PR._setWorkerForTests({ script: path.join(__dirname, 'fixtures', 'hanging-audit-worker.js'), backstop: 300 });
+  PR._setWorkerForTests({ script: path.join(__dirname, 'fixtures', 'hanging-audit-worker.js'), backstop: 1500 });
   const warn = console.warn; console.warn = () => {};
   try {
+    assert.deepEqual(await PR.runAudit({ n: 0 }, 11), { echo: 0 });
     const a = PR.runAudit({ hang: true }, 11), b = PR.runAudit({ hang: true }, 11), c = PR.runAudit({ n: 9 }, 11);
     assert.equal((await a).refused.backstop, true);
     assert.equal((await b).refused.backstop, true);
