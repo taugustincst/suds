@@ -9,7 +9,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.16.4, the released commit `6491308` ("Release 1.16.4", on `main`, CI green, and published to GitHub Pages by a direct `gh-pages` push at the owner's request); not yet tagged by the owner. (Until the review of the 1.17.0 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed, and that was never published.)
+**Version.** It describes 1.16.4, the released commit `6491308` ("Release 1.16.4", on `main`, CI green, and published to GitHub Pages by a direct `gh-pages` push at the owner's request); the owner has not tagged it yet. (Until the review of the 1.17.0 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed, and that was never published.)
 
 **Other ways in.** The same ground is covered question by question in [../security/QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md), and for buyers in [../market/BUYER-GUIDE-IT.md](../market/BUYER-GUIDE-IT.md).
 

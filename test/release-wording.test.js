@@ -58,5 +58,8 @@ test('the check finds what it is for', () => {
   assert.ok(!stamped().has('9.9.9'));
   const m = [...flat('the copilot is **built for 1.17.0,\nnot yet released** (office only)').matchAll(/built for (\d+\.\d+\.\d+),? not yet released/gi)];
   assert.equal(m.length, 1); assert.equal(m[0][1], '1.17.0');
-  assert.ok(notYetReleased().length > 0, 'the documents do use the phrase while 1.17.0 is being built');
+  // While package.json's version is not yet stamped, the documents describe what it adds with the phrase; once it is
+  // stamped, none may (the test above).
+  const version = require('../package.json').version;
+  if (!stamped().has(version)) assert.ok(notYetReleased().length > 0, `the documents do use the phrase while ${version} is being built`);
 });

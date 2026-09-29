@@ -2,10 +2,9 @@
 
 **Status: the owner's strategy, written down and assessed, 29 September 2026.** It replaces nothing in the
 rest of this pack until a row below says it is done. Everything described as *planned* is not in a released
-version of SUDS. The 1.17.0 features are built on the development branch and are described as **built for
-1.17.0, not yet released** until that release is tagged; the next feature release waits for the freeze that ends
-2026-10-27 ([docs/RELEASE.md](../RELEASE.md)). `test/release-wording.test.js` fails once 1.17.0 is stamped while
-any of these lines still says so.
+version of SUDS. The 1.17.0 features are **released in 1.17.0** (published to GitHub Pages under an owner-approved policy
+exception; the tag is the owner's). The next feature release waits the policy's 28 days from 1.17.0
+([docs/RELEASE.md](../RELEASE.md)); `test/release-wording.test.js` keeps these lines honest at each stamp.
 
 The strategy has three parts:
 
@@ -37,7 +36,7 @@ organisation:
 - The repository controls for releases are designed but not in force until the owner applies them
   ([docs/RELEASE.md](../RELEASE.md)).
 - Least privilege is the default only for a new install (an upgraded office has to turn it on), and the client
-  record's revision history starts with 1.17.0: both built for 1.17.0, not yet released.
+  record's revision history starts with 1.17.0: both released in 1.17.0.
 - There are no users yet, and so no measured time saving, support hours or willingness to pay.
 
 No part of this strategy removes those items. Several make them more urgent: the copilot adds a data flow to an
@@ -51,7 +50,7 @@ that are not customers. **The organisational items are the critical path for eve
 | **Harm-reduction and outreach CBOs** (roughly 3–40 staff; opioid-settlement, SOR / NDP, SABG prevention funding spent on outreach and distribution) | Programme director, from a grant line | Outreach, supplies and funder reporting; implementation and support | Core fit. Needs an IT partner or a county sponsor; SUDS is not hosted |
 | **Counties as funders and sponsors** (county behavioural-health or public-health departments that allocate settlement money to CBOs) | County SUD / behavioural-health administrator; county IT gates it | Consistent outcome data from the CBOs they fund; a site licence or sponsored instances; implementation across CBOs | The "sell to the money" buyer. Procurement is 6–24+ months; nothing organisational is ready |
 | **Treatment-adjacent programmes with an EHR** (county-contracted SUD providers that also do outreach, navigation or recovery support) | Programme director and county IT | Part 2-controlled work beside the EHR; a CalOMS extract where the EHR does not produce one | Optional modules exist; the CalOMS layout is not verified; no live EHR connection yet |
-| **Organisations that receive referrals** (shelters, MAT clinics, recovery residences, hospital navigators) | Nobody at first: they are invited | Free participation in the referral flow | One-time secure links built for 1.17.0, not yet released (off by default); the network is planned (see *Capture 6*) |
+| **Organisations that receive referrals** (shelters, MAT clinics, recovery residences, hospital navigators) | Nobody at first: they are invited | Free participation in the referral flow | One-time secure links released in 1.17.0 (off by default); the network is planned (see *Capture 6*) |
 
 Out of scope, and still said plainly: DMC billing, e-prescribing, the treatment medical record and a SABG
 primary-prevention (PPSDS) submission file; prevention events are recorded and summarised from 1.17.0, and the PPSDS
@@ -59,7 +58,7 @@ mapping awaits the DHCS data dictionary ([POSITIONING.md](POSITIONING.md), *The 
 
 ## Create
 
-### 1. AI documentation copilot (first build; built for 1.17.0, not yet released)
+### 1. AI documentation copilot (first build; released in 1.17.0)
 
 **What it is.** A drafting assistant for SUD workflows: a worker's field note, a visit summary or a
 structured note becomes a draft the worker edits and signs. The owner's constraints, which are the design:
@@ -72,7 +71,7 @@ structured note becomes a draft the worker edits and signs. The owner's constrai
 | **De-identified before sending** | Names, dates of birth, phone numbers and other identifiers SUDS holds for the client are removed or replaced before the text leaves the server |
 | **Drafts only** | Nothing the model writes is saved to the record on its own. A person reviews, edits and signs; the signature is the person's |
 
-**What is built for 1.17.0, not yet released** ([docs/AI-COPILOT.md](../AI-COPILOT.md)). Drafts of a progress
+**What is released in 1.17.0** ([docs/AI-COPILOT.md](../AI-COPILOT.md)). Drafts of a progress
 note, the six assessment dimensions, care plan suggestions and CalOMS answers, each from the author's own text for
 one client, on the office server only. Off until an administrator records the BAA, the QSOA terms and counsel's
 review, and the provider key is set in the server's environment; withdrawing the agreement switches it off.
@@ -118,7 +117,7 @@ summary and SUPRT-A completion rates, with exact submissions and screened public
 ([docs/compliance/HARM-REDUCTION-REPORTING.md](../compliance/HARM-REDUCTION-REPORTING.md)). None of the layouts
 has been checked against a current official template.
 
-**What is built for 1.17.0, not yet released.** The programme's own settlement outcomes page: per fund, category
+**What is released in 1.17.0.** The programme's own settlement outcomes page: per fund, category
 and month, with cost per outcome; small cells protected (suppressed by default, even for finance) and no cost shown
 beside a hidden count; never a publication release. It is a CBO's internal report, not a county dashboard.
 
@@ -140,9 +139,9 @@ closed), without seeing a client.
 - *Dependency.* The value is the county's reporting template. Until the owner obtains a county settlement
   template and DHCS's current form, the layouts are "as SUDS understands them".
 
-### 3. A real street-outreach mode (the screen built for 1.17.0, not yet released; the rest planned)
+### 3. A real street-outreach mode (the screen released in 1.17.0; the rest planned)
 
-**What is built for 1.17.0, not yet released.** The street-outreach screen: one phone screen, used with one hand,
+**What is released in 1.17.0.** The street-outreach screen: one phone screen, used with one hand,
 for an anonymous contact (the kind of contact and the supplies given, with − count +), drawing stock down; it works
 offline on a device and syncs; *My shift* and a start page for field staff; and the optional anonymous SSP
 participant code on a contact with no client record, counted by blind index.
@@ -154,7 +153,7 @@ default ([docs/PLATFORM.md](../PLATFORM.md)).
 
 **What "real" would add.** An offline-first flow designed around a contact that takes a minute: minimal
 personal information by default (a participant code instead of a name, which is also the CDPH SSP norm: the
-code is built for 1.17.0, not yet released; making it the default is planned), a device that holds only what the
+code is released in 1.17.0; making it the default is planned), a device that holds only what the
 worker needs rather than everything the worker may see (planned), and a sync that tolerates days without signal.
 
 **Assessment.** It is the most differentiated of the three for harm-reduction buyers, and the one that fits the
@@ -171,7 +170,7 @@ offline sync is the area where most 1.16.x security findings were; each change t
 **What is built.** A FHIR R4 read API and bulk export that enforce Part 2 consent; an encounter hand-off export
 for services the EHR records or bills; consents that name the recipient; one disclosure gate with an accounting
 of disclosures ([docs/integration/FHIR.md](../integration/FHIR.md), [docs/compliance/PART2.md](../compliance/PART2.md)).
-**Built for 1.17.0, not yet released:** the *Part 2 compliance module* profile (the Part 2 pages lead, the
+**released in 1.17.0:** the *Part 2 compliance module* profile (the Part 2 pages lead, the
 EHR-like modules are off); patients and encounters imported from the EHR's FHIR R4 export as a file, through the
 same preview as a spreadsheet; each consent's provenance readable by the EHR over FHIR; and the Part 2 layer tab
 (`GET /api/part2/layer`) with consents, disclosures, requests and breaches in one view
@@ -199,7 +198,7 @@ the monthly provider activity report; the extract accounted as a disclosure requ
 submit to DHCS**: the county or provider uploads the files through its own channel
 ([docs/compliance/CALOMS.md](../compliance/CALOMS.md)).
 
-**What is built for 1.17.0, not yet released.** Monthly automation: a scheduled run prepares the previous month's
+**What is released in 1.17.0.** Monthly automation: a scheduled run prepares the previous month's
 file, checked against SUDS's own edits (not DHCS's), which is not a disclosure until a person produces it;
 producing it is the disclosure, accounted per client; a worklist of the errors to fix, each assigned to the
 record's owner; a submission log with the reference the DHCS portal gave; several CalOMS provider IDs, each with
@@ -221,13 +220,13 @@ county-contracted treatment provider reports CalOMS, and many do so by hand), bu
 - competes with county EHRs that already submit CalOMS for their providers (keep CalOMS in the EHR where the EHR
   does it: [PILOT-KIT.md](PILOT-KIT.md), Q3).
 
-### 6. The cross-organisation referral flow as a network effect (one-time links built for 1.17.0, not yet released; the network planned)
+### 6. The cross-organisation referral flow as a network effect (one-time links released in 1.17.0; the network planned)
 
 **What is built.** Referrals inside one programme to a verified resource directory, with a consent that must
 name the recipient, warm hand-off, loop closure and an accounting of each disclosure. The recipient organisation
 does not see anything in SUDS: loop closure is recorded by the referring worker.
 
-**What is built for 1.17.0, not yet released.** One-time secure referral links: the referring programme sends a
+**What is released in 1.17.0.** One-time secure referral links: the referring programme sends a
 link to an organisation not on SUDS; with a consent naming it, the recipient opens a minimal referral (the
 client's name and the reason) behind a six-digit access code, in a browser, with no account; says what happened
 (which gives the worker a to-do to close the loop); and is invited to receive referrals through SUDS
@@ -296,7 +295,7 @@ vehicle for a consulting practice.
 | Step | What | Gate to the next step |
 | --- | --- | --- |
 | **0. Now (freeze to 2026-10-27)** | The organisational items in [README.md](README.md): entity, insurance, counsel review (now including the AI provider BAA/QSOA), repository settings in force, pen test commissioned, official templates requested, one county conversation | Counsel has the templates; repository controls in force |
-| **1. 1.17.0** | Built for 1.17.0, not yet released: the AI copilot as specified above, with the least-privilege default, the client revision history and publication for most of the refused band; the street-outreach screen, settlement outcomes, the Part 2 layer profile, CalOMS automation and one-time referral links (off by default) | Released and tagged; the copilot's outbound payload reviewed |
+| **1. 1.17.0** | released in 1.17.0: the AI copilot as specified above, with the least-privilege default, the client revision history and publication for most of the refused band; the street-outreach screen, settlement outcomes, the Part 2 layer profile, CalOMS automation and one-time referral links (off by default) | Released and tagged; the copilot's outbound payload reviewed |
 | **2. First pilots with the FDE service** | Two or three CBOs under one county sponsor, delivered as paid implementation ([PILOT-KIT.md](PILOT-KIT.md), *County pilot with the FDE service*) | One accepted funder submission; measured time to a signed note; measured support and implementation hours |
 | **3. County settlement view** | The funder-facing view for the sponsoring county, from the CBOs' exact submissions | County template in hand; counsel's view on the data flow |
 | **4. Street-outreach mode, the rest** | The screen and the participant code are in 1.17.0; what remains is minimal-PII capture by default and a device scope for field work | Least-privilege default released |
@@ -319,13 +318,13 @@ until counsel and one pilot have looked at it.
 | CalOMS Tx capture, checks and extract | **Built; layout not verified** against the DHCS data dictionary; SUDS does not submit |
 | Referrals with consent check and loop closure, inside one programme | **Built** |
 | Note import review queue (Pocket AI, OneNote) | **Built** |
-| AI documentation copilot | **Built for 1.17.0**, not yet released ([docs/AI-COPILOT.md](../AI-COPILOT.md)); off by default |
-| Least-privilege default; client revision history | **Built for 1.17.0**, not yet released |
-| SABG primary-prevention events and their summary; anonymous SSP participant code | **Built for 1.17.0**, not yet released; no PPSDS file (the mapping awaits the DHCS data dictionary) |
+| AI documentation copilot | **Released in 1.17.0** ([docs/AI-COPILOT.md](../AI-COPILOT.md)); off by default |
+| Least-privilege default; client revision history | **Released in 1.17.0** |
+| SABG primary-prevention events and their summary; anonymous SSP participant code | **Released in 1.17.0**; no PPSDS file (the mapping awaits the DHCS data dictionary) |
 | Funder-facing outcome view across CBOs | **Planned**, not scheduled |
-| Street-outreach screen (one-handed anonymous contacts, offline, *My shift*) with the SSP participant code; settlement outcomes by fund | **Built for 1.17.0**, not yet released |
+| Street-outreach screen (one-handed anonymous contacts, offline, *My shift*) with the SSP participant code; settlement outcomes by fund | **Released in 1.17.0** |
 | Minimal-PII defaults and a field device scope for street outreach | **Planned**, not scheduled |
-| One-time secure referral links to organisations not on SUDS, with an invitation | **Built for 1.17.0**, not yet released; off by default; counsel reviews the design before a programme switches it on |
+| One-time secure referral links to organisations not on SUDS, with an invitation | **Released in 1.17.0**; off by default; counsel reviews the design before a programme switches it on |
 | A cross-organisation referral network (organisations that join and accept referrals in SUDS) | **Planned**, not scheduled |
 | Inbound FHIR referrals | **Design placeholder** ([docs/integration/FHIR.md](../integration/FHIR.md)) |
 | De-identified outcomes and benchmarking dataset | **Design only** ([DATA-NETWORK.md](DATA-NETWORK.md)) |

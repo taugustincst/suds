@@ -174,6 +174,16 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.15.1 | new device routes in a patch (not checked then) | owner recovery code for SUDS on this device | owner (`policy_exception`, per HANDOFF.md) |
 | 1.16.0 | monthly limit | role-permission expansion and the pending review fixes as one release | owner (`policy_exception`) |
 | 1.16.4 | released without a tag, a GitHub Release or the `release` environment's approval: published to GitHub Pages by a direct push to `gh-pages` | the owner asked for it to be live at once; the commit (`6491308`) had passed CI in full | owner (a request, no workflow record; *Record: 1.16.4 published without a tag*, below) |
+| 1.17.0 | monthly limit (a feature release inside 1.16.0's 28 days); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner approved shipping 1.17.0 with an exception once green, and asked for it to be deployed to Pages; the stamp commit passed `npm test`, the full browser suite in both orders and CI | owner (a request, no workflow record; *Record: 1.17.0*, below) |
+
+**Record: 1.17.0 ships under a policy exception, published without a tag.** 1.17.0 is a feature release (migrations
+49–55, new permissions and routes: the AI documentation copilot, client revision history, the least-privilege default,
+SSP participant codes and prevention events, the Part 2 layer, CalOMS automation, secure referral links, settlement
+outcomes and street outreach, the publication change) inside the 28 days after 1.16.0, which the policy refuses on its
+own. The owner approved it as a recorded exception ("ship 1.17 with an exception when it's green"; "merge and deploy to
+pages when green"). Like 1.16.4 it was published to GitHub Pages by pushing the stamp commit's verified build to
+`gh-pages`; `v1.17.0`, its GitHub Release and zip wait for the owner's tag (after `v1.16.3` and `v1.16.4`). The next
+feature release waits 28 days from 1.17.0.
 
 **Record: 1.16.4 published without a tag.** The released 1.16.4 is `6491308` ("Release 1.16.4", on `main`, CI green
 in full: run 36591664382). At the owner's request it was published to GitHub Pages by pushing its build straight to

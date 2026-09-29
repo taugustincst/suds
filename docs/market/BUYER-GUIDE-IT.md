@@ -115,7 +115,7 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
   never printed in a report or exported (a per-file random reference stands in), and not in publication releases
   ([docs/SUPPLIES.md](../SUPPLIES.md), *Participant codes*). **Prevention events** (1.17.0) hold no person-level data:
   a headcount per event and free-text notes, which are encrypted.
-- **The AI copilot's outbound flow (built for 1.17.0, not yet released)**, described above: it cannot be
+- **The AI copilot's outbound flow (released in 1.17.0)**, described above: it cannot be
   enabled until the programme records a BAA and a Part 2 QSOA with the provider; the remaining free text may still
   identify someone, so treat the provider as receiving PHI; the result is a draft a person edits and signs. Review
   it in your risk register before enabling it ([STRATEGY.md](STRATEGY.md), *Create 1*).

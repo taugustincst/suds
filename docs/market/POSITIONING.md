@@ -22,7 +22,7 @@ Three leads, in this order, each stated no further than the software goes:
    planned, not built.
 
 What comes next, and what is only planned, is in [STRATEGY.md](STRATEGY.md): the AI documentation copilot is
-**built for 1.17.0, not yet released** (office server only, off by default, gated on a BAA and QSOA, identifiers removed before
+**released in 1.17.0** (office server only, off by default, gated on a BAA and QSOA, identifiers removed before
 sending, drafts only, a person signs, never for SUD counseling notes). Do not show or promise it until it is released.
 
 ## Category

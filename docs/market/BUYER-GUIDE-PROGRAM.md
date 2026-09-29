@@ -20,7 +20,7 @@ implementation for you and one or two other CBOs it funds, and the vendor does t
 funder-report checks with your team ([PILOT-KIT.md](PILOT-KIT.md), section 8). Ask your county contract manager
 whether that is possible.
 
-**What is planned, not available.** The AI documentation copilot is built for 1.17.0, not yet released
+**What is available, and what is planned.** The AI documentation copilot is available from 1.17.0
 (below: office server only, off unless your administrator turns it on after a BAA and QSOA with the AI
 provider). A county view of its grantees' outcomes, a field device scope for street outreach and a referral
 network partner organisations join (beyond the 1.17.0 one-time secure links) are planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS

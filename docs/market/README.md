@@ -19,7 +19,7 @@ workflow (C). The owner chose **B and C together**: do the work, and aim it at h
 and grant reporting. [EVALUATION-RESPONSE.md](EVALUATION-RESPONSE.md) answers each point with its status.
 
 **Go-to-market for 1.17.0 (29 September 2026).** The owner's strategy builds on that choice
-([STRATEGY.md](STRATEGY.md)): *create* an AI documentation copilot (the first build: **built for 1.17.0, not yet released**),
+([STRATEGY.md](STRATEGY.md)): *create* an AI documentation copilot (the first build: **released in 1.17.0**),
 settlement tracking with funder-facing outcome views, and a real street-outreach mode; *capture* the Part 2 layer
 beside any EHR, CalOMS automation as a county wedge, a cross-organisation referral network and low pricing; and
 *defend* with county contracts, the referral network, a de-identified outcomes dataset and the deployment service
@@ -116,8 +116,8 @@ Software cannot close these. Suggested timeline from the start of Phase 1.
 | Support (business hours) and SLA template reviewed by counsel | Vendor / company | Month 1–2 | Owner template drafted (`[owner to complete]` placeholders); today's channels are the public issue tracker and private vulnerability reports ([../SUPPORT.md](../SUPPORT.md)) |
 | Vendor-hosted environment ([HOSTING.md](HOSTING.md) checklist) | Vendor / company | After 3 pilots measure support hours | Planned — not offered |
 | Pricing validated with 3 pilot customers | Vendor / company | Phase 2 | Unvalidated hypothesis ([templates/PRICING.md](templates/PRICING.md)); models to decide in [PRICING-OPTIONS.md](PRICING-OPTIONS.md) |
-| Counsel: the AI copilot's data flow — BAA and Part 2 QSOA terms for an AI provider; what "identifiers removed" may be called; whether SUD counseling notes may be drafted with it (1.17.0 excludes them, the conservative default) | Vendor / company counsel | Before any pilot turns the copilot on (built for 1.17.0, not yet released) | Not started |
-| Counsel and a county: data stewardship for pooled outcomes, and the one-time referral-link design as built ([DATA-NETWORK.md](DATA-NETWORK.md), *What counsel must review*) | Vendor / company counsel, county | Before any pooled figure, and before any programme switches on secure referral links (built for 1.17.0, not yet released; off by default) | Not started (the dataset is design only) |
+| Counsel: the AI copilot's data flow — BAA and Part 2 QSOA terms for an AI provider; what "identifiers removed" may be called; whether SUD counseling notes may be drafted with it (1.17.0 excludes them, the conservative default) | Vendor / company counsel | Before any pilot turns the copilot on (released in 1.17.0) | Not started |
+| Counsel and a county: data stewardship for pooled outcomes, and the one-time referral-link design as built ([DATA-NETWORK.md](DATA-NETWORK.md), *What counsel must review*) | Vendor / company counsel, county | Before any pooled figure, and before any programme switches on secure referral links (released in 1.17.0; off by default) | Not started (the dataset is design only) |
 | Independent penetration test, findings remediated | Vendor / company | Month 2–4 | Not started |
 | SOC 2 Type 1 | Vendor / company | Month 4–8 | Readiness self-assessment in `docs/security/` |
 | SOC 2 Type 2 | Vendor / company | Month 10–18 | Not started |
@@ -139,8 +139,8 @@ Software cannot close these. Suggested timeline from the start of Phase 1.
 - Lead with the Part 2 layer beside the EHR, field-ready outreach and funder outcomes; clinical modules are
   optional, not the pitch.
 - Never present a planned capability as available. The AI copilot, the street-outreach screen, settlement
-  outcomes and one-time secure referral links are built for 1.17.0, not yet released: none is available until that
-  release is tagged, and the links are off by default until counsel has reviewed their design. The county funder
+  outcomes and one-time secure referral links are available from 1.17.0 on the office server (the copilot and the
+  links are off by default, and the links stay off until counsel has reviewed their design). The county funder
   view, minimal-PII field defaults and a field device scope, the referral network and the outcomes dataset are
   planned ([STRATEGY.md](STRATEGY.md), *Built vs planned, exactly*). Say "SUDS's own checks" for the CalOMS extract, never
   "validated" or "submission-ready" without "to verify against the DHCS data dictionary".

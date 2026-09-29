@@ -127,7 +127,7 @@ accounting record; the referring worker records the outcome. The recipient organ
 ([docs/USER_GUIDE.md](../USER_GUIDE.md), *Referrals and resources*). An inbound FHIR referral path is a design
 placeholder ([docs/integration/FHIR.md](../integration/FHIR.md)).
 
-### What is built for 1.17.0, not yet released: one-time secure referral links
+### What is released in 1.17.0: one-time secure referral links
 
 What was built is narrower than the network below, and it departs from the conservative answers in the table
 ([docs/security/REFERRAL-LINKS.md](../security/REFERRAL-LINKS.md) has the design and threat model):
@@ -188,7 +188,7 @@ say, and are gated on counsel's review instead.
 ## What counsel must review
 
 Before any tier is built for real use, and before any programme switches on the one-time referral links
-built for 1.17.0 (not yet released):
+released in 1.17.0:
 
 1. Whether pooling each type of record (Part 2, HIPAA PHI, other) at the county is a disclosure, and on which basis
    it may be made: consent, §2.53 audit and evaluation, §2.54 public health (de-identified), §2.52 research, or the
