@@ -43,25 +43,29 @@ _(Append replies here, newest first.)_
 
 ### Release waiting
 
-- **1.16.3 and 1.16.4 are on `main`, and 1.16.4 is live, but neither is tagged: the owner tags both.** The
-  assistant cannot push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the
-  owner*). Until the tags exist, every "previous release" computation still starts at `v1.16.2`: the release
-  policy for 1.17.0 and for any 1.16.x backport, the migration-order baseline, and *Backports* step B's
-  `git rev-parse 'v1.16.4^{commit}'`, which fails outright. The commands (the owner, from any clone):
+- **1.16.3, 1.16.4 and 1.17.0 are on `main`, and 1.17.0 is live, but none is tagged: the owner tags all three,
+  in one push.** The assistant cannot push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing a
+  release to the owner*). Until the tags exist, every "previous release" computation still starts at `v1.16.2`: the
+  release policy for any 1.16.x backport and 1.17.x patch, the migration-order baseline, and *Backports* step B's
+  `git rev-parse 'v1.16.4^{commit}'`, which fails outright. **Never push `v1.16.3` or `v1.16.4` without
+  `v1.17.0`** (engineering review of 1.17.0, H1): their own workflows would make 1.16.4 the Latest release and
+  publish its web app over 1.17.0, and the 1.16.4 kernel refuses the schema-55 databases 1.17.0 made. The commands (the
+  owner, from any clone, once 1.17.1's fixes are on `main`):
 
   ```bash
   git fetch origin
-  git merge-base --is-ancestor fc5e9d7 origin/main && git merge-base --is-ancestor 6491308 origin/main && echo "both on main"
-  git show -s --format='%H %s' fc5e9d7 6491308          # "Release 1.16.3", "Release 1.16.4"
-  gh run list --workflow ci.yml --commit 6491308 --event push   # completed, success (run 36591664382)
+  for c in fc5e9d7 6491308 485548c; do git merge-base --is-ancestor $c origin/main || echo "$c is NOT on main"; done
+  git show -s --format='%H %s' fc5e9d7 6491308 485548c   # "Release 1.16.3", "Release 1.16.4", "Release 1.17.0"
   git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3"
   git tag -a v1.16.4 6491308 -m "SUDS 1.16.4"
-  git push origin v1.16.3 v1.16.4
+  git tag -a v1.17.0 485548c -m "SUDS 1.17.0"
+  git push origin v1.16.3 v1.16.4 v1.17.0
   ```
 
-  Pushing `v1.16.4` starts `release.yml` (gate, `verify`, then the owner's approval for the GitHub Release with
-  its zip); its web-app publish would republish what `gh-pages` already serves. `v1.16.3` is older than `v1.16.4`,
-  so its release is not Latest and it publishes no web app. Never push tags from an assistant's clone.
+  What each run then does, and what to approve or reject, is in docs/RELEASE.md (*Record: 1.16.4 published without
+  a tag*): the 1.16.x runs stop at the gate, and a `Web app` run for `v1.16.3` or `v1.16.4` is never approved;
+  `v1.17.0` needs a `policy_exception` (feature interval) and republishes the build `gh-pages` already serves. If
+  1.17.1 is stamped by then, add `v1.17.1` to the same push. Never push tags from an assistant's clone.
 - The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
   once its tag is pushed.
 

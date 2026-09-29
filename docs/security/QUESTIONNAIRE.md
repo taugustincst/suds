@@ -6,7 +6,7 @@ These are the questions county IT typically sends, pre-answered. They follow the
 
 **How to check them.** Every answer cites the file, test or document that shows it.
 
-**Checked against:** 1.16.4 (the released commit `6491308`, 29 September 2026; live on GitHub Pages; its tag is pending the owner).
+**Checked against:** 1.17.0 (the stamp commit `485548c`, 29 September 2026; live on GitHub Pages; its tag is pending the owner). The SBOM linked below is 1.16.4's until it is regenerated for 1.17.0.
 
 **Markers used in the answers:**
 
@@ -37,7 +37,7 @@ Evidence that goes with this questionnaire:
 | # | Question | Answer |
 | --- | --- | --- |
 | 7 | What data is stored? | PHI, including SUD treatment information (42 CFR Part 2); staff accounts; the audit log. Every encrypted column, table by table, with what it holds, whether devices receive it and its retention: [DATA-INVENTORY.md](DATA-INVENTORY.md). `test/data-inventory.test.js` fails if `server/schema.sql` gains an encrypted column the inventory does not list |
-| 8 | Where is data stored (residency)? | **Only where the county installs it** (`SUDS_DATA_DIR`) and points its backups, offsite copies and audit anchors. Nothing leaves the county's infrastructure unless an administrator configures an integration ([DATA-INVENTORY.md](DATA-INVENTORY.md) section 5). If local mode is on, the county's approved devices also hold copies (#45). **County.** |
+| 8 | Where is data stored (residency)? | **Only where the county installs it** (`SUDS_DATA_DIR`) and points its backups, offsite copies and audit anchors. Nothing leaves the county's infrastructure unless an administrator configures an integration ([DATA-INVENTORY.md](DATA-INVENTORY.md) section 5), or, from 1.17.0, a worker sends a secure referral link to an organisation not on SUDS: off unless an administrator turns it on, and each one a disclosure checked against the client's consent and accounted ([REFERRAL-LINKS.md](REFERRAL-LINKS.md)). If local mode is on, the county's approved devices also hold copies (#45). **County.** |
 | 9 | Is data encrypted at rest? | **Yes.** Identifiers and free text are encrypted per field with AES-256-GCM (every `_enc` column; `server/crypto.js`). Backups are encrypted whole with AES-256-GCM (`server/backup.js`). Coded reporting fields are readable columns and rely on the county's volume encryption ([DATA-INVENTORY.md](DATA-INVENTORY.md) section 3). Device copies are sealed whole ([ENCRYPTION-AND-KEYS.md](ENCRYPTION-AND-KEYS.md)) |
 | 10 | Encrypted in transit? | **Yes.** TLS 1.2+ (native, or at a proxy), HSTS, and `Secure; HttpOnly; SameSite=Strict` cookies. The server cannot be opened to other devices without HTTPS, native or at a trusted proxy (`server/routes/admin.js`: "HTTPS is required when other devices can connect") |
 | 11 | Who manages encryption keys? Customer-managed keys? | **The county, always.** Keys come from the county's secrets manager, or from a 0600 `keys.json` for small installs. The server refuses to start if the key does not match the database's fingerprint (`server/db.js` `checkKeyFingerprint`). There is no vendor escrow for a county-hosted installation. [ENCRYPTION-AND-KEYS.md](ENCRYPTION-AND-KEYS.md) |
@@ -168,7 +168,7 @@ What is still missing:
 
 - **Off by default.** Local mode is off unless the setup wizard or IT (`LOCAL_MODE_ENABLED`) turns it on. The wizard recommends it for harm-reduction and outreach programmes.
 - **Sealed copies.** If it is on, registered devices hold copies sealed under each person's password. Devices can be revoked and wiped remotely.
-- **What a copy holds.** A copy holds what its user may see. **Under the 1.16.0 role defaults, that is the whole programme's records, clinical notes included**, unless *See every client* is denied to that person before the device first syncs.
+- **What a copy holds.** A copy holds what its user may see. **Under the 1.16.0 role defaults, that is the whole programme's records, clinical notes included**, unless the person is held to their caseload before the device first syncs: *See every client* denied to them, or, from 1.17.0, the least-privilege default, on for a new install, which holds every new navigator and clinician to their caseload (#22).
 - **Shared devices.** On a device shared by several accounts, every account unlocks the same key. What separates them is the app's rules, not cryptography ([THREAT-MODEL.md](THREAT-MODEL.md), *Residual risks* 4).
 
 ## Evidence, vulnerability disclosure and support

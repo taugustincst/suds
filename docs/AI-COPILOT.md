@@ -76,7 +76,7 @@ audit log's `ai.` entries show each call.
 | --- | --- |
 | `ANTHROPIC_API_KEY` | The provider API key. Required. Read at each call (a new key needs no restart, but set it where the service manager reads its environment). |
 | `SUDS_AI_BASE_URL` | Optional. Another endpoint that speaks the same Messages API (a county's own gateway to the provider, or a test double). Must be `https://`, except to this machine. Default `https://api.anthropic.com`. |
-| `SUDS_AI_TIMEOUT_MS` | Optional. How long to wait for a draft, default 180000 (180 s; 90 s until 1.17.0), the one retry included. |
+| `SUDS_AI_TIMEOUT_MS` | Optional. How long to wait for a draft, default 180000 (180 s), the one retry included. |
 
 The call goes out from the office server over HTTPS (`POST /v1/messages`). If your server reaches the
 internet only through an allow-list, add `api.anthropic.com` (or your gateway) for this module.
@@ -213,8 +213,8 @@ parsing prose.
   `output_config.format` (JSON schema). For the default model it also sets effort `medium` and the provider's
   `fallbacks: "default"` (header `anthropic-beta: server-side-fallback-2026-07-01`), which re-runs a request
   the model's safeguards decline on the provider's recommended fallback model. Not streamed: one answer, within
-  a 180-second deadline (90 s until 1.17.0: with up to 16,000 output tokens and a model that always thinks, a long
-  transcript could run past it).
+  a 180-second deadline (up to 16,000 output tokens from a model that always thinks: a long transcript needs the
+  time).
 * Failures: a timeout (504), the provider unreachable or down or rate-limited (503), refusing the key or the
   request, a draft cut off or unreadable (502), the model declining (422), the monthly cap (429), the copilot
   off (409). A 400 or 404 from the provider says "the AI provider refused the request (check the model

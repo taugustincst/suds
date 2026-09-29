@@ -39,9 +39,9 @@ Rules for every release:
 
 | Line | Gets | For how long |
 | --- | --- | --- |
-| **The latest minor** (today 1.16.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
-| **The previous minor** (today 1.15.x) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below) | **30 days** after the next minor's release date, then none |
-| Anything older | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
+| **The latest minor** (today 1.17.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
+| **The previous minor** (today 1.16.x, until 30 days after 1.17.0's release date: the date of its tag) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below) | **30 days** after the next minor's release date, then none |
+| Anything older (today 1.15.x and before: once 1.17.0 was released, 1.15.x stopped being the previous minor, whatever was left of its 30 days after 1.16.0) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
@@ -177,7 +177,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.17.0 | monthly limit (a feature release inside 1.16.0's 28 days); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner approved shipping 1.17.0 with an exception once green, and asked for it to be deployed to Pages; the stamp commit passed `npm test`, the full browser suite in both orders and CI | owner (a request, no workflow record; *Record: 1.17.0*, below) |
 
 **Record: 1.17.0 ships under a policy exception, published without a tag.** 1.17.0 is a feature release (migrations
-49–55, new permissions and routes: the AI documentation copilot, client revision history, the least-privilege default,
+49–55, one new permission, `ai:draft`, and new routes: the AI documentation copilot, client revision history, the least-privilege default,
 SSP participant codes and prevention events, the Part 2 layer, CalOMS automation, secure referral links, settlement
 outcomes and street outreach, the publication change) inside the 28 days after 1.16.0, which the policy refuses on its
 own. The owner approved it as a recorded exception ("ship 1.17 with an exception when it's green"; "merge and deploy to

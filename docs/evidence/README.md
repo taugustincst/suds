@@ -9,7 +9,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.16.4, the released commit `6491308` ("Release 1.16.4", on `main`, CI green, and published to GitHub Pages by a direct `gh-pages` push at the owner's request); the owner has not tagged it yet. (Until the review of the 1.17.0 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed, and that was never published.)
+**Version.** It describes 1.17.0, the stamp commit `485548c` ("Release 1.17.0", published to GitHub Pages by a direct `gh-pages` push at the owner's request, as 1.16.4 was); the owner has not tagged it yet ([../RELEASE.md](../RELEASE.md), *Record: 1.17.0*). The SBOM below is still 1.16.4's (`6491308`) until it is regenerated for 1.17.0. (Until the review of the 1.17.0 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed, and that was never published.)
 
 **Other ways in.** The same ground is covered question by question in [../security/QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md), and for buyers in [../market/BUYER-GUIDE-IT.md](../market/BUYER-GUIDE-IT.md).
 
@@ -57,7 +57,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 ### Access control, MFA and SSO
 
 - **Documents:** [IDENTITY.md](../security/IDENTITY.md); [QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md) #17–#24.
-- **Tests:** `auth-permissions`, `role-expansion`, `user-permissions`, `deidentified-roles`, `mfa-grace`, `mfa-enrol-hardening`, `in-session-guessing`, `signer-hardening`, `oidc`, `oidc-reauth`, `idp-lifecycle`, `scim`, `security-1154` to `security-1164`.
+- **Tests:** `auth-permissions`, `role-expansion`, `user-permissions`, `deidentified-roles`, `mfa-grace`, `mfa-enrol-hardening`, `in-session-guessing`, `signer-hardening`, `oidc`, `oidc-reauth`, `idp-lifecycle`, `scim`, `security-1154` to `security-1164`, `security-1170`.
 - **CI:** `test`; `browser` (`permissions-admin`, `signup`).
 - **Status:** In place, with caveats. Least privilege is the default for a new install and a setting an upgraded office turns on (*New navigators and clinicians start held to their caseload*, 1.17.0; `least-privilege-default`, `least-privilege-sso`, `least-privilege-device`); an upgraded office that leaves it off keeps navigators and clinicians seeing every client. The client record keeps a revision history with revert from 1.17.0 (`client-revisions`), at the office only.
 
@@ -114,7 +114,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 ### 42 CFR Part 2 and disclosures
 
 - **Documents:** [../compliance/PART2.md](../compliance/PART2.md); [../HIPAA.md](../HIPAA.md); [ADR-0004](../architecture/ADR-0004-disclosure-gate.md); [../integration/FHIR.md](../integration/FHIR.md).
-- **Tests:** `part2`, `disclosure-gates`, `counseling-notes`, `fhir`, `fhir-oracle`, `fhir-hardening`, `compliance`, `witness-metadata-privacy`.
+- **Tests:** `part2`, `part2-layer` (1.17.0), `referral-links` (secure referral links, 1.17.0; [REFERRAL-LINKS.md](../security/REFERRAL-LINKS.md)), `disclosure-gates`, `counseling-notes`, `fhir`, `fhir-oracle`, `fhir-hardening`, `compliance`, `witness-metadata-privacy`.
 - **CI:** `test`.
 - **Status:** Addressed in software. **Owner-pending:** counsel review of consent and notice wording, and an independent Part 2 review.
 
@@ -123,7 +123,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 - **Documents:** [../AI-COPILOT.md](../AI-COPILOT.md) (what is sent, the residual risk, what is recorded); [DATA-INVENTORY.md](../security/DATA-INVENTORY.md) section 5; [THREAT-MODEL.md](../security/THREAT-MODEL.md).
 - **Tests:** `ai-copilot`, `ssrf`, `role-expansion`; browser `r10-ai` (against a local fake provider).
 - **CI:** `test`; `browser` (`r10-ai`).
-- **Status:** Off by default; not yet in a released version. **Programme-pending:** a BAA with Part 2 QSOA terms with the AI provider, and counsel's review, before it is switched on.
+- **Status:** Off by default; released in 1.17.0. **Programme-pending:** a BAA with Part 2 QSOA terms with the AI provider, and counsel's review, before it is switched on.
 
 ### De-identification and publication
 
@@ -169,7 +169,7 @@ These close review questions that software cannot. The status of each is on the 
    - immutable releases, with older releases' checksums recorded;
    - stale branches deleted;
    - CodeQL, secret scanning and push protection.
-2. **Tag the released versions.** 1.16.3 (`fc5e9d7`) and 1.16.4 (`6491308`, live on GitHub Pages) are released but not tagged (HANDOFF.md, *Release waiting*; docs/RELEASE.md, *Record: 1.16.4 published without a tag*): `git fetch origin && git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3" && git tag -a v1.16.4 6491308 -m "SUDS 1.16.4" && git push origin v1.16.3 v1.16.4`. The SBOM already describes `6491308`.
+2. **Tag the released versions.** 1.16.3 (`fc5e9d7`), 1.16.4 (`6491308`) and 1.17.0 (`485548c`, live on GitHub Pages) are released but not tagged (HANDOFF.md, *Release waiting*; docs/RELEASE.md, *Record: 1.16.4 published without a tag*). All three go in **one** push, never 1.16.x alone, which would publish 1.16.4 over 1.17.0: `git fetch origin && git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3" && git tag -a v1.16.4 6491308 -m "SUDS 1.16.4" && git tag -a v1.17.0 485548c -m "SUDS 1.17.0" && git push origin v1.16.3 v1.16.4 v1.17.0`, then follow what RELEASE.md says each run does. The SBOM already describes `6491308`.
 3. **Vulnerability disclosure.** Turn on private vulnerability reporting, add a `SECURITY.md`, and name a security contact `[owner to complete]`.
 4. **Licence file.** `package.json` says MIT; add the `LICENSE` file `[owner to complete]`.
 5. **Organisation** `[owner to complete]`:
