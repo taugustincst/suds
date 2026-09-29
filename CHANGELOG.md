@@ -2,6 +2,54 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Security
+
+Fixes from the security review of 1.16.0. No migration, no new permission, no new route. With 1.16.0 most staff
+see every client, so "who may change this row" can no longer be left to the caseload; these say it.
+
+- **Stored files are never pages of this origin (H1).** A device could push a resource photo with the type
+  `text/html` or `text/javascript`, upload a page or a script as its bytes, and have it served as this origin's
+  (stored XSS, with a link from the resource's website field). A resource photo's type is now read from its bytes,
+  and anything that is not a picture is an opaque download; every stored file (photos and thumbnails, form
+  attachments, policy documents, the form library) is served with `nosniff`, a `Content-Disposition`,
+  `Cross-Origin-Resource-Policy: same-origin` and `Content-Security-Policy: sandbox; default-src 'none'` (a PDF
+  keeps the app's policy: browsers do not show one in a sandbox); sync refuses a photo whose type is not a picture
+  or an attachment whose type the form library does not take, and the blob upload checks a photo's bytes.
+- **A device writes only the columns a table's rules declare (H2).** Sync push stored every column a device
+  sent, so it could make another worker's goal its own and then delete it, or name someone else as the person who
+  made a disclosure (the §2.25 / §164.528 accounting). Anything a table's rules do not declare is now the office's,
+  and who created a record (`created_by`, `disclosed_by`, `given_by`, `recorded_by`, `opened_by`, `uploaded_by`...)
+  is the account that syncs it, kept as the office has it afterwards; a device that names someone else is told.
+  This replaces 1.14.0's "a creator column arrives as the device recorded it" (docs/architecture/README.md).
+- **Attachments follow their form (M1, M2).** The blob upload route replaced any attachment, including the signed
+  copy on another worker's completed form. A device now fills in only the file of a row it created, while empty;
+  replacing a file is its creator's or `records:manage-others`', never on a completed form. Nothing is removed from
+  a completed form but by a supervisor (the signed copy is still attached after completing it), and voiding or removing a form, or removing an attachment, is
+  the person's who started the form or added the file, or `records:manage-others'`, by REST as by sync.
+- **Supply lines are their visit's (M3).** A device could add or remove the supplies on another worker's visit
+  (changing its kit counts and the stock); a line now follows the visit's own edit rule.
+- **Import items (M4).** Committing a staged import item is its importer's or `records:manage-others'`, as
+  viewing, discarding and purging it already were.
+- **SUPRT-A and CalOMS deletes (M5).** Deleting an assessment or a CalOMS record is its recorder's or
+  `records:manage-others'`; a CalOMS record already sent to DHCS is corrected, never deleted, by anyone (it used to
+  be deleted with a warning). Re-admitting a discharge made in error still takes its discharge record with it.
+- **Episodes (M6).** A device changes an episode only as the REST routes do (open, discharge, re-admit); when,
+  how and why a client was admitted is kept as the office has it, and `closed_by` is the account that discharged.
+  Discharging or re-admitting, which ends the whole care team and cancels its to-dos, is for the client's care
+  team, the person who opened the episode, or `records:manage-others` — at both doors, and for the care team a
+  device's discharge ends.
+- **Separation of duties (M7).** An approver could record spending or time under a colleague's name, or raise a
+  colleague's pending amount, and then approve it. Approving is now refused to anyone who recorded or changed the
+  entry, read from the audit trail (without a migration there is no creator column on these rows); a device's
+  entry recorded for someone else is audited for it (`sync.record`). Returning an entry is unchanged.
+- **Smaller fixes (L1–L5).** A problem-list change arriving by sync is kept in the problem's history; a device
+  cannot ask for a review of another worker's signed note; a spreadsheet import needs `imports:write` (as the
+  Import page does), checks each record against its table's shape and rules, and audits each record; a goal's or
+  step's wording is its author's or `records:manage-others'` to change (they keep no history); a resource photo
+  removed by sync is removed, as over REST, instead of being dropped quietly.
+
 ## 1.16.0 — 2026-09-29
 
 ### Roles and permissions

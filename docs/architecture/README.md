@@ -117,7 +117,7 @@ doors:
 
 ```
                  REST routes                                        sync push (a device's rows)
-  server/crud.js (8 tables) + hand-written routes          server/rules/push.js: prepare → authorise → validate
+  server/crud.js (8 tables) + hand-written routes          server/rules/push.js: prepare → confine → authorise → validate
         │ shape = R.fields  canEdit = R.editableBy                  → resolve (last write wins) → normalise → apply
         │ restrictOwner = R.owner  rules.assertWrite()                        │
         └──────────────────────────► server/rules/<table>.js ◄──────────────────┘
@@ -194,9 +194,20 @@ REST lists — and `mayReachUnlinked` for one row, which push asks before a devi
 The supply routes (`server/routes/supplies.js`) keep their action-shaped checks (a receipt, a transfer, an
 adjustment); the ledger's push rules mirror them rather than share code, because the route builds the row.
 
-Kept as they were, deliberately: a creator column (`created_by`) arrives as the device recorded it (a shared phone
-carries several workers' work); a tombstone for shared reference data (resources, templates) still needs
-clients:all, where REST soft-deletes; CalOMS answers are validated by `server/caloms.js` over REST only.
+**What a device may write (1.16.1).** A push writes only the columns a table's rules declare: its `fields`, its
+`deviceColumns` (a status its rules move, a parent's id), and its client, parent, self-parent and owner columns
+(`R.writable`, `server/rules/core.js`); anything else a device sends is dropped (`confine`, the stage after
+prepare). So a column is the office's unless a rule speaks for it: before 1.16.1 a device could set who created a
+goal (and then delete it), who made a disclosure, or a photo's content type (security review of 1.16.0, H2). The
+columns that say who created a row (`createdBy`: created_by, disclosed_by, given_by, recorded_by, opened_by...)
+are the syncing account for a new row and the office's value afterwards; a device that names someone else is
+told (flagged `attribution`), and the row is recorded as its user's. That replaces 1.14.0's "a creator column
+arrives as the device recorded it": on a shared phone the account that syncs is the one the office can vouch for,
+and the owner columns (who did the work: a visit's worker) keep their own rule, `attribute()`, which refuses
+another worker's name without `records:manage-others`. `test/sync-attribution.test.js` holds every synchronised
+table to it. A tombstone for shared reference data (resources, templates) still needs `records:manage-others`
+unless the table's rules say whose a row is (a resource photo: anyone who keeps the directory, as over REST);
+CalOMS answers are validated by `server/caloms.js` over REST only.
 
 No person other than the owner has yet reviewed the code end to end; an independent code review and penetration test are open items
 in [docs/market/EVALUATION-RESPONSE.md](../market/EVALUATION-RESPONSE.md).
