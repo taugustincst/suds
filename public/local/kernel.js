@@ -21502,8 +21502,8 @@ var require_demo = __commonJS({
     var M = require_clients_model();
     var audit3 = require_audit();
     var DEMO_PREFIX = "DEMO-";
-    var TABLES = ["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "part2_notices", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "episodes", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_ledger", "supply_items"];
-    var SYNCED = /* @__PURE__ */ new Set(["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "part2_notices", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "episodes", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_ledger", "supply_items"]);
+    var TABLES = ["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "part2_notices", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "caloms_records", "episodes", "assignments", "clients", "prevention_events", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_ledger", "supply_items"];
+    var SYNCED = /* @__PURE__ */ new Set(["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "part2_notices", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "caloms_records", "episodes", "assignments", "clients", "prevention_events", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_ledger", "supply_items"]);
     function rng(seed2) {
       let a = seed2 >>> 0;
       return () => {
@@ -21854,7 +21854,7 @@ var require_demo = __commonJS({
         const y = (/* @__PURE__ */ new Date()).getFullYear();
         const fundStart = `${y}-07-01`;
         const fund = track("funding_sources", uuid2());
-        db3.run(`INSERT INTO funding_sources(id,name,source_type,grant_number,fiscal_year_start,fiscal_year_end,total_amount,restrictions) VALUES(?,?,?,?,?,?,?,?)`, fund, `Opioid Settlement \u2013 Navigation FY${String(y + 1).slice(2)}`, "opioid_settlement", "OS-2026-014", `${y}-07-01`, `${y + 1}-06-30`, 18e4, "Abatement uses only; no indirect above 10%");
+        db3.run(`INSERT INTO funding_sources(id,name,source_type,grant_number,fiscal_year_start,fiscal_year_end,total_amount,restrictions,settlement_use,settlement_hiaa) VALUES(?,?,?,?,?,?,?,?,?,?)`, fund, `Opioid Settlement \u2013 Navigation FY${String(y + 1).slice(2)}`, "opioid_settlement", "OS-2026-014", `${y}-07-01`, `${y + 1}-06-30`, 18e4, "Abatement uses only; no indirect above 10%", "approved_c", "hiaa_3");
         const lines = { client_assistance: 25e3, transportation: 8e3, naloxone_supplies: 6e3, housing_assistance: 3e4, staffing: 1e5, training: 3e3, ids_documents: 2e3, phones_communication: 3e3, outreach_materials: 3e3 };
         const lineIds = {};
         for (const [cat, amt] of Object.entries(lines)) {
@@ -22186,7 +22186,7 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
           const wd = day(Math.floor(rand2() * 60));
           db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,description_enc) VALUES(?,?,?,?,?,?,?,?)`, track("time_entries", uuid2()), w, null, wd, 30 + Math.floor(rand2() * 6) * 15, cat, cat === "training" ? fund2 : wd >= fundStart ? fund : null, encrypt3({ documentation: "Charting and note sign-off", meeting: "Weekly team huddle", travel: "Drive between sites", training: "Naloxone train-the-trainer", supervision: "Supervision with program manager", admin: "Data entry for monthly report", outreach: "Encampment outreach walk" }[cat]));
         }
-        for (const [cat, vendor, desc, amt] of [["naloxone_supplies", "Harm Reduction Coalition", "Naloxone kits (50)", 1500], ["outreach_materials", "PrintPro", "Outreach flyers and cards", 220], ["training", "State Peer Academy", "Peer certification course", 650]]) db3.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,user_id,spent_at,amount,category,vendor,description_enc,status,approved_by,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, track("expenditures", uuid2()), fund, lineIds[cat], workers[0], day(20 + Math.floor(rand2() * 60)), amt, cat, vendor, encrypt3(desc), "approved", supervisor, d(15));
+        for (const [cat, vendor, desc, amt, use, hiaa] of [["naloxone_supplies", "Harm Reduction Coalition", "Naloxone kits (50)", 1500, "core_a", "hiaa_6"], ["outreach_materials", "PrintPro", "Outreach flyers and cards", 220, "approved_h", "hiaa_3"], ["training", "State Peer Academy", "Peer certification course", 650, "approved_k", "none"]]) db3.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,user_id,spent_at,amount,category,vendor,description_enc,status,approved_by,approved_at,settlement_use,settlement_hiaa) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("expenditures", uuid2()), fund, lineIds[cat], workers[0], day(20 + Math.floor(rand2() * 60)), amt, cat, vendor, encrypt3(desc), "approved", supervisor, d(15), use, hiaa);
         const site = db3.MAIN_SITE_ID;
         for (const [name, category, product, unit, quick, receipts] of [
           ["Naloxone kit", "naloxone", "nasal_4mg", "kit", 1, [[24, "NX24A117", 400, "ndp"], [18, "NX23K052", 40, "ndp"]]],
@@ -22212,6 +22212,105 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
               source,
               "Sample delivery",
               workers[0]
+            );
+          }
+        }
+        const PC = require_participant_code();
+        const CODES = ["JA0412R", "MB1102T", "TO0723K", "RK0130L", "DP1205S", "SO0618W", "BL0227M", "TM0808C", "GW1021H", "AJ0514P", "LH0315N", "CR0909D", "EV0131F", "NS0620G"];
+        const OUTREACH_NOTES = ["Encampment walk; handed out supplies.", "Checked in at the shelter line.", "Asked about the evening van schedule.", "Talked through fentanyl test strip use.", "Offered wound care; accepted.", "Asked where the drop-in is; gave hours."];
+        for (let k = 0; k < 28; k++) {
+          const off = 2 + Math.floor(rand2() * 75);
+          const type = k % 3 === 0 ? "naloxone_distribution" : "outreach";
+          const kits = type === "naloxone_distribution" ? 1 + Math.floor(rand2() * 2) : rand2() < 0.25 ? 1 : 0;
+          const code = k % 6 === 5 ? null : PC.normalise(CODES[k * 5 % CODES.length]);
+          const when = d(off, 13 + k % 6);
+          db3.run(
+            `INSERT INTO interventions(id,client_id,user_id,type,occurred_at,duration_minutes,location,modality,outcome,naloxone_kits,fentanyl_strips,funding_source_id,summary_enc,participant_code_enc,participant_code_idx,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            track("interventions", uuid2()),
+            null,
+            workers[k % workers.length],
+            type,
+            when,
+            5 + k % 3 * 5,
+            pick(["street", "street", "shelter", "community"]),
+            "in_person",
+            "completed",
+            kits,
+            rand2() < 0.5 ? 5 : 0,
+            when.slice(0, 10) >= fundStart ? fund : null,
+            encrypt3(pick(OUTREACH_NOTES) + " (Sample data)"),
+            code ? encrypt3(code) : null,
+            code ? PC.index(code) : null,
+            when
+          );
+          counts.interventions++;
+        }
+        for (const [off, title, type, strategy, iom, audience, where, hours, att, est] of [
+          [6, "Naloxone training for shelter staff", "training", "education", "selective", "health_providers", "Community shelter", 2, 14, 0],
+          [13, "Fentanyl facts: high school assembly", "presentation", "information_dissemination", "universal_direct", "youth", "Springfield High", 1, 220, 1],
+          [21, "Parents night: talking with teens about pills", "workshop", "education", "universal_direct", "parents_families", "Library meeting room", 1.5, 26, 0],
+          [34, "Prevention coalition meeting", "coalition_meeting", "community_based_process", "universal_indirect", "general_community", "City hall annex", 2, 18, 0],
+          [48, "Safe medication disposal day", "community_event", "environmental", "universal_indirect", "general_community", "Pharmacy parking lot", 4, 90, 1],
+          [62, "Drug-free skate night", "alternative_activity", "alternatives", "selective", "youth", "Recreation center", 3, 45, 1],
+          [75, "Naloxone train-the-trainer for first responders", "training", "education", "selective", "first_responders", "Fire station 2", 3, 12, 0]
+        ]) {
+          db3.run(
+            `INSERT INTO prevention_events(id,user_id,event_date,title,event_type,strategy,iom_category,audience,location,hours,attendance,attendance_estimated,funding_source_id,notes_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            track("prevention_events", uuid2()),
+            workers[off % workers.length],
+            day(off),
+            title,
+            type,
+            strategy,
+            iom,
+            audience,
+            where,
+            hours,
+            att,
+            est,
+            type === "training" ? fund2 : null,
+            encrypt3("Sign-in sheet kept on paper; headcount only. (Sample data)")
+          );
+        }
+        const CALOMS_BASE = { admission_transaction: "1", service_type: "01", days_waited: 3, prior_episodes: 0, mat_planned: "N", calworks: "N", race: ["01"], ethnicity: "05", veteran: "N", disability: ["1"], zip_code: "00000", education_grade: 12, children_under_18: 0, children_cps: 0, pregnant: "N", primary_age_first_use: 19, secondary_drug: "00", primary_days_used: 10, alcohol_days: 0, employment_status: "3", paid_work_days: 0, school_enrolled: "N", job_training: "N", arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 2, mh_diagnosis: "N", mh_er_visits_30: 0, psych_inpatient_days_30: 0, psych_meds: "N", family_conflict_days_30: 1, social_support_days_30: 4, lives_with_user: "N" };
+        const CALOMS_DISCHARGE = { discharge_status: "1", primary_days_used: 0, alcohol_days: 0, iv_use_30: "N", employment_status: "1", paid_work_days: 20, school_enrolled: "N", job_training: "N", living_arrangement: "3", arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 0, mh_diagnosis: "N", mh_er_visits_30: 0, psych_inpatient_days_30: 0, psych_meds: "N", family_conflict_days_30: 0, social_support_days_30: 12, lives_with_user: "N" };
+        for (const [i, answers] of [
+          [0, { referral_source: "01", sex_at_birth: "F", gender_identity: "5", primary_drug: "21", primary_route: "4", iv_use_12m: "Y", iv_use_30: "Y", living_arrangement: "1" }],
+          [5, { referral_source: "01", sex_at_birth: "M", gender_identity: "1", primary_drug: "08", primary_route: "3", iv_use_12m: "N", iv_use_30: "N", living_arrangement: "3", employment_status: "1", paid_work_days: 20 }],
+          [6, { referral_source: "01", sex_at_birth: "F", gender_identity: "2", primary_drug: "01", primary_route: "4", iv_use_12m: "Y", iv_use_30: "Y", living_arrangement: "2", secondary_drug: "05", secondary_route: "2", secondary_age_first_use: 22, secondary_days_used: 4 }]
+        ]) {
+          const c = cids[i];
+          const ep = c && db3.one(`SELECT id, opened_at, closed_at FROM episodes WHERE client_id=? ORDER BY opened_at LIMIT 1`, c.id);
+          if (!ep) continue;
+          db3.run(
+            `INSERT INTO caloms_records(id,client_id,episode_id,record_type,provider_id,record_date,service_type,discharge_status,answers_enc,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+            track("caloms_records", uuid2()),
+            c.id,
+            ep.id,
+            "admission",
+            null,
+            ep.opened_at.slice(0, 10),
+            "01",
+            null,
+            encrypt3(JSON.stringify({ ...CALOMS_BASE, ...answers })),
+            c.worker,
+            c.worker
+          );
+          if (ep.closed_at) {
+            const out2 = ep.closed_at.slice(0, 10);
+            db3.run(
+              `INSERT INTO caloms_records(id,client_id,episode_id,record_type,provider_id,record_date,service_type,discharge_status,answers_enc,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+              track("caloms_records", uuid2()),
+              c.id,
+              ep.id,
+              "discharge",
+              null,
+              out2,
+              null,
+              CALOMS_DISCHARGE.discharge_status,
+              encrypt3(JSON.stringify({ ...CALOMS_DISCHARGE, last_service_date: out2 })),
+              supervisor,
+              supervisor
             );
           }
         }

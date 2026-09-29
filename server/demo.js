@@ -9,8 +9,8 @@ const M = require('./clients-model');
 const audit = require('./audit');
 
 const DEMO_PREFIX = 'DEMO-';
-const TABLES = ['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'episodes', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_ledger', 'supply_items'];
-const SYNCED = new Set(['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'episodes', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_ledger', 'supply_items']);
+const TABLES = ['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'caloms_records', 'episodes', 'assignments', 'clients', 'prevention_events', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_ledger', 'supply_items'];
+const SYNCED = new Set(['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'caloms_records', 'episodes', 'assignments', 'clients', 'prevention_events', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_ledger', 'supply_items']);
 
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
@@ -121,7 +121,10 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
     const y = new Date().getFullYear();
     const fundStart = `${y}-07-01`; // the settlement fund's fiscal year; work before it is not charged to it
     const fund = track('funding_sources', uuid());
-    db.run(`INSERT INTO funding_sources(id,name,source_type,grant_number,fiscal_year_start,fiscal_year_end,total_amount,restrictions) VALUES(?,?,?,?,?,?,?,?)`, fund, `Opioid Settlement – Navigation FY${String(y + 1).slice(2)}`, 'opioid_settlement', 'OS-2026-014', `${y}-07-01`, `${y + 1}-06-30`, 180000, 'Abatement uses only; no indirect above 10%');
+    // Its Exhibit E allowable use and California High Impact Abatement Activity (constants.SETTLEMENT_USES /
+    // SETTLEMENT_HIAA), so the settlement report and Settlement outcomes have a category to show; the program-level
+    // expenditures below carry their own where they differ.
+    db.run(`INSERT INTO funding_sources(id,name,source_type,grant_number,fiscal_year_start,fiscal_year_end,total_amount,restrictions,settlement_use,settlement_hiaa) VALUES(?,?,?,?,?,?,?,?,?,?)`, fund, `Opioid Settlement – Navigation FY${String(y + 1).slice(2)}`, 'opioid_settlement', 'OS-2026-014', `${y}-07-01`, `${y + 1}-06-30`, 180000, 'Abatement uses only; no indirect above 10%', 'approved_c', 'hiaa_3');
     const lines = { client_assistance: 25000, transportation: 8000, naloxone_supplies: 6000, housing_assistance: 30000, staffing: 100000, training: 3000, ids_documents: 2000, phones_communication: 3000, outreach_materials: 3000 };
     const lineIds = {}; for (const [cat, amt] of Object.entries(lines)) { lineIds[cat] = track('budget_lines', uuid()); db.run(`INSERT INTO budget_lines(id,funding_source_id,category,label,allocated_amount) VALUES(?,?,?,?,?)`, lineIds[cat], fund, cat, null, amt); }
     const fund2 = track('funding_sources', uuid());
@@ -271,7 +274,9 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
     // Non-client time (meetings, documentation, training) for each worker
     for (const w of workers) for (let k = 0; k < 10; k++) { const cat = pick(['documentation', 'meeting', 'travel', 'training', 'supervision', 'admin', 'outreach']); const wd = day(Math.floor(rand() * 60)); db.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,description_enc) VALUES(?,?,?,?,?,?,?,?)`, track('time_entries', uuid()), w, null, wd, 30 + Math.floor(rand() * 6) * 15, cat, cat === 'training' ? fund2 : (wd >= fundStart ? fund : null), encrypt({ documentation: 'Charting and note sign-off', meeting: 'Weekly team huddle', travel: 'Drive between sites', training: 'Naloxone train-the-trainer', supervision: 'Supervision with program manager', admin: 'Data entry for monthly report', outreach: 'Encampment outreach walk' }[cat])); }
     // Program-level expenditures
-    for (const [cat, vendor, desc, amt] of [['naloxone_supplies', 'Harm Reduction Coalition', 'Naloxone kits (50)', 1500], ['outreach_materials', 'PrintPro', 'Outreach flyers and cards', 220], ['training', 'State Peer Academy', 'Peer certification course', 650]]) db.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,user_id,spent_at,amount,category,vendor,description_enc,status,approved_by,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, track('expenditures', uuid()), fund, lineIds[cat], workers[0], day(20 + Math.floor(rand() * 60)), amt, cat, vendor, encrypt(desc), 'approved', supervisor, d(15));
+    // Each tagged with its own settlement category where it is not the fund's (naloxone: Exhibit E core A and High
+    // Impact Abatement Activity 6; outreach materials: harm reduction; training: Exhibit E approved use K, not an HIAA).
+    for (const [cat, vendor, desc, amt, use, hiaa] of [['naloxone_supplies', 'Harm Reduction Coalition', 'Naloxone kits (50)', 1500, 'core_a', 'hiaa_6'], ['outreach_materials', 'PrintPro', 'Outreach flyers and cards', 220, 'approved_h', 'hiaa_3'], ['training', 'State Peer Academy', 'Peer certification course', 650, 'approved_k', 'none']]) db.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,user_id,spent_at,amount,category,vendor,description_enc,status,approved_by,approved_at,settlement_use,settlement_hiaa) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track('expenditures', uuid()), fund, lineIds[cat], workers[0], day(20 + Math.floor(rand() * 60)), amt, cat, vendor, encrypt(desc), 'approved', supervisor, d(15), use, hiaa);
 
     // Supplies at the main office, so the Supplies page has stock, lots and an expiry to show and visits have
     // something to draw down: [name, category, product, unit, quick, [[quantity, lot, expires in days, source]]].
@@ -290,6 +295,63 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
       for (const [qty, lot, days, source] of receipts) {
         db.run(`INSERT INTO supply_ledger(id,item_id,site_id,kind,quantity,lot_number,expires_on,occurred_on,source,reference,user_id) VALUES(?,?,?,'received',?,?,?,?,?,?,?)`,
           track('supply_ledger', uuid()), itemId, site, qty, lot, days === null ? null : new Date(Date.now() + days * 86400000).toISOString().slice(0, 10), day(30), source, 'Sample delivery', workers[0]);
+      }
+    }
+
+    // 1.17.0 screens. Everything below comes after the rest of the sample data, so the records above (and the random
+    // values they draw) are the same as before.
+    //
+    // Anonymous street-outreach contacts: no client record (constants.CLIENTLESS_INTERVENTION_TYPES), never today
+    // or yesterday (so a worker's *My shift* starts at zero), and most with the participant's self-built SSP code.
+    // The code is kept only encrypted, with its blind index for counting (server/participant-code.js), as the visit
+    // routes store it; the notes line names nobody.
+    const PC = require('./participant-code');
+    const CODES = ['JA0412R', 'MB1102T', 'TO0723K', 'RK0130L', 'DP1205S', 'SO0618W', 'BL0227M', 'TM0808C', 'GW1021H', 'AJ0514P', 'LH0315N', 'CR0909D', 'EV0131F', 'NS0620G'];
+    const OUTREACH_NOTES = ['Encampment walk; handed out supplies.', 'Checked in at the shelter line.', 'Asked about the evening van schedule.', 'Talked through fentanyl test strip use.', 'Offered wound care; accepted.', 'Asked where the drop-in is; gave hours.'];
+    for (let k = 0; k < 28; k++) {
+      const off = 2 + Math.floor(rand() * 75); const type = k % 3 === 0 ? 'naloxone_distribution' : 'outreach';
+      const kits = type === 'naloxone_distribution' ? 1 + Math.floor(rand() * 2) : (rand() < 0.25 ? 1 : 0);
+      const code = k % 6 === 5 ? null : PC.normalise(CODES[(k * 5) % CODES.length]);
+      const when = d(off, 13 + (k % 6));
+      db.run(`INSERT INTO interventions(id,client_id,user_id,type,occurred_at,duration_minutes,location,modality,outcome,naloxone_kits,fentanyl_strips,funding_source_id,summary_enc,participant_code_enc,participant_code_idx,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        track('interventions', uuid()), null, workers[k % workers.length], type, when, 5 + (k % 3) * 5, pick(['street', 'street', 'shelter', 'community']), 'in_person', 'completed', kits, rand() < 0.5 ? 5 : 0, when.slice(0, 10) >= fundStart ? fund : null, encrypt(pick(OUTREACH_NOTES) + ' (Sample data)'), code ? encrypt(code) : null, code ? PC.index(code) : null, when);
+      counts.interventions++;
+    }
+
+    // Group and community prevention events (SABG primary prevention, server/prevention.js): attendance is a
+    // headcount, never names; none today, so a day's summary shows only what is recorded that day.
+    for (const [off, title, type, strategy, iom, audience, where, hours, att, est] of [
+      [6, 'Naloxone training for shelter staff', 'training', 'education', 'selective', 'health_providers', 'Community shelter', 2, 14, 0],
+      [13, 'Fentanyl facts: high school assembly', 'presentation', 'information_dissemination', 'universal_direct', 'youth', 'Springfield High', 1, 220, 1],
+      [21, 'Parents night: talking with teens about pills', 'workshop', 'education', 'universal_direct', 'parents_families', 'Library meeting room', 1.5, 26, 0],
+      [34, 'Prevention coalition meeting', 'coalition_meeting', 'community_based_process', 'universal_indirect', 'general_community', 'City hall annex', 2, 18, 0],
+      [48, 'Safe medication disposal day', 'community_event', 'environmental', 'universal_indirect', 'general_community', 'Pharmacy parking lot', 4, 90, 1],
+      [62, 'Drug-free skate night', 'alternative_activity', 'alternatives', 'selective', 'youth', 'Recreation center', 3, 45, 1],
+      [75, 'Naloxone train-the-trainer for first responders', 'training', 'education', 'selective', 'first_responders', 'Fire station 2', 3, 12, 0],
+    ]) {
+      db.run(`INSERT INTO prevention_events(id,user_id,event_date,title,event_type,strategy,iom_category,audience,location,hours,attendance,attendance_estimated,funding_source_id,notes_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        track('prevention_events', uuid()), workers[off % workers.length], day(off), title, type, strategy, iom, audience, where, hours, att, est, type === 'training' ? fund2 : null, encrypt('Sign-in sheet kept on paper; headcount only. (Sample data)'));
+    }
+
+    // CalOMS Tx records for three episodes (server/caloms.js): admissions on two open episodes, and an admission and
+    // a discharge on the closed one. The coded answers are one encrypted document, as caloms.save() writes them. No
+    // provider ID is set (the programme's own is entered under State reporting), so once CalOMS reporting is switched
+    // on each record asks for one on the worklist; nothing is disclosed until someone produces a file.
+    const CALOMS_BASE = { admission_transaction: '1', service_type: '01', days_waited: 3, prior_episodes: 0, mat_planned: 'N', calworks: 'N', race: ['01'], ethnicity: '05', veteran: 'N', disability: ['1'], zip_code: '00000', education_grade: 12, children_under_18: 0, children_cps: 0, pregnant: 'N', primary_age_first_use: 19, secondary_drug: '00', primary_days_used: 10, alcohol_days: 0, employment_status: '3', paid_work_days: 0, school_enrolled: 'N', job_training: 'N', arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 2, mh_diagnosis: 'N', mh_er_visits_30: 0, psych_inpatient_days_30: 0, psych_meds: 'N', family_conflict_days_30: 1, social_support_days_30: 4, lives_with_user: 'N' };
+    const CALOMS_DISCHARGE = { discharge_status: '1', primary_days_used: 0, alcohol_days: 0, iv_use_30: 'N', employment_status: '1', paid_work_days: 20, school_enrolled: 'N', job_training: 'N', living_arrangement: '3', arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 0, mh_diagnosis: 'N', mh_er_visits_30: 0, psych_inpatient_days_30: 0, psych_meds: 'N', family_conflict_days_30: 0, social_support_days_30: 12, lives_with_user: 'N' };
+    for (const [i, answers] of [
+      [0, { referral_source: '01', sex_at_birth: 'F', gender_identity: '5', primary_drug: '21', primary_route: '4', iv_use_12m: 'Y', iv_use_30: 'Y', living_arrangement: '1' }],
+      [5, { referral_source: '01', sex_at_birth: 'M', gender_identity: '1', primary_drug: '08', primary_route: '3', iv_use_12m: 'N', iv_use_30: 'N', living_arrangement: '3', employment_status: '1', paid_work_days: 20 }],
+      [6, { referral_source: '01', sex_at_birth: 'F', gender_identity: '2', primary_drug: '01', primary_route: '4', iv_use_12m: 'Y', iv_use_30: 'Y', living_arrangement: '2', secondary_drug: '05', secondary_route: '2', secondary_age_first_use: 22, secondary_days_used: 4 }],
+    ]) {
+      const c = cids[i]; const ep = c && db.one(`SELECT id, opened_at, closed_at FROM episodes WHERE client_id=? ORDER BY opened_at LIMIT 1`, c.id);
+      if (!ep) continue;
+      db.run(`INSERT INTO caloms_records(id,client_id,episode_id,record_type,provider_id,record_date,service_type,discharge_status,answers_enc,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+        track('caloms_records', uuid()), c.id, ep.id, 'admission', null, ep.opened_at.slice(0, 10), '01', null, encrypt(JSON.stringify({ ...CALOMS_BASE, ...answers })), c.worker, c.worker);
+      if (ep.closed_at) {
+        const out = ep.closed_at.slice(0, 10);
+        db.run(`INSERT INTO caloms_records(id,client_id,episode_id,record_type,provider_id,record_date,service_type,discharge_status,answers_enc,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+          track('caloms_records', uuid()), c.id, ep.id, 'discharge', null, out, null, CALOMS_DISCHARGE.discharge_status, encrypt(JSON.stringify({ ...CALOMS_DISCHARGE, last_service_date: out })), supervisor, supervisor);
       }
     }
     db.setSetting('demo_ids', JSON.stringify(ids)); db.setSetting('demo_loaded_at', nowIso);
