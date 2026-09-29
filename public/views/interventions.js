@@ -318,6 +318,11 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   };
   f.inputs.type.addEventListener('change', syncCodeField);
   syncCodeField();
+  // A resumed draft that holds a code (form() puts the fields back, then fires change): its section opens, once.
+  f.addEventListener('change', () => {
+    const sec = f.sections.participant; const i = f.inputs.participant_code;
+    if (sec && i && !sec.hidden && !sec.dataset.shownCode && i.value.trim()) { sec.open = true; sec.dataset.shownCode = '1'; }
+  });
   if (can('budget:read')) {
     const fundSel = f.inputs.funding_source_id, lineSel = f.inputs.budget_line_id;
     const fillLines = () => { const fund = state.funds.find(x => x.id === fundSel.value); lineSel.replaceChildren(h('option', { value: '' }, '— none —'), ...flattenLines(fund ? fund.lines : []).map(l => h('option', { value: l.id, selected: l.id === seed.budget_line_id }, `${'— '.repeat(l._depth)}${l.label || fmt.label(l.category)} (${fmt.money(l.allocated_amount - l.subtree_spent)} left)`))); };
