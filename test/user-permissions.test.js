@@ -107,23 +107,38 @@ test('permissions API: guards', async () => {
   assert.ok(row, 'denied permission change is audited');
 });
 
-test('every permission that widens what a person may read is in READ_SCOPE_PERMS, one list for sync, the device and the benchmark (1.16.1)', () => {
+test('every permission that widens what a person may read is in READ_SCOPE_PERMS, one list for sync, the device and the benchmark (1.16.1)', async () => {
   // They were listed by hand in the sync scope key, the device sign-up's caseload hold and the benchmark: the next
   // one had to be added in three or four places, and a miss leaks data or skips a re-sync.
-  const fs = require('node:fs'); const path = require('node:path');
   const { READ_SCOPE_PERMS, CASELOAD_PERMS, isKnownPermission } = require('../server/permissions');
   const SYNC = require('../server/sync-tables');
   const listed = new Set(Object.keys(READ_SCOPE_PERMS));
   for (const p of listed) assert.ok(isKnownPermission(p), `${p} is a permission`);
   for (const p of CASELOAD_PERMS) assert.ok(listed.has(p), `${p} (the caseload hold) widens reading`);
-  // The sync route's own checks: each permission it asks about is listed, or comes from a table (readPerm, redaction,
-  // unlinked.all), which the scope key adds by itself.
+  // The sync route's own checks: each permission a pull asks about is listed, or comes from a table (readPerm,
+  // redaction, unlinked.all), which the scope key adds by itself. Asked, not read from the source: every
+  // hasPerm call a pull makes, by roles that take each branch (1.16.2; a regex over the file missed helpers).
   const fromTables = new Set(SYNC.tables.flatMap(t => [t.readPerm, t.redact && t.redact.perm, t.unlinked && t.unlinked.all].filter(Boolean)));
+  // The key's other parts, caseload= and counseling=, stand for what auth.caseloadRestricted and
+  // rules/notes readsCounseling ask: those count as keyed too.
+  const asked = new Set(); const keyed = new Set(); const real = auth.hasPerm;
+  const COUNSEL = require('../server/rules/notes');
+  const pullAs = async (role, ...denied) => {
+    const u = H.deny(H.makeUser(`scopeperm_${role}_${denied.length}`, role), ...denied);
+    const c = H.client(); await c.login(u.username, 'StaffPassw0rd!x');
+    let seen = null;
+    auth.hasPerm = (user, p) => { if (user && user.id === u.id) { asked.add(p); seen = user; } return real(user, p); };
+    const config = require('../server/config'); const was = config.localModeEnabled; config.localModeEnabled = true;
+    try { assert.equal((await c.get('/api/sync/pull?since=1970-01-01T00:00:00.000Z')).status, 200); } finally { auth.hasPerm = real; config.localModeEnabled = was; }
+    auth.hasPerm = (user, p) => { keyed.add(p); return real(user, p); };
+    try { auth.caseloadRestricted(seen); COUNSEL.readsCounseling(seen); } finally { auth.hasPerm = real; }
+  };
+  await pullAs('navigator'); await pullAs('navigator', 'clients:all', 'notes:clinical:read'); await pullAs('supervisor'); await pullAs('clinician');
+  asked.delete('clients:read'); // the route's gate (who may sync at all), not how far a pull reaches
+  assert.ok(asked.size >= 3, [...asked].join(', '));
+  for (const p of asked) assert.ok(listed.has(p) || fromTables.has(p) || keyed.has(p), `a sync pull asks about ${p}, which is not in READ_SCOPE_PERMS`);
+  const fs = require('node:fs'); const path = require('node:path');
   const src = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
-  // (The pull half of the file: what follows the push rules' require is who may write, not how far reading reaches.)
-  const pull = src('server/routes/sync.js'); const asked = [...pull.slice(0, pull.indexOf("require('../rules/push')")).matchAll(/hasPerm\([^,()]+,\s*'([^']+)'\)/g)].map(m => m[1]);
-  assert.ok(asked.length >= 3);
-  for (const p of asked) assert.ok(listed.has(p) || fromTables.has(p), `server/routes/sync.js asks about ${p}`);
   assert.match(src('local/kernel.js'), /const SIGNUP_SCOPE = require\('\.\.\/server\/permissions\.js'\)\.CASELOAD_PERMS;/);
   assert.match(src('scripts/bench/run.js'), /const HELD = require\('\.\.\/\.\.\/server\/permissions'\)\.CASELOAD_PERMS;/);
 });

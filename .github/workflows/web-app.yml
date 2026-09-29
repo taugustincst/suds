@@ -73,9 +73,23 @@ jobs:
           for i in $(seq 1 40); do curl -sf http://127.0.0.1:8877/ >/dev/null && break; sleep 0.5; done
           SUDS_STATIC_URL=http://127.0.0.1:8877 node scripts/ui/static-site.mjs
           kill "$(cat /tmp/static.pid)" 2>/dev/null || true
+      # With the `gh-pages` ruleset the owner sets up (docs/RELEASE.md, "Owner: repository settings", step 5), only
+      # the deploy key may update gh-pages, and its private half is a secret of the `release` environment: a job
+      # that did not wait for the owner's approval in that environment (an older ref's copy of this workflow) cannot
+      # read it, and its push with the workflow token is refused. Without the secret, the token pushes, as before.
       - name: Publish to the gh-pages branch
         working-directory: src
+        env:
+          PAGES_DEPLOY_KEY: ${{ secrets.PAGES_DEPLOY_KEY }}
         run: |
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if [ -n "${PAGES_DEPLOY_KEY}" ]; then
+            install -m 700 -d "$HOME/.ssh" && printf '%s\n' "${PAGES_DEPLOY_KEY}" > "$RUNNER_TEMP/pages_key" && chmod 600 "$RUNNER_TEMP/pages_key"
+            # github.com's host keys from the API (over TLS), not trusted on first use.
+            gh api meta --jq '.ssh_keys[]' | sed 's/^/github.com /' > "$HOME/.ssh/known_hosts"
+            export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/pages_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+            remote="git@github.com:${GITHUB_REPOSITORY}.git"
+          fi
           cd _site
           git init -q
           git config user.name "github-actions[bot]"
@@ -84,7 +98,7 @@ jobs:
           touch .nojekyll  # Pages runs everything through Jekyll by default; this app needs none of that
           git add -A
           git commit -q -m "Deploy ${GITHUB_SHA}"
-          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages:gh-pages
+          git push -q --force "${remote}" gh-pages:gh-pages
       - name: Enable GitHub Pages, if it is not already
         run: |
           if gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1; then

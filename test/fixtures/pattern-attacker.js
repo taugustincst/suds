@@ -42,8 +42,13 @@ function runAll(worlds, T) {
   });
 }
 
-/** The leaks: for each printout of an inner world, each hidden count whose values over the worlds left break the rule. */
-function attackAll(worlds, T, { limit = 20 } = {}) {
+/**
+ * The leaks: for each printout of an inner world, each hidden count whose values over the worlds left break the rule.
+ * only(p): the printouts to check, when a family holds every world behind some printouts but not behind others
+ * (a family of one total of events has every world behind a printout that prints that total, not behind one that
+ * hides it).
+ */
+function attackAll(worlds, T, { limit = 20, only = null } = {}) {
   const P = Math.ceil(T / 2);
   const all = runAll(worlds, T);
   const groups = new Map();
@@ -52,6 +57,7 @@ function attackAll(worlds, T, { limit = 20 } = {}) {
   for (const [key, ws] of groups) {
     if (!ws.some(w => w.inner)) continue;
     if (key === 'REFUSED') { refused += ws.filter(w => w.inner).length; continue; }
+    if (only && !only(ws[0].p)) continue;
     checked++;
     const { p } = ws[0]; const m = p.model;
     const gone = new Set(p.withheld_tables);

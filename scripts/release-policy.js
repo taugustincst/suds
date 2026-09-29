@@ -194,11 +194,23 @@ function decide({ prevVersion, nextVersion, diff, override, feature = null, now 
  * would publish a different commit's zip under a released version), or a commit not on the default branch
  * (`onMain` false: a tag on a feature branch with green CI).
  */
-function commitProblems({ version, sha, tagSha = null, onMain = true, mainRef = 'origin/main' }) {
+function commitProblems({ version, sha, tagSha = null, onMain = true, mainRef = 'origin/main', tag = null }) {
   const out = [];
   if (tagSha && tagSha !== sha) out.push(`v${version} is already released at ${tagSha}, not ${sha}: bump the version`);
   if (!onMain) out.push(`${sha} is not on ${mainRef}: only a commit merged to it is released`);
+  // A pushed tag names the version it releases (1.16.2; the release job checked this only after the approval).
+  if (tag && tag !== `v${version}`) out.push(`the tag ${tag} does not match package.json's version ${version}`);
   return out;
+}
+/**
+ * The released commit should be the version-stamp commit, the one that set package.json's version (1.16.2;
+ * docs/RELEASE.md, "The released commit is the version-stamp commit"): a commit after it (1.14.x to 1.16.1: a test
+ * fix) ships under a CHANGELOG section and a stamp that did not see it. A warning, not a refusal: `stampSha` is the
+ * newest commit up to `sha` that changed the version line, null when unknown.
+ */
+function stampWarning({ version, sha, stampSha = null }) {
+  if (!stampSha || stampSha === sha) return null;
+  return `${sha} is not the commit that set package.json's version to ${version} (${stampSha}): commits after the version stamp ship under notes written before them; release the stamp commit, or stamp again after the fix`;
 }
 /** The date a tag was made (an annotated tag's own date; a lightweight tag's commit date), or null. */
 function tagDate(tag) {
@@ -261,15 +273,19 @@ function arg(name) { const i = process.argv.indexOf(name); return i > 0 ? proces
 function main() {
   if (arg('--root')) ROOT = path.resolve(arg('--root'));
   const version = arg('--version') || JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
-  // --sha <commit> [--main <ref>]: the commit being released must be on main, and its version not tagged elsewhere.
+  // --sha <commit> [--main <ref>] [--tag <pushed tag>]: the commit being released must be on main, its version not
+  // tagged elsewhere, and a pushed tag its version; a warning when it is not the version-stamp commit.
   if (arg('--sha')) {
     const git = (...a) => execFileSync('git', a, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     let tagSha = null; try { tagSha = git('rev-parse', '-q', '--verify', `refs/tags/v${version}^{commit}`) || null; } catch { tagSha = null; }
     let onMain = true;
     if (arg('--main')) { try { git('merge-base', '--is-ancestor', arg('--sha'), arg('--main')); } catch { onMain = false; } }
-    const bad = commitProblems({ version, sha: arg('--sha'), tagSha, onMain, mainRef: arg('--main') });
+    const bad = commitProblems({ version, sha: arg('--sha'), tagSha, onMain, mainRef: arg('--main'), tag: arg('--tag') || null });
     for (const b of bad) console.log(`::error::Release refused: ${b}.`);
     if (bad.length) return 1;
+    let stampSha = null; try { stampSha = git('log', '-1', '--format=%H', '-G', '^\\s*"version":', arg('--sha'), '--', 'package.json') || null; } catch { stampSha = null; }
+    const w = stampWarning({ version, sha: arg('--sha'), stampSha });
+    if (w) console.log(`::warning::${w}.`);
   }
   const tags = execFileSync('git', ['tag', '-l', 'v*'], { cwd: ROOT, encoding: 'utf8' }).split('\n').map((s) => s.trim()).filter(Boolean);
   const prev = arg('--previous') || previousTag(tags, version);
@@ -304,4 +320,4 @@ function main() {
 if (require.main === module) {
   try { process.exitCode = main(); } catch (e) { console.log(`::error::The release policy check could not run: ${e.message}`); process.exitCode = 1; }
 }
-module.exports = { parseVersion, compareVersions, bumpKind, previousTag, previousFeatureTag, FEATURE_INTERVAL_DAYS, PATCH_MAX_ADDED_LINES, SIZE_EXEMPT, patchSize, sizeViolation, localRoutes, LOCAL_ROUTE_FILES, diffSurfaces, violations, decide, commitProblems, tagDate, surface, extractRef, measureSize };
+module.exports = { parseVersion, compareVersions, bumpKind, previousTag, previousFeatureTag, FEATURE_INTERVAL_DAYS, PATCH_MAX_ADDED_LINES, SIZE_EXEMPT, patchSize, sizeViolation, localRoutes, LOCAL_ROUTE_FILES, diffSurfaces, violations, decide, commitProblems, stampWarning, tagDate, surface, extractRef, measureSize };

@@ -267,20 +267,12 @@ function buildModel({ funder: raw, perFund, settlement }, T) {
   h.d.forEach((d, m) => { soft([[d, 1], [h.r[m], -1]], '>='); soft([[d, 1], [h.r[m], -DOSES_MAX]], '<='); mirror.push([h.r[m], d]); });
   soft([[Dall, 1], [Dr, -1]], '>='); soft([[Dall, 1], [E, -DOSES_MAX]], '<='); soft([[Dall, 1], [Dr, -1], [E, -DOSES_MAX], [R, DOSES_MAX]], '<=');
   mirror.push([R, Dr], [R, Dall], [E, Dall]);
-  // A published rule (server/sdc.js protect; ADR-0009, "Withheld by rule"): in a period with at least 12T overdose
-  // events, the events by month are withheld from the start whenever a month has 1 to T-1 events, or 1 to T-1
-  // not reversed. Those are small counts worked out from printed ones (beside the reversals by month), which at
-  // that size the check against the method can show protected only by trying every candidate world: too slow
-  // for the degrade step to redo for each world it tries, so a 2,000-client year was refused whole (1.16.0).
-  // The rule reads the months' events too, so that it not firing never says a month's small events were all
-  // reversed. Below 12T events the check settles the months itself, cheaply, as before 1.16.1.
-  const small = (x) => x >= 1 && x < T;
-  const preWithhold = [{ table: 'overdose.by_month.n', when: (vals) => vals[E] >= 12 * T && h.n.some((n, m) => small(vals[n]) || small(vals[n] - vals[h.r[m]])) }];
+  // No table is withheld by a published rule. 1.16.1 withheld the events by month from the start, in a period of at
+  // least 12T events with a small month; its check counted worlds whose own release was refused, and leaked. A
+  // sound check of such a rule cost more than the budget wherever it fired, so 1.16.2 withdrew it (ADR-0009,
+  // "Withheld by rule").
   // The headline, and the counts a reader takes as bounding it, hidden whenever it is (server/sdc.js run).
-  const model = { vars, cons, derived, mirror, watch, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] };
-  // Not enumerable: the model goes back from the audit worker, and a function cannot be posted.
-  Object.defineProperty(model, 'preWithhold', { value: preWithhold });
-  return { model, h };
+  return { model: { vars, cons, derived, mirror, watch, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] }, h };
 }
 
 // FNV-1a (64-bit, as two 32-bit halves): a digest that runs the same in Node and in the browser kernel.

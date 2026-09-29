@@ -116,12 +116,24 @@ release refused rather than publishing unchecked figures (its message asked for 
 year). That was a defect, not the check's designed failure mode: a whole-programme year could not be published.
 Its cause: three months with 1, 2 and 3 overdose events not reversed made the first round's check try every
 candidate world (206 million units), and the degrade step, which re-runs that check for each world it tries, had
-less than one such run left of the budget. Since 1.16.1 that table (overdose events by month) is withheld by a
-published rule whose decision is checked per world in a few operations (docs/architecture/ADR-0009, *Withheld by
-rule*): the same figures publish in about 0.7 s and 77 million units, with only that table withheld
-(`test/fixtures/release-small-programme.json`, `test/publication-release-perf.test.js`); the 20,000-client year is
-unchanged (1,953 units). A refusal for want of budget is now logged with the audit's work (steps, rounds, tables
-degraded), as a backstop refusal was.
+less than one such run left of the budget. 1.16.1 withheld that table (overdose events by month) by a published
+rule and published the year in about 0.7 s and 77 million units, but the rule's check was not sound (it counted
+worlds whose own release was refused, and the attacker found leaks; docs/architecture/ADR-0009, *Withheld by
+rule*). Checked soundly - each such world's own release run - the rule cost more than the budget wherever it
+fired (this year: 55 worlds at about 72 million units each, over 4 billion units), so **1.16.2 withdrew it and
+this year is refused again**, after 400 million units (about 4 to 8 s of one core), as in 1.16.0
+(`test/publication-release-perf.test.js`). A refusal publishes nothing, so it is safe; raising the budget
+fourfold does not help (1.6 billion units: still refused), so neither would a budget floor for the degrade step.
+The 20,000-client year is unaffected (1,953 units). A refusal for want of budget is logged with the audit's work
+(steps, rounds, tables degraded), as a backstop refusal was.
+
+**Which programmes are refused.** Measured for 1.16.2 by scaling this programme's overdose figures (T = 11, 12
+months; 12 scales from 0.2 to 1.5 times, 5 programmes each with every month's events and reversals moved by up
+to 2 at random): 17 of 60 were refused, all for want of budget, all with 126 to 237 overdose events in the year
+and months of 1 to 10 events not reversed; every programme with 125 events or fewer, and every one with 239 or
+more, published. That is the price of publishing only what the check can show protected; the programme's
+submission to its funder is unaffected. What would lift it is a cheaper sound check of such a table (a design
+change for a feature release), not a larger budget.
 
 Server, same run (for the record; the load makes these slower than the table above): Home dashboard, fiscal
 year, administrator 385–500 / 157–194 ms; start-up 365 ms, 81 MB; 50 navigators for 20 s: 100 requests/s, p50/p95
