@@ -352,6 +352,7 @@ function scrollRegions(root) {
     // Whether it scrolls can change after it is drawn (fonts, a sibling growing, a rotation): watch its size.
     if (scrollWatch && !w._a11yWatched) { w._a11yWatched = true; scrollWatch.observe(w); if (w.firstElementChild) scrollWatch.observe(w.firstElementChild); }
     const scrolls = w.scrollHeight > w.clientHeight + 1 || w.scrollWidth > w.clientWidth + 1;
+    if (w.matches('.table-wrap')) sidewaysHint(w, w.scrollWidth > w.clientWidth + 1);
     // Only a control that is showing counts: a table that has collapsed to its phone list hides its own links.
     if (!scrolls || w.hasAttribute('tabindex') || [...w.querySelectorAll(FOCUSABLE)].some(e => e.getClientRects().length)) continue;
     w.tabIndex = 0; w.setAttribute('role', 'region');
@@ -360,6 +361,12 @@ function scrollRegions(root) {
       w.setAttribute('aria-label', `${head ? head.textContent.trim() + ' — ' : ''}${w.matches('pre') ? 'text' : 'table'} (scrolls)`);
     }
   }
+}
+// A table wider than its card said in words above it, not only by a scroll bar some systems hide (r9 L4).
+function sidewaysHint(w, wide) {
+  const hint = w.previousElementSibling && w.previousElementSibling.hasAttribute('data-scroll-hint') ? w.previousElementSibling : null;
+  if (wide && !hint) w.before(h('p', { class: 'small muted scroll-hint', 'data-scroll-hint': '1' }, 'More columns than fit here: scroll the table sideways ', h('span', { 'aria-hidden': 'true' }, '→')));
+  else if (!wide && hint) hint.remove();
 }
 let a11yFrame = 0;
 const scrollWatch = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => scrollCheckSoon());
@@ -505,6 +512,7 @@ function watchDialogs(root) {
   dialogWatch = new MutationObserver(syncInertBehindDialogs);
   dialogWatch.observe(root, { childList: true });
 }
+// cancelText: null for a dialog that only tells (one OK button; Escape and ✕ still close it).
 export function confirmDialog(title, message, { danger = false, okText = 'Confirm', cancelText = 'Cancel', requireReason = false, minLength = 0, maxLength = 0, reasonLabel = null, reasonHint = null } = {}) {
   return new Promise((resolve) => {
     let reason; let answered = false;
@@ -513,7 +521,7 @@ export function confirmDialog(title, message, { danger = false, okText = 'Confir
     const err = h('div', { class: 'err', role: 'alert' });
     const rid = 'confirm-reason-' + Math.random().toString(36).slice(2, 9);
     const m = modal(title, h('div', {}, h('p', {}, message), requireReason ? h('div', { class: 'field' }, h('label', { for: rid }, reasonLabel || `Reason (recorded in audit log${minLength ? `, at least ${minLength} characters` : ''})`), reason = h('input', { id: rid, required: true, minLength: minLength || null, maxLength: maxLength || null }), reasonHint ? h('div', { class: 'small muted' }, reasonHint) : null, err) : null,
-      h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: () => { m.close(); answer(null); } }, cancelText), h('button', { class: `btn ${danger ? 'danger' : 'primary'}`, onClick: () => {
+      h('div', { class: 'btn-row' }, cancelText === null ? null : h('button', { class: 'btn', onClick: () => { m.close(); answer(null); } }, cancelText), h('button', { class: `btn ${danger ? 'danger' : 'primary'}`, onClick: () => {
         if (requireReason) {
           const text = reason.value.trim();
           // Say what is wrong rather than quietly refusing: a too-short reason used to look like a button that did nothing.
@@ -1397,7 +1405,7 @@ export function roleSummary(f, name = 'role') {
 }
 export function pageHead(title, ...actions) {
   const r = parseHash(); const item = NAV.find(n => n.name === r.name);
-  return h('div', { class: 'topbar' }, h('div', { class: 'row', style: { gap: '.4rem' } }, h('h1', {}, title), item?.help ? helpTip(item.help) : null), h('div', { class: 'row' }, actions));
+  return h('div', { class: 'topbar' }, h('div', { class: 'row', style: { gap: '.4rem' } }, h('h1', {}, title), item?.help ? helpTip(typeof item.help === 'function' ? item.help() : item.help) : null), h('div', { class: 'row' }, actions));
 }
 // Small "?" that reveals a plain-language explanation
 export function helpTip(text) {
@@ -1672,12 +1680,12 @@ function firstDayList() {
   return h('div', { 'data-first-day': state.user.role }, h('div', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'baseline' } }, h('h3', {}, 'Your first day'), count), list);
 }
 /** Home's welcome card, or null once put away (unless asked for again from Help). */
-export function welcomeCard({ force = false } = {}) {
+export function welcomeCard({ force = false, experienced = false } = {}) {
   if (paused || (!force && prefs.get('tour_done'))) return null;
   const card = h('section', { class: 'card mb welcome-card', 'data-welcome': '1', 'aria-labelledby': 'welcome-title' },
     h('div', { class: 'card-head' }, h('h2', { id: 'welcome-title' }, 'Welcome to SUDS')),
     h('p', { 'data-welcome-intro': '1' }, welcomeIntro()),
-    firstDayList(),
+    experienced ? null : firstDayList(),
     h('details', { class: 'welcome-tips' }, h('summary', {}, 'A few things that help'),
       h('ul', { class: 'welcome-steps' }, welcomeSteps().map(([t, text]) => h('li', {}, h('b', {}, t), ' — ', text)))),
     h('div', { class: 'row' },
@@ -1790,7 +1798,8 @@ export const NAV = [
   { name: 'clients', team: true, label: 'Clients', ico: '👤', perm: 'clients:read', help: 'Everyone you serve. Open a client to see their whole story in one place.' },
   { name: 'waitlist', team: true, label: 'Waitlist', ico: '⧗', perm: 'clients:read', help: 'People waiting for a place, longest and highest risk first.' },
   { name: 'tasks', team: true, label: 'To-dos', ico: '☑', perm: 'tasks:read', help: 'Your to-dos: follow-ups and reminders. Check a box when it is done.' },
-  { name: 'supervision', team: true, label: 'Supervision', ico: '✍', perm: ['notes:cosign', 'time:approve', 'assignments:manage'], help: 'Notes waiting for your countersignature, drafts your team has not finished, staff time to approve, and referrals with no outcome recorded.' },
+  { name: 'supervision', team: true, label: 'Supervision', ico: '✍', perm: ['notes:cosign', 'time:approve', 'assignments:manage'], help: () => (can('notes:cosign') || can('assignments:manage') ? 'Notes waiting for your countersignature, drafts your team has not finished, staff time to approve, and referrals with no outcome recorded.'
+    : 'Staff time submitted for approval: approve it, or send it back to be corrected.') }, // Finance sees only the time (r9 L7)
   { sec: 'Record work' },
   { name: 'interventions', team: true, label: 'Visits', ico: '✚', perm: 'interventions:read', help: 'Every visit: the face-to-face or phone services you provide — outreach, screenings, warm handoffs, naloxone, transport and more.' },
   { name: 'calls', team: true, label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
@@ -2126,6 +2135,8 @@ export async function loadSession() {
         el.insertBefore(h('a', { href: '#/profile?mfa=1', class: 'btn sm primary', 'data-mfa-setup': '1' }, 'Set up'), el.lastChild);
       }
     }
+    // Set up (or no longer owed): the bar and the header link go now, not at the next reload (r9 M3).
+    if (!state.mfaDue) document.querySelectorAll('#banners [data-banner="mfa-required"], [data-mfa-link]').forEach(b => b.remove());
   } catch { state.user = null; }
 }
 /** Re-read the signed-in user's permission snapshot without signing out (an administrator may have

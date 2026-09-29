@@ -29,7 +29,8 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
     await save(d, true);
     // "Save & sign": the signature step opens straight from the editor, over it; the editor closes once the
     // note is signed (or stays, saved, if the signature is cancelled).
-    if (andSign && noteId) { signNote({ id: noteId }, () => { m.close(); }); return; }
+    // A cancelled signature leaves the saved draft: say so, or it turns up in Unsigned notes as a surprise (r9 L3).
+    if (andSign && noteId) { signNote({ id: noteId }, () => { m.close(); }, { onCancel: () => toast('Not signed: the note is saved as a draft. Sign it when it is complete.', 'ok') }); return; }
     toast('Saved as a draft. Sign it when it is complete.', 'ok'); m.close(); onDone && onDone();
   } });
   // Only the author can sign (a supervisor editing someone else's draft countersigns later instead).
@@ -186,7 +187,8 @@ export async function openNote(id, { onChange } = {}) {
  */
 // fresh: no "you confirmed a few minutes ago" (the key backup, POST /api/admin/keys-backup): the password or
 // code is asked for every time; only a single sign-on confirmation just completed (sso_fresh) stands in for it.
-export async function signatureDialog({ title, intro, submitText, send, done, fields = [], returnTo, verb = 'sign', fresh = false }) {
+export async function signatureDialog({ title, intro, submitText, send, done, fields = [], returnTo, verb = 'sign', fresh = false, onCancel = null }) {
+  let finished = false; // signed, or asking again: not a cancel
   let st = { recent: false, method: 'password' };
   try { st = await get('/api/auth/reauth', { quiet: true }); } catch { /* ask for the password */ }
   if (fresh) st = { ...st, recent: !!st.sso_fresh };
@@ -209,10 +211,10 @@ export async function signatureDialog({ title, intro, submitText, send, done, fi
       try { await send(st.recent ? { ...d, confirm: true } : d); }
       catch (e) {
         // The few minutes ran out while the dialog was open: ask again, keeping what was typed.
-        if (e.data && e.data.reauthRequired && st.recent) { m.close(); open({ recent: false, method: e.data.method || 'password', sso: !!e.data.sso }, e.message); return; }
+        if (e.data && e.data.reauthRequired && st.recent) { finished = true; m.close(); finished = false; open({ recent: false, method: e.data.method || 'password', sso: !!e.data.sso }, e.message); return; }
         throw e;
       }
-      m.close(); done && done();
+      finished = true; m.close(); done && done();
     } });
     const m = modal(title, h('div', { 'data-signature-dialog': st.recent ? 'confirm' : st.method },
       why ? h('div', { class: 'banner warn', role: 'status' }, why) : null,
@@ -223,7 +225,8 @@ export async function signatureDialog({ title, intro, submitText, send, done, fi
         return [h('p', {}, `${fresh ? 'This needs you to confirm it is you each time.' : 'It has been a while since you confirmed it is you.'} Your account signs in through single sign-on, so confirm with the county sign-in. You will come back here and ` + (verb === 'sign' ? 'sign' : 'continue') + ' with one click.'),
           status, h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', onClick: () => m.close() }, 'Cancel'), btn)];
       })() : f,
-      !viaSso && !st.recent && st.sso && st.method === 'password' ? h('div', { class: 'mt' }, ...ssoButton('Confirm with single sign-on instead', false)) : null));
+      !viaSso && !st.recent && st.sso && st.method === 'password' ? h('div', { class: 'mt' }, ...ssoButton('Confirm with single sign-on instead', false)) : null),
+      { onClose: () => { if (!finished && onCancel) onCancel(); } });
   };
   open(st);
 }
@@ -240,18 +243,18 @@ export function ssoReauthNotice(query) {
   if (r) toast(r[0], r[1]);
   return !!r;
 }
-function signNote(n, done) {
+function signNote(n, done, { onCancel = null } = {}) {
   return signatureDialog({ title: 'Electronic signature', submitText: 'Sign note',
     intro: h('p', { 'data-attestation': '1' }, 'By signing you attest that this documentation is accurate and complete. Signed notes cannot be edited or deleted; corrections are made by addendum.'),
     send: (body) => post(`/api/notes/${n.id}/sign`, body), returnTo: `#/notes/${n.id}`,
-    done: () => { toast('Note signed and locked', 'ok'); done(); } });
+    done: () => { toast('Note signed and locked', 'ok'); done(); }, onCancel });
 }
 function addAddendum(n, done) {
   const f = form([{ name: 'reason', label: 'Reason (e.g. late entry, correction)' }, { name: 'content', label: 'Addendum', type: 'textarea', required: true, span: true }], { submitText: 'Add addendum', onCancel: () => m.close(), onSubmit: async (d) => { await post(`/api/notes/${n.id}/addenda`, d); toast('Addendum added', 'ok'); m.close(); done(); } });
   const m = modal('Add addendum', f);
 }
 /** For someone who reads clinical notes but does not write them: SUD counseling notes are not listed (server/routes/notes.js). */
-export const counselingHidden = () => (can('notes:clinical:read') && !can('notes:clinical:write') ? h('div', { class: 'banner small', 'data-counseling-hidden': '1' }, 'SUD counseling notes are visible only to their author, the co-signer and clinical staff, so they are not listed here.') : null);
+export const counselingHidden = () => (can('notes:clinical:read') && !can('notes:clinical:write') ? h('div', { class: 'banner small phone-line', 'data-counseling-hidden': '1' }, h('span', { class: 'wide-only' }, 'SUD counseling notes are visible only to their author, the co-signer and clinical staff, so they are not listed here.'), h('span', { class: 'phone-only' }, 'Counseling notes (§2.11) are not listed.')) : null);
 export function noteTable(rows, { showClient = true, onChange } = {}) {
   // The client code used to be a real <a> inside a cell of a row that is itself a keyboard-focusable
   // "button" (table()'s onRow) — a link nested inside a button, which is invalid and leaves a screen
@@ -283,8 +286,10 @@ route('notes', async (r) => {
   const sSel = h('select', { onChange: () => nav(`notes?status=${sSel.value}&kind=${kind}${mine ? '&mine=1' : ''}`) }, [['', 'Any status'], ['draft', 'Unsigned drafts'], ['signed', 'Signed'], ['amended', 'Amended']].map(([v, l]) => h('option', { value: v, selected: v === status }, l)));
   const kSel = h('select', { onChange: () => nav(`notes?status=${status}&kind=${kSel.value}${mine ? '&mine=1' : ''}`) }, [['', 'All types'], ['admin', 'Administrative'], ['clinical', 'Clinical']].map(([v, l]) => h('option', { value: v, selected: v === kind }, l)));
   return h('div', {},
-    pageHead('Notes', (can('notes:admin:write') || can('notes:clinical:write')) ? h('button', { class: 'btn primary', onClick: () => openNoteForm(null, { onDone: refresh }) }, '+ New note') : null, can('imports:write') ? h('a', { class: 'btn', href: '#/imports' }, 'Import from Pocket AI / OneNote') : null),
+    pageHead('Notes', (can('notes:admin:write') || can('notes:clinical:write')) ? h('button', { class: 'btn primary', onClick: () => openNoteForm(null, { onDone: refresh }) }, '+ New note') : null, can('imports:write') ? h('a', { class: 'btn wide-only', href: '#/imports' }, 'Import from Pocket AI / OneNote') : null,
+      // On a phone Import folds into More, so the first note is higher up the screen (r9 L5).
+      can('imports:write') ? h('details', { class: 'more-menu phone-only', 'data-notes-more': '1' }, h('summary', { class: 'btn' }, 'More'), h('a', { class: 'btn', href: '#/imports' }, 'Import from Pocket AI / OneNote')) : null),
     filterBar([status, kind, mine].filter(Boolean).length, h('div', { class: 'field' }, h('label', {}, 'Status'), sSel), h('div', { class: 'field' }, h('label', {}, 'Type'), kSel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(`notes?status=${status}&kind=${kind}${mine ? '' : '&mine=1'}`) }, 'My notes')),
-    !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are visible only to clinical roles and supervisors.') : counselingHidden(),
+    !can('notes:clinical:read') ? h('div', { class: 'banner small phone-line' }, 'Clinical notes are visible only to clinical roles and supervisors.') : counselingHidden(),
     pagedList({ first: data, url: `/api/notes${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => noteTable(rows, { onChange: refresh }), summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} notes`) }));
 });

@@ -9,15 +9,15 @@ route('profile', async (r) => {
   const mfaBox = h('div', {});
   const renderMfa = () => {
     mfaBox.replaceChildren();
-    if (u.mfa_enabled) mfaBox.append(...[badge('MFA enabled', 'ok'), h('p', { class: 'small muted mt' }, 'Your account requires an authenticator code at sign-in.'), !u.mfa_required ? h('button', { class: 'btn sm danger', onClick: async () => { const f = form([{ name: 'password', label: 'Confirm password', type: 'password', required: true },
+    if (u.mfa_enabled) mfaBox.append(...[badge('2-step verification is on', 'ok'), h('p', { class: 'small muted mt' }, 'Your account requires an authenticator code at sign-in.'), !u.mfa_required ? h('button', { class: 'btn sm danger', onClick: async () => { const f = form([{ name: 'password', label: 'Confirm password', type: 'password', required: true },
       // Both factors: a password on its own must not be able to remove the second one.
-      { name: 'code', label: 'Code from your authenticator app', required: true, pattern: '[0-9]{6}', autocomplete: 'one-time-code', help: 'The 6-digit code the app shows now. If you have lost the app, ask an administrator to reset two-step verification for you.' }], { submitText: 'Disable MFA', onCancel: () => m.close(), onSubmit: async (d) => { await post('/api/auth/mfa/disable', d); m.close(); await loadSession(); render(); } }); const m = modal('Disable MFA', f); } }, 'Disable') : null].filter(Boolean));
-    else mfaBox.append(...[u.mfa_required ? h('div', { class: 'banner warn' }, u.mfa_setup_deadline ? `Your role requires two-step verification. Set it up by ${fmt.date(u.mfa_setup_deadline)} — after that SUDS will not let you in until it is done.` : 'Your role requires two-step verification. Set it up now to keep using SUDS.') : null, h('button', { class: 'btn primary', onClick: enroll }, 'Enroll authenticator app')].filter(Boolean));
+      { name: 'code', label: 'Code from your authenticator app', required: true, pattern: '[0-9]{6}', autocomplete: 'one-time-code', help: 'The 6-digit code the app shows now. If you have lost the app, ask an administrator to reset two-step verification for you.' }], { submitText: 'Turn off 2-step', onCancel: () => m.close(), onSubmit: async (d) => { await post('/api/auth/mfa/disable', d); m.close(); await loadSession(); render(); } }); const m = modal('Turn off 2-step verification', f); } }, 'Turn off 2-step') : null].filter(Boolean));
+    else mfaBox.append(...[u.mfa_required ? h('div', { class: 'banner warn' }, u.mfa_setup_deadline ? `Your role requires two-step verification. Set it up by ${fmt.date(u.mfa_setup_deadline)} — after that SUDS will not let you in until it is done.` : 'Your role requires two-step verification. Set it up now to keep using SUDS.') : null, h('button', { class: 'btn primary', onClick: enroll }, 'Set up 2-step verification')].filter(Boolean));
   };
   async function enroll() {
     const s = await post('/api/auth/mfa/setup', {});
-    const f = form([{ name: 'code', label: 'Enter the 6-digit code from the app', required: true, pattern: '[0-9]{6}', autocomplete: 'one-time-code' }], { submitText: 'Activate MFA', onCancel: () => m.close(), onSubmit: async (d) => { await post('/api/auth/mfa/enable', d); toast('MFA enabled', 'ok'); m.close(); await loadSession(); nav('dashboard'); render(); } });
-    const m = modal('Enroll authenticator', h('div', {}, h('p', {}, '1. Open Microsoft Authenticator, Google Authenticator, or another TOTP app.'), h('p', {}, '2. Scan this QR code, or add an account manually with the secret key:'), h('div', { class: 'center mb' }, qrSvg(s.otpauth, { size: 220 })), h('div', { class: 'qr' }, s.secret.match(/.{1,4}/g).join(' ')), h('p', { class: 'small muted' }, h('a', { href: s.otpauth }, 'Open in authenticator app (on this device)')), h('p', {}, '3. Enter the code shown by the app:'), f));
+    const f = form([{ name: 'code', label: 'Enter the 6-digit code from the app', required: true, pattern: '[0-9]{6}', autocomplete: 'one-time-code' }], { submitText: 'Turn on 2-step', onCancel: () => m.close(), onSubmit: async (d) => { await post('/api/auth/mfa/enable', d); toast('2-step verification is on', 'ok'); m.close(); await loadSession(); nav('dashboard'); render(); } });
+    const m = modal('Set up 2-step verification', h('div', {}, h('p', {}, '1. Open Microsoft Authenticator, Google Authenticator, or another TOTP app.'), h('p', {}, '2. Scan this QR code, or add an account manually with the secret key:'), h('div', { class: 'center mb' }, qrSvg(s.otpauth, { size: 220 })), h('div', { class: 'qr' }, s.secret.match(/.{1,4}/g).join(' ')), h('p', { class: 'small muted' }, h('a', { href: s.otpauth }, 'Open in authenticator app (on this device)')), h('p', {}, '3. Enter the code shown by the app:'), f));
   }
   renderMfa();
   if (mfaPrompt && !u.mfa_enabled) setTimeout(enroll, 0);
@@ -46,7 +46,7 @@ route('profile', async (r) => {
       h('div', { class: 'card' }, h('h2', {}, 'Account'), kv([['Name', u.display_name], ['Username', u.username], ['Role', fmt.label(u.role)], ['Title', u.title], ['Email', u.email], ['Caseload', u.caseload_restricted ? 'Assigned clients only' : 'All clients']]),
         h('p', { class: 'small mt' }, h('button', { class: 'btn sm', 'data-refresh-permissions': '1', onClick: async (e) => { e.target.disabled = true; await refreshPermissions(); toast('Permissions refreshed', 'ok'); } }, 'Refresh permissions'), ' ',
           h('span', { class: 'muted' }, 'If an administrator changed what you can do, pick it up without signing out.'))),
-      h('div', { class: 'card' }, h('h2', {}, 'Multi-factor authentication'), mfaBox),
+      h('div', { class: 'card' }, h('h2', {}, '2-step verification'), mfaBox),
       h('div', { class: 'card' }, h('h2', {}, 'Change password'), pw),
       reminders,
       shortcuts,

@@ -58,10 +58,10 @@ route('reports', async (r) => {
   const outcomesCard = () => h('div', { class: 'card mb', 'data-outcomes-report': '1' },
     h('div', { class: 'card-head' }, h('h2', {}, 'Outcome measures'), can('export:read') ? h('button', { class: 'btn sm', 'data-export-outcomes': '1', onClick: () => downloadCsv(`/api/reports/outcomes/export?from=${from}&to=${to}`) }, 'Export (de-identified CSV)') : null),
     h('p', { class: 'small muted' }, 'Baseline is each client\'s first administration in the period and latest their last; only clients screened at least twice count toward change. Improved means the score moved in the better direction (lower for PHQ-9, GAD-7, AUDIT-C and DAST-10; higher for wellbeing).'),
-    table([{ label: 'Measure', key: 'name' }, { label: 'Clients screened', key: 'clients_screened', num: true }, { label: 'Screened twice or more', key: 'clients_with_followup', num: true },
-      { label: 'Mean baseline', render: x => x.mean_baseline ?? '—', num: true }, { label: 'Mean latest', render: x => x.mean_latest ?? '—', num: true }, { label: 'Mean change', render: x => x.mean_change ?? '—', num: true },
+    table([{ label: 'Measure', key: 'name' }, { label: 'Screened', key: 'clients_screened', num: true }, { label: 'Screened 2+ times', key: 'clients_with_followup', num: true },
+      { label: 'Baseline (mean)', render: x => x.mean_baseline ?? '—', num: true }, { label: 'Latest (mean)', render: x => x.mean_latest ?? '—', num: true }, { label: 'Change (mean)', render: x => x.mean_change ?? '—', num: true },
       { label: 'Improved', render: x => (x.pct_improved === null ? '—' : `${x.improved} (${x.pct_improved}%)`), num: true }, { label: 'Worse', key: 'worse', num: true }, { label: 'Unchanged', key: 'unchanged', num: true },
-      { label: 'Positive at baseline → latest', render: x => (x.clients_with_followup ? `${x.positive_at_baseline} → ${x.positive_at_latest}` : '—') }, { label: 'PHQ-9 safety alerts', render: x => (x.instrument === 'phq9' ? String(x.safety_flags) : '') }],
+      { label: 'Positive: first → last', render: x => (x.clients_with_followup ? `${x.positive_at_baseline} → ${x.positive_at_latest}` : '—') }, { label: 'PHQ-9 alerts', render: x => (x.instrument === 'phq9' ? String(x.safety_flags) : '') }],
       oc.instruments, { empty: 'No outcome measures in this period.' }));
   // Admissions and discharges in the period (GET /api/episodes). A client code opens the client only for a
   // role that can open client records.

@@ -427,8 +427,22 @@ try {
 
   // ------------------------------------------------------------------------------- 20: your first day
   {
-    for (const [who, pw, role] of [['mrivera', PW, 'navigator'], ['jwalker', PW, 'supervisor'], ['admin', 'AdminPassw0rd!x', null]]) {
-      const s = await session(who, pw, { viewport: { width: 1280, height: 900 } }, { tour_done: false, first_day: null });
+    // A navigator on their first day: a new account with no visits yet (mrivera has logged visits before today,
+    // so is not shown the list, r9 L6: scripts/ui/r9.mjs).
+    // Made with a few bare requests, not a signed-in page (this script runs close to the API's per-minute limit).
+    const temp = 'TempPassw0rd!2026';
+    { const ctx = await browser.newContext(); const p = await ctx.newPage(); await p.goto(base + '/api/health');
+      const made = await p.evaluate(async ({ temp, PW }) => { const H = { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' };
+        const call = (path, body) => fetch(path, { method: 'POST', headers: H, body: JSON.stringify(body) });
+        await call('/api/auth/login', { username: 'admin', password: 'AdminPassw0rd!x' });
+        const u = (await call('/api/users', { username: 'uxfirstday', display_name: 'First Day', role: 'navigator', password: temp })).status;
+        await call('/api/auth/logout', {});
+        await call('/api/auth/login', { username: 'uxfirstday', password: temp });
+        return [u, (await call('/api/auth/password', { current_password: temp, new_password: PW })).status]; }, { temp, PW });
+      eq(made.join(','), '201,200', 'an administrator adds a navigator, who sets their own password');
+      await ctx.close(); }
+    for (const [who, pw, role] of [['uxfirstday', PW, 'navigator'], ['jwalker', PW, 'supervisor'], ['admin', 'AdminPassw0rd!x', null]]) {
+      const s = await session(who, pw, { viewport: { width: 1280, height: 900 } }, { tour_done: false, first_day: null, first_day_skip: null });
       await s.go('dashboard');
       ok(await s.page.$('[data-welcome]'), `${who}: the welcome card is on Home the first time`);
       if (role) {

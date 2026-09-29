@@ -581,3 +581,15 @@ kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fon
 .welcome-tips { margin-bottom: .75rem; }
 /* A tab strip that wraps rather than scrolls (Settings, 1.15.3): every tab stays inside the page at 200% zoom. */
 .tabs.wrapped { flex-wrap: wrap; overflow: visible; row-gap: 0; -webkit-mask-image: none; mask-image: none; scroll-snap-type: none; }
+/* One control or line for a phone, another for wider screens (r9 L5): Notes' Import folds into More. */
+.phone-only { display: none; }
+@media (max-width: 640px) {
+  .wide-only { display: none !important; }
+  .phone-only { display: revert; }
+  .banner.phone-line { padding-top: .3rem; padding-bottom: .3rem; }
+}
+details.more-menu > summary { list-style: none; } details.more-menu > summary::-webkit-details-marker { display: none; }
+details.more-menu > summary::after { content: " ▾" / ""; } details.more-menu[open] > summary::after { content: " ▴" / ""; }
+details.more-menu[open] { flex-basis: 100%; } details.more-menu > a { margin-top: .4rem; }
+/* A table wider than its card (r9 L4): said above it, in words. */
+.scroll-hint { margin: 0 0 .3rem; }

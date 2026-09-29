@@ -292,6 +292,6 @@ route('supervision', async (r) => {
     pageHead('Supervision'),
     tabs,
     glassCount ? h('div', { class: 'banner error', role: 'alert' }, `${plural(glassCount, 'emergency access or re-admission', 'emergency accesses and re-admissions')} ${glassCount === 1 ? 'is' : 'are'} waiting for review. `, h('a', { href: '#/supervision?tab=breakglass' }, 'Review now')) : null,
-    h('p', { class: 'muted' }, can('notes:cosign') ? 'Work that is waiting on you: countersignatures, unsigned notes, staff time, and referrals that have not closed the loop.' : 'Work that is waiting on you: staff time to approve, and anything else your role reviews.'),
+    h('p', { class: 'muted' }, can('notes:cosign') ? 'Work that is waiting on you: countersignatures, unsigned notes, staff time, and referrals that have not closed the loop.' : can('assignments:manage') ? 'Work that is waiting on you: staff time to approve, and anything else your role reviews.' : 'Staff time submitted for approval: approve it, or send it back to be corrected.'),
     page);
 });
