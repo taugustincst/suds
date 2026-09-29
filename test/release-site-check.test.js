@@ -121,7 +121,7 @@ test('web-app.yml\'s publish job checks the site against the tag, with the tag\'
   const check = publish.indexOf('node tag/scripts/release-site-check.js tag site');
   assert.ok(check > publish.indexOf('mkdir site && tar -xf in/site.tar') && check < publish.indexOf('git push -q --force'), 'after the unpack, before the push');
   assert.match(publish, /git init -q --bare tag\.git\n/);
-  assert.match(publish, /git --git-dir=tag\.git archive "\$\{GITHUB_SHA\}" public server\/csp\.js scripts\/build-static-site\.js scripts\/static-site-security\.js scripts\/release-site-check\.js \| tar -x -C tag/);
+  assert.match(publish, /git --git-dir=tag\.git archive "\$\{GITHUB_SHA\}" public server\/csp\.js scripts\/build-static-site\.js scripts\/static-site-security\.js scripts\/release-site-check\.js scripts\/pages-version-check\.js \| tar -x -C tag/);
   // Exactly the files the check loads: it runs with nothing else of the tag, and no node_modules (test above).
   const req = (f) => [...fs.readFileSync(path.join(root, f), 'utf8').matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]).filter((m) => !m.startsWith('node:'));
   assert.deepEqual(req('scripts/static-site-security.js'), ['../server/csp']);
