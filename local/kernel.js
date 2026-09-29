@@ -9,6 +9,8 @@ import idempotency from '../server/idempotency.js';
 import * as sync from './sync.js';
 import * as backup from './backup.js';
 import * as vault from './vault.js';
+import { auditRunner } from './audit-runner.js';
+import publicationRelease from '../server/publication-release.js';
 import { gcm } from '@noble/ciphers/aes';
 
 // The list itself comes from the server so the two cannot drift; only the loaders live here, because
@@ -440,8 +442,11 @@ async function lockedAnswer(method, path, body) {
   return refused(401, 'This device is locked. Sign in to continue.');
 }
 
-export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
+export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, force } = {}) {
   await sqlite.init(wasmUrl);
+  // A publication release's audit runs in a Web Worker (public/local/audit-worker.js), not on this page's thread
+  // (local/audit-runner.js; server/publication-release.js falls back to the page where no worker can start).
+  if (auditWorkerUrl) publicationRelease.setDeviceAuditRunner(auditRunner(auditWorkerUrl));
 
   // Only one page may write this device's database: every save writes the whole of it, so two pages would
   // erase each other's work. A page that cannot get the lock is told so and the person chooses; the one

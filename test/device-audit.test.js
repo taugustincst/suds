@@ -63,7 +63,7 @@ test('the kernel assets are served precompressed and, when versioned, as immutab
   const config = require('../server/config'); const was = config.localModeEnabled; config.localModeEnabled = true;
   try {
   const pub = path.join(__dirname, '..', 'public', 'local');
-  for (const f of ['kernel.js', 'sql-wasm.wasm']) {
+  for (const f of ['kernel.js', 'sql-wasm.wasm', 'audit-worker.js']) {
     assert.ok(fs.existsSync(path.join(pub, f + '.gz')), `${f}.gz is built and committed (npm run build:local)`);
     assert.ok(fs.existsSync(path.join(pub, f + '.br')), `${f}.br is built and committed (npm run build:local)`);
     // The compressed copies are of the committed file, not a stale one.
@@ -95,6 +95,9 @@ test('app.js requests the kernel with the release version, and the service worke
   const sw = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
   assert.match(sw, /local\/kernel\.js\?v=\$\{KERNEL_VERSION\}/, 'the service worker precaches the versioned kernel URL');
   assert.match(sw, /local\/sql-wasm\.wasm\?v=\$\{KERNEL_VERSION\}/);
+  // The publication audit's Web Worker (1.17.0): started with the version query, precached under the same URL.
+  assert.match(appJs, /auditWorkerUrl: new URL\(`\.\/local\/audit-worker\.js\?v=\$\{SUDS_VERSION\}`/, 'the audit worker is started with the version query');
+  assert.match(sw, /local\/audit-worker\.js\?v=\$\{KERNEL_VERSION\}/, 'the service worker precaches the versioned audit worker URL');
 });
 
 test('a background request does not keep a session alive', async () => {

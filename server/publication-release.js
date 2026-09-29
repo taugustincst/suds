@@ -15,9 +15,10 @@
 //
 // The audit runs in a worker thread (server/release-audit-worker.js), so a year's release does not stop the
 // server answering anyone else while it is checked; in the browser kernel (local mode), which has no worker
-// threads, and when SUDS_AUDIT_INLINE=1, it runs inline (the tests' API calls use the worker, as the server
-// does). A wall-clock backstop (release-audit.js AUDIT_BACKSTOP_MS) protects the server from a runaway audit:
-// a release it stops is refused and logged.
+// threads, it runs in a Web Worker (setDeviceAuditRunner, below; 1.17.0), and inline where the page cannot start
+// one or when SUDS_AUDIT_INLINE=1 (the tests' API calls use the worker thread, as the server does). A wall-clock
+// backstop (release-audit.js AUDIT_BACKSTOP_MS) protects the server from a runaway audit: a release it stops is
+// refused and logged.
 //
 // A table the audit cannot show protected is withheld (listed, with why, in release.withheld_reasons) and the
 // rest is published; the whole release is refused (422) only when even the headline (people served) cannot
@@ -68,7 +69,7 @@ function auditWorker() {
   return w;
 }
 // How many audits ran where (the tests check that theirs ran in the worker, as the server's do).
-const auditStats = { worker: 0, inline: 0 };
+const auditStats = { worker: 0, inline: 0, device: 0 };
 /** Send pending audit `id` to the current worker, with its own backstop. */
 function dispatch(id) {
   const p = pending.get(id); if (!p) return;
@@ -89,14 +90,41 @@ function timedOut(id) {
   for (const qid of queued) dispatch(qid);
   w.terminate().catch(() => {});
   console.warn(`[suds] a publication release audit did not answer within ${Math.round(backstopMs / 1000)} s; its worker was stopped and the release refused${queued.length ? ` (${queued.length} other audit(s) moved to a new worker)` : ''}`);
-  p.resolve({ refused: { out_of_budget: true, backstop: true, message: RA.refusalMessage({ backstop: true }, ((p.msg.inputs.domains && p.msg.inputs.domains.months) || []).length) } });
+  p.resolve(backstopRefusal(p.msg.inputs));
+}
+/** A release refused because its audit did not answer within the backstop (server worker or device worker). */
+function backstopRefusal(inputs) {
+  return { refused: { out_of_budget: true, backstop: true, message: RA.refusalMessage({ backstop: true }, ((inputs.domains && inputs.domains.months) || []).length) } };
+}
+// ---- on a device ----
+// The browser kernel has no worker threads, and its requests are answered on the page's own thread. Where the
+// page can start a Web Worker, local/kernel.js hands this module a runner that audits in one (local/audit-runner.js,
+// public/local/audit-worker.js), so a year's release does not hold the page (1.17.0; before, the audit ran on the
+// page's thread for up to the backstop). Where it cannot (no Web Workers, or the worker's script does not load),
+// the audit runs on the page as before. The same code and the same budget either way: the release a device
+// makes is the one the office makes of the same figures (test/kernel-parity.test.js).
+let deviceRunner = null;
+/** local/kernel.js: the Web Worker runner for this device's audits (null: audit on the page). */
+function setDeviceAuditRunner(fn) { deviceRunner = typeof fn === 'function' ? fn : null; clearCache(); }
+function inlineAudit(inputs, T, opts) {
+  auditStats.inline++;
+  return new Promise((resolve) => require('./spreadsheet').defer(resolve)).then(() => RA.protectFigures(inputs, T, opts));
 }
 /** The audit of one release's figures, off the main thread where there is one. */
 function runAudit(inputs, T) {
   const opts = { ...auditOptions };
-  // Inline (the browser kernel, which has no worker threads), after letting the event loop go once, so the page
-  // can paint between the read and the audit (docs/architecture/ADR-0009, "Where it runs").
-  if (inline()) { auditStats.inline++; return new Promise((resolve) => require('./spreadsheet').defer(resolve)).then(() => RA.protectFigures(inputs, T, opts)); }
+  // On a device, in its Web Worker where it has one; otherwise inline (the browser kernel without one, or
+  // SUDS_AUDIT_INLINE=1), after letting the event loop go once, so the page can paint between the read and the
+  // audit (docs/architecture/ADR-0009, "Where it runs").
+  if (inline()) {
+    if (!deviceRunner) return inlineAudit(inputs, T, opts);
+    auditStats.device++;
+    return deviceRunner(inputs, T, opts).catch((e) => {
+      if (e && e.code === 'SUDS_NO_WORKER') return inlineAudit(inputs, T, opts);
+      if (e && e.code === 'SUDS_AUDIT_BACKSTOP') { console.warn('[suds] a publication release audit did not answer within the backstop on this device; its worker was stopped and the release refused'); return backstopRefusal(inputs); }
+      throw e;
+    });
+  }
   auditStats.worker++;
   return new Promise((resolve, reject) => {
     const id = ++seq;
@@ -150,8 +178,32 @@ function dataVersion() {
 // Releases by (threshold, period, data version): the pending or finished release (a promise), kept CACHE_MS.
 const released = new Map();
 
+/**
+ * A refused release, as the audit log records it (1.17.0): why (budget, backstop, headline, or unprotected: the
+ * release with tables withheld still failed its check), how many counts the check could not show protected, the
+ * tables it had withheld before it gave up, and the audit's work. Table names, reason codes and counts of work
+ * only, never a count of people.
+ */
+function refusalDetails(p) {
+  const r = p.refused || {};
+  return {
+    reason: r.backstop ? 'backstop' : r.out_of_budget ? 'budget' : r.headline ? 'headline' : 'unprotected',
+    unprotected: r.unprotected || 0, withheld: p.withheld_tables || [], ...(p.audit ? { steps: p.audit.steps, rounds: p.audit.rounds } : {}),
+  };
+}
+
 /** The release for a period, and each report's part of it. counting: FR.countingMode for a publication run. */
 async function release(ctx, range, counting) {
+  try { return await releaseOf(ctx, range, counting); } catch (e) {
+    // Every report asked of a refused release records the refusal, with why and what it had withheld (the reports
+    // that print a release record its id and withheld tables: FR.releaseAuditDetails).
+    if (e && e.status === 422 && e.extra && e.extra.code === 'publication_refused') {
+      require('./audit').log({ user: ctx.user, action: 'report.publication.refused', ip: ctx.ip, success: false, details: { path: ctx.path, from: range.from, to: range.to, threshold: counting.threshold, ...(e.refusal || refusalDetails({})) } });
+    }
+    throw e;
+  }
+}
+async function releaseOf(ctx, range, counting) {
   const T = counting.threshold;
   // One snapshot of the data for everything the release reads. Where there is a second connection to read it
   // from, the read lets the event loop go between its phases; elsewhere it runs straight through (db.readSnapshot).
@@ -196,8 +248,14 @@ async function assemble({ raw, perFund, settle, dist, domains, ndpSettings }, ra
   const HR = require('./harm-reduction-reports');
   const T = counting.threshold;
   const p = await audited({ funder: raw, perFund, settlement: settle, domains }, T);
-  if (p.refused) throw new HttpError(422, p.refused.message, { code: 'publication_refused', ...(p.refused.backstop ? { backstop: true } : {}) });
-  const rel = { ...counting.release, id: p.id, reports: ['funder', 'naloxone-ndp', 'opioid-settlement'], withheld: p.withheld_tables, withheld_reasons: p.withheld_reasons };
+  if (p.refused) {
+    const e = new HttpError(422, p.refused.message, { code: 'publication_refused', ...(p.refused.backstop ? { backstop: true } : {}) });
+    // What the audit log records of the refusal (not sent to the person: they have the message).
+    e.refusal = refusalDetails(p);
+    throw e;
+  }
+  // not_published: what no publication release prints, whatever the figures (a choice of method: RA.NOT_PUBLISHED).
+  const rel = { ...counting.release, id: p.id, reports: ['funder', 'naloxone-ndp', 'opioid-settlement'], withheld: p.withheld_tables, withheld_reasons: p.withheld_reasons, not_published: RA.NOT_PUBLISHED };
   const withRelease = (d) => ({ ...d, release: rel });
   const { fundKeys, ...s } = settle;
   return {
@@ -209,4 +267,4 @@ async function assemble({ raw, perFund, settle, dist, domains, ndpSettings }, ra
   };
 }
 
-module.exports = { release, runAudit, auditStats, dataVersion, VERSION_TABLES, setAuditOptions, clearCache, _setWorkerForTests, protectFigures: RA.protectFigures, buildModel: RA.buildModel, prepare: RA.prepare, digest: RA.digest, monthsOf: RA.monthsOf, AUDIT_BACKSTOP_MS: RA.AUDIT_BACKSTOP_MS };
+module.exports = { release, runAudit, auditStats, setDeviceAuditRunner, dataVersion, VERSION_TABLES, setAuditOptions, clearCache, _setWorkerForTests, protectFigures: RA.protectFigures, buildModel: RA.buildModel, prepare: RA.prepare, digest: RA.digest, monthsOf: RA.monthsOf, AUDIT_BACKSTOP_MS: RA.AUDIT_BACKSTOP_MS };

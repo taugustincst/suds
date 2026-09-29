@@ -277,8 +277,11 @@ route('funder', async (r) => {
       // A publication release lists every code and every month, zero or not; nothing to draw if all are 0.
       d.overdose.by_administered_by.some(x => x.n !== 0) ? h('div', { class: 'grid cols-2 mt' },
         h('div', {}, h('h2', {}, 'Who gave the naloxone (reversals)'), bars(d.overdose.by_administered_by, { valueKey: 'n', labelKey: 'k', list: 'ADMINISTERED_BY' })),
-        h('div', {}, h('h2', {}, 'By month'), bars(d.overdose.by_month.map(x => ({ k: x.month, n: x.n })), { valueKey: 'n', labelKey: 'k' }))) : null,
-      withheldNote(['by_administered_by', 'by_month'], 'Who gave the naloxone, or the overdoses by month, are withheld: they could not be shown without giving someone away.'),
+        // A publication release gives the reversals by month, not the events (server/release-audit.js NOT_PUBLISHED).
+        publishable ? h('div', {}, h('h2', {}, 'Reversals by month'), bars(d.overdose.by_month.map(x => ({ k: x.month, n: x.reversals })), { valueKey: 'n', labelKey: 'k' }))
+          : h('div', {}, h('h2', {}, 'By month'), bars(d.overdose.by_month.map(x => ({ k: x.month, n: x.n })), { valueKey: 'n', labelKey: 'k' }))) : null,
+      withheldNote(['by_administered_by', 'by_month'], publishable ? 'Who gave the naloxone, or the reversals by month, are withheld: they could not be shown without giving someone away.' : 'Who gave the naloxone, or the overdoses by month, are withheld: they could not be shown without giving someone away.'),
+      ((publishable && d.release && d.release.not_published) || []).map(x => h('p', { class: 'small muted', 'data-not-published': x.table }, `${x.label}: not part of a publication release. ${x.why}`)),
       d.suppression.mode === 'exact' ? null : h('p', { class: 'small muted', 'data-suppression-note': '1' }, `"<${d.suppression.threshold}" is a count of fewer than ${d.suppression.threshold} people; "suppressed" is hidden so that such a count cannot be worked out from the other figures. Kits and test strips are not counts of people and are exact; doses are hidden when they would show how many reversals there were.`)),
 
     h('section', { class: 'card' },

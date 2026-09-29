@@ -60,7 +60,14 @@ function figuresOf({ people, anon = {}, events = [], discharges = [], episodes =
       raw.fund_fold = folded.fold; combined = folded.fold.members;
     }
   }
-  return { inputs: { funder: raw, perFund, settlement, domains }, inactiveFunds, fundTruth, combined, funds, range: { from: `${period[0]}-01`, to: lastDay(period[period.length - 1]) } };
+  // Each month's true events and events not reversed: since 1.17.0 a publication release does not print the events
+  // by month, so these are counts printed nowhere, which the attacker holds to the rule (pattern-attacker.js).
+  const monthTruth = {};
+  for (const m of period) {
+    const n = events.filter(e => e.month === m).length; const r = events.filter(e => e.month === m && e.reversed).length;
+    monthTruth[`overdose.${m}.events`] = n; monthTruth[`overdose.${m}.not_reversed`] = n - r;
+  }
+  return { inputs: { funder: raw, perFund, settlement, domains }, inactiveFunds, fundTruth, monthTruth, combined, funds, range: { from: `${period[0]}-01`, to: lastDay(period[period.length - 1]) } };
 }
 
 const person = (over = {}) => ({ gender: 'm', language: 'en', housing: 'u', insurance: 'a', ethnicity: 'u', race: [], visits: { C: 1 }, ...over });
@@ -70,7 +77,7 @@ const person = (over = {}) => ({ gender: 'm', language: 'en', housing: 'u', insu
 const plain = (over = {}) => person({ visits: {}, ...over });
 const many = (n, f) => Array.from({ length: n }, (_, i) => f(i));
 /** [label, spec, size] -> { label, inputs, inner }: inner when its size is at most `inner`. */
-const worldsOf = (list, inner = Infinity) => list.map(([label, spec, size]) => ({ label, inner: size <= inner, inputs: figuresOf({ funds: [], ...spec }).inputs }));
+const worldsOf = (list, inner = Infinity) => list.map(([label, spec, size]) => { const prog = figuresOf({ funds: [], ...spec }); return { label, inner: size <= inner, inputs: prog.inputs, monthTruth: prog.monthTruth }; });
 
 /**
  * Small families of worlds, each every programme of its shape up to a size (`outer`): what an attacker who
@@ -119,6 +126,50 @@ const pattern = {
     }
     return worldsOf(out, 0);
   },
+  // Since 1.17.0 a publication release prints the reversals by month and the period's totals, not the events by month:
+  // each month's events, and its events not reversed, are counts printed nowhere (the attacker holds them to the rule
+  // from each world's monthTruth). Three months, events and reversals in each.
+  months3: (inner, outer) => {
+    const out = []; const ev = (month, n, r) => many(n, i => ({ month, reversed: i < r, by: 'staff', doses: i < r ? 1 : 0 }));
+    const period = ['2025-01', '2025-02', '2025-03'];
+    for (let a = 0; a <= outer; a++) for (let b = 0; a + b <= outer; b++) for (let c = 0; a + b + c <= outer; c++) {
+      for (let ra = 0; ra <= a; ra++) for (let rb = 0; rb <= b; rb++) for (let rc = 0; rc <= c; rc++) {
+        out.push([`E=${a}+${b}+${c} R=${ra}+${rb}+${rc}`, { period, people: many(30, () => plain()), events: [...ev(period[0], a, ra), ...ev(period[1], b, rb), ...ev(period[2], c, rc)] }, a + b + c]);
+      }
+    }
+    return worldsOf(out, inner);
+  },
+  // Two months, each event reversed, fatal or neither (fatal and reversed are never both), and (community) one of
+  // month 1's reported from the community or none: the period's fatal and community-reported totals beside the
+  // reversals by month bound the months' events not reversed too.
+  monthsOutcome: (inner, outer, community = true) => {
+    const out = []; const period = ['2025-01', '2025-02'];
+    const ev = (month, r, f, n, c) => [...many(r, () => ({ month, reversed: true, by: 'staff', doses: 1 })), ...many(f, () => ({ month, fatal: true, by: 'staff', doses: 0 })), ...many(n, () => ({ month, by: 'staff', doses: 0 }))]
+      .map((e, i) => ({ ...e, community: i < c }));
+    for (let r1 = 0; r1 <= outer; r1++) for (let f1 = 0; r1 + f1 <= outer; f1++) for (let n1 = 0; r1 + f1 + n1 <= outer; n1++) {
+      for (let r2 = 0; r1 + f1 + n1 + r2 <= outer; r2++) for (let f2 = 0; r1 + f1 + n1 + r2 + f2 <= outer; f2++) for (let n2 = 0; r1 + f1 + n1 + r2 + f2 + n2 <= outer; n2++) {
+        const E = r1 + f1 + n1 + r2 + f2 + n2;
+        // The community-reported events: none, or the first of month 1's (a reader does not know which).
+        for (const c of community ? [0, 1] : [0]) {
+          if (c > r1 + f1 + n1) continue;
+          out.push([`M1 r${r1} f${f1} n${n1} c${c} M2 r${r2} f${f2} n${n2}`, { period, people: many(30, () => plain()), events: [...ev(period[0], r1, f1, n1, c), ...ev(period[1], r2, f2, n2, 0)] }, E]);
+        }
+      }
+    }
+    return worldsOf(out, inner);
+  },
+  // Two months, each reversal recorded with one or two doses of naloxone: the doses by month bound the reversals by
+  // month (at least one per reversal, at most NALOXONE_DOSES_MAX), and all doses bound the events.
+  monthsDoses: (inner, outer) => {
+    const out = []; const period = ['2025-01', '2025-02'];
+    const ev = (month, one, two, n) => [...many(one, () => ({ month, reversed: true, by: 'staff', doses: 1 })), ...many(two, () => ({ month, reversed: true, by: 'staff', doses: 2 })), ...many(n, () => ({ month, by: 'staff', doses: 0 }))];
+    for (let a1 = 0; a1 <= outer; a1++) for (let b1 = 0; a1 + b1 <= outer; b1++) for (let n1 = 0; a1 + b1 + n1 <= outer; n1++) {
+      for (let a2 = 0; a1 + b1 + n1 + a2 <= outer; a2++) for (let b2 = 0; a1 + b1 + n1 + a2 + b2 <= outer; b2++) for (let n2 = 0; a1 + b1 + n1 + a2 + b2 + n2 <= outer; n2++) {
+        out.push([`M1 1x${a1} 2x${b1} n${n1} M2 1x${a2} 2x${b2} n${n2}`, { period, people: many(30, () => plain()), events: [...ev(period[0], a1, b1, n1), ...ev(period[1], a2, b2, n2)] }, a1 + b1 + n1 + a2 + b2 + n2]);
+      }
+    }
+    return worldsOf(out, inner);
+  },
   // Race codes, a cover (a person may report several, so the codes add up to at least the people served): people
   // with code a alone, b alone, both, and none reported ("unknown"). Every set of codes a person can have is in
   // the family, so it tells its attacker no more than a reader knows (a is at most the people served, a, b and
@@ -147,7 +198,7 @@ const pattern = {
       if (!(a + b + ab + c)) continue;
       const spec = { funds, fold: { T, keep }, anon: e ? { A: e } : {}, people: [...many(a, () => plain({ visits: { A: 1 } })), ...many(b, () => plain({ visits: { B: 1 } })), ...many(ab, () => plain({ visits: { A: 1, B: 1 } })), ...many(c, () => plain())] };
       const prog = figuresOf(spec);
-      out.push({ label: `A=${a} B=${b} AB=${ab} none=${c} extra=${e}`, inner: a + b + ab + c <= inner && e <= extra[0], inputs: prog.inputs, fundTruth: prog.fundTruth, combined: prog.combined });
+      out.push({ label: `A=${a} B=${b} AB=${ab} none=${c} extra=${e}`, inner: a + b + ab + c <= inner && e <= extra[0], inputs: prog.inputs, fundTruth: prog.fundTruth, monthTruth: prog.monthTruth, combined: prog.combined });
     }
     return out;
   },

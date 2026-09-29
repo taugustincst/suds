@@ -1,7 +1,7 @@
 'use strict';
 // The audit of a publication release as a pure function of its figures (server/publication-release.js reads the
-// figures and serves the result; there it runs in a worker thread, as it does for the tests' API calls, and
-// inline in the browser kernel and in the tests that call it directly).
+// figures and serves the result; there it runs in a worker thread, as it does for the tests' API calls, in a Web
+// Worker in the browser kernel (local/audit-worker.js, 1.17.0), and inline in the tests that call it directly).
 // docs/HIPAA.md "Small cells in aggregate reports"; docs/architecture/ADR-0009-publication-release.md.
 //
 // One publication release per standard period that has ended, for the whole programme (docs/HIPAA.md "Small
@@ -29,8 +29,8 @@
 //     unprinted count standing for any one of them, and per settlement use their people and services (below);
 //   * people per settlement allowable use: at most N, at most its services, at least the people of each fund
 //     with that use and at most their sum; its services are exactly the sum of those funds' services;
-//   * the overdose events E: by month (adding up to E); reversals R by month and by who gave the naloxone
-//     (each adding up to R), the reversals in a month at most that month's events; fatal F and community-
+//   * the overdose events E (not by month: no publication release prints them, NOT_PUBLISHED); reversals R by
+//     month and by who gave the naloxone (each adding up to R), R at most E; fatal F and community-
 //     reported C at most E; F + R at most E (an event recorded through SUDS is never both: a fatal one is
 //     saved as not survived. A row imported or synced as both breaks it, and then it is left out);
 //   * episodes: discharges add up by reason; the episodes opened in the period are at most those closed in it
@@ -50,8 +50,7 @@
 //     A table withheld whole prints no rows.
 // Counts printed nowhere but worked out from printed ones are sensitive when they are small (1 to T-1): the
 // people left when on MAT, referred, admitted, a fund, a use or a race code are taken from N; a use's people
-// not under one of its funds; E-R, E-F, E-C, E-R-F; each month's events that were not reversals; the
-// episodes carried in.
+// not under one of its funds; E-R, E-F, E-C, E-R-F; the episodes carried in.
 // Kits, test strips, money and staff hours are not counts of people and bound none, so they stay out.
 //
 // A free-text breakdown (language, housing, insurance, ethnicity, gender, race codes) lists at most
@@ -247,14 +246,25 @@ function buildModel({ funder: raw, perFund, settlement }, T) {
   const R = h.R = v('overdose.reversals', od.reversals, { total: true, table: 'overdose.reversals' });
   const F = h.F = v('overdose.fatal', od.fatal, { table: 'overdose.fatal' });
   const Cm = h.C = v('overdose.community_reported', od.community_reported, { table: 'overdose.community_reported' });
-  h.n = od.by_month.map(x => v(`overdose.${x.month}.events`, x.n, { table: 'overdose.by_month.n' }));
+  // The events by month are not part of a publication release (1.17.0: a choice of method, the same for every
+  // period and programme, made before any figure is read; ADR-0009, "Events by month: not published"). The
+  // reversals by month are (the NDP log's), and so are the period's events, reversals, fatal and community-reported
+  // totals. What a reader then knows of the months' events is what the reversals and the totals say: each month's
+  // events are at least its reversals and they add up to E, and projected onto the printed figures that is exactly
+  // R <= E. A month's events not reversed (its events less its reversals) are then any split of E - R the reversals
+  // allow, so each can be 0 and anything up to E - R: a count held to the rule through E - R (derived below) and
+  // the months' reversals, not a count of its own (test/publication-release.test.js puts the months' true events
+  // and events not reversed under the attacker). Printing the events by month made every month's events not
+  // reversed a count of its own, and with a few of them small in most months the check against the method failed
+  // at a cost the budget could not meet: 1.16.x refused 34 of 114 scaled years and 28 of 72 seeded quarters.
   h.r = od.by_month.map(x => v(`overdose.${x.month}.reversals`, x.reversals, { table: 'overdose.by_month.reversals' }));
   h.by = od.by_administered_by.map(x => v(`overdose.by.${x.k}`, x.n, { table: 'overdose.by_administered_by' }));
-  rel([...h.n.map(i => [i, 1]), [E, -1]], '=');
   rel([...h.r.map(i => [i, 1]), [R, -1]], '=');
   rel([...h.by.map(i => [i, 1]), [R, -1]], '=');
-  present(h.n, fixed.months); present(h.by, fixed.by);
-  h.n.forEach((n, m) => { rel([[h.r[m], 1], [n, -1]], '<='); derived.push({ id: `overdose.${od.by_month[m].month}.not_reversed`, terms: [[n, 1], [h.r[m], -1]] }); });
+  rel([[R, 1], [E, -1]], '<=');
+  present(h.by, fixed.by);
+  // (Every month of the period is listed, zero or not: a publication release is for a standard period, whose months
+  // are its domain, so no month is listed for being non-zero.)
   rel([[F, 1], [E, -1]], '<='); rel([[Cm, 1], [E, -1]], '<='); soft([[F, 1], [R, 1], [E, -1]], '<=');
   derived.push({ id: 'overdose.not_reversed', terms: [[E, 1], [R, -1]] }, { id: 'overdose.not_fatal', terms: [[E, 1], [F, -1]] },
     { id: 'overdose.not_community', terms: [[E, 1], [Cm, -1]] }, { id: 'overdose.neither', terms: [[E, 1], [R, -1], [F, -1]] });
@@ -293,10 +303,16 @@ const TABLE_LABEL = {
   by_funding_source: 'People and services by funding source', 'settlement.services_by_use': 'Settlement report: people and services by allowable use',
   'episodes.admissions': 'Episodes opened', 'episodes.open_at_end': 'Episodes open at the end of the period', 'episodes.discharges': 'Episodes closed',
   'episodes.by_discharge_reason': 'Discharge reasons', 'overdose.events': 'Overdose events', 'overdose.reversals': 'Reversals', 'overdose.fatal': 'Fatal overdoses',
-  'overdose.community_reported': 'Overdoses reported from the community', 'overdose.by_month.n': 'Overdoses by month', 'overdose.by_month.reversals': 'Reversals by month (and the NDP log\'s reversals)',
+  'overdose.community_reported': 'Overdoses reported from the community', 'overdose.by_month.reversals': 'Reversals by month (and the NDP log\'s reversals)',
   'overdose.by_administered_by': 'Who gave the naloxone', 'ndp.by_month.reversal_doses': 'Naloxone doses used in reversals, by month', 'ndp.reversal_doses': 'Naloxone doses used in reversals',
   'overdose.naloxone_doses': 'Naloxone doses used',
 };
+// What a publication release never prints, whatever the figures: a choice of method (the same for every period and
+// programme, so its absence says nothing about anyone), with why, for the page and the files to say so.
+const NOT_PUBLISHED = [{
+  table: 'overdose.by_month.n', label: 'Overdose events by month',
+  why: 'A publication release gives the period\'s overdose events as totals and the reversals by month. The events by month are left out of every publication release: beside the reversals by month they would show each month\'s events that were not reversed, often a handful, and checking that took most periods past what the check can afford. The program\'s own submission to its funder still has them.',
+}];
 // Why a table was withheld, in a sentence: the suppression found no pattern of hidden cells that protects it
 // (protect), or the check against the method could not show that the pattern it found does, so it was left
 // out and the rest was suppressed and checked again without it (check).
@@ -367,7 +383,8 @@ function protectFigures(inputs, T, { strict = false, budget, stepLimit, timeLimi
   const ep = raw.episodes; const od = raw.overdose;
   // A table withheld whole prints no rows: a row, even one shown "withheld", could say its count is not 0.
   const disGone = gone.has('episodes.by_discharge_reason'); const byGone = gone.has('overdose.by_administered_by');
-  const monthsGone = gone.has('overdose.by_month.n') && gone.has('overdose.by_month.reversals'); const revGone = gone.has('overdose.by_month.reversals');
+  // The months print their reversals only (the events by month are not part of a publication release: NOT_PUBLISHED).
+  const revGone = gone.has('overdose.by_month.reversals'); const monthsGone = revGone;
   if (disGone) withheld.push('by_discharge_reason');
   if (byGone) withheld.push('by_administered_by');
   if (monthsGone) withheld.push('by_month');
@@ -381,7 +398,7 @@ function protectFigures(inputs, T, { strict = false, budget, stepLimit, timeLimi
       // A median over fewer people than the threshold is one of them.
       median_length_of_stay_days: smallGroup || show(h.D) === SC.WITHHELD ? SC.SECONDARY : ep.median_length_of_stay_days },
     overdose: { ...od, events: show(h.E), reversals: show(h.R), fatal: show(h.F), community_reported: show(h.C), naloxone_doses: show(h.Dall),
-      by_month: monthsGone ? [] : od.by_month.map((x, m) => { const n = show(h.n[m]); const r = show(h.r[m]); return { month: x.month, n, reversals: r, ...(typeof n === 'number' && typeof r === 'number' ? {} : { suppressed: true }) }; }),
+      by_month: monthsGone ? [] : od.by_month.map((x, m) => { const r = show(h.r[m]); return { month: x.month, reversals: r, ...(typeof r === 'number' ? {} : { suppressed: true }) }; }),
       by_administered_by: byGone ? [] : od.by_administered_by.map((x, i) => SC.withCell(x, 'n', show(h.by[i]))) },
     naloxone_distribution: raw.naloxone_distribution,
     by_funding_source: byFund,
@@ -395,4 +412,4 @@ function protectFigures(inputs, T, { strict = false, budget, stepLimit, timeLimi
 }
 
 
-module.exports = { protectFigures, buildModel, prepare, digest, monthsOf, withheldReasons, refusalMessage, TABLE_LABEL, HEADLINE, AUDIT_BACKSTOP_MS };
+module.exports = { protectFigures, buildModel, prepare, digest, monthsOf, withheldReasons, refusalMessage, TABLE_LABEL, NOT_PUBLISHED, HEADLINE, AUDIT_BACKSTOP_MS };

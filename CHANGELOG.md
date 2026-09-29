@@ -2,6 +2,62 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Publication
+
+Programmes with roughly 90 to 340 overdose events a year were refused a publication release whole (1.16.2 to
+1.16.4), because the check of each month's overdose events not reversed failed at a cost the audit's budget could not
+meet. No migration; no new permission or route.
+
+- **The overdose events by month are no longer part of a publication release** (a choice of method, the same for
+  every period and programme, made before any figure is read, so leaving them out says nothing about anyone). A
+  release prints the period's events, reversals, fatal and community-reported totals, the reversals by month (the
+  funder report's months and the NDP log's, one table) and the doses; the programme's own submission to its funder
+  still has the events by month. The page, the release (`release.not_published`) and the funder report's About sheet
+  say so. Why it is sound: without them a reader knows only that the reversals are at most the events, which the
+  audit now states; each month's events not reversed can be anything up to the period's, which the audit already
+  protects, and the algorithm-aware attacker checks every month's true events and events not reversed as hidden
+  counts (docs/architecture/ADR-0009, *Events by month: not published*, with the options weighed: events by quarter
+  still refused the benchmark year, a data-dependent choice is the 1.16.1 case, a reserved degrade budget cannot
+  pay for the validation). Measured at the default threshold on the same programmes: the benchmark's 2,000-client
+  year publishes in 0.25 million units of work (1.16.4 refused it after 400 million, about 9 s); 4 of 114 scaled
+  fiscal years are refused (1.16.4: 34), none of 18 seeded years (6) and 11 of their 72 quarters (28). Not every
+  period gains: 3 quarters that 1.16.4 published are refused now, among them the benchmark's last; what is still
+  refused is small overdose counts beside small reversals by month, and tiny programmes at small thresholds are
+  often refused as before (docs/PERFORMANCE.md, *Which programmes are refused*). The two thorough sweeps run in about
+  1 and 3 minutes instead of 6 to 20 and 4 to 9. Of 300 tiny random programmes (1 to 12 people, T = 3 to 5), 182 are
+  refused (212). **Do not publish again a period published under 1.16.x**: the two
+  releases hide differently and can be set side by side (docs/HIPAA.md, *Across releases*).
+- **The check steps over one value** (`server/sdc.js`): a suppressed count's range, stepped outward from its value,
+  no longer stops at a single value no world that prints the release has (a month's reversals printed exactly when
+  the other months' small reversals add up to the threshold), which refused quarters whose count ranged widely on
+  both sides of it; two such values in a row still stop it. The rule (the span of the values) is unchanged, and
+  every value counted is still shown by a world found and run.
+- **The audit log records what a release withheld, and why a release was refused.** Every report of a publication
+  release (`report.funder`, `report.naloxone_ndp`, `report.opioid_settlement` and their exports) records the
+  release's id and each withheld table with its reason code (`withheld: [{table, reason}]`, `protect` or `check`);
+  a refused release writes `report.publication.refused` (not a success) with why (`budget`, `backstop`, `headline`
+  or `unprotected`), how many counts the check could not show protected, the tables it had withheld and the
+  audit's work. Table names and codes only, never a count of people; the person is still told why in words
+  (`test/publication-audit-log.test.js`).
+- **On a device the audit runs in a Web Worker**, off the page's thread (engineering reviews of 1.13.0 to 1.16.3:
+  it ran on the page for up to the 60-second backstop and could hold a phone). The worker is a second generated
+  bundle, `public/local/audit-worker.js` (built by `npm run build:local` beside the kernel, with its `.gz` and `.br`,
+  precached by the service worker under the kernel's version); `local/audit-runner.js` starts one long-lived worker,
+  refuses an audit it stops answering within 75 s and stops it, and where no worker can start (no Web Workers, the
+  script does not load or does not start within 10 s) the audit runs on the page as before. The same code and budget
+  either way, so a device's release is the office's (`test/device-audit-worker.test.js` runs the committed worker
+  as a browser does).
+- The degrade fixture is a new one (`test/fixtures/degraded-release.json`: 11 people at T = 4, the funding-source
+  table withheld); 1.16.4's, degraded to the reversals total, is refused now (its degraded release could not be checked).
+  The attacker's families gain three with months (three months; reversed, fatal and neither events with community
+  reports; one or two doses a reversal), and every family with months checks the months' events and events not
+  reversed. The attacker found no leak at T = 3, 5 and 11 in the existing families or the new ones (at T = 11, two
+  months with 24 events, every split of events and reversals); a first run of the new outcome family, enumerated only
+  two events past the sizes it checked, reported a suppressed total of 3 or 4 whose worlds, run further, include 6:
+  the families are now enumerated three past (docs/architecture/ADR-0009, *Known limits*).
+
 ## 1.16.4 — 2026-09-29
 
 ### Security

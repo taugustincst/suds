@@ -36,9 +36,13 @@ function runAll(worlds, T) {
     const value = new Map(m.vars.map(v => [v.id, v.value]));
     for (const d of m.derived) value.set(d.id, d.terms.reduce((a, [i, c]) => a + c * m.vars[i].value, 0));
     for (const [id, x] of Object.entries(w.fundTruth || {})) if (!value.has(`fund.${id}.people`)) value.set(`fund.${id}.people`, x.people);
+    // Counts the release prints nowhere and has no cell for (since 1.17.0 each month's events, and its events not
+    // reversed): the family's truth (w.monthTruth), held to the rule for counts printed nowhere.
+    const extra = Object.keys(w.monthTruth || {}).filter(id => !value.has(id));
+    for (const id of extra) value.set(id, w.monthTruth[id]);
     const table = new Map(m.vars.map(v => [v.id, v.table]));
     const key = p.refused ? 'REFUSED' : JSON.stringify({ f: p.funder, u: p.uses, n: p.ndp, w: p.withheld_tables });
-    return { label: w.label, inner: w.inner !== false, p, value, table, key, combined: w.combined || [] };
+    return { label: w.label, inner: w.inner !== false, p, value, table, key, combined: w.combined || [], extra };
   });
 }
 
@@ -79,7 +83,10 @@ function attackAll(worlds, T, { limit = 20, only = null } = {}) {
     const valuesOf = (id) => [...new Set(ws.map(w => (w.value.has(id) ? w.value.get(id) : 0)))].sort((a, b) => a - b);
     const cells = m.vars.map((v, i) => ({ id: v.id, people: v.people && !v.aux, status: p.status[i], constrained: m.cons.some(k => k.terms.some(([j]) => j === i)) }))
       .concat(m.derived.map(d => ({ id: d.id, people: true, status: 'derived', constrained: true })))
-      .concat(ws[0].combined.map(id => ({ id: `fund.${id}.people`, people: true, status: 'pri', constrained: true })));
+      .concat(ws[0].combined.map(id => ({ id: `fund.${id}.people`, people: true, status: 'pri', constrained: true })))
+      // A month's events (printed nowhere, a cell of its own: it must be able to be the lowest small value) and its
+      // events not reversed (worked out: its small values must range).
+      .concat(ws[0].extra.map(id => ({ id, people: true, status: /\.not_reversed$/.test(id) ? 'derived' : 'unpub', constrained: true })));
     for (const c of cells) {
       if (!c.people || c.status === 'vis' || !c.constrained) continue;
       const vs = valuesOf(c.id);

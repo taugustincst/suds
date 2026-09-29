@@ -698,6 +698,25 @@ function auditor(model, T, { budget, meter = newMeter() }) {
       }
       return false;
     };
+    // A count's range over the worlds that print the same (a suppressed count, or a withheld one of T or more): from
+    // [a, b], step down, then up, while the next value is shown by such a world - or, when it is not, the value
+    // after it (1.17.0). What is hidden can depend on one value exactly: a month's reversals are printed when the
+    // other months' "<T" reversals add up to T (each can then be 1 and T-1 whatever the split) and hidden
+    // otherwise, so no world that prints the release has it at that one value, and the step stopped there and
+    // refused releases whose count ranged widely on both sides of it. The rule is the span of the values (the
+    // attacker's too: test/fixtures/pattern-attacker.js); one value skipped at a time, never two in a row.
+    const widen = (q, a, b, lo, hi, x) => {
+      const inside = (v) => v >= lo && v <= hi && v >= x - 2 * T && v <= x + 2 * T;
+      for (let v = a - 1; b - a < P && inside(v) && !meter.over; v--) {
+        if (witness(q, v, 8)) a = v;
+        else if (inside(v - 1) && !meter.over && witness(q, v - 1, 8)) { a = v - 1; v--; } else break;
+      }
+      for (let v = b + 1; b - a < P && inside(v) && !meter.over; v++) {
+        if (witness(q, v, 8)) b = v;
+        else if (inside(v + 1) && !meter.over && witness(q, v + 1, 8)) { b = v + 1; v++; } else break;
+      }
+      return [a, b];
+    };
     const unprotected = [];
     for (const q of w.quantities(S)) {
       if (meter.over) break;
@@ -712,8 +731,7 @@ function auditor(model, T, { budget, meter = newMeter() }) {
         const x = truth[q.terms[0][0]];
         let a = x; let b = x;
         for (const vals of G) { const y = valueOf(vals, q.terms); if (y >= T) { a = Math.min(a, y); b = Math.max(b, y); } }
-        for (let v = a - 1; b - a < P && v >= T && v >= x - 2 * T && !meter.over && witness(q, v, 8); v--) a = v;
-        for (let v = b + 1; b - a < P && v <= x + 2 * T && !meter.over && witness(q, v, 8); v++) b = v;
+        [a, b] = widen(q, a, b, T, Infinity, x);
         ok = b - a >= P;
       } else if (q.kind === 'pri' || (q.kind === 'cond' && (!q.derived || (checkDerived && q.terms.some(([i]) => checkDerived.has(i)))))) {
         // A "<T" cell, or a withheld one (or one printed nowhere) when the printout lets it be small: worlds
@@ -740,8 +758,7 @@ function auditor(model, T, { budget, meter = newMeter() }) {
         const hi = intMax(p.prob, p.c, null, opt).value + p.constant;
         const found = G.map(vals => valueOf(vals, q.terms));
         let a = Math.min(x, ...found); let b = Math.max(x, ...found);
-        for (let v = a - 1; b - a < P && v >= lo && v >= x - 2 * T && !meter.over && witness(q, v, 8); v--) a = v;
-        for (let v = b + 1; b - a < P && v <= hi && v <= x + 2 * T && !meter.over && witness(q, v, 8); v++) b = v;
+        [a, b] = widen(q, a, b, lo, hi, x);
         ok = b - a >= P;
       }
       if (!ok) unprotected.push(q.id);

@@ -1,7 +1,7 @@
 # ADR-0009: One audited publication release per ended period
 
 - **Status:** accepted (independent statistical review pending; see *Known limits*)
-- **Date recorded:** 2026-09-26 (the release object in 1.12.2, the check against the method in 1.12.4, the defaults, degrade step, work budget and worker thread in 1.13.0; written down retrospectively. 1.14.0: small funds combined, the read from a snapshot, the release kept by the data's version, the budget measured and reset, a timed-out audit refused on its own. 1.16.1: a table withheld by a published rule; 1.16.2: withdrawn, *Withheld by rule*)
+- **Date recorded:** 2026-09-26 (the release object in 1.12.2, the check against the method in 1.12.4, the defaults, degrade step, work budget and worker thread in 1.13.0; written down retrospectively. 1.14.0: small funds combined, the read from a snapshot, the release kept by the data's version, the budget measured and reset, a timed-out audit refused on its own. 1.16.1: a table withheld by a published rule; 1.16.2: withdrawn, *Withheld by rule*. 1.17.0: the events by month left out of every release, *Events by month: not published*; one value skipped in the check's step; the device's audit in a Web Worker, *Where it runs*; the withheld tables and a refusal's reason in the audit log, *Consequences*)
 
 ## Context
 
@@ -39,7 +39,7 @@ figures it read.
 **The constraint model** (`server/release-audit.js` `buildModel`). One integer variable per count of people any
 of the three prints (and a few printed nowhere but tied to printed ones, such as a settlement fund no longer
 active), every additive relationship the attacker knows (breakdowns add up, subsets are at most their total, race
-codes cover it, a month's reversals are at most its events, doses bound reversals, ...), each checked against the
+codes cover it, the reversals are at most the events (1.17.0; before, a month's at most its events), doses bound reversals, ...), each checked against the
 true figures (a relationship an import breaks is left out for that period), and what each cell shows: a number,
 `<T` (1 to T−1), `suppressed` (at least T), `withheld`. Rows are listed from fixed domains in a fixed order.
 
@@ -124,6 +124,63 @@ releases, at every level, at a cost the budget allows, and must be run under the
 before it ships (`test/publication-release.test.js`, "the reviewer's case against
 1.16.1's rule").
 
+**Events by month: not published** (1.17.0). The expensive failure above is one table's: printed beside the
+reversals by month (which the NDP log must print), the events by month make each month's events not reversed a
+count of its own, a handful in most months of a programme with 90 to 340 overdose events a year, and the check of
+those counts against the method is what failed at a cost the budget could not meet. Three ways round were weighed,
+soundness first:
+
+* *A coarsening chosen from the data* (publish the events by quarter when the year's events are in some range) is a
+  rule on figures, the 1.16.1 case: whether it fires is itself published, and its check would have to be a fixed
+  point over worlds' releases. Not taken. *Events by quarter for every year*, chosen by the period alone, is sound
+  (a method, not a rule), but the benchmark year is still refused with it: its first and last quarters have 6 and 5
+  events not reversed, the check fails, and the release with the quarters withheld fails too (58.6 million units).
+* *A degrade budget reserved from round 1* does not help: the degrade step validates each witness by running that
+  world's whole release, about as expensive as the first round, so what it needs is a multiple of the budget, not a
+  share of it (1.16.2: four times the budget still refused the benchmark).
+* **Taken: no publication release prints the events by month** - for every period and programme, whatever the
+  figures, so its absence says nothing about anyone (`server/release-audit.js` `NOT_PUBLISHED`, stated on the page,
+  in `release.not_published` and on the funder report's About sheet). The release prints the period's events,
+  reversals, fatal and community-reported totals, the reversals by month (the funder report's months and the NDP
+  log's, one table) and the doses; the programme's own submission to its funder still has the events by month.
+
+Why it is sound: the model is what the printout says. What a reader knows of the months' events is that each is at
+least its month's reversals and that they add up to E; projected onto the printed figures that is exactly
+R <= E, which the model now states (before, it followed from the months). The months' events are then free beside
+the reversals: any split of E - R over the months is consistent with every printout, and no world's release reads
+them, so a month's events not reversed can be anything from 0 to E - R and a month's events anything from its
+reversals to its reversals plus E - R. Each is therefore protected whenever E - R and the month's reversals are
+(E - R is a derived count the audit already holds to the rule; a month's reversals are its cells), and neither is a
+count of its own in the model. The attacker holds them to the rule regardless: `test/fixtures/pattern-attacker.js`
+checks every month's true events (as a count printed nowhere, which must be able to be 1 and range) and events not
+reversed over the worlds that print the same, in the two-month family and in three new ones (three months; two
+months of reversed, fatal and neither events with community reports; two months of reversals with one or two doses)
+at T = 3, the two-month family at T = 5, and at T = 11 two months with 24 events, every split of events and
+reversals; the independent attacker models them as unprinted counts too. No leak was found in any (a first run of the
+outcome family enumerated too near its checked sizes; *Known limits*).
+Before and after are in docs/PERFORMANCE.md, *Which programmes are refused*.
+
+What it costs: the published funder report loses its events by month. What it buys (measured, T = 11): the
+benchmark's year publishes in 0.25 million units (about 60 ms; 1.16.x refused it after 400 million, about 9 s); of
+the 114 scaled years 4 are refused, not 34 (1 for want of budget, at 87 events, and 3 because the release with
+tables withheld still failed its check, at 93 to 150; 1.16.4: 26 and 8; the 4 were refused by 1.16.4 too, and
+the other 30 publish); of the seeded programmes none of 18 years is refused, not 6, and 11 of 72 quarters, not 28.
+Not every period gains: 3 quarters that 1.16.4 published are refused now (36 and 37 events; the
+benchmark's last quarter among them), and of 300 of
+the property test's tiny random programmes (1 to 12 people, T = 3 to 5) 182 are refused (1.16.4: 212; 31 newly
+published, 1 newly refused). A release a programme
+already published for a period under 1.16.x must not be published again under 1.17.0 for the same period: the two
+patterns of what is hidden can be combined (docs/HIPAA.md, *Across releases*).
+
+*One value skipped* (`server/sdc.js` `consistent`, 1.17.0). With the events by month gone, a month's reversals is
+printed exactly when the other months' `<T` reversals add up to T (each can then be 1 and T-1 whatever the split)
+and hidden otherwise, so no world that prints the release has the hidden count at that one value. The check's step
+outward from a suppressed (or withheld, T or more) count's value stopped at the first value no world showed, and
+refused quarters whose count ranged widely on both sides of it (with the events by month gone and without this step,
+4 seeded quarters 1.16.4 published were refused; with it, 3, and 11 of 72 in all rather than 13). It now steps
+over one such value, never two in a row. The rule is unchanged - the span of the values the worlds that print the
+release allow, which is what the attacker checks - and every value counted is still shown by a world found and run.
+
 **Determinism.** The audit's budget is counted in solver work (tableau cells touched, and since 1.14.0 the
 constraint terms scanned to find each problem, which with many funds took as long as the solving; `STEP_LIMIT` =
 400 million per release, the degrade step included: its share is at most eight times the first round's work
@@ -145,25 +202,40 @@ own and its worker stopped; the audits queued behind it on that worker start aga
 1.13.0 they were failed with it, `test/release-worker-timeout.test.js`). A refusal by the backstop is not kept
 with the release (it says how busy the machine was, not what the figures are): asking again audits again.
 The browser kernel has no worker threads (`node:worker_threads` is shimmed empty) and no second connection to
-snapshot from, and serves requests as they come, so there the read runs straight through and the audit runs
-inline on the page's thread, after letting the page paint once. A Web Worker for the kernel's audit needs a
-second generated bundle (built, committed and served beside `public/local/kernel.js`), precached by the service
-worker under the kernel's version, and a fallback when it cannot start: considered for 1.14.0 and deferred,
-because the release's generated files are rebuilt outside the change that would add it and an unbuilt bundle
-would fail only on devices. What bounds it meanwhile: a device holds one browser's records, and with small
-funds combined even a 120-fund year audits in tens of millions of units (well under a second). The budget's worst
-case is not "a few seconds": 400 million units are 2 to 7 seconds of a server-class core, and more on a phone (the
-2,000-client year that 1.16.0 refused held the page for about 7 s on such a core before refusing); the backstop is
-60 s.
+snapshot from, and serves requests as they come, so there the read runs straight through. **Since 1.17.0 the
+kernel's audit runs in a Web Worker** (engineering reviews of 1.13.0 to 1.16.3: until then it ran on the page's
+thread, held back only by the 60-second backstop, and the 2,000-client year 1.16.x refused held a server-class core
+for about 7 s before refusing, longer on a phone). The worker is a second generated bundle, `public/local/audit-worker.js`
+(built from `local/audit-worker.js` by `npm run build:local` beside the kernel, with its `.gz` and `.br`; the audit
+alone, about 110 kB; CI's drift check covers `public/local`, so an unbuilt worker fails CI, not devices), precached
+by the service worker under the kernel's version and started by `local/audit-runner.js`, which the kernel hands to
+`server/publication-release.js` (`setDeviceAuditRunner`; `public/app.js` passes its URL). One long-lived worker;
+an audit that does not answer within the backstop (75 s, as the server's) is refused and its worker stopped, and the
+audits queued on it start again on a new one. Where no worker can run - no Web Workers, the constructor throws, the
+script fails to load or does not say it started within 10 s - the audit runs on the page as before (after letting
+it paint once); once a worker has said it started, its audits are never run twice. The same code and the same
+budget run either way, so a device's release of some figures is the office's (`test/kernel-parity.test.js`); a
+lower on-device budget was considered and not taken, because it would make a device refuse what the office
+publishes. `test/device-audit-worker.test.js` runs the committed worker as a browser does and the runner with
+stand-in workers (the same release, the fall-back to the page, the refusal of one that stops answering). What
+remains on the page's thread is the read (straight through, as before) and, on a device where no worker can start,
+the audit.
 
 ## Consequences
 
 - A supervisor's first click is the submission, exact; publication is an explicit step with a review confirmation.
 - In the reviewer's simulation (8 seeds per size, quarter and month) no release of 40 to 200 people was refused
   (1.12.4: 7 of 8 at 60, 6 of 8 at 80 per quarter); the random "realistic" property programmes refuse about 1 in 70.
-  That is not a guarantee: the benchmark's 2,000-client year is refused whole (above, *Withheld by rule*), and so
-  is a table whose check fails expensively wherever it exhausts the budget, or fails even with tables withheld:
-  34 of 114 scaled copies of that year, and 28 of 72 quarters of seeded years (*Withheld by rule*).
+  That is not a guarantee. 1.16.2 to 1.16.4 refused the benchmark's 2,000-client year whole, with 34 of 114 scaled
+  copies of it and 28 of 72 quarters of seeded years (*Withheld by rule*); since 1.17.0, with the events by month
+  left out of every release, the year publishes and 4 of the 114 and 11 of the 72 are refused (*Events by month: not
+  published*): small overdose counts beside small reversals by month, where the release with tables withheld still
+  fails its check.
+- The audit log records each release's id and every table it withheld with the reason code, from every report of it
+  (`FR.releaseAuditDetails`), and a refused release as `report.publication.refused` with why (budget, backstop,
+  headline, unprotected), how many counts were unprotected, the tables it had withheld and the audit's work (1.17.0;
+  market reviews of 1.16.2 and 1.16.3: until then a release 1.16.1's rule had affected could not be found from the
+  log). Table names and codes only, never a count of people.
 - A year for 5,000 people costs about 17 million units of work (4% of the budget; the release 0.6 to 0.9 s); while
   it runs the event loop is held only for the read's phases (0.1 to 0.2 s at 20,000 clients, 1.14.0; 0.6 to 1.5 s
   before, the whole read at once).
@@ -182,8 +254,21 @@ case is not "a few seconds": 400 million units are 2 to 7 seconds of a server-cl
   by the tests' families; otherwise against the printout. The attacker's family of two small funds of one
   allowable use at T = 5 finds one such count - the people served not under that use - narrowed by the method
   in a few printouts, with the funds combined or listed alike.
-- The people of several combined funds together are not a count held to the rule (each fund's are); the browser
-  kernel audits on the page's thread (above).
+- The people of several combined funds together are not a count held to the rule (each fund's are). A device
+  whose browser cannot start the audit's Web Worker audits on the page's thread, as before 1.17.0 (above).
+- A published release no longer has the overdose events by month, which some funders or the public may want; they are
+  in the programme's submission only. A period some version before 1.17.0 published must not be published again: the
+  two releases of the same figures hide differently (docs/HIPAA.md, *Across releases*).
+- Still refused (1.17.0, measured at T = 11): 4 of 114 scaled years (87 to 150 events) and 11 of 72 seeded quarters
+  (29 to 49), 3 of them quarters 1.16.4 published, the benchmark's last quarter among them; and, in the attacker's
+  two-month family at T = 3, more printouts than 1.16.4 refused. What refuses them is the check against the method on
+  small reversals by month beside hidden totals (its witness search finds too few worlds that print the same), not
+  its budget; a cheaper sound check of those, or a reviewed coarsening of the reversals by month, which the NDP log
+  prints by month, is further work. No option weighed here makes every period publish.
+- The check's step over one value (*One value skipped*) looks up to two values past the range it has shown, so an
+  attacker's family must reach that far beyond the sizes it checks: at T = 3, the new two-month family of reversed,
+  fatal and neither events enumerated only to 5 events reported a suppressed total of 3 or 4 whose worlds, run
+  further, include 6 (5 prints differently); the tests' families are sized for it.
 - Nested or overlapping periods, the same period re-run after late entries, outside knowledge, and sums of several
   small cells of one breakdown are outside the audit (docs/HIPAA.md, residual risks).
 - It is a conservative automated screen, **not a statistical expert determination** (45 CFR 164.514(b)(1)). An
@@ -228,10 +313,13 @@ docs/compliance/HARM-REDUCTION-REPORTING.md.
 
 `test/publication-release.test.js` (the independent attacker `test/fixtures/release-attacker.js`, the
 algorithm-aware attacker `test/fixtures/pattern-attacker.js` over families in `test/fixtures/release-worlds.js`
-including the race-code cover, two small funds combined (`test/publication-release-funds.test.js`) and the reviewer's two-month, 36-event family against 1.16.1's rule (`pattern.monthsWith`), realistic programmes, programmes of many small funds and random
+including the race-code cover, two small funds combined (`test/publication-release-funds.test.js`), the reviewer's two-month, 36-event family against 1.16.1's rule (`pattern.monthsWith`), and since 1.17.0 each month's events and events not reversed checked as hidden counts in every family with months, with three more such families (`pattern.months3`, `monthsOutcome`, `monthsDoses`; `test/publication-release-months.test.js`), realistic programmes, programmes of many small funds and random
 programmes, their small funds combined, the degrade fixture `test/fixtures/degraded-release.json`, the reviewer reproductions, the
 audit running in the worker; full sweeps with `SUDS_THOROUGH=1`), `test/publication-release-perf.test.js` (work,
-determinism, event-loop stall, a year of 60 funds - 120 in the thorough run - most of them small),
+determinism, event-loop stall, a year of 60 funds - 120 in the thorough run - most of them small; the benchmark year
+publishes), `test/thorough/refusal-band.test.js` and `refusal-quarters.test.js` (which periods are refused, a
+tripwire), `test/publication-audit-log.test.js` (what the audit log records), `test/device-audit-worker.test.js`
+(the device's Web Worker),
 `test/report-snapshot.test.js` (the snapshot read, the release kept by the data's version),
 `test/kernel-parity.test.js` and `test/kernel-sync-parity.test.js` (the same release id from the kernel and the
 office), `test/report-access.test.js` (defaults and permissions per role), `test/small-cell-suppression.test.js`,
