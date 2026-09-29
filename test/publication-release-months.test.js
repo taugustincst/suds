@@ -28,8 +28,10 @@ test('algorithm-aware attacker: since 1.17.0 the events by month are printed now
   assert.ok(model.cons.some(k => !k.soft && k.op === '<=' && k.rhs === 0 && k.terms.length === 2 && k.terms.some(([i, c]) => i === R && c === 1) && k.terms.some(([i, c]) => i === E && c === -1)), 'R <= E');
   // Every family with months checks each month's true events (a count printed nowhere: it must be able to be its
   // lowest small value, and range) and events not reversed (its small values must range) over the worlds that print
-  // the same (pattern-attacker.js, monthTruth); the two-month families above do too. Each family is enumerated at
-  // least three events beyond the sizes checked: the check's step over one value (server/sdc.js) looks that far.
+  // the same (pattern-attacker.js, monthTruth); the two-month families above do too. Each family is enumerated a few
+  // events beyond the sizes checked. The attacker is monotone (more worlds only widen what it holds possible), so a
+  // short margin can only raise a false alarm, never hide a leak: on a reported leak, enumerate that family further
+  // before acting (ADR-0009, Known limits). What bounds its coverage is the sizes and thresholds it checks.
   assertNoPatternLeak('three months', pattern.months3(2, 5), 3);
   if (!THOROUGH) return;
   assertNoPatternLeak('three months', pattern.months3(3, 6), 3);
