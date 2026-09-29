@@ -14,7 +14,7 @@ Three leads, in this order, each stated no further than the software goes:
    been made yet; the first is to be tested in a pilot.
 2. **Field-ready outreach.** One **+ Log** button on a phone, anonymous contacts that still count, supplies drawn
    from the van or site they left, and an offline copy that syncs with the office where the programme turns it on.
-   The Street outreach screen and the SSP participant code are built for 1.17.0; a field device scope and
+   The Street outreach screen and the SSP participant code are released in 1.17.0; a field device scope and
    minimal-personal-information defaults beyond that are planned, not built.
 3. **Funder outcomes.** Funder report, NDP log, settlement expenditure report by allowable use and the layouts for
    DHCS and county settlement reporting, as exact submissions or screened publication releases. Each layout is to
@@ -23,7 +23,8 @@ Three leads, in this order, each stated no further than the software goes:
 
 What comes next, and what is only planned, is in [STRATEGY.md](STRATEGY.md): the AI documentation copilot is
 **released in 1.17.0** (office server only, off by default, gated on a BAA and QSOA, identifiers removed before
-sending, drafts only, a person signs, never for SUD counseling notes). Do not show or promise it until it is released.
+sending, drafts only, a person signs, never for SUD counseling notes). Show it only to a programme that runs an office server and can record the BAA and QSOA with the AI
+provider; do not show it for SUDS on this device, and do not promise it for SUD counseling notes.
 
 ## Category
 
@@ -257,7 +258,7 @@ business-hours support and (when offered) hosting. The current hypothesis is fla
 the owner has not decided ([PRICING-OPTIONS.md](PRICING-OPTIONS.md)). Nothing is a quote.
 
 **"Will an AI read our clients' records?"**
-Not in any released version. An AI documentation copilot is built for 1.17.0 ([docs/AI-COPILOT.md](../AI-COPILOT.md)). It runs only from an
+Only if you turn it on. An AI documentation copilot is available from 1.17.0 ([docs/AI-COPILOT.md](../AI-COPILOT.md)). It runs only from an
 office server, is off until an administrator turns it on, cannot be turned on until the programme records a BAA and
 a Part 2 QSOA with the AI provider, removes the identifiers SUDS holds before sending, and returns drafts that a
 person edits and signs. Removing known identifiers does not make free text de-identified (a note can still name a

@@ -245,8 +245,9 @@ what it adds with one phrase, **"built for X.Y.Z, not yet released"** (docs/mark
 README.md, PILOT-KIT.md, the buyer guides). When stamping X.Y.Z, rewrite each of them to say what is now true
 (released in X.Y.Z; for a line that also gates a pilot or a demo, say what still gates it, such as counsel's
 review). `test/release-wording.test.js` finds them: it fails once `package.json`'s version has a dated CHANGELOG
-heading while any document still says that version is not yet released, and it refuses other spellings of the
-same thing, so there is one phrase to search for.
+heading while any document still says that version is not yet released, or still says a feature is "built for"
+it (say "released in X.Y.Z" or "available from X.Y.Z"), and it refuses other spellings of the same thing, so there
+is one phrase to search for.
 
 #### Handing a release to the owner
 Whoever prepares a release (a maintainer, or the maintaining assistant) stamps it on `main` and then hands it over;
