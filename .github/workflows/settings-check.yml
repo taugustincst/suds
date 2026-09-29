@@ -5,13 +5,16 @@ name: Repository settings
 # the deploy key and its secret, and stale release branches. It fails, with a table in the run summary, when a
 # setting is off or cannot be read (scripts/repo-settings-check.js; 1.17.0, engineering reviews of 1.16.1 M2,
 # 1.16.2 L5 and 1.16.3 L6). Uses no action and changes nothing: every request is a GET.
+# Until SETTINGS_READ_TOKEN exists, what the workflow's own token cannot read is a warning, not a failure, so the run
+# is red only for a setting it read and found off (engineering review of the 1.17.0 candidate, M6).
 #
 # The token is read-only either way. The workflow's own token reads the rulesets, the rules on a branch and the
 # environment, but not the admin-only settings (Actions permissions, deploy keys, secrets' names, immutable
-# releases), which then show as "cannot verify" and fail the run. A fine-grained token with read-only
+# releases), which then show as "cannot verify (add SETTINGS_READ_TOKEN)", a warning. A fine-grained token with read-only
 # Administration, Secrets, Environments, Actions and Metadata access to this repository only, stored as the secret
-# SETTINGS_READ_TOKEN of the `settings-check` environment (deployments from the default branch only), reads them
-# all (docs/RELEASE.md, step 9). No read-only token can see a ruleset's bypass list; those rows say "check by hand".
+# SETTINGS_READ_TOKEN of the `settings-check` environment (limited to the default branch BEFORE the secret is added;
+# the check reads that limit too), reads them all, and then "cannot verify" fails (docs/RELEASE.md, step 9).
+# No read-only token can see a ruleset's bypass list; those rows say "check by hand".
 on:
   schedule:
     - cron: '17 6 * * 1'

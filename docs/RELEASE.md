@@ -301,8 +301,8 @@ released commit's own edit of them, and the commit released is on that `main`. I
 * **Changes to the gate fail closed, not open.** If `main`'s `release-policy.js` ever `require`s a helper file,
   the two-file `git archive` leaves it out and every release fails until `release.yml` lists the helper; re-running
   an old tag's release after `main` changed the scripts' flags fails too. Neither releases anything unchecked.
-* **The settings are checked, not assumed** (1.17.0): a weekly workflow reads them and fails when one is off or
-  cannot be read (*Owner: repository settings*, step 9).
+* **The settings are checked, not assumed** (1.17.0): a weekly workflow reads them and fails when one is off, or
+  cannot be read once its read-only token exists (*Owner: repository settings*, step 9).
 
 The release job never replaces a published file: when the GitHub Release already exists (a re-run of the same
 commit's release) it uploads the zip and checksum only if neither is there, and stops with an error if only one
@@ -587,9 +587,12 @@ scanning** and **Push protection**. None of these changes what SUDS ships; they 
 
 **9. The weekly settings check, and the token that lets it read everything (1.17.0).**
 `.github/workflows/settings-check.yml` runs every Monday (and on *Run workflow*) and runs
-`scripts/repo-settings-check.js`, which reads steps 1 to 7 through the REST API, only with GET requests, and fails
-the run when a setting is **off** or **cannot be verified**; the run summary has one row per setting (step, setting,
-state, detail). What it reads:
+`scripts/repo-settings-check.js`, which reads steps 1 to 7 and this step's environment through the REST API, only with
+GET requests, and fails the run when a setting it read is **off**; the run summary has one row per setting (step,
+setting, state, detail). A setting it **cannot verify** fails the run once `SETTINGS_READ_TOKEN` exists; until then
+(the run has only the workflow's own token), a setting that token is refused is a **warning**, "cannot verify (add
+SETTINGS_READ_TOKEN)", so the Monday run is red only for something really off, not every week until the token is
+added (engineering review of the 1.17.0 candidate, M6). What it reads:
 
 | Step | Setting | Read from | The workflow's own token |
 | --- | --- | --- | --- |
@@ -600,20 +603,27 @@ state, detail). What it reads:
 | 5 | immutable releases | `immutable-releases`; else the newest release's `immutable` | cannot verify, unless the newest release is marked immutable |
 | 6 | `gh-pages` ruleset; one deploy key with write access; `PAGES_PUBLISH_KEY` in `release`, no `PAGES_DEPLOY_KEY`, neither as a repository secret | `rules/branches/gh-pages`, `keys`, `environments/release/secrets`, `actions/secrets` | the ruleset; the rest **cannot verify** |
 | 7 | no `release/v*` branch left; *Automatically delete head branches* | `git/matching-refs/heads/release/v`, the repository | the branches; the setting **cannot verify** |
+| 9 | the `settings-check` environment: deployments from `main` only (branch rule `main`, nothing else) | `environments/settings-check`, `…/deployment-branch-policies` | reads it; open to other branches is a warning without the token, **off** with it |
 
-**Cannot verify is not a pass**: with only the workflow's token the run stays red on the rows marked above. To let
-it read them, make a token that can read and nothing more:
-1. GitHub → your profile → **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained
-   tokens** → **Generate new token**: name `suds settings check`, an expiry (at most a year; the check reports an
-   expired token as "refused (401)"), **Repository access** → *Only select repositories* → `taugustincst/suds`;
-   **Repository permissions**, each **Read-only**: *Administration*, *Secrets*, *Environments*, *Actions*
-   (*Metadata* is added by itself). Nothing with write. **Generate token** and copy it.
-2. Settings → **Environments** → **New environment** → `settings-check` (a run has already made it if the workflow
-   ran): **Deployment branches and tags** → *Selected branches and tags* → add `main` (Ref type: Branch), so only
-   the default branch's copy of the workflow receives the token, not a branch's edited copy; no reviewers (it runs on
-   a schedule). **Environment secrets** → **Add environment secret**: `SETTINGS_READ_TOKEN`, the token → Add.
-3. Check: Actions → *Repository settings* → **Run workflow** on `main`; the summary says "with the
-   SETTINGS_READ_TOKEN token", and only settings that are really off are red.
+**Cannot verify is not a pass**: with only the workflow's token the rows marked above are warnings, which say what
+the check could not see; they are not settings shown to be on. To let it read them, make a token that can read and
+nothing more, and put it where only `main`'s copy of the workflow can read it, **in this order**:
+1. **Create the environment**: Settings → **Environments** → **New environment** → `settings-check`. (The
+   workflow's `environment: settings-check` makes it on its first run, **open to every branch**; if it is already
+   listed, open it.) No reviewers: it runs on a schedule.
+2. **Limit it to `main`, before any secret is in it**: **Deployment branches and tags** → *Selected branches and
+   tags* → add `main` (Ref type: Branch), and nothing else → Save. Only the default branch's copy of the workflow
+   then receives the token, never a branch's edited copy. The check reads this rule (the step 9 row).
+3. **Make the token**: GitHub → your profile → **Settings** → **Developer settings** → **Personal access tokens** →
+   **Fine-grained tokens** → **Generate new token**: name `suds settings check`, an expiry (at most a year; the check
+   reports an expired token as "refused (401)"), **Repository access** → *Only select repositories* →
+   `taugustincst/suds`; **Repository permissions**, each **Read-only**: *Administration*, *Secrets*, *Environments*,
+   *Actions* (*Metadata* is added by itself). Nothing with write. **Generate token** and copy it.
+4. **Then add the secret**: the `settings-check` environment → **Environment secrets** → **Add environment secret**:
+   `SETTINGS_READ_TOKEN`, the token → Add. Never as a repository secret.
+5. Check: Actions → *Repository settings* → **Run workflow** on `main`; the summary says "with the
+   SETTINGS_READ_TOKEN token", no row says "warning", and only settings that are really off are red. From now on a
+   setting it cannot verify fails the run, and so does the environment if it is ever opened to another branch.
 
 What no read-only token can see: a ruleset's **bypass list**, which GitHub shows only to a token that may edit the
 ruleset. Those rows read "check by hand" and do not fail the run; look at them in Settings → Rules → Rulesets (step

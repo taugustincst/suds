@@ -22,8 +22,8 @@ const FORBIDDEN = { status: 403, body: { message: 'Resource not accessible by in
 test('every documented setting in force: all ok, nothing to check by hand', () => {
   const checks = run(configured());
   assert.deepEqual(checks.filter((c) => c.state !== 'ok'), []);
-  // Every step of RELEASE.md's owner settings but the optional code scanning (8) is checked.
-  assert.deepEqual([...new Set(checks.map((c) => c.step))], ['1', '2', '3', '4', '5', '6', '7']);
+  // Every step of RELEASE.md's owner settings but the optional code scanning (8) is checked, and step 9's environment.
+  assert.deepEqual([...new Set(checks.map((c) => c.step))], ['1', '2', '3', '4', '5', '6', '7', '9']);
   assert.ok(checks.length >= 25, `${checks.length} checks`);
 });
 
@@ -63,6 +63,41 @@ test('the workflow\'s default token: the admin-only settings "cannot be verified
   // An immutable newest release is evidence enough that the setting is on.
   d['releases/latest'].body.immutable = true;
   assert.deepEqual(state(run(d), /^Immutable releases$/), ['ok']);
+});
+
+test('until SETTINGS_READ_TOKEN exists: what the default token cannot read is a warning, not a failure; what it reads and finds off still fails', () => {
+  // Engineering review of the 1.17.0 candidate, M6: a run red every week until the owner adds the token is ignored.
+  const d = configured();
+  for (const k of ['actions/permissions', 'actions/permissions/workflow', 'keys?per_page=100', 'environments/release/secrets?per_page=100', 'actions/secrets?per_page=100', 'immutable-releases']) d[k] = FORBIDDEN;
+  delete d['actions/permissions/selected-actions'];
+  delete d[''].body.delete_branch_on_merge;
+  // The environment as the workflow's first run makes it: open to every branch (no token in it yet).
+  d['environments/settings-check'].body.deployment_branch_policy = null;
+  const checks = C.evaluate(d, { ...CTX, readToken: false });
+  assert.deepEqual(failing(checks), [], 'nothing fails');
+  const warned = checks.filter((c) => c.state === 'warn');
+  assert.equal(warned.length, 7, JSON.stringify(warned)); // immutable releases: shown by the newest release here
+  for (const w of warned.filter((c) => c.step !== '9')) assert.match(w.detail, /^cannot verify \(add SETTINGS_READ_TOKEN\): /);
+  assert.match(checks.find((c) => c.step === '9').detail, /any branch may deploy: limit it to main before adding SETTINGS_READ_TOKEN/);
+  // A setting the default token reads and finds off still fails, and so does a refusal that is not a 403.
+  d['rules/branches/gh-pages'] = { status: 200, body: [] };
+  assert.deepEqual(failing(C.evaluate(d, { ...CTX, readToken: false })).map((c) => c.state), ['off']);
+  d['rules/branches/gh-pages'] = { status: 401, body: { message: 'Bad credentials' } };
+  assert.deepEqual(failing(C.evaluate(d, { ...CTX, readToken: false })).map((c) => c.state), ['unverified']);
+  // With the token, the same rows cannot be verified, which fails; and an open environment holding it is off.
+  const strict = C.evaluate(d, CTX);
+  assert.ok(strict.filter((c) => c.state === 'unverified').length >= 6);
+  assert.equal(strict.find((c) => c.step === '9').state, 'off');
+});
+
+test('step 9: the settings-check environment is limited to main', () => {
+  const d = configured();
+  assert.equal(state(run(d), /settings-check/)[0], 'ok');
+  d['environments/settings-check/deployment-branch-policies'].body.branch_policies.push({ id: 23, name: 'maint/*', type: 'branch' });
+  assert.equal(state(run(d), /settings-check/)[0], 'off');
+  assert.equal(state(C.evaluate(d, { ...CTX, readToken: false }), /settings-check/)[0], 'warn');
+  d['environments/settings-check'] = { status: 404, body: { message: 'Not Found' } };
+  assert.equal(state(C.evaluate(d, { ...CTX, readToken: false }), /settings-check/)[0], 'warn');
 });
 
 test('one setting off at a time is found, with what is wrong', () => {
@@ -163,10 +198,10 @@ test('ruleset ref patterns: ~DEFAULT_BRANCH, one-segment and any-depth wildcards
 test('run as the workflow runs it: exit status, error annotations and a summary table', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-settings-'));
   try {
-    const cli = (fixture) => {
+    const cli = (fixture, kind = 'default workflow') => {
       const f = path.join(dir, 'fx.json'); fs.writeFileSync(f, JSON.stringify(fixture));
       const sum = path.join(dir, 'summary.md'); fs.writeFileSync(sum, '');
-      const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'repo-settings-check.js'), '--repo', 'taugustincst/suds', '--fixtures', f], { encoding: 'utf8', env: { PATH: process.env.PATH, GITHUB_STEP_SUMMARY: sum, SETTINGS_TOKEN_KIND: 'default workflow' } });
+      const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'repo-settings-check.js'), '--repo', 'taugustincst/suds', '--fixtures', f], { encoding: 'utf8', env: { PATH: process.env.PATH, GITHUB_STEP_SUMMARY: sum, SETTINGS_TOKEN_KIND: kind } });
       return { ...r, summary: fs.readFileSync(sum, 'utf8') };
     };
     const good = cli(configured());
@@ -179,9 +214,21 @@ test('run as the workflow runs it: exit status, error annotations and a summary 
     const bad = cli(d);
     assert.equal(bad.status, 1);
     assert.match(bad.stdout, /::error::Setting off \(docs\/RELEASE\.md step 5\): 5 Immutable releases: off/);
-    assert.match(bad.stdout, /::error::Cannot verify \(docs\/RELEASE\.md step 4\): 4 Default workflow token read-only: unverified/);
-    assert.match(bad.summary, /\*\*1 off, 1 cannot be verified\*\* with the default workflow token/);
-    assert.match(bad.summary, /\| 4 \| Default workflow token read-only \| \*\*cannot verify\*\* \|/);
+    // With the workflow's own token (no SETTINGS_READ_TOKEN yet), what it cannot read warns; the setting off fails.
+    assert.match(bad.stdout, /::warning::\(docs\/RELEASE\.md step 4\): 4 Default workflow token read-only: warn \(cannot verify \(add SETTINGS_READ_TOKEN\)/);
+    assert.ok(!/::error::Cannot verify/.test(bad.stdout));
+    assert.match(bad.summary, /\*\*1 off, 0 cannot be verified\*\* with the default workflow token/);
+    assert.match(bad.summary, /\| 4 \| Default workflow token read-only \| warning \| cannot verify \(add SETTINGS_READ_TOKEN\)/);
+    // Only the 403 alone: a warning, and the run passes.
+    const warnOnly = configured(); warnOnly['actions/permissions/workflow'] = FORBIDDEN;
+    const w = cli(warnOnly);
+    assert.equal(w.status, 0, w.stdout);
+    assert.match(w.summary, /1 warning: settings the default workflow token cannot read/);
+    // With SETTINGS_READ_TOKEN, the same row cannot be verified, which fails.
+    const strict = cli(warnOnly, 'SETTINGS_READ_TOKEN');
+    assert.equal(strict.status, 1);
+    assert.match(strict.stdout, /::error::Cannot verify \(docs\/RELEASE\.md step 4\): 4 Default workflow token read-only: unverified/);
+    assert.match(strict.summary, /\| 4 \| Default workflow token read-only \| \*\*cannot verify\*\* \|/);
     assert.match(bad.summary, /\| 5 \| Immutable releases \| \*\*OFF\*\* \| enabled: false \|/);
     assert.match(bad.summary, /A setting that cannot be verified is not a pass/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
