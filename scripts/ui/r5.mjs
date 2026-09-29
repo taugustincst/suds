@@ -215,7 +215,9 @@ try {
     await admin.go('admin?tab=users');
     await admin.page.click('.main button:has-text("+ New user")');
     await admin.page.waitForSelector('.modal select[name=role]'); await settle(admin.page);
-    const ro = await admin.page.$eval('.modal select[name=role] option[value=readonly]', o => o.textContent);
+    // The option is the role's name (1.16.2); its summary is shown under the select once chosen.
+    await admin.page.selectOption('.modal select[name=role]', 'readonly');
+    const ro = await admin.page.textContent('.modal [data-role-summary]');
     ok(/cannot open client records/.test(ro) && !/client summaries/.test(ro), 'Read-only is not described as seeing client summaries', ro);
     await closeModals(admin.page);
   }

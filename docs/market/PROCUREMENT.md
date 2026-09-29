@@ -84,9 +84,11 @@ does not hold.
    Insurance: [general liability, professional/E&O, cyber — limits] (certificates on request)
 
 2. SOLUTION SUMMARY
-   SUDS is the operations system for harm-reduction and prevention programmes: outreach encounters
-   (named or anonymous), naloxone and supply distribution, and grant/funder reporting, with privacy
-   controls built to the 42 CFR Part 2 standard. Clinical modules (care plan, assessments, CalOMS Tx,
+   SUDS is the operations system for harm-reduction and outreach programmes, including prevention-
+   funded outreach and distribution: outreach encounters (named or anonymous), naloxone and supply
+   distribution, and grant/funder reporting, with privacy controls built to support 42 CFR Part 2.
+   It does not support SABG primary-prevention reporting (group and community events, CSAP strategy,
+   IOM category). Clinical modules (care plan, assessments, CalOMS Tx,
    FHIR, EHR hand-off) are optional. It is not an EHR and does not bill Drug Medi-Cal.
 
 3. DEPLOYMENT AND HOSTING

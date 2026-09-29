@@ -228,10 +228,19 @@ export function openClientForm(values, onDone, { full = false, prefill = null } 
     f.querySelector('.form-grid').after(dup.box);
     dup.watch();
   }
+  if (!isNew) { const told = noticeLine(values); if (told) f.prepend(told); }
   const m = modal(isNew ? 'New client — full intake' : `Edit ${values.display_name}`, f, { wide: true });
   if (isNew && prefill && prefill.last_name) dup.check();
 }
 
+/** Editing a client whose care team you are not on: the primary worker is told which fields change (server/rules/clients.js notifyPrimary). */
+function noticeLine(c) {
+  const today = fmt.today(); const now = new Date().toISOString();
+  const team = (c.assignments || []).filter(a => (!a.end_date || a.end_date >= today) && (!a.ended_at || a.ended_at > now));
+  const p = team.find(a => a.role_on_case === 'primary');
+  if (!p || team.some(a => a.user_id === state.user.id)) return null;
+  return h('p', { class: 'banner info small', 'data-change-notice-warning': '1' }, `${p.display_name} is this client's primary worker. You are not on the care team, so they will be told which fields you change (not what you change them to).`);
+}
 const SORTS = [['', 'Recently updated'], ['last_contact', 'Last contact (oldest first)'], ['overdue', 'Overdue follow-ups'], ['risk', 'Risk']];
 route('clients', async (r) => {
   const q = r.query.get('q') || ''; const status = r.query.get('status') || 'active'; const assigned = r.query.get('assigned_to') || '';

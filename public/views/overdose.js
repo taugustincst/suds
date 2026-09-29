@@ -79,6 +79,8 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
     await del(`/api/overdose-events/${row.id}`); discardDraft(`overdose:${row.id}`);
     toast('Event deleted', 'ok'); m.close(); onDone && onDone();
   } }, 'Delete event'));
+  // A supervisor or administrator changing a colleague's report is told whose it is, before they save.
+  if (row && row.reported_by && state.user && row.reported_by !== state.user.id) f.prepend(h('p', { class: 'banner info small', 'data-others-record': '1' }, `Reported by ${row.reporter || 'another worker'}. You are changing another worker's record.`));
   const m = modal(row ? 'Edit overdose event' : 'Record an overdose or reversal', f, { wide: true });
   return m;
 }

@@ -108,7 +108,8 @@ try {
   ok(row, 'David\'s visit is listed');
   if (row) {
     const cell = await row.$('[data-view-only]');
-    eq(cell && (await cell.textContent()).trim(), 'Recorded by David Chen — view only', 'its actions cell says whose it is');
+    // 1.16.2 (r7 L5): the row's Worker column already names David, so the actions cell says only "View only".
+    eq(cell && (await cell.textContent()).trim(), 'View only', 'its actions cell says it is view only');
     ok(!(await row.textContent()).includes(`End${tag}`), 'the list shows only the start of the summary');
     await (await row.$('.row-open')).click();
     const view = await until(() => page.$('.modal [data-visit-view]'));
@@ -204,8 +205,12 @@ try {
   await admin.page.click('.main button:has-text("+ New user")');
   await admin.page.waitForSelector('.modal select[name=role]');
   const roles = await admin.page.$$eval('.modal select[name=role] option', os => os.map(o => o.textContent));
-  ok(roles.some(r => /^Navigator — sees and updates every client; reads clinical notes except SUD counseling notes.*changes only their own work$/.test(r)), 'New user describes the navigator role, see vs change', roles[0]);
-  ok(roles.some(r => /^Supervisor — .*can change other workers' records$/.test(r)), 'and says a supervisor changes other workers\' records');
+  // 1.16.2 (r7 L1): the options are the roles' names, and the chosen role's summary is shown in full under the select.
+  ok(roles.includes('Navigator') && roles.includes('Supervisor'), 'New user lists the roles by name', roles.join(' | '));
+  await admin.page.selectOption('.modal select[name=role]', 'navigator');
+  ok(/^Navigator — sees and updates every client; reads clinical notes except SUD counseling notes.*changes only their own work$/.test(await admin.page.textContent('.modal [data-role-summary]')), 'and describes the chosen navigator role, see vs change');
+  await admin.page.selectOption('.modal select[name=role]', 'supervisor');
+  ok(/^Supervisor — .*can change other workers' records$/.test(await admin.page.textContent('.modal [data-role-summary]')), 'and says a supervisor changes other workers\' records');
   await axe(admin.page, 'New user dialog');
   await closeModals(admin.page);
   const cat = (await admin.api('GET', '/api/permissions/catalog')).data.permissions;

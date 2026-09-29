@@ -42,6 +42,55 @@ Fixes from the security review of 1.16.1. No migration, no new permission, no ne
 - **Lows.** A supply line's worker is its visit's and is no longer a column a device may send (it was already set
   from the visit). The care plan's count of notes per problem leaves out counseling notes its reader cannot read.
 
+### Frontline
+
+Fixes from the frontline-UX review of 1.16.1 (round 7). No migration, no new permission, no new route.
+
+- **A client-change notice is something to read (H2, M2).** The to-do the primary worker gets when someone off the
+  care team changes their client's record opened as the full Edit to-do form, with a reference line holding a user
+  id. It now opens as a card: who changed which fields (by the client form's labels), when, **View client** and
+  **Mark as seen**, and that SUDS keeps which fields changed, not their earlier values. The to-do list shows
+  *View change* instead of Edit and Delete, and never shows a notice as overdue. The bell's link opens the same card.
+  Notices are recognised by one function (`changeNotice()` in `public/views/tasks.js`), from the task's `notice` flag
+  (the text of a notice from an older server as a fallback); **Mark as seen** is offered only to the person it was sent to
+  and to supervisors and administrators. The client **Edit** form
+  tells someone off the care team that the primary worker will be told which fields they change.
+- **Visits on a phone are two-line rows (M3)**, as Calls and To-dos are: who and what, then when, what was handed
+  out and by whom. A row opens the visit.
+- **Referrals fit a 1280 px window (M4).** Urgency, the appointment and the barrier sit under the status; the
+  action buttons no longer end past the right-hand edge.
+- **An anonymous visit says "Anonymous" (M5).** A naloxone distribution with no client was drawn as an empty link to
+  `#/client/null` (an accessibility failure) and an empty Client row on a phone. The accessibility audit now logs one
+  before it checks Visits.
+- **A colleague's referral says what you can do (M6):** *"You can record the outcome; only David Chen or a supervisor
+  can change the referral"*, not "view only" beside a working **Record outcome** button.
+- **Smaller fixes.** The role select lists roles by name, and the chosen role's whole summary shows under it (it was
+  cut off in the closed select); *My hours logged* is under *Your own work*, not among the program's tiles; Visits
+  name the client (name and code, where the person may see names) as Calls and To-dos do; a new visit, when this
+  browser has none remembered, starts at the location and modality of the worker's own latest visit instead of the
+  office; a row whose Worker column names its owner says only *View only*; a supervisor editing a colleague's
+  overdose event is told whose it is; no permission is labelled "(all)" (*Care plans (read, add, change own)*, and
+  what the others allow); the Home welcome tips leave out what the person cannot do (Finance and Read-only log
+  nothing and open no client record); New to-do does not offer Finance or Read-only accounts as assignees; the
+  two-step verification reminder is one short line on a phone, still saying by when.
+
+### Documentation
+
+- The user guide no longer says navigators read SUD counseling notes (they have not since 1.16.1); the README's
+  role table says the same. The client record keeps which fields were changed, not their earlier values: said in the
+  user guide, POSITIONING, both buyer guides and the security questionnaire (#22), with revision history planned.
+- A change notice is sent when the editor is not on the client's care team (POSITIONING and the buyer guides said
+  "someone else").
+- INSTALL's *Working offline* agrees with the wizard and Step 4: recommended for harm-reduction outreach, not for a
+  treatment-adjacent programme without a field-work need.
+- "Prevention" is qualified in the README and the RFI solution summary (prevention-funded outreach; SABG
+  primary-prevention reporting is not supported), the README no longer speaks of a supply cupboard, and "built to
+  the 42 CFR Part 2 standard" now reads "built to support 42 CFR Part 2".
+- The pen-test scope lists the classes fixed in 1.16.1 and 1.16.2 for a tester to confirm: stored-file serving, sync
+  attribution and column smuggling, separation of duties, SUD counseling-note access, note signatures via sync and
+  client-change notices.
+- The browser suite is 42 scripts (`scripts/ui/r7.mjs`).
+
 ## 1.16.1 — 2026-09-29
 
 ### Security

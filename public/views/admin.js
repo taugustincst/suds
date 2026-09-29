@@ -1,4 +1,4 @@
-import { h, route, api, get, post, put, del, state, form, modal, toast, table, badge, flag, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs, moduleOn, roleOptions, ROLE_SUMMARY } from '../app.js';
+import { h, route, api, get, post, put, del, state, form, modal, toast, table, badge, flag, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs, moduleOn, roleOptions, roleSummary, ROLE_SUMMARY } from '../app.js';
 import { qrSvg } from '../qr.js';
 import { listsTab } from './lists.js';
 import { securityTab, drillCard } from './security.js';
@@ -98,6 +98,7 @@ async function openUserForm(values, onDone) {
     'The role gives this person\'s permissions. ', values.override_count ? `${values.override_count} individual override${values.override_count === 1 ? '' : 's'}. ` : '',
     h('button', { type: 'button', class: 'btn sm', 'data-open-permissions': values.id, onClick: () => { m.close(); openPermissionsDialog(values, onDone); } }, 'Permissions…'))
     : isNew && can('users:manage') ? h('p', { class: 'small muted' }, 'Once the account is created you can grant or deny individual permissions straight away.') : null;
+  roleSummary(f);
   const m = modal(isNew ? 'New user' : `Edit ${values.display_name}`, permLink ? h('div', {}, permLink, f) : f, { wide: true });
 }
 
@@ -554,6 +555,7 @@ async function accessRequestsCard(onDone) {
     ], { submitText: 'Approve', onCancel: () => m.close(), onSubmit: async (d) => {
       await post(`/api/users/${q.id}/approve`, d); m.close(); toast(`${q.display_name} can now sign in`, 'ok'); await loadRefData(); onDone();
     } });
+    roleSummary(f);
     const m = modal(`Approve ${q.display_name}`, h('div', {}, h('p', { class: 'small muted' }, `${q.username}${q.email ? ` · ${q.email}` : ''}. They sign in with the password they chose; two-step verification applies as for any new account.`), f));
   };
   const decline = async (q) => {

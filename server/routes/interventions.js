@@ -147,7 +147,8 @@ module.exports = (r) => {
   crud.build(r, {
     table: 'interventions', entity: 'intervention', perm: 'interventions', clientRequired: false, dateCol: 'occurred_at',
     joins: 'JOIN users u ON u.id=interventions.user_id LEFT JOIN clients c ON c.id=interventions.client_id LEFT JOIN funding_sources f ON f.id=interventions.funding_source_id',
-    select: 'interventions.*, u.display_name AS worker, c.client_code, f.name AS funding_source',
+    // The client's name beside the code, as Calls and To-dos have it (withClientName: the code alone for a role without clients:read).
+    select: `interventions.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${require('../client-name').SELECT}`,
     // shape (supplies and returns included), owner and canEdit: server/rules/interventions.js (crud.js reads them from there).
     filters: (ctx, where, params) => {
       const t = ctx.query.get('type'); if (t) { where.push('interventions.type=?'); params.push(t); }
@@ -157,7 +158,7 @@ module.exports = (r) => {
       // kit given on an outreach contact or a follow-up counts the same as one on a distribution visit).
       if (ctx.query.get('naloxone') === '1') where.push('interventions.naloxone_kits > 0');
     },
-    afterLoad: (ctx, row) => withLines(decodeSummary(row)),
+    afterLoad: (ctx, row) => withLines(decodeSummary(require('../client-name').withClientName(ctx, row))),
     beforeInsert: (ctx, v) => { planNote(ctx, v); v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); checkCostPermission(ctx, v);
       // Nobody chose a fund (the field was not on the form: a role not shown it, or an API client): the
       // worker's default fund, else the programme's. An explicit "none" (null) is left as chosen.

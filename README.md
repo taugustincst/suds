@@ -1,14 +1,16 @@
 # SUDS — SUD Navigator Services Tracker
 
-**The operations system for harm-reduction and prevention programmes — outreach encounters, naloxone and supply
-distribution, and grant/funder reporting — with privacy controls built to the 42 CFR Part 2 standard.**
+**The operations system for harm-reduction and outreach programmes, prevention-funded outreach included —
+outreach encounters, naloxone and supply distribution, and grant/funder reporting — with privacy controls built to
+support 42 CFR Part 2.**
 
 SUDS is for community-based organisations and county programmes doing outreach, harm reduction, naloxone and
-test-strip distribution and prevention, usually on opioid-settlement, SOR / Naloxone Distribution Project or
-SABG prevention funding. It records outreach contacts (named or anonymous), draws supplies down from a supply
-cupboard, tracks referrals and a verified resource directory, holds grant budgets, expenditures and staff time
-with approvals, and produces the funder reports that go with them. Privacy is built to the 42 CFR Part 2
-standard: consents that name the recipient, one disclosure gate with an accounting of disclosures, AES-256-GCM
+test-strip distribution and prevention-funded outreach, usually on opioid-settlement, SOR / Naloxone Distribution
+Project or SABG prevention funding (SABG primary-prevention reporting — group and community events, CSAP strategy,
+IOM category — is not supported; [POSITIONING.md](docs/market/POSITIONING.md)). It records outreach contacts
+(named or anonymous), draws supplies down from stock kept by item, site and lot, tracks referrals and a verified
+resource directory, holds grant budgets, expenditures and staff time with approvals, and produces the funder reports that go with them. Its privacy controls are built to support
+42 CFR Part 2: consents that name the recipient, one disclosure gate with an accounting of disclosures, AES-256-GCM
 encryption of client identifiers and free text, and a tamper-evident audit log of PHI reads and writes, sign-ins,
 exports, disclosures and configuration changes.
 
@@ -115,7 +117,7 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 
 | Role | Sees | Can |
 | --- | --- | --- |
-| navigator | All clients (`clients:all`, 1.16.0; an administrator can hold a person to their caseload by denying it) | Clients, visits, calls, time, referrals, to-dos (their own work; changing another worker's records is `records:manage-others`, supervisors and administrators), admin notes, reads clinical notes (`notes:clinical:read`, 1.16.0; cannot write them), consents, imports, de-identified exports; records expenditures (grant structure itself is `budget:manage`: supervisor, finance, admin); sees the supply stock and records deliveries received (items, sites, transfers, adjustments and disposal are `supplies:manage`: supervisor, admin) |
+| navigator | All clients (`clients:all`, 1.16.0; an administrator can hold a person to their caseload by denying it) | Clients, visits, calls, time, referrals, to-dos (their own work; changing another worker's records is `records:manage-others`, supervisors and administrators), admin notes, reads clinical notes except SUD counseling notes (`notes:clinical:read`, 1.16.0; counseling notes only for their author, the co-signer and those who write clinical notes, 1.16.1; cannot write them), consents, imports, de-identified exports; records expenditures (grant structure itself is `budget:manage`: supervisor, finance, admin); sees the supply stock and records deliveries received (items, sites, transfers, adjustments and disposal are `supplies:manage`: supervisor, admin) |
 | clinician | All clients (`clients:all`, 1.16.0, for coverage and on-call; deniable per person) | Clients, visits, calls, time, referrals, to-dos (their own work, on any client), admin and **clinical notes**, consents, imports, de-identified exports; reads the resource directory; sees the budget and spending (`budget:read`, 1.16.0; no budget entry); sees the supply stock and records deliveries received |
 | supervisor | All clients | Everything, plus changing or removing other workers' records (`records:manage-others`), assignments, approvals, audit log, break-glass review, de-identified and identified exports, consent overrides |
 | finance | De-identified list | Funding, budget lines, expenditure approval, staff time approval (every submitted entry, on the Supervision page), time summaries, de-identified exports; writes the funder report (`reports:funder`): the program's own submission of the funder report, NDP log and settlement report (also in the DHCS and county settlement layouts) — exact aggregate counts, by fund and any range, no client-level data — and publication releases |

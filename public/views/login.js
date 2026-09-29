@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions } from '../app.js';
+import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions, roleSummary } from '../app.js';
 import { restoreBackupButton, requestPersistentStorage, showRecoveryCode, resetRecoveryPrompt } from './local.js';
 
 const OIDC_ERRORS = {
@@ -239,6 +239,7 @@ function firstRun() {
     if (made && made.code) showRecoveryCode(made.code, made.created_at, { after: 'dashboard' });
     else navAndRender('dashboard');
   } }));
+  roleSummary(f);
   // Optional, and after the real thing: one tap from nothing to a set of fictional records to look around.
   let tryIt = null;
   if (stat) {
