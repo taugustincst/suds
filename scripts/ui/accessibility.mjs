@@ -324,8 +324,9 @@ const DIALOGS = [
   // 1.14.0: "+ New client" is Quick add; the full intake is its own dialog.
   ['New client — full intake', 'clients:write', async (p) => p.evaluate(async () => (await import('./views/clients.js')).openClientForm(null, null, { full: true }))],
   ['Log visit', 'interventions:write', async (p) => p.evaluate(async () => (await import('./views/interventions.js')).openInterventionForm(null, {}))],
-  // The visit's folded sections, every one open (axe does not look inside a closed one).
-  ['Log visit, every section open', 'interventions:write', async (p) => { await p.evaluate(async () => (await import('./views/interventions.js')).openInterventionForm(null, {})); await p.waitForSelector('.modal details[data-section-key]'); await p.evaluate(() => document.querySelectorAll('.modal details').forEach(d => { d.open = true; })); }],
+  // The visit's folded sections, every one open (axe does not look inside a closed one). The first is the participant
+  // code's, hidden unless the visit may have no client (1.17.0): wait for one that is shown.
+  ['Log visit, every section open', 'interventions:write', async (p) => { await p.evaluate(async () => (await import('./views/interventions.js')).openInterventionForm(null, {})); await p.waitForSelector('.modal details[data-section-key]:not([hidden])'); await p.evaluate(() => document.querySelectorAll('.modal details').forEach(d => { d.open = true; })); }],
   // The referral's steps inside its one dialog: the consent naming the provider, and a provider not listed.
   ['Referral: record a consent (step)', ['referrals:write'], async (p) => {
     await p.evaluate(async () => {
