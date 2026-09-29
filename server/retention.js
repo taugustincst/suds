@@ -13,14 +13,15 @@ const audit = require('./audit');
 // staff-time bookkeeping (time_entries, expenditures) keep their rows with the client link removed:
 // the money was spent and the hours were worked whether or not the person's record still exists.
 // A disclosure cites the court order it relied on, so disclosures go before court_orders.
-const DELETE_TABLES = ['care_plan_steps', 'care_plan_goals', 'problem_history', 'problems', 'asam_assessments', 'outcome_measures', 'client_form_files', 'client_forms', 'disclosures', 'court_orders', 'part2_notices', 'consents', 'patient_requests', 'referrals', 'tasks', 'calls', 'overdose_events', 'intervention_supplies', 'interventions', 'caloms_records', 'suprt_assessments', 'episodes', 'assignments', 'breakglass_events'];
+const DELETE_TABLES = ['care_plan_steps', 'care_plan_goals', 'problem_history', 'problems', 'asam_assessments', 'outcome_measures', 'client_form_files', 'client_forms', 'disclosures', 'court_orders', 'part2_notices', 'consents', 'patient_requests', 'referrals', 'tasks', 'calls', 'overdose_events', 'intervention_supplies', 'interventions', 'caloms_records', 'suprt_assessments', 'episodes', 'assignments', 'breakglass_events', 'client_revisions'];
 // A complaint is the programme's record of how it answered one, and stays (unlinked) when the person's
 // record goes. So does an incident's link to the person: breach documentation is kept six years (45 CFR
 // §164.530(j)), longer than a record may be, so the link keeps the snapshot taken when the client was
 // linked (code, encrypted name) and records when the record was purged (purgeClient).
 const UNLINK_TABLES = ['time_entries', 'expenditures', 'complaints'];
-// Tables that never synchronise leave no tombstone behind.
-const NO_TOMBSTONE = ['breakglass_events'];
+// Tables that never synchronise leave no tombstone behind. A client's revision history (1.17.0: the earlier values
+// of the record) goes with the record: it is the record's, and kept no longer than the record is.
+const NO_TOMBSTONE = ['breakglass_events', 'client_revisions'];
 
 function retentionYears() {
   const v = Number(db.getSetting('client_retention_years', ''));
@@ -61,11 +62,13 @@ const ACTIVITY = {
   time_entries: ['work_date'],
   expenditures: ['spent_at'],
 };
-// Client-linked tables that are not activity on the record: who was assigned, and emergency reads of it.
+// Client-linked tables that are not activity on the record: who was assigned, emergency reads of it, and edits to
+// its own fields (client_revisions: correcting a phone number, or putting a change back, is not care given, and must
+// not keep a record past its time).
 // A privacy complaint or an incident that touched the record is not care given to the person either. A
 // visit's supplies (intervention_supplies) are dated by their visit, which is already counted. (The stock
 // ledger's rows for a purged visit stay: they hold no client, only what left the shelf and when.)
-const NOT_ACTIVITY = ['assignments', 'breakglass_events', 'complaints', 'privacy_incident_clients', 'intervention_supplies'];
+const NOT_ACTIVITY = ['assignments', 'breakglass_events', 'complaints', 'privacy_incident_clients', 'intervention_supplies', 'client_revisions'];
 
 function lastActivitySql() {
   const parts = [];

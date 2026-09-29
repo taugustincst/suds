@@ -117,9 +117,9 @@ staff to double-enter.
 By default (since 1.16.0), yes to seeing: navigators and clinicians can open every client, for coverage and
 on-call work, and navigators read clinical notes without writing them. SUD counseling notes are readable only by their author, the co-signer and staff who write clinical notes (clinicians, supervisors). Client records are shared:
 anyone who sees a client may update it, and the client's primary worker is told which fields changed when someone
-not on the client's care team does. SUDS keeps which fields were changed (in the notice and the audit log), not what
-they held before: the client record has no revision history yet (planned), so an earlier value comes back only from
-a backup.
+not on the client's care team does. From 1.17.0 SUDS keeps what the fields held before and after
+each change (the record's History, for its care team, supervisors and administrators), and the primary worker or a
+supervisor can put a change back, as a new change: nothing in the history is removed.
 Each person changes only their own visits, calls, notes, referrals and to-dos; changing or deleting another
 worker's is for supervisors and administrators. Finance and read-only see client codes, never client records. A programme
 that wants least privilege holds a person to their own caseload with a per-user deny of *See every client*, and

@@ -651,6 +651,20 @@ const migrations = [
     )`);
     d.exec(`CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id)`);
   },
+  // 49: reserved for a parallel 1.17.0 stream (a programme-wide least-privilege default), whose own migration takes
+  //     this place when the streams are merged. A no-op here, so that the revision history below is number 50.
+  (d) => { void d; },
+  // 50: client-record revision history (1.17.0, server/client-revisions.js): one row per change to a client's
+  //     record, with each changed field's value before and after, encrypted. A new table; nothing to backfill
+  //     (the values a record held before this release were never kept). Created from schema.sql's own text, so an
+  //     upgraded database and a fresh one match; self-contained and idempotent, so it can be renumbered.
+  (d) => {
+    const text = safeSchema();
+    const m = text.match(/CREATE TABLE IF NOT EXISTS client_revisions \([\s\S]*?\n\);/);
+    if (!m) throw new Error('migration 50: no definition for client_revisions in schema');
+    d.exec(m[0]);
+    createIndexesFromSchema(d, text, ['idx_client_revisions_client']);
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

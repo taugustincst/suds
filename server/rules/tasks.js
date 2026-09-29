@@ -65,4 +65,14 @@ module.exports = define({
     return !!k && k.closed.size > 0 && st.standing(existing.client_id);
   },
 });
-Object.assign(module.exports, { NOTICE_MARKER, isNotice, noticeEntry, noticeBy, noticeIds });
+/**
+ * The revisions a change notice reports (1.17.0, server/client-revisions.js), oldest first: each edit that raised or
+ * added to it names its revision in its audit entry. Empty on a device, whose audit trail is its own, and for a
+ * notice raised before revisions were kept.
+ */
+function noticeRevisions(row) {
+  if (!noticeEntry(row)) return [];
+  return require('../db').all(`SELECT details FROM audit_log WHERE client_id=? AND action='client.change_notice' AND details LIKE ? ORDER BY id`, row.client_id, `%"task":"${String(row.id).replace(/[%_"\\]/g, '')}"%`)
+    .map(a => { try { return JSON.parse(a.details); } catch { return {}; } }).filter(d => d.task === row.id && d.notified === row.assigned_to && d.revision).map(d => d.revision);
+}
+Object.assign(module.exports, { NOTICE_MARKER, isNotice, noticeEntry, noticeBy, noticeIds, noticeRevisions });

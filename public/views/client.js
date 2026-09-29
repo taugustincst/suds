@@ -56,6 +56,8 @@ route('client', async (r) => {
     moduleTab('assessments', 'assessments', 'Assessments', can('assessments:read'), can('assessments:write'), n('assessments')),
     moduleTab('suprt', 'suprt', 'SUPRT-A', can('clients:read'), can('clients:write'), n('suprt')),
     ['forms', `Forms (${c.counts.forms || 0})`], ['episodes', 'Episodes'], ['requests', 'Requests'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team'],
+    // The record's own changes, before and after (1.17.0): for its care team and supervisors (server/client-revisions.js).
+    (c.history && c.history.read) || tab === 'history' ? ['history', 'History'] : null,
     tab === 'timeline' ? ['timeline', 'All activity'] : null].filter(Boolean);
   // The sections in the strip: the six everyone uses, then what this person's own work turns to most, by
   // permission (deny-aware can()), not role name — a supervisor's episodes and care team (who is working this
@@ -210,6 +212,7 @@ route('client', async (r) => {
     async careplan() { return (await import('./clinical.js')).carePlanTab(id, { refresh, clientDisplay: disp }); },
     async assessments() { return (await import('./clinical.js')).assessmentsTab(id, { refresh, clientDisplay: disp }); },
     async suprt() { return (await import('./suprt.js')).suprtTab(id, { refresh, clientDisplay: disp }); },
+    async history() { return (await import('./history.js')).historyTab(id, c, { refresh, highlight: (r.query && r.query.get('rev') ? r.query.get('rev').split(',') : []) }); },
     async timeline() {
       const { events } = await get(`/api/clients/${id}/timeline`);
       return h('div', { 'data-all-activity': '1' }, h('p', {}, h('a', { href: `#/client/${id}/overview` }, '← Overview')), h('h2', {}, 'All activity'),

@@ -14,7 +14,7 @@ const { withClientName, SELECT: NAME_COLS } = require('../client-name');
 // and handed to SQL — not date('now','localtime') in SQL against new Date().toISOString() in JS, which
 // were two different days for a few hours either side of midnight.
 const { localDate } = require('./budget');
-const { isNotice, noticeBy } = require('../rules/tasks');
+const { isNotice, noticeBy, noticeRevisions } = require('../rules/tasks');
 function dueTasks(ctx, within) {
   const cf = auth.caseloadFilter(ctx.user, 'tasks.client_id');
   const horizonMs = Date.now() + within * 60000;
@@ -84,6 +84,8 @@ function presentTask(t) {
     // Who made the change is the audit entry's user, never the title's words (security review of 1.16.3, N5).
     const by = noticeBy(t); const u = by && db.one(`SELECT display_name FROM users WHERE id=?`, by);
     if (u) o.notice_by = u.display_name;
+    // The revisions it reports (1.17.0): its card links to them on the record's History ("See what changed").
+    const revs = noticeRevisions(t); if (revs.length) o.notice_revisions = revs;
   }
   // A notice's title names the client by code (it is written once, for whoever reads it); shown as every list
   // shows a client: the name, where this reader may see it (r8 M2).
