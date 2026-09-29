@@ -13,7 +13,9 @@ Fixes from the frontline-UX review of 1.16.1 (round 7). No migration, no new per
   id. It now opens as a card: who changed which fields (by the client form's labels), when, **View client** and
   **Mark as seen**, and that SUDS keeps which fields changed, not their earlier values. The to-do list shows
   *View change* instead of Edit and Delete, and never shows a notice as overdue. The bell's link opens the same card.
-  Notices are recognised by one function (`changeNotice()` in `public/views/tasks.js`). The client **Edit** form
+  Notices are recognised by one function (`changeNotice()` in `public/views/tasks.js`), from the task's `notice` flag
+  (the text of a notice from an older server as a fallback); **Mark as seen** is offered only to the person it was sent to
+  and to supervisors and administrators. The client **Edit** form
   tells someone off the care team that the primary worker will be told which fields they change.
 - **Visits on a phone are two-line rows (M3)**, as Calls and To-dos are: who and what, then when, what was handed
   out and by whom. A row opens the visit.

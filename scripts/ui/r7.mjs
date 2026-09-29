@@ -125,7 +125,7 @@ try {
   // ------------------------------------------------------------------ H2: David reads the notice
   const david = await session('dchen');
   ({ page, go, api } = david);
-  const notices = (await api('GET', '/api/tasks?status=open&mine=1&limit=300')).data.rows.filter(t => t.client_id === cid && /changed/.test(t.title));
+  const notices = (await api('GET', '/api/tasks?status=open&mine=1&limit=300')).data.rows.filter(t => t.client_id === cid && (t.notice === true || /changed/.test(t.title)));
   eq(notices.length, 1, 'David has one notice about Maria\'s change');
   const notice = notices[0];
   await go('tasks');
@@ -155,7 +155,7 @@ try {
   const put2 = await (await session('mrivera')).api('PUT', `/api/clients/${cid}`, { preferred_name: `Ree${tag}` });
   eq(put2.status, 200, 'Maria changes the preferred name as well');
   const dphone = await session('dchen', PW, ...PHONE);
-  const again = (await dphone.api('GET', '/api/tasks?status=open&mine=1&limit=300')).data.rows.find(t => t.client_id === cid && /changed/.test(t.title));
+  const again = (await dphone.api('GET', '/api/tasks?status=open&mine=1&limit=300')).data.rows.find(t => t.client_id === cid && (t.notice === true || /changed/.test(t.title)));
   ok(again, 'a new notice is raised');
   if (again) {
     await dphone.go(`tasks?id=${again.id}`);
