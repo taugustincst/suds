@@ -141,6 +141,26 @@ try {
     const settingsText = await page.textContent('[data-ai-settings]');
     ok(/resets on the 1st of each month/.test(settingsText) && !/UTC/.test(settingsText), 'the monthly cap help says when it resets, without "UTC"');
     ok(!/programme|organisation/.test(settingsText), 'US spelling on the AI settings ("program", "organization")');
+    // 1.17.1: the provider this server sends to is named, and the This month card shows an estimated cost once the
+    // administrator enters the prices (docs/AI-COPILOT.md, "Cost").
+    eq(await page.getAttribute('[data-ai-provider]', 'data-ai-provider'), 'anthropic', 'Settings › AI copilot names the configured provider');
+    ok(/Anthropic/.test(await page.textContent('[data-ai-provider]')), 'in words');
+    eq(await page.getAttribute('[data-ai-cost]', 'data-ai-cost'), 'none', 'no estimated cost until the prices are entered');
+    eq((await api('PUT', '/api/ai/settings', { price_input: -1 })).status, 400, 'a negative price is refused');
+    await page.fill('[data-ai-switch] input[name=price_input]', '4');
+    await page.fill('[data-ai-switch] input[name=price_output]', '20');
+    await page.click('[data-ai-switch] button[type=submit]');
+    await page.waitForSelector('[data-ai-cost="1"]', { timeout: 10000 });
+    const priced = (await api('GET', '/api/ai/settings')).data;
+    eq([priced.price_input, priced.price_output].join(), '4,20', 'the prices are saved from the form');
+    const costText = await page.textContent('[data-ai-cost="1"]');
+    ok(/Estimated cost: \$\d[\d,]*\.\d\d/.test(costText), 'the This month card shows an estimated cost in dollars', costText);
+    ok(/An estimate, not a bill/.test(costText) && /\$4\.00 and \$20\.00 per million/.test(costText), 'says it is an estimate, and at which prices', costText);
+    for (const n of ['price_input', 'price_output', 'monthly_cost_cap']) {
+      const id = await page.getAttribute(`[data-ai-switch] input[name=${n}]`, 'id');
+      ok(id && await page.$(`label[for="${id}"]`), `the ${n} field has a visible label`);
+    }
+    await axe(page, 'Settings › AI copilot, with an estimated cost');
     // A cap of 0 pauses it, and says so (not "used its 0 AI drafts").
     const cap0 = (await api('GET', '/api/ai/settings')).data.monthly_cap;
     eq((await api('PUT', '/api/ai/settings', { monthly_cap: 0 })).status, 200, 'the administrator sets the cap to 0');

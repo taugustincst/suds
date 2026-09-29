@@ -27,8 +27,9 @@ the server outbound HTTPS (port 443) to the providers' websites if you want it; 
 "the computer running SUDS could not reach the internet" and every program keeps its generated card.
 
 The optional **AI documentation copilot** (off by default; `docs/AI-COPILOT.md`) calls the AI provider's API
-(`https://api.anthropic.com`, or `SUDS_AI_BASE_URL`) with `ANTHROPIC_API_KEY` from the service's environment,
-only after an administrator records the programme's BAA/QSOA with the provider and switches it on. Allow
+(`https://api.anthropic.com`, or `SUDS_AI_BASE_URL`) with `ANTHROPIC_API_KEY` from the service's environment
+(or, with `SUDS_AI_PROVIDER=bedrock` / `vertex`, Amazon Bedrock or Google Vertex AI with their credentials:
+`docs/AI-COPILOT.md`, *Providers*), only after an administrator records the programme's BAA/QSOA with the provider and switches it on. Allow
 outbound HTTPS to that host if you use it.
 
 ### Inbound from the internet: secure referral links

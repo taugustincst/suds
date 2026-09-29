@@ -46,13 +46,20 @@ administrator, under Settings → Users & permissions. And the client must be on
    provider that covers this use, including 42 CFR Part 2 qualified service organisation (QSOA) terms (§2.11),
    and your counsel's review. Also settle with the provider how long it keeps request content (its data
    retention terms) — that is governed by your agreement, not by SUDS.
-2. **Give the server the provider's API key.** Set `ANTHROPIC_API_KEY` in the office server's environment
-   (as `OIDC_CLIENT_SECRET` and the other secrets are: `docs/DEPLOYMENT.md`) and restart SUDS. The key is
-   never stored in the database, never sent to a browser and never shown in Settings.
+2. **Choose the provider and give the server its credentials.** Anthropic's own API (the default), Amazon
+   Bedrock or Google Cloud Vertex AI (*Providers*, below): set `SUDS_AI_PROVIDER` and that provider's
+   credentials in the office server's environment (as `OIDC_CLIENT_SECRET` and the other secrets are:
+   `docs/DEPLOYMENT.md`) and restart SUDS. Credentials are never stored in the database, never sent to a
+   browser and never shown in Settings; Settings names the provider (and its region) the server is set up for.
 3. **Record the agreement.** Settings → **AI copilot** → *Agreement with the AI provider*: the provider, who
    signed for the programme, the date, the agreement's reference, and three confirmations (a BAA covering
    this use; it includes Part 2 QSOA terms; counsel has reviewed this use). All three are required. The
-   record is audited (`ai.attestation.record`: provider, signer, date, reference).
+   record is audited (`ai.attestation.record`: provider, signer, date, reference, and the provider the server
+   was set up for). The screen says which provider this server sends drafts to, so the agreement recorded is
+   with that provider. **The agreement is tied to that provider** (since 1.17.1): if the server is later set up
+   for another (`SUDS_AI_PROVIDER` changed), drafts are refused (`provider_changed`) and the copilot cannot be
+   switched on until the agreement with the new provider is recorded (withdraw the old one first). An agreement
+   recorded before 1.17.1 counts as one with Anthropic, the only provider then.
 4. **Switch it on** under *Copilot settings*. It cannot be switched on without the agreement and the key.
    Choose the monthly cap (below).
 
@@ -66,20 +73,101 @@ administrator, under Settings → Users & permissions. And the client must be on
 | Switched on | off | Needs the agreement and the key. |
 | Model | `claude-opus-5-5` | Leave blank for the default. Another model id from the provider (a `claude-…` id) can be entered, for example a newer or a cheaper model; the request for any model other than the default leaves out the options only the default is known to accept (the explicit effort level and the provider's safeguard fallback). Test a draft after changing it. |
 | Most drafts per calendar month | 500 | For the whole programme, counted from the 1st (UTC). Every draft the provider returns counts, including one it declined or cut off (it did the work); since 1.17.0 a call that failed (rate limited, unavailable, timed out, refused as a request) is recorded and shown but does not use up the cap. Once reached, staff are told and write documentation themselves until the 1st. 0 stops it. |
+| Price per million input / output tokens | blank | US dollars, from your provider's price sheet or contract for the model you use (1.17.1). Used only for the estimated cost below. Non-negative numbers; blank for no estimate. |
+| Most estimated spending per calendar month | blank (no dollar limit) | US dollars (1.17.1), optional, and needs both prices. Once this month's *estimated* cost reaches it, staff are told and write documentation themselves until the 1st, as with the draft limit. It is checked before each draft against the calls already recorded, so drafts in progress at that moment can take the month a little past it. |
 
-The *This month* card shows the drafts used, failures, tokens sent and received, and drafts by feature. The
-audit log's `ai.` entries show each call.
+The *This month* card shows the drafts used, failures, tokens sent and received, drafts by feature, and (once
+the prices are entered) the **estimated cost** of this month's tokens. The audit log's `ai.` entries show each
+call. Changing a setting is audited (`ai.settings.update`: what changed, and the switch, model, draft limit,
+prices and dollar limit afterwards); only administrators (`settings:manage`) can change them.
+
+### Cost
+
+The copilot asks for the provider's top model by default (`claude-opus-5-5`), which gives the best drafts and
+costs the most per token. To see what that means in dollars, enter what your programme pays per million input
+and output tokens: the *This month* card then shows this month's tokens at those prices.
+
+* **It is an estimate, not a bill.** Every input token is priced at the input rate, although cached input (the
+  copilot's instructions are marked for prompt caching) is billed differently by the provider, and failed calls
+  that returned token counts are included. Prices differ by provider (Anthropic, Bedrock and Vertex AI publish
+  their own, and a county's contract may differ again), by model and over time. The provider's invoice is what
+  counts; check the estimate against it after the first month.
+* **A cheaper model.** Under *Model*, another model id from the same provider can be entered (for example a
+  Sonnet or Haiku model instead of Opus), and its prices entered with it. A smaller model costs less per token
+  but may draft less well: it may miss details the notes contain, follow the instructions (placeholders, `[needs
+  clinician input]`, person-first language) less reliably, or suggest ratings and codes less carefully. The
+  request for any model but the default leaves out the default's explicit effort level and (on Anthropic's API)
+  its safeguard fallback. Try a few drafts of each kind against notes you know before relying on it, and check
+  that the model is covered by your agreement with the provider.
+* **A spending limit** in dollars can be set beside the limit on drafts (above).
+
+### Providers
+
+The same Claude model, reached through one of three services. Many counties already have a business associate
+agreement with Amazon Web Services or Google Cloud and can use the copilot under it; which one is used is set in
+the server's environment, not in Settings (`server/ai-providers.js`).
+
+| `SUDS_AI_PROVIDER` | Service | Credentials (server environment only) | Other settings | Default model |
+| --- | --- | --- | --- | --- |
+| `anthropic` (default) | Anthropic's API, `POST /v1/messages` | `ANTHROPIC_API_KEY` | `SUDS_AI_BASE_URL` | `claude-opus-5-5` |
+| `bedrock` | Amazon Bedrock InvokeModel, `POST /model/{model id}/invoke`, signed with AWS Signature Version 4 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` for temporary credentials | `AWS_REGION` (or `AWS_DEFAULT_REGION`), required; `SUDS_AI_BASE_URL` (for example a VPC endpoint) | `anthropic.claude-opus-5-5` |
+| `vertex` | Google Cloud Vertex AI, `POST /v1/projects/{project}/locations/{region}/publishers/anthropic/models/{model}:rawPredict` | `GOOGLE_APPLICATION_CREDENTIALS`: the path of a service account key file (JSON), readable only by the SUDS service | `SUDS_AI_VERTEX_REGION` (for example `us-east5`, or `global`), required; `SUDS_AI_VERTEX_PROJECT` (else the key file's `project_id`); `SUDS_AI_BASE_URL` | `claude-opus-5-5` |
+
+* **Model ids differ by provider.** On Bedrock, enter the model id or cross-region inference profile id your AWS
+  console shows for the Claude model you have access to (`anthropic.claude-…`, `us.anthropic.claude-…`); many
+  regions accept only an inference profile. On Vertex AI, the model id from Model Garden (`claude-…`). Settings
+  refuses a model id in another provider's form, and a model id left from another provider stops drafts
+  (*misconfigured*) until it is changed. Enable the model for your account or project first (Bedrock model
+  access; Vertex AI Model Garden).
+* **Bedrock**: the credentials are an IAM user's or role's keys allowed `bedrock:InvokeModel` on that model
+  (nothing else is needed). SUDS reads them from the environment at each call; it does not read the AWS
+  configuration files, an instance profile or SSO (*Deferred*). Requests are signed with AWS Signature Version 4
+  (Node's built-in `crypto`; no AWS SDK).
+* **Vertex AI**: the service account needs permission to call the model (for example the *Vertex AI User*
+  role) in the project. SUDS signs a JWT with the key file's private key and exchanges it at the key file's
+  `token_uri` (Google's token endpoint) for an access token, which it keeps until a minute before it expires.
+  The key file is read at each call and never logged. SUDS does not use workload identity or the metadata server
+  (*Deferred*). Where the request is processed depends on the region you choose (a `global` endpoint may process
+  it in any region): confirm with Google and counsel which endpoint your agreement and data-residency
+  requirements allow.
+* **The same everywhere**: the agreement, counsel and switch; the caps; the identifier replacement; what is sent;
+  the audit and usage records (never the text); the one retry; the timeouts; and the error messages (a key or
+  token the provider refuses is *auth*; a model id it does not know is *misconfigured*). Anthropic's server-side
+  safeguard fallback is not offered by Bedrock or Vertex AI, so there a request the model declines is simply
+  declined (*refused*: write it yourself).
+* **Redirects are refused.** No request to a provider (or to Google's token endpoint) follows a redirect: a
+  redirect is a failure (*unreachable*), so text is never re-sent to another address.
+
+**What to confirm with the provider and counsel, per provider.** SUDS cannot tell what a provider keeps or how it
+uses what it receives; that is set by your agreement and the provider's terms for the service you use, which
+differ between Anthropic's API, Bedrock and Vertex AI and change over time. Before switching on, ask the provider
+(and have counsel check the answer is in the agreement):
+
+* that the BAA covers this service (the model service, in the region you use) and includes 42 CFR Part 2 QSOA
+  terms;
+* whether request and response content is stored, for how long, where, and who at the provider (or its
+  subprocessors, including the model's developer) can see it, for example for abuse monitoring, and whether a
+  zero- or reduced-retention arrangement is available and applies to you;
+* whether content is used to train or improve any model, and how that is excluded in writing;
+* whether logging or monitoring features in your own cloud account (for example model invocation logging on
+  Bedrock, or request logging on Vertex AI) would store the prompts and drafts, and if so switch them off or
+  treat those logs as PHI;
+* how you are told of a breach, and how content is returned or destroyed when the agreement ends.
 
 ### Server environment
 
 | Variable | Meaning |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | The provider API key. Required. Read at each call (a new key needs no restart, but set it where the service manager reads its environment). |
-| `SUDS_AI_BASE_URL` | Optional. Another endpoint that speaks the same Messages API (a county's own gateway to the provider, or a test double). Must be `https://`, except to this machine. Default `https://api.anthropic.com`. |
+| `SUDS_AI_PROVIDER` | `anthropic` (default), `bedrock` or `vertex` (*Providers*). |
+| `ANTHROPIC_API_KEY` | Anthropic: the API key. Required for that provider. Read at each call (a new key needs no restart, but set it where the service manager reads its environment). |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION` | Bedrock: the credentials (the session token only for temporary credentials) and the region. Read at each call. |
+| `GOOGLE_APPLICATION_CREDENTIALS`, `SUDS_AI_VERTEX_PROJECT`, `SUDS_AI_VERTEX_REGION` | Vertex AI: the service account key file's path, the project (default: the key file's `project_id`) and the region. |
+| `SUDS_AI_BASE_URL` | Optional. Another endpoint that speaks the same API as the provider (a county's own gateway or private endpoint, or a test double). Must be `https://`, except to this machine. Default: `https://api.anthropic.com`, `https://bedrock-runtime.{AWS_REGION}.amazonaws.com`, or `https://{region}-aiplatform.googleapis.com` (`https://aiplatform.googleapis.com` for `global`). |
 | `SUDS_AI_TIMEOUT_MS` | Optional. How long to wait for a draft, default 180000 (180 s; 90 s until 1.17.0), the one retry included. |
 
-The call goes out from the office server over HTTPS (`POST /v1/messages`). If your server reaches the
-internet only through an allow-list, add `api.anthropic.com` (or your gateway) for this module.
+The call goes out from the office server over HTTPS. If your server reaches the internet only through an
+allow-list, add the provider's host for this module: `api.anthropic.com`; `bedrock-runtime.{region}.amazonaws.com`;
+or `{region}-aiplatform.googleapis.com` and `oauth2.googleapis.com` (or your gateway).
 
 ## What is sent to the provider, and what is not
 
@@ -201,14 +289,19 @@ parsing prose.
 
 ## How it works (for IT)
 
-* `server/ai-copilot.js`: whether a draft can be asked for (agreement, switch, key, endpoint, cap), the
-  identifier replacement and re-insertion, the provider call (Node's built-in `fetch`; no SDK or other
-  package), error handling and the usage row.
+* `server/ai-copilot.js`: whether a draft can be asked for (agreement, switch, key, endpoint, provider, caps),
+  the identifier replacement and re-insertion, the request, error handling and the usage row.
+* `server/ai-providers.js`: the provider (1.17.1): its credentials and endpoint, the request in its form,
+  AWS Signature Version 4, the service account JWT and access token, and the fetch (Node's built-in `fetch`
+  and `crypto`; no SDK or other package; never following a redirect).
+* `server/ai-cost.js`: the prices, the estimate and the dollar limit (1.17.1).
 * `server/ai-prompts.js`: the instructions and answer shapes.
 * `server/routes/ai.js`: `GET /api/ai/status`, `GET|PUT /api/ai/settings`, `POST|DELETE /api/ai/attestation`,
   `POST /api/ai/draft/{note,asam,careplan,caloms}`. Not loaded in the local-mode kernel.
 * `public/views/ai.js`: the panels, banners, care plan dialog and the Settings tab.
-* Request: `POST {SUDS_AI_BASE_URL}/v1/messages`, `anthropic-version: 2023-06-01`, the key in `x-api-key`;
+* Request (Anthropic; Bedrock and Vertex AI take the same body with `anthropic_version` `bedrock-2023-05-31` or
+  `vertex-2023-10-16` in it and the model in the URL instead, and neither takes `fallbacks`):
+  `POST {SUDS_AI_BASE_URL}/v1/messages`, `anthropic-version: 2023-06-01`, the key in `x-api-key`;
   `max_tokens` 16000; the system instructions marked for prompt caching; one user message; the answer shape in
   `output_config.format` (JSON schema). For the default model it also sets effort `medium` and the provider's
   `fallbacks: "default"` (header `anthropic-beta: server-side-fallback-2026-07-01`), which re-runs a request
@@ -236,3 +329,8 @@ parsing prose.
 * Masking names SUDS does not hold (other people in the text) and other date forms near the date of birth.
 * Drafting from an audio recording (only text is accepted).
 * A per-programme model allow-list or per-person caps.
+* Other ways of getting cloud credentials (1.17.1 reads them from the environment and a key file only): the AWS
+  configuration files, an EC2 instance profile / ECS task role / SSO, and Google workload identity or the
+  metadata server. Microsoft Foundry as a provider.
+* Pricing cached input tokens at their own rate in the estimate (the provider reports them; SUDS counts them as
+  input).

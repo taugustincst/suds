@@ -21,6 +21,8 @@
 const db = require('./db');
 const config = require('./config');
 const P = require('./ai-prompts');
+const providers = require('./ai-providers');
+const cost = require('./ai-cost');
 const { uuid } = require('./crypto');
 
 // The model the copilot asks for unless the administrator names another. Any other model id may be set
@@ -41,20 +43,20 @@ function settings() {
   const cap = Number(db.getSetting('ai_monthly_cap', String(DEFAULT_CAP)));
   return {
     enabled: db.getSetting('ai_enabled', '0') === '1',
-    model: db.getSetting('ai_model', null) || DEFAULT_MODEL,
-    default_model: DEFAULT_MODEL,
+    model: db.getSetting('ai_model', null) || providers.defaultModel(),
+    default_model: providers.defaultModel(),
     monthly_cap: Number.isInteger(cap) && cap >= 0 ? cap : DEFAULT_CAP,
+    ...cost.pricing(),
+    provider: providers.id(),
     attestation: attestation(),
   };
 }
-const keyConfigured = () => !!config.ai.apiKey;
-/** The endpoint may be plain http only on this machine (a test double); anywhere else it must be https. */
-function endpointProblem() {
-  let u; try { u = new URL(config.ai.baseUrl); } catch { return 'SUDS_AI_BASE_URL is not a URL'; }
-  if (u.protocol === 'https:') return null;
-  if (u.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname)) return null;
-  return 'SUDS_AI_BASE_URL must be https (plain http only to this machine)';
-}
+// The provider (SUDS_AI_PROVIDER: anthropic, bedrock or vertex) and its credentials, endpoint and model id are
+// server/ai-providers.js's. The endpoint may be plain http only on this machine (a test double).
+const keyConfigured = () => providers.credentialsConfigured();
+const endpointProblem = () => providers.configProblem(settings().model);
+/** The provider the recorded agreement is with (one recorded before 1.17.1 was with Anthropic, the only one then). */
+const attestedProvider = (a) => (a && typeof a.configured_provider === 'string' ? a.configured_provider : 'anthropic');
 
 function monthStart(now = new Date()) { return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString(); }
 // The outcomes that count as a draft against the monthly cap: the provider answered and did the work (a draft,
@@ -72,13 +74,14 @@ function usage(since = monthStart()) {
   const failed = db.one(`SELECT COUNT(*) n FROM ai_usage WHERE at >= ? AND NOT ${COUNTED_SQL}`, since).n;
   // calls: the drafts counted against the cap; attempts: every request, failed ones included; errors: every one
   // that did not return a draft (refused and cut off included); failed: those not counted against the cap.
-  return { since, calls: drafts, attempts: t.attempts, input_tokens: t.input_tokens, output_tokens: t.output_tokens, errors, failed, by_feature: byFeature };
+  return { since, calls: drafts, attempts: t.attempts, input_tokens: t.input_tokens, output_tokens: t.output_tokens, errors, failed, by_feature: byFeature,
+    estimated_cost: cost.estimate(t) };
 }
 
 /** Whether a draft can be asked for now, and if not, why (in words for the person at the keyboard). */
 function status() {
   const s = settings();
-  const used = usage().calls; // drafts, not failed calls (COUNTED)
+  const u = usage(); const used = u.calls; // drafts, not failed calls (COUNTED)
   let reason = null; let code = null;
   const no = (c, r) => { code = c; reason = r; };
   if (config.local) no('device', 'The AI copilot runs only on an office server. SUDS on this device never sends anything to an AI provider.');
@@ -86,9 +89,11 @@ function status() {
   else if (!s.enabled) no('off', 'The AI copilot is switched off for this program (Settings → AI copilot).');
   else if (!keyConfigured()) no('no_key', 'The AI copilot is not configured on this server (no provider API key). Tell your administrator.');
   else if (endpointProblem()) no('endpoint', `The AI copilot is misconfigured on this server: ${endpointProblem()}.`);
+  else if (attestedProvider(s.attestation) !== providers.id()) no('provider_changed', `The AI copilot is off: the agreement recorded is with ${providers.label(attestedProvider(s.attestation))}, but this server sends drafts to ${providers.label()}. An administrator must record the agreement with ${providers.label()} (Settings → AI copilot).`);
   else if (!s.monthly_cap) no('cap', 'The AI copilot is paused for this program. Write the documentation yourself as usual.');
   else if (used >= s.monthly_cap) no('cap', `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? '' : 's'} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
-  return { available: !reason, reason, code, enabled: s.enabled, attested: !!s.attestation, key_configured: keyConfigured(), model: s.model, monthly_cap: s.monthly_cap, used_this_month: used };
+  else if (cost.capReached(u)) no('cap', 'This program has reached its AI spending limit for this month. Write the documentation yourself; the limit resets on the 1st of each month.');
+  return { available: !reason, reason, code, enabled: s.enabled, attested: !!s.attestation, key_configured: keyConfigured(), provider: providers.id(), model: s.model, monthly_cap: s.monthly_cap, used_this_month: used };
 }
 
 // ---------------------------------------------------------------- de-identification
@@ -304,7 +309,7 @@ function buildRequest(prompt, model) {
     output_config: { format: { type: 'json_schema', schema: prompt.schema } },
   };
   const headers = { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' };
-  if (model === DEFAULT_MODEL) {
+  if (providers.isDefaultModel(model)) {
     // Drafting from a page of notes is not a hard reasoning task: medium effort, set explicitly. A request the
     // model's safeguards decline is re-run by the provider on its recommended fallback model.
     body.output_config.effort = 'medium';
@@ -339,17 +344,18 @@ function retryWait(retryAfter) {
   return sec * 1000 <= RETRY_MAX_WAIT_MS ? sec * 1000 : null;
 }
 
-/** Send one request to the provider; returns { data, usage, model }. Throws AiError. Never logs the body. */
+/**
+ * Send one request to the provider; returns { data, usage, model }. Throws AiError. Never logs the body. The
+ * provider's own form of the request, its authentication and the fetch itself are server/ai-providers.js's.
+ */
 async function send(prompt, model) {
   const { body, headers } = buildRequest(prompt, model);
-  headers['x-api-key'] = config.ai.apiKey;
   const deadline = Date.now() + config.ai.timeoutMs;
-  const payload = JSON.stringify(body);
   let res; let json = null;
   for (let attempt = 0; ; attempt++) {
     let wait = null; let failure = null;
     try {
-      res = await fetch(`${config.ai.baseUrl}/v1/messages`, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
+      res = await providers.request({ body, headers, model, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
     } catch (e) {
       if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) throw new AiError('timeout', 504, 'The AI provider did not answer in time. Your form is unchanged: try again, or write it yourself.');
       failure = new AiError('unreachable', 503, 'The server could not reach the AI provider. Your form is unchanged: try again later, or write it yourself.');
@@ -413,5 +419,5 @@ async function draft({ user, clientId, feature, pieces, build }) {
   }
 }
 
-module.exports = { DEFAULT_MODEL, MODEL_ID, DEFAULT_CAP, MAX_TEXT, MAX_TOKENS, COUNTED, retryWait, settings, attestation, status, usage, monthStart, keyConfigured, endpointProblem,
+module.exports = { DEFAULT_MODEL, MODEL_ID, attestedProvider, DEFAULT_CAP, MAX_TEXT, MAX_TOKENS, COUNTED, retryWait, settings, attestation, status, usage, monthStart, keyConfigured, endpointProblem,
   identifiersFor, deidentify, reidentify, buildRequest, send, draft, AiError, PATTERNS };
