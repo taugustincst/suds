@@ -23327,6 +23327,327 @@ ${text}
   }
 });
 
+// server/ai-providers.js
+var require_ai_providers = __commonJS({
+  "server/ai-providers.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var config2 = require_config();
+    var DEFAULT_MODEL = "claude-opus-5-5";
+    var PROVIDERS = {
+      anthropic: {
+        label: "Anthropic (Claude API)",
+        defaultModel: DEFAULT_MODEL,
+        model: /^claude-[a-z0-9][a-z0-9.-]{1,62}$/,
+        modelHint: "a model id such as claude-\u2026",
+        credentials: "ANTHROPIC_API_KEY"
+      },
+      bedrock: {
+        // A Bedrock model id (anthropic.claude-…) or a cross-region inference profile id (us.anthropic.claude-…).
+        label: "Amazon Bedrock",
+        defaultModel: `anthropic.${DEFAULT_MODEL}`,
+        model: /^(?:[a-z]{2,6}\.)?anthropic\.claude-[a-z0-9][a-z0-9.:-]{1,80}$/,
+        modelHint: "a Bedrock model id such as anthropic.claude-\u2026 or us.anthropic.claude-\u2026",
+        credentials: "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (and AWS_REGION)"
+      },
+      vertex: {
+        label: "Google Cloud Vertex AI",
+        defaultModel: DEFAULT_MODEL,
+        model: /^claude-[a-z0-9][a-z0-9.@-]{1,62}$/,
+        modelHint: "a Vertex AI model id such as claude-\u2026",
+        credentials: "GOOGLE_APPLICATION_CREDENTIALS (a service account key file)"
+      }
+    };
+    var BEDROCK_VERSION = "bedrock-2023-05-31";
+    var VERTEX_VERSION = "vertex-2023-10-16";
+    var VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
+    var GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token";
+    var id = () => (proc.env.SUDS_AI_PROVIDER || "anthropic").trim().toLowerCase() || "anthropic";
+    var current2 = () => PROVIDERS[id()] || null;
+    var label = (p = id()) => PROVIDERS[p] ? PROVIDERS[p].label : p;
+    var defaultModel = () => (current2() || PROVIDERS.anthropic).defaultModel;
+    var modelOk = (model) => {
+      const p = current2();
+      return !!p && p.model.test(String(model || ""));
+    };
+    var isDefaultModel = (model) => String(model || "").replace(/^(?:[a-z]{2,6}\.)?anthropic\./, "") === DEFAULT_MODEL;
+    var awsRegion = () => (proc.env.AWS_REGION || proc.env.AWS_DEFAULT_REGION || "").trim();
+    var vertexRegion = () => (proc.env.SUDS_AI_VERTEX_REGION || "").trim();
+    function serviceAccount() {
+      const file = proc.env.GOOGLE_APPLICATION_CREDENTIALS;
+      if (!file) return null;
+      try {
+        const k = JSON.parse(fs.readFileSync(file, "utf8"));
+        if (!k || typeof k !== "object" || typeof k.client_email !== "string" || typeof k.private_key !== "string" || !k.client_email || !k.private_key) return null;
+        return k;
+      } catch {
+        return null;
+      }
+    }
+    var vertexProject = () => (proc.env.SUDS_AI_VERTEX_PROJECT || (serviceAccount() || {}).project_id || "").trim();
+    function credentialsConfigured() {
+      switch (id()) {
+        case "anthropic":
+          return !!config2.ai.apiKey;
+        case "bedrock":
+          return !!(proc.env.AWS_ACCESS_KEY_ID && proc.env.AWS_SECRET_ACCESS_KEY);
+        case "vertex":
+          return !!serviceAccount();
+        default:
+          return false;
+      }
+    }
+    function baseUrl() {
+      if (proc.env.SUDS_AI_BASE_URL) return proc.env.SUDS_AI_BASE_URL.replace(/\/+$/, "");
+      switch (id()) {
+        case "bedrock":
+          return `https://bedrock-runtime.${awsRegion()}.amazonaws.com`;
+        case "vertex": {
+          const r = vertexRegion();
+          return r === "global" ? "https://aiplatform.googleapis.com" : `https://${r}-aiplatform.googleapis.com`;
+        }
+        default:
+          return config2.ai.baseUrl;
+      }
+    }
+    function urlProblem(value, name) {
+      let u;
+      try {
+        u = new URL(value);
+      } catch {
+        return `${name} is not a URL`;
+      }
+      if (u.protocol === "https:") return null;
+      if (u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname)) return null;
+      return `${name} must be https (plain http only to this machine)`;
+    }
+    function configProblem(model) {
+      const p = current2();
+      if (!p) return `SUDS_AI_PROVIDER must be anthropic, bedrock or vertex (it is "${String(id()).slice(0, 40)}")`;
+      if (id() === "bedrock" && !/^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(awsRegion())) return "Amazon Bedrock needs AWS_REGION (for example us-west-2)";
+      if (id() === "vertex") {
+        if (!/^[a-z][a-z0-9-]{1,30}$/.test(vertexRegion())) return "Vertex AI needs SUDS_AI_VERTEX_REGION (a region such as us-east5, or global)";
+        if (!/^[a-z][a-z0-9-]{4,62}$/.test(vertexProject())) return "Vertex AI needs SUDS_AI_VERTEX_PROJECT (the Google Cloud project id), or a project_id in the key file";
+        const sa = serviceAccount();
+        if (sa) {
+          const t = urlProblem(sa.token_uri || GOOGLE_TOKEN_URI, "the key file's token_uri");
+          if (t) return t;
+        }
+      }
+      const e = urlProblem(baseUrl(), proc.env.SUDS_AI_BASE_URL ? "SUDS_AI_BASE_URL" : "the provider endpoint");
+      if (e) return e;
+      if (model !== void 0 && !p.model.test(String(model || ""))) return `the model setting (${String(model).slice(0, 80)}) is not ${p.modelHint} for ${p.label}: change it in Settings \u2192 AI copilot`;
+      return null;
+    }
+    function describe2() {
+      const p = current2();
+      return {
+        id: id(),
+        label: label(),
+        known: !!p,
+        credentials_hint: p ? p.credentials : "SUDS_AI_PROVIDER",
+        model_hint: p ? p.modelHint : null,
+        default_model: defaultModel(),
+        region: id() === "bedrock" ? awsRegion() || null : id() === "vertex" ? vertexRegion() || null : null,
+        project: id() === "vertex" ? vertexProject() || null : null
+      };
+    }
+    function adapt(body, headers, provider = id()) {
+      if (provider === "anthropic") return { body, headers: { ...headers } };
+      const { model, fallbacks, ...rest } = body;
+      const h = { "content-type": "application/json", accept: "application/json" };
+      return { body: { anthropic_version: provider === "bedrock" ? BEDROCK_VERSION : VERTEX_VERSION, ...rest }, headers: h };
+    }
+    var seg = (s, keep = "") => encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`).replace(/%40/g, keep.includes("@") ? "@" : "%40");
+    async function request({ body, headers, model, signal }) {
+      const provider = id();
+      const a = adapt(body, headers, provider);
+      const payload = JSON.stringify(a.body);
+      const base = baseUrl();
+      if (provider === "anthropic") {
+        return fetch(`${base}/v1/messages`, { method: "POST", headers: { ...a.headers, "x-api-key": config2.ai.apiKey }, body: payload, signal, redirect: "error" });
+      }
+      if (provider === "bedrock") {
+        const url = `${base}/model/${seg(model)}/invoke`;
+        const { headers: signed } = sigv4({
+          method: "POST",
+          url,
+          headers: a.headers,
+          body: payload,
+          region: awsRegion(),
+          service: "bedrock",
+          credentials: { accessKeyId: proc.env.AWS_ACCESS_KEY_ID, secretAccessKey: proc.env.AWS_SECRET_ACCESS_KEY, sessionToken: proc.env.AWS_SESSION_TOKEN || null }
+        });
+        const res = await fetch(url, { method: "POST", headers: signed, body: payload, signal, redirect: "error" });
+        return res.ok ? bedrockAnswer(res, model) : res;
+      }
+      if (provider === "vertex") {
+        const token2 = await vertexToken(signal);
+        if (token2.refused) return new Response("{}", { status: token2.refused, headers: { "content-type": "application/json" } });
+        const url = `${base}/v1/projects/${seg(vertexProject())}/locations/${seg(vertexRegion())}/publishers/anthropic/models/${seg(model, "@")}:rawPredict`;
+        return fetch(url, { method: "POST", headers: { ...a.headers, authorization: `Bearer ${token2.token}` }, body: payload, signal, redirect: "error" });
+      }
+      throw new Error("unknown AI provider");
+    }
+    async function bedrockAnswer(res, model) {
+      let json;
+      try {
+        json = await res.json();
+      } catch {
+        return new Response("not json", { status: 200 });
+      }
+      if (json && typeof json === "object" && !json.usage) {
+        const n = (h) => Number(res.headers.get(h) || 0);
+        json.usage = { input_tokens: n("x-amzn-bedrock-input-token-count"), output_tokens: n("x-amzn-bedrock-output-token-count") };
+      }
+      if (json && typeof json === "object" && typeof json.model !== "string") json.model = model;
+      return new Response(JSON.stringify(json), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    var sha2562 = (data) => crypto3.createHash("sha256").update(data).digest("hex");
+    var hmac2 = (key, data) => crypto3.createHmac("sha256", key).update(data).digest();
+    var uriEncode = (s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+    var amzDate = (d) => d.toISOString().replace(/[:-]|\.\d{3}/g, "");
+    function sigv4({ method, url, headers = {}, body = "", region, service, credentials, now: now2 = /* @__PURE__ */ new Date() }) {
+      const u = new URL(url);
+      const date = amzDate(now2);
+      const day = date.slice(0, 8);
+      const h = {};
+      for (const [k, v] of Object.entries(headers)) h[k.toLowerCase()] = String(v);
+      h.host = u.host;
+      h["x-amz-date"] = date;
+      if (credentials.sessionToken) h["x-amz-security-token"] = credentials.sessionToken;
+      const names = Object.keys(h).sort();
+      const canonicalHeaders = names.map((n) => `${n}:${h[n].trim().replace(/\s+/g, " ")}
+`).join("");
+      const signedHeaders = names.join(";");
+      const path = u.pathname.split("/").map(uriEncode).join("/") || "/";
+      const query = [...u.searchParams].map(([k, v]) => [uriEncode(k), uriEncode(v)]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0).map(([k, v]) => `${k}=${v}`).join("&");
+      const canonicalRequest = [method.toUpperCase(), path, query, canonicalHeaders, signedHeaders, sha2562(body || "")].join("\n");
+      const scope = `${day}/${region}/${service}/aws4_request`;
+      const stringToSign = ["AWS4-HMAC-SHA256", date, scope, sha2562(canonicalRequest)].join("\n");
+      const key = hmac2(hmac2(hmac2(hmac2(`AWS4${credentials.secretAccessKey}`, day), region), service), "aws4_request");
+      const signature = crypto3.createHmac("sha256", key).update(stringToSign).digest("hex");
+      const out2 = { ...h };
+      delete out2.host;
+      out2.authorization = `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+      return { headers: out2, canonicalRequest, stringToSign, signature };
+    }
+    var b64url = (b) => import_buffer.Buffer.from(b).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+    function signJwt(claims, privateKey, kid) {
+      const header = { alg: "RS256", typ: "JWT", ...kid ? { kid } : {} };
+      const data = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(claims))}`;
+      return `${data}.${b64url(crypto3.sign("RSA-SHA256", import_buffer.Buffer.from(data), privateKey))}`;
+    }
+    function serviceAccountAssertion(sa, now2 = Date.now()) {
+      const iat = Math.floor(now2 / 1e3);
+      return signJwt({ iss: sa.client_email, scope: VERTEX_SCOPE, aud: sa.token_uri || GOOGLE_TOKEN_URI, iat, exp: iat + 3600 }, sa.private_key, sa.private_key_id);
+    }
+    var tokens = /* @__PURE__ */ new Map();
+    async function vertexToken(signal) {
+      const sa = serviceAccount();
+      if (!sa) return { refused: 401 };
+      const uri = sa.token_uri || GOOGLE_TOKEN_URI;
+      const k = `${sa.client_email}
+${uri}
+${sa.private_key_id || ""}`;
+      const have = tokens.get(k);
+      if (have && have.token && have.expires - 6e4 > Date.now()) return have;
+      if (have && have.pending) return have.pending;
+      const pending = (async () => {
+        let res;
+        try {
+          res = await fetch(uri, {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            signal,
+            redirect: "error",
+            body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: serviceAccountAssertion(sa) }).toString()
+          });
+        } finally {
+          if (tokens.get(k) && tokens.get(k).pending) tokens.delete(k);
+        }
+        let json = null;
+        try {
+          json = await res.json();
+        } catch {
+          json = null;
+        }
+        if (!res.ok || !json || typeof json.access_token !== "string") return { refused: res.status === 429 ? 429 : res.status >= 500 ? 503 : 401 };
+        const t = { token: json.access_token, expires: Date.now() + Math.max(60, Number(json.expires_in) || 3600) * 1e3 };
+        tokens.set(k, t);
+        return t;
+      })();
+      tokens.set(k, { pending });
+      return pending;
+    }
+    var clearTokenCache = () => tokens.clear();
+    module.exports = {
+      PROVIDERS,
+      DEFAULT_MODEL,
+      id,
+      current: current2,
+      label,
+      defaultModel,
+      modelOk,
+      isDefaultModel,
+      credentialsConfigured,
+      baseUrl,
+      configProblem,
+      describe: describe2,
+      adapt,
+      request,
+      sigv4,
+      signJwt,
+      serviceAccountAssertion,
+      vertexToken,
+      clearTokenCache
+    };
+  }
+});
+
+// server/ai-cost.js
+var require_ai_cost = __commonJS({
+  "server/ai-cost.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var KEYS = { price_input: "ai_price_input_per_mtok", price_output: "ai_price_output_per_mtok", monthly_cost_cap: "ai_monthly_cost_cap" };
+    var MAX_PRICE = 1e4;
+    var MAX_COST_CAP = 1e7;
+    var num = (key) => {
+      const v = db3.getSetting(key, null);
+      if (v === null || v === "") return null;
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 0 ? n : null;
+    };
+    function pricing() {
+      return Object.fromEntries(Object.entries(KEYS).map(([k, key]) => [k, num(key)]));
+    }
+    var priced = (p = pricing()) => p.price_input !== null && p.price_output !== null;
+    function estimate({ input_tokens = 0, output_tokens = 0 } = {}, p = pricing()) {
+      if (!priced(p)) return null;
+      return (Number(input_tokens) * p.price_input + Number(output_tokens) * p.price_output) / 1e6;
+    }
+    function capReached(usage, p = pricing()) {
+      if (p.monthly_cost_cap === null || !priced(p)) return false;
+      return estimate(usage, p) >= p.monthly_cost_cap;
+    }
+    function save(v) {
+      const changed = [];
+      for (const [k, key] of Object.entries(KEYS)) {
+        if (v[k] === void 0) continue;
+        if (v[k] === null) db3.run(`DELETE FROM settings WHERE key=?`, key);
+        else db3.setSetting(key, String(v[k]));
+        changed.push(k);
+      }
+      return changed;
+    }
+    module.exports = { KEYS, MAX_PRICE, MAX_COST_CAP, pricing, priced, estimate, capReached, save };
+  }
+});
+
 // server/ai-copilot.js
 var require_ai_copilot = __commonJS({
   "server/ai-copilot.js"(exports, module) {
@@ -23335,6 +23656,8 @@ var require_ai_copilot = __commonJS({
     var db3 = require_db();
     var config2 = require_config();
     var P2 = require_ai_prompts();
+    var providers = require_ai_providers();
+    var cost = require_ai_cost();
     var { uuid: uuid2 } = require_crypto();
     var DEFAULT_MODEL = "claude-opus-5-5";
     var MODEL_ID = /^claude-[a-z0-9][a-z0-9.-]{1,62}$/;
@@ -23355,24 +23678,17 @@ var require_ai_copilot = __commonJS({
       const cap = Number(db3.getSetting("ai_monthly_cap", String(DEFAULT_CAP)));
       return {
         enabled: db3.getSetting("ai_enabled", "0") === "1",
-        model: db3.getSetting("ai_model", null) || DEFAULT_MODEL,
-        default_model: DEFAULT_MODEL,
+        model: db3.getSetting("ai_model", null) || providers.defaultModel(),
+        default_model: providers.defaultModel(),
         monthly_cap: Number.isInteger(cap) && cap >= 0 ? cap : DEFAULT_CAP,
+        ...cost.pricing(),
+        provider: providers.id(),
         attestation: attestation()
       };
     }
-    var keyConfigured = () => !!config2.ai.apiKey;
-    function endpointProblem() {
-      let u;
-      try {
-        u = new URL(config2.ai.baseUrl);
-      } catch {
-        return "SUDS_AI_BASE_URL is not a URL";
-      }
-      if (u.protocol === "https:") return null;
-      if (u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname)) return null;
-      return "SUDS_AI_BASE_URL must be https (plain http only to this machine)";
-    }
+    var keyConfigured = () => providers.credentialsConfigured();
+    var endpointProblem = () => providers.configProblem(settings().model);
+    var attestedProvider = (a) => a && typeof a.configured_provider === "string" ? a.configured_provider : "anthropic";
     function monthStart(now2 = /* @__PURE__ */ new Date()) {
       return new Date(Date.UTC(now2.getUTCFullYear(), now2.getUTCMonth(), 1)).toISOString();
     }
@@ -23384,13 +23700,24 @@ var require_ai_copilot = __commonJS({
       const byFeature = db3.all(`SELECT feature, COUNT(*) calls FROM ai_usage WHERE at >= ? AND ${COUNTED_SQL} GROUP BY feature ORDER BY feature`, since);
       const errors = db3.one(`SELECT COUNT(*) n FROM ai_usage WHERE at >= ? AND outcome <> 'ok'`, since).n;
       const failed = db3.one(`SELECT COUNT(*) n FROM ai_usage WHERE at >= ? AND NOT ${COUNTED_SQL}`, since).n;
-      return { since, calls: drafts, attempts: t.attempts, input_tokens: t.input_tokens, output_tokens: t.output_tokens, errors, failed, by_feature: byFeature };
+      return {
+        since,
+        calls: drafts,
+        attempts: t.attempts,
+        input_tokens: t.input_tokens,
+        output_tokens: t.output_tokens,
+        errors,
+        failed,
+        by_feature: byFeature,
+        estimated_cost: cost.estimate(t)
+      };
     }
     var inFlight = 0;
     var pending = () => inFlight;
     function status() {
       const s = settings();
-      const used = usage().calls;
+      const u = usage();
+      const used = u.calls;
       const reserved = used + inFlight;
       let reason = null;
       let code = null;
@@ -23403,9 +23730,11 @@ var require_ai_copilot = __commonJS({
       else if (!s.enabled) no("off", "The AI copilot is switched off for this program (Settings \u2192 AI copilot).");
       else if (!keyConfigured()) no("no_key", "The AI copilot is not configured on this server (no provider API key). Tell your administrator.");
       else if (endpointProblem()) no("endpoint", `The AI copilot is misconfigured on this server: ${endpointProblem()}.`);
+      else if (attestedProvider(s.attestation) !== providers.id()) no("provider_changed", `The AI copilot is off: the agreement recorded is with ${providers.label(attestedProvider(s.attestation))}, but this server sends drafts to ${providers.label()}. An administrator must record the agreement with ${providers.label()} (Settings \u2192 AI copilot).`);
       else if (!s.monthly_cap) no("cap", "The AI copilot is paused for this program. Write the documentation yourself as usual.");
       else if (reserved >= s.monthly_cap) no("cap", `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? "" : "s"} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
-      return { available: !reason, reason, code, enabled: s.enabled, attested: !!s.attestation, key_configured: keyConfigured(), model: s.model, monthly_cap: s.monthly_cap, used_this_month: used };
+      else if (cost.capReached(u)) no("cap", "This program has reached its AI spending limit for this month. Write the documentation yourself; the limit resets on the 1st of each month.");
+      return { available: !reason, reason, code, enabled: s.enabled, attested: !!s.attestation, key_configured: keyConfigured(), provider: providers.id(), model: s.model, monthly_cap: s.monthly_cap, used_this_month: used };
     }
     var esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     var NOT_NAMES = /* @__PURE__ */ new Set([
@@ -23748,7 +24077,7 @@ var require_ai_copilot = __commonJS({
         output_config: { format: { type: "json_schema", schema: prompt.schema } }
       };
       const headers = { "content-type": "application/json", "anthropic-version": "2023-06-01" };
-      if (model === DEFAULT_MODEL) {
+      if (providers.isDefaultModel(model)) {
         body.output_config.effort = "medium";
         body.fallbacks = "default";
         headers["anthropic-beta"] = FALLBACK_BETA;
@@ -23774,16 +24103,14 @@ var require_ai_copilot = __commonJS({
     }
     async function send(prompt, model) {
       const { body, headers } = buildRequest(prompt, model);
-      headers["x-api-key"] = config2.ai.apiKey;
       const deadline = Date.now() + config2.ai.timeoutMs;
-      const payload = JSON.stringify(body);
       let res;
       let json = null;
       for (let attempt = 0; ; attempt++) {
         let wait = null;
         let failure = null;
         try {
-          res = await fetch(`${config2.ai.baseUrl}/v1/messages`, { method: "POST", headers, body: payload, redirect: "error", signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
+          res = await providers.request({ body, headers, model, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
         } catch (e) {
           if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new AiError("timeout", 504, "The AI provider did not answer in time. Your form is unchanged: try again, or write it yourself.");
           if (e && e.cause && /redirect/i.test(String(e.cause.message || ""))) throw new AiError("redirect", 502, "The AI provider's address answered with a redirect, which SUDS does not follow. Your form is unchanged: write it yourself, and tell your administrator.");
@@ -23872,6 +24199,7 @@ var require_ai_copilot = __commonJS({
     module.exports = {
       DEFAULT_MODEL,
       MODEL_ID,
+      attestedProvider,
       DEFAULT_CAP,
       MAX_TEXT,
       MAX_TOKENS,
@@ -23906,6 +24234,8 @@ var require_ai = __commonJS({
     var auth3 = require_auth2();
     var audit3 = require_audit();
     var AI = require_ai_copilot();
+    var AP = require_ai_providers();
+    var COST = require_ai_cost();
     var P2 = require_ai_prompts();
     var CL = require_clinical();
     var { badRequest, forbidden, notFound, HttpError: HttpError3 } = require_http();
@@ -23964,15 +24294,35 @@ var require_ai = __commonJS({
       });
       r.get("/api/ai/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => {
         const st = AI.settings();
-        return { ...st, key_configured: AI.keyConfigured(), endpoint_problem: AI.endpointProblem(), custom_endpoint: !!proc.env.SUDS_AI_BASE_URL, status: AI.status(), usage: AI.usage() };
+        return {
+          ...st,
+          key_configured: AI.keyConfigured(),
+          endpoint_problem: AI.endpointProblem(),
+          custom_endpoint: !!proc.env.SUDS_AI_BASE_URL,
+          status: AI.status(),
+          usage: AI.usage(),
+          provider: AP.describe(),
+          attestation_provider: st.attestation ? AI.attestedProvider(st.attestation) : null
+        };
       });
       r.put("/api/ai/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
-        const v = validate(ctx.body, { enabled: { type: "boolean" }, model: { type: "string", maxLen: 64 }, monthly_cap: { type: "number", integer: true, min: 0, max: 1e5 } }, { partial: true });
-        if (v.model !== void 0 && v.model !== null && v.model !== "" && !AI.MODEL_ID.test(v.model)) throw badRequest("Validation failed", { fields: { model: "must be a model id such as claude-\u2026" } });
+        const price = { type: "number", min: 0, max: COST.MAX_PRICE };
+        const v = validate(ctx.body, {
+          enabled: { type: "boolean" },
+          model: { type: "string", maxLen: 100 },
+          monthly_cap: { type: "number", integer: true, min: 0, max: 1e5 },
+          price_input: price,
+          price_output: price,
+          monthly_cost_cap: { type: "number", min: 0, max: COST.MAX_COST_CAP }
+        }, { partial: true });
+        if (v.model !== void 0 && v.model !== null && v.model !== "" && !AP.modelOk(v.model)) throw badRequest("Validation failed", { fields: { model: `must be ${AP.current() ? AP.current().modelHint : "a model id"} (the provider is ${AP.label()})` } });
         const was = AI.settings();
+        const next = { ...COST.pricing(), ...Object.fromEntries(["price_input", "price_output", "monthly_cost_cap"].filter((k) => v[k] !== void 0).map((k) => [k, v[k]])) };
+        if (next.monthly_cost_cap !== null && !COST.priced(next)) throw badRequest("A monthly spending limit needs both prices, to estimate the cost", { fields: { monthly_cost_cap: "enter the prices per million input and output tokens first" } });
         if (v.enabled === 1 && !was.enabled) {
           if (!was.attestation) throw badRequest("Record the programme's agreement (BAA / QSOA) with the AI provider before switching the copilot on", { fields: { enabled: "needs the agreement recorded first" } });
-          if (!AI.keyConfigured()) throw badRequest("This server has no AI provider key (ANTHROPIC_API_KEY in its environment). Set it and restart SUDS, then switch the copilot on.", { fields: { enabled: "no provider key on the server" } });
+          if (!AI.keyConfigured()) throw badRequest(AP.id() === "anthropic" ? "This server has no AI provider key (ANTHROPIC_API_KEY in its environment). Set it and restart SUDS, then switch the copilot on." : `This server has no credentials for ${AP.label()} (${AP.describe().credentials_hint} in its environment). Set them and restart SUDS, then switch the copilot on.`, { fields: { enabled: "no provider key on the server" } });
+          if (AI.attestedProvider(was.attestation) !== AP.id()) throw badRequest(`The agreement recorded is with ${AP.label(AI.attestedProvider(was.attestation))}, but this server sends drafts to ${AP.label()}. Withdraw it and record the agreement with ${AP.label()} first.`, { fields: { enabled: "the agreement is with another provider" } });
         }
         const changed = [];
         db3.transaction(() => {
@@ -23989,9 +24339,18 @@ var require_ai = __commonJS({
             db3.setSetting("ai_monthly_cap", String(v.monthly_cap));
             changed.push("monthly_cap");
           }
+          changed.push(...COST.save(v));
         });
         const now2 = AI.settings();
-        audit3.log({ user: ctx.user, action: "ai.settings.update", ip: ctx.ip, details: { changed, enabled: now2.enabled, model: now2.model, monthly_cap: now2.monthly_cap } });
+        audit3.log({ user: ctx.user, action: "ai.settings.update", ip: ctx.ip, details: {
+          changed,
+          enabled: now2.enabled,
+          model: now2.model,
+          monthly_cap: now2.monthly_cap,
+          price_input: now2.price_input,
+          price_output: now2.price_output,
+          monthly_cost_cap: now2.monthly_cost_cap
+        } });
         return { ok: true, ...now2 };
       });
       r.post("/api/ai/attestation", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
@@ -24010,8 +24369,10 @@ var require_ai = __commonJS({
         if (!v.counsel_reviewed) missing.counsel_reviewed = "Confirm that your counsel has reviewed this use of client records.";
         if (Object.keys(missing).length) throw badRequest("The agreement cannot be recorded until each statement is confirmed.", { fields: missing });
         if (v.agreement_date > (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) throw badRequest("Validation failed", { fields: { agreement_date: "The date the agreement was signed cannot be in the future." } });
+        if (!AP.current()) throw badRequest(`This server's AI provider is not one SUDS knows (${AP.configProblem()}).`);
         const a = {
           provider: v.provider,
+          configured_provider: AP.id(),
           signed_by: v.signed_by,
           agreement_date: v.agreement_date,
           reference: v.reference,
@@ -24023,7 +24384,7 @@ var require_ai = __commonJS({
           recorded_at: db3.now()
         };
         db3.setSetting("ai_attestation", JSON.stringify(a));
-        audit3.log({ user: ctx.user, action: "ai.attestation.record", ip: ctx.ip, details: { provider: a.provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true } });
+        audit3.log({ user: ctx.user, action: "ai.attestation.record", ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true } });
         ctx.status = 201;
         return { ok: true, attestation: a };
       });
