@@ -220,7 +220,7 @@ test('Bedrock: a refused signature is "auth", throttling is retried once; a redi
   try {
     const before = calls.length;
     const r = await draft();
-    assert.equal(r.status, 503); assert.equal(r.data.ai_error, 'unreachable');
+    assert.equal(r.status, 502); assert.equal(r.data.ai_error, 'redirect'); // refused, not retried (security-1171)
     assert.ok(!calls.slice(before).some(c => c.path.startsWith('/elsewhere')), 'the redirect was not followed');
   } finally { reply = null; console.warn = warn; console.log = log; }
   assert.ok(logs.every(l => !l.includes(AWS_SECRET) && !l.includes('session-token-test') && !l.includes('cravings')), 'no credential or text in the log');
@@ -291,7 +291,7 @@ test('Vertex: a key the token service refuses is "auth"; a redirect of the token
   try {
     const before = calls.length;
     const r = await draft();
-    assert.equal(r.status, 503); assert.equal(r.data.ai_error, 'unreachable');
+    assert.equal(r.status, 502); assert.equal(r.data.ai_error, 'redirect'); // refused, not retried (security-1171)
     assert.ok(!calls.slice(before).some(c => c.path.startsWith('/elsewhere') || c.path.includes('rawPredict')));
   } finally { reply = null; }
   fresh(); AP.clearTokenCache();
@@ -299,7 +299,7 @@ test('Vertex: a key the token service refuses is "auth"; a redirect of the token
   try {
     const before = calls.length;
     const r = await draft();
-    assert.equal(r.status, 503); assert.equal(r.data.ai_error, 'unreachable');
+    assert.equal(r.status, 502); assert.equal(r.data.ai_error, 'redirect'); // refused, not retried (security-1171)
     assert.ok(!calls.slice(before).some(c => c.path.startsWith('/elsewhere')), 'the redirect was not followed');
   } finally { reply = null; }
 });

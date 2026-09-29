@@ -136,7 +136,7 @@ the server's environment, not in Settings (`server/ai-providers.js`).
   safeguard fallback is not offered by Bedrock or Vertex AI, so there a request the model declines is simply
   declined (*refused*: write it yourself).
 * **Redirects are refused.** No request to a provider (or to Google's token endpoint) follows a redirect: a
-  redirect is a failure (*unreachable*), so text is never re-sent to another address.
+  redirect is a failure (*redirect*, not retried), so text is never re-sent to another address.
 
 **What to confirm with the provider and counsel, per provider.** SUDS cannot tell what a provider keeps or how it
 uses what it receives; that is set by your agreement and the provider's terms for the service you use, which
