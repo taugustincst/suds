@@ -175,6 +175,15 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.16.0 | monthly limit | role-permission expansion and the pending review fixes as one release | owner (`policy_exception`) |
 | 1.16.4 | released without a tag, a GitHub Release or the `release` environment's approval: published to GitHub Pages by a direct push to `gh-pages` | the owner asked for it to be live at once; the commit (`6491308`) had passed CI in full | owner (a request, no workflow record; *Record: 1.16.4 published without a tag*, below) |
 | 1.17.0 | monthly limit (a feature release inside 1.16.0's 28 days); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner approved shipping 1.17.0 with an exception once green, and asked for it to be deployed to Pages; the stamp commit passed `npm test`, the full browser suite in both orders and CI | owner (a request, no workflow record; *Record: 1.17.0*, below) |
+| 1.17.1 | new behaviour in a patch (AI providers Bedrock and Vertex AI, and the copilot's estimated cost and spending limit) and more than the patch line limit; released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner asked for Bedrock/Vertex and the dollar cost to ship in 1.17.1 with the review-of-1.17.0 fixes, and for it to be deployed to Pages when green; no migration, permission or route | owner (a request, no workflow record; *Record: 1.17.1*, below) |
+
+**Record: 1.17.1 ships under a policy exception, published without a tag.** 1.17.1 is the review of 1.17.0's
+fixes (security, UX, engineering, market) together with two things the owner asked to ship in it: the AI copilot
+on Amazon Bedrock and Google Vertex AI, and its estimated cost in dollars with an optional spending limit. Those
+are new behaviour, and the release is over the patch line limit; it adds no migration, permission or route. It
+passed `npm test`, the browser suite and CI on its stamp commit, went to `main`, and was published to `gh-pages` by
+a direct push, as 1.17.0 was. Its tag goes in the same push as the others (below), after 1.17.1 is on `main`: from
+1.17.1 the release gate refuses a version older than `main`'s, which is what stops the 1.16.x runs.
 
 **Record: 1.17.0 ships under a policy exception, published without a tag.** 1.17.0 is a feature release (migrations
 49–55, one new permission, `ai:draft`, and new routes: the AI documentation copilot, client revision history, the least-privilege default,

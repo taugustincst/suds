@@ -21,6 +21,62 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 - **No redirects to the AI provider.** The provider request never follows a redirect; one is refused (not retried)
   and the draft fails closed.
 
+### AI copilot: providers and cost (owner request for 1.17.1)
+
+- **Amazon Bedrock and Google Vertex AI.** `SUDS_AI_PROVIDER` chooses Anthropic's API (the default), Amazon Bedrock
+  (InvokeModel, AWS Signature Version 4) or Vertex AI (rawPredict, a service account's signed JWT exchanged for an
+  access token), so a county can use the copilot under the business associate agreement it already has with its
+  cloud provider. Node's built-in `crypto` only: still no dependencies (`server/ai-providers.js`). Every gate is the
+  same on each: the recorded agreement, counsel, the caps, identifier replacement, audit without the text, and no
+  redirects. The agreement now records which provider the server was set up for, and drafts stop
+  (`provider_changed`) if the server is later pointed at another until an administrator records that agreement.
+- **Estimated cost in dollars.** An administrator can enter the price per million input and output tokens, and
+  the *This month* card shows the month's estimated cost; an optional monthly spending limit pauses drafts like
+  the draft limit (`server/ai-cost.js`; audited as `ai.settings.update`). An estimate, not a bill.
+  `docs/AI-COPILOT.md` gains *Providers* and *Cost*, including what to confirm with each provider and counsel.
+
+### Frontline (review of 1.17.0, UX)
+
+- Care plan suggestions: *Add problem*, *Add goal* and *Add as a step* keep keyboard focus and announce what was
+  added. Street outreach: *Save contact* keeps focus (on the contact type after a save, on the error after a
+  failure), and the offline message is said once.
+- The CalOMS discharge copilot asks for discharge or last-session notes, not intake notes; each panel's "what is
+  sent" is worded for what it drafts. *Apply* and the six-dimension rating buttons name the question or dimension
+  and announce what they set. *Draft* and *Suggest* are *Draft with AI* and *Suggest with AI*.
+- Settlement outcomes refuses a start date after the end date, on the page and from the server (400, page and
+  export), instead of showing a report of zeros.
+- The import card is *Import a spreadsheet or EHR export*: spreadsheet templates are hidden for an EHR file and
+  its errors are announced. Prevention has its own navigation icon; the outreach start-page checkbox is 44 px on
+  a touch screen. The AI agreement's messages are full sentences.
+
+### Engineering (review of 1.17.0)
+
+- **No older release over a newer one.** Pushing the 1.16.x tags after 1.17.0 was on GitHub Pages would have
+  published 1.16.4 over it and locked out every device whose database 1.17.0 had upgraded. The release gate now
+  refuses a version older than `main`'s (as run by any release's workflow), a release is Latest only if it is the
+  newest version, and `web-app.yml` refuses to publish a version older than the one on `gh-pages`
+  (`scripts/pages-version-check.js`). RELEASE.md and HANDOFF.md give the one-push tag order.
+- CalOMS: the scheduled run no longer prepares a second file for a provider whose file was produced or
+  discarded, *Produce* refuses records already sent, and the "uploaded on" check measures from when the file
+  was produced.
+- A client revision whose earlier value is a list choice retired since can be put back.
+- Rules written twice now live once in `server/rules/`: the AI review statement, the AI-assisted mark, and the
+  SSP participant code (REST, sync push and import agree; `test/rules-parity.test.js`).
+- Browser suite: multitab's queued-work case tells a save that reached the store before the takeover from the
+  race it tests (it failed intermittently on a loaded machine).
+- Supported versions, the security questionnaire and the evidence page describe 1.17; changelog counts corrected.
+
+### Market and documentation (review of 1.17.0)
+
+- README: *What's new in 1.17.0* and the new features in *At a glance*. "Built for 1.17.0" wording corrected
+  everywhere, and the wording test now fails on "built for" a released version. SBOM for 1.17.0.
+- Sample data fills the outreach, SSP participant code, settlement, prevention and CalOMS screens (no new sample
+  clients or funds). `docs/market/DEMO-SCRIPT.md`: a 20-minute first-meeting walkthrough for a CBO director and a
+  county funder.
+- PILOT-KIT measures the copilot from data SUDS already keeps; the pen-test scope covers referral links and the
+  copilot routes; the DPA and BAA/QSOA drafts carry an AI-provider clause; POSITIONING compares with AI
+  documentation tools and EHR add-ons (prices left for the owner to verify); the ROI worksheet has a copilot section.
+
 ## 1.17.0 — 2026-09-29
 
 ### AI documentation copilot
