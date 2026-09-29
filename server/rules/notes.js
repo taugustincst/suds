@@ -11,6 +11,7 @@ const db = require('../db');
 const auth = require('../auth');
 const { define, refuse, flag, notPermitted } = require('./core');
 
+const isYes = (v) => v === true || v === 1 || v === '1' || v === 'true';
 const parseList = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
 // Everything about a signed note stays as signed, except asking a supervisor to look at it (request-cosign).
 const SIGNED_KEEPS = ['kind', 'format', 'title_enc', 'content_enc', 'structured_enc', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'problem_ids',
@@ -57,6 +58,8 @@ module.exports = define({
     ai_assisted: { type: 'boolean' },
   },
   tombstone: 'never',
+  // Said by the device with a row, never stored (push.js): the author's review of AI-drafted text as they sign.
+  statements: ['ai_reviewed'],
   createdBy: ['author_id'],
   editableBy: (user, row) => (row.status === 'draft' && row.author_id !== user.id && !auth.hasPerm(user, 'records:manage-others') ? notPermitted('Only the author can edit a draft') : null),
   authorise(row, c) {
@@ -77,6 +80,18 @@ module.exports = define({
         const p = id ? db.one(`SELECT client_id FROM problems WHERE id=?`, id) : null;
         if (!p || p.client_id !== clientId) { out.push(refuse('has a value the office does not accept (it is linked to a problem that is not on this client\'s problem list)', { message: 'Validation failed', fields: { problem_ids: 'names a problem that is not on this client\'s problem list' } })); break; }
       }
+    }
+    // A SUD counseling note is never drafted with the AI copilot (docs/AI-COPILOT.md; the strategy's rule until
+    // counsel says otherwise): a note with copilot text cannot become one, nor a counseling note take copilot text.
+    const counseling = Number(row.counseling_note ?? e.counseling_note) === 1;
+    const ai = Number(row.ai_assisted) === 1 || Number(e.ai_assisted) === 1;
+    if (counseling && ai && (!c.existing || ['counseling_note', 'ai_assisted'].some(k => row[k] !== undefined && row[k] !== null && Number(row[k]) !== Number(e[k] || 0)))) {
+      out.push(refuse('has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot)', { message: 'A SUD counseling note cannot include text drafted by the AI copilot', fields: { counseling_note: 'this note has AI-drafted text; a SUD counseling note is written without the copilot' } }));
+    }
+    // An AI-assisted note is signed only with its author's statement that they reviewed the drafted text, over sync
+    // as over REST (security review of 1.17.0, L1): the device sends it with the row (local/sync.js).
+    if (c.via === 'sync' && signs(row, c) && ai && !isYes(c.statements && c.statements.ai_reviewed)) {
+      out.push(refuse('needs the author\'s review statement: this note includes text drafted by the AI copilot', { message: 'This note includes text drafted by the AI copilot. Confirm you have reviewed and corrected it before signing.', fields: { ai_reviewed: 'confirm you reviewed the AI-drafted text' } }));
     }
     // Only the person who wrote a note signs it, and only they (POST /api/notes/:id/sign): on push, the syncing user
     // signing their own note. A supervisor countersigns instead.
@@ -133,12 +148,12 @@ module.exports = define({
   afterApply(row, o, c) {
     if (c.existing) reissueAddenda(row.id, c.existing.counseling_note, o.counseling_note ?? c.existing.counseling_note);
     if (c.existing && c.existing.status !== 'draft') return;
-    const n = db.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required FROM notes WHERE id=?`, row.id);
+    const n = db.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required, ai_assisted FROM notes WHERE id=?`, row.id);
     if (!n || n.status === 'draft') return;
     const hash = require('../crypto').sha256(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ''}`);
     db.run(`UPDATE notes SET signature_hash=? WHERE id=?`, hash, n.id);
     const reminders = closeSignReminders(n.author_id, n.id, n.client_id);
-    require('../audit').log({ user: c.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: 'device', details: { hash, via: 'sync', cosign_required: !!n.cosign_required, reminders_closed: reminders.length ? reminders : undefined } });
+    require('../audit').log({ user: c.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: 'device', details: { hash, via: 'sync', cosign_required: !!n.cosign_required, reminders_closed: reminders.length ? reminders : undefined, ai_assisted: Number(n.ai_assisted) ? true : undefined, ai_reviewed: Number(n.ai_assisted) ? true : undefined } });
   },
 });
 module.exports.closeSignReminders = closeSignReminders;

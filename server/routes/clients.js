@@ -671,3 +671,6 @@ module.exports = (r) => {
 module.exports.possibleDuplicates = possibleDuplicates;
 module.exports.flagForReview = flagForReview;
 module.exports.mayOpen = mayOpen;
+module.exports.reviewTask = reviewTask;
+module.exports.DUPLICATE_CHECKS = DUPLICATE_CHECKS;
+module.exports.DUPLICATE_CHECK_WINDOW_MS = DUPLICATE_CHECK_WINDOW_MS;

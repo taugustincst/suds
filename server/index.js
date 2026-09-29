@@ -106,5 +106,6 @@ for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
   stopping = true;
   console.log('[suds] shutting down…');
   // Flush the log file before exiting, so the last lines (often the reason for the stop) are not lost.
-  listener.stop(() => { try { db.close(); } catch {} require('./log').flush().finally(() => process.exit(0)); });
+  // The hour's count of refused referral-link opens goes into the audit log before the database closes.
+  listener.stop(() => { try { require('./referral-links').flushRefusals(); } catch {} try { db.close(); } catch {} require('./log').flush().finally(() => process.exit(0)); });
 });

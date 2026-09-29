@@ -5,7 +5,7 @@
 // month-end work around the upload a person makes:
 //   * the scheduled run: on the configured day of each month (caloms_schedule 'monthly', caloms_schedule_day),
 //     the previous calendar month is validated in full against every implemented edit rule, programme-wide, and
-//     a submission-ready file is PREPARED for it — one file, or one per provider (caloms_split_by_provider, a
+//     a file is PREPARED for it, checked against SUDS's own edits (not DHCS's): one file, or one per provider (caloms_split_by_provider, a
 //     county server reporting for several provider organisations). A prepared file is built once and kept
 //     encrypted, but it is not a disclosure: nothing has left, nobody's accounting changes and no record is
 //     stamped as sent. Records with a fatal error are held back and appear on the worklist (below);

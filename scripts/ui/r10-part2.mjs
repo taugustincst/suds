@@ -93,7 +93,20 @@ try {
   eq((await nav.api('POST', `/api/clients/${cl.data.id}/consents`, { type: 'part2_disclosure', recipient: `Harbor Clinic ${tag}`, purpose: 'Referral for treatment', ...ELEMENTS })).status, 201, 'whose Part 2 consent names the provider');
   const ref = await nav.api('POST', '/api/referrals', { client_id: cl.data.id, resource_id: res.data.id, referred_at: new Date().toISOString(), status: 'pending', warm_handoff: false });
   eq(ref.status, 201, 'a pending referral to it');
+  // Off by default (counsel reviews the design first): no Secure link button until an administrator switches it on.
   await nav.go(`client/${cl.data.id}/referrals`);
+  ok(!(await nav.page.$(`[data-secure-link-open="${ref.data.id}"]`)), 'secure referral links are off by default: no Secure link button');
+  eq((await nav.api('POST', `/api/referrals/${ref.data.id}/links`, { kind: 'contact_notice' })).status, 409, 'and the server refuses to make one');
+  await admin.go('compliance?tab=overview');
+  await admin.page.waitForSelector('[data-invite-settings] input[name=enabled]', { timeout: 10000 });
+  await axe(admin.page, 'Privacy & Part 2 overview with the Secure referral links setting');
+  await admin.page.check('[data-invite-settings] input[name=enabled]');
+  await admin.page.click('[data-invite-settings] button[type=submit]');
+  await toastText(admin.page, /Saved/);
+  eq((await admin.api('GET', '/api/referral-links/settings')).data.enabled, true, 'an administrator switches secure referral links on in Privacy & Part 2');
+  await nav.page.reload(); await nav.page.waitForSelector('.layout'); await settle(nav.page);
+  await nav.go(`client/${cl.data.id}/referrals`);
+  await nav.page.waitForSelector(`[data-secure-link-open="${ref.data.id}"]`, { timeout: 10000 });
   await nav.page.click(`[data-secure-link-open="${ref.data.id}"]`);
   await nav.page.waitForSelector(`.modal [data-secure-link="${ref.data.id}"]`);
   eq(await nav.page.$eval('.modal select[name=kind]', s => s.value), 'packet', 'with a consent naming the provider, the referral itself is offered');

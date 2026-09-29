@@ -148,6 +148,9 @@ try {
     ok(/^D: Aurelia discussed cravings/.test(d), 'the Data section holds the draft, with the name put back', d);
     ok(/needs clinician input/.test(await page.inputValue('.modal textarea[data-sec=A]')), 'gaps are left for the clinician');
     await axe(page, 'Note form with an AI draft in it');
+    // A SUD counseling note (§2.11) is written without the copilot: a note with copilot text cannot be ticked as one.
+    ok(await page.$eval('.modal input[name=counseling_note]', i => i.disabled), 'a note with copilot text cannot be ticked as a SUD counseling note');
+    ok(await page.$eval('.modal [data-counseling-ai-note]', e => !e.hidden), 'and the form says why');
     // Save & sign: the review statement is asked for, and required.
     await page.click('.modal button[data-save-sign]');
     await page.waitForSelector('[data-signature-dialog]', { timeout: 10000 });
@@ -180,6 +183,10 @@ try {
     await page.waitForSelector('.modal textarea[name=content]');
     await page.fill('.modal textarea[name=content]', 'My own words about the session.');
     await openPanel(page, 'note');
+    await page.check('.modal input[name=counseling_note]');
+    ok(await page.$eval('[data-ai-panel="note"]', e => e.hidden), 'ticking "SUD counseling note" hides the copilot');
+    await page.uncheck('.modal input[name=counseling_note]');
+    ok(await page.$eval('[data-ai-panel="note"]', e => !e.hidden), 'and unticking it shows the copilot again');
     await page.fill('[data-ai-panel="note"] textarea', 'Session text');
     await page.click('[data-ai-draft="note"]');
     await until(async () => (await page.textContent('[data-ai-panel="note"] [data-ai-error]')).trim(), { timeout: 20000 });

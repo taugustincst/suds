@@ -30,6 +30,32 @@ before(async () => {
   anon = H.client();
   H.db.setSetting('org_name', 'Riverside Recovery'); H.db.setSetting('program_contact', 'Privacy officer, 555-0100');
 });
+
+// Off until an administrator switches it on (market review of the 1.17.0 candidate): the first test sees the
+// default and switches it on for the rest.
+test('"Secure referral links" is a programme setting, off by default; only an administrator switches it', async () => {
+  const admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
+  assert.equal((await nav.get('/api/referral-links/settings')).data.enabled, false, 'off on a new install (and an upgrade: no setting means off)');
+  assert.equal((await nav.get('/api/auth/me')).data.programme.referral_links, false, 'the browser hides the Secure link button');
+  const c = await newClient(); const res = await resource('Offswitch Clinic'); const ref = await pendingReferral(c, res);
+  const refused = await nav.post(`/api/referrals/${ref}/links`, { kind: 'contact_notice' });
+  assert.equal(refused.status, 409, JSON.stringify(refused.data)); assert.equal(refused.data.referral_links_off, true);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM referral_links WHERE referral_id=?`, ref).n, 0);
+  for (const who of [nav, sup]) assert.equal((await who.put('/api/referral-links/settings', { enabled: true })).status, 403);
+  const on = await admin.put('/api/referral-links/settings', { enabled: true });
+  assert.equal(on.status, 200, JSON.stringify(on.data)); assert.equal(on.data.enabled, true);
+  const a = JSON.parse(lastAudit('settings.update').details);
+  assert.deepEqual(a.changed, ['referral_links_enabled']); assert.equal(a.referral_links_enabled, true);
+  assert.equal((await nav.get('/api/auth/me')).data.programme.referral_links, true);
+  const made = await nav.post(`/api/referrals/${ref}/links`, { kind: 'contact_notice' });
+  assert.equal(made.status, 201, JSON.stringify(made.data));
+  // Switched off again, a link already sent stops opening (the same answer as any link that cannot be opened).
+  assert.equal((await admin.put('/api/referral-links/settings', { enabled: false })).status, 200);
+  const off = await anon.post('/api/referral-links/open', { token: tokenOf(made.data.path) });
+  assert.equal(off.status, 404);
+  assert.equal((await admin.put('/api/referral-links/settings', { enabled: true })).status, 200);
+  assert.equal((await anon.post('/api/referral-links/open', { token: tokenOf(made.data.path) })).status, 200);
+});
 after(async () => { await H.stop(); });
 
 test('a packet needs a live Part 2 consent that names the recipient; without one only a contact notice can go', async () => {

@@ -88,7 +88,9 @@ module.exports = (r) => {
     return { user: auth.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db.getSetting('org_name', 'SUDS'), idle_minutes: auth.policy().idleMinutes, setup_needed: false,
       default_fund_id: require('./budget').defaultFundFor(u.id),
       // The programme profile and the modules in force (server/programme.js): what the navigation shows.
-      programme: { profile: require('../programme').profile(), modules: require('../programme').modules() } };
+      programme: { profile: require('../programme').profile(), modules: require('../programme').modules(),
+        // Whether "Secure link" is offered on a referral (server/referral-links.js; office server only).
+        referral_links: db.getSetting('referral_links_enabled', '0') === '1' } };
   });
 
   // Whether signing a note now needs the password (or authenticator code) again, or only a confirmation:

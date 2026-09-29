@@ -210,14 +210,28 @@ module.exports = (r) => {
     return { ok: true, id, from, to, submitted_at: stamp, file_name: fileName, sha256: hash, bytes: body.length, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded };
   });
 
+  // A file covers the whole programme unless a worker held to a caseload produced it themselves from their own
+  // caseload (POST /api/caloms/submissions: the extract is scoped to the caller). Held to a caseload, a worker
+  // reaches only those; the monthly run's files, and anyone else's, are the whole programme's (security review
+  // of 1.17.0, L4: the same rule as prepare and produce).
+  const ownOnly = (ctx) => auth.caseloadRestricted(ctx.user);
+  const mayReach = (ctx, sub, what) => {
+    if (ownOnly(ctx) && !(sub.origin === 'manual' && sub.created_by === ctx.user.id)) {
+      audit.log({ user: ctx.user, action: 'caloms.submission.refused', entity: 'caloms_submission', entityId: sub.id, ip: ctx.ip, success: false, details: { what, reason: 'held to a caseload' } });
+      throw require('../http').forbidden(`This file covers the whole program; someone who is held to a caseload cannot ${what} it`);
+    }
+    return sub;
+  };
+
   // What was produced, when and by whom: periods, counts and hashes, never who was in it.
   r.get('/api/caloms/submissions', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
+    const own = ownOnly(ctx);
     const rows = db.all(`SELECT s.id, s.period_from, s.period_to, s.file_name, s.sha256, s.bytes, s.clients, s.counts, s.created_at, s.file_cleared_at, s.file_enc IS NOT NULL AS has_file, u.display_name AS created_by_name,
         s.status, s.origin, s.provider_id, s.uploaded_at, s.dhcs_reference, up.display_name AS uploaded_by_name,
         (SELECT COUNT(*) FROM caloms_submission_events ev WHERE ev.submission_id=s.id AND ev.action='downloaded') AS downloads
-      FROM caloms_submissions s JOIN users u ON u.id=s.created_by LEFT JOIN users up ON up.id=s.uploaded_by ORDER BY s.created_at DESC LIMIT 200`)
+      FROM caloms_submissions s JOIN users u ON u.id=s.created_by LEFT JOIN users up ON up.id=s.uploaded_by ${own ? `WHERE s.origin='manual' AND s.created_by=?` : ''} ORDER BY s.created_at DESC LIMIT 200`, ...(own ? [ctx.user.id] : []))
       .map(r => { let counts = {}; try { counts = JSON.parse(r.counts || '{}'); } catch { /* keep {} */ } const o = { ...r, counts, file_available: !!r.has_file }; delete o.has_file; return o; });
-    audit.log({ user: ctx.user, action: 'caloms.submission.list', ip: ctx.ip, details: { count: rows.length } });
+    audit.log({ user: ctx.user, action: 'caloms.submission.list', ip: ctx.ip, details: { count: rows.length, own_only: own || undefined } });
     return { rows, keep_days: require('../retention').CALOMS_FILE_DAYS };
   });
 
@@ -225,6 +239,7 @@ module.exports = (r) => {
   r.get('/api/caloms/submissions/:id/file', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
     const sub = db.one(`SELECT * FROM caloms_submissions WHERE id=?`, ctx.params.id);
     if (!sub) throw notFound('Submission not found');
+    mayReach(ctx, sub, 'download');
     // A prepared file has not been accounted: it is produced first (below), which is the disclosure.
     if (sub.status !== 'produced') throw new HttpError(409, sub.status === 'prepared' ? 'This file was prepared by the monthly run and has not been produced yet. Produce it first: that is when it is written to each client\'s accounting of disclosures.' : 'This file was discarded.', { status: sub.status });
     if (!sub.file_enc) throw new HttpError(410, `This submission's file is no longer kept (files are kept ${require('../retention').CALOMS_FILE_DAYS} days, and removed when a client in it is purged). Its record and hash remain; produce a new submission if the records must be sent again.`);
@@ -287,7 +302,7 @@ module.exports = (r) => {
   });
 
   r.post('/api/caloms/submissions/:id/discard', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
-    const sub = subFor(ctx.params.id);
+    const sub = mayReach(ctx, subFor(ctx.params.id), 'discard');
     if (sub.status !== 'prepared') throw new HttpError(409, 'Only a prepared file that has not been produced can be discarded; a produced one is a disclosure on record.');
     db.transaction(() => {
       db.run(`UPDATE caloms_submissions SET status='discarded', file_enc=NULL, file_cleared_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), sub.id);
@@ -299,7 +314,7 @@ module.exports = (r) => {
 
   // SUDS does not upload to DHCS; the person who did records it here, with the reference the portal gave.
   r.post('/api/caloms/submissions/:id/uploaded', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
-    const sub = subFor(ctx.params.id);
+    const sub = mayReach(ctx, subFor(ctx.params.id), 'record the upload of');
     const v = validate(ctx.body || {}, { uploaded_on: { type: 'date', required: true }, dhcs_reference: { type: 'string', maxLen: 60, pattern: /^[A-Za-z0-9 ._/#-]*$/ } });
     if (sub.status !== 'produced') throw new HttpError(409, 'Produce the file first: a prepared file has not been accounted, so it cannot have been sent.');
     if (v.uploaded_on > require('./budget').localDate()) throw badRequest('The upload date cannot be in the future', { fields: { uploaded_on: 'in the future' } });
@@ -313,7 +328,7 @@ module.exports = (r) => {
   });
 
   r.get('/api/caloms/submissions/:id/events', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
-    const sub = subFor(ctx.params.id);
+    const sub = mayReach(ctx, subFor(ctx.params.id), 'read the log of');
     const rows = db.all(`SELECT e.action, e.detail, e.created_at, COALESCE(u.display_name, 'Scheduled run') AS who FROM caloms_submission_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.submission_id=? ORDER BY e.created_at, e.rowid`, sub.id);
     audit.log({ user: ctx.user, action: 'caloms.submission.log', entity: 'caloms_submission', entityId: sub.id, ip: ctx.ip, details: { count: rows.length } });
     return { id: sub.id, file_name: sub.file_name, sha256: sub.sha256, status: sub.status, rows };

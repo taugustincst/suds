@@ -333,7 +333,8 @@ function referralActions(r, onChange) {
   return can('referrals:write') ? h('div', {}, h('div', { class: 'row' },
       !r.outcome_recorded_at ? h('button', { class: 'btn sm primary', onClick: () => openOutcomeForm(r, onChange) }, 'Record outcome') : null,
       // Office server only: a device has no address an outside provider could open.
-      !isLocalMode() ? h('button', { class: 'btn sm', 'data-secure-link-open': r.id, 'aria-label': `Secure link to ${r.resource_name || 'the provider'}`, onClick: () => openSecureLinkDialog(r, onChange) }, 'Secure link') : null,
+      // And only once an administrator has switched secure referral links on (off by default: counsel reviews them first).
+      !isLocalMode() && state.programme && state.programme.referral_links ? h('button', { class: 'btn sm', 'data-secure-link-open': r.id, 'aria-label': `Secure link to ${r.resource_name || 'the provider'}`, onClick: () => openSecureLinkDialog(r, onChange) }, 'Secure link') : null,
       mayChange(r.user_id) ? h('button', { class: 'btn sm', onClick: () => openReferralForm(r, { onDone: onChange }) }, 'Edit') : null, mayChange(r.user_id) ? h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this referral', onClick: async () => { if (await confirmDialog('Delete referral', 'Delete this referral?', { danger: true, okText: 'Delete' })) { await del(`/api/referrals/${r.id}`); onChange && onChange(); } } }, '✕') : null),
       mayChange(r.user_id) ? null : r.outcome_recorded_at ? viewOnly(null, { short: true })
         : h('span', { class: 'small muted', 'data-view-only': '1' }, `You can record the outcome; only ${r.worker || 'the worker who made it'} or a supervisor can change the referral.`)) : null;

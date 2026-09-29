@@ -340,7 +340,12 @@ function localRows(officeUserId = null) {
     const rows = db.all(`SELECT x.* FROM ${t.name} x WHERE NOT EXISTS (SELECT 1 FROM sync_seen s WHERE s.table_name=? AND s.id=x.id AND s.updated_at IS COALESCE(x.updated_at, x.created_at))${own}`, t.name);
     for (const r of rows) {
       if (syncing && (t.name === 'notes' || t.name === 'note_addenda') && !mayRead(syncing, t, r)) continue;
-      const e = exportRow(t, r); if (e) out.push({ table: t.name, row: e });
+      const e = exportRow(t, r); if (!e) continue;
+      // A signed AI-assisted note carries its author's review statement: this device's own sign route (the office's
+      // routes/notes.js, in the kernel) refused to sign it without one, and the office asks for it again
+      // (server/rules/notes.js; security review of 1.17.0, L1).
+      if (t.name === 'notes' && Number(r.ai_assisted) && r.status && r.status !== 'draft') e.ai_reviewed = true;
+      out.push({ table: t.name, row: e });
     }
   }
   return out;

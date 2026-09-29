@@ -251,6 +251,10 @@ class PushSession {
     delete raw.updated_at;
     const c = new RowContext(this, t, raw, existing, existingCols, incomingAt);
     const refused = (list) => this.settle(list, t, raw, c);
+    // What the device says alongside the row rather than in it (a table's `statements`: an author's "I reviewed
+    // the AI-drafted text" as they sign, as the REST route takes it in the request body): read before confine
+    // keeps only the columns.
+    c.statements = Object.fromEntries((R.statements || []).filter(k => raw[k] !== undefined).map(k => [k, raw[k]]));
     this.confine(R, raw, c);
 
     // ---- authorise ----

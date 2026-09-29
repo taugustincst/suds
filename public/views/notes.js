@@ -124,18 +124,31 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   const showAiBanner = (b) => { if (aiBanner) aiBanner.remove(); aiBanner = b; structuredBox.before(b); };
   if (aiAssisted) showAiBanner(aiDraftBanner({ onReviewed: () => {} }));
   const copilot = noteCopilot({
-    read: () => ({ client_id: f.inputs.client_id?.value || null, kind: f.inputs.kind.value, format: fmtSel.value, note_id: noteId }),
+    read: () => ({ client_id: f.inputs.client_id?.value || null, kind: f.inputs.kind.value, format: fmtSel.value, note_id: noteId, counseling_note: !!f.inputs.counseling_note?.checked }),
     apply: (r) => {
       if (r.structured) {
         if (fmtSel.value !== r.format) { fmtSel.value = r.format; renderStructured(); }
         structuredBox.querySelectorAll('textarea[data-sec]').forEach(t => { if (r.draft.sections[t.dataset.sec] !== undefined) { t.value = r.draft.sections[t.dataset.sec]; t.dispatchEvent(new Event('input', { bubbles: true })); } });
       } else { contentArea.value = r.draft.narrative; contentArea.dataset.auto = '0'; contentArea.dispatchEvent(new Event('input', { bubbles: true })); }
-      aiAssisted = true;
+      aiAssisted = true; syncCounseling();
       showAiBanner(aiDraftBanner({ gaps: r.gaps, counts: r.identifiers_replaced, onReviewed: () => {} }));
       scheduleSave();
     },
   });
   if (copilot) (aiBanner || structuredBox).before(copilot);
+  // A SUD counseling note (§2.11) is written without the copilot (docs/AI-COPILOT.md): ticking the box hides the
+  // panel, and a note that already has copilot text cannot be ticked as one (the server refuses both ways).
+  const counselBox = f.inputs.counseling_note;
+  const counselHelp = counselBox && h('p', { class: 'small muted', 'data-counseling-ai-note': '1', hidden: true }, 'This note has text drafted by the AI copilot, so it cannot be a SUD counseling note. Write a counseling note yourself, in a new note.');
+  if (counselHelp) counselBox.closest('[data-field]').append(counselHelp);
+  const syncCounseling = () => {
+    if (!counselBox) return;
+    if (copilot) copilot.hidden = counselBox.checked;
+    counselBox.disabled = aiAssisted && !counselBox.checked;
+    counselHelp.hidden = !counselBox.disabled;
+  };
+  if (counselBox) counselBox.addEventListener('change', syncCounseling);
+  syncCounseling();
   const m = modal(isNew ? 'New note' : 'Edit draft note', f, { wide: true });
   const origClose = m.close; m.close = () => { clearTimeout(asTimer); if (noteId && onDone) onDone(); origClose(); };
 }

@@ -80,20 +80,50 @@ function status() {
 }
 
 // ---------------------------------------------------------------- de-identification
+// What SUDS knows about the client (and the author) is masked however it is written, as far as that can be done
+// conservatively: masking a word that was not an identifier costs the author a correction; missing one sends it
+// (security review of 1.17.0, L5). Names, streets and cities are compared "folded": accents and apostrophes taken
+// off both sides (José = Jose, O'Brien = OBrien = Obrien), a hyphen the same as a space.
 const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Words in an emergency contact entry that are relationships or filler, not names.
 const NOT_NAMES = new Set(['mother', 'mom', 'father', 'dad', 'sister', 'brother', 'aunt', 'uncle', 'grandmother', 'grandma', 'grandfather', 'grandpa', 'wife', 'husband',
   'partner', 'spouse', 'friend', 'son', 'daughter', 'cousin', 'niece', 'nephew', 'guardian', 'sponsor', 'case', 'manager', 'worker', 'caseworker', 'pastor', 'neighbor', 'neighbour',
   'girlfriend', 'boyfriend', 'fiance', 'fiancee', 'roommate', 'cell', 'home', 'work', 'phone', 'mobile', 'call', 'text', 'only', 'the', 'and', 'or', 'of', 'at', 'is', 'not', 'ok', 'to', 'mr', 'mrs', 'ms', 'dr']);
+// Capitalised words that come before a surname without being someone's given name: titles, roles, and words that
+// start a sentence in a note. The counselor's surname after one of these is the counselor.
+const BEFORE_SURNAME = new Set(['mr', 'mrs', 'ms', 'mx', 'dr', 'miss', 'counselor', 'counsellor', 'clinician', 'therapist', 'navigator', 'worker', 'nurse', 'coach', 'supervisor', 'staff',
+  'peer', 'specialist', 'lcsw', 'lmft', 'acsw', 'cadc', 'rn', 'np', 'md', 'today', 'yesterday', 'tomorrow', 'then', 'also', 'later', 'when', 'after', 'before', 'per', 'and', 'but', 'so',
+  'with', 'by', 'from', 'to', 'for', 'as', 'client', 'writer', 'this', 'that', 'called', 'met', 'saw', 'told', 'asked', 'spoke', 'plan', 'note', 'i', 'we']);
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const MONTH_RE = `(?:${MONTHS.map(m => `${m}|${m.slice(0, 3)}\\.?${m === 'September' ? '|Sept\\.?' : ''}`).join('|')})`;
+const ORD = '(?:st|nd|rd|th)?';
 
-/** The ways a date of birth (YYYY-MM-DD) is likely to be written. */
-function dateForms(iso) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); if (!m) return [];
+/** Accents and apostrophes off, for comparing names: "José O'Brien" and "Jose OBrien" fold the same. */
+const foldChars = (s) => String(s).normalize('NFKD').replace(/\p{M}/gu, '').replace(/['’`´]/g, '');
+/** `text` folded, with where each folded character came from in the original ([start, end) per character). */
+function foldMapped(text) {
+  let folded = ''; const from = []; const to = [];
+  let i = 0;
+  for (const ch of text) {
+    const f = foldChars(ch);
+    for (let k = 0; k < f.length; k++) { from.push(i); to.push(i + ch.length); }
+    folded += f; i += ch.length;
+  }
+  return { folded, from, to };
+}
+
+/** The ways a date of birth (YYYY-MM-DD) is likely to be written: month first or day first, any separator, words. */
+function dobPattern(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); if (!m) return null;
   const [, y, mo, d] = m; const mi = Number(mo); const di = Number(d);
+  const M = `0?${mi}`, D = `0?${di}`, Y = `(?:${y}|${y.slice(2)})`, S = '[\\/.\\-]';
   const mon = MONTHS[mi - 1];
-  return [`${y}-${mo}-${d}`, `${mo}/${d}/${y}`, `${mi}/${di}/${y}`, `${mo}-${d}-${y}`, `${mi}-${di}-${y}`, `${mo}/${d}/${y.slice(2)}`, `${mi}/${di}/${y.slice(2)}`,
-    `${mon} ${di}, ${y}`, `${mon} ${di} ${y}`, `${di} ${mon} ${y}`, `${mon.slice(0, 3)} ${di}, ${y}`, `${mon.slice(0, 3)}. ${di}, ${y}`, `${mon.slice(0, 3)} ${di} ${y}`];
+  const name = `(?:${mon}|${mon.slice(0, 3)}\\.?${mon === 'September' ? '|Sept\\.?' : ''})`;
+  const forms = [
+    `${y}${S}${M}${S}${D}`, `${M}${S}${D}${S}${Y}`, `${D}${S}${M}${S}${Y}`,
+    `${name}\\s+${D}${ORD},?\\s+${y}`, `${D}${ORD}\\s+(?:of\\s+)?${name},?\\s+${y}`,
+  ];
+  return new RegExp(`(?<![\\p{L}\\p{N}])(?:${forms.join('|')})(?![\\p{L}\\p{N}])`, 'giu');
 }
 /** A pattern for a phone number's ten (or seven) digits, however it is punctuated. */
 function phonePattern(phone) {
@@ -104,12 +134,29 @@ function phonePattern(phone) {
   return new RegExp(`(?<!\\d)(?:\\+?1${sep})?${digits.split('').map(esc).join(sep)}(?!\\d)`, 'g');
 }
 const nameParts = (s) => String(s || '').split(/[\s,-]+/).map(x => x.replace(/[^\p{L}'’.]/gu, '')).filter(x => x.replace(/[.'’]/g, '').length >= 2);
-const namePattern = (s) => new RegExp(`(?<![\\p{L}\\p{N}])${esc(s).replace(/\s+/g, '\\s+')}(?![\\p{L}\\p{N}])`, 'giu');
+/** A folded value as a pattern: whole words, any case, a space or a hyphen between its words. */
+const foldedPattern = (s) => new RegExp(`(?<![\\p{L}\\p{N}])${esc(foldChars(s).trim()).replace(/[\s-]+/g, '[\\s-]+')}(?![\\p{L}\\p{N}])`, 'giu');
 const exactPattern = (s) => new RegExp(`(?<![\\p{L}\\p{N}])${esc(s).replace(/\s+/g, '\\s+')}(?![\\p{L}\\p{N}])`, 'giu');
+
+// Street suffixes, each with the ways it is written: "Road" in the record is "Rd" in a note.
+const SUFFIXES = [['Street', 'St'], ['Avenue', 'Ave', 'Av'], ['Road', 'Rd'], ['Boulevard', 'Blvd'], ['Drive', 'Dr'], ['Lane', 'Ln'], ['Way'], ['Court', 'Ct'], ['Place', 'Pl'],
+  ['Terrace', 'Ter'], ['Circle', 'Cir'], ['Highway', 'Hwy'], ['Parkway', 'Pkwy'], ['Trail', 'Trl'], ['Square', 'Sq'], ['Alley', 'Aly']];
+/** The client's street however it is written: with or without its number, the suffix in full or short, any case. */
+function streetPattern(street) {
+  const words = foldChars(street).trim().split(/\s+/);
+  const at = words.findIndex((w, i) => i > 0 && SUFFIXES.some(s => s.some(x => x.toLowerCase() === w.replace(/\.$/, '').toLowerCase())));
+  if (at < 1) return null;
+  const num = /^\d+[A-Za-z]?$/.test(words[0]) ? words[0] : null;
+  const name = words.slice(num ? 1 : 0, at);
+  if (!name.length || name.join('').replace(/[^\p{L}\p{N}]/gu, '').length < 3) return null;
+  const suffix = SUFFIXES.find(s => s.some(x => x.toLowerCase() === words[at].replace(/\.$/, '').toLowerCase()));
+  return new RegExp(`(?<![\\p{L}\\p{N}])(?:${num ? `${esc(num)}\\s+` : ''})?${name.map(esc).join('\\s+')}\\s+(?:${suffix.join('|')})\\b\\.?`, 'giu');
+}
 
 /**
  * What SUDS knows that identifies this client (and the author), as replacements to make before sending.
- * Each: { pattern, token, kind, reinsert } — reinsert is the value put back into the draft (names only).
+ * Each: { pattern, token, kind, reinsert, fold, keep } — reinsert is the value put back into the draft (names
+ * only); fold, compared with accents and apostrophes off; keep(folded, at, match), a match to leave alone.
  */
 function identifiersFor(clientId, author) {
   const M = require('./clients-model');
@@ -117,10 +164,11 @@ function identifiersFor(clientId, author) {
   if (!row) return [];
   const c = M.decryptRow(row);
   const out = [];
-  const add = (value, token, kind, reinsert = null, pattern = null) => {
+  const add = (value, token, kind, reinsert = null, pattern = null, extra = {}) => {
     const v = String(value || '').trim();
     if (!pattern && v.replace(/[^\p{L}\p{N}]/gu, '').length < 2) return;
-    out.push({ pattern: pattern || exactPattern(v), token, kind, reinsert, len: pattern ? 1000 : v.length });
+    const fold = !pattern && ['name', 'contact', 'address', 'staff'].includes(kind);
+    out.push({ pattern: pattern || (fold ? foldedPattern(v) : exactPattern(v)), token, kind, reinsert, fold: fold || !!extra.fold, keep: extra.keep || null, len: pattern ? 1000 : v.length });
   };
   const first = (c.first_name || '').trim(), last = (c.last_name || '').trim(), pref = (c.preferred_name || '').trim();
   // Whole names first (longest wins, below), then each part of each name on its own.
@@ -132,13 +180,15 @@ function identifiersFor(clientId, author) {
   if (last) { add(last, 'CLIENT_LAST_NAME', 'name', last); for (const p of nameParts(last)) add(p, 'CLIENT_LAST_NAME', 'name', last); }
   if (pref) { add(pref, 'CLIENT_PREFERRED_NAME', 'name', pref); for (const p of nameParts(pref)) add(p, 'CLIENT_PREFERRED_NAME', 'name', pref); }
   if (row.client_code) add(row.client_code, 'CLIENT_CODE', 'code');
-  for (const d of dateForms(c.dob)) add(d, 'DOB', 'dob');
+  const dob = dobPattern(c.dob); if (dob) add(c.dob, 'DOB', 'dob', null, dob);
   for (const ph of [c.phone, c.alt_phone]) { const re = phonePattern(ph); if (re) add(ph, 'PHONE', 'phone', null, re); }
   if (c.email) add(c.email, 'EMAIL', 'email');
   if (c.address) {
     add(c.address, 'ADDRESS', 'address');
     const street = String(c.address).split(/[,\n]/)[0];
     if (street && street !== c.address) add(street, 'ADDRESS', 'address');
+    const sp = street && streetPattern(street.replace(/\s+(?:#|Apt\.?|Unit|Suite|Ste\.?)\s*[\w-]+$/i, ''));
+    if (sp) add(street, 'ADDRESS', 'address', null, sp, { fold: true });
   }
   if (row.city) add(row.city, 'CITY', 'address');
   if (row.zip) add(row.zip, 'ZIP', 'address', null, new RegExp(`(?<!\\d)${esc(row.zip)}(?:-\\d{4})?(?!\\d)`, 'g'));
@@ -150,7 +200,17 @@ function identifiersFor(clientId, author) {
   }
   if (author && author.display_name) {
     add(author.display_name, 'COUNSELOR', 'staff', author.display_name);
-    for (const p of nameParts(author.display_name)) if (p.length >= 3) add(p, 'COUNSELOR', 'staff', author.display_name);
+    // A part of the author's name on its own is theirs only written as a name: capitalised ("pat dry" is not
+    // Pat), and not after another given name ("Patricia Jones" is someone else who shares the surname).
+    const own = new Set(nameParts(author.display_name).map(p => foldChars(p).toLowerCase()));
+    const keep = (folded, at, m) => {
+      if (m[0] === m[0].toLowerCase()) return true;
+      const w = /(\p{Lu}[\p{L}.]*)[ \t]+$/u.exec(folded.slice(Math.max(0, at - 40), at));
+      if (!w) return false;
+      const word = w[1].replace(/\./g, '').toLowerCase();
+      return !BEFORE_SURNAME.has(word) && !NOT_NAMES.has(word) && !own.has(word);
+    };
+    for (const p of nameParts(author.display_name)) if (p.length >= 3) add(p, 'COUNSELOR', 'staff', author.display_name, null, { keep });
   }
   // Longest first, so "Maria Lopez" goes as a whole before "Maria" does.
   return out.sort((a, b) => b.len - a.len);
@@ -162,6 +222,8 @@ const PATTERNS = [
   ['URL', 'url', /\b(?:https?:\/\/|www\.)[^\s<>"]*[^\s<>".,;:!?)\]]/gi],
   ['SSN', 'ssn', /(?<!\d)\d{3}[- ]\d{2}[- ]\d{4}(?!\d)/g],
   ['PHONE', 'phone', /(?<![\d-])(?:\+?1[\s.-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]\d{4}(?![\d-])/g],
+  // A date said to be someone's date of birth, whoever's: "DOB 1/2/1990", "born March 4th, 1988".
+  ['DOB', 'dob', new RegExp(`(?<=\\b(?:DOB|D\\.O\\.B\\.?|date of birth|birth ?date|born(?:\\s+on)?)\\s*:?\\s*)(?:\\d{1,4}[\\/.\\-]\\d{1,2}[\\/.\\-]\\d{2,4}|${MONTH_RE}\\s+\\d{1,2}${ORD},?\\s+\\d{4}|\\d{1,2}${ORD}\\s+(?:of\\s+)?${MONTH_RE},?\\s+\\d{4})(?!\\d)`, 'gi')],
   ['ADDRESS', 'address', /\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Z][\p{L}'-]*\s+){1,4}(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Way|Ct|Court|Pl|Place|Ter|Terrace|Cir|Circle|Hwy|Highway|Pkwy|Parkway)\b\.?(?:\s*(?:#|Apt\.?|Unit|Suite)\s*[\w-]+)?/gu],
   // An identifier-like run: a Medi-Cal CIN (9 characters ending in a letter) or 7+ digits (an MRN, a case number).
   ['ID', 'id', /\b9\d{7}[A-Z]\b/g],
@@ -176,17 +238,31 @@ const PATTERNS = [
 // later pattern can never match inside one already made; they become [TOKEN] at the end.
 const TOKENS = P.PLACEHOLDERS;
 const hold = (token) => String.fromCharCode(0xE000 + TOKENS.indexOf(token));
+/** Replace one folded identifier: matched on the folded text, replaced in the original. Returns [text, n]. */
+function replaceFolded(out, id) {
+  const { folded, from, to } = foldMapped(out);
+  const spans = [];
+  for (const m of folded.matchAll(id.pattern)) {
+    if (!m[0].length || (id.keep && id.keep(folded, m.index, m[0]))) continue;
+    spans.push([from[m.index], to[m.index + m[0].length - 1]]);
+  }
+  for (let i = spans.length - 1; i >= 0; i--) out = out.slice(0, spans[i][0]) + hold(id.token) + out.slice(spans[i][1]);
+  return [out, spans.length];
+}
 function deidentify(text, ids) {
-  let out = String(text || '').replace(/[\uE000-\uE0FF]/g, '');
+  let out = String(text || '').replace(/[-]/g, '');
   const counts = {};
   const hit = (kind, n) => { if (n) counts[kind] = (counts[kind] || 0) + n; };
   for (const id of ids) {
-    let n = 0; out = out.replace(id.pattern, () => { n++; return hold(id.token); }); hit(id.kind, n);
+    let n = 0;
+    if (id.fold) [out, n] = replaceFolded(out, id);
+    else out = out.replace(id.pattern, () => { n++; return hold(id.token); });
+    hit(id.kind, n);
   }
   for (const [token, kind, re] of PATTERNS) {
     let n = 0; out = out.replace(re, () => { n++; return hold(token); }); hit(kind, n);
   }
-  out = out.replace(/[\uE000-\uE0FF]/g, (ch) => `[${TOKENS[ch.charCodeAt(0) - 0xE000]}]`);
+  out = out.replace(/[-]/g, (ch) => `[${TOKENS[ch.charCodeAt(0) - 0xE000]}]`);
   return { text: out, counts };
 }
 

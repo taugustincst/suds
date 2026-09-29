@@ -20,9 +20,20 @@ const text = { type: 'string', maxLen: AI.MAX_TEXT };
 // How many drafts one person may ask for in a minute: a person reads a draft before asking for another.
 const PER_USER_PER_MINUTE = 12;
 
-function clientFor(ctx, clientId) {
+/**
+ * The client exists and is in the caller's reach, and nothing the programme agreed with them stops their text
+ * going to the provider. A §164.522 / §2.26 restriction the programme granted may cover this use (a business
+ * associate's work needs no consent, but a restriction can still forbid it), and SUDS cannot read a restriction's
+ * terms, so the copilot is not used for that client at all (security review of 1.17.0, L6; docs/AI-COPILOT.md).
+ * Refused before anything is sent, and audited as a draft that did not happen.
+ */
+function clientFor(ctx, clientId, feature) {
   if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, clientId)) throw notFound('Client not found');
   auth.assertClientAccess(ctx, clientId);
+  if (require('../disclosure').agreedRestrictions(clientId)) {
+    audit.log({ user: ctx.user, action: 'ai.draft', entity: 'client', entityId: clientId, clientId, ip: ctx.ip, success: false, details: { feature, outcome: 'restriction' } });
+    throw new HttpError(409, 'This client has an agreed restriction on how their information is used or shared (see their Requests tab), so the AI copilot is not used for their records. Write this yourself.', { ai_error: 'restriction' });
+  }
 }
 function perUserLimit(ctx) {
   if (!require('../app').rateLimit(`ai:${ctx.user.id}`, PER_USER_PER_MINUTE, 60_000)) throw new HttpError(429, 'Too many AI drafts in a minute. Read the last one first, then try again.');
@@ -120,18 +131,27 @@ module.exports = (r) => {
   // notes). note_id, when the author is editing a saved draft, must be their own draft about this client.
   r.post('/api/ai/draft/note', auth.requireAuth, auth.requirePerm('ai:draft'), async (ctx) => {
     const v = validate(ctx.body, { client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: ['clinical', 'admin'] },
-      format: { type: 'string', enum: P.NOTE_FORMATS }, source_text: { ...text, required: true }, note_id: { type: 'string' } });
+      format: { type: 'string', enum: P.NOTE_FORMATS }, source_text: { ...text, required: true }, note_id: { type: 'string' }, counseling_note: { type: 'boolean' } });
     if (!auth.hasPerm(ctx.user, `notes:${v.kind}:write`)) throw forbidden(`You cannot author ${v.kind} notes`);
-    clientFor(ctx, v.client_id);
+    // A SUD counseling note (42 CFR §2.11) is never drafted with the copilot until counsel says otherwise
+    // (docs/AI-COPILOT.md, docs/market/STRATEGY.md): not one being written with the box ticked, nor a saved one.
+    const COUNSELING = 'The AI copilot is not used for SUD counseling notes (§2.11). Write this note yourself, or untick "SUD counseling note" if it is not one.';
+    if (v.counseling_note) throw badRequest(COUNSELING, { ai_error: 'counseling_note' });
+    clientFor(ctx, v.client_id, 'note');
     if (v.note_id) {
-      const n = db.one(`SELECT client_id, author_id, status, kind FROM notes WHERE id=? AND deleted_at IS NULL`, v.note_id);
+      const n = db.one(`SELECT client_id, author_id, status, kind, counseling_note FROM notes WHERE id=? AND deleted_at IS NULL`, v.note_id);
       if (!n || n.client_id !== v.client_id) throw notFound('Note not found');
       if (n.author_id !== ctx.user.id) throw forbidden('The AI copilot drafts only in your own note');
       if (n.status !== 'draft') throw badRequest('A signed note cannot be redrafted; add an addendum instead');
+      if (Number(n.counseling_note)) throw badRequest(COUNSELING, { ai_error: 'counseling_note' });
     }
     const format = v.format || 'narrative';
     const out = await run(ctx, { clientId: v.client_id, feature: 'note', pieces: { text: v.source_text },
       build: (c) => P.notePrompt({ format, kind: v.kind, text: c.text }), details: { format, kind: v.kind, note_id: v.note_id || undefined } });
+    // The note the draft was asked for is AI-assisted from now on, whatever the browser later sends (security review
+    // of 1.17.0, L1): signing it then needs the author's review statement. The ai.draft audit entry above, with
+    // this note's id, is the authoritative record that the copilot was used.
+    if (v.note_id) db.run(`UPDATE notes SET ai_assisted=1, updated_at=? WHERE id=? AND ai_assisted=0`, db.now(), v.note_id);
     const secs = P.NOTE_SECTIONS[format];
     const d = out.data || {};
     const draft = secs ? { sections: Object.fromEntries(secs.map(([k]) => [k, s(d.sections && d.sections[k], 20000)])) } : { narrative: s(d.narrative, 50000) };
@@ -143,7 +163,7 @@ module.exports = (r) => {
   r.post('/api/ai/draft/asam', auth.requireAuth, auth.requirePerm('ai:draft'), auth.requirePerm('assessments:write'), async (ctx) => {
     require('../programme').requireModule('assessments')();
     const v = validate(ctx.body, { client_id: { type: 'string', required: true }, source_text: { ...text, required: true } });
-    clientFor(ctx, v.client_id);
+    clientFor(ctx, v.client_id, 'asam');
     const out = await run(ctx, { clientId: v.client_id, feature: 'asam', pieces: { text: v.source_text }, build: (c) => P.asamPrompt({ text: c.text }) });
     const dims = (out.data && out.data.dimensions) || {};
     const dimensions = {};
@@ -161,7 +181,7 @@ module.exports = (r) => {
     require('../programme').requireModule('careplan')();
     const v = validate(ctx.body, { client_id: { type: 'string', required: true }, assessment_id: { type: 'string' }, source_text: text });
     if (!v.assessment_id && !v.source_text) throw badRequest('Choose an assessment or give some notes to draft from', { fields: { source_text: 'required without an assessment' } });
-    clientFor(ctx, v.client_id);
+    clientFor(ctx, v.client_id, 'careplan');
     let assessment = null;
     if (v.assessment_id) {
       if (!auth.hasPerm(ctx.user, 'assessments:read') && !auth.hasPerm(ctx.user, 'assessments:write')) throw forbidden('You cannot read assessments');
@@ -191,7 +211,7 @@ module.exports = (r) => {
   r.post('/api/ai/draft/caloms', auth.requireAuth, auth.requirePerm('ai:draft'), auth.requirePerm('episodes:write'), async (ctx) => {
     require('../programme').requireModule('caloms')();
     const v = validate(ctx.body, { client_id: { type: 'string', required: true }, record_type: { type: 'string', required: true, enum: ['admission', 'discharge', 'annual_update'] }, source_text: { ...text, required: true } });
-    clientFor(ctx, v.client_id);
+    clientFor(ctx, v.client_id, 'caloms');
     const out = await run(ctx, { clientId: v.client_id, feature: 'caloms', pieces: { text: v.source_text }, build: (c) => P.calomsPrompt({ type: v.record_type, text: c.text }), details: { record_type: v.record_type } });
     const S = require('../caloms-spec');
     const fields = new Map(P.calomsFields(v.record_type).map(f => [f.key, f]));

@@ -419,3 +419,71 @@ test('one person may ask for a dozen drafts a minute', async () => {
   assert.equal(r.status, 429); assert.equal(calls.length, before);
   fresh();
 });
+
+// ---------------------------------------------------------------- 1.17.0 pre-release reviews (r10)
+test('a draft asked for in a saved note marks that note AI-assisted on the server (security review r10, L1)', async () => {
+  fresh(); reply = () => okJson({ narrative: 'Draft.', gaps: [] });
+  const n = await clin.post('/api/notes', { client_id: clientId, kind: 'clinical', content: 'Own words so far.', occurred_at: new Date().toISOString() });
+  assert.equal(n.status, 201);
+  assert.equal(H.db.one(`SELECT ai_assisted FROM notes WHERE id=?`, n.data.id).ai_assisted, 0);
+  assert.equal((await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'x', note_id: n.data.id })).status, 200);
+  assert.equal(H.db.one(`SELECT ai_assisted FROM notes WHERE id=?`, n.data.id).ai_assisted, 1, 'set by the draft route, not left to the browser');
+  assert.equal(JSON.parse(lastAudit('ai.draft').details).note_id, n.data.id, 'the draft is recorded against the note');
+  const noReview = await clin.post(`/api/notes/${n.data.id}/sign`, { password: 'StaffPassw0rd!x' });
+  assert.equal(noReview.status, 400, 'so signing asks for the review statement'); assert.equal(noReview.data.ai_review_required, true);
+});
+
+test('the copilot does not draft a SUD counseling note, and a note with copilot text cannot become one (market review r10, 1)', async () => {
+  fresh(); reply = () => okJson({ narrative: 'Draft.', gaps: [] });
+  const before = calls.length;
+  const c = await clin.post('/api/notes', { client_id: clientId, kind: 'clinical', content: 'Session analysis.', occurred_at: new Date().toISOString(), counseling_note: true });
+  assert.equal(c.status, 201);
+  const r = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'x', note_id: c.data.id });
+  assert.equal(r.status, 400, JSON.stringify(r.data)); assert.equal(r.data.ai_error, 'counseling_note');
+  const unsaved = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'x', counseling_note: true });
+  assert.equal(unsaved.status, 400, 'nor one being written that is ticked as one');
+  assert.equal(calls.length, before, 'nothing was sent');
+  assert.equal(H.db.one(`SELECT ai_assisted FROM notes WHERE id=?`, c.data.id).ai_assisted, 0);
+  // The other way round: an AI-assisted note cannot be flagged a counseling note, nor created as both.
+  const a = await clin.post('/api/notes', { client_id: clientId, kind: 'clinical', content: 'Drafted.', occurred_at: new Date().toISOString(), ai_assisted: true });
+  assert.equal((await clin.put(`/api/notes/${a.data.id}`, { counseling_note: true })).status, 400);
+  assert.equal(H.db.one(`SELECT counseling_note FROM notes WHERE id=?`, a.data.id).counseling_note, 0);
+  assert.equal((await clin.post('/api/notes', { client_id: clientId, kind: 'clinical', content: 'x', occurred_at: new Date().toISOString(), ai_assisted: true, counseling_note: true })).status, 400);
+});
+
+test('a client with an agreed restriction: the copilot refuses to send their text (security review r10, L6)', async () => {
+  fresh(); reply = () => okJson({ narrative: 'Draft.', gaps: [] });
+  const r0 = await clin.post('/api/clients', { first_name: 'Rhea', last_name: 'Restricted', confirm_duplicate: true });
+  const adminId = H.db.one(`SELECT id FROM users WHERE username='admin'`).id;
+  H.db.run(`INSERT INTO patient_requests(id,client_id,kind,received_at,due_at,status,created_by) VALUES(?,?,?,?,?,?,?)`, require('node:crypto').randomUUID(), r0.data.id, 'restriction', '2026-09-01', '2026-10-01', 'fulfilled', adminId);
+  const before = calls.length;
+  for (const [path, body] of [['/api/ai/draft/note', { kind: 'clinical', source_text: 'x' }], ['/api/ai/draft/asam', { source_text: 'x' }], ['/api/ai/draft/caloms', { record_type: 'admission', source_text: 'x' }]]) {
+    const r = await clin.post(path, { client_id: r0.data.id, ...body });
+    assert.equal(r.status, 409, `${path}: ${JSON.stringify(r.data)}`); assert.equal(r.data.ai_error, 'restriction'); assert.match(r.data.error, /restriction/);
+  }
+  assert.equal(calls.length, before, 'nothing was sent');
+  const a = JSON.parse(lastAudit('ai.draft').details);
+  assert.equal(a.outcome, 'restriction');
+});
+
+test('de-identification: accents, apostrophes, more date-of-birth forms, abbreviated streets; the counselor\'s surname only as a name (security review r10, L5)', async () => {
+  const A = require('../server/ai-copilot');
+  const c = await clin.post('/api/clients', { first_name: 'José', last_name: "O'Brien-Nakamura", preferred_name: 'JoJo', dob: '1988-03-04', phone: '(555) 201-3345', address: '1200 Old Mill Road Apt 4, Oakdale', city: 'Oakdale', zip: '95361', confirm_duplicate: true });
+  assert.equal(c.status, 201, JSON.stringify(c.data));
+  const ids = A.identifiersFor(c.data.id, { display_name: 'Pat Jones' });
+  const d = (s) => A.deidentify(s, ids).text;
+  assert.equal(d('Jose OBrien came in'), '[CLIENT_FIRST_NAME] [CLIENT_LAST_NAME] came in');
+  assert.equal(d('JOSÉ said'), '[CLIENT_FIRST_NAME] said');
+  assert.equal(d('Obrien-Nakamura, Jose'), '[CLIENT_FULL_NAME]');
+  assert.equal(d('Obrien Nakamura was late'), '[CLIENT_LAST_NAME] was late');
+  for (const dob of ['March 4th, 1988', 'march 4 1988', '4th March 1988', 'Mar. 4th, 1988', '1988/03/04', '1988/3/4', '03.04.1988', '3.4.1988', '4/3/88', '04/03/1988']) assert.equal(d(`DOB ${dob}.`), 'DOB [DOB].', dob);
+  assert.equal(d('lives on Old Mill Rd'), 'lives on [ADDRESS]');
+  assert.equal(d('at 1200 old mill road'), 'at [ADDRESS]');
+  assert.equal(d('someone else born 1/2/1990'), 'someone else born [DOB]', 'a date said to be a birth date is masked whoever it belongs to');
+  assert.equal(d('Pat said'), '[COUNSELOR] said');
+  assert.equal(d('Counselor Jones reviewed it. Jones will call.'), 'Counselor [COUNSELOR] reviewed it. [COUNSELOR] will call.');
+  assert.equal(d('Patricia Jones visited'), 'Patricia Jones visited', 'another person who shares the surname is not the counselor');
+  assert.equal(d('she keeps up with the jones family'), 'she keeps up with the jones family', 'lower case: a word, not the counselor');
+  // Put back as the record spells them.
+  assert.deepEqual(A.reidentify({ t: '[CLIENT_FIRST_NAME] [CLIENT_LAST_NAME]' }, ids), { t: "José O'Brien-Nakamura" });
+});

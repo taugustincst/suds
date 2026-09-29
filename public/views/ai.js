@@ -101,7 +101,8 @@ export function noteCopilot(ctx) {
       const c = ctx.read();
       if (!c.client_id) throw new Error('Choose the client first.');
       if (c.format === 'safety_plan') throw new Error('A safety plan is the client\'s own plan, in their words: the copilot does not draft one.');
-      const r = await post('/api/ai/draft/note', { client_id: c.client_id, kind: c.kind, format: c.format || 'narrative', source_text: text, note_id: c.note_id || undefined }, { quiet: true });
+      if (c.counseling_note) throw new Error('The AI copilot is not used for SUD counseling notes (§2.11). Write this note yourself.');
+      const r = await post('/api/ai/draft/note', { client_id: c.client_id, kind: c.kind, format: c.format || 'narrative', source_text: text, note_id: c.note_id || undefined, counseling_note: c.counseling_note || undefined }, { quiet: true });
       ctx.apply(r);
       return `Draft added below. ${replacedText(r.identifiers_replaced)} Review it before signing.`;
     } });

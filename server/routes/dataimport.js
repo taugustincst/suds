@@ -5,7 +5,7 @@ const auth = require('../auth');
 const audit = require('../audit');
 const S = require('../spreadsheet');
 const DI = require('../dataimport');
-const { badRequest, notFound, forbidden } = require('../http');
+const { badRequest, notFound, forbidden, HttpError } = require('../http');
 const { encrypt, blindIndex, uuid, sha256 } = require('../crypto');
 const M = require('../clients-model');
 const { validate } = require('../validate');
@@ -40,6 +40,23 @@ function checkRecord(entity, rec, ctx) {
     const fields = e.extra && e.extra.fields;
     throw new Error(fields ? Object.entries(fields).map(([k, m]) => `${k} ${m}`).join('; ') : e.message);
   }
+}
+
+const C = () => require('./clients');
+/**
+ * Clients already on record under this row's full name, split as the live duplicate check splits them (security
+ * review of 1.17.0, M1): `shown`, the ones the caller may open, and `hidden`, the ones they may not, which must
+ * never be revealed to them — not by a code, a count or a skipped row: "is this person a client here?" is itself
+ * Part 2 information.
+ */
+function nameMatches(user, rec) {
+  const all = db.all(`SELECT id, client_code FROM clients WHERE full_name_idx=? AND deleted_at IS NULL AND merged_into IS NULL`, blindIndex((rec.last_name || '') + (rec.first_name || '')));
+  return { shown: all.filter(m => C().mayOpen(user, m.id)), hidden: all.filter(m => !C().mayOpen(user, m.id)) };
+}
+function duplicateCheckLimit(ctx) {
+  if (require('../app').rateLimit(`duplicate-check:${ctx.user.id}`, C().DUPLICATE_CHECKS, C().DUPLICATE_CHECK_WINDOW_MS)) return;
+  audit.log({ user: ctx.user, action: 'import.data.preview', ip: ctx.ip, success: false, details: { reason: 'rate limited' } });
+  throw new HttpError(429, 'Too many duplicate checks. Wait a few minutes, then preview the file again.');
 }
 
 const permFor = (entity) => ({ clients: 'clients:write', resources: 'resources:write', interventions: 'interventions:write', calls: 'calls:write', time_entries: 'time:write', tasks: 'tasks:write', expenditures: 'budget:write' }[entity]);
@@ -95,14 +112,26 @@ module.exports = (r) => {
     if (!mapping) mapping = DI.suggestMapping(entity, sheet.headers.map(h => h.replace(/\s*\*$/, '')));
     // headers in the template carry a trailing " *"; map both spellings
     const normalizedMapping = {}; for (const h of sheet.headers) { const clean = h.replace(/\s*\*$/, ''); if (mapping[h]) normalizedMapping[h] = mapping[h]; else if (mapping[clean]) normalizedMapping[h] = mapping[clean]; }
+    // Every name in a clients sheet is looked up among other people's records, as the live duplicate check does
+    // (POST /api/clients/check-duplicates): the same per-worker limit, charged once per preview.
+    if (entity === 'clients') duplicateCheckLimit(ctx);
+    const dups = { shown: 0, hidden: 0 };
     const rows = sheet.rows.slice(0, 2000).map((row, i) => {
       const { record, errors } = DI.convertRow(entity, normalizedMapping, row);
       if (record.client_ref !== undefined) { const id = DI.resolveClient(record.client_ref, ctx, auth); if (record.client_ref && !id) errors.push(`Client "${record.client_ref}" not found (use the client code or "Last, First")`); else if (id === 'ambiguous') errors.push(`Client "${record.client_ref}" matches several clients; use the client code`); else record.client_id = id || null; }
       if (entity === 'expenditures' && record.fund) { const f = db.one(`SELECT id FROM funding_sources WHERE name=? COLLATE NOCASE AND is_active=1`, record.fund); if (!f) errors.push(`Funding source "${record.fund}" not found`); else record.funding_source_id = f.id; }
-      if (entity === 'clients' && record.first_name && record.last_name && !errors.length) { const dup = db.one(`SELECT client_code FROM clients WHERE full_name_idx=? AND deleted_at IS NULL`, blindIndex(record.last_name + record.first_name)); if (dup) record._duplicate_of = dup.client_code; }
+      if (entity === 'clients' && record.first_name && record.last_name && !errors.length) {
+        const { shown, hidden } = nameMatches(ctx.user, record);
+        if (shown.length) record._duplicate_of = shown[0].client_code;
+        dups.shown += shown.length ? 1 : 0;
+        // A match the caller cannot open is not revealed (the row reads as no match at all); a supervisor is
+        // asked to look instead, on that record, where the caller does not see the task.
+        if (hidden.length && !shown.length) { dups.hidden++; for (const m of hidden) C().reviewTask(ctx.user, m.id, `Possible duplicate: a spreadsheet or EHR import preview named the person on ${m.client_code}; check whether they are being imported again`); }
+      }
       return { n: i + 2, record, errors };
     });
-    audit.log({ user: ctx.user, action: 'import.data.preview', ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name, source: source || undefined } });
+    // Counts only: never which names were looked for, nor what they matched.
+    audit.log({ user: ctx.user, action: 'import.data.preview', ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name, source: source || undefined, duplicates: entity === 'clients' ? dups : undefined } });
     return { entity, sheets, sheet: sheetIdx, headers: sheet.headers, mapping: normalizedMapping, fields: def.fields.map(f => ({ key: f.key, label: f.label, required: !!f.required })), rows, valid: rows.filter(x => !x.errors.length).length, invalid: rows.filter(x => x.errors.length).length, truncated: sheet.rows.length > 2000 };
   }
 
@@ -111,7 +140,7 @@ module.exports = (r) => {
     const { entity, records, skip_duplicates } = ctx.body || {}; const def = DI.ENTITIES[entity]; if (!def) throw badRequest('Unknown entity');
     if (!auth.hasPerm(ctx.user, permFor(entity))) throw forbidden();
     if (!Array.isArray(records) || !records.length) throw badRequest('No rows to import'); if (records.length > 2000) throw badRequest('Import at most 2000 rows at a time');
-    let created = 0, skipped = 0, skippedDuplicates = 0; const errors = []; const imported = [];
+    let created = 0, skipped = 0, skippedDuplicates = 0; const errors = []; const imported = []; const hiddenDuplicates = [];
     db.transaction(() => {
       records.forEach((rec, i) => {
         try {
@@ -124,7 +153,11 @@ module.exports = (r) => {
           checkRecord(entity, rec, ctx);
           switch (entity) {
             case 'clients': {
-              if (skip_duplicates && db.one(`SELECT 1 FROM clients WHERE full_name_idx=? AND deleted_at IS NULL`, blindIndex((rec.last_name || '') + (rec.first_name || '')))) { skipped++; return; }
+              // Skipped only for a match the caller can open: one they cannot is imported (the caller learns
+              // nothing from the count) and a supervisor compares the two, as at intake (flagForReview below).
+              const same = rec.first_name && rec.last_name ? nameMatches(ctx.user, rec) : { shown: [], hidden: [] };
+              if (skip_duplicates && same.shown.length) { skipped++; return; }
+              if (same.hidden.length) hiddenDuplicates.push([id, same.hidden]);
               const enc = M.encryptFields(rec); enc.full_name_idx = blindIndex((rec.last_name || '') + (rec.first_name || ''));
               const cols = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id, intake_date: rec.intake_date || now.slice(0, 10) };
               // A yes/no cell arrives as true/false, which SQLite cannot bind: stored as 1/0 (a "no" used to fail the row).
@@ -149,6 +182,11 @@ module.exports = (r) => {
       });
       if (errors.length && !ctx.body.partial) throw badRequest(`${errors.length} row(s) could not be imported; nothing was saved`, { rows: errors });
       for (const [hash, id] of imported) db.run(`INSERT OR IGNORE INTO import_rows(row_hash,entity,record_id,imported_by) VALUES(?,?,?,?)`, hash, entity, id, ctx.user.id);
+      const made = new Set(imported.map(([, id]) => id));
+      for (const [id, hidden] of hiddenDuplicates) if (made.has(id)) {
+        const code = db.one(`SELECT client_code FROM clients WHERE id=?`, id).client_code;
+        C().flagForReview(ctx.user, { id, client_code: code, matches: hidden.map(m => ({ ...m, reasons: ['same full name'] })), source: 'import', ip: ctx.ip });
+      }
     });
     audit.log({ user: ctx.user, action: 'import.data.commit', ip: ctx.ip, details: { entity, created, skipped, skipped_duplicates: skippedDuplicates, errors: errors.length, source: ctx.body.source === 'ehr_fhir' ? 'ehr_fhir' : undefined } });
     return { created, skipped, skipped_duplicates: skippedDuplicates, errors };

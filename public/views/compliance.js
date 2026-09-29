@@ -31,9 +31,11 @@ async function inviteCard(refresh) {
   const s = await get('/api/referral-links/settings', { quiet: true }).catch(() => null);
   if (!s) return null;
   return h('div', { class: 'card mt', 'data-invite-settings': '1' }, h('h2', {}, 'Secure referral links'),
-    h('p', { class: 'small muted' }, 'A provider who opens a secure referral link is invited to receive referrals through SUDS. Give the page they should go to — your own page about it, or the SUDS project — or leave it blank to show the program contact instead.'),
-    form([{ name: 'invite_url', label: 'Invitation link (https://)', value: s.invite_url || '', span: true, maxLen: 300 }],
-      { submitText: 'Save', onSubmit: async (v) => { await put('/api/referral-links/settings', { invite_url: v.invite_url || null }); toast('Saved', 'ok'); refresh(); } }));
+    h('p', { class: 'small muted' }, 'A secure referral link sends a referral — the client\'s name and the reason, behind a six-digit access code — to a provider that does not use SUDS, to open in a browser without an account. It is off until an administrator switches it on. Have counsel review the design first (docs/security/REFERRAL-LINKS.md), and note that the provider\'s browser must be able to reach this server over the internet.'),
+    form([
+      { name: 'enabled', label: 'Secure referral links: workers may send referrals as one-time links', type: 'checkbox', value: !!s.enabled, span: true, help: 'Off, no link can be made and links already sent stop opening.' },
+      { name: 'invite_url', label: 'Invitation link (https://)', value: s.invite_url || '', span: true, maxLen: 300, help: 'A provider who opens a link is invited to receive referrals through SUDS: the page they should go to, or blank to show the program contact instead.' }],
+      { submitText: 'Save', onSubmit: async (v) => { await put('/api/referral-links/settings', { enabled: !!v.enabled, invite_url: v.invite_url || null }); if (state.programme) state.programme.referral_links = !!v.enabled; toast('Saved', 'ok'); refresh(); } }));
 }
 
 route('compliance', async (r) => {

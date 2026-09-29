@@ -12271,6 +12271,7 @@ var require_notes = __commonJS({
     var db3 = require_db();
     var auth3 = require_auth2();
     var { define: define2, refuse, flag, notPermitted } = require_core();
+    var isYes = (v) => v === true || v === 1 || v === "1" || v === "true";
     var parseList = (v) => typeof v === "string" ? JSON.parse(v) : v;
     var SIGNED_KEEPS = [
       "kind",
@@ -12337,6 +12338,8 @@ var require_notes = __commonJS({
         ai_assisted: { type: "boolean" }
       },
       tombstone: "never",
+      // Said by the device with a row, never stored (push.js): the author's review of AI-drafted text as they sign.
+      statements: ["ai_reviewed"],
       createdBy: ["author_id"],
       editableBy: (user, row) => row.status === "draft" && row.author_id !== user.id && !auth3.hasPerm(user, "records:manage-others") ? notPermitted("Only the author can edit a draft") : null,
       authorise(row, c) {
@@ -12364,6 +12367,14 @@ var require_notes = __commonJS({
               break;
             }
           }
+        }
+        const counseling = Number(row.counseling_note ?? e.counseling_note) === 1;
+        const ai = Number(row.ai_assisted) === 1 || Number(e.ai_assisted) === 1;
+        if (counseling && ai && (!c.existing || ["counseling_note", "ai_assisted"].some((k) => row[k] !== void 0 && row[k] !== null && Number(row[k]) !== Number(e[k] || 0)))) {
+          out2.push(refuse("has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot)", { message: "A SUD counseling note cannot include text drafted by the AI copilot", fields: { counseling_note: "this note has AI-drafted text; a SUD counseling note is written without the copilot" } }));
+        }
+        if (c.via === "sync" && signs(row, c) && ai && !isYes(c.statements && c.statements.ai_reviewed)) {
+          out2.push(refuse("needs the author's review statement: this note includes text drafted by the AI copilot", { message: "This note includes text drafted by the AI copilot. Confirm you have reviewed and corrected it before signing.", fields: { ai_reviewed: "confirm you reviewed the AI-drafted text" } }));
         }
         if (c.via === "sync" && signs(row, c) && (c.user.id !== (c.existing ? e.author_id : row.author_id) || row.signed_by && row.signed_by !== c.user.id)) {
           out2.push(refuse("not permitted: only the author can sign a note", { status: 403, message: "Only the author can sign a note. Supervisors countersign instead." }));
@@ -12417,12 +12428,12 @@ var require_notes = __commonJS({
       afterApply(row, o, c) {
         if (c.existing) reissueAddenda(row.id, c.existing.counseling_note, o.counseling_note ?? c.existing.counseling_note);
         if (c.existing && c.existing.status !== "draft") return;
-        const n = db3.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required FROM notes WHERE id=?`, row.id);
+        const n = db3.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required, ai_assisted FROM notes WHERE id=?`, row.id);
         if (!n || n.status === "draft") return;
         const hash2 = require_crypto().sha256(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ""}`);
         db3.run(`UPDATE notes SET signature_hash=? WHERE id=?`, hash2, n.id);
         const reminders = closeSignReminders(n.author_id, n.id, n.client_id);
-        require_audit().log({ user: c.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: "device", details: { hash: hash2, via: "sync", cosign_required: !!n.cosign_required, reminders_closed: reminders.length ? reminders : void 0 } });
+        require_audit().log({ user: c.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: "device", details: { hash: hash2, via: "sync", cosign_required: !!n.cosign_required, reminders_closed: reminders.length ? reminders : void 0, ai_assisted: Number(n.ai_assisted) ? true : void 0, ai_reviewed: Number(n.ai_assisted) ? true : void 0 } });
       }
     });
     module.exports.closeSignReminders = closeSignReminders;
@@ -13946,6 +13957,9 @@ var require_clients = __commonJS({
     module.exports.possibleDuplicates = possibleDuplicates;
     module.exports.flagForReview = flagForReview;
     module.exports.mayOpen = mayOpen;
+    module.exports.reviewTask = reviewTask;
+    module.exports.DUPLICATE_CHECKS = DUPLICATE_CHECKS;
+    module.exports.DUPLICATE_CHECK_WINDOW_MS = DUPLICATE_CHECK_WINDOW_MS;
   }
 });
 
@@ -22936,29 +22950,103 @@ var require_ai_copilot = __commonJS({
       "ms",
       "dr"
     ]);
+    var BEFORE_SURNAME = /* @__PURE__ */ new Set([
+      "mr",
+      "mrs",
+      "ms",
+      "mx",
+      "dr",
+      "miss",
+      "counselor",
+      "counsellor",
+      "clinician",
+      "therapist",
+      "navigator",
+      "worker",
+      "nurse",
+      "coach",
+      "supervisor",
+      "staff",
+      "peer",
+      "specialist",
+      "lcsw",
+      "lmft",
+      "acsw",
+      "cadc",
+      "rn",
+      "np",
+      "md",
+      "today",
+      "yesterday",
+      "tomorrow",
+      "then",
+      "also",
+      "later",
+      "when",
+      "after",
+      "before",
+      "per",
+      "and",
+      "but",
+      "so",
+      "with",
+      "by",
+      "from",
+      "to",
+      "for",
+      "as",
+      "client",
+      "writer",
+      "this",
+      "that",
+      "called",
+      "met",
+      "saw",
+      "told",
+      "asked",
+      "spoke",
+      "plan",
+      "note",
+      "i",
+      "we"
+    ]);
     var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-    function dateForms(iso) {
+    var MONTH_RE = `(?:${MONTHS.map((m) => `${m}|${m.slice(0, 3)}\\.?${m === "September" ? "|Sept\\.?" : ""}`).join("|")})`;
+    var ORD = "(?:st|nd|rd|th)?";
+    var foldChars = (s) => String(s).normalize("NFKD").replace(/\p{M}/gu, "").replace(/['’`´]/g, "");
+    function foldMapped(text) {
+      let folded = "";
+      const from = [];
+      const to = [];
+      let i = 0;
+      for (const ch of text) {
+        const f = foldChars(ch);
+        for (let k = 0; k < f.length; k++) {
+          from.push(i);
+          to.push(i + ch.length);
+        }
+        folded += f;
+        i += ch.length;
+      }
+      return { folded, from, to };
+    }
+    function dobPattern(iso) {
       const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
-      if (!m) return [];
+      if (!m) return null;
       const [, y, mo, d] = m;
       const mi = Number(mo);
       const di = Number(d);
+      const M = `0?${mi}`, D = `0?${di}`, Y = `(?:${y}|${y.slice(2)})`, S = "[\\/.\\-]";
       const mon = MONTHS[mi - 1];
-      return [
-        `${y}-${mo}-${d}`,
-        `${mo}/${d}/${y}`,
-        `${mi}/${di}/${y}`,
-        `${mo}-${d}-${y}`,
-        `${mi}-${di}-${y}`,
-        `${mo}/${d}/${y.slice(2)}`,
-        `${mi}/${di}/${y.slice(2)}`,
-        `${mon} ${di}, ${y}`,
-        `${mon} ${di} ${y}`,
-        `${di} ${mon} ${y}`,
-        `${mon.slice(0, 3)} ${di}, ${y}`,
-        `${mon.slice(0, 3)}. ${di}, ${y}`,
-        `${mon.slice(0, 3)} ${di} ${y}`
+      const name = `(?:${mon}|${mon.slice(0, 3)}\\.?${mon === "September" ? "|Sept\\.?" : ""})`;
+      const forms = [
+        `${y}${S}${M}${S}${D}`,
+        `${M}${S}${D}${S}${Y}`,
+        `${D}${S}${M}${S}${Y}`,
+        `${name}\\s+${D}${ORD},?\\s+${y}`,
+        `${D}${ORD}\\s+(?:of\\s+)?${name},?\\s+${y}`
       ];
+      return new RegExp(`(?<![\\p{L}\\p{N}])(?:${forms.join("|")})(?![\\p{L}\\p{N}])`, "giu");
     }
     function phonePattern(phone) {
       let digits = String(phone || "").replace(/\D/g, "");
@@ -22968,17 +23056,47 @@ var require_ai_copilot = __commonJS({
       return new RegExp(`(?<!\\d)(?:\\+?1${sep2})?${digits.split("").map(esc).join(sep2)}(?!\\d)`, "g");
     }
     var nameParts = (s) => String(s || "").split(/[\s,-]+/).map((x) => x.replace(/[^\p{L}'’.]/gu, "")).filter((x) => x.replace(/[.'’]/g, "").length >= 2);
+    var foldedPattern = (s) => new RegExp(`(?<![\\p{L}\\p{N}])${esc(foldChars(s).trim()).replace(/[\s-]+/g, "[\\s-]+")}(?![\\p{L}\\p{N}])`, "giu");
     var exactPattern = (s) => new RegExp(`(?<![\\p{L}\\p{N}])${esc(s).replace(/\s+/g, "\\s+")}(?![\\p{L}\\p{N}])`, "giu");
+    var SUFFIXES = [
+      ["Street", "St"],
+      ["Avenue", "Ave", "Av"],
+      ["Road", "Rd"],
+      ["Boulevard", "Blvd"],
+      ["Drive", "Dr"],
+      ["Lane", "Ln"],
+      ["Way"],
+      ["Court", "Ct"],
+      ["Place", "Pl"],
+      ["Terrace", "Ter"],
+      ["Circle", "Cir"],
+      ["Highway", "Hwy"],
+      ["Parkway", "Pkwy"],
+      ["Trail", "Trl"],
+      ["Square", "Sq"],
+      ["Alley", "Aly"]
+    ];
+    function streetPattern(street) {
+      const words = foldChars(street).trim().split(/\s+/);
+      const at = words.findIndex((w, i) => i > 0 && SUFFIXES.some((s) => s.some((x) => x.toLowerCase() === w.replace(/\.$/, "").toLowerCase())));
+      if (at < 1) return null;
+      const num = /^\d+[A-Za-z]?$/.test(words[0]) ? words[0] : null;
+      const name = words.slice(num ? 1 : 0, at);
+      if (!name.length || name.join("").replace(/[^\p{L}\p{N}]/gu, "").length < 3) return null;
+      const suffix = SUFFIXES.find((s) => s.some((x) => x.toLowerCase() === words[at].replace(/\.$/, "").toLowerCase()));
+      return new RegExp(`(?<![\\p{L}\\p{N}])(?:${num ? `${esc(num)}\\s+` : ""})?${name.map(esc).join("\\s+")}\\s+(?:${suffix.join("|")})\\b\\.?`, "giu");
+    }
     function identifiersFor(clientId, author) {
       const M = require_clients_model();
       const row = db3.one(`SELECT * FROM clients WHERE id=?`, clientId);
       if (!row) return [];
       const c = M.decryptRow(row);
       const out2 = [];
-      const add = (value, token2, kind, reinsert = null, pattern = null) => {
+      const add = (value, token2, kind, reinsert = null, pattern = null, extra = {}) => {
         const v = String(value || "").trim();
         if (!pattern && v.replace(/[^\p{L}\p{N}]/gu, "").length < 2) return;
-        out2.push({ pattern: pattern || exactPattern(v), token: token2, kind, reinsert, len: pattern ? 1e3 : v.length });
+        const fold = !pattern && ["name", "contact", "address", "staff"].includes(kind);
+        out2.push({ pattern: pattern || (fold ? foldedPattern(v) : exactPattern(v)), token: token2, kind, reinsert, fold: fold || !!extra.fold, keep: extra.keep || null, len: pattern ? 1e3 : v.length });
       };
       const first = (c.first_name || "").trim(), last = (c.last_name || "").trim(), pref = (c.preferred_name || "").trim();
       if (first && last) {
@@ -22998,7 +23116,8 @@ var require_ai_copilot = __commonJS({
         for (const p of nameParts(pref)) add(p, "CLIENT_PREFERRED_NAME", "name", pref);
       }
       if (row.client_code) add(row.client_code, "CLIENT_CODE", "code");
-      for (const d of dateForms(c.dob)) add(d, "DOB", "dob");
+      const dob = dobPattern(c.dob);
+      if (dob) add(c.dob, "DOB", "dob", null, dob);
       for (const ph of [c.phone, c.alt_phone]) {
         const re = phonePattern(ph);
         if (re) add(ph, "PHONE", "phone", null, re);
@@ -23008,6 +23127,8 @@ var require_ai_copilot = __commonJS({
         add(c.address, "ADDRESS", "address");
         const street = String(c.address).split(/[,\n]/)[0];
         if (street && street !== c.address) add(street, "ADDRESS", "address");
+        const sp = street && streetPattern(street.replace(/\s+(?:#|Apt\.?|Unit|Suite|Ste\.?)\s*[\w-]+$/i, ""));
+        if (sp) add(street, "ADDRESS", "address", null, sp, { fold: true });
       }
       if (row.city) add(row.city, "CITY", "address");
       if (row.zip) add(row.zip, "ZIP", "address", null, new RegExp(`(?<!\\d)${esc(row.zip)}(?:-\\d{4})?(?!\\d)`, "g"));
@@ -23022,7 +23143,15 @@ var require_ai_copilot = __commonJS({
       }
       if (author && author.display_name) {
         add(author.display_name, "COUNSELOR", "staff", author.display_name);
-        for (const p of nameParts(author.display_name)) if (p.length >= 3) add(p, "COUNSELOR", "staff", author.display_name);
+        const own = new Set(nameParts(author.display_name).map((p) => foldChars(p).toLowerCase()));
+        const keep = (folded, at, m) => {
+          if (m[0] === m[0].toLowerCase()) return true;
+          const w = /(\p{Lu}[\p{L}.]*)[ \t]+$/u.exec(folded.slice(Math.max(0, at - 40), at));
+          if (!w) return false;
+          const word = w[1].replace(/\./g, "").toLowerCase();
+          return !BEFORE_SURNAME.has(word) && !NOT_NAMES.has(word) && !own.has(word);
+        };
+        for (const p of nameParts(author.display_name)) if (p.length >= 3) add(p, "COUNSELOR", "staff", author.display_name, null, { keep });
       }
       return out2.sort((a, b) => b.len - a.len);
     }
@@ -23031,6 +23160,8 @@ var require_ai_copilot = __commonJS({
       ["URL", "url", /\b(?:https?:\/\/|www\.)[^\s<>"]*[^\s<>".,;:!?)\]]/gi],
       ["SSN", "ssn", /(?<!\d)\d{3}[- ]\d{2}[- ]\d{4}(?!\d)/g],
       ["PHONE", "phone", /(?<![\d-])(?:\+?1[\s.-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]\d{4}(?![\d-])/g],
+      // A date said to be someone's date of birth, whoever's: "DOB 1/2/1990", "born March 4th, 1988".
+      ["DOB", "dob", new RegExp(`(?<=\\b(?:DOB|D\\.O\\.B\\.?|date of birth|birth ?date|born(?:\\s+on)?)\\s*:?\\s*)(?:\\d{1,4}[\\/.\\-]\\d{1,2}[\\/.\\-]\\d{2,4}|${MONTH_RE}\\s+\\d{1,2}${ORD},?\\s+\\d{4}|\\d{1,2}${ORD}\\s+(?:of\\s+)?${MONTH_RE},?\\s+\\d{4})(?!\\d)`, "gi")],
       ["ADDRESS", "address", /\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Z][\p{L}'-]*\s+){1,4}(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Way|Ct|Court|Pl|Place|Ter|Terrace|Cir|Circle|Hwy|Highway|Pkwy|Parkway)\b\.?(?:\s*(?:#|Apt\.?|Unit|Suite)\s*[\w-]+)?/gu],
       // An identifier-like run: a Medi-Cal CIN (9 characters ending in a letter) or 7+ digits (an MRN, a case number).
       ["ID", "id", /\b9\d{7}[A-Z]\b/g],
@@ -23038,15 +23169,26 @@ var require_ai_copilot = __commonJS({
     ];
     var TOKENS = P2.PLACEHOLDERS;
     var hold = (token2) => String.fromCharCode(57344 + TOKENS.indexOf(token2));
+    function replaceFolded(out2, id) {
+      const { folded, from, to } = foldMapped(out2);
+      const spans = [];
+      for (const m of folded.matchAll(id.pattern)) {
+        if (!m[0].length || id.keep && id.keep(folded, m.index, m[0])) continue;
+        spans.push([from[m.index], to[m.index + m[0].length - 1]]);
+      }
+      for (let i = spans.length - 1; i >= 0; i--) out2 = out2.slice(0, spans[i][0]) + hold(id.token) + out2.slice(spans[i][1]);
+      return [out2, spans.length];
+    }
     function deidentify(text, ids) {
-      let out2 = String(text || "").replace(/[\uE000-\uE0FF]/g, "");
+      let out2 = String(text || "").replace(/[-]/g, "");
       const counts = {};
       const hit = (kind, n) => {
         if (n) counts[kind] = (counts[kind] || 0) + n;
       };
       for (const id of ids) {
         let n = 0;
-        out2 = out2.replace(id.pattern, () => {
+        if (id.fold) [out2, n] = replaceFolded(out2, id);
+        else out2 = out2.replace(id.pattern, () => {
           n++;
           return hold(id.token);
         });
@@ -23060,7 +23202,7 @@ var require_ai_copilot = __commonJS({
         });
         hit(kind, n);
       }
-      out2 = out2.replace(/[\uE000-\uE0FF]/g, (ch) => `[${TOKENS[ch.charCodeAt(0) - 57344]}]`);
+      out2 = out2.replace(/[-]/g, (ch) => `[${TOKENS[ch.charCodeAt(0) - 57344]}]`);
       return { text: out2, counts };
     }
     function reidentify(value, ids) {
@@ -23216,9 +23358,13 @@ var require_ai = __commonJS({
     var { decrypt: decrypt3 } = require_crypto();
     var text = { type: "string", maxLen: AI.MAX_TEXT };
     var PER_USER_PER_MINUTE = 12;
-    function clientFor(ctx, clientId) {
+    function clientFor(ctx, clientId, feature) {
       if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, clientId)) throw notFound("Client not found");
       auth3.assertClientAccess(ctx, clientId);
+      if (require_disclosure().agreedRestrictions(clientId)) {
+        audit3.log({ user: ctx.user, action: "ai.draft", entity: "client", entityId: clientId, clientId, ip: ctx.ip, success: false, details: { feature, outcome: "restriction" } });
+        throw new HttpError3(409, "This client has an agreed restriction on how their information is used or shared (see their Requests tab), so the AI copilot is not used for their records. Write this yourself.", { ai_error: "restriction" });
+      }
     }
     function perUserLimit(ctx) {
       if (!require_app2().rateLimit(`ai:${ctx.user.id}`, PER_USER_PER_MINUTE, 6e4)) throw new HttpError3(429, "Too many AI drafts in a minute. Read the last one first, then try again.");
@@ -23339,15 +23485,19 @@ var require_ai = __commonJS({
           kind: { type: "string", required: true, enum: ["clinical", "admin"] },
           format: { type: "string", enum: P2.NOTE_FORMATS },
           source_text: { ...text, required: true },
-          note_id: { type: "string" }
+          note_id: { type: "string" },
+          counseling_note: { type: "boolean" }
         });
         if (!auth3.hasPerm(ctx.user, `notes:${v.kind}:write`)) throw forbidden(`You cannot author ${v.kind} notes`);
-        clientFor(ctx, v.client_id);
+        const COUNSELING = 'The AI copilot is not used for SUD counseling notes (\xA72.11). Write this note yourself, or untick "SUD counseling note" if it is not one.';
+        if (v.counseling_note) throw badRequest(COUNSELING, { ai_error: "counseling_note" });
+        clientFor(ctx, v.client_id, "note");
         if (v.note_id) {
-          const n = db3.one(`SELECT client_id, author_id, status, kind FROM notes WHERE id=? AND deleted_at IS NULL`, v.note_id);
+          const n = db3.one(`SELECT client_id, author_id, status, kind, counseling_note FROM notes WHERE id=? AND deleted_at IS NULL`, v.note_id);
           if (!n || n.client_id !== v.client_id) throw notFound("Note not found");
           if (n.author_id !== ctx.user.id) throw forbidden("The AI copilot drafts only in your own note");
           if (n.status !== "draft") throw badRequest("A signed note cannot be redrafted; add an addendum instead");
+          if (Number(n.counseling_note)) throw badRequest(COUNSELING, { ai_error: "counseling_note" });
         }
         const format = v.format || "narrative";
         const out2 = await run2(ctx, {
@@ -23357,6 +23507,7 @@ var require_ai = __commonJS({
           build: (c) => P2.notePrompt({ format, kind: v.kind, text: c.text }),
           details: { format, kind: v.kind, note_id: v.note_id || void 0 }
         });
+        if (v.note_id) db3.run(`UPDATE notes SET ai_assisted=1, updated_at=? WHERE id=? AND ai_assisted=0`, db3.now(), v.note_id);
         const secs = P2.NOTE_SECTIONS[format];
         const d = out2.data || {};
         const draft = secs ? { sections: Object.fromEntries(secs.map(([k]) => [k, s(d.sections && d.sections[k], 2e4)])) } : { narrative: s(d.narrative, 5e4) };
@@ -23365,7 +23516,7 @@ var require_ai = __commonJS({
       r.post("/api/ai/draft/asam", auth3.requireAuth, auth3.requirePerm("ai:draft"), auth3.requirePerm("assessments:write"), async (ctx) => {
         require_programme().requireModule("assessments")();
         const v = validate(ctx.body, { client_id: { type: "string", required: true }, source_text: { ...text, required: true } });
-        clientFor(ctx, v.client_id);
+        clientFor(ctx, v.client_id, "asam");
         const out2 = await run2(ctx, { clientId: v.client_id, feature: "asam", pieces: { text: v.source_text }, build: (c) => P2.asamPrompt({ text: c.text }) });
         const dims = out2.data && out2.data.dimensions || {};
         const dimensions = {};
@@ -23380,7 +23531,7 @@ var require_ai = __commonJS({
         require_programme().requireModule("careplan")();
         const v = validate(ctx.body, { client_id: { type: "string", required: true }, assessment_id: { type: "string" }, source_text: text });
         if (!v.assessment_id && !v.source_text) throw badRequest("Choose an assessment or give some notes to draft from", { fields: { source_text: "required without an assessment" } });
-        clientFor(ctx, v.client_id);
+        clientFor(ctx, v.client_id, "careplan");
         let assessment = null;
         if (v.assessment_id) {
           if (!auth3.hasPerm(ctx.user, "assessments:read") && !auth3.hasPerm(ctx.user, "assessments:write")) throw forbidden("You cannot read assessments");
@@ -23426,7 +23577,7 @@ var require_ai = __commonJS({
       r.post("/api/ai/draft/caloms", auth3.requireAuth, auth3.requirePerm("ai:draft"), auth3.requirePerm("episodes:write"), async (ctx) => {
         require_programme().requireModule("caloms")();
         const v = validate(ctx.body, { client_id: { type: "string", required: true }, record_type: { type: "string", required: true, enum: ["admission", "discharge", "annual_update"] }, source_text: { ...text, required: true } });
-        clientFor(ctx, v.client_id);
+        clientFor(ctx, v.client_id, "caloms");
         const out2 = await run2(ctx, { clientId: v.client_id, feature: "caloms", pieces: { text: v.source_text }, build: (c) => P2.calomsPrompt({ type: v.record_type, text: c.text }), details: { record_type: v.record_type } });
         const S = require_caloms_spec();
         const fields = new Map(P2.calomsFields(v.record_type).map((f) => [f.key, f]));
@@ -24743,7 +24894,12 @@ var require_auth = __commonJS({
           setup_needed: false,
           default_fund_id: require_budget().defaultFundFor(u.id),
           // The programme profile and the modules in force (server/programme.js): what the navigation shows.
-          programme: { profile: require_programme().profile(), modules: require_programme().modules() }
+          programme: {
+            profile: require_programme().profile(),
+            modules: require_programme().modules(),
+            // Whether "Secure link" is offered on a referral (server/referral-links.js; office server only).
+            referral_links: db3.getSetting("referral_links_enabled", "0") === "1"
+          }
         };
       });
       r.get("/api/auth/reauth", (ctx) => {
@@ -25884,11 +26040,20 @@ var require_caloms2 = __commonJS({
         audit3.log({ user: ctx.user, action: "caloms.submitted", entity: "caloms_submission", entityId: id, ip: ctx.ip, details: { from, to, ...x.counts, held_back: x.excluded, clients_disclosed: x.clientIds.length, sha256: hash2 } });
         return { ok: true, id, from, to, submitted_at: stamp2, file_name: fileName, sha256: hash2, bytes: body.length, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded };
       });
+      const ownOnly = (ctx) => auth3.caseloadRestricted(ctx.user);
+      const mayReach = (ctx, sub, what) => {
+        if (ownOnly(ctx) && !(sub.origin === "manual" && sub.created_by === ctx.user.id)) {
+          audit3.log({ user: ctx.user, action: "caloms.submission.refused", entity: "caloms_submission", entityId: sub.id, ip: ctx.ip, success: false, details: { what, reason: "held to a caseload" } });
+          throw require_http().forbidden(`This file covers the whole program; someone who is held to a caseload cannot ${what} it`);
+        }
+        return sub;
+      };
       r.get("/api/caloms/submissions", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+        const own = ownOnly(ctx);
         const rows = db3.all(`SELECT s.id, s.period_from, s.period_to, s.file_name, s.sha256, s.bytes, s.clients, s.counts, s.created_at, s.file_cleared_at, s.file_enc IS NOT NULL AS has_file, u.display_name AS created_by_name,
         s.status, s.origin, s.provider_id, s.uploaded_at, s.dhcs_reference, up.display_name AS uploaded_by_name,
         (SELECT COUNT(*) FROM caloms_submission_events ev WHERE ev.submission_id=s.id AND ev.action='downloaded') AS downloads
-      FROM caloms_submissions s JOIN users u ON u.id=s.created_by LEFT JOIN users up ON up.id=s.uploaded_by ORDER BY s.created_at DESC LIMIT 200`).map((r2) => {
+      FROM caloms_submissions s JOIN users u ON u.id=s.created_by LEFT JOIN users up ON up.id=s.uploaded_by ${own ? `WHERE s.origin='manual' AND s.created_by=?` : ""} ORDER BY s.created_at DESC LIMIT 200`, ...own ? [ctx.user.id] : []).map((r2) => {
           let counts = {};
           try {
             counts = JSON.parse(r2.counts || "{}");
@@ -25898,12 +26063,13 @@ var require_caloms2 = __commonJS({
           delete o.has_file;
           return o;
         });
-        audit3.log({ user: ctx.user, action: "caloms.submission.list", ip: ctx.ip, details: { count: rows.length } });
+        audit3.log({ user: ctx.user, action: "caloms.submission.list", ip: ctx.ip, details: { count: rows.length, own_only: own || void 0 } });
         return { rows, keep_days: require_retention().CALOMS_FILE_DAYS };
       });
       r.get("/api/caloms/submissions/:id/file", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
         const sub = db3.one(`SELECT * FROM caloms_submissions WHERE id=?`, ctx.params.id);
         if (!sub) throw notFound("Submission not found");
+        mayReach(ctx, sub, "download");
         if (sub.status !== "produced") throw new HttpError3(409, sub.status === "prepared" ? "This file was prepared by the monthly run and has not been produced yet. Produce it first: that is when it is written to each client's accounting of disclosures." : "This file was discarded.", { status: sub.status });
         if (!sub.file_enc) throw new HttpError3(410, `This submission's file is no longer kept (files are kept ${require_retention().CALOMS_FILE_DAYS} days, and removed when a client in it is purged). Its record and hash remain; produce a new submission if the records must be sent again.`);
         const body = import_buffer.Buffer.from(require_crypto().decrypt(sub.file_enc), "base64");
@@ -25965,7 +26131,7 @@ var require_caloms2 = __commonJS({
         return { ok: true, id: sub.id, submitted_at: stamp2, file_name: sub.file_name, sha256: sub.sha256, clients_disclosed: clientIds.length, counts };
       });
       r.post("/api/caloms/submissions/:id/discard", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
-        const sub = subFor(ctx.params.id);
+        const sub = mayReach(ctx, subFor(ctx.params.id), "discard");
         if (sub.status !== "prepared") throw new HttpError3(409, "Only a prepared file that has not been produced can be discarded; a produced one is a disclosure on record.");
         db3.transaction(() => {
           db3.run(`UPDATE caloms_submissions SET status='discarded', file_enc=NULL, file_cleared_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), sub.id);
@@ -25975,7 +26141,7 @@ var require_caloms2 = __commonJS({
         return { ok: true };
       });
       r.post("/api/caloms/submissions/:id/uploaded", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
-        const sub = subFor(ctx.params.id);
+        const sub = mayReach(ctx, subFor(ctx.params.id), "record the upload of");
         const v = validate(ctx.body || {}, { uploaded_on: { type: "date", required: true }, dhcs_reference: { type: "string", maxLen: 60, pattern: /^[A-Za-z0-9 ._/#-]*$/ } });
         if (sub.status !== "produced") throw new HttpError3(409, "Produce the file first: a prepared file has not been accounted, so it cannot have been sent.");
         if (v.uploaded_on > require_budget().localDate()) throw badRequest("The upload date cannot be in the future", { fields: { uploaded_on: "in the future" } });
@@ -25988,7 +26154,7 @@ var require_caloms2 = __commonJS({
         return { ok: true, uploaded_at: v.uploaded_on, dhcs_reference: v.dhcs_reference || null };
       });
       r.get("/api/caloms/submissions/:id/events", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
-        const sub = subFor(ctx.params.id);
+        const sub = mayReach(ctx, subFor(ctx.params.id), "read the log of");
         const rows = db3.all(`SELECT e.action, e.detail, e.created_at, COALESCE(u.display_name, 'Scheduled run') AS who FROM caloms_submission_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.submission_id=? ORDER BY e.created_at, e.rowid`, sub.id);
         audit3.log({ user: ctx.user, action: "caloms.submission.log", entity: "caloms_submission", entityId: sub.id, ip: ctx.ip, details: { count: rows.length } });
         return { id: sub.id, file_name: sub.file_name, sha256: sub.sha256, status: sub.status, rows };
@@ -27098,7 +27264,7 @@ var require_dataimport2 = __commonJS({
     var audit3 = require_audit();
     var S = require_spreadsheet();
     var DI = require_dataimport();
-    var { badRequest, notFound, forbidden } = require_http();
+    var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
     var { encrypt: encrypt3, blindIndex: blindIndex2, uuid: uuid2, sha256: sha2562 } = require_crypto();
     var M = require_clients_model();
     var { validate } = require_validate();
@@ -27119,6 +27285,16 @@ var require_dataimport2 = __commonJS({
         const fields = e.extra && e.extra.fields;
         throw new Error(fields ? Object.entries(fields).map(([k, m]) => `${k} ${m}`).join("; ") : e.message);
       }
+    }
+    var C = () => require_clients();
+    function nameMatches(user, rec) {
+      const all = db3.all(`SELECT id, client_code FROM clients WHERE full_name_idx=? AND deleted_at IS NULL AND merged_into IS NULL`, blindIndex2((rec.last_name || "") + (rec.first_name || "")));
+      return { shown: all.filter((m) => C().mayOpen(user, m.id)), hidden: all.filter((m) => !C().mayOpen(user, m.id)) };
+    }
+    function duplicateCheckLimit(ctx) {
+      if (require_app2().rateLimit(`duplicate-check:${ctx.user.id}`, C().DUPLICATE_CHECKS, C().DUPLICATE_CHECK_WINDOW_MS)) return;
+      audit3.log({ user: ctx.user, action: "import.data.preview", ip: ctx.ip, success: false, details: { reason: "rate limited" } });
+      throw new HttpError3(429, "Too many duplicate checks. Wait a few minutes, then preview the file again.");
     }
     var permFor = (entity) => ({ clients: "clients:write", resources: "resources:write", interventions: "interventions:write", calls: "calls:write", time_entries: "time:write", tasks: "tasks:write", expenditures: "budget:write" })[entity];
     module.exports = (r) => {
@@ -27184,6 +27360,8 @@ var require_dataimport2 = __commonJS({
           if (mapping[h]) normalizedMapping[h] = mapping[h];
           else if (mapping[clean2]) normalizedMapping[h] = mapping[clean2];
         }
+        if (entity === "clients") duplicateCheckLimit(ctx);
+        const dups = { shown: 0, hidden: 0 };
         const rows = sheet.rows.slice(0, 2e3).map((row, i) => {
           const { record, errors } = DI.convertRow(entity, normalizedMapping, row);
           if (record.client_ref !== void 0) {
@@ -27198,12 +27376,17 @@ var require_dataimport2 = __commonJS({
             else record.funding_source_id = f.id;
           }
           if (entity === "clients" && record.first_name && record.last_name && !errors.length) {
-            const dup = db3.one(`SELECT client_code FROM clients WHERE full_name_idx=? AND deleted_at IS NULL`, blindIndex2(record.last_name + record.first_name));
-            if (dup) record._duplicate_of = dup.client_code;
+            const { shown, hidden } = nameMatches(ctx.user, record);
+            if (shown.length) record._duplicate_of = shown[0].client_code;
+            dups.shown += shown.length ? 1 : 0;
+            if (hidden.length && !shown.length) {
+              dups.hidden++;
+              for (const m of hidden) C().reviewTask(ctx.user, m.id, `Possible duplicate: a spreadsheet or EHR import preview named the person on ${m.client_code}; check whether they are being imported again`);
+            }
           }
           return { n: i + 2, record, errors };
         });
-        audit3.log({ user: ctx.user, action: "import.data.preview", ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name, source: source || void 0 } });
+        audit3.log({ user: ctx.user, action: "import.data.preview", ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name, source: source || void 0, duplicates: entity === "clients" ? dups : void 0 } });
         return { entity, sheets, sheet: sheetIdx, headers: sheet.headers, mapping: normalizedMapping, fields: def.fields.map((f) => ({ key: f.key, label: f.label, required: !!f.required })), rows, valid: rows.filter((x) => !x.errors.length).length, invalid: rows.filter((x) => x.errors.length).length, truncated: sheet.rows.length > 2e3 };
       }
       r.post("/api/imports/data/commit", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
@@ -27216,6 +27399,7 @@ var require_dataimport2 = __commonJS({
         let created = 0, skipped = 0, skippedDuplicates = 0;
         const errors = [];
         const imported = [];
+        const hiddenDuplicates = [];
         db3.transaction(() => {
           records.forEach((rec, i) => {
             try {
@@ -27235,10 +27419,12 @@ var require_dataimport2 = __commonJS({
               checkRecord(entity, rec, ctx);
               switch (entity) {
                 case "clients": {
-                  if (skip_duplicates && db3.one(`SELECT 1 FROM clients WHERE full_name_idx=? AND deleted_at IS NULL`, blindIndex2((rec.last_name || "") + (rec.first_name || "")))) {
+                  const same = rec.first_name && rec.last_name ? nameMatches(ctx.user, rec) : { shown: [], hidden: [] };
+                  if (skip_duplicates && same.shown.length) {
                     skipped++;
                     return;
                   }
+                  if (same.hidden.length) hiddenDuplicates.push([id, same.hidden]);
                   const enc2 = M.encryptFields(rec);
                   enc2.full_name_idx = blindIndex2((rec.last_name || "") + (rec.first_name || ""));
                   const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id, intake_date: rec.intake_date || now2.slice(0, 10) };
@@ -27292,6 +27478,11 @@ var require_dataimport2 = __commonJS({
           });
           if (errors.length && !ctx.body.partial) throw badRequest(`${errors.length} row(s) could not be imported; nothing was saved`, { rows: errors });
           for (const [hash2, id] of imported) db3.run(`INSERT OR IGNORE INTO import_rows(row_hash,entity,record_id,imported_by) VALUES(?,?,?,?)`, hash2, entity, id, ctx.user.id);
+          const made = new Set(imported.map(([, id]) => id));
+          for (const [id, hidden] of hiddenDuplicates) if (made.has(id)) {
+            const code = db3.one(`SELECT client_code FROM clients WHERE id=?`, id).client_code;
+            C().flagForReview(ctx.user, { id, client_code: code, matches: hidden.map((m) => ({ ...m, reasons: ["same full name"] })), source: "import", ip: ctx.ip });
+          }
         });
         audit3.log({ user: ctx.user, action: "import.data.commit", ip: ctx.ip, details: { entity, created, skipped, skipped_duplicates: skippedDuplicates, errors: errors.length, source: ctx.body.source === "ehr_fhir" ? "ehr_fhir" : void 0 } });
         return { created, skipped, skipped_duplicates: skippedDuplicates, errors };
@@ -36818,6 +37009,9 @@ var require_referral_links = __commonJS({
     var MAX_FAILED = 5;
     var ACK_STATUSES = ["received", "accepted", "scheduled", "declined", "unable_to_reach"];
     var NOT_VALID = "This link is not valid. It may have expired or been withdrawn. Contact the program that sent it.";
+    var CLOSED_REFERRAL = ["declined_by_client", "declined_by_provider", "no_show", "completed", "closed"];
+    var SETTING = "referral_links_enabled";
+    var enabled = () => db3.getSetting(SETTING, "0") === "1";
     var hashToken = (t) => sha2562(`referral-link:${t}`);
     var hashCode = (id, code) => sha2562(`referral-link-code:${id}:${String(code || "").replace(/\D/g, "")}`);
     var hashClaim = (id, claim) => sha2562(`referral-link-claim:${id}:${claim}`);
@@ -36878,6 +37072,7 @@ var require_referral_links = __commonJS({
     }
     function create3({ referral, user, ip, v }) {
       const kind = v.kind;
+      if (!enabled()) throw new HttpError3(409, "Secure referral links are switched off for this program. An administrator can switch them on in Privacy & Part 2 once counsel has reviewed them.", { referral_links_off: true });
       if (!KINDS.includes(kind)) throw badRequest(`kind must be one of ${KINDS.join(", ")}`);
       const hours = v.expires_hours === void 0 || v.expires_hours === null ? DEFAULT_TTL_HOURS : Number(v.expires_hours);
       if (!TTL_HOURS.includes(hours)) throw badRequest(`A link lasts ${TTL_HOURS.join(", ")} hours (7 days at most)`);
@@ -36916,6 +37111,7 @@ var require_referral_links = __commonJS({
           recipient: res.name
         };
         code = newCode();
+        packet = { packet, recipient_names: resourceNames(res) };
       }
       db3.run(
         `INSERT INTO referral_links(id,referral_id,client_id,resource_id,kind,token_hash,code_hash,consent_id,packet_enc,reference,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -36949,26 +37145,77 @@ var require_referral_links = __commonJS({
       audit3.log({ user, action: "referral_link.revoke", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { kind: link.kind, opened: !!link.opened_at } });
       return present(db3.one(`SELECT * FROM referral_links WHERE id=?`, link.id));
     }
+    var REFUSALS_LOGGED_PER_HOUR = 10;
+    var REFUSAL_WINDOW_MS = 36e5;
+    var refusals = /* @__PURE__ */ new Map();
+    function summarise(key, w) {
+      if (!w.extra) return;
+      const addresses = [...w.byIp.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([ip, n]) => ({ ip, n }));
+      audit3.log({
+        user: null,
+        action: w.action,
+        entity: "referral_link",
+        entityId: w.linkId,
+        clientId: w.clientId,
+        ip: null,
+        success: false,
+        details: { reason: key === "unknown" ? "unknown_summary" : "refused_summary", count: w.extra, window_start: new Date(w.start).toISOString(), window_end: new Date(Math.min(Date.now(), w.start + REFUSAL_WINDOW_MS)).toISOString(), addresses }
+      });
+    }
+    function flushRefusals() {
+      for (const [key, w] of refusals) summarise(key, w);
+      refusals.clear();
+    }
+    function logRefusal({ action, link, ip, reason }) {
+      const key = link ? link.id : "unknown";
+      const now2 = Date.now();
+      let w = refusals.get(key);
+      if (w && now2 - w.start >= REFUSAL_WINDOW_MS) {
+        summarise(key, w);
+        refusals.delete(key);
+        w = null;
+      }
+      if (!w) {
+        w = { start: now2, logged: 0, extra: 0, byIp: /* @__PURE__ */ new Map(), action, linkId: link ? link.id : null, clientId: link ? link.client_id : null };
+        refusals.set(key, w);
+      }
+      if (w.logged < REFUSALS_LOGGED_PER_HOUR) {
+        w.logged++;
+        audit3.log({ user: null, action, entity: "referral_link", entityId: w.linkId, clientId: w.clientId, ip, success: false, details: { reason } });
+        if (w.logged === REFUSALS_LOGGED_PER_HOUR) audit3.log({ user: null, action, entity: "referral_link", entityId: w.linkId, clientId: w.clientId, ip, success: false, details: { reason: "counting", note: "further refusals this hour are counted and summarised, not written one by one" } });
+        return;
+      }
+      w.extra++;
+      w.byIp.set(ip || "?", (w.byIp.get(ip || "?") || 0) + 1);
+      if (refusals.size > 5e3) flushRefusals();
+    }
     function usable(token2, ip, action) {
       const t = String(token2 || "");
       const link = /^[A-Za-z0-9_-]{40,64}$/.test(t) ? db3.one(`SELECT * FROM referral_links WHERE token_hash=?`, hashToken(t)) : null;
       const refuse = (reason) => {
-        audit3.log({ user: null, action, entity: "referral_link", entityId: link ? link.id : null, clientId: link ? link.client_id : null, ip, success: false, details: { reason } });
+        logRefusal({ action, link, ip, reason });
         throw notFound(NOT_VALID);
       };
+      if (!enabled()) refuse(link ? "switched_off" : "unknown");
       if (!link) refuse("unknown");
       if (link.revoked_at) refuse("revoked");
       if (link.failed_attempts >= MAX_FAILED) refuse("locked");
       if (link.expires_at < (/* @__PURE__ */ new Date()).toISOString()) refuse("expired");
       return link;
     }
+    function stored(link) {
+      if (!link.packet_enc) return { packet: null, names: null };
+      const s = JSON.parse(decrypt3(link.packet_enc));
+      return s && s.packet ? { packet: s.packet, names: Array.isArray(s.recipient_names) ? s.recipient_names : null } : { packet: s, names: null };
+    }
     function header(link) {
       const res = resourceOf(link.resource_id) || {};
+      const snap = link.kind === "packet" ? stored(link).names : null;
       return {
         kind: link.kind,
         reference: link.reference,
         expires_at: link.expires_at,
-        recipient: res.name || null,
+        recipient: snap && snap[0] || res.name || null,
         programme: invite().programme,
         contact: invite().contact,
         invite: invite(),
@@ -36977,11 +37224,18 @@ var require_referral_links = __commonJS({
       };
     }
     function stillCovered(link, creator) {
-      const res = resourceOf(link.resource_id);
+      const client = db3.one(`SELECT deleted_at, merged_into FROM clients WHERE id=?`, link.client_id);
+      if (!client || client.deleted_at || client.merged_into) return { ok: false, reason: "client_removed" };
+      const referral = db3.one(`SELECT status FROM referrals WHERE id=?`, link.referral_id);
+      if (!referral || CLOSED_REFERRAL.includes(referral.status)) return { ok: false, reason: "referral_closed" };
+      const snap = stored(link).names;
+      const live = resourceOf(link.resource_id);
+      const res = snap && snap.length ? { name: snap[0], names: snap } : live && { name: live.name, names: resourceNames(live) };
+      if (!res) return { ok: false, reason: "recipient_not_covered" };
       const restrictedSince = db3.one(`SELECT 1 FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled' AND updated_at > ?`, link.client_id, link.created_at);
       if (restrictedSince) return { ok: false, reason: "restriction" };
       try {
-        const basis = disclosure.requireBasis(link.client_id, { basis: "consent", consent_id: link.consent_id, recipient: resourceNames(res), allowed: ["consent"], restriction_reviewed: true, user: creator });
+        const basis = disclosure.requireBasis(link.client_id, { basis: "consent", consent_id: link.consent_id, recipient: res.names, allowed: ["consent"], restriction_reviewed: true, user: creator });
         return { ok: true, basis, res };
       } catch (e) {
         return { ok: false, reason: e && e.extra && e.extra.recipientNotCovered ? "recipient_not_covered" : "consent_not_valid" };
@@ -37018,7 +37272,7 @@ var require_referral_links = __commonJS({
         audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: cover.reason, withheld: true } });
         return { ...base, withheld: true };
       }
-      const packet = JSON.parse(decrypt3(link.packet_enc));
+      const packet = stored(link).packet;
       let newClaim = null;
       db3.transaction(() => {
         if (!link.claim_hash) {
@@ -37058,22 +37312,27 @@ var require_referral_links = __commonJS({
       db3.transaction(() => {
         db3.run(`UPDATE referral_links SET ack_status=?, ack_at=?, ack_by_enc=?, ack_note_enc=?, updated_at=? WHERE id=?`, status, db3.now(), encrypt3(who), text ? encrypt3(text) : null, db3.now(), link.id);
         const label = { received: "received it", accepted: "accepted the client", scheduled: "scheduled the client", declined: "declined", unable_to_reach: "could not reach the client" }[status];
-        db3.run(
+        const title = encrypt3(`${res.name} ${label} (secure referral link ${link.reference}) \u2014 confirm and record the outcome`);
+        const priority = status === "declined" || status === "unable_to_reach" ? "high" : "normal";
+        const mark = `(secure referral link ${link.reference})`;
+        const open4 = db3.all(`SELECT id, title_enc FROM tasks WHERE referral_id=? AND assigned_to=? AND created_by=? AND status IN ('open','in_progress')`, link.referral_id, link.created_by, link.created_by).find((t) => (dec2(t.title_enc) || "").includes(mark));
+        if (open4) db3.run(`UPDATE tasks SET title_enc=?, priority=?, due_at=?, updated_at=? WHERE id=?`, title, priority, (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), db3.now(), open4.id);
+        else db3.run(
           `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`,
           uuid2(),
           link.client_id,
           link.created_by,
           link.created_by,
-          encrypt3(`${res.name} ${label} (secure referral link ${link.reference}) \u2014 confirm and record the outcome`),
+          title,
           (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
-          status === "declined" || status === "unable_to_reach" ? "high" : "normal",
+          priority,
           link.referral_id
         );
       });
       audit3.log({ user: null, action: "referral_link.ack", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { status, kind: link.kind } });
       return { ok: true, ack_status: status };
     }
-    module.exports = { KINDS, TTL_HOURS, DEFAULT_TTL_HOURS, MAX_FAILED, ACK_STATUSES, NOT_VALID, create: create3, revoke, open: open3, acknowledge, listFor, present, invite, hashToken };
+    module.exports = { SETTING, enabled, CLOSED_REFERRAL, REFUSALS_LOGGED_PER_HOUR, flushRefusals, KINDS, TTL_HOURS, DEFAULT_TTL_HOURS, MAX_FAILED, ACK_STATUSES, NOT_VALID, create: create3, revoke, open: open3, acknowledge, listFor, present, invite, hashToken };
   }
 });
 
@@ -37089,9 +37348,11 @@ var require_referral_links2 = __commonJS({
     var { validate } = require_validate();
     var { notFound, HttpError: HttpError3, badRequest } = require_http();
     var PUBLIC_PER_10_MIN = 30;
+    var PUBLIC_ALL_PER_10_MIN = 600;
     function limit2(ctx) {
       const { rateLimit } = require_app2();
       if (!rateLimit(`referral-link:${ctx.ip}`, PUBLIC_PER_10_MIN, 10 * 6e4)) throw new HttpError3(429, "Too many attempts from this address. Wait a few minutes and try again.");
+      if (!rateLimit("referral-link:*", PUBLIC_ALL_PER_10_MIN, 10 * 6e4)) throw new HttpError3(429, "Too many attempts. Wait a few minutes and try again.");
     }
     function referralFor(ctx, id) {
       const r = db3.one(`SELECT * FROM referrals WHERE id=?`, id);
@@ -37100,14 +37361,22 @@ var require_referral_links2 = __commonJS({
       return r;
     }
     module.exports = (r) => {
-      r.get("/api/referral-links/settings", auth3.requireAuth, () => ({ invite_url: require_referral_links().invite().url, ttl_hours: RL.TTL_HOURS, default_ttl_hours: RL.DEFAULT_TTL_HOURS, max_failed: RL.MAX_FAILED }));
+      r.get("/api/referral-links/settings", auth3.requireAuth, () => ({ enabled: RL.enabled(), invite_url: RL.invite().url, ttl_hours: RL.TTL_HOURS, default_ttl_hours: RL.DEFAULT_TTL_HOURS, max_failed: RL.MAX_FAILED }));
       r.put("/api/referral-links/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
-        const v = validate(ctx.body, { invite_url: { type: "string", maxLen: 300 } });
+        const v = validate(ctx.body, { enabled: { type: "boolean" }, invite_url: { type: "string", maxLen: 300 } }, { partial: true });
         if (v.invite_url && !/^https:\/\/[^\s<>"']+$/i.test(v.invite_url)) throw badRequest("The invitation link must be an https:// address", { fields: { invite_url: "must start with https://" } });
-        if (v.invite_url) db3.setSetting("referral_invite_url", v.invite_url);
-        else db3.run(`DELETE FROM settings WHERE key='referral_invite_url'`);
-        audit3.log({ user: ctx.user, action: "settings.update", ip: ctx.ip, details: { changed: ["referral_invite_url"] } });
-        return { invite_url: RL.invite().url };
+        const changed = [];
+        if (v.enabled !== void 0 && v.enabled !== null) {
+          db3.setSetting(RL.SETTING, v.enabled ? "1" : "0");
+          changed.push(RL.SETTING);
+        }
+        if (v.invite_url !== void 0) {
+          if (v.invite_url) db3.setSetting("referral_invite_url", v.invite_url);
+          else db3.run(`DELETE FROM settings WHERE key='referral_invite_url'`);
+          changed.push("referral_invite_url");
+        }
+        audit3.log({ user: ctx.user, action: "settings.update", ip: ctx.ip, details: { changed, referral_links_enabled: changed.includes(RL.SETTING) ? RL.enabled() : void 0 } });
+        return { enabled: RL.enabled(), invite_url: RL.invite().url };
       });
       r.get("/api/referrals/:id/links", auth3.requireAuth, auth3.requirePerm("referrals:read", "referrals:write"), (ctx) => {
         const ref = referralFor(ctx, ctx.params.id);
@@ -42036,6 +42305,7 @@ var require_push = __commonJS({
         delete raw.updated_at;
         const c = new RowContext(this, t, raw, existing, existingCols, incomingAt);
         const refused = (list) => this.settle(list, t, raw, c);
+        c.statements = Object.fromEntries((R.statements || []).filter((k) => raw[k] !== void 0).map((k) => [k, raw[k]]));
         this.confine(R, raw, c);
         if (refused(this.authorise(R, t, raw, c))) return false;
         if (R.authorise && refused(R.authorise(raw, c))) return false;
@@ -46148,7 +46418,9 @@ function localRows(officeUserId = null) {
     for (const r of rows) {
       if (syncing && (t.name === "notes" || t.name === "note_addenda") && !mayRead(syncing, t, r)) continue;
       const e = exportRow(t, r);
-      if (e) out2.push({ table: t.name, row: e });
+      if (!e) continue;
+      if (t.name === "notes" && Number(r.ai_assisted) && r.status && r.status !== "draft") e.ai_reviewed = true;
+      out2.push({ table: t.name, row: e });
     }
   }
   return out2;

@@ -36,6 +36,12 @@ const ACK_STATUSES = ['received', 'accepted', 'scheduled', 'declined', 'unable_t
 // not an oracle for which tokens exist.
 const NOT_VALID = 'This link is not valid. It may have expired or been withdrawn. Contact the program that sent it.';
 
+// Referral statuses after which the referral is over: a link made for it is not opened any more.
+const CLOSED_REFERRAL = ['declined_by_client', 'declined_by_provider', 'no_show', 'completed', 'closed'];
+// The programme setting "Secure referral links" (off unless an administrator turns it on: docs/security/REFERRAL-LINKS.md).
+const SETTING = 'referral_links_enabled';
+const enabled = () => db.getSetting(SETTING, '0') === '1';
+
 const hashToken = (t) => sha256(`referral-link:${t}`);
 const hashCode = (id, code) => sha256(`referral-link-code:${id}:${String(code || '').replace(/\D/g, '')}`);
 const hashClaim = (id, claim) => sha256(`referral-link-claim:${id}:${claim}`);
@@ -74,6 +80,7 @@ function listFor(referralId) {
  */
 function create({ referral, user, ip, v }) {
   const kind = v.kind;
+  if (!enabled()) throw new HttpError(409, 'Secure referral links are switched off for this program. An administrator can switch them on in Privacy & Part 2 once counsel has reviewed them.', { referral_links_off: true });
   if (!KINDS.includes(kind)) throw badRequest(`kind must be one of ${KINDS.join(', ')}`);
   const hours = v.expires_hours === undefined || v.expires_hours === null ? DEFAULT_TTL_HOURS : Number(v.expires_hours);
   if (!TTL_HOURS.includes(hours)) throw badRequest(`A link lasts ${TTL_HOURS.join(', ')} hours (7 days at most)`);
@@ -97,6 +104,10 @@ function create({ referral, user, ip, v }) {
       referred_by: user.display_name || user.username, recipient: res.name,
     };
     code = newCode();
+    // The recipient as the directory named it now, kept with the packet: the consent is checked against these
+    // names again at open, and the accounting names this recipient, whatever the entry is called by then
+    // (security review of 1.17.0, L2). Not shown to the recipient.
+    packet = { packet, recipient_names: resourceNames(res) };
   }
   db.run(`INSERT INTO referral_links(id,referral_id,client_id,resource_id,kind,token_hash,code_hash,consent_id,packet_enc,reference,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
     id, referral.id, referral.client_id, referral.resource_id, kind, hashToken(token), code ? hashCode(id, code) : null, consentId, packet ? encrypt(JSON.stringify(packet)) : null, reference, expires, user.id);
@@ -112,11 +123,46 @@ function revoke({ link, user, ip }) {
   return present(db.one(`SELECT * FROM referral_links WHERE id=?`, link.id));
 }
 
+/**
+ * Refusals of anonymous callers, in the audit log without letting anyone who can reach the office grow it without
+ * limit (security review of 1.17.0, L3): per link (or, for tokens that match no link, for all of them together)
+ * the first REFUSALS_LOGGED_PER_HOUR in an hour are written one by one, then one entry saying the rest are being
+ * counted, and when the hour is over one summary with the count and the addresses they came from (the busiest
+ * twenty). The summary is written by the next refusal after the hour, or by flushRefusals when the server stops.
+ */
+const REFUSALS_LOGGED_PER_HOUR = 10;
+const REFUSAL_WINDOW_MS = 3600_000;
+const refusals = new Map(); // key -> { start, logged, extra, byIp: Map, action, linkId, clientId }
+function summarise(key, w) {
+  if (!w.extra) return;
+  const addresses = [...w.byIp.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([ip, n]) => ({ ip, n }));
+  audit.log({ user: null, action: w.action, entity: 'referral_link', entityId: w.linkId, clientId: w.clientId, ip: null, success: false,
+    details: { reason: key === 'unknown' ? 'unknown_summary' : 'refused_summary', count: w.extra, window_start: new Date(w.start).toISOString(), window_end: new Date(Math.min(Date.now(), w.start + REFUSAL_WINDOW_MS)).toISOString(), addresses } });
+}
+function flushRefusals() { for (const [key, w] of refusals) summarise(key, w); refusals.clear(); }
+function logRefusal({ action, link, ip, reason }) {
+  const key = link ? link.id : 'unknown';
+  const now = Date.now();
+  let w = refusals.get(key);
+  if (w && now - w.start >= REFUSAL_WINDOW_MS) { summarise(key, w); refusals.delete(key); w = null; }
+  if (!w) { w = { start: now, logged: 0, extra: 0, byIp: new Map(), action, linkId: link ? link.id : null, clientId: link ? link.client_id : null }; refusals.set(key, w); }
+  if (w.logged < REFUSALS_LOGGED_PER_HOUR) {
+    w.logged++;
+    audit.log({ user: null, action, entity: 'referral_link', entityId: w.linkId, clientId: w.clientId, ip, success: false, details: { reason } });
+    if (w.logged === REFUSALS_LOGGED_PER_HOUR) audit.log({ user: null, action, entity: 'referral_link', entityId: w.linkId, clientId: w.clientId, ip, success: false, details: { reason: 'counting', note: 'further refusals this hour are counted and summarised, not written one by one' } });
+    return;
+  }
+  w.extra++; w.byIp.set(ip || '?', (w.byIp.get(ip || '?') || 0) + 1);
+  if (refusals.size > 5000) flushRefusals();
+}
+
 /** A link a recipient may still use, or a 404 with the one message. Audits the refusal (reason code only). */
 function usable(token, ip, action) {
   const t = String(token || '');
   const link = /^[A-Za-z0-9_-]{40,64}$/.test(t) ? db.one(`SELECT * FROM referral_links WHERE token_hash=?`, hashToken(t)) : null;
-  const refuse = (reason) => { audit.log({ user: null, action, entity: 'referral_link', entityId: link ? link.id : null, clientId: link ? link.client_id : null, ip, success: false, details: { reason } }); throw notFound(NOT_VALID); };
+  const refuse = (reason) => { logRefusal({ action, link, ip, reason }); throw notFound(NOT_VALID); };
+  // Switched off: every link stops working at once (the setting is also the way to stop them all).
+  if (!enabled()) refuse(link ? 'switched_off' : 'unknown');
   if (!link) refuse('unknown');
   if (link.revoked_at) refuse('revoked');
   if (link.failed_attempts >= MAX_FAILED) refuse('locked');
@@ -125,9 +171,16 @@ function usable(token, ip, action) {
   return link;
 }
 
+/** What was stored with a packet: the packet itself and the recipient's names when the link was made. */
+function stored(link) {
+  if (!link.packet_enc) return { packet: null, names: null };
+  const s = JSON.parse(decrypt(link.packet_enc));
+  return s && s.packet ? { packet: s.packet, names: Array.isArray(s.recipient_names) ? s.recipient_names : null } : { packet: s, names: null };
+}
 function header(link) {
   const res = resourceOf(link.resource_id) || {};
-  return { kind: link.kind, reference: link.reference, expires_at: link.expires_at, recipient: res.name || null, programme: invite().programme, contact: invite().contact,
+  const snap = link.kind === 'packet' ? stored(link).names : null;
+  return { kind: link.kind, reference: link.reference, expires_at: link.expires_at, recipient: (snap && snap[0]) || res.name || null, programme: invite().programme, contact: invite().contact,
     invite: invite(), ack_status: link.ack_status, ack_statuses: link.kind === 'packet' ? ACK_STATUSES : ['received', 'unable_to_reach'] };
 }
 
@@ -136,11 +189,21 @@ function header(link) {
  * a restriction agreed since, or a consent that no longer names the provider withholds the packet.
  */
 function stillCovered(link, creator) {
-  const res = resourceOf(link.resource_id);
+  // The record is still there and still this person's, and the referral is still open (security review of
+  // 1.17.0, L2): a removed or merged record, or a referral since closed or declined, is not disclosed.
+  const client = db.one(`SELECT deleted_at, merged_into FROM clients WHERE id=?`, link.client_id);
+  if (!client || client.deleted_at || client.merged_into) return { ok: false, reason: 'client_removed' };
+  const referral = db.one(`SELECT status FROM referrals WHERE id=?`, link.referral_id);
+  if (!referral || CLOSED_REFERRAL.includes(referral.status)) return { ok: false, reason: 'referral_closed' };
+  // The recipient as named when the link was made (a link from before the snapshot: the directory entry now).
+  const snap = stored(link).names;
+  const live = resourceOf(link.resource_id);
+  const res = snap && snap.length ? { name: snap[0], names: snap } : live && { name: live.name, names: resourceNames(live) };
+  if (!res) return { ok: false, reason: 'recipient_not_covered' };
   const restrictedSince = db.one(`SELECT 1 FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled' AND updated_at > ?`, link.client_id, link.created_at);
   if (restrictedSince) return { ok: false, reason: 'restriction' };
   try {
-    const basis = disclosure.requireBasis(link.client_id, { basis: 'consent', consent_id: link.consent_id, recipient: resourceNames(res), allowed: ['consent'], restriction_reviewed: true, user: creator });
+    const basis = disclosure.requireBasis(link.client_id, { basis: 'consent', consent_id: link.consent_id, recipient: res.names, allowed: ['consent'], restriction_reviewed: true, user: creator });
     return { ok: true, basis, res };
   } catch (e) { return { ok: false, reason: e && e.extra && e.extra.recipientNotCovered ? 'recipient_not_covered' : 'consent_not_valid' }; }
 }
@@ -182,7 +245,7 @@ function open({ token, code, claim, ip }) {
     audit.log({ user: null, action: 'referral_link.open', entity: 'referral_link', entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: cover.reason, withheld: true } });
     return { ...base, withheld: true };
   }
-  const packet = JSON.parse(decrypt(link.packet_enc));
+  const packet = stored(link).packet;
   let newClaim = null;
   db.transaction(() => {
     if (!link.claim_hash) {
@@ -213,11 +276,19 @@ function acknowledge({ token, claim, status, by, note, ip }) {
   db.transaction(() => {
     db.run(`UPDATE referral_links SET ack_status=?, ack_at=?, ack_by_enc=?, ack_note_enc=?, updated_at=? WHERE id=?`, status, db.now(), encrypt(who), text ? encrypt(text) : null, db.now(), link.id);
     const label = { received: 'received it', accepted: 'accepted the client', scheduled: 'scheduled the client', declined: 'declined', unable_to_reach: 'could not reach the client' }[status];
-    db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`, uuid(), link.client_id, link.created_by, link.created_by,
-      encrypt(`${res.name} ${label} (secure referral link ${link.reference}) — confirm and record the outcome`), new Date().toISOString().slice(0, 10), status === 'declined' || status === 'unable_to_reach' ? 'high' : 'normal', link.referral_id);
+    const title = encrypt(`${res.name} ${label} (secure referral link ${link.reference}) — confirm and record the outcome`);
+    const priority = status === 'declined' || status === 'unable_to_reach' ? 'high' : 'normal';
+    // One to-do per link, saying what the recipient said last: a recipient answering again (or anyone holding a
+    // forwarded notice link) updates it rather than filling the worker's list (security review of 1.17.0, L3).
+    const mark = `(secure referral link ${link.reference})`;
+    const open = db.all(`SELECT id, title_enc FROM tasks WHERE referral_id=? AND assigned_to=? AND created_by=? AND status IN ('open','in_progress')`, link.referral_id, link.created_by, link.created_by)
+      .find(t => (dec(t.title_enc) || '').includes(mark));
+    if (open) db.run(`UPDATE tasks SET title_enc=?, priority=?, due_at=?, updated_at=? WHERE id=?`, title, priority, new Date().toISOString().slice(0, 10), db.now(), open.id);
+    else db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`, uuid(), link.client_id, link.created_by, link.created_by,
+      title, new Date().toISOString().slice(0, 10), priority, link.referral_id);
   });
   audit.log({ user: null, action: 'referral_link.ack', entity: 'referral_link', entityId: link.id, clientId: link.client_id, ip, details: { status, kind: link.kind } });
   return { ok: true, ack_status: status };
 }
 
-module.exports = { KINDS, TTL_HOURS, DEFAULT_TTL_HOURS, MAX_FAILED, ACK_STATUSES, NOT_VALID, create, revoke, open, acknowledge, listFor, present, invite, hashToken };
+module.exports = { SETTING, enabled, CLOSED_REFERRAL, REFUSALS_LOGGED_PER_HOUR, flushRefusals, KINDS, TTL_HOURS, DEFAULT_TTL_HOURS, MAX_FAILED, ACK_STATUSES, NOT_VALID, create, revoke, open, acknowledge, listFor, present, invite, hashToken };
