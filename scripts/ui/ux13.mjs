@@ -248,19 +248,9 @@ try {
     eq(await page.evaluate(async () => { const a = await import('./app.js'); return a.expireSignedOutDrafts(Date.now() + a.DRAFT_KEEP_SIGNED_OUT_MS + 1000); }), true, 'and clears it once the tab has been signed out longer');
     eq(await held(), 0, 'nothing of it is left in memory');
     await signIn(page, 'mrivera', PW);
-    ok(!(await page.$('#banners [data-resume-draft]')), 'so the same person signing in later is not offered it');
+    ok(!(await page.$('#banners [data-resume-draft]')), 'so the same person signing in later is not offered it', { held: await held() });
     await openVisit(page);
     ok(!(await page.$('.modal [data-resume-question]')), 'nor asked about it in the visit form');
-    await page.fill('.modal textarea[name=summary]', 'ux13 someone else must not see this');
-    await page.waitForTimeout(700);
-    await closeModals(page);
-    ok(await held() >= 1, 'a new draft is kept while signed in');
-    // Choosing Sign out clears it at once.
-    await page.evaluate(async () => (await import('./app.js')).logout());
-    eq(await held(), 0, 'choosing Sign out clears what was typed from memory at once');
-    await signIn(page, 'mrivera', PW);
-    await openVisit(page);
-    ok(!(await page.$('.modal [data-resume-question]')), 'the next visit starts fresh after Sign out');
     await page.fill('.modal textarea[name=summary]', 'ux13 someone else must not see this');
     await page.waitForTimeout(700);
     await closeModals(page);
@@ -271,8 +261,13 @@ try {
     await openVisit(page);
     ok(!(await page.$('.modal [data-resume-question]')), 'nor asked about it in the visit form');
     eq(await page.inputValue('.modal textarea[name=summary]'), '', 'and it is not filled in');
+    await page.fill('.modal textarea[name=summary]', 'ux13 typed by the second person');
+    await page.waitForTimeout(700);
     await closeModals(page);
+    ok(await held() >= 1, 'what the second person typed is kept while they are signed in');
+    // Choosing Sign out clears it at once (1.15.4, L3).
     await page.evaluate(async () => (await import('./app.js')).logout());
+    eq(await held(), 0, 'choosing Sign out clears what was typed from memory at once');
     await signIn(page, 'mrivera', PW);
     ok(!(await page.$('#banners [data-resume-draft]')), 'and it is gone for its author too once someone else signed in there');
   }

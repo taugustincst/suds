@@ -68,8 +68,8 @@ affects 1.15.1–1.15.3. Upgrade to 1.15.4.
   `user.permission.deny` (it was logged as a grant). `npm run reset-admin` removes a deny of `users:manage` on the
   account it resets and says so, and says first, plainly, when it reactivates a deactivated administrator.
 - **L3 (Low) — unsent visit drafts stayed in a signed-out tab's memory.** Choosing **Sign out** now clears
-  what was being typed at once; after a sign-out for inactivity it is kept for 15 minutes for the same person to
-  resume, then cleared.
+  what was being typed at once (and a form left open before it cannot put it back when the same person signs in
+  again); after a sign-out for inactivity it is kept for 15 minutes for the same person to resume, then cleared.
 
 ## 1.15.3 — 2026-09-29
 

@@ -669,8 +669,11 @@ export const can = (perm) => { const u = state.user; if (!u) return false; const
 // a session that expired) they are kept for DRAFT_KEEP_SIGNED_OUT_MS, then cleared, and the person who comes back
 // later starts afresh.
 export const DRAFT_KEEP_SIGNED_OUT_MS = 15 * 60000;
-const draftMap = new Map(); let draftOwner = null; let signedOutAt = 0;
-function dropDrafts() { draftMap.clear(); draftOwner = null; signedOutAt = 0; document.querySelectorAll('#banners [data-resume-draft]').forEach(b => b.remove()); }
+// draftEpoch: which clearing a form was built after. A form built before the drafts were cleared never writes
+// one again (a save still queued, or a change event from a field left behind, would otherwise put back what
+// Sign out just cleared as soon as the same person signed in).
+const draftMap = new Map(); let draftOwner = null; let signedOutAt = 0; let draftEpoch = 0;
+function dropDrafts() { draftMap.clear(); draftOwner = null; signedOutAt = 0; draftEpoch++; document.querySelectorAll('#banners [data-resume-draft]').forEach(b => b.remove()); }
 /** Signed out without saying so (idle, or the session expired): the drafts' clock starts. */
 function noteSignedOut() { if (!signedOutAt) signedOutAt = Date.now(); }
 /** Clear the drafts once they have been kept signed out for long enough. `now` is for tests. Returns whether it did. */
@@ -766,8 +769,8 @@ export const NOT_SAVED = Symbol('not saved');
 export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCancel, cancelText = 'Cancel', extra, draftKey, resume = null } = {}) {
   const inputs = {}; const sections = {};
   // Whose form this is: a save still queued when they sign out must not land in the next person's drafts.
-  const formOwner = state.user && state.user.id;
-  const mine = () => !!state.user && state.user.id === formOwner;
+  const formOwner = state.user && state.user.id; const formEpoch = draftEpoch;
+  const mine = () => !!state.user && state.user.id === formOwner && draftEpoch === formEpoch;
   const grid = h('div', { class: 'form-grid' });
   let target = grid;
   for (const f of fields) {
