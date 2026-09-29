@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.16.2 — 2026-09-29
 
 ### Security
 
@@ -67,8 +67,8 @@ Fixes from the frontline-UX review of 1.16.1 (round 7). No migration, no new per
 - **Smaller fixes.** The role select lists roles by name, and the chosen role's whole summary shows under it (it was
   cut off in the closed select); *My hours logged* is under *Your own work*, not among the program's tiles; Visits
   name the client (name and code, where the person may see names) as Calls and To-dos do; a new visit, when this
-  browser has none remembered, starts at the location and modality of the worker's own latest visit instead of the
-  office; a row whose Worker column names its owner says only *View only*; a supervisor editing a colleague's
+  browser has none remembered, starts at the programme's default location (the street for a harm-reduction
+  programme), as before; a row whose Worker column names its owner says only *View only*; a supervisor editing a colleague's
   overdose event is told whose it is; no permission is labelled "(all)" (*Care plans (read, add, change own)*, and
   what the others allow); the Home welcome tips leave out what the person cannot do (Finance and Read-only log
   nothing and open no client record); New to-do does not offer Finance or Read-only accounts as assignees; the
