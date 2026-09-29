@@ -316,10 +316,18 @@ function refusalMessage(r, months = 0) {
     : r.outOfBudget ? 'the check of this period\'s figures reached its limit before it could finish'
     : r.headline ? 'the number of people served could not be shown without giving someone away'
     : 'the check could not confirm that every small count in it is protected';
-  // A year is the longest standard period: asking for a longer one cannot help. What can (1.16.3; market review of
-  // 1.16.2): its quarters, each checked on its own, published instead of the year and never beside it.
-  const next = months >= 12 ? 'A year is the longest standard period. You can publish its four quarters instead, each once its figures are complete (each quarter is checked on its own and is published or refused by itself); then do not publish this year as well, because a year and its quarters can be subtracted from each other. If a quarter is refused too, tell whoever supports your SUDS server which period was refused (the server log records the check\'s figures).'
-    : `Publish a longer standard period (${months >= 3 ? 'a year' : 'a quarter or a year'}).`;
+  // Each kind of period has its own next step, and none points back at the one that sent the person here (market
+  // review of 1.16.3: a refused year offered its quarters, and a refused quarter offered the year). A year is the
+  // longest standard period: its quarters may be tried, each checked on its own (a quarter of a refused benchmark
+  // year can be refused too: test/thorough/refusal-quarters.test.js). A quarter may try its year, unless the year
+  // was refused or one of its quarters is already published (nested periods subtract). Where neither is left, the
+  // period cannot be published in this version, and the person is told whom to tell: the programme's own support,
+  // or, for a programme with none, the SUDS project's issue tracker (the channel docs/accessibility/STATEMENT.md
+  // gives), without client details.
+  const tell = 'tell whoever supports your SUDS (your IT partner or county) which period was refused; the server log records the check\'s figures. A programme with no one to tell can report it at https://github.com/taugustincst/suds/issues (the period and this message only, never a client\'s details).';
+  const next = months >= 12 ? `A year is the longest standard period. Its four quarters may be tried instead, each once its figures are complete: each is checked on its own and may be refused too. Never publish a quarter beside its year: a year and its quarters can be subtracted from each other. If the quarters are refused as well, this year cannot be published in this version of SUDS; ${tell}`
+    : months >= 3 ? `Its fiscal year may be tried instead once the year has ended, unless the year was refused too or another quarter of it is already published (a year and its quarters can be subtracted from each other). Otherwise this quarter cannot be published in this version of SUDS; ${tell}`
+    : 'Publish a longer standard period (a quarter or a year).';
   return `This period cannot be published: ${why}, so no publication release was made. ${next} The program's own submission to its funder, which is not for publication, is unaffected.`;
 }
 
@@ -331,7 +339,11 @@ function refusalMessage(r, months = 0) {
  * reversal_doses }, withheld_tables, withheld_reasons, id, audit: { steps, rounds, degraded } } - or, when
  * the audit could not verify the release even with tables withheld, { refused } and nothing to print. A table
  * the check against the method cannot show protected is withheld (degraded) and the rest checked again
- * (server/sdc.js protect); only the headline, the step budget or the backstop refuses the whole release.
+ * (server/sdc.js protect). The whole release is refused in four cases: the headline (people served) cannot be
+ * shown (refused.headline); the step budget ran out (refused.out_of_budget); the wall-clock backstop fired
+ * (refused.backstop); or the release with its tables withheld still failed its check (none of those flags, and
+ * refused.unprotected counts the counts it could not show protected - a quarter of the benchmark year is refused
+ * this way). refused.message says why and what can be tried for that kind of period (refusalMessage).
  */
 function protectFigures(inputs, T, { strict = false, budget, stepLimit, timeLimitMs = AUDIT_BACKSTOP_MS, degrade = true } = {}) {
   const raw = prepare(inputs.funder, inputs.domains);

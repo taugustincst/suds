@@ -127,22 +127,32 @@ fourfold does not help (1.6 billion units: still refused), so neither would a bu
 The 20,000-client year is unaffected (1,953 units). A refusal for want of budget is logged with the audit's work
 (steps, rounds, tables degraded), as a backstop refusal was.
 
-**Which programmes are refused.** A fiscal year with **about 110 to 240 overdose events** can be refused whole
-(sampled, not a guarantee: the edges are where refusals were seen, and many programmes inside the range publish).
-Measured by scaling this programme's overdose figures (T = 11, 12 months): 1.16.2's sweep (12 scales from 0.2 to
-1.5 times, 5 programmes each, every month's events and reversals moved by up to 2 at random) refused 17 of 60,
-with 126 to 237 events, and 1.16.2's docs said every programme with 125 or fewer published. That lower edge was
-wrong (engineering review of 1.16.2, M4): the reviewer's runs refused years of 125, 123 and 113 events, and a
-second sweep at 0.55 to 0.6 times (24 programmes) refused 6 with 113 to 128. Together, 23 of 84 refused, all for
-want of budget, all with 113 to 237 events and months of 1 to 10 events not reversed; below about 110 and above
-about 240 every programme published. `test/thorough/refusal-band.test.js` (CI's `thorough-sdc` job) runs both
-sweeps, checks that every refusal is whole (nothing printed) and every published release withheld only what its
-check did, and fails when the band leaves 100 to 260 events, so a change is seen here first. Only the 12-month year
-was measured; a quarter of such a programme has about a quarter of its events and is checked on its own, and the
-refusal message for a year now suggests publishing the quarters instead (never beside the year). That is the price
-of publishing only what the check can show protected; the programme's submission to its funder is unaffected. What
-would lift it is a cheaper sound check of such a table (a design change for a feature release, 1.17.0 work), not a
-larger budget.
+**Which programmes are refused.** No size of programme is guaranteed to publish. In sampled programmes, fiscal
+years with **from under 100 to over 300 overdose events** were refused whole, and many inside that range published;
+what decides it is how many months have few overdose events, or few not reversed, more than the total. A refusal
+publishes nothing, so it is always safe, and the programme's submission to its funder is unaffected. The history:
+1.16.2 and 1.16.3 stated a band ("about 110 to 240 events; below and above, every programme published") from
+sweeps that scaled this programme's overdose figures (T = 11, 12 months) and moved each month's events and
+reversals together by up to 2. The engineering review of 1.16.3 (M3) moved them independently by up to 3 or 4 and
+found refusals outside it on both sides. `test/thorough/refusal-band.test.js` (CI's `thorough-sdc` job) now runs
+all of these, 114 years: **34 refused, 26 for want of budget (87 to 237 events) and 8 because the release, with
+the events by month withheld, still failed its check (301 to 341 events)**. It checks that every refusal is whole
+(nothing printed) and every published release withheld only what its check did, and records the refusals; it
+pins no band.
+
+**Quarters are no sure way round (1.16.4).** A refused year's message offers its quarters, each checked on its
+own and never published beside the year. `test/thorough/refusal-quarters.test.js` measures that: 18 programmes
+seeded as the benchmark's is (1,100 to 2,600 clients, about 110 to 260 overdose events a year, three seeds each;
+the 2,000-client one with seed 7 is the benchmark), each year and each of its four quarters read as a publication
+release reads them (every table for that quarter, not the year's figures) and audited. **6 of 18 years were
+refused (all for want of budget, 140 to 230 events), and 28 of 72 quarters (5 for want of budget, 23 because the
+release with tables withheld still failed its check), with 29 to 71 events.** Every refused year had 1 to 3 of its
+quarters refused too (11 of its 24), and quarters of years that published were refused as well (17 of 48). The
+benchmark's own year is refused, and so is its first quarter (46 events; the other three publish). So the quarters
+may be tried, but a programme in this position may have no publishable standard period in this version; the
+refusal message for a quarter says so and whom to tell. That is the price of publishing only what the check can
+show protected. What would lift it is a cheaper sound check of such a table (a design change for a feature
+release, 1.17.0 work, to be measured on both sweeps), not a larger budget.
 
 Server, same run (for the record; the load makes these slower than the table above): Home dashboard, fiscal
 year, administrator 385–500 / 157–194 ms; start-up 365 ms, 81 MB; 50 navigators for 20 s: 100 requests/s, p50/p95
