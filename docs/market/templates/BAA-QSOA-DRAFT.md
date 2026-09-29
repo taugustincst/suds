@@ -32,6 +32,19 @@ A county-hosted install that the vendor never accesses may not need one; counsel
    with the information §164.410 requires as it becomes available.
 6. **Subcontractors** (e.g. the cloud hosting provider): flow-down BAAs with the same restrictions;
    list maintained and notified to the Covered Entity (see DPA).
+   **AI provider (only when the AI documentation copilot is turned on).** The copilot (`docs/AI-COPILOT.md`,
+   office server only, off by default) sends the text a worker gives for one client, with the identifiers SUDS
+   holds replaced, to one named AI provider: `[AI provider legal name; SUDS calls Anthropic's Messages API by
+   default]`. Where the Business Associate hosts SUDS or holds the provider's API key, that provider is its
+   subcontractor: before the copilot is turned on it must be listed in Part C, bound by a flow-down BAA with Part 2
+   QSO terms (Part B, item 8), and bound in writing `[to keep no request or response content beyond the call
+   ("zero retention"), or only for ___ days for abuse monitoring]` and `[never to use the content to train or
+   improve any model]`: **the exact retention and no-training terms are to be confirmed by counsel against the
+   provider's current agreement; do not state them from this draft.** Where the Covered Entity contracts with the
+   provider itself and holds the key (the arrangement SUDS's *Agreement with the AI provider* setting records), the
+   provider is the Covered Entity's own business associate, not the Business Associate's subcontractor, and this
+   item records only that the Business Associate does not send PHI to any AI provider on its own account. The
+   copilot is never used for SUD counseling notes (Part B, item 6).
 7. **Individual rights**: make PHI available for access (§164.524), amendment (§164.526) and accounting of
    disclosures (§164.528) within `[10]` business days of request — SUDS produces the accounting and exports.
 8. **Books and records** available to the Secretary of HHS.
@@ -73,6 +86,7 @@ that**:
 | Encryption keys held by | `[vendor, with custody procedure / county]` |
 | Vendor personnel with access | `[roles; named list maintained]` |
 | Subprocessors | `[cloud provider, email/support tool if it may receive PHI — ideally none]` |
+| AI provider (only if the copilot is turned on) | `[none / provider legal name; whose agreement (Business Associate's or Covered Entity's); retention and no-training terms as confirmed by counsel; date turned on]` |
 | Incident notice contact (county) | `[privacy officer, phone, email]` |
 | Incident notice contact (vendor) | `[security lead, phone, email]` |
 | Breach notice deadline | `[5]` business days (Part A.5) |
