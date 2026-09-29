@@ -174,6 +174,9 @@ function create(body, actor, base) {
   db.run(`INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,must_change_password,password_changed_at,scim_external_id,idp_seen_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?,?)`,
     id, a.username, NO_PASSWORD, a.display_name, a.email || null, a.title || null, role, active ? 1 : 0, now, a.scim_external_id || null, active ? now : null, now, now);
   audit.log({ user: actor, action: 'scim.user.create', entity: 'user', entityId: id, details: { username: a.username, role, active, role_from: a.role ? 'group mapping' : 'default' } });
+  // The programme's least-privilege default (server/caseload-default.js): a provisioned navigator or clinician
+  // starts held to their caseload, as one an administrator creates does.
+  require('./caseload-default').holdIfDefault(id, role, { actor, cause: 'scim_provisioned' });
   return toResource(find(id), base);
 }
 
@@ -195,6 +198,9 @@ function apply(id, a, actor, base, action) {
     db.run(`UPDATE users SET ${sets.join(', ')} WHERE id=?`, ...vals, id);
     if (deactivated) cutOff(id);
   });
+  // A group change that makes the person a navigator or a clinician (or takes them out of those roles), as an
+  // administrator's role change does (server/caseload-default.js onRoleChange).
+  if (a.role && a.role !== u.role) require('./caseload-default').onRoleChange(id, u.role, a.role, { actor });
   if (changed.length) audit.log({ user: actor, action: deactivated ? 'scim.user.deactivate' : action, entity: 'user', entityId: id, details: { username: a.username || u.username, changed, ...(a.role && a.role !== u.role ? { role: { from: u.role, to: a.role } } : {}), ...(reactivated ? { reactivated: true } : {}) } });
   return toResource(find(id), base);
 }

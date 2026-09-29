@@ -51,6 +51,11 @@ test('a 1.6.1 database upgrades to the current schema version', () => {
   assert.equal(db().getSetting('schema_version'), String(require('../server/db').LATEST_SCHEMA_VERSION));
 });
 
+test('an upgraded office starts with the least-privilege default off (1.17.0), so nobody\'s access changes silently', () => {
+  // A new install has it on (test/least-privilege-default.test.js); server/caseload-default.js.
+  assert.equal(db().getSetting('caseload_hold_new_staff'), '0');
+});
+
 test('migration leaves no orphaned rows', () => {
   assert.deepEqual(db().all('PRAGMA foreign_key_check'), []);
 });

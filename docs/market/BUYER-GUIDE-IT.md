@@ -55,9 +55,15 @@ process and one SQLite database per programme; a second process is refused
   them. From 1.16.1 SUD counseling notes are readable only by their author, the co-signer and staff who write clinical notes (clinicians, supervisors). Client records are shared: anyone who sees a client may update it, and the client's
   primary worker is told which fields changed when someone not on the care team does (field names are audited; earlier
   values are not kept: the client record has no revision history yet, planned). Only supervisors and administrators change or delete other
-  workers' visits, calls, notes, referrals and to-dos. Least privilege is **not** the default: a programme holds a person to their own caseload with a
-  per-user deny of *See every client* (`clients:all`), and keeps clinical notes from a navigator with a deny of
-  *Read clinical notes* — set before that person's data is imported or their device first syncs. Finance and
+  workers' visits, calls, notes, referrals and to-dos. **Least privilege for new staff (1.17.0):** with *New navigators
+  and clinicians start held to their caseload* on (Settings → Users & permissions), every account that becomes a
+  navigator or clinician — created by an administrator, an approved sign-up, SCIM provisioning (single sign-on links
+  that account and creates none), or a role change — is denied *See every client* (`clients:all`), audited with the
+  reason "programme default: held to caseload". It is **on for a new install** and **off for an office upgraded from
+  1.16.x** (Users & permissions recommends turning it on); existing staff change only through the confirmed, audited
+  *Apply to existing navigators and clinicians*. It does not take clinical notes from a navigator: a per-user deny of
+  *Read clinical notes* does, as a per-user deny of `clients:all` holds anyone else — set before that person's data is
+  imported or their device first syncs. The user list shows who is held to their caseload. Finance and
   read-only see client codes, never client records. Administrator access to clinical notes only via audited
   break-glass, reviewed by a supervisor.
 - **Account requests** (Sign up) wait for administrator approval and can be turned off.

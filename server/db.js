@@ -716,6 +716,8 @@ function initialise(d, schemaText, dbPath) {
     // A new install is a harm-reduction & outreach programme until someone says otherwise (the setup
     // wizard asks; Settings › Programme changes it). server/programme.js.
     d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('programme_profile',?)`).run(require('./programme').DEFAULT_PROFILE);
+    // New navigators and clinicians start held to their caseload on a new install (server/caseload-default.js).
+    d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('caseload_hold_new_staff','1')`).run();
     ensureMainSite(d);
   } else {
     encryptedColumns = 0;
@@ -729,6 +731,9 @@ function initialise(d, schemaText, dbPath) {
     if (!d.prepare(`SELECT 1 FROM settings WHERE key='programme_profile'`).get()) {
       d.prepare(`INSERT INTO settings(key,value) VALUES('programme_profile',?)`).run(require('./programme').defaultForExisting(d));
     }
+    // A database from before 1.17.0: the least-privilege default starts off, recorded once, so an upgrade
+    // changes nobody's access silently; Users & permissions recommends turning it on (server/caseload-default.js).
+    d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('caseload_hold_new_staff','0')`).run();
   }
   reindexNameParts(d);
   ensureIndexes(d, schemaText);

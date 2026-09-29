@@ -35,6 +35,8 @@ async function openUserForm(values, onDone) {
   // How many devices this person syncs from, so the "also wipe" choice below is made with the number in view.
   let deviceCount = 0;
   if (!isNew && !state.local) deviceCount = await get('/api/admin/devices', { quiet: true }).then(r => r.devices.filter(d => d.user_id === values.id && !d.revoked_at).length).catch(() => 0);
+  // Whether the least-privilege default will hold a new navigator or clinician (1.17.0), said on the form.
+  const heldByDefault = isNew && can('users:manage') ? await get('/api/users/caseload-default', { quiet: true }).then(r => r.enabled).catch(() => false) : false;
   const f = form([
     { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+' }, { name: 'display_name', label: 'Display name', required: true }, { name: 'email', label: 'Email' }, { name: 'title', label: 'Job title' },
     { name: 'role', label: 'Role', type: 'select', required: true, options: roleOptions(), help: 'Only supervisors and administrators change or delete other workers\' records; everyone else changes their own.' },
@@ -51,7 +53,7 @@ async function openUserForm(values, onDone) {
       const r = await post('/api/users', d); m.close(); await loadRefData();
       // Straight on to the new person's individual permissions (for someone who may manage them), so an override
       // is not a second trip: create, find the row again, open it again.
-      const created = { id: r.id, display_name: d.display_name, role: d.role };
+      const created = { id: r.id, display_name: d.display_name, role: d.role, held: !!r.held_to_caseload };
       const next = can('users:manage') ? () => openPermissionsDialog(created, onDone, { justCreated: true }) : onDone;
       // The list refresh below re-renders the page, and render() clears every open modal with it -- so the
       // one-time password used to flash up and vanish before anyone could read it. It now stays until
@@ -79,7 +81,8 @@ async function openUserForm(values, onDone) {
         if (!answer) return;
         moveTo = answer.moveTo;
       }
-      await put(`/api/users/${values.id}`, d); m.close(); toast('User updated', 'ok');
+      const saved = await put(`/api/users/${values.id}`, d); m.close();
+      toast(saved && saved.caseload_default === 'held' ? 'User updated. As a new navigator or clinician they are held to their caseload (program default).' : saved && saved.caseload_default === 'lifted' ? 'User updated. The program default\'s caseload hold was lifted with the new role.' : 'User updated', 'ok');
       // The caseload moves through the same audited transfer as Settings -> Move a caseload. If that fails the
       // account is still deactivated, and Home's "assigned to inactive staff" warning keeps it in view.
       if (moveTo) {
@@ -97,7 +100,8 @@ async function openUserForm(values, onDone) {
   const permLink = !isNew && can('users:manage') ? h('p', { class: 'small muted', 'data-perm-link': '1' },
     'The role gives this person\'s permissions. ', values.override_count ? `${values.override_count} individual override${values.override_count === 1 ? '' : 's'}. ` : '',
     h('button', { type: 'button', class: 'btn sm', 'data-open-permissions': values.id, onClick: () => { m.close(); openPermissionsDialog(values, onDone); } }, 'Permissions…'))
-    : isNew && can('users:manage') ? h('p', { class: 'small muted' }, 'Once the account is created you can grant or deny individual permissions straight away.') : null;
+    : isNew && can('users:manage') ? h('p', { class: 'small muted' }, 'Once the account is created you can grant or deny individual permissions straight away.',
+      heldByDefault ? h('span', { 'data-new-user-held': '1' }, ' A new navigator or clinician starts held to their caseload (the program default above): they see the clients assigned to them, not every client.') : null) : null;
   roleSummary(f);
   const m = modal(isNew ? 'New user' : `Edit ${values.display_name}`, permLink ? h('div', {}, permLink, f) : f, { wide: true });
 }
@@ -109,7 +113,7 @@ async function openUserForm(values, onDone) {
  */
 function openPermissionsDialog(user, onDone, { justCreated = false } = {}) {
   const box = h('div', { id: 'user-perm-section', 'data-perm-section': '1' });
-  const intro = justCreated ? h('div', { class: 'banner ok small mb', 'data-perm-just-created': '1' }, `${user.display_name} has been created with the ${fmt.label(user.role)} role's permissions. Grant or deny individual permissions below, or close this to finish.`) : null;
+  const intro = justCreated ? h('div', { class: 'banner ok small mb', 'data-perm-just-created': '1' }, `${user.display_name} has been created with the ${fmt.label(user.role)} role's permissions${user.held ? ', held to their caseload by the program default ("See every client" denied)' : ''}. Grant or deny individual permissions below, or close this to finish.`) : null;
   const dlg = modal(`Permissions — ${user.display_name}`, h('div', { 'data-perm-dialog': user.id }, intro, box,
     h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', 'data-perm-done': '1', onClick: () => dlg.close() }, 'Done'))),
   { wide: true, onClose: onDone });
@@ -362,8 +366,11 @@ route('admin', async (r) => {
   const T = {
     async users() {
       const { users } = await get('/api/users');
-      return h('div', {}, state.local ? null : await accessRequestsCard(refresh), h('div', { class: 'row mb' }, h('button', { class: 'btn primary', onClick: () => openUserForm(null, refresh) }, '+ New user')),
+      return h('div', {}, state.local ? null : await accessRequestsCard(refresh), await caseloadDefaultCard(refresh), h('div', { class: 'row mb' }, h('button', { class: 'btn primary', onClick: () => openUserForm(null, refresh) }, '+ New user')),
         table([{ label: 'Name', render: u => h('div', {}, h('b', {}, u.display_name), h('div', { class: 'small muted' }, u.username, u.title ? ` · ${u.title}` : '')) }, { label: 'Role', render: u => badge(fmt.label(u.role), u.role === 'admin' ? 'purple' : 'info') }, { label: 'Email', key: 'email' }, { label: 'MFA', render: u => u.mfa_enabled ? badge('On', 'ok') : badge('Off', 'warn') }, { label: 'Status', render: u => [u.is_active ? badge('Active', 'ok') : u.access_status === 'declined' ? badge('Request declined') : badge('Inactive'), u.locked_until && Date.parse(u.locked_until) > Date.now() ? [' ', badge('Locked', 'danger')] : null] }, { label: 'Last login', render: u => u.last_login_at ? fmt.dt(u.last_login_at) : 'never' },
+          // Which clients the person reaches (1.17.0): held to their caseload shows at a glance, and whether the
+          // programme default did it (server/caseload-default.js).
+          { label: 'Clients', render: clientScopeCell },
           // Individual permissions: their own button (and a badge when the person has any overrides).
           { label: 'Permissions', render: u => u.override_count ? h('span', { 'data-perm-count': String(u.override_count) }, badge(`${u.override_count} override${u.override_count === 1 ? '' : 's'}`, 'warn')) : h('span', { class: 'small muted' }, 'Role only') },
           { label: '', render: u => h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openUserForm(u, refresh) }, 'Edit'),
@@ -374,7 +381,7 @@ route('admin', async (r) => {
       const f = form([{ type: 'section', label: 'Your program', collapsible: true, open: true, heading: true },
         { name: 'org_name', label: 'Organization / program name', required: true }, { name: 'county_name', label: 'County' }, { name: 'program_contact', label: 'Privacy officer / program contact' },
         { name: 'caseload_restriction', label: 'Caseload restriction', type: 'select', options: [{ value: '1', label: 'On — people denied "See every client" see assigned clients only (recommended)' }, { value: '0', label: 'Off — all staff see all clients' }], noBlank: true,
-          help: 'Navigators and clinicians see every client by default. To hold a person to their caseload, deny them "See every client" under Users & permissions → Permissions; this setting then limits them to the clients assigned to them.' },
+          help: 'Navigators and clinicians see every client unless they are held to their caseload: by the Users & permissions setting "New navigators and clinicians start held to their caseload", or one by one by denying them "See every client" under Permissions. This setting is what then limits them to the clients assigned to them.' },
         { name: 'note_lock_days', label: 'Days before unsigned drafts are flagged', type: 'number', min: 0, step: 1 },
         timezoneField(s),
         // The rest of the page is folded into sections, each opened when it is needed: the whole form used to be
@@ -542,6 +549,54 @@ route('admin', async (r) => {
 });
 
 // ---------------------------------------------------------------------------
+// The programme-wide least-privilege default (1.17.0, server/caseload-default.js): whether new navigators and
+// clinicians start held to their caseload (a per-user deny of "See every client", reason "programme default:
+// held to caseload"), and the one-off "Apply to existing navigators and clinicians", which lists exactly who
+// changes before anything does.
+// ---------------------------------------------------------------------------
+function clientScopeCell(u) {
+  const s = u.client_scope || {};
+  if (s.scope === 'caseload') return h('span', { 'data-client-scope': 'caseload', 'data-held-by-default': s.held_by_default ? '1' : '0' }, badge('Caseload only', 'info'),
+    s.held_by_default ? h('div', { class: 'small muted' }, 'program default') : null);
+  if (s.scope === 'all') return h('span', { 'data-client-scope': 'all', class: 'small' }, 'Every client');
+  if (s.scope === 'codes') return h('span', { 'data-client-scope': 'codes', class: 'small muted' }, 'Client codes only');
+  return h('span', { 'data-client-scope': 'none', class: 'small muted' }, 'None');
+}
+async function caseloadDefaultCard(onDone) {
+  const d = await get('/api/users/caseload-default', { quiet: true }).catch(() => null);
+  if (!d) return null;
+  const f = form([{ name: 'enabled', label: 'New navigators and clinicians start held to their caseload', type: 'checkbox', span: true,
+    help: 'Every new navigator or clinician account (created here, an approved access request, or provisioned by your identity provider), and anyone whose role is changed to one of those, is denied "See every client", so they see only the clients assigned to them. Navigators still read clinical notes; deny that per person under Permissions. Existing accounts do not change.' }],
+  { values: { enabled: d.enabled }, submitText: 'Save', onSubmit: async (v) => {
+    await put('/api/users/caseload-default', { enabled: !!v.enabled });
+    toast(v.enabled ? 'New navigators and clinicians will start held to their caseload' : 'New navigators and clinicians will see every client', 'ok'); onDone();
+  } });
+  const n = d.would_change.length;
+  return h('div', { class: 'card mb', 'data-caseload-default': d.enabled ? 'on' : 'off' }, h('h2', {}, 'Who new staff see'),
+    d.enabled ? null : h('div', { class: 'banner warn', role: 'note', 'data-caseload-default-recommend': '1' }, h('b', {}, 'Recommended: turn this on. '),
+      'New navigators and clinicians see every client in the program until someone remembers to deny it. Least privilege as the starting point is what county security reviews expect.'),
+    d.caseload_restriction ? null : h('div', { class: 'banner warn', role: 'note', 'data-caseload-restriction-off': '1' }, 'Caseload restriction is off (Settings → Program), so being held to a caseload limits nobody until it is turned on.'),
+    f,
+    h('div', { class: 'mt' }, n
+      ? h('button', { class: 'btn', type: 'button', 'data-apply-existing': String(n), onClick: () => applyExistingDialog(d, onDone) }, `Apply to existing navigators and clinicians (${n})…`)
+      : h('p', { class: 'small muted', 'data-apply-existing': '0' }, 'Every existing navigator and clinician is already held to their caseload, or has been granted "See every client" individually.')));
+}
+function applyExistingDialog(d, onDone) {
+  const people = d.would_change;
+  const row = (u) => h('li', {}, `${u.display_name} (${u.username}) — ${fmt.label(u.role)}${u.is_active ? '' : ', inactive'}`);
+  const m = modal('Hold existing staff to their caseload', h('div', { 'data-apply-dialog': '1' },
+    h('p', {}, `These ${people.length} ${people.length === 1 ? 'person' : 'people'} will be denied "See every client" and from their next request see only the clients assigned to them. Each change is recorded in the audit log.`),
+    h('ul', { class: 'small', 'data-apply-list': '1' }, people.map(row)),
+    d.kept.length ? [h('p', { class: 'small' }, 'Not changed, because they were granted "See every client" individually:'), h('ul', { class: 'small muted', 'data-apply-kept': '1' }, d.kept.map(row))] : null,
+    h('p', { class: 'small muted' }, 'Anyone can be given every client back one by one under Permissions (revoke the deny).'),
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', onClick: () => m.close() }, 'Cancel'),
+      h('button', { class: 'btn primary', type: 'button', 'data-apply-confirm': '1', onClick: async () => {
+        const r = await post('/api/users/caseload-default/apply', { user_ids: people.map(u => u.id) });
+        m.close(); toast(`${r.changed} ${r.changed === 1 ? 'person is' : 'people are'} now held to their caseload${r.skipped ? ` (${r.skipped} had changed since the list was shown and were left alone)` : ''}`, 'ok'); onDone();
+      } }, `Hold ${people.length} to their caseload`))), { wide: true });
+}
+
+// ---------------------------------------------------------------------------
 // Access requests: what the sign-in page's "Sign up" sends (POST /api/auth/signup). Each waits here until an
 // administrator approves it — choosing the role, and a supervisor if wanted — or declines it.
 // ---------------------------------------------------------------------------
@@ -553,7 +608,7 @@ async function accessRequestsCard(onDone) {
       { name: 'supervisor_id', label: 'Supervisor (optional)', type: 'select', placeholder: '— none —', options: state.users.filter(u => u.is_active !== 0 && ['supervisor', 'admin'].includes(u.role)).map(u => ({ value: u.id, label: u.display_name })) },
       { name: 'title', label: 'Job title (optional)' },
     ], { submitText: 'Approve', onCancel: () => m.close(), onSubmit: async (d) => {
-      await post(`/api/users/${q.id}/approve`, d); m.close(); toast(`${q.display_name} can now sign in`, 'ok'); await loadRefData(); onDone();
+      const r = await post(`/api/users/${q.id}/approve`, d); m.close(); toast(`${q.display_name} can now sign in${r && r.held_to_caseload ? ', held to their caseload (program default)' : ''}`, 'ok'); await loadRefData(); onDone();
     } });
     roleSummary(f);
     const m = modal(`Approve ${q.display_name}`, h('div', {}, h('p', { class: 'small muted' }, `${q.username}${q.email ? ` · ${q.email}` : ''}. They sign in with the password they chose; two-step verification applies as for any new account.`), f));

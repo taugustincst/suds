@@ -102,7 +102,8 @@ does not hold.
    role-based access (role defaults: navigators and clinicians see every client and change only their own
    work, while client records are shared and the primary worker is notified of others' changes; SUD
    counseling notes only for their author, co-signer and clinical staff; a per-user deny holds a person to
-   their caseload); tamper-evident hash-chained audit log, append-only in the
+   their caseload, and from 1.17.0 a programme setting, on for new installs, gives it to every new navigator
+   and clinician); tamper-evident hash-chained audit log, append-only in the
    database, anchored every hour (write-once when AUDIT_ANCHOR_DIR points at WORM storage).
    Evidence: docs/HIPAA.md, docs/security/. Attestation: none. SOC 2: readiness self-assessment only
    [audit planned for ___ / not planned]; independent penetration test [not yet commissioned / planned for
