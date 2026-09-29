@@ -1,8 +1,8 @@
 # What SUDS is for, and where it stops
 
-SUDS is the operations system for **harm-reduction and prevention programmes**: outreach encounters (named or
-anonymous), naloxone and supply distribution, and grant/funder reporting, with privacy controls built to the
-42 CFR Part 2 standard. Its users are community-based organisations and county programmes doing outreach, harm
+SUDS is the operations system for **harm-reduction and outreach programmes, prevention-funded outreach included**:
+outreach encounters (named or anonymous), naloxone and supply distribution, and grant/funder reporting, with
+privacy controls built to support 42 CFR Part 2. Its users are community-based organisations and county programmes doing outreach, harm
 reduction, naloxone and test-strip distribution, prevention and navigation, funded by opioid-settlement money,
 SOR / the Naloxone Distribution Project, SABG prevention funds and similar grants. "Prevention" here means
 prevention-funded outreach and distribution: SABG primary-prevention reporting (group and community events with

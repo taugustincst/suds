@@ -23,6 +23,20 @@ The SUDS project has not commissioned an independent penetration test. This scop
 | Transport | TLS configuration of the deployed proxy/app, HSTS, certificate handling | `Caddyfile`, `server/listener.js` |
 | Host/container (optional) | Container escape surface, file permissions of `data/`, service hardening | `Dockerfile`, `../DEPLOYMENT.md` systemd unit |
 
+### Classes fixed after the security reviews of 1.16.0 and 1.16.1 (confirm them)
+
+These were found by the project's own reviews and fixed in 1.16.1 and 1.16.2 (CHANGELOG, *Security*). Test that
+they stay fixed rather than rediscovering them; each has API tests in `test/`.
+
+| Class | What to try | Reference |
+| --- | --- | --- |
+| Stored-file serving | Upload or sync a resource photo, form attachment or document whose declared type is `text/html`, SVG or script, or whose bytes are not what its type says; check every stored file is served with `nosniff`, a `Content-Disposition`, `Cross-Origin-Resource-Policy: same-origin` and a sandbox CSP, never as a page of the app's origin | `server/routes/resources.js`, `server/routes/forms.js`, `server/routes/sync.js` |
+| Sync attribution and column smuggling | Push rows that name another worker as creator or discloser (`created_by`, `disclosed_by`, `given_by`, `recorded_by`, `opened_by`, `uploaded_by`), or carry columns the table's rules do not declare; neither may be stored as sent | `server/rules/push.js`, `server/rules/*` |
+| Separation of duties | Record or change spending or time under a colleague's name (REST or sync), then approve it as the same account | `server/routes/budget.js`, `server/routes/time.js` |
+| SUD counseling-note access | Read a counseling note as a navigator, through break-glass, and through sync (the note and its addenda, and a device that held them before) | `server/rules/notes.js`, `server/routes/notes.js`, `server/routes/sync.js` |
+| Note signatures via sync | Sign, co-sign or change a signed note, or ask for a review of another worker's signed note, from a device, where the REST routes would refuse it | `server/rules/notes.js`, `server/rules/note_addenda.js` |
+| Client-change notices | As someone off a client's care team, change the client and then edit, complete or delete the notice the primary worker receives | `server/rules/clients.js`, `server/rules/tasks.js` |
+
 ## Out of scope
 
 * Denial-of-service beyond verifying rate limits and body caps (single-instance by design).

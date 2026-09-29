@@ -2,8 +2,9 @@
 
 For the people selling, buying and approving SUDS. The short version:
 
-> **The operations system for harm-reduction and prevention programmes — outreach encounters, naloxone and
-> supply distribution, and grant/funder reporting — with privacy controls built to the 42 CFR Part 2 standard.**
+> **The operations system for harm-reduction and outreach programmes, prevention-funded outreach included —
+> outreach encounters, naloxone and supply distribution, and grant/funder reporting — with privacy controls built
+> to support 42 CFR Part 2.**
 > For community-based organisations funded by opioid-settlement, SOR / Naloxone Distribution Project and SABG
 > prevention money spent on outreach and distribution, and for the counties that sponsor them. SABG
 > primary-prevention (PPSDS) reporting is not supported. Clinical modules (care plan, assessments, CalOMS Tx,
