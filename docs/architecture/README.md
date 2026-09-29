@@ -205,7 +205,14 @@ told (flagged `attribution`), and the row is recorded as its user's. That replac
 arrives as the device recorded it": on a shared phone the account that syncs is the one the office can vouch for,
 and the owner columns (who did the work: a visit's worker) keep their own rule, `attribute()`, which refuses
 another worker's name without `records:manage-others`. `test/sync-attribution.test.js` holds every synchronised
-table to it. A tombstone for shared reference data (resources, templates) still needs `records:manage-others`
+table to it. A note's author is a creator column, not an owner one (1.16.2): nobody writes a note in someone else's
+name, at either door, so a device's note is its syncing user's, and a signature a push brings (a draft that stops
+being one) is refused unless that user is the author signing it themselves; the office works the signature hash out
+over what it stores and audits it as `note.sign` with `via: sync`, as the sign route does (security review of 1.16.1,
+H1; `test/security-1162.test.js`). A supply line's worker is its visit's and is not a device's to send. A note
+changed in a pull's window that its reader may not read (a draft flagged as a SUD counseling note after their device
+pulled it) is named in `dropped_rows` with its addenda, not left out in silence (`server/routes/sync.js`
+`exportInto`; M3, `test/counseling-drop-device.test.js`). A tombstone for shared reference data (resources, templates) still needs `records:manage-others`
 unless the table's rules say whose a row is (a resource photo: anyone who keeps the directory, as over REST);
 CalOMS answers are validated by `server/caloms.js` over REST only.
 

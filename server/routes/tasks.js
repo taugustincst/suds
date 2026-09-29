@@ -14,6 +14,7 @@ const { withClientName, SELECT: NAME_COLS } = require('../client-name');
 // and handed to SQL — not date('now','localtime') in SQL against new Date().toISOString() in JS, which
 // were two different days for a few hours either side of midnight.
 const { localDate } = require('./budget');
+const { isNotice } = require('../rules/tasks');
 function dueTasks(ctx, within) {
   const cf = auth.caseloadFilter(ctx.user, 'tasks.client_id');
   const horizonMs = Date.now() + within * 60000;
@@ -24,7 +25,12 @@ function dueTasks(ctx, within) {
       AND (tasks.client_id IS NULL OR ${cf.sql})
     ORDER BY tasks.due_at LIMIT 50`, ctx.user.id, horizonDay, horizon, ...cf.params);
   const now = db.now(); const today = localDate();
-  return rows.map(x => withClientName(ctx, x)).map(x => ({ ...presentTask(x), overdue: x.due_at.length === 10 ? x.due_at < today : x.due_at < now }));
+  // Change notices (server/rules/clients.js notifyPrimary) have no due date and are never overdue: listed first, as new.
+  const notices = db.all(`SELECT tasks.*, c.client_code, ${NAME_COLS} FROM tasks LEFT JOIN clients c ON c.id=tasks.client_id
+    WHERE tasks.assigned_to=? AND tasks.created_by=? AND tasks.status='open' AND tasks.due_at IS NULL AND tasks.client_id IS NOT NULL AND ${cf.sql}
+    ORDER BY tasks.updated_at DESC LIMIT 50`, ctx.user.id, ctx.user.id, ...cf.params).filter(isNotice);
+  return [...notices.map(x => ({ ...presentTask(withClientName(ctx, x)), overdue: false })),
+    ...rows.map(x => withClientName(ctx, x)).map(x => ({ ...presentTask(x), overdue: x.due_at.length === 10 ? x.due_at < today : x.due_at < now }))];
 }
 
 // The due-reminder poll is a count the app shell repeats all day; auditing every poll wrote thousands of
@@ -41,7 +47,7 @@ module.exports = (r) => {
       lastDue.set(ctx.user.id, signature);
       audit.log({ user: ctx.user, action: 'task.due', ip: ctx.ip, details: { within, count: rows.length } });
     }
-    return { rows, within, overdue: rows.filter(x => x.overdue).length, due_soon: rows.filter(x => !x.overdue).length };
+    return { rows, within, overdue: rows.filter(x => x.overdue).length, due_soon: rows.filter(x => !x.overdue && !x.notice).length, notices: rows.filter(x => x.notice).length };
   });
   crud.build(r, {
     table: 'tasks', entity: 'task', perm: 'tasks', dateCol: 'due_at', ownerCol: 'assigned_to', creatorCol: 'created_by', clientRequired: false,
@@ -71,6 +77,8 @@ function presentTask(t) {
   if (!t) return t;
   const o = { ...t, title: t.title_enc ? decrypt(t.title_enc) : '', title_enc: undefined };
   if ('description_enc' in t) { o.description = t.description_enc ? decrypt(t.description_enc) : null; o.description_enc = undefined; }
+  // A change notice (1.16.2): the UI shows it as a read-only card; only its assignee or a manager closes it.
+  if (o.description && o.description.includes('Reference: client record change')) o.notice = true;
   return o;
 }
 module.exports.presentTask = presentTask;

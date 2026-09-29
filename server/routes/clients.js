@@ -442,6 +442,14 @@ module.exports = (r) => {
     return { ok: true, kept: keep.id, merged: source.id, moved };
   });
 
+  // The client's notes this reader may read: the kinds they read, less the SUD counseling notes they may not (the
+  // list's rule, routes/notes.js), so the tab's count neither disagrees with it nor reveals one (UX review r7, M7).
+  function noteCount(ctx, clientId) {
+    const kinds = ['admin', 'clinical'].filter(k => auth.hasPerm(ctx.user, `notes:${k}:read`) || auth.hasPerm(ctx.user, `notes:${k}:write`));
+    if (!kinds.length) return 0;
+    const sud = require('../rules/notes').counselingFilter(ctx.user, 'n');
+    return db.one(`SELECT COUNT(*) n FROM notes n WHERE n.client_id=? AND n.deleted_at IS NULL AND n.kind IN (${kinds.map(() => '?').join(',')}) AND ${sud.sql}`, clientId, ...kinds, ...sud.params).n;
+  }
   r.get('/api/clients/:id', auth.requireAuth, auth.requirePerm('clients:read'), (ctx) => {
     const row = loadClient(ctx, ctx.params.id);
     const client = M.decryptRow(row);
@@ -453,10 +461,12 @@ module.exports = (r) => {
     client.counts = {
       interventions: db.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, row.id).n,
       calls: db.one(`SELECT COUNT(*) n FROM calls WHERE client_id=?`, row.id).n,
-      notes: db.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND deleted_at IS NULL`, row.id).n,
+      notes: noteCount(ctx, row.id), // the notes the reader may read (1.16.2: never a counseling note they may not)
       forms: db.one(`SELECT COUNT(*) n FROM client_forms WHERE client_id=? AND deleted_at IS NULL`, row.id).n,
       referrals: db.one(`SELECT COUNT(*) n FROM referrals WHERE client_id=?`, row.id).n,
       open_tasks: db.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, row.id).n,
+      // Of those, the change notices (open_tasks includes them): never overdue, shown apart (1.16.2).
+      notices: db.all(`SELECT description_enc FROM tasks WHERE client_id=? AND status='open' AND due_at IS NULL AND created_by=assigned_to`, row.id).filter(require('../rules/tasks').isNotice).length,
       minutes: db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
       spent: db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n,
       episodes: db.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n,

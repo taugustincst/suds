@@ -48,8 +48,11 @@ function mkClient(owner) {
 // the table's rules set for themselves on push (a signature, a ruling, the visit's worker on a supply line).
 const DEVICE_NAMES = new Set([
   'assignments.user_id', 'tasks.assigned_to', 'care_plan_steps.owner_user_id', 'patient_requests.handled_by',
-  'notes.signed_by', 'notes.cosigned_by', 'time_entries.approved_by', 'expenditures.approved_by', 'intervention_supplies.user_id',
+  'notes.signed_by', 'notes.cosigned_by', 'time_entries.approved_by', 'expenditures.approved_by',
 ]);
+// Columns the table's rules set from another record, whatever a device sends: a supply line's worker is its visit's
+// (1.16.2, security review of 1.16.1, L1).
+const OFFICE_SETS = new Set(['intervention_supplies.user_id']);
 
 test('every synchronised table: a device may name only the user columns its rules check; the creator columns are the office\'s', () => {
   for (const t of SYNC.tables) {
@@ -61,7 +64,7 @@ test('every synchronised table: a device may name only the user columns its rule
       const stamped = (R.createdBy || []).includes(col) || (R.updatedBy || []).includes(col);
       const owner = R.owner && R.owner.col === col;
       if (DEVICE_NAMES.has(key) || owner) assert.ok(R.writable.has(col), `${key} is a column a device names (checked by the rules)`);
-      else assert.ok(!R.writable.has(col) && (stamped || col === 'revoked_by' || col === 'completed_by' || col === 'closed_by' || col === 'approved_by'),
+      else assert.ok(!R.writable.has(col) && (stamped || OFFICE_SETS.has(key) || col === 'revoked_by' || col === 'completed_by' || col === 'closed_by' || col === 'approved_by'),
         `${key}: a device must not write it; it is the office's (createdBy/updatedBy, or set by the table's own rules)`);
     }
     // Stored file metadata and blobs are the office's to work out from the file.
@@ -80,6 +83,8 @@ const FIXTURES = {
   court_orders: (cid) => ({ as: 'sup', col: 'recorded_by', row: { client_id: cid, order_type: 'noncriminal_2_64', court_enc: 'Superior Court', purpose_enc: 'p', scope_enc: 's', issued_at: day(-1) } }),
   part2_notices: (cid) => ({ as: 'navA', col: 'given_by', row: { client_id: cid, given_at: day(0), method: 'in_person_paper' } }),
   tasks: (cid) => ({ as: 'navA', col: 'created_by', row: { client_id: cid, title_enc: 'Call back', assigned_to: U.navA, status: 'open', priority: 'normal' } }),
+  // A note's author (1.16.2, security review of 1.16.1, H1): nobody writes a note in someone else's name.
+  notes: (cid) => ({ as: 'clin', col: 'author_id', row: { client_id: cid, kind: 'clinical', format: 'narrative', content_enc: 'A draft', occurred_at: iso(), status: 'draft', part2_protected: 1 } }),
   note_addenda: (cid) => { const n = randomUUID(); H.db.run(`INSERT INTO notes(id,client_id,author_id,kind,content_enc,occurred_at,status,signed_by,signed_at) VALUES(?,?,?,?,?,?,?,?,?)`, n, cid, U.navA, 'admin', enc('x'), iso(), 'signed', U.navA, iso()); return { as: 'navA', col: 'author_id', row: { note_id: n, content_enc: 'Addendum' } }; },
   disclosures: (cid) => ({ as: 'navA', col: 'disclosed_by', row: { client_id: cid, recipient_enc: 'County', purpose_enc: 'x', what_enc: 'y', disclosed_at: iso(), basis: 'medical_emergency', justification_enc: 'z' } }),
   imports: () => ({ as: 'navA', col: 'imported_by', row: { source: 'generic', status: 'staged', filename_enc: 'x.txt' } }),

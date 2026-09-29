@@ -3,7 +3,10 @@
 // notes:clinical:write, and only a clinical note can be a SUD counseling note (42 CFR §2.11). A draft is its
 // author's (or a manager's) to change. A signed note is the legal record: nothing about it changes except the
 // request for a review, and an addendum is how it grows (server/rules/note_addenda.js). Only the author signs;
-// a countersignature is the supervisor's act on the office server and is never taken from a device.
+// a countersignature is the supervisor's act on the office server and is never taken from a device. Who wrote a note
+// is the account that synced it (createdBy), as over REST, and a signature a device brings is its author's own:
+// the syncing user signing their own draft. The office works the signature's hash out itself and audits it as
+// note.sign (security review of 1.16.1, H1: a manage-others push signed a clinician's draft in their name).
 const db = require('../db');
 const auth = require('../auth');
 const { define, refuse, flag, notPermitted } = require('./core');
@@ -28,6 +31,17 @@ function closeSignReminders(authorId, noteId, clientId) {
   return done.map(t => t.id);
 }
 
+/**
+ * A note no longer a SUD counseling note is sent again to the devices that dropped it (routes/sync.js exportInto,
+ * dropHidden); its addenda, unchanged themselves, are stamped so they follow it. Called by PUT /api/notes/:id and push.
+ */
+function reissueAddenda(noteId, was, now) {
+  if (Number(was) && !Number(now)) db.run(`UPDATE note_addenda SET updated_at=? WHERE note_id=?`, db.now(), noteId);
+}
+
+/** Does this push sign the note: a new note that is not a draft, or a draft that stops being one? */
+const signs = (row, c) => !!row.status && row.status !== 'draft' && (!c.existing || c.existing.status === 'draft');
+
 module.exports = define({
   table: 'notes',
   deviceColumns: ['status', 'signed_at', 'signed_by', 'signature_hash', 'cosign_required', 'cosigned_by', 'cosigned_at', 'cosignature_hash', 'cosign_note_enc', 'import_item_id', 'deleted_at'],
@@ -40,7 +54,7 @@ module.exports = define({
     problem_ids: { type: 'array', maxLen: 30, of: 'string', fromColumn: JSON.parse },
   },
   tombstone: 'never',
-  owner: { col: 'author_id', all: 'records:manage-others' },
+  createdBy: ['author_id'],
   editableBy: (user, row) => (row.status === 'draft' && row.author_id !== user.id && !auth.hasPerm(user, 'records:manage-others') ? notPermitted('Only the author can edit a draft') : null),
   authorise(row, c) {
     const kind = c.existing ? c.existing.kind : row.kind;
@@ -61,8 +75,9 @@ module.exports = define({
         if (!p || p.client_id !== clientId) { out.push(refuse('has a value the office does not accept (it is linked to a problem that is not on this client\'s problem list)', { message: 'Validation failed', fields: { problem_ids: 'names a problem that is not on this client\'s problem list' } })); break; }
       }
     }
-    // Only the person who wrote a note signs it; a supervisor countersigns instead (POST /api/notes/:id/sign).
-    if (c.via === 'sync' && row.status && row.status !== 'draft' && (!c.existing || e.status === 'draft') && row.signed_by && row.signed_by !== (row.author_id || e.author_id)) {
+    // Only the person who wrote a note signs it, and only they (POST /api/notes/:id/sign): on push, the syncing user
+    // signing their own note. A supervisor countersigns instead.
+    if (c.via === 'sync' && signs(row, c) && (c.user.id !== (c.existing ? e.author_id : row.author_id) || (row.signed_by && row.signed_by !== c.user.id))) {
       out.push(refuse('not permitted: only the author can sign a note', { status: 403, message: 'Only the author can sign a note. Supervisors countersign instead.' }));
     }
     return out;
@@ -84,7 +99,11 @@ module.exports = define({
       row.cosign_note_enc = undefined;
       // Whether it needs a countersignature comes from its author's account when it was written, as over REST.
       row.cosign_required = e.cosign_required;
-    } else {
+    }
+    // A signature arriving now (checked above to be the syncing author's own): theirs, a signed note, with the hash
+    // the office works out in afterApply over what it stores, whatever the device sent.
+    if (signs(row, c)) { row.status = 'signed'; row.signed_by = c.user.id; row.signed_at = row.signed_at || db.now(); row.signature_hash = null; }
+    if (!e) {
       for (const k of COSIGN) row[k] = null;
       row.cosign_note_enc = undefined;
       const author = db.one(`SELECT requires_cosign FROM users WHERE id=?`, row.author_id || c.user.id);
@@ -93,13 +112,20 @@ module.exports = define({
     return asserted ? flag('was accepted, but not the countersignature on it: a supervisor countersigns at the office, never by sync', { code: 'ruling' }) : null;
   },
   // A note signed on a device closes its reminder at the office too, as signing here does (routes/notes.js).
+  // The signature is recomputed as POST /api/notes/:id/sign computes it, and audited as that route audits it.
   afterApply(row, o, c) {
+    if (c.existing) reissueAddenda(row.id, c.existing.counseling_note, o.counseling_note ?? c.existing.counseling_note);
     if (c.existing && c.existing.status !== 'draft') return;
-    const n = db.one(`SELECT id, author_id, client_id, status FROM notes WHERE id=?`, row.id);
-    if (n && n.status !== 'draft') closeSignReminders(n.author_id, n.id, n.client_id);
+    const n = db.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required FROM notes WHERE id=?`, row.id);
+    if (!n || n.status === 'draft') return;
+    const hash = require('../crypto').sha256(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ''}`);
+    db.run(`UPDATE notes SET signature_hash=? WHERE id=?`, hash, n.id);
+    const reminders = closeSignReminders(n.author_id, n.id, n.client_id);
+    require('../audit').log({ user: c.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: 'device', details: { hash, via: 'sync', cosign_required: !!n.cosign_required, reminders_closed: reminders.length ? reminders : undefined } });
   },
 });
 module.exports.closeSignReminders = closeSignReminders;
+module.exports.reissueAddenda = reissueAddenda;
 
 /**
  * Who may read a SUD counseling note (42 CFR §2.11), restricted by design from 1.16.1 (the owner's decision): its

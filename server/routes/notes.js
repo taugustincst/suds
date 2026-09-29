@@ -194,6 +194,7 @@ module.exports = (r) => {
     if (v.structured !== undefined) { sets.push('structured_enc=?'); params.push(v.structured ? encrypt(JSON.stringify(v.structured)) : null); }
     const stamp = sets.length ? db.now() : n.updated_at;
     if (sets.length) db.run(`UPDATE notes SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, stamp, n.id);
+    if (v.counseling_note !== undefined) require('../rules/notes').reissueAddenda(n.id, n.counseling_note, v.counseling_note ? 1 : 0);
     audit.log({ user: ctx.user, action: 'note.update', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
     return { ok: true, updated_at: stamp };
   });

@@ -1,6 +1,7 @@
 'use strict';
 const db = require('../db');
 const auth = require('../auth');
+const audit = require('../audit');
 const crud = require('../crud');
 const C = require('../constants');
 const O = require('../options');
@@ -33,7 +34,9 @@ function checkCostPermission(ctx, v) {
 // (no existing row), update (amend the still-pending one, or create/remove one as the cost is added or
 // cleared) and is a no-op once the linked expenditure has been approved/rejected/reimbursed: that is real
 // money that has already moved, and an edit to the service record must not silently rewrite it.
-function syncExpenditure(row) {
+// The expenditure it writes is audited as the caller's (expenditure.create/update): separation of duties reads the
+// audit trail, so whoever caused it cannot approve it (security review of 1.16.1, M1; rules/shared.js).
+function syncExpenditure(ctx, row) {
   const existing = db.one(`SELECT * FROM expenditures WHERE intervention_id=?`, row.id);
   if (existing && existing.status !== 'pending') return;
   const wantsCost = row.cost > 0 && row.funding_source_id && row.budget_line_id;
@@ -42,22 +45,28 @@ function syncExpenditure(row) {
   if (!line) return; // already validated on the way in; guards against a reference that went stale in between
   const desc = `Auto-recorded from ${row.type.replace(/_/g, ' ')}`;
   const spentAt = serviceDate(row);
-  if (existing) db.run(`UPDATE expenditures SET funding_source_id=?, budget_line_id=?, client_id=?, spent_at=?, amount=?, category=?, description_enc=?, updated_at=? WHERE id=?`,
-    row.funding_source_id, row.budget_line_id, row.client_id || null, spentAt, cents(row.cost), line.category, encrypt(desc), db.now(), existing.id);
-  else db.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,intervention_id,spent_at,amount,category,description_enc) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-    uuid(), row.funding_source_id, row.budget_line_id, row.client_id || null, row.user_id, row.id, spentAt, cents(row.cost), line.category, encrypt(desc));
+  const id = existing ? existing.id : uuid();
+  if (existing) {
+    if (existing.funding_source_id === row.funding_source_id && existing.budget_line_id === row.budget_line_id && (existing.client_id || null) === (row.client_id || null) && existing.spent_at === spentAt && existing.amount === cents(row.cost)) return;
+    db.run(`UPDATE expenditures SET funding_source_id=?, budget_line_id=?, client_id=?, spent_at=?, amount=?, category=?, description_enc=?, updated_at=? WHERE id=?`,
+      row.funding_source_id, row.budget_line_id, row.client_id || null, spentAt, cents(row.cost), line.category, encrypt(desc), db.now(), id);
+  } else db.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,intervention_id,spent_at,amount,category,description_enc) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    id, row.funding_source_id, row.budget_line_id, row.client_id || null, row.user_id, row.id, spentAt, cents(row.cost), line.category, encrypt(desc));
+  audit.log({ user: ctx.user, action: existing ? 'expenditure.update' : 'expenditure.create', entity: 'expenditure', entityId: id, clientId: row.client_id || null, ip: ctx.ip, details: { intervention_id: row.id, for: row.user_id !== ctx.user.id ? row.user_id : undefined } });
 }
 
 // A visit that logged its own time entry keeps that entry right when the visit is corrected: a duration
 // or date typed wrong and fixed on the visit used to leave the time sheet with the wrong number, and a
 // supervisor approving hours nobody had actually worked. Only while the entry is still unapproved —
 // approved or rejected time has been ruled on and is not rewritten behind the approver's back.
-function syncTimeEntry(row, prev) {
+// Audited as the caller's (time_entry.update), as syncExpenditure is.
+function syncTimeEntry(ctx, row, prev) {
   if (row.duration_minutes === prev.duration_minutes && row.occurred_at === prev.occurred_at && !row._service_date) return;
   const te = db.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
   if (!te || (te.status !== 'draft' && te.status !== 'submitted')) return;
   if (!(row.duration_minutes > 0)) { db.run(`DELETE FROM time_entries WHERE id=?`, te.id); db.tombstone('time_entries', te.id); return; }
   db.run(`UPDATE time_entries SET minutes=?, work_date=?, updated_at=? WHERE id=?`, row.duration_minutes, serviceDate(row), db.now(), te.id);
+  audit.log({ user: ctx.user, action: 'time_entry.update', entity: 'time_entry', entityId: te.id, clientId: te.client_id || null, ip: ctx.ip, details: { intervention_id: row.id, fields: ['minutes', 'work_date'] } });
 }
 
 // The visit summary is clinical narrative about a named person, so it is stored encrypted like any other
@@ -165,20 +174,22 @@ module.exports = (r) => {
     afterInsert: (ctx, row) => {
       // Optional automatic time entry + naloxone tracking on client
       if (row._log_time && row.duration_minutes > 0) {
+        const te = uuid();
         db.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description_enc) VALUES(?,?,?,?,?,?,?,?,?)`,
-          uuid(), row.user_id, row.client_id ?? null, serviceDate(row), row.duration_minutes, row._time_category || 'direct_service', row.funding_source_id || null, row.id, encrypt(O.labelOf('INTERVENTION_TYPES', row.type)));
+          te, row.user_id, row.client_id ?? null, serviceDate(row), row.duration_minutes, row._time_category || 'direct_service', row.funding_source_id || null, row.id, encrypt(O.labelOf('INTERVENTION_TYPES', row.type)));
+        audit.log({ user: ctx.user, action: 'time_entry.create', entity: 'time_entry', entityId: te, clientId: row.client_id ?? null, ip: ctx.ip, details: { intervention_id: row.id, for: row.user_id !== ctx.user.id ? row.user_id : undefined } });
       }
       // Community distribution has no client record to update, and no client to follow up with.
       if (row.naloxone_kits > 0 && row.client_id) db.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, serviceDate(row), db.now(), row.client_id);
       if (row.follow_up_due && row.client_id) db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
         uuid(), row.client_id, row.user_id, ctx.user.id, require('../crypto').encrypt(`Follow up: ${O.labelOf('INTERVENTION_TYPES', row.type)}`), row.follow_up_due, 'normal');
-      syncExpenditure(row);
+      syncExpenditure(ctx, row);
       applySupplies(ctx, row, row._supply_plan);
       // The note written with the visit: in the same transaction, so both are saved or neither is.
       if (row._note) row._note.id = notes.insertNote(ctx, { ...row._note, intervention_id: row.id });
     },
     afterUpdate: (ctx, row, prev) => {
-      syncExpenditure(row); syncTimeEntry(row, prev);
+      syncExpenditure(ctx, row); syncTimeEntry(ctx, row, prev);
       if (row.client_id !== prev.client_id || row.user_id !== prev.user_id) S.relinkLines(row);
       applySupplies(ctx, row, row._supply_plan);
     },

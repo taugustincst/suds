@@ -253,6 +253,8 @@ function backfillPage(user, until, bf, limit) {
 function pull(user, sinceRaw, { limit = PULL_LIMIT, scope = null } = {}) {
   const serverNow = db.now();
   let { since, bf } = parseCursor(String(sinceRaw || NEVER));
+  // A device that has pulled before may hold a note that has since become one it may not read (dropHidden, exportInto).
+  const dropHidden = since !== NEVER;
   // What the person may read changed since this device last pulled (see syncScopeKey above).
   const change = since !== NEVER ? scopeChange(user, scope) : null;
   const drops = change ? scopeDrops(user, change) : null;
@@ -261,16 +263,16 @@ function pull(user, sinceRaw, { limit = PULL_LIMIT, scope = null } = {}) {
     out.scope = syncScopeKey(user);
     if (drops) {
       out.dropped_clients = [...new Set([...(out.dropped_clients || []), ...drops.clients])];
-      out.dropped_rows = drops.rows;
+      out.dropped_rows = [...drops.rows, ...(out.dropped_rows || [])];
       out.scope_changed = true;
       if (change.widened || change.redacted) out.scope_widened = true;
     }
     return out;
   };
   if (bf) return withScope(pullBackfill(user, since, bf, limit, serverNow));
-  return withScope(pullPage(user, since, limit, serverNow));
+  return withScope(pullPage(user, since, limit, serverNow, dropHidden));
 }
-function pullPage(user, since, limit, serverNow) {
+function pullPage(user, since, limit, serverNow, dropHidden = false) {
   const raw = {}; const capped = []; const scopes = new Map();
 
   // Where the page ends, in two passes. Up to 1.13 each table's first `limit` rows were read whole, and most of
@@ -306,7 +308,7 @@ function pullPage(user, since, limit, serverNow) {
   // rows before its boundary (or every row of a single-timestamp page); for the rest, everything they had.
   for (const [name, sc] of scopes) raw[name] = db.all(`SELECT x.* FROM ${name} x WHERE x.updated_at > ? AND x.updated_at <= ? AND ${sc.sql} ORDER BY x.updated_at`, since, cursor, ...sc.params);
   const out = baseAnswer(cursor, serverNow, capped.length === 0);
-  exportInto(out, user, raw, cursor);
+  exportInto(out, user, raw, cursor, dropHidden);
   // Newly assigned clients arrive whole: everything recorded about them before `since` as well, in the
   // backfill pages that follow this one (backfillPage). The cursor carries where they start.
   if (newlyInScope(user, since, cursor).length) {
@@ -347,13 +349,20 @@ function pullBackfill(user, since, bf, limit, serverNow) {
   resyncCheck(out, bf.from);
   return out;
 }
-function exportInto(out, user, raw, cursor) {
+// dropHidden: a note changed in this window that the person may not read is named in `dropped_rows` (with its
+// addenda, first) rather than left out in silence, for a device that may hold an earlier copy: a clinical draft
+// flagged as a SUD counseling note after a navigator's device pulled it (security review of 1.16.1, M3).
+function exportInto(out, user, raw, cursor, dropHidden = false) {
   for (const t of SYNC.tables) {
     let rows = raw[t.name] || [];
     if (cursor) rows = rows.filter(r => r.updated_at <= cursor);
     if (t.name === 'users') rows = rows.map(r => ({ ...(r.id === user.id ? r : { ...r, password_hash: 'scrypt$0$0$0$AA==$AA==' }), mfa_secret_enc: null, mfa_enabled: 0 })); // devices get own password hash for offline login; never MFA secrets
     if (t.name === 'notes' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => r.kind !== 'clinical'); // minimum necessary
-    if (t.name === 'notes') rows = rows.filter(r => COUNSEL.mayReadCounseling(user, r)); // SUD counseling notes (1.16.1)
+    if (t.name === 'notes') { // SUD counseling notes (1.16.1)
+      const hidden = rows.filter(r => !COUNSEL.mayReadCounseling(user, r));
+      if (hidden.length) rows = rows.filter(r => COUNSEL.mayReadCounseling(user, r));
+      if (dropHidden) for (const n of hidden) out.dropped_rows.push(...db.all(`SELECT id FROM note_addenda WHERE note_id=?`, n.id).map(a => ['note_addenda', a.id]), ['notes', n.id]);
+    }
     if (t.readPerm && !auth.hasPerm(user, t.readPerm)) rows = []; // minimum necessary (clinical assessments, the care plan, spending)
     if (t.redact && !auth.hasPerm(user, t.redact.perm)) rows = rows.map(r => ({ ...r, ...t.redact.cols })); // fund names without their money
     if (t.name === 'note_addenda' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => db.one(`SELECT kind FROM notes WHERE id=?`, r.note_id)?.kind !== 'clinical');

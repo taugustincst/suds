@@ -25,8 +25,13 @@ module.exports = (r) => {
     beforeUpdate: (ctx, v) => { deriveCrisis(v); encAll(v); },
     afterInsert: (ctx, row) => {
       const what = row.method === 'text' ? 'text message' : 'call';
-      if (row._log_time && row.duration_minutes > 0) db.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,call_id,description_enc) VALUES(?,?,?,?,?,?,?,?)`,
-        uuid(), row.user_id, row.client_id || null, row.started_at.slice(0, 10), row.duration_minutes, 'direct_service', row.id, encrypt(`${row.direction} ${what}`));
+      if (row._log_time && row.duration_minutes > 0) {
+        const te = uuid();
+        db.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,call_id,description_enc) VALUES(?,?,?,?,?,?,?,?)`,
+          te, row.user_id, row.client_id || null, row.started_at.slice(0, 10), row.duration_minutes, 'direct_service', row.id, encrypt(`${row.direction} ${what}`));
+        // The caller's, for separation of duties (rules/shared.js recordedOrChanged), as routes/interventions.js does.
+        require('../audit').log({ user: ctx.user, action: 'time_entry.create', entity: 'time_entry', entityId: te, clientId: row.client_id || null, ip: ctx.ip, details: { call_id: row.id, for: row.user_id !== ctx.user.id ? row.user_id : undefined } });
+      }
       if (row.follow_up_needed && row.follow_up_due) db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
         uuid(), row.client_id || null, row.user_id, ctx.user.id, encrypt(`${row.method === 'text' ? 'Text back' : 'Call back'}: ${row._purpose || row.contact_type}`), row.follow_up_due, row.crisis ? 'urgent' : 'normal');
     },

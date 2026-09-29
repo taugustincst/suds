@@ -79,10 +79,14 @@ function assertRulingHere(what) {
  * the REST create and update (`<entity>.create`, `.update`, a spreadsheet import's per-record entry too), and a
  * device's (sync.overwrite; sync.record, logged by the table's afterApply for an entry it records for someone
  * else). No migration: the audit trail is the record, and the retention purge keeps it far past an approval.
+ * From 1.16.2 (security review of 1.16.1, M1) the entries a visit or call writes as a side effect (its expenditure,
+ * its time entry, and their resizing when the visit is edited) are audited as `<entity>.create`/`.update` too, and
+ * submitting someone else's time for them (time.submit by a time:all holder: the approver is never the worker)
+ * counts as changing it.
  */
 function recordedOrChanged(entity, table, id, userId) {
-  return !!require('../db').one(`SELECT 1 FROM audit_log WHERE user_id=? AND entity_id=? AND ((entity=? AND action IN (?,?)) OR (entity=? AND action IN ('sync.overwrite','sync.record'))) LIMIT 1`,
-    userId, id, entity, `${entity}.create`, `${entity}.update`, table);
+  return !!require('../db').one(`SELECT 1 FROM audit_log WHERE user_id=? AND entity_id=? AND ((entity=? AND action IN (?,?,?)) OR (entity=? AND action IN ('sync.overwrite','sync.record'))) LIMIT 1`,
+    userId, id, entity, `${entity}.create`, `${entity}.update`, entity === 'time_entry' ? 'time.submit' : `${entity}.create`, table);
 }
 /** The push side of recordedOrChanged: an entry a device records under someone else's name is logged as its user's. */
 function logRecordedFor(table, row, c) {

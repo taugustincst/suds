@@ -2,6 +2,46 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Security
+
+Fixes from the security review of 1.16.1. No migration, no new permission, no new route.
+
+- **Nobody signs a note in someone else's name by sync (H1).** A push from a supervisor or administrator
+  (`records:manage-others`) could create a note already signed in a clinician's name, or take a clinician's draft,
+  rewrite it and push it back signed by them; the only trace was a `sync.overwrite`. A note's author is now the
+  account that syncs it, as over REST (`records:manage-others` does not let anyone author as someone else), a
+  signature arriving by sync is refused unless that account wrote the note and is signing it themselves, and the
+  office works the signature hash out itself (a device's value is ignored) and audits it as `note.sign` (`via:
+  sync`). Countersignatures were already never taken from a device; addenda keep their syncing author.
+- **Separation of duties sees what a visit or call does (M1).** An approver could record a costed visit, or a visit
+  or call that logs time, in another worker's name, add a cost to a colleague's visit, resize a colleague's
+  submitted time by editing the visit, or submit a colleague's time for them, and then approve the expenditure or
+  time that resulted. The expenditure and time entry a visit or call records or changes are now audited as the
+  caller's (`expenditure.create`/`.update`, `time_entry.create`/`.update`), and submitting someone else's time
+  counts as changing it, so the approval routes refuse them as they refuse an entry one recorded directly. The
+  same writes from a device were already counted (`sync.record`, `sync.overwrite`).
+- **The change notice cannot be silenced by the editor it reports on (M2).** The to-do that tells a client's
+  primary worker that someone off the care team changed the record was recorded as the editor's, so the editor
+  could close, retitle or delete it before it was seen. It is now the primary worker's own, and a change notice,
+  including one raised by 1.16.1, is changed, closed or deleted only by its assignee or `records:manage-others`,
+  over REST and by sync alike (a care-team member's discharge still closes it). Its text no longer carries a user
+  id (a fixed reference line marks it; which editor it reports on is read from the `client.change_notice` audit
+  entry, which now names the to-do), names the fields by the client form's labels ("ASAM level of care"), still
+  never their values, and it has no due date: it is not overdue work in the bell, the check-in list, the
+  supervisor's overdue count or `?overdue=1`. The bell lists open notices first (`notice: true`, and a `notices`
+  count); every to-do the API returns says `notice: true` when it is one, and a client's `counts.notices` says how
+  many of its open to-dos are notices. A notice raised by 1.16.1 keeps the due date it was given.
+- **A note flagged as a SUD counseling note leaves the devices that may no longer read it (M3).** A clinical draft a
+  navigator's device had pulled, then flagged as a counseling note, stayed on that device as it was. The next pull
+  now names it, and its addenda, in `dropped_rows`; unflagged, it and its addenda come back.
+- **A client's note count leaves out counseling notes its reader cannot read.** The Notes tab said 5 where the
+  list, rightly, showed 4, which also told a navigator that a counseling note existed; the count now follows the
+  list's rule.
+- **Lows.** A supply line's worker is its visit's and is no longer a column a device may send (it was already set
+  from the visit). The care plan's count of notes per problem leaves out counseling notes its reader cannot read.
+
 ## 1.16.1 — 2026-09-29
 
 ### Security

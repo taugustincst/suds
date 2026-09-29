@@ -77,7 +77,8 @@ function noteCounts(ctx, clientId) {
   const kinds = ['admin', 'clinical'].filter(k => auth.hasPerm(ctx.user, `notes:${k}:read`) || auth.hasPerm(ctx.user, `notes:${k}:write`));
   const counts = {};
   if (!kinds.length) return counts;
-  for (const n of db.all(`SELECT problem_ids FROM notes WHERE client_id=? AND deleted_at IS NULL AND problem_ids IS NOT NULL AND kind IN (${kinds.map(() => '?').join(',')})`, clientId, ...kinds)) {
+  const sud = require('../rules/notes').counselingFilter(ctx.user, 'n'); // not the counseling notes they cannot read (1.16.2)
+  for (const n of db.all(`SELECT n.problem_ids FROM notes n WHERE n.client_id=? AND n.deleted_at IS NULL AND n.problem_ids IS NOT NULL AND n.kind IN (${kinds.map(() => '?').join(',')}) AND ${sud.sql}`, clientId, ...kinds, ...sud.params)) {
     let ids = []; try { ids = JSON.parse(n.problem_ids); } catch { ids = []; }
     if (Array.isArray(ids)) for (const id of ids) counts[id] = (counts[id] || 0) + 1;
   }

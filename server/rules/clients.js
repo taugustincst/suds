@@ -140,28 +140,46 @@ module.exports.freeClientCode = freeClientCode;
 
 /**
  * Anyone who can see a client may update their record (1.16.1, the owner's decision); when someone who is not on
- * the client's care team does, the client's primary worker is told: a to-do on their list, due now so the bell
- * shows it, naming who changed which fields -- field names only, never a value (the to-do's text is encrypted like
- * every to-do's, and the audit entry names the fields). The same editor's further changes within a day are added to
- * the open to-do rather than raising another. Called by PUT /api/clients/:id and, for a device's edit, afterApply.
+ * the client's care team does, the client's primary worker is told: a change notice, naming who changed which
+ * fields by the client form's labels -- field names only, never a value (the to-do's text is encrypted like every
+ * to-do's, and the audit entry names the fields). The same editor's further changes within a day are added to the
+ * open notice rather than raising another. Called by PUT /api/clients/:id and, for a device's edit, afterApply.
+ * From 1.16.2 (security review of 1.16.1, M2; UX review r7, H1/H2/M1) a notice is the primary worker's own
+ * (created_by = them), carries no user id (its fixed reference line marks it: rules/tasks.js NOTICE_MARKER), and has
+ * no due date, so it is never overdue work; the bell lists it as new (routes/tasks.js). Which notice is whose
+ * editor's is read from the audit trail (client.change_notice names the to-do). The tasks rule keeps a notice out
+ * of the editor's hands, whoever it names as creator.
  */
+const LABELS = {
+  dob: 'Date of birth', alt_phone: 'Alternate phone', zip: 'ZIP', race_ethnicity: 'Race / ethnicity', ok_to_text: 'OK to text',
+  ok_to_voicemail: 'OK to leave voicemail', contact_preferences: 'Contact preferences', emergency_contact: 'Emergency contact',
+  referral_source: 'Referred by', referral_date: 'Referral date', medicaid_id: 'Medicaid ID', asam_level: 'ASAM level of care',
+  mat_status: 'MAT status', mat_medication: 'MAT medication', overdose_history: 'History of overdose', naloxone_last_date: 'Naloxone last given',
+  co_occurring_mh: 'Co-occurring mental health', goals: 'Client goals', flags: 'Safety flags', race_codes: 'Race codes',
+};
+/** A client field as the client form names it ("ASAM level of care", not "asam level"). */
+const fieldLabel = (f) => LABELS[f] || (f.charAt(0).toUpperCase() + f.slice(1)).replace(/_/g, ' ');
 function notifyPrimary(user, clientId, fields) {
   if (!fields.length || db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${auth.activeAssignment()}`, clientId, user.id)) return [];
   const { encrypt, decrypt, uuid } = require('../crypto');
+  const { NOTICE_MARKER } = require('./tasks');
   const code = (db.one(`SELECT client_code FROM clients WHERE id=?`, clientId) || {}).client_code || 'a client';
-  const ref = `Reference: client record change by ${user.id}`;
   const since = new Date(Date.now() - 86400000).toISOString();
+  // This editor's notices about this client in the last day, from the audit trail: the to-do carries no user id.
+  const recent = db.all(`SELECT details FROM audit_log WHERE action='client.change_notice' AND user_id=? AND entity_id=? AND at >= ? ORDER BY id DESC`, user.id, clientId, since)
+    .map(a => { try { return JSON.parse(a.details || '{}'); } catch { return {}; } }).filter(d => d.task);
   const told = [];
   for (const { user_id: primary } of db.all(`SELECT DISTINCT user_id FROM assignments WHERE client_id=? AND role_on_case='primary' AND user_id<>? AND ${auth.activeAssignment()}`, clientId, user.id)) {
-    const open = db.all(`SELECT id, description_enc FROM tasks WHERE assigned_to=? AND client_id=? AND created_by=? AND status='open' AND created_at >= ?`, primary, clientId, user.id, since)
-      .map(t => { try { return { id: t.id, desc: decrypt(t.description_enc || '') }; } catch { return { id: t.id, desc: '' }; } }).find(t => t.desc.includes(ref));
-    const before = open ? (/^Changed: (.*)$/m.exec(open.desc) || [])[1] : '';
-    const all = [...new Set([...String(before || '').split(', ').filter(Boolean), ...fields.map(f => f.replace(/_/g, ' '))])];
+    const open = recent.filter(d => d.notified === primary).map(d => db.one(`SELECT id, description_enc FROM tasks WHERE id=? AND assigned_to=? AND status='open'`, d.task, primary)).find(Boolean);
+    let before = '';
+    if (open) { try { before = (/^Changed: (.*)$/m.exec(decrypt(open.description_enc || '')) || [])[1] || ''; } catch { before = ''; } }
+    const all = [...new Set([...String(before).split(', ').filter(Boolean), ...fields.map(fieldLabel)])];
     const title = `${user.display_name || user.username} changed ${code}'s record (${all.join(', ')})`.slice(0, 200);
-    const desc = `Changed: ${all.join(', ')}\nYou are this client's primary worker; open their record to see what changed.\n${ref}`;
-    if (open) db.run(`UPDATE tasks SET title_enc=?, description_enc=?, due_at=?, updated_at=? WHERE id=?`, encrypt(title), encrypt(desc), db.now(), db.now(), open.id);
-    else db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, uuid(), clientId, primary, user.id, encrypt(title), encrypt(desc), db.now(), 'normal');
-    require('../audit').log({ user, action: 'client.change_notice', entity: 'client', entityId: clientId, clientId, details: { notified: primary, fields } });
+    const desc = `Changed: ${all.join(', ')}\nYou are this client's primary worker. Only the names of the fields are given here, never their values: open the record to see them as they are now.\n${NOTICE_MARKER}`;
+    const id = open ? open.id : uuid();
+    if (open) db.run(`UPDATE tasks SET title_enc=?, description_enc=?, updated_at=? WHERE id=?`, encrypt(title), encrypt(desc), db.now(), id);
+    else db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, clientId, primary, primary, encrypt(title), encrypt(desc), null, 'normal');
+    require('../audit').log({ user, action: 'client.change_notice', entity: 'client', entityId: clientId, clientId, details: { notified: primary, fields, task: id } });
     told.push(primary);
   }
   return told;

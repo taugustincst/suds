@@ -28,15 +28,29 @@ test('an edit by someone off the care team tells the primary worker which fields
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const n = notices(id, U.primary);
   assert.equal(n.length, 1);
-  assert.match(n[0].title, /ccn_other changed .*record \(phone, risk level\)/);
+  assert.match(n[0].title, /ccn_other changed .*record \(Phone, Risk level\)/, 'the client form\'s labels');
   assert.ok(!n[0].title.includes('0199') && !n[0].description.includes('0199') && !n[0].description.includes('high'), 'no values');
-  assert.ok(n[0].due_at, 'due now, so the bell shows it');
+  assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-/.test(n[0].title + n[0].description), 'no user id in its text (1.16.2)');
+  assert.equal(n[0].created_by, U.primary, 'the primary worker\'s own');
+  // Not overdue work (1.16.2): no due date; the bell lists it as a notice, first, and nothing counts it as overdue.
+  assert.equal(n[0].due_at, null);
+  const bell = (await C.primary.get('/api/tasks/due?within=60')).data;
+  assert.equal(bell.rows[0].id, n[0].id); assert.equal(bell.rows[0].notice, true); assert.equal(bell.rows[0].overdue, false);
+  assert.equal(bell.overdue, 0); assert.equal(bell.notices, 1);
+  assert.ok(!(await C.primary.get('/api/tasks?overdue=1')).data.rows.some(t => t.id === n[0].id));
+  const listed = (await C.primary.get(`/api/tasks?client_id=${id}`)).data.rows.find(t => t.id === n[0].id);
+  assert.equal(listed.notice, true, 'the UI can tell a notice (a read-only card)');
+  const rec = (await C.primary.get(`/api/clients/${id}`)).data;
+  assert.equal((rec.client || rec).counts.notices, 1);
   const a = H.db.one(`SELECT details FROM audit_log WHERE action='client.change_notice' AND entity_id=? ORDER BY id DESC`, id);
   assert.deepEqual(JSON.parse(a.details).fields, ['phone', 'risk_level']);
   // A second edit the same day adds to the same to-do.
   await C.other.put(`/api/clients/${id}`, { status: 'inactive' });
   const again = notices(id, U.primary);
-  assert.equal(again.length, 1); assert.match(again[0].title, /phone, risk level, status/);
+  assert.equal(again.length, 1); assert.match(again[0].title, /Phone, Risk level, Status/);
+  // A field with its own label on the form.
+  await C.other.put(`/api/clients/${id}`, { asam_level: '1.0' });
+  assert.match(notices(id, U.primary)[0].title, /ASAM level of care\)/);
 });
 
 test('the care team\'s own edits, and an edit that changes nothing, raise no notice', async () => {
@@ -53,5 +67,5 @@ test('a device\'s edit tells the primary worker the same way', async () => {
   const res = await C.clin.post('/api/sync/push', { device_now: new Date().toISOString(), tables: { clients: [{ id, client_code: row.client_code, first_name_enc: 'Sync', last_name_enc: 'Notice', phone_enc: '916-555-0177', status: row.status, updated_at: new Date(Date.now() + 5000).toISOString() }] } });
   assert.deepEqual(res.data.rejected, []);
   const n = notices(id, U.primary);
-  assert.equal(n.length, 1); assert.match(n[0].title, /ccn_clin changed .*\(phone\)/);
+  assert.equal(n.length, 1); assert.match(n[0].title, /ccn_clin changed .*\(Phone\)/);
 });
