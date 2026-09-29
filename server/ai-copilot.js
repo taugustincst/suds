@@ -57,17 +57,28 @@ function endpointProblem() {
 }
 
 function monthStart(now = new Date()) { return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString(); }
+// The outcomes that count as a draft against the monthly cap: the provider answered and did the work (a draft,
+// a refusal, or one cut off at max_tokens, each of which it bills). A failed call (rate limited, unavailable,
+// timed out, refused by the provider as a request, unreadable) is recorded too, but does not use up the cap:
+// a provider outage or a burst of rate limits must not spend the programme's drafts (engineering review of the
+// 1.17.0 candidate, M4).
+const COUNTED = ['ok', 'refused', 'truncated'];
+const COUNTED_SQL = `outcome IN (${COUNTED.map(o => `'${o}'`).join(',')})`;
 function usage(since = monthStart()) {
-  const t = db.one(`SELECT COUNT(*) calls, COALESCE(SUM(input_tokens),0) input_tokens, COALESCE(SUM(output_tokens),0) output_tokens FROM ai_usage WHERE at >= ?`, since);
-  const byFeature = db.all(`SELECT feature, COUNT(*) calls FROM ai_usage WHERE at >= ? GROUP BY feature ORDER BY feature`, since);
+  const t = db.one(`SELECT COUNT(*) attempts, COALESCE(SUM(input_tokens),0) input_tokens, COALESCE(SUM(output_tokens),0) output_tokens FROM ai_usage WHERE at >= ?`, since);
+  const drafts = db.one(`SELECT COUNT(*) n FROM ai_usage WHERE at >= ? AND ${COUNTED_SQL}`, since).n;
+  const byFeature = db.all(`SELECT feature, COUNT(*) calls FROM ai_usage WHERE at >= ? AND ${COUNTED_SQL} GROUP BY feature ORDER BY feature`, since);
   const errors = db.one(`SELECT COUNT(*) n FROM ai_usage WHERE at >= ? AND outcome <> 'ok'`, since).n;
-  return { since, calls: t.calls, input_tokens: t.input_tokens, output_tokens: t.output_tokens, errors, by_feature: byFeature };
+  const failed = db.one(`SELECT COUNT(*) n FROM ai_usage WHERE at >= ? AND NOT ${COUNTED_SQL}`, since).n;
+  // calls: the drafts counted against the cap; attempts: every request, failed ones included; errors: every one
+  // that did not return a draft (refused and cut off included); failed: those not counted against the cap.
+  return { since, calls: drafts, attempts: t.attempts, input_tokens: t.input_tokens, output_tokens: t.output_tokens, errors, failed, by_feature: byFeature };
 }
 
 /** Whether a draft can be asked for now, and if not, why (in words for the person at the keyboard). */
 function status() {
   const s = settings();
-  const used = usage().calls;
+  const used = usage().calls; // drafts, not failed calls (COUNTED)
   let reason = null; let code = null;
   const no = (c, r) => { code = c; reason = r; };
   if (config.local) no('device', 'The AI copilot runs only on an office server. SUDS on this device never sends anything to an AI provider.');
@@ -227,26 +238,57 @@ function buildRequest(prompt, model) {
 }
 
 function classify(status, retryAfter) {
+  // A 400 or 404 is the provider refusing the request itself, almost always a model id it does not know (the
+  // model setting) or an option that model does not take: shortening the text would not help.
+  if (status === 400 || status === 404) return new AiError('misconfigured', 502, 'The AI provider refused the request (check the model setting in Settings → AI copilot). Your form is unchanged: write it yourself, and tell your administrator.');
+  if (status === 413) return new AiError('too_large', 502, 'The text is too long for the AI provider. Your form is unchanged: shorten the text and try again, or write it yourself.');
   if (status === 429) return new AiError('rate_limited', 503, 'The AI provider is busy (rate limited). Your form is unchanged: try again in a minute, or write it yourself.', { retry_after: retryAfter || null });
   if (status === 401 || status === 403) return new AiError('auth', 502, 'The AI provider refused this server\'s key. Your form is unchanged. Tell your administrator.');
   if (status === 529 || status >= 500) return new AiError('unavailable', 503, 'The AI provider is unavailable right now. Your form is unchanged: try again later, or write it yourself.');
   return new AiError('rejected', 502, 'The AI provider could not take this request. Your form is unchanged: write it yourself, or shorten the text and try again.');
 }
 
+// One retry, inside the same deadline, for what is usually transient: a rate limit (429), an overloaded or failing
+// provider (529, 500, 502, 503, 504) or a connection that failed. Only when the provider's retry-after (if any) is
+// at most RETRY_MAX_WAIT_MS and the wait leaves time for the answer; never after a timeout (the deadline is spent).
+const RETRY_STATUSES = new Set([429, 500, 502, 503, 504, 529]);
+const RETRY_MAX_WAIT_MS = 10000;
+const RETRY_DEFAULT_WAIT_MS = 1000;
+/** How long to wait before the one retry, from the provider's retry-after header (seconds), or null for no retry. */
+function retryWait(retryAfter) {
+  if (retryAfter == null || retryAfter === '') return RETRY_DEFAULT_WAIT_MS + Math.floor(Math.random() * 500);
+  const sec = Number(retryAfter);
+  if (!Number.isFinite(sec) || sec < 0) return RETRY_DEFAULT_WAIT_MS;
+  return sec * 1000 <= RETRY_MAX_WAIT_MS ? sec * 1000 : null;
+}
+
 /** Send one request to the provider; returns { data, usage, model }. Throws AiError. Never logs the body. */
 async function send(prompt, model) {
   const { body, headers } = buildRequest(prompt, model);
   headers['x-api-key'] = config.ai.apiKey;
-  let res;
-  try {
-    res = await fetch(`${config.ai.baseUrl}/v1/messages`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(config.ai.timeoutMs) });
-  } catch (e) {
-    if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) throw new AiError('timeout', 504, 'The AI provider did not answer in time. Your form is unchanged: try again, or write it yourself.');
-    throw new AiError('unreachable', 503, 'The server could not reach the AI provider. Your form is unchanged: try again later, or write it yourself.');
+  const deadline = Date.now() + config.ai.timeoutMs;
+  const payload = JSON.stringify(body);
+  let res; let json = null;
+  for (let attempt = 0; ; attempt++) {
+    let wait = null; let failure = null;
+    try {
+      res = await fetch(`${config.ai.baseUrl}/v1/messages`, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
+    } catch (e) {
+      if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) throw new AiError('timeout', 504, 'The AI provider did not answer in time. Your form is unchanged: try again, or write it yourself.');
+      failure = new AiError('unreachable', 503, 'The server could not reach the AI provider. Your form is unchanged: try again later, or write it yourself.');
+      wait = retryWait(null);
+    }
+    if (!failure) {
+      json = null;
+      try { json = await res.json(); } catch { json = null; }
+      if (res.ok) break;
+      failure = classify(res.status, res.headers.get('retry-after'));
+      wait = RETRY_STATUSES.has(res.status) ? retryWait(res.headers.get('retry-after')) : null;
+    }
+    // The retry must leave the answer as long as the wait at least (and a second), or it is not worth making.
+    if (attempt > 0 || wait == null || Date.now() + 2 * wait + 1000 > deadline) throw failure;
+    await new Promise(ok => setTimeout(ok, wait));
   }
-  let json = null;
-  try { json = await res.json(); } catch { json = null; }
-  if (!res.ok) throw classify(res.status, res.headers.get('retry-after'));
   const u = (json && json.usage) || {};
   const tokens = { input_tokens: Number(u.input_tokens || 0) + Number(u.cache_read_input_tokens || 0) + Number(u.cache_creation_input_tokens || 0), output_tokens: Number(u.output_tokens || 0) };
   if (!json || !Array.isArray(json.content)) throw new AiError('bad_response', 502, 'The AI provider sent an answer SUDS could not read. Your form is unchanged.', { tokens });
@@ -294,5 +336,5 @@ async function draft({ user, clientId, feature, pieces, build }) {
   }
 }
 
-module.exports = { DEFAULT_MODEL, MODEL_ID, DEFAULT_CAP, MAX_TEXT, settings, attestation, status, usage, monthStart, keyConfigured, endpointProblem,
+module.exports = { DEFAULT_MODEL, MODEL_ID, DEFAULT_CAP, MAX_TEXT, MAX_TOKENS, COUNTED, retryWait, settings, attestation, status, usage, monthStart, keyConfigured, endpointProblem,
   identifiersFor, deidentify, reidentify, buildRequest, send, draft, AiError, PATTERNS };
