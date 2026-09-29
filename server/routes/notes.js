@@ -253,6 +253,7 @@ module.exports = (r) => {
     return hash;
   }
   r.post('/api/notes/:id/cosign', auth.requireAuth, auth.requirePerm('notes:cosign'), async (ctx) => {
+    require('../rules/shared').assertRulingHere('Countersigning a note');
     const n = load(ctx, ctx.params.id);
     const why = cosignRefusal(ctx, n);
     if (why) { if (/cannot read/.test(why)) throw forbidden(why); throw badRequest(why); }

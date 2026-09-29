@@ -138,6 +138,7 @@ module.exports = (r) => {
   });
 
   r.post('/api/time/:id/approve', auth.requireAuth, auth.requirePerm('time:approve'), (ctx) => {
+    require('../rules/shared').assertRulingHere('Approving or returning time');
     const t = loadEntry(ctx, ctx.params.id);
     const v = validate(ctx.body, { decision: { type: 'string', required: true, enum: ['approved', 'rejected'] }, note: { type: 'string', maxLen: 500 } });
     // The same rule as expenditures: nobody signs off their own claim.
@@ -155,6 +156,7 @@ module.exports = (r) => {
   });
 
   r.post('/api/time/approve-batch', auth.requireAuth, auth.requirePerm('time:approve'), (ctx) => {
+    require('../rules/shared').assertRulingHere('Approving or returning time');
     const v = validate(ctx.body, { ids: { type: 'array', required: true, maxLen: 500 }, decision: { type: 'string', required: true, enum: ['approved', 'rejected'] }, note: { type: 'string', maxLen: 500 } });
     if (v.decision === 'rejected' && !v.note) throw badRequest(NO_REASON);
     let n = 0; const skipped = [];

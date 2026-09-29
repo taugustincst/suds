@@ -108,7 +108,7 @@ const PERMS = {
   readonly:   ['clients:list-deidentified','resources:read','reports:read','users:read','forms:read','documents:read'],
 };
 
-const { isKnownPermission } = require('./permissions');
+const { isKnownPermission, grantProblem } = require('./permissions');
 
 // The role's defaults, as a fresh array the caller may mutate.
 function rolePerms(role) { return [...(PERMS[role] || [])]; }
@@ -125,10 +125,14 @@ function effectivePerms(user) {
   if (user.id) {
     try {
       const rows = db.all(`SELECT permission, mode FROM user_permission_overrides WHERE user_id=?`, user.id);
+      const defaults = PERMS[user.role] || [];
       for (const r of rows) {
         if (!isKnownPermission(r.permission)) continue; // defensive: ignore hand-edited typos
         if (r.mode === 'deny') { allow.delete(r.permission); deny.add(r.permission); }
-        else { allow.add(r.permission); }
+        // A grant the account's role may not hold (a privileged one after a demotion, clients:read on a
+        // de-identified role: permissions.js grantProblem) is checked here, at every request, so a row that
+        // was left behind, written before 1.15.4 or put in by hand cannot drift into power.
+        else if (!grantProblem(user.role, defaults, r.permission)) { allow.add(r.permission); }
       }
     } catch (e) { /* table missing on databases that have not run migration 46 yet */ }
   }
@@ -172,12 +176,20 @@ function reportRunAllowed(user, { caseloadScoped = false } = {}) {
 // report (purpose=submission, exact counts, by fund, any range) without client-level access? reports:funder.
 function submissionRunAllowed(user) { return hasPerm(user, 'reports:funder'); }
 
-// Caseload scoping: roles without clients:all only see clients assigned to them (setting can disable).
-// A de-identified role (finance) is not caseload-scoped because it never sees who the client is — which is
-// only true as long as it cannot run an identified export. That is enforced by 'export:identified', a
-// separate permission finance does not hold; see datasets() in exports.js.
+// Caseload scoping: whoever may open client records (clients:read) sees only the clients assigned to them,
+// unless they hold clients:all (or the setting is off). clients:all alone decides it: holding
+// clients:list-deidentified is no exemption (security review of 1.15.3, M1: a navigator granted it, or finance
+// granted clients:read, used to see every client's record). So denying clients:all puts anyone back on their
+// caseload, everywhere this is asked: REST lists and records, exports, sync pull, the dashboard and search.
+// The one account that is not held to a caseload without clients:all is a de-identified one: it cannot open a
+// record at all (no clients:read: canAccessClient refuses it every one) and lists clients by code only, through
+// its own read path (clients:list-deidentified; test/deidentified-roles.test.js), which it is never granted a
+// way around (permissions.js grantProblem: no clients:read, clients:write or export:identified, and no
+// clients:list-deidentified for a role that opens records). Anyone else without clients:read (a navigator
+// denied it) stays caseload-scoped, as before.
 function caseloadRestricted(user) {
-  if (hasPerm(user, 'clients:all') || hasPerm(user, 'clients:list-deidentified')) return false;
+  if (hasPerm(user, 'clients:all')) return false;
+  if (!hasPerm(user, 'clients:read') && hasPerm(user, 'clients:list-deidentified')) return false;
   return db.getSetting('caseload_restriction', '1') === '1';
 }
 // An assignment is over when its last day has passed, or the moment somebody ended it outright.

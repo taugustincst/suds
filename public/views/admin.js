@@ -174,12 +174,16 @@ async function renderPermissionsSection(box, userId) {
     h('div', { 'data-perm-overrides': '1' }, (data.overrides || []).length
       ? data.overrides.map((o) => h('div', { class: 'card flat perm-override' },
           h('div', {}, h('b', {}, label(o.permission)), ' ', permProvBadge(o.mode === 'grant' ? 'granted' : 'denied'), h('code', { class: 'small muted' }, ` ${o.permission}`)),
+          o.no_effect ? h('div', { class: 'small', 'data-perm-no-effect': o.permission }, badge('No effect', 'warn'), ` A ${data.role} cannot hold this permission, so this grant does nothing. Revoke it.`) : null,
           h('div', { class: 'small' }, o.reason),
           h('div', { class: 'small muted' }, `by ${permGrantedByName(o.granted_by)} · ${fmt.dt(o.granted_at)}`),
           h('div', { class: 'btn-row' }, h('button', { class: 'btn sm danger', 'data-perm-revoke': o.permission,
             onClick: async () => {
-              if (!await confirmDialog('Revoke override', `Remove the ${o.permission} override for ${data.display_name || 'this person'}? Their permissions go back to what the ${data.role} role gives.`, { danger: true, okText: 'Revoke' })) return;
-              try { await del(`/api/users/${userId}/permissions/${encodeURIComponent(o.permission)}`); toast('Override revoked', 'ok'); await refresh(); }
+              // A reason to revoke, too (1.15.4): kept with the change, never a client's details.
+              const why = await confirmDialog('Revoke override', `Remove the ${o.permission} override for ${data.display_name || 'this person'}? Their permissions go back to what the ${data.role} role gives.`,
+                { danger: true, okText: 'Revoke', requireReason: true, minLength: 10, maxLength: 300, reasonLabel: 'Why is it being revoked? (10 to 300 characters)', reasonHint: 'About the staff member\'s job, never a client: no names or details.' });
+              if (!why) return;
+              try { await del(`/api/users/${userId}/permissions/${encodeURIComponent(o.permission)}`, { reason: why }); toast('Override revoked', 'ok'); await refresh(); }
               catch (e) { toast(e.message, 'error'); }
             } }, 'Revoke'))))
       : h('p', { class: 'small muted' }, 'No individual overrides — this person has exactly what their role gives.')));
@@ -192,7 +196,9 @@ async function renderPermissionsSection(box, userId) {
       return h('option', { value: p.name }, `${p.label} (${p.name})${p.risk === 'standard' ? '' : ` — ⚠ ${p.risk}`}`); })));
   }
   const denyRadio = h('input', { type: 'radio', name: 'perm-mode', value: 'deny', 'data-perm-mode': 'deny' });
-  const reason = h('textarea', { 'data-perm-reason': '1', rows: 2, placeholder: 'Why this person needs it — recorded in the audit log (at least 10 characters)' });
+  // Bounded (10 to 300 characters) and about the job, never a client (1.15.4): it stays with the override for
+  // administrators to read; the audit log records that a reason was given, not the words.
+  const reason = h('textarea', { id: 'perm-reason', 'data-perm-reason': '1', rows: 2, maxLength: 300, 'aria-describedby': 'perm-reason-hint', placeholder: 'Why this person needs it (10 to 300 characters)' });
   box.append(h('div', { 'data-perm-grant-form': '1' },
     h('h3', {}, 'Grant or deny a permission'),
     h('div', { class: 'field' }, h('label', {}, 'Permission'), sel,
@@ -201,7 +207,8 @@ async function renderPermissionsSection(box, userId) {
       h('div', { class: 'row' },
         h('label', {}, h('input', { type: 'radio', name: 'perm-mode', value: 'grant', 'data-perm-mode': 'grant', checked: true }), ' Grant'),
         h('label', {}, denyRadio, ' Deny'))),
-    h('div', { class: 'field' }, h('label', {}, 'Reason (recorded in the audit log, at least 10 characters)'), reason),
+    h('div', { class: 'field' }, h('label', { for: 'perm-reason' }, 'Reason (10 to 300 characters)'), reason,
+      h('div', { class: 'small muted', id: 'perm-reason-hint', 'data-perm-reason-hint': '1' }, 'Say why the person\'s job needs it. Do not put a client\'s name or any client details here: this is kept with the permission and shown to administrators.')),
     h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', 'data-perm-save': '1',
       onClick: async () => {
         const mode = denyRadio.checked ? 'deny' : 'grant';

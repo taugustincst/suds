@@ -6,7 +6,7 @@
 // a countersignature is the supervisor's act on the office server and is never taken from a device.
 const db = require('../db');
 const auth = require('../auth');
-const { define, refuse, notPermitted } = require('./core');
+const { define, refuse, flag, notPermitted } = require('./core');
 
 const parseList = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
 // Everything about a signed note stays as signed, except asking a supervisor to look at it (request-cosign).
@@ -53,12 +53,24 @@ module.exports = define({
   },
   normalise(row, c) {
     const e = c.existing;
+    // A countersignature is the supervisor's act on the office server (POST /api/notes/:id/cosign); a device can
+    // never assert one, and one it asks for is flagged rather than dropped unseen (security review of 1.15.3, H1).
+    const COSIGN = ['cosigned_by', 'cosigned_at', 'cosignature_hash'];
+    const has = (v) => v !== undefined && v !== null && v !== '';
+    const asserted = COSIGN.some(k => has(row[k]) && String(row[k]) !== String((e && e[k]) ?? '')) || (has(row.cosign_note_enc) && String(row.cosign_note_enc) !== String((e && c.was('cosign_note_enc')) ?? ''));
     if (e) {
       row.kind = e.kind; // a note's kind is decided when it is written (no route changes it)
       if (e.status !== 'draft') for (const col of SIGNED_KEEPS) row[col] = col.endsWith('_enc') ? undefined : e[col];
-      // A countersignature is the supervisor's act on the office server; a device can never assert one.
-      row.cosigned_by = e.cosigned_by; row.cosigned_at = e.cosigned_at; row.cosignature_hash = e.cosignature_hash; row.cosign_note_enc = undefined;
-    } else { row.cosigned_by = null; row.cosigned_at = null; row.cosignature_hash = null; }
-    return null;
+      for (const k of COSIGN) row[k] = e[k];
+      row.cosign_note_enc = undefined;
+      // Whether it needs a countersignature comes from its author's account when it was written, as over REST.
+      row.cosign_required = e.cosign_required;
+    } else {
+      for (const k of COSIGN) row[k] = null;
+      row.cosign_note_enc = undefined;
+      const author = db.one(`SELECT requires_cosign FROM users WHERE id=?`, row.author_id || c.user.id);
+      row.cosign_required = author && author.requires_cosign ? 1 : 0;
+    }
+    return asserted ? flag('was accepted, but not the countersignature on it: a supervisor countersigns at the office, never by sync', { code: 'ruling' }) : null;
   },
 });

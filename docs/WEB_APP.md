@@ -63,13 +63,16 @@ register (`HIPAA.md`, *Risk register notes*).
   is readable without a password. While you are signed in the records are open on the device, so sign out
   when you put it down, and still use a device with a passcode and disk encryption.
 - **A forgotten password needs the recovery code, or a backup.** Right after the first account is created the
-  app shows a **recovery code** once (seven groups of four letters and numbers): download it or print it, keep
-  it away from the device, and tick *I have saved my recovery code* to go on. On the sign-in page, **Can't sign
+  app shows a **recovery code** once (seven groups of four letters and numbers): print it, or save it as a file
+  straight to another device (a USB stick, another computer; a copy left on this device is found by anyone who
+  uses it), keep it away from the device, and tick *I have saved my recovery code* to go on. On the sign-in page, **Can't sign
   in? → Use your recovery code** takes the code and a new password for the person who manages the device,
   keeps every record, signs them in and shows a new code (the used one stops working). Whoever holds the code
   can open every record on the device, like a key, so keep it as you would a key. Nobody else can let you in:
   SUDS has no shared or stock password, and the code is never stored anywhere but on the paper or in the file
-  you keep. See *Can't sign in?* below.
+  you keep. The code belongs to the person who manages the device: if their account is deactivated, the code
+  stops working at once and the administrator who deactivated it is asked to make a new one (1.15.4). See
+  *Can't sign in?* below.
 - **Someone new is let in by someone already here.** On a device that is locked, **Sign up** asks for the
   username and password of a person who already has an account on it: a new account gets the key to every
   record, so it cannot be created by whoever happens to pick the device up.

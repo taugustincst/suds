@@ -20,4 +20,6 @@ module.exports = define({
     if (e && e.status !== 'closed') return flag('was accepted, but it is a discharge record for an episode that is open at the office; the office will review it', { code: 'episode_open', message: 'A CalOMS discharge record is completed when the episode is discharged (Discharge on the Episodes tab)' });
     return null;
   },
+  // When it went into a state extract is the office's (POST /api/caloms/extract); a device's copy may be stale.
+  normalise: (row, c) => require('./shared').officeMarks(row, c, ['extracted_at'], 'its extract date (when it was sent to DHCS)'),
 });

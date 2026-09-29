@@ -138,11 +138,20 @@ module.exports = (r) => {
     const q = (ctx.query.get('q') || '').trim();
     // A name search ranks what it finds (1.15.3): see nameTier below.
     let nameTier = null;
+    // Which field the search looked in, for the audit entry (never what was typed).
+    let searched = []; let searchRefused;
     if (q) {
-      if (/^[A-Z]+\d*-\d+(-D)?$/i.test(q)) { where.push('c.client_code=?'); params.push(q.toUpperCase()); }
-      else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) { where.push('c.dob_idx=?'); params.push(blindIndex(q)); }
-      else if (/^[\d\-() .+]{7,}$/.test(q)) { where.push('c.phone_idx=?'); params.push(blindIndex(q.replace(/\D/g, ''))); }
+      const isCode = /^[A-Z]+\d*-\d+(-D)?$/i.test(q);
+      // A de-identified role (clients:list-deidentified without clients:read: finance, readonly) knows clients by
+      // code only. Letting it search names, dates of birth and phone numbers answered "is this person a client
+      // here?" (42 CFR Part 2: even that is protected) without showing a name (security review of 1.15.3, H2).
+      // So its q matches an exact client code and nothing else, and anything else finds nobody, in the same shape.
+      if (deidentify && !isCode) { where.push('0'); searchRefused = 'identifier'; }
+      else if (isCode) { where.push('c.client_code=?'); params.push(q.toUpperCase()); searched = ['client_code']; }
+      else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) { where.push('c.dob_idx=?'); params.push(blindIndex(q)); searched = ['dob']; }
+      else if (/^[\d\-() .+]{7,}$/.test(q)) { where.push('c.phone_idx=?'); params.push(blindIndex(q.replace(/\D/g, ''))); searched = ['phone']; }
       else {
+        searched = ['name'];
         // Exact surname or full name first, then the coarse indexes so a partial surname ("ngu") or a
         // misspelling ("Nguyan") still finds the person. Blind indexes cannot do prefix matching, so the
         // tolerance comes from indexing a 3-letter prefix and a Soundex code at write time.
@@ -232,7 +241,7 @@ module.exports = (r) => {
       FROM clients c WHERE c.id IN (SELECT value FROM json_each(?))`, now, ...(consentWindow ? [consentWindow.from, consentWindow.to] : []), JSON.stringify(pageIds)).map(x => [x.id, x]));
     const rows = pageIds.map(id => byId.get(id));
     const total = db.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
-    audit.log({ user: ctx.user, action: 'client.list', ip: ctx.ip, details: { q: q ? '[redacted]' : '', status, sort: sort || undefined, filters: filters.length ? filters : undefined, offset: offset || undefined, count: rows.length, deidentified: deidentify } });
+    audit.log({ user: ctx.user, action: 'client.list', ip: ctx.ip, details: { q: q ? '[redacted]' : '', searched: q ? searched : undefined, search_refused: searchRefused, status, sort: sort || undefined, filters: filters.length ? filters : undefined, offset: offset || undefined, count: rows.length, deidentified: deidentify } });
     return { clients: rows.map(x => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks, ...(consentWindow ? { consent_expires_at: x.consent_expires_at } : {}) })), total, limit, offset };
   });
 

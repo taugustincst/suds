@@ -151,6 +151,8 @@ function codeText(c) {
     'The code then stops working and SUDS shows you a new one to keep instead.',
     '',
     'Keep this away from the device: whoever has this code can open every record on it, the way a key would.',
+    'If you saved this as a file on the device itself, move it (to a USB stick, another computer or a password',
+    'manager) and delete it from the device.',
     'Making a new code (This device > Recovery code) makes this one stop working.',
   ].join('\n');
 }
@@ -195,10 +197,19 @@ export async function recoveryPromptCard() {
   const unsaved = st.recovery.exists;
   const card = h('div', { class: 'banner warn mb', role: 'status', 'data-recovery-prompt': unsaved ? 'unsaved' : 'none' },
     h('div', {}, h('b', {}, unsaved ? 'Your recovery code was not confirmed as saved. ' : 'This device has no recovery code. '),
+      !unsaved && st.recovery.dropped && st.recovery.dropped.reason === 'device_admin_changed' ? 'You now manage this device, and the code of the person who managed it before no longer works. ' : null,
       'If you forget your password, a recovery code is the only way back to the records here without a backup. ',
       h('button', { type: 'button', class: 'btn sm primary', 'data-recovery-prompt-make': '1', onClick: () => openRecoveryDialog({ exists: unsaved, after: 'dashboard' }) }, unsaved ? 'Make a new recovery code' : 'Make a recovery code')),
     h('button', { type: 'button', class: 'btn ghost sm', 'aria-label': 'Dismiss until you next sign in', 'data-recovery-prompt-dismiss': '1', onClick: () => { promptDismissed = true; card.remove(); } }, '✕'));
   return card;
+}
+
+/** Why a device that had a recovery code has none now, when it was not the person's own doing. */
+function droppedNote(rc) {
+  if (!rc || !rc.dropped) return null;
+  return h('span', { class: 'small', 'data-recovery-dropped': rc.dropped.reason }, ' ', rc.dropped.reason === 'device_admin_changed'
+    ? `The last one stopped working ${fmt.dt(rc.dropped.at)}, when the account of the person who managed this device was deactivated: make a new one.`
+    : `The last one stopped working ${fmt.dt(rc.dropped.at)}, when a backup was restored: make a new one.`);
 }
 
 /** The "Recovery code" card on This device: whether there is one and when it was made, and making a new one. */
@@ -207,7 +218,7 @@ function recoveryCard(dev, onChange) {
   const rc = dev.recovery;
   const status = rc.exists
     ? h('span', { 'data-recovery-state': rc.saved ? 'saved' : 'unsaved' }, `Made ${fmt.dt(rc.created_at)}`, rc.saved ? null : [' ', badge('Not confirmed as saved', 'warn')])
-    : h('span', { 'data-recovery-state': 'none' }, badge('None yet', 'warn'));
+    : h('span', { 'data-recovery-state': 'none' }, badge('None yet', 'warn'), droppedNote(rc));
   return h('div', { class: 'card', 'data-device-recovery': '1' }, h('h2', {}, 'Recovery code'),
     kv([['Recovery code', status]]),
     h('p', { class: 'small muted mt' }, 'If the person who manages this device forgets their password, the recovery code lets them back in from the sign-in page (Can’t sign in? → Use your recovery code) and keeps every record. Keep it away from this device: whoever has the code can open every record here, like a key. SUDS never shows an existing code again; making a new one makes the old one stop working.'),
@@ -242,9 +253,12 @@ route('recovery-code', async () => {
       h('div', { class: 'recovery-code', 'data-recovery-code': '1' }, c.code),
       h('p', { class: 'small muted' }, `Made ${fmt.dt(c.createdAt)}. Capitals and dashes do not matter when you type it.`),
       h('div', { class: 'banner warn', 'data-recovery-warning': '1' }, h('div', {}, h('b', {}, 'This is the only time it is shown. '), 'SUDS does not keep a copy, so nobody can show it to you again. Keep it away from this device, on paper in a safe place or in a password manager: whoever has the code can open every record on this device, the way a key would.')),
+      // Printing it, or saving it straight to another device, keeps it off this one (security review of 1.15.3,
+      // L1): a file saved here sits next to the records it opens.
       h('div', { class: 'btn-row' },
-        h('button', { type: 'button', class: 'btn', 'data-recovery-download': '1', onClick: () => downloadCode(c) }, 'Download as a text file'),
-        h('button', { type: 'button', class: 'btn', 'data-recovery-print': '1', onClick: () => printCode(c) }, 'Print')),
+        h('button', { type: 'button', class: 'btn primary', 'data-recovery-print': '1', onClick: () => printCode(c) }, 'Print it'),
+        h('button', { type: 'button', class: 'btn', 'data-recovery-download': '1', onClick: () => downloadCode(c) }, 'Save to another device (as a file)')),
+      h('p', { class: 'small muted', 'data-recovery-file-hint': '1' }, 'Saving asks where to put the file: choose a USB stick or a folder that is not on this device, or move the file there afterwards and delete it here. A copy left on this device is found by anyone who uses it.'),
       f));
 });
 

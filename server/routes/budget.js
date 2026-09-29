@@ -259,6 +259,7 @@ module.exports = (r) => {
   // moved keeps the record of who moved it.
   const TRANSITIONS = { pending: ['approved', 'rejected'], approved: ['reimbursed'] };
   r.post('/api/budget/expenditures/:id/approve', auth.requireAuth, auth.requirePerm('budget:approve'), (ctx) => {
+    require('../rules/shared').assertRulingHere('Approving, rejecting or reimbursing spending');
     const e = db.one(`SELECT * FROM expenditures WHERE id=?`, ctx.params.id); if (!e) throw notFound();
     const { status, note, force } = validate(ctx.body, { status: { type: 'string', required: true, enum: ['approved', 'rejected', 'reimbursed'] }, note: { type: 'string', maxLen: 500 }, force: { type: 'boolean' } });
     if (!(TRANSITIONS[e.status] || []).includes(status)) {

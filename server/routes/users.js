@@ -5,8 +5,8 @@ const audit = require('../audit');
 const devices = require('../devices');
 const { badRequest, notFound, HttpError } = require('../http');
 const { validate } = require('../validate');
-const { isKnownPermission, PRIVILEGED_PERMISSIONS, PERMISSION_CATALOG } = require('../permissions');
-const { hashPasswordAsync, uuid, randomToken } = require('../crypto');
+const { isKnownPermission, PERMISSION_CATALOG, grantProblem } = require('../permissions');
+const { hashPasswordAsync, uuid, randomToken, sha256 } = require('../crypto');
 
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
 const shape = {
@@ -98,7 +98,9 @@ module.exports = (r) => {
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
     if (!u) throw notFound();
     const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
-    if (u.id === ctx.user.id && (v.role && v.role !== 'admin' || v.is_active === 0)) throw badRequest('You cannot demote or deactivate your own account');
+    // Nobody changes their own role, up or down (security review of 1.15.3, M2: a demoted account that kept a
+    // users:manage grant promoted itself back to administrator). Saving one's own profile unchanged is fine.
+    if (u.id === ctx.user.id && ((v.role !== undefined && v.role !== u.role) || v.is_active === 0)) throw badRequest('You cannot change your own role or deactivate your own account. Ask another administrator.');
     if (v.oidc_subject && db.one(`SELECT 1 FROM users WHERE oidc_subject=? AND id<>?`, v.oidc_subject, u.id)) throw badRequest('That single sign-on identity is already linked to a different account');
     if (v.supervisor_id && !db.one(`SELECT 1 FROM users WHERE id=? AND id<>? AND role IN ('supervisor','admin')`, v.supervisor_id, u.id)) throw badRequest('The supervisor must be a different supervisor or administrator account');
     if (v.default_fund_id && !db.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v.default_fund_id)) throw badRequest('The default fund must be an active funding source');
@@ -126,6 +128,16 @@ module.exports = (r) => {
     if (!sets.length) return { ok: true, devices_wiped: wiped.length };
     sets.push('updated_at=?'); params.push(db.now(), u.id);
     db.run(`UPDATE users SET ${sets.join(', ')} WHERE id=?`, ...params);
+    // A role change takes away the individual grants the new role may not hold (a privileged one after a
+    // demotion, clients:read on a de-identified role), each removal audited. auth.effectivePerms ignores such a
+    // grant anyway, at every request; removing it keeps Users & permissions from showing a grant that does nothing.
+    if (v.role !== undefined && v.role !== u.role) {
+      for (const o of db.all(`SELECT permission, mode, reason FROM user_permission_overrides WHERE user_id=? AND mode='grant'`, u.id)) {
+        if (!grantProblem(v.role, auth.rolePerms(v.role), o.permission)) continue;
+        db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, u.id, o.permission);
+        audit.log({ user: ctx.user, action: 'user.permission.revoke', entity: 'user', entityId: u.id, ip: ctx.ip, details: { permission: o.permission, mode: o.mode, cause: 'role_change', from: u.role, to: v.role } });
+      }
+    }
     audit.log({ user: ctx.user, action: 'user.update', entity: 'user', entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter(k => k !== 'password'), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length, wipe_devices: wipeDevices } });
     return { ok: true, devices_wiped: wiped.length };
   });
@@ -141,6 +153,9 @@ module.exports = (r) => {
     const eff = auth.effectivePerms({ id: target.id, role: target.role });
     const overrides = db.all(
       `SELECT permission, mode, reason, granted_by, granted_at FROM user_permission_overrides WHERE user_id=? ORDER BY permission`, target.id);
+    // no_effect: a grant this role may not hold (permissions.js grantProblem), left from before 1.15.4 or put in by
+    // hand; effectivePerms ignores it, and the list says so rather than showing it as if it worked.
+    for (const o of overrides) if (o.mode === 'grant' && grantProblem(target.role, auth.rolePerms(target.role), o.permission)) o.no_effect = true;
     return {
       user_id: target.id,
       role: target.role,
@@ -151,8 +166,16 @@ module.exports = (r) => {
     };
   });
 
-  // validate() has no string minLen option, so the 10-character reason minimum is enforced explicitly.
-  const permShape = { permission: { type: 'string', required: true }, mode: { type: 'string', required: true }, reason: { type: 'string', required: true } };
+  // validate() has no string minLen option, so the 10-character reason minimum is enforced explicitly. The reason
+  // is bounded (REASON_MAX) and stays with the override: it is for the administrators who read Users &
+  // permissions, and the audit log records only its length and SHA-256 (security review of 1.15.3, L2): the words
+  // stay out of the hash-chained trail, which cannot be edited if someone puts a client's name in them, and a
+  // reason given later can still be checked against the one recorded. It is about the
+  // staff member's job, never a client: the form says so.
+  const REASON_MIN = 10; const REASON_MAX = 300;
+  const reasonProblem = (reason) => (typeof reason !== 'string' || reason.trim().length < REASON_MIN ? `reason must be at least ${REASON_MIN} characters`
+    : reason.length > REASON_MAX ? `reason must be at most ${REASON_MAX} characters (say why in a sentence; no client details)` : null);
+  const permShape = { permission: { type: 'string', required: true, maxLen: 100 }, mode: { type: 'string', required: true, maxLen: 10 }, reason: { type: 'string', required: true, maxLen: 2000 } };
 
   r.post('/api/users/:id/permissions', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
     const v = validate(ctx.body || {}, permShape);
@@ -166,16 +189,19 @@ module.exports = (r) => {
     if (!target) return fail('User not found', 404);
     if (v.mode !== 'grant' && v.mode !== 'deny') return fail('mode must be "grant" or "deny"');
     if (!isKnownPermission(v.permission)) return fail(`Unknown permission "${v.permission}"`);
-    if (v.reason.trim().length < 10) return fail('reason must be at least 10 characters');
-    if (v.mode === 'grant' && PRIVILEGED_PERMISSIONS.includes(v.permission) && target.role !== 'admin')
-      return fail(`"${v.permission}" can only be granted to an administrator — change their role instead`);
+    const bad = reasonProblem(v.reason); if (bad) return fail(bad);
+    // What the target's role may be granted at all (permissions.js grantProblem): privileged permissions are an
+    // administrator's; a de-identified role is never granted a way to identify clients (M1).
+    if (v.mode === 'grant') { const no = grantProblem(target.role, auth.rolePerms(target.role), v.permission); if (no) return fail(no); }
     db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by)
             VALUES(?, ?, ?, ?, ?) ON CONFLICT(user_id, permission) DO UPDATE SET mode=excluded.mode, reason=excluded.reason, granted_by=excluded.granted_by, granted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
       target.id, v.permission, v.mode, v.reason, ctx.user.id);
-    audit.log({ user: ctx.user, action: 'user.permission.grant', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason: v.reason } });
+    // A deny is audited as a deny, a grant as a grant.
+    audit.log({ user: ctx.user, action: v.mode === 'deny' ? 'user.permission.deny' : 'user.permission.grant', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason_length: v.reason.length, reason_sha256: sha256(v.reason) } });
     return { ok: true };
   });
 
+  // Revoking an override needs a reason too (the same bounds), in the body: DELETE ... { reason }.
   r.delete('/api/users/:id/permissions/:permission', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
     if (ctx.params.id === ctx.user.id) {
       audit.log({ user: ctx.user, action: 'user.permission.denied', entity: 'user', entityId: ctx.params.id, ip: ctx.ip, details: { permission: ctx.params.permission, reason: 'self-edit' } });
@@ -185,8 +211,11 @@ module.exports = (r) => {
     if (!target) throw notFound('User not found');
     const row = db.one(`SELECT permission, mode, reason FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
     if (!row) throw notFound('No such override');
+    const reason = ctx.body && typeof ctx.body.reason === 'string' ? ctx.body.reason : '';
+    const bad = reasonProblem(reason);
+    if (bad) throw badRequest(`Say why the override is being revoked: ${bad}`, { fields: { reason: bad } });
     db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
-    audit.log({ user: ctx.user, action: 'user.permission.revoke', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: row.permission, mode: row.mode, reason: row.reason } });
+    audit.log({ user: ctx.user, action: 'user.permission.revoke', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: row.permission, mode: row.mode, reason_length: String(row.reason || '').length, revoke_reason_length: reason.length, revoke_reason_sha256: sha256(reason) } });
     return { ok: true };
   });
 

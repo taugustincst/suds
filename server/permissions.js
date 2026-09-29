@@ -4,11 +4,36 @@
 // server/auth.js (which stays the source of the *role defaults*); the test in
 // test/user-permissions.test.js fails if the two drift apart.
 // risk: 'privileged' = full-administration powers (grantable only to role=admin, enforced in
-//   server/routes/users.js); 'sensitive' = PHI-identifying or disclosure powers (shown with a
-//   warning in the admin UI); 'standard' = everything else.
+//   server/routes/users.js); 'sensitive' = PHI-identifying or disclosure powers, or ones that decide whose
+//   records a person reaches (shown with a warning in the admin UI); 'standard' = everything else.
 const PRIVILEGED_PERMISSIONS = ['users:manage', 'settings:manage', 'apikeys:manage'];
 
-const SENSITIVE = new Set(['export:identified', 'clients:all', 'disclosures:override', 'notes:clinical:breakglass', 'clients:merge', 'clients:legal-hold']);
+// assignments:manage decides who is on a client's care team (and so who reaches the record); clients:read opens
+// records; clients:list-deidentified lists every client by code (security review of 1.15.3, M1).
+const SENSITIVE = new Set(['export:identified', 'clients:all', 'disclosures:override', 'notes:clinical:breakglass', 'clients:merge', 'clients:legal-hold',
+  'assignments:manage', 'clients:read', 'clients:list-deidentified']);
+
+// What opens a client's identity: a record (clients:write implies clients:read, auth.hasPerm), or a file of them.
+const IDENTIFYING = ['clients:read', 'clients:write', 'export:identified'];
+/**
+ * Why an individual grant of `permission` does not fit an account of `role` (whose defaults are `roleDefaults`),
+ * or null when it does. The same rule refuses the grant (POST /api/users/:id/permissions), removes it when the
+ * role changes (PUT /api/users/:id) and ignores it at request time (auth.effectivePerms), so a row that breaks
+ * it -- written before 1.15.4, or by hand -- does nothing (security review of 1.15.3, M1 and M2):
+ *   - a privileged permission is an administrator's, never a grant to another role;
+ *   - a de-identified role (clients:list-deidentified without clients:read: finance, readonly) knows clients by
+ *     code only, and is never granted what would identify them;
+ *   - clients:list-deidentified is that role's read path, not something to add to a role that opens records.
+ * Denying is always allowed: it only takes away.
+ */
+function grantProblem(role, roleDefaults, permission) {
+  const defaults = roleDefaults || [];
+  if (PRIVILEGED_PERMISSIONS.includes(permission) && role !== 'admin') return `"${permission}" can only be granted to an administrator — change their role instead`;
+  const deidentified = defaults.includes('clients:list-deidentified') && !defaults.some(p => IDENTIFYING.includes(p));
+  if (deidentified && IDENTIFYING.includes(permission)) return `A ${role} account knows clients by client code only (de-identified), so it cannot be granted "${permission}", which would let it identify them. If this person needs to open client records, give them a role that does.`;
+  if (permission === 'clients:list-deidentified' && defaults.some(p => IDENTIFYING.includes(p))) return `"clients:list-deidentified" is how a de-identified role (finance, read-only) lists clients by code. A ${role} already opens the records on their caseload; to show them every client, grant clients:all instead.`;
+  return null;
+}
 
 const DEFS = [
   ['users:manage', 'Manage users & permissions', 'Create/edit/deactivate accounts, change roles, grant or revoke individual permissions.'],
@@ -85,4 +110,4 @@ const PERMISSION_CATALOG = DEFS.map(([name, label, description]) => ({
 const KNOWN = new Set(PERMISSION_CATALOG.map((p) => p.name));
 function isKnownPermission(name) { return KNOWN.has(name); }
 
-module.exports = { PERMISSION_CATALOG, PRIVILEGED_PERMISSIONS, isKnownPermission };
+module.exports = { PERMISSION_CATALOG, PRIVILEGED_PERMISSIONS, isKnownPermission, grantProblem };

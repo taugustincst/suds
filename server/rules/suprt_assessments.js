@@ -55,7 +55,7 @@ module.exports = define({
   normalise(row, c) {
     const e = c.existing;
     if (e) row.assessment_type = e.assessment_type; // an assessment point is what it was recorded as
-    row.exported_at = e ? e.exported_at : null; // a SPARS export is the office's act
+    const mark = require('./shared').officeMarks(row, c, ['exported_at'], 'its SPARS export date'); // a SPARS export is the office's act
     row.updated_by = c.user.id;
     // The record-management answers are the record's own, as the REST routes make them.
     const R = require('../routes/suprt');
@@ -67,6 +67,6 @@ module.exports = define({
       row.answers_enc = JSON.stringify(answers);
       row.derived_keys = R.derivedKeys(clientRow.id, row.assessment_type, date, answers, row.id);
     }
-    return null;
+    return mark;
   },
 });

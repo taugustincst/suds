@@ -43,9 +43,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/base64-js/index.js
+// ../../../node_modules/base64-js/index.js
 var require_base64_js = __commonJS({
-  "node_modules/base64-js/index.js"(exports) {
+  "../../../node_modules/base64-js/index.js"(exports) {
     "use strict";
     init_globals_inject();
     exports.byteLength = byteLength;
@@ -145,9 +145,9 @@ var require_base64_js = __commonJS({
   }
 });
 
-// node_modules/ieee754/index.js
+// ../../../node_modules/ieee754/index.js
 var require_ieee754 = __commonJS({
-  "node_modules/ieee754/index.js"(exports) {
+  "../../../node_modules/ieee754/index.js"(exports) {
     init_globals_inject();
     exports.read = function(buffer, offset, isLE3, mLen, nBytes) {
       var e, m;
@@ -229,9 +229,9 @@ var require_ieee754 = __commonJS({
   }
 });
 
-// node_modules/buffer/index.js
+// ../../../node_modules/buffer/index.js
 var require_buffer = __commonJS({
-  "node_modules/buffer/index.js"(exports) {
+  "../../../node_modules/buffer/index.js"(exports) {
     "use strict";
     init_globals_inject();
     var base64 = require_base64_js();
@@ -1906,7 +1906,7 @@ var init_path = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_assert.js
+// ../../../node_modules/@noble/ciphers/esm/_assert.js
 function isBytes(a) {
   return a instanceof Uint8Array || a != null && typeof a === "object" && a.constructor.name === "Uint8Array";
 }
@@ -1930,12 +1930,12 @@ function output(out2, instance) {
   }
 }
 var init_assert = __esm({
-  "node_modules/@noble/ciphers/esm/_assert.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/ciphers/esm/utils.js
+// ../../../node_modules/@noble/ciphers/esm/utils.js
 function utf8ToBytes(str) {
   if (typeof str !== "string")
     throw new Error(`string expected, got ${typeof str}`);
@@ -1998,7 +1998,7 @@ function clean(...arrays) {
 }
 var u8, u32, createView, isLE, wrapCipher;
 var init_utils = __esm({
-  "node_modules/@noble/ciphers/esm/utils.js"() {
+  "../../../node_modules/@noble/ciphers/esm/utils.js"() {
     init_globals_inject();
     init_assert();
     u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
@@ -2014,7 +2014,7 @@ var init_utils = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_polyval.js
+// ../../../node_modules/@noble/ciphers/esm/_polyval.js
 function _toGHASHKey(k) {
   k.reverse();
   const hiBit = k[15] & 1;
@@ -2037,7 +2037,7 @@ function wrapConstructorWithKey(hashCons) {
 }
 var BLOCK_SIZE, ZEROS16, ZEROS32, POLY, mul2, swapLE, estimateWindow, GHASH, Polyval, ghash, polyval;
 var init_polyval = __esm({
-  "node_modules/@noble/ciphers/esm/_polyval.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_polyval.js"() {
     init_globals_inject();
     init_assert();
     init_utils();
@@ -2212,7 +2212,7 @@ var init_polyval = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/aes.js
+// ../../../node_modules/@noble/ciphers/esm/aes.js
 function mul22(n) {
   return n << 1 ^ POLY2 & -(n >> 7);
 }
@@ -2492,7 +2492,7 @@ function decryptBlock(xk, block) {
 }
 var BLOCK_SIZE2, BLOCK_SIZE32, EMPTY_BLOCK, POLY2, sbox, invSbox, rotr32_8, rotl32_8, byteSwap, tableEncoding, tableDecoding, xPowers, ctr, ecb, cbc, cfb, gcm, limit, siv, AESW, AESKW_IV, aeskw, AESKWP_IV, aeskwp;
 var init_aes = __esm({
-  "node_modules/@noble/ciphers/esm/aes.js"() {
+  "../../../node_modules/@noble/ciphers/esm/aes.js"() {
     init_globals_inject();
     init_assert();
     init_polyval();
@@ -2965,7 +2965,7 @@ var init_aes = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_assert.js
+// ../../../node_modules/@noble/hashes/esm/_assert.js
 function number(n) {
   if (!Number.isSafeInteger(n) || n < 0)
     throw new Error(`positive integer expected, not ${n}`);
@@ -2999,21 +2999,21 @@ function output2(out2, instance) {
   }
 }
 var init_assert2 = __esm({
-  "node_modules/@noble/hashes/esm/_assert.js"() {
+  "../../../node_modules/@noble/hashes/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/hashes/esm/crypto.js
+// ../../../node_modules/@noble/hashes/esm/crypto.js
 var crypto2;
 var init_crypto = __esm({
-  "node_modules/@noble/hashes/esm/crypto.js"() {
+  "../../../node_modules/@noble/hashes/esm/crypto.js"() {
     init_globals_inject();
     crypto2 = typeof globalThis === "object" && "crypto" in globalThis ? globalThis.crypto : void 0;
   }
 });
 
-// node_modules/@noble/hashes/esm/utils.js
+// ../../../node_modules/@noble/hashes/esm/utils.js
 function byteSwap32(arr) {
   for (let i = 0; i < arr.length; i++) {
     arr[i] = byteSwap2(arr[i]);
@@ -3055,7 +3055,7 @@ function randomBytes(bytesLength = 32) {
 }
 var u322, createView2, rotr, rotl, isLE2, byteSwap2, Hash, toStr;
 var init_utils2 = __esm({
-  "node_modules/@noble/hashes/esm/utils.js"() {
+  "../../../node_modules/@noble/hashes/esm/utils.js"() {
     init_globals_inject();
     init_crypto();
     init_assert2();
@@ -3075,7 +3075,7 @@ var init_utils2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_md.js
+// ../../../node_modules/@noble/hashes/esm/_md.js
 function setBigUint642(view, byteOffset, value, isLE3) {
   if (typeof view.setBigUint64 === "function")
     return view.setBigUint64(byteOffset, value, isLE3);
@@ -3090,7 +3090,7 @@ function setBigUint642(view, byteOffset, value, isLE3) {
 }
 var Chi, Maj, HashMD;
 var init_md = __esm({
-  "node_modules/@noble/hashes/esm/_md.js"() {
+  "../../../node_modules/@noble/hashes/esm/_md.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3185,10 +3185,10 @@ var init_md = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha256.js
+// ../../../node_modules/@noble/hashes/esm/sha256.js
 var SHA256_K, SHA256_IV, SHA256_W, SHA256, sha256;
 var init_sha256 = __esm({
-  "node_modules/@noble/hashes/esm/sha256.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha256.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3343,10 +3343,10 @@ var init_sha256 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha1.js
+// ../../../node_modules/@noble/hashes/esm/sha1.js
 var SHA1_IV, SHA1_W, SHA1, sha1;
 var init_sha1 = __esm({
-  "node_modules/@noble/hashes/esm/sha1.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha1.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3425,10 +3425,10 @@ var init_sha1 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/hmac.js
+// ../../../node_modules/@noble/hashes/esm/hmac.js
 var HMAC, hmac;
 var init_hmac = __esm({
-  "node_modules/@noble/hashes/esm/hmac.js"() {
+  "../../../node_modules/@noble/hashes/esm/hmac.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3498,7 +3498,7 @@ var init_hmac = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/pbkdf2.js
+// ../../../node_modules/@noble/hashes/esm/pbkdf2.js
 function pbkdf2Init(hash2, _password, _salt, _opts) {
   hash(hash2);
   const opts = checkOpts({ dkLen: 32, asyncTick: 10 }, _opts);
@@ -3543,7 +3543,7 @@ function pbkdf2(hash2, password, salt, opts) {
   return pbkdf2Output(PRF, PRFSalt, DK, prfW, u);
 }
 var init_pbkdf2 = __esm({
-  "node_modules/@noble/hashes/esm/pbkdf2.js"() {
+  "../../../node_modules/@noble/hashes/esm/pbkdf2.js"() {
     init_globals_inject();
     init_assert2();
     init_hmac();
@@ -3551,7 +3551,7 @@ var init_pbkdf2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/scrypt.js
+// ../../../node_modules/@noble/hashes/esm/scrypt.js
 function XorAndSalsa(prev, pi, input, ii, out2, oi) {
   let y00 = prev[pi++] ^ input[ii++], y01 = prev[pi++] ^ input[ii++];
   let y02 = prev[pi++] ^ input[ii++], y03 = prev[pi++] ^ input[ii++];
@@ -3707,7 +3707,7 @@ function scrypt(password, salt, opts) {
   return scryptOutput(password, dkLen, B2, V, tmp);
 }
 var init_scrypt = __esm({
-  "node_modules/@noble/hashes/esm/scrypt.js"() {
+  "../../../node_modules/@noble/hashes/esm/scrypt.js"() {
     init_globals_inject();
     init_assert2();
     init_sha256();
@@ -3852,9 +3852,9 @@ var init_crypto2 = __esm({
   }
 });
 
-// node_modules/sql.js/dist/sql-wasm.js
+// ../../../node_modules/sql.js/dist/sql-wasm.js
 var require_sql_wasm = __commonJS({
-  "node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
+  "../../../node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
     init_globals_inject();
     var initSqlJsPromise = void 0;
     var initSqlJs = function(moduleConfig) {
@@ -9342,7 +9342,7 @@ var require_csp = __commonJS({
   }
 });
 
-// node_modules/fflate/esm/browser.js
+// ../../../node_modules/fflate/esm/browser.js
 function deflateSync(data, opts) {
   return dopt(data, opts || {}, 0, 0);
 }
@@ -9362,7 +9362,7 @@ function unzlibSync(data, opts) {
 }
 var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
 var init_browser = __esm({
-  "node_modules/fflate/esm/browser.js"() {
+  "../../../node_modules/fflate/esm/browser.js"() {
     init_globals_inject();
     u82 = Uint8Array;
     u16 = Uint16Array;
@@ -10440,7 +10440,26 @@ var require_permissions = __commonJS({
     "use strict";
     init_globals_inject();
     var PRIVILEGED_PERMISSIONS = ["users:manage", "settings:manage", "apikeys:manage"];
-    var SENSITIVE = /* @__PURE__ */ new Set(["export:identified", "clients:all", "disclosures:override", "notes:clinical:breakglass", "clients:merge", "clients:legal-hold"]);
+    var SENSITIVE = /* @__PURE__ */ new Set([
+      "export:identified",
+      "clients:all",
+      "disclosures:override",
+      "notes:clinical:breakglass",
+      "clients:merge",
+      "clients:legal-hold",
+      "assignments:manage",
+      "clients:read",
+      "clients:list-deidentified"
+    ]);
+    var IDENTIFYING = ["clients:read", "clients:write", "export:identified"];
+    function grantProblem(role, roleDefaults, permission) {
+      const defaults = roleDefaults || [];
+      if (PRIVILEGED_PERMISSIONS.includes(permission) && role !== "admin") return `"${permission}" can only be granted to an administrator \u2014 change their role instead`;
+      const deidentified = defaults.includes("clients:list-deidentified") && !defaults.some((p) => IDENTIFYING.includes(p));
+      if (deidentified && IDENTIFYING.includes(permission)) return `A ${role} account knows clients by client code only (de-identified), so it cannot be granted "${permission}", which would let it identify them. If this person needs to open client records, give them a role that does.`;
+      if (permission === "clients:list-deidentified" && defaults.some((p) => IDENTIFYING.includes(p))) return `"clients:list-deidentified" is how a de-identified role (finance, read-only) lists clients by code. A ${role} already opens the records on their caseload; to show them every client, grant clients:all instead.`;
+      return null;
+    }
     var DEFS = [
       ["users:manage", "Manage users & permissions", "Create/edit/deactivate accounts, change roles, grant or revoke individual permissions."],
       ["users:read", "See the staff directory", "Minimal staff list for assignment dropdowns."],
@@ -10515,7 +10534,7 @@ var require_permissions = __commonJS({
     function isKnownPermission(name) {
       return KNOWN.has(name);
     }
-    module.exports = { PERMISSION_CATALOG, PRIVILEGED_PERMISSIONS, isKnownPermission };
+    module.exports = { PERMISSION_CATALOG, PRIVILEGED_PERMISSIONS, isKnownPermission, grantProblem };
   }
 });
 
@@ -11570,7 +11589,55 @@ var require_shared = __commonJS({
       }
     }
     var ownedBy = (cols2, all, message = "You cannot edit this record") => (user, row) => cols2.some((c) => row[c] === user.id) || auth3.hasPerm(user, all) ? null : notPermitted(message);
-    module.exports = { periodProblem, ownedBy };
+    function officeRuling(row, c, { initial, mayMove = () => false, rulings, cols: cols2 = [], enc: enc2 = [], what }) {
+      const e = c.existing;
+      const sent = row.status;
+      const has = (v) => v !== void 0 && v !== null && v !== "";
+      let ruled = false;
+      if (!e) {
+        const start2 = initial(sent);
+        if (has(sent) && sent !== start2 && rulings.includes(sent)) ruled = true;
+        row.status = start2;
+        for (const k of cols2) {
+          if (has(row[k])) ruled = true;
+          row[k] = null;
+        }
+        for (const k of enc2) {
+          if (has(row[k])) ruled = true;
+          row[k] = void 0;
+        }
+      } else {
+        if (has(sent) && sent !== e.status && !mayMove(e.status, sent, row, e)) {
+          if (rulings.includes(sent)) ruled = true;
+          row.status = e.status;
+        }
+        for (const k of cols2) {
+          if (has(row[k]) && String(row[k]) !== String(e[k] ?? "")) ruled = true;
+          row[k] = e[k];
+        }
+        for (const k of enc2) {
+          if (has(row[k]) && String(row[k]) !== String(c.was(k) ?? "")) ruled = true;
+          row[k] = void 0;
+        }
+      }
+      return ruled ? flag(`was accepted, but not the ruling on it (approved, returned or reimbursed): ${what} is ruled on at the office, never by sync, so the office's decision stands`, { code: "ruling" }) : null;
+    }
+    function officeMarks(row, c, cols2, what) {
+      const e = c.existing;
+      let asserted = false;
+      for (const k of cols2) {
+        const v = row[k];
+        if (v !== void 0 && v !== null && v !== "" && String(v) !== String((e && e[k]) ?? "")) asserted = true;
+        row[k] = e ? e[k] : null;
+      }
+      return asserted ? flag(`was accepted, but not ${what}: that is the office's record of its own act, never set by sync`, { code: "office_mark" }) : null;
+    }
+    function assertRulingHere(what) {
+      const config2 = require_config();
+      const staticHost = typeof window !== "undefined" && window.SUDS_STATIC_HOST === true;
+      if (config2.local && !staticHost) throw new (require_http()).HttpError(403, `${what} is done on the office SUDS, not on this device: sync does not carry it there.`, { rulingAtOffice: true });
+    }
+    module.exports = { periodProblem, ownedBy, officeRuling, officeMarks, assertRulingHere };
   }
 });
 
@@ -11583,7 +11650,7 @@ var require_expenditures = __commonJS({
     var auth3 = require_auth2();
     var C = require_constants();
     var { define: define2, refuse, flag, notPermitted } = require_core();
-    var { periodProblem } = require_shared();
+    var { periodProblem, officeRuling } = require_shared();
     var SETTLEMENT = { settlement_use: { type: "string", enum: C.SETTLEMENT_USES.map((x) => x.code) }, settlement_hiaa: { type: "string", enum: [...C.SETTLEMENT_HIAA.map((x) => x.code), "none"] } };
     var APPROVAL = ["status", "approved_by", "approved_at", "approval_note_enc"];
     module.exports = define2({
@@ -11607,8 +11674,9 @@ var require_expenditures = __commonJS({
       },
       owner: { col: "user_id", all: "clients:all" },
       editableBy: (user, row) => row.status === "pending" && (row.user_id === user.id || auth3.hasPerm(user, "budget:approve")) ? null : notPermitted("You cannot edit this record"),
-      // An approver's ruling made offline (approve, reject, reimburse) is theirs to send, whatever the item's status.
-      othersMayChange: (existing, row, changed, c) => auth3.hasPerm(c.user, "budget:approve") && changed.every((col) => APPROVAL.includes(col)),
+      // A push that only asks for a ruling (approve, reject, reimburse) reaches normalise, which keeps the office's
+      // and flags the ask, whatever the item's status and whoever sent it.
+      othersMayChange: (existing, row, changed) => changed.every((col) => APPROVAL.includes(col)),
       // Money that has moved keeps its record: only a pending item is deleted, by its submitter or an approver.
       deletableBy: (user, row) => row.status !== "pending" ? "skip" : row.user_id === user.id || auth3.hasPerm(user, "budget:approve") ? null : notPermitted("You cannot delete this record"),
       check(row, c) {
@@ -11623,20 +11691,8 @@ var require_expenditures = __commonJS({
           lineId && !db3.one(`SELECT 1 FROM budget_lines WHERE id=? AND funding_source_id=?`, lineId, f.id) ? refuse("has a value the office does not accept (its budget line belongs to another fund)", { message: "Budget line does not belong to fund" }) : null
         ];
       },
-      normalise(row, c) {
-        const e = c.existing;
-        if (!e) {
-          row.status = "pending";
-          row.approved_by = null;
-          row.approved_at = null;
-        } else if (!auth3.hasPerm(c.user, "budget:approve")) {
-          row.status = e.status;
-          row.approved_by = e.approved_by;
-          row.approved_at = e.approved_at;
-          row.approval_note_enc = void 0;
-        }
-        return null;
-      }
+      // The status is the office's from the start (pending) to the end (reimbursed): shared.js officeRuling.
+      normalise: (row, c) => officeRuling(row, c, { what: "spending", rulings: ["approved", "rejected", "reimbursed"], cols: ["approved_by", "approved_at"], enc: ["approval_note_enc"], initial: () => "pending" })
     });
     module.exports.SETTLEMENT = SETTLEMENT;
   }
@@ -12685,17 +12741,27 @@ var require_clients = __commonJS({
         }
         const q = (ctx.query.get("q") || "").trim();
         let nameTier = null;
+        let searched = [];
+        let searchRefused;
         if (q) {
-          if (/^[A-Z]+\d*-\d+(-D)?$/i.test(q)) {
+          const isCode = /^[A-Z]+\d*-\d+(-D)?$/i.test(q);
+          if (deidentify && !isCode) {
+            where.push("0");
+            searchRefused = "identifier";
+          } else if (isCode) {
             where.push("c.client_code=?");
             params.push(q.toUpperCase());
+            searched = ["client_code"];
           } else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) {
             where.push("c.dob_idx=?");
             params.push(blindIndex2(q));
+            searched = ["dob"];
           } else if (/^[\d\-() .+]{7,}$/.test(q)) {
             where.push("c.phone_idx=?");
             params.push(blindIndex2(q.replace(/\D/g, "")));
+            searched = ["phone"];
           } else {
+            searched = ["name"];
             const parts = q.split(/[,\s]+/).filter(Boolean);
             const idxs = parts.map((p) => blindIndex2(p));
             const clauses = [`c.last_name_idx IN (${idxs.map(() => "?").join(",")})`, "c.full_name_idx IN (?,?)", `c.first_name_idx IN (${idxs.map(() => "?").join(",")})`, `c.preferred_name_idx IN (${idxs.map(() => "?").join(",")})`];
@@ -12785,7 +12851,7 @@ var require_clients = __commonJS({
       FROM clients c WHERE c.id IN (SELECT value FROM json_each(?))`, now2, ...consentWindow ? [consentWindow.from, consentWindow.to] : [], JSON.stringify(pageIds)).map((x) => [x.id, x]));
         const rows = pageIds.map((id) => byId.get(id));
         const total = db3.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
-        audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", status, sort: sort || void 0, filters: filters.length ? filters : void 0, offset: offset || void 0, count: rows.length, deidentified: deidentify } });
+        audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", searched: q ? searched : void 0, search_refused: searchRefused, status, sort: sort || void 0, filters: filters.length ? filters : void 0, offset: offset || void 0, count: rows.length, deidentified: deidentify } });
         return { clients: rows.map((x) => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks, ...consentWindow ? { consent_expires_at: x.consent_expires_at } : {} })), total, limit: limit2, offset };
       });
       r.post("/api/clients/check-duplicates", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
@@ -13208,7 +13274,7 @@ var require_assignments = __commonJS({
     init_globals_inject();
     var db3 = require_db();
     var auth3 = require_auth2();
-    var { define: define2, refuse } = require_core();
+    var { define: define2, refuse, notPermitted } = require_core();
     function isSelfAssignment(raw, user, knownUsers, batchClients) {
       if (!raw || typeof raw.client_id !== "string") return false;
       if (raw.user_id && raw.user_id !== user.id && knownUsers.has(raw.user_id)) return false;
@@ -13258,6 +13324,9 @@ var require_assignments = __commonJS({
       // A self-assignment is what puts the new client on the caseload, so it cannot be judged by it.
       outsideCaseload: (raw, c) => c.session.state.assignments.selfIds.has(raw.id),
       authorise(row, c) {
+        if (!c.existing && !(c.via === "sync" && c.session.state.assignments.selfIds.has(row.id)) && !auth3.hasPerm(c.user, "clients:all") && !auth3.canAccessClient(c.user, row.client_id)) {
+          return notPermitted("This client is not on your caseload, so you cannot change who works with them. Ask a supervisor who can see every client.", "not on caseload");
+        }
         if (c.via === "sync" && !c.existing && c.session.state.assignments.selfIds.has(row.id)) {
           const dup = db3.one(`SELECT id FROM assignments WHERE client_id=? AND user_id=? AND role_on_case=? AND id<>? AND ${auth3.activeAssignment()}`, row.client_id, c.user.id, row.role_on_case || "primary", row.id);
           if (dup) return refuse("conflicts with an existing record");
@@ -13564,7 +13633,9 @@ var require_caloms_records = __commonJS({
         const e = db3.one(`SELECT status FROM episodes WHERE id=?`, episodeId);
         if (e && e.status !== "closed") return flag("was accepted, but it is a discharge record for an episode that is open at the office; the office will review it", { code: "episode_open", message: "A CalOMS discharge record is completed when the episode is discharged (Discharge on the Episodes tab)" });
         return null;
-      }
+      },
+      // When it went into a state extract is the office's (POST /api/caloms/extract); a device's copy may be stale.
+      normalise: (row, c) => require_shared().officeMarks(row, c, ["extracted_at"], "its extract date (when it was sent to DHCS)")
     });
   }
 });
@@ -14300,9 +14371,9 @@ var require_time_entries = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth2();
     var { define: define2, refuse } = require_core();
-    var { periodProblem, ownedBy } = require_shared();
+    var { periodProblem, ownedBy, officeRuling } = require_shared();
+    var RULING = ["status", "approved_by", "approved_at", "approval_note_enc"];
     var APPROVED = "This time entry has been approved and is part of a signed-off time sheet, so it cannot be changed or deleted. Ask a supervisor to reopen it (return it for correction) first.";
     var owned = ownedBy(["user_id"], "time:all");
     module.exports = define2({
@@ -14322,6 +14393,9 @@ var require_time_entries = __commonJS({
       owner: { col: "user_id", all: "time:all" },
       // 'not permitted …' is one of sync-tables.js's permanent reasons: the device stops resending the edit.
       editableBy: (user, row) => row.status === "approved" ? refuse("not permitted (the time entry is approved; a supervisor must reopen it)", { status: 409, message: APPROVED }) : owned(user, row),
+      // A push that only asks for a ruling reaches normalise, which keeps the office's and flags the ask (rather
+      // than a bare "not permitted" on an approved entry the device thought it could approve).
+      othersMayChange: (existing, row, changed) => changed.length > 0 && changed.every((col) => RULING.includes(col)),
       check(row, c) {
         const e = c.existing || {};
         if (c.existing && !["work_date", "funding_source_id"].some((k) => row[k] !== void 0 && String(row[k] ?? "") !== String(e[k] ?? ""))) return null;
@@ -14329,20 +14403,17 @@ var require_time_entries = __commonJS({
         const fund = fundId ? db3.one(`SELECT * FROM funding_sources WHERE id=?`, fundId) : null;
         return periodProblem(fund, row.work_date !== void 0 ? row.work_date : e.work_date, "Work date");
       },
-      normalise(row, c) {
-        const e = c.existing;
-        if (!e) {
-          row.status = row.status === "submitted" ? "submitted" : "draft";
-          row.approved_by = null;
-          row.approved_at = null;
-        } else if (!auth3.hasPerm(c.user, "time:approve")) {
-          row.status = e.status === "approved" || e.status === "rejected" ? e.status : row.status;
-          row.approved_by = e.approved_by;
-          row.approved_at = e.approved_at;
-          row.approval_note_enc = void 0;
-        }
-        return null;
-      }
+      // Only the office rules on time (shared.js officeRuling): a device may submit its own (draft -> submitted) and
+      // resubmit time it was shown returned (rejected -> submitted, from the returned copy); anything else it says
+      // about the status, approver, date or note is the office's, and a ruling it asks for is flagged.
+      normalise: (row, c) => officeRuling(row, c, {
+        what: "time",
+        rulings: ["approved", "rejected"],
+        cols: ["approved_by", "approved_at"],
+        enc: ["approval_note_enc"],
+        initial: (s) => s === "submitted" ? "submitted" : "draft",
+        mayMove: (from, to, row2, e) => to === "submitted" && (from === "draft" || from === "rejected" && String(row2.approved_at ?? "") === String(e.approved_at ?? ""))
+      })
     });
   }
 });
@@ -14817,7 +14888,7 @@ var require_notes = __commonJS({
     init_globals_inject();
     var db3 = require_db();
     var auth3 = require_auth2();
-    var { define: define2, refuse, notPermitted } = require_core();
+    var { define: define2, refuse, flag, notPermitted } = require_core();
     var parseList = (v) => typeof v === "string" ? JSON.parse(v) : v;
     var SIGNED_KEEPS = [
       "kind",
@@ -14896,19 +14967,22 @@ var require_notes = __commonJS({
       },
       normalise(row, c) {
         const e = c.existing;
+        const COSIGN = ["cosigned_by", "cosigned_at", "cosignature_hash"];
+        const has = (v) => v !== void 0 && v !== null && v !== "";
+        const asserted = COSIGN.some((k) => has(row[k]) && String(row[k]) !== String((e && e[k]) ?? "")) || has(row.cosign_note_enc) && String(row.cosign_note_enc) !== String((e && c.was("cosign_note_enc")) ?? "");
         if (e) {
           row.kind = e.kind;
           if (e.status !== "draft") for (const col of SIGNED_KEEPS) row[col] = col.endsWith("_enc") ? void 0 : e[col];
-          row.cosigned_by = e.cosigned_by;
-          row.cosigned_at = e.cosigned_at;
-          row.cosignature_hash = e.cosignature_hash;
+          for (const k of COSIGN) row[k] = e[k];
           row.cosign_note_enc = void 0;
+          row.cosign_required = e.cosign_required;
         } else {
-          row.cosigned_by = null;
-          row.cosigned_at = null;
-          row.cosignature_hash = null;
+          for (const k of COSIGN) row[k] = null;
+          row.cosign_note_enc = void 0;
+          const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, row.author_id || c.user.id);
+          row.cosign_required = author && author.requires_cosign ? 1 : 0;
         }
-        return null;
+        return asserted ? flag("was accepted, but not the countersignature on it: a supervisor countersigns at the office, never by sync", { code: "ruling" }) : null;
       }
     });
   }
@@ -16994,7 +17068,7 @@ var require_suprt_assessments = __commonJS({
       normalise(row, c) {
         const e = c.existing;
         if (e) row.assessment_type = e.assessment_type;
-        row.exported_at = e ? e.exported_at : null;
+        const mark = require_shared().officeMarks(row, c, ["exported_at"], "its SPARS export date");
         row.updated_by = c.user.id;
         const R = require_suprt2();
         const clientRow = require_db().one(`SELECT * FROM clients WHERE id=?`, e ? e.client_id : row.client_id);
@@ -17005,7 +17079,7 @@ var require_suprt_assessments = __commonJS({
           row.answers_enc = JSON.stringify(answers);
           row.derived_keys = R.derivedKeys(clientRow.id, row.assessment_type, date, answers, row.id);
         }
-        return null;
+        return mark;
       }
     });
   }
@@ -17674,6 +17748,7 @@ var require_budget = __commonJS({
       });
       const TRANSITIONS = { pending: ["approved", "rejected"], approved: ["reimbursed"] };
       r.post("/api/budget/expenditures/:id/approve", auth3.requireAuth, auth3.requirePerm("budget:approve"), (ctx) => {
+        require_shared().assertRulingHere("Approving, rejecting or reimbursing spending");
         const e = db3.one(`SELECT * FROM expenditures WHERE id=?`, ctx.params.id);
         if (!e) throw notFound();
         const { status, note, force } = validate(ctx.body, { status: { type: "string", required: true, enum: ["approved", "rejected", "reimbursed"] }, note: { type: "string", maxLen: 500 }, force: { type: "boolean" } });
@@ -22566,6 +22641,7 @@ var require_assignments2 = __commonJS({
       r.post("/api/assignments/:id/end", auth3.requireAuth, auth3.requirePerm("assignments:manage"), (ctx) => {
         const a = db3.one(`SELECT * FROM assignments WHERE id=?`, ctx.params.id);
         if (!a) throw notFound();
+        if (!auth3.hasPerm(ctx.user, "clients:all")) auth3.assertClientAccess(ctx, a.client_id);
         db3.run(`UPDATE assignments SET end_date=date('now'), ended_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), a.id);
         audit3.log({ user: ctx.user, action: "assignment.end", entity: "assignment", entityId: a.id, clientId: a.client_id, ip: ctx.ip });
         return { ok: true };
@@ -25340,8 +25416,11 @@ var require_episodes2 = __commonJS({
         const when = v.effective_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const lastDay = new Date(Date.parse(when) - 864e5).toISOString().slice(0, 10);
         const scope = v.client_ids && v.client_ids.length ? { sql: `AND a.client_id IN (${v.client_ids.map(() => "?").join(",")})`, params: v.client_ids } : { sql: "", params: [] };
-        const open3 = db3.all(`SELECT a.* FROM assignments a JOIN clients c ON c.id=a.client_id
+        const held = db3.all(`SELECT a.* FROM assignments a JOIN clients c ON c.id=a.client_id
       WHERE a.user_id=? AND (a.end_date IS NULL OR a.end_date >= ?) AND a.ended_at IS NULL AND c.deleted_at IS NULL ${scope.sql}`, from.id, when, ...scope.params);
+        const reach = auth3.hasPerm(ctx.user, "clients:all") ? () => true : (id) => auth3.canAccessClient(ctx.user, id);
+        const open3 = held.filter((a) => reach(a.client_id));
+        const outOfReach = held.length - open3.length;
         let moved = 0;
         let tasks = 0;
         const skipped = [];
@@ -25371,8 +25450,8 @@ var require_episodes2 = __commonJS({
             if (!v.client_ids || !v.client_ids.length) tasks += db3.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS NULL`, to.id, db3.now(), from.id).changes;
           }
         });
-        audit3.log({ user: ctx.user, action: "caseload.transfer", entity: "user", entityId: from.id, ip: ctx.ip, details: { to: to.id, clients: moved, tasks, skipped: skipped.length, effective_date: when } });
-        return { ok: true, transferred: moved, tasks_reassigned: tasks, skipped, from: from.display_name, to: to.display_name };
+        audit3.log({ user: ctx.user, action: "caseload.transfer", entity: "user", entityId: from.id, ip: ctx.ip, details: { to: to.id, clients: moved, tasks, skipped: skipped.length, not_on_caseload: outOfReach || void 0, effective_date: when } });
+        return { ok: true, transferred: moved, tasks_reassigned: tasks, skipped, not_on_caseload: outOfReach, from: from.display_name, to: to.display_name };
       });
       r.get("/api/meta/discharge-reasons", auth3.requireAuth, () => ({ discharge_reasons: O.visible("DISCHARGE_REASONS"), options: O.entries("DISCHARGE_REASONS") }));
     };
@@ -32102,6 +32181,7 @@ var require_notes2 = __commonJS({
         return hash2;
       }
       r.post("/api/notes/:id/cosign", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
+        require_shared().assertRulingHere("Countersigning a note");
         const n = load(ctx, ctx.params.id);
         const why = cosignRefusal(ctx, n);
         if (why) {
@@ -37866,6 +37946,7 @@ var require_supervision = __commonJS({
         return { ok: true, submitted: res.changes };
       });
       r.post("/api/time/:id/approve", auth3.requireAuth, auth3.requirePerm("time:approve"), (ctx) => {
+        require_shared().assertRulingHere("Approving or returning time");
         const t = loadEntry(ctx, ctx.params.id);
         const v = validate(ctx.body, { decision: { type: "string", required: true, enum: ["approved", "rejected"] }, note: { type: "string", maxLen: 500 } });
         if (t.user_id === ctx.user.id) throw forbidden("You cannot approve your own time");
@@ -37878,6 +37959,7 @@ var require_supervision = __commonJS({
         return { ok: true };
       });
       r.post("/api/time/approve-batch", auth3.requireAuth, auth3.requirePerm("time:approve"), (ctx) => {
+        require_shared().assertRulingHere("Approving or returning time");
         const v = validate(ctx.body, { ids: { type: "array", required: true, maxLen: 500 }, decision: { type: "string", required: true, enum: ["approved", "rejected"] }, note: { type: "string", maxLen: 500 } });
         if (v.decision === "rejected" && !v.note) throw badRequest(NO_REASON);
         let n = 0;
@@ -38673,8 +38755,8 @@ var require_users2 = __commonJS({
     var devices = require_devices();
     var { badRequest, notFound, HttpError: HttpError3 } = require_http();
     var { validate } = require_validate();
-    var { isKnownPermission, PRIVILEGED_PERMISSIONS, PERMISSION_CATALOG } = require_permissions();
-    var { hashPasswordAsync, uuid: uuid2, randomToken } = require_crypto();
+    var { isKnownPermission, PERMISSION_CATALOG, grantProblem } = require_permissions();
+    var { hashPasswordAsync, uuid: uuid2, randomToken, sha256: sha2562 } = require_crypto();
     var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
     var shape = {
       username: { type: "string", required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ },
@@ -38761,7 +38843,7 @@ var require_users2 = __commonJS({
         const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
         if (!u) throw notFound();
         const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
-        if (u.id === ctx.user.id && (v.role && v.role !== "admin" || v.is_active === 0)) throw badRequest("You cannot demote or deactivate your own account");
+        if (u.id === ctx.user.id && (v.role !== void 0 && v.role !== u.role || v.is_active === 0)) throw badRequest("You cannot change your own role or deactivate your own account. Ask another administrator.");
         if (v.oidc_subject && db3.one(`SELECT 1 FROM users WHERE oidc_subject=? AND id<>?`, v.oidc_subject, u.id)) throw badRequest("That single sign-on identity is already linked to a different account");
         if (v.supervisor_id && !db3.one(`SELECT 1 FROM users WHERE id=? AND id<>? AND role IN ('supervisor','admin')`, v.supervisor_id, u.id)) throw badRequest("The supervisor must be a different supervisor or administrator account");
         if (v.default_fund_id && !db3.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v.default_fund_id)) throw badRequest("The default fund must be an active funding source");
@@ -38794,6 +38876,13 @@ var require_users2 = __commonJS({
         sets.push("updated_at=?");
         params.push(db3.now(), u.id);
         db3.run(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, ...params);
+        if (v.role !== void 0 && v.role !== u.role) {
+          for (const o of db3.all(`SELECT permission, mode, reason FROM user_permission_overrides WHERE user_id=? AND mode='grant'`, u.id)) {
+            if (!grantProblem(v.role, auth3.rolePerms(v.role), o.permission)) continue;
+            db3.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, u.id, o.permission);
+            audit3.log({ user: ctx.user, action: "user.permission.revoke", entity: "user", entityId: u.id, ip: ctx.ip, details: { permission: o.permission, mode: o.mode, cause: "role_change", from: u.role, to: v.role } });
+          }
+        }
         audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped2.length, wipe_devices: wipeDevices } });
         return { ok: true, devices_wiped: wiped2.length };
       });
@@ -38806,6 +38895,7 @@ var require_users2 = __commonJS({
           `SELECT permission, mode, reason, granted_by, granted_at FROM user_permission_overrides WHERE user_id=? ORDER BY permission`,
           target.id
         );
+        for (const o of overrides) if (o.mode === "grant" && grantProblem(target.role, auth3.rolePerms(target.role), o.permission)) o.no_effect = true;
         return {
           user_id: target.id,
           role: target.role,
@@ -38815,7 +38905,10 @@ var require_users2 = __commonJS({
           denied: eff.deny
         };
       });
-      const permShape = { permission: { type: "string", required: true }, mode: { type: "string", required: true }, reason: { type: "string", required: true } };
+      const REASON_MIN = 10;
+      const REASON_MAX = 300;
+      const reasonProblem = (reason) => typeof reason !== "string" || reason.trim().length < REASON_MIN ? `reason must be at least ${REASON_MIN} characters` : reason.length > REASON_MAX ? `reason must be at most ${REASON_MAX} characters (say why in a sentence; no client details)` : null;
+      const permShape = { permission: { type: "string", required: true, maxLen: 100 }, mode: { type: "string", required: true, maxLen: 10 }, reason: { type: "string", required: true, maxLen: 2e3 } };
       r.post("/api/users/:id/permissions", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
         const v = validate(ctx.body || {}, permShape);
         const fail = (msg, status = 400) => {
@@ -38828,9 +38921,12 @@ var require_users2 = __commonJS({
         if (!target) return fail("User not found", 404);
         if (v.mode !== "grant" && v.mode !== "deny") return fail('mode must be "grant" or "deny"');
         if (!isKnownPermission(v.permission)) return fail(`Unknown permission "${v.permission}"`);
-        if (v.reason.trim().length < 10) return fail("reason must be at least 10 characters");
-        if (v.mode === "grant" && PRIVILEGED_PERMISSIONS.includes(v.permission) && target.role !== "admin")
-          return fail(`"${v.permission}" can only be granted to an administrator \u2014 change their role instead`);
+        const bad = reasonProblem(v.reason);
+        if (bad) return fail(bad);
+        if (v.mode === "grant") {
+          const no = grantProblem(target.role, auth3.rolePerms(target.role), v.permission);
+          if (no) return fail(no);
+        }
         db3.run(
           `INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by)
             VALUES(?, ?, ?, ?, ?) ON CONFLICT(user_id, permission) DO UPDATE SET mode=excluded.mode, reason=excluded.reason, granted_by=excluded.granted_by, granted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
@@ -38840,7 +38936,7 @@ var require_users2 = __commonJS({
           v.reason,
           ctx.user.id
         );
-        audit3.log({ user: ctx.user, action: "user.permission.grant", entity: "user", entityId: target.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason: v.reason } });
+        audit3.log({ user: ctx.user, action: v.mode === "deny" ? "user.permission.deny" : "user.permission.grant", entity: "user", entityId: target.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason_length: v.reason.length, reason_sha256: sha2562(v.reason) } });
         return { ok: true };
       });
       r.delete("/api/users/:id/permissions/:permission", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
@@ -38852,8 +38948,11 @@ var require_users2 = __commonJS({
         if (!target) throw notFound("User not found");
         const row = db3.one(`SELECT permission, mode, reason FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
         if (!row) throw notFound("No such override");
+        const reason = ctx.body && typeof ctx.body.reason === "string" ? ctx.body.reason : "";
+        const bad = reasonProblem(reason);
+        if (bad) throw badRequest(`Say why the override is being revoked: ${bad}`, { fields: { reason: bad } });
         db3.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
-        audit3.log({ user: ctx.user, action: "user.permission.revoke", entity: "user", entityId: target.id, ip: ctx.ip, details: { permission: row.permission, mode: row.mode, reason: row.reason } });
+        audit3.log({ user: ctx.user, action: "user.permission.revoke", entity: "user", entityId: target.id, ip: ctx.ip, details: { permission: row.permission, mode: row.mode, reason_length: String(row.reason || "").length, revoke_reason_length: reason.length, revoke_reason_sha256: sha2562(reason) } });
         return { ok: true };
       });
       r.get("/api/users/access-requests", auth3.requireAuth, auth3.requirePerm("users:manage"), () => ({ requests: db3.all(`SELECT id,username,display_name,email,access_note AS reason,requested_at FROM users WHERE access_status='pending' ORDER BY requested_at, username`) }));
@@ -39497,7 +39596,7 @@ var require_auth2 = __commonJS({
       // need clients:read as well (server/routes/forms.js), which readonly does not hold.
       readonly: ["clients:list-deidentified", "resources:read", "reports:read", "users:read", "forms:read", "documents:read"]
     };
-    var { isKnownPermission } = require_permissions();
+    var { isKnownPermission, grantProblem } = require_permissions();
     function rolePerms(role) {
       return [...PERMS[role] || []];
     }
@@ -39509,12 +39608,13 @@ var require_auth2 = __commonJS({
       if (user.id) {
         try {
           const rows = db3.all(`SELECT permission, mode FROM user_permission_overrides WHERE user_id=?`, user.id);
+          const defaults = PERMS[user.role] || [];
           for (const r of rows) {
             if (!isKnownPermission(r.permission)) continue;
             if (r.mode === "deny") {
               allow.delete(r.permission);
               deny.add(r.permission);
-            } else {
+            } else if (!grantProblem(user.role, defaults, r.permission)) {
               allow.add(r.permission);
             }
           }
@@ -39554,7 +39654,8 @@ var require_auth2 = __commonJS({
       return hasPerm(user, "reports:funder");
     }
     function caseloadRestricted(user) {
-      if (hasPerm(user, "clients:all") || hasPerm(user, "clients:list-deidentified")) return false;
+      if (hasPerm(user, "clients:all")) return false;
+      if (!hasPerm(user, "clients:read") && hasPerm(user, "clients:list-deidentified")) return false;
       return db3.getSetting("caseload_restriction", "1") === "1";
     }
     var ACTIVE_ASSIGNMENT = `((end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
@@ -42749,6 +42850,7 @@ async function replaceRecoveryCode() {
   const replaced = !!recoveryWrap(theVault);
   const next = withRecovery(theVault, wrap);
   delete next.recovery_dropped_at;
+  delete next.recovery_dropped_reason;
   await saveVault(next);
   return { code, created_at: wrap.created_at, replaced };
 }
@@ -42779,8 +42881,27 @@ function idleCheck() {
   if (Date.now() - lastActivity > limit2) lockDevice().catch(() => {
   });
 }
-async function reconcileVault() {
+async function retireRecoveryIfAdminGone(ctx) {
+  const adminId = import_db2.default.getSetting("device_admin_user_id", null);
+  if (!adminId) return;
+  const admin = import_db2.default.one(`SELECT id, is_active FROM users WHERE id=?`, adminId);
+  if (admin && admin.is_active) return;
+  const actor = ctx && ctx.user && ctx.user.id !== adminId && import_auth2.default.hasPerm(ctx.user, "users:manage") ? ctx.user : null;
+  if (actor) import_db2.default.setSetting("device_admin_user_id", actor.id);
+  if (!recoveryWrap(theVault)) return;
+  const next = withRecovery(theVault, null);
+  next.recovery_dropped_at = (/* @__PURE__ */ new Date()).toISOString();
+  next.recovery_dropped_reason = "device_admin_changed";
+  await saveVault(next);
+  import_audit2.default.log({
+    user: actor ? { id: actor.id, username: actor.username } : { username: "device" },
+    action: "device.recovery_code.dropped",
+    details: { reason: admin ? "device_admin_deactivated" : "device_admin_removed", new_device_admin: actor ? actor.id : null }
+  });
+}
+async function reconcileVault(ctx = null) {
   if (phase !== "open" || !hasAccounts(theVault)) return;
+  await retireRecoveryIfAdminGone(ctx);
   const users = import_db2.default.all(`SELECT id, username, is_active FROM users`);
   const byId = new Map(users.map((u) => [u.id, u]));
   const byName = /* @__PURE__ */ new Map();
@@ -43022,7 +43143,9 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
   });
   const recoveryInfo = () => {
     const w = recoveryWrap(theVault);
-    return { exists: !!w, created_at: w ? w.created_at : null, saved: !!(w && w.saved_at) };
+    const out2 = { exists: !!w, created_at: w ? w.created_at : null, saved: !!(w && w.saved_at) };
+    if (!w && theVault && theVault.recovery_dropped_at) out2.dropped = { at: theVault.recovery_dropped_at, reason: theVault.recovery_dropped_reason || "restore" };
+    return out2;
   };
   const mayManageRecovery = (ctx) => {
     import_auth2.default.requireAuth(ctx);
@@ -43059,7 +43182,11 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     const typed = (v.username || "").trim();
     const adminId = deviceAdminId();
     let target = adminId ? import_db2.default.one(`SELECT id, username, is_active, password_hash, mfa_enabled, locked_until FROM users WHERE id=?`, adminId) : null;
-    if (target && (!target.is_active || /^scrypt\$0\$/.test(target.password_hash))) target = null;
+    if (target && !target.is_active) {
+      await retireRecoveryIfAdminGone(null);
+      throw new import_http2.HttpError(403, "The account that managed this device has been deactivated, so its recovery code no longer works. An administrator who uses this device can sign in and make a new one; otherwise restore a backup.", { recoveryRetired: true });
+    }
+    if (target && /^scrypt\$0\$/.test(target.password_hash)) target = null;
     let created = false;
     const hash2 = await hashPasswordAsync(v.password);
     if (target) {
@@ -43249,7 +43376,7 @@ async function afterSuccess(method, path, body, ctx, result) {
   try {
     if (PASSWORD_PATHS.test(path)) await afterPasswordEvent(method, path, body, ctx, result);
     if (method === "POST" && path === "/api/auth/logout") await lockDevice();
-    else if (method !== "GET" && /^\/api\/(users|local|admin|auth)(\/|$)/.test(path)) await reconcileVault();
+    else if (method !== "GET" && /^\/api\/(users|local|admin|auth)(\/|$)/.test(path)) await reconcileVault(ctx);
   } catch (e) {
     reportError(e);
   }

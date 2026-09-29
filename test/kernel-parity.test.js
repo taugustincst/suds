@@ -212,8 +212,8 @@ test('the device kernel enforces permission grants and denies exactly like the o
 
   // Revoke the deny on each side; the client list opens again on both.
   assert.equal((await kernelCall('POST', '/api/auth/login', deviceAdmin)).status, 200, 'device admin re-login');
-  assert.equal((await kernelCall('DELETE', `/api/users/${dNav.data.id}/permissions/clients:read`)).status, 200, 'device revoke');
-  assert.equal((await admin.del(`/api/users/${oNav.data.id}/permissions/clients:read`)).status, 200, 'office revoke');
+  assert.equal((await kernelCall('DELETE', `/api/users/${dNav.data.id}/permissions/clients:read`, { reason: 'parity check revoke reason' })).status, 200, 'device revoke');
+  assert.equal((await admin.del(`/api/users/${oNav.data.id}/permissions/clients:read`, { reason: 'parity check revoke reason' })).status, 200, 'office revoke');
   assert.equal((await kernelCall('POST', '/api/auth/login', navCreds)).status, 200, 'device navigator re-login');
   await step('clients after revoke',
     await kernelCall('GET', '/api/clients'),

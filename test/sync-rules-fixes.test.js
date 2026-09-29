@@ -113,16 +113,19 @@ test('another worker\'s referral: its outcome may be recorded by sync, as over R
   assert.equal(r2.rejected[0].reason, 'not permitted');
 });
 
-test('money: an approved expenditure is not rewritten by its submitter; an approver\'s ruling made offline lands', async () => {
+test('money: an approved expenditure is not rewritten by its submitter; an approver\'s ruling made offline is flagged, not applied (1.15.4)', async () => {
   const fund = randomUUID(); H.db.run(`INSERT INTO funding_sources(id,name,fiscal_year_start,fiscal_year_end,total_amount) VALUES(?,?,?,?,?)`, fund, 'F', day(-100), day(100), 1000);
   const e = randomUUID(); H.db.run(`INSERT INTO expenditures(id,funding_source_id,user_id,spent_at,amount,category,status,approved_by,approved_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, e, fund, U.nav, day(-1), 20, 'supplies', 'approved', U.sup, iso(), iso(Date.now() - 60000));
   const row = { id: e, funding_source_id: fund, user_id: U.nav, spent_at: day(-1), category: 'supplies', status: 'approved' };
   const r = await push('nav', { tables: { expenditures: [{ ...row, amount: 2000, ...later() }] } });
   assert.equal(r.rejected[0].reason, 'not permitted');
   assert.equal(H.db.one(`SELECT amount FROM expenditures WHERE id=?`, e).amount, 20);
+  // Rulings are the office's (POST /api/budget/expenditures/:id/approve): the security review of 1.15.3 found an
+  // approver's device approving the approver's own spending this way. The row lands without it, flagged.
   const r2 = await push('sup', { tables: { expenditures: [{ ...row, amount: 20, status: 'reimbursed', ...later(9000) }] } });
   assert.deepEqual(r2.rejected, []);
-  assert.equal(H.db.one(`SELECT status FROM expenditures WHERE id=?`, e).status, 'reimbursed');
+  assert.equal(H.db.one(`SELECT status FROM expenditures WHERE id=?`, e).status, 'approved');
+  assert.ok(r2.warnings.some(w => w.id === e && w.flagged), JSON.stringify(r2));
 });
 
 test('a court order is vacated by sync but never rewritten; a §2.22 notice is never rewritten', async () => {

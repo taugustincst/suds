@@ -55,17 +55,20 @@ test('permissions API: grant, deny, revoke round-trip', async () => {
   assert.equal(r.status, 403, 'client list forbidden after deny');
 
   // revoke → exactly back to role defaults
-  r = await a.del(`/api/users/${nav.id}/permissions/clients:read`);
+  r = await a.del(`/api/users/${nav.id}/permissions/clients:read`, { reason: 'back to the full navigator role' });
   assert.equal(r.status, 200);
-  r = await a.del(`/api/users/${nav.id}/permissions/audit:read`);
+  r = await a.del(`/api/users/${nav.id}/permissions/audit:read`, { reason: 'weekly review moved elsewhere' });
   assert.equal(r.status, 200);
-  // the revoke audit row carries the permission, mode, and reason of the removed override
+  // the revoke audit row carries the permission and mode of the removed override, and the lengths of the reasons
+  // (1.15.4: the words stay out of the audit log)
   const rev = H.db.one(`SELECT details FROM audit_log WHERE action='user.permission.revoke' AND entity_id=? ORDER BY at DESC LIMIT 1`, nav.id);
   assert.ok(rev, 'revoke is audited');
   const revDetails = JSON.parse(rev.details);
   assert.equal(revDetails.permission, 'audit:read');
   assert.equal(revDetails.mode, 'grant');
-  assert.equal(revDetails.reason, 'reviews the break-glass queue weekly');
+  assert.equal(revDetails.reason, undefined);
+  assert.equal(revDetails.reason_length, 'reviews the break-glass queue weekly'.length);
+  assert.equal(revDetails.revoke_reason_length, 'weekly review moved elsewhere'.length);
   r = await a.get(`/api/users/${nav.id}/permissions`);
   assert.equal(r.status, 200);
   assert.deepEqual(r.data.overrides, [], 'no override rows remain');

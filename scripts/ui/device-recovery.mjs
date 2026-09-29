@@ -2,8 +2,9 @@
 // code"), on the static build in a real browser: set-up shows the code once and will not go on until "I have
 // saved my recovery code" is ticked; the file it downloads holds the code; the locked sign-in page's "Can't sign
 // in?" lists the ways back in; a wrong code is refused on the form; the right one sets a new password, keeps
-// the records and shows a new code; the old password and the used code stop working; and a device set up
-// before this release (no code) is asked for one on Home until it has one.
+// the records and shows a new code; the old password and the used code stop working; a device set up
+// before this release (no code) is asked for one on Home until it has one; and when the device administrator is
+// deactivated, their code stops working and the administrator who took over is asked for a new one (1.15.4).
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import { makeChecks, until, settle, saved, passRecoveryCode } from './assert.mjs';
@@ -62,10 +63,15 @@ async function useCode(page, code, { username = '', password = NEW_PW } = {}) {
   ok(/only time it is shown/.test(await page.textContent('[data-recovery-warning]')) && /whoever has the code can open every record/.test(await page.textContent('[data-recovery-warning]')), 'and says it is shown once, and that it opens every record like a key');
   eq(await page.title(), 'Recovery code — SUDS', 'the page has its own title');
   ok(await page.$('[data-recovery-print]'), 'it can be printed');
+  // 1.15.4 (L1): printing comes first, and saving says to put the file on another device.
+  ok(await page.$eval('[data-recovery-print]', b => b.classList.contains('primary') && !b.previousElementSibling), 'Print is the first, main choice');
+  ok(/another device/i.test(await page.textContent('[data-recovery-download]')), 'saving is "Save to another device"', await page.textContent('[data-recovery-download]'));
+  ok(/not on this device/.test(await page.textContent('[data-recovery-file-hint]')), 'and says to keep the file off this device');
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-recovery-download]')]);
   const file = fs.readFileSync(await download.path(), 'utf8');
   ok(/^suds-recovery-code-\d{4}-\d{2}-\d{2}\.txt$/.test(download.suggestedFilename()), 'it downloads as a text file', download.suggestedFilename());
   ok(file.includes(code1) && /Use your recovery code/.test(file), 'holding the code and how to use it');
+  ok(/delete it from the device/.test(file), 'and saying to move it off the device');
   // Continue without the box ticked: refused, on the same screen.
   await page.click('[data-recovery-screen] button[type=submit]'); await settle(page);
   ok(await page.$('[data-recovery-screen] [data-field=saved].error'), 'Continue without ticking "I have saved my recovery code" is refused');
@@ -175,6 +181,22 @@ async function useCode(page, code, { username = '', password = NEW_PW } = {}) {
   ok(CODE.test(await passRecoveryCode(page) || ''), 'older device: the administrator makes one from the prompt');
   await page.goto(base + '/#/dashboard?_=2'); await settle(page);
   ok(!(await page.$('[data-recovery-prompt]')), 'older device: and Home stops asking');
+  // 5. (1.15.4, L1) The administrator who deactivates the device administrator takes over, the old code stops
+  // working, and Home asks the new one for a code of their own.
+  const accounts = (await kernel(page, 'GET', '/api/local/accounts')).json.rows;
+  const olnav = accounts.find(a => a.username === 'olnav'); const older = accounts.find(a => a.username === 'older');
+  eq((await kernel(page, 'PUT', `/api/local/accounts/${olnav.id}`, { role: 'admin' })).status, 200, 'handover: the second account is made an administrator');
+  await logout(page);
+  eq(await tryLogin(page, 'olnav', PW), 'in', 'handover: who signs in');
+  eq((await kernel(page, 'PUT', `/api/users/${older.id}`, { is_active: false })).status, 200, 'handover: and deactivates the first administrator');
+  await page.goto(base + '/#/dashboard?_=3'); await settle(page);
+  const handed = await until(() => page.$('[data-recovery-prompt=none]'), { timeout: 10000 });
+  ok(handed, 'handover: Home asks the new administrator for a recovery code');
+  ok(/code of the person who managed it before no longer works/.test(await page.textContent('[data-recovery-prompt]')), 'handover: saying the old one no longer works', await page.textContent('[data-recovery-prompt]'));
+  await page.goto(base + '/#/sync'); await settle(page);
+  ok(await page.$('[data-device-recovery] [data-recovery-dropped="device_admin_changed"]'), 'handover: This device says why there is none');
+  await logout(page);
+  ok(/has none yet/.test(await page.textContent('[data-way-back=recovery]')) && !(await page.$('[data-recover-open]')), 'handover: the sign-in page no longer offers the old code');
   await ctx.close();
 }
 

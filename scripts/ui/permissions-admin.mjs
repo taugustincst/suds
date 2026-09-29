@@ -55,6 +55,8 @@ else {
   // Grant audit:read with a reason; the badge appears.
   await page.selectOption('[data-perm-select]', 'audit:read');
   await page.check('[data-perm-mode=grant]');
+  ok(/client/.test(await page.textContent('[data-perm-reason-hint]')), 'the reason field says to keep client details out');
+  eq(await page.getAttribute('[data-perm-reason]', 'maxlength'), '300', 'and is bounded');
   await page.fill('[data-perm-reason]', 'reviews the break-glass queue weekly');
   await page.click('[data-perm-save]');
   const grantedBadge = await until(() => page.$('[data-perm-overrides] [data-perm-badge="granted"]'), { timeout: 8000 });
@@ -90,8 +92,13 @@ else {
   // Revoke it; the badge is gone.
   await page.click('[data-perm-revoke="audit:read"]');
   await page.waitForSelector('.modal-bg .modal', { timeout: 5000 }); await settle(page);
-  // The confirm dialog is the topmost modal; the editor's own Revoke buttons sit behind it.
-  await page.locator('.modal-bg').nth(-1).locator('button:has-text("Revoke")').click();
+  // The confirm dialog is the topmost modal; the editor's own Revoke buttons sit behind it. It asks why (1.15.4).
+  const top = page.locator('.modal-bg').nth(-1);
+  await top.locator('button:has-text("Revoke")').click();
+  ok(await top.locator('.err').textContent().then(t => /reason is required/i.test(t)), 'revoking without a reason is refused in the dialog');
+  ok(/never a client/.test(await top.textContent()), 'the dialog says to keep client details out of the reason');
+  await top.locator('input').fill('The weekly review moved to the supervisor');
+  await top.locator('button:has-text("Revoke")').click();
   const gone = await until(async () => !(await page.$('[data-perm-overrides] [data-perm-badge="granted"]')), { timeout: 8000 });
   ok(gone, 'revoking clears the badge');
   await closeEditor();

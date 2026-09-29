@@ -68,6 +68,6 @@ test('users list: the override count is shown to user managers only', async () =
   // A supervisor's directory (users:read) is minimal: no permission detail.
   const dir = (await sup.get('/api/users')).data.users;
   assert.ok(dir.length && dir.every(u => !('override_count' in u)), 'the staff directory does not carry it');
-  assert.equal((await admin.del(`/api/users/${target.id}/permissions/audit:read`)).status, 200);
+  assert.equal((await admin.del(`/api/users/${target.id}/permissions/audit:read`, { reason: 'Review finished, back to the role' })).status, 200);
   assert.equal((await admin.get('/api/users')).data.users.find(u => u.id === target.id).override_count, 1, 'and it follows a revoke');
 });

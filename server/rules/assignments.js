@@ -4,7 +4,7 @@
 // device does exactly that offline, so the assignment it pushes (its own, on a client it created) is taken.
 const db = require('../db');
 const auth = require('../auth');
-const { define, refuse } = require('./core');
+const { define, refuse, notPermitted } = require('./core');
 
 /**
  * An assignment a worker without assignments:manage may still push: their own (user_id is theirs, or a
@@ -63,6 +63,13 @@ module.exports = define({
   // A self-assignment is what puts the new client on the caseload, so it cannot be judged by it.
   outsideCaseload: (raw, c) => c.session.state.assignments.selfIds.has(raw.id),
   authorise(row, c) {
+    // Putting someone on a care team is how they reach the record, so it is for a client the actor can reach
+    // (or anyone, with clients:all): assignments:manage let its holder put themselves on any client, which undid
+    // a deny of clients:all (security review of 1.15.3, M1). Sync push also checks the caseload before this; a
+    // worker's own assignment on a client they just created (selfIds) is what puts it on their caseload.
+    if (!c.existing && !(c.via === 'sync' && c.session.state.assignments.selfIds.has(row.id)) && !auth.hasPerm(c.user, 'clients:all') && !auth.canAccessClient(c.user, row.client_id)) {
+      return notPermitted('This client is not on your caseload, so you cannot change who works with them. Ask a supervisor who can see every client.', 'not on caseload');
+    }
     // A matching open assignment under another id (the office's own, from a sync before this rule existed)
     // makes the device's row a duplicate, refused for good so the device stops offering it.
     if (c.via === 'sync' && !c.existing && c.session.state.assignments.selfIds.has(row.id)) {
