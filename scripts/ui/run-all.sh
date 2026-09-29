@@ -14,6 +14,11 @@ export SUDS_ENV=development SUDS_DATA_DIR=$T/suds-ui-data PORT=${PORT:-8090} SUD
 # Every script signs in afresh, several as more than one person; the office default of 20 sign-ins per
 # address per 15 minutes was being hit part-way through the run and failing the later scripts at login.
 export LOGIN_RATE_LIMIT=1000
+# Likewise the API limit (API_RATE_LIMIT, 600 requests a minute per address): every browser session here comes from
+# 127.0.0.1, so a script that drives several people at once (ux13 opens about 630 requests in a minute) and the
+# tail of the one before it share a single office-sized allowance. The limit itself is tested by the node suite
+# (test/ux-review-5.test.js); here it is raised so a script is never refused for the suite's own shape.
+export API_RATE_LIMIT=${API_RATE_LIMIT:-6000}
 # Local mode (/?local=1) is off by default on an office server; the dev server the suite drives turns it on
 # so the local-mode, sync and device scripts have a kernel to load. The first-run wizard's server below
 # clears it again, so the wizard asks the question the way a county sees it.
