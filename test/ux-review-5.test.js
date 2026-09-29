@@ -194,6 +194,8 @@ test('Home\'s Calls tile counts what a caseload-scoped worker may see, like the 
   const mine = (await nav.post('/api/clients', { first_name: 'Cal', last_name: 'Lmine', status: 'active', confirm_duplicate: true })).data.id;
   const theirs = (await nav2.post('/api/clients', { first_name: 'Cal', last_name: 'Ltheirs', status: 'active', confirm_duplicate: true })).data.id;
   const q = `from=${from}&to=${today}`;
+  // From 1.16.0 a navigator holds clients:all by default; one held to their caseload has it denied.
+  H.deny({ id: U.nav }, 'clients:all');
   const base = { nav: (await nav.get(`/api/reports/dashboard?${q}`)).data.calls.total, sup: (await sup.get(`/api/reports/dashboard?${q}`)).data.calls.total };
   for (const [c, cid] of [[nav, mine], [nav2, theirs], [nav2, null]]) {
     const r = await c.post('/api/calls', { client_id: cid, direction: 'outbound', started_at: iso(Date.now() - 3600000), duration_minutes: 5, contact_type: cid ? 'client' : 'other', outcome: 'reached' });
@@ -201,6 +203,8 @@ test('Home\'s Calls tile counts what a caseload-scoped worker may see, like the 
   }
   assert.equal((await nav.get(`/api/reports/dashboard?${q}`)).data.calls.total, base.nav + 1, 'their own client\'s call only: not another caseload\'s, nor another worker\'s call with no client');
   assert.equal((await sup.get(`/api/reports/dashboard?${q}`)).data.calls.total, base.sup + 3, 'a supervisor (clients:all) counts every call');
+  H.db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission='clients:all'`, U.nav);
+  assert.equal((await nav.get(`/api/reports/dashboard?${q}`)).data.calls.total, (await sup.get(`/api/reports/dashboard?${q}`)).data.calls.total, 'a navigator with the 1.16.0 default (clients:all) counts every call too');
 });
 
 test('finance runs the syringe services summary as the programme\'s own submission of the whole programme', async () => {
