@@ -2,6 +2,41 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Engineering
+
+Release machinery and CI only: nothing here changes what SUDS does for a user, and no administrator action is needed
+on a SUDS install. The owner has repository settings to make (below).
+
+- **The repository settings are checked every week** (engineering reviews of 1.16.1 M2, 1.16.2 L5, 1.16.3 L6). A new
+  workflow, *Repository settings* (`.github/workflows/settings-check.yml`, weekly and *Run workflow*, read-only, no
+  action), reads through the GitHub API the settings RELEASE.md asks the owner to make (the rulesets for `main`,
+  `maint/*`, `v*` tags and `gh-pages`, the `release` environment's reviewers and deployment refs, immutable
+  releases, the default workflow token and allowed actions, the deploy key and its secret, stale `release/v*`
+  branches) and fails, with one row per setting in the run summary, when a setting is off **or cannot be read**:
+  a refused request is "cannot verify", never a pass. The workflow's own token cannot read the admin-only settings,
+  so until the owner gives it a read-only token the run stays red on those rows. **Owner:** RELEASE.md, *Owner:
+  repository settings*, step 9 (a fine-grained, read-only token as `SETTINGS_READ_TOKEN` in a `settings-check`
+  environment limited to `main`). Ruleset bypass lists, which no read-only token can see, are listed to check by hand.
+- **A 1.16.x security fix can be released after 1.17.0** (engineering review of 1.16.1, M3). A patch of a minor
+  older than `main`'s may now be released from that minor's `maint/X.Y` branch: the gate accepts a commit on
+  `origin/maint/X.Y` only for such a version, the release policy measures it against the previous tag on its own
+  line (1.16.5 against v1.16.4), and the release is not marked Latest and does not publish the web app;
+  `web-app.yml` now publishes only the newest release tag. **Owner:** add `maint/*` to the `main` ruleset and a ruleset
+  that lets only an administrator create a `maint/*` branch (RELEASE.md, step 2); the procedure for making the
+  branch and releasing a backport is in RELEASE.md, *Backports*.
+- **The migration check also watches what released migrations depend on** (engineering review of 1.16.0, M6).
+  `scripts/migration-order.js` fingerprints the helpers each released migration runs (`rebuildTable`,
+  `encryptColumn`, functions it requires) and the `schema.sql` definitions it reads, and fails CI when one changed
+  since the previous release unless the change is acknowledged, with a reason, in `DEPENDENCY_CHANGES`. Run over
+  history it would have stopped 1.13.0 and 1.14.0 for such changes.
+- **Workflow tests read the YAML as data** (engineering reviews of 1.16.1 L6, 1.16.3 L7). `scripts/workflow-yaml.js`
+  parses the YAML the workflows use, with no new dependency (it gives the same data as PyYAML on all four), and
+  refuses anything else with a line number; `test/workflow-yaml.test.js` checks write scopes, environments,
+  triggers, actions and the required jobs as data. Checks of what a step's shell script does stay text matches.
+  `actionlint` 1.7.7 is clean on all four workflows; it is not yet a CI step.
+
 ## 1.16.4 — 2026-09-29
 
 ### Security
