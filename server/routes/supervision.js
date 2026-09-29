@@ -159,6 +159,8 @@ module.exports = (r) => {
     const v = validate(ctx.body, { decision: { type: 'string', required: true, enum: ['approved', 'rejected'] }, note: { type: 'string', maxLen: 500 } });
     // The same rule as expenditures: nobody signs off their own claim.
     if (t.user_id === ctx.user.id) throw forbidden('You cannot approve your own time');
+    // Nor time they recorded for someone else, or changed (security review of 1.16.0, M7). Returning it is still theirs.
+    if (v.decision === 'approved' && require('../rules/shared').recordedOrChanged('time_entry', 'time_entries', t.id, ctx.user.id)) throw forbidden('Separation of duties: you recorded or changed this time, so another approver must review it');
     // Approved time is locked (server/rules/time_entries.js); returning it with a reason is how a supervisor
     // reopens it for the worker to correct and resubmit. Nothing else moves an approved entry.
     const reopening = t.status === 'approved' && v.decision === 'rejected';
@@ -183,6 +185,7 @@ module.exports = (r) => {
         if (!t) { skipped.push({ id, reason: 'not found' }); continue; }
         if (t.user_id === ctx.user.id) { skipped.push({ id, reason: 'your own time' }); continue; }
         if (t.status !== 'submitted') { skipped.push({ id, reason: 'not awaiting approval' }); continue; }
+        if (v.decision === 'approved' && require('../rules/shared').recordedOrChanged('time_entry', 'time_entries', t.id, ctx.user.id)) { skipped.push({ id, reason: 'you recorded or changed it' }); continue; }
         db.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db.now(), v.note ? encrypt(v.note) : null, db.now(), t.id);
         n++;
         if (v.decision === 'rejected') { if (!byWorker.has(t.user_id)) byWorker.set(t.user_id, []); byWorker.get(t.user_id).push(t); }

@@ -5,7 +5,7 @@ const audit = require('../audit');
 const crud = require('../crud');
 const config = require('../config');
 const C = require('../constants');
-const { badRequest, notFound, HttpError } = require('../http');
+const { badRequest, notFound, forbidden, HttpError } = require('../http');
 const { validate } = require('../validate');
 const { uuid, encrypt, decrypt } = require('../crypto');
 
@@ -268,6 +268,8 @@ module.exports = (r) => {
     }
     // No role is exempt: an administrator's own claim waits for someone else exactly like anyone's.
     if (e.user_id === ctx.user.id && status === 'approved') throw badRequest('Separation of duties: you cannot approve your own expenditure; another approver must review it');
+    // Nor one they recorded for someone else, or whose amount or details they changed (security review of 1.16.0, M7).
+    if (status === 'approved' && require('../rules/shared').recordedOrChanged('expenditure', 'expenditures', e.id, ctx.user.id)) throw forbidden('Separation of duties: you recorded or changed this expenditure, so another approver must review it');
     // A rejection with no reason leaves the submitter guessing, and there is no undo for a mis-click.
     if (status === 'rejected' && !note) throw badRequest('Say why this expenditure is being rejected, so the person who submitted it knows what to fix');
     // The note can name the client ("receipt shows J.'s name"): encrypted on the row, and the audit entry

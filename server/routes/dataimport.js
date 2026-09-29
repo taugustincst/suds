@@ -8,6 +8,7 @@ const DI = require('../dataimport');
 const { badRequest, notFound, forbidden } = require('../http');
 const { encrypt, blindIndex, uuid, sha256 } = require('../crypto');
 const M = require('../clients-model');
+const { validate } = require('../validate');
 
 // What makes an imported row "the same row again": the kind of import and every mapped field the file
 // gave it (values as text, keys sorted). Internal bookkeeping (_n, the raw client_ref) is left out; the
@@ -20,6 +21,25 @@ function rowHash(entity, rec) {
   const def = DI.ENTITIES[entity];
   const keys = [...def.fields.map(f => f.key), 'client_id', 'funding_source_id'].filter(k => k !== 'client_ref' && rec[k] !== undefined && rec[k] !== null && rec[k] !== '').sort();
   return sha256(JSON.stringify([entity, keys.map(k => [k, String(rec[k])])]));
+}
+
+const ENTITY_NAME = { clients: 'client', resources: 'resource', interventions: 'intervention', calls: 'call', time_entries: 'time_entry', tasks: 'task', expenditures: 'expenditure' };
+/**
+ * A record checked as the REST routes check one (security review of 1.16.0, L3): the fields the file gave it
+ * against its table's shape (types, lists, ranges), then the table's own rules (server/rules/<table>.js: a
+ * client-less visit, a fund's period, a cost without a fund...). Throws the first problem as the row's error.
+ */
+function checkRecord(entity, rec, ctx) {
+  const rules = require('../rules');
+  const R = rules.forTable(entity);
+  const own = Object.fromEntries(Object.entries(rec).filter(([k, v]) => R.fields[k] && R.fields[k].sync !== false && v !== undefined && v !== null && v !== ''));
+  try {
+    const v = validate(own, R.partialShape());
+    if (entity !== 'clients') rules.assertWrite(entity, rules.toColumns(entity, v), ctx);
+  } catch (e) {
+    const fields = e.extra && e.extra.fields;
+    throw new Error(fields ? Object.entries(fields).map(([k, m]) => `${k} ${m}`).join('; ') : e.message);
+  }
 }
 
 const permFor = (entity) => ({ clients: 'clients:write', resources: 'resources:write', interventions: 'interventions:write', calls: 'calls:write', time_entries: 'time:write', tasks: 'tasks:write', expenditures: 'budget:write' }[entity]);
@@ -42,7 +62,9 @@ module.exports = (r) => {
   });
 
   // Preview: parse the file, suggest a mapping, validate every row (raw body; entity + optional mapping in query)
-  r.post('/api/imports/data/preview', auth.requireAuth, (ctx) => {
+  // imports:write (the Import page's own permission) and the entity's write permission: a spreadsheet import is
+  // an import (security review of 1.16.0, L3).
+  r.post('/api/imports/data/preview', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => {
     const entity = ctx.query.get('entity'); const def = DI.ENTITIES[entity]; if (!def) throw badRequest('Unknown entity');
     if (!auth.hasPerm(ctx.user, permFor(entity))) throw forbidden();
     const buf = ctx.rawBody && ctx.rawBody.length ? ctx.rawBody : (ctx.body && ctx.body.text ? Buffer.from(ctx.body.text, 'utf8') : null);
@@ -65,7 +87,7 @@ module.exports = (r) => {
   });
 
   // Commit validated rows (client sends back the records from the preview; server re-validates)
-  r.post('/api/imports/data/commit', auth.requireAuth, (ctx) => {
+  r.post('/api/imports/data/commit', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => {
     const { entity, records, skip_duplicates } = ctx.body || {}; const def = DI.ENTITIES[entity]; if (!def) throw badRequest('Unknown entity');
     if (!auth.hasPerm(ctx.user, permFor(entity))) throw forbidden();
     if (!Array.isArray(records) || !records.length) throw badRequest('No rows to import'); if (records.length > 2000) throw badRequest('Import at most 2000 rows at a time');
@@ -79,6 +101,7 @@ module.exports = (r) => {
           const hash = rowHash(entity, rec);
           if (db.one(`SELECT 1 FROM import_rows WHERE row_hash=?`, hash)) { skippedDuplicates++; return; }
           const id = uuid(); const now = db.now();
+          checkRecord(entity, rec, ctx);
           switch (entity) {
             case 'clients': {
               if (skip_duplicates && db.one(`SELECT 1 FROM clients WHERE full_name_idx=? AND deleted_at IS NULL`, blindIndex((rec.last_name || '') + (rec.first_name || '')))) { skipped++; return; }
@@ -100,6 +123,8 @@ module.exports = (r) => {
             case 'expenditures': { const f = rec.funding_source_id ? db.one(`SELECT id FROM funding_sources WHERE id=?`, rec.funding_source_id) : db.one(`SELECT id FROM funding_sources WHERE name=? COLLATE NOCASE AND is_active=1`, rec.fund); if (!f || !rec.spent_at || !rec.amount || !rec.category) throw new Error('date, amount, funding source and category are required'); db.run(`INSERT INTO expenditures(id,funding_source_id,client_id,user_id,spent_at,amount,category,vendor,description_enc,receipt_ref) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, f.id, rec.client_id || null, ctx.user.id, rec.spent_at, rec.amount, rec.category, rec.vendor || null, rec.description ? encrypt(String(rec.description)) : null, rec.receipt_ref || null); break; }
           }
           created++; imported.push([hash, id]);
+          // One entry per record, as the REST routes write (and separation of duties reads: rules/shared.js).
+          audit.log({ user: ctx.user, action: `${ENTITY_NAME[entity]}.create`, entity: ENTITY_NAME[entity], entityId: id, clientId: entity === 'clients' ? id : rec.client_id || null, ip: ctx.ip, details: { source: 'spreadsheet' } });
         } catch (e) { errors.push({ n: rec._n || i + 1, error: e.message }); }
       });
       if (errors.length && !ctx.body.partial) throw badRequest(`${errors.length} row(s) could not be imported; nothing was saved`, { rows: errors });
