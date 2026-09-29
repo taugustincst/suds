@@ -59,6 +59,13 @@ existing `GET /api/reports/ssp`. One new setting: `API_RATE_LIMIT`.
   charged to the worker's default fund, as a new visit is. On a client's record the `n` shortcut logs a visit for
   that client. The audit-anchor notice keeps its place (a security finding) and now says plainly that nothing in
   SUDS fixes it and what to ask IT, with **Copy the request for IT**.
+- **From the live retest of 1.15.3.** The expiring-consent alert on a client's Overview read *the Part 2 consent
+  consent to …*: "consent" is now said once (and still added for a type whose name lacks it). An empty
+  **Waitlist** offers **Add someone to the waitlist** (the intake form, opened on the status Waitlist) to a role
+  that may add clients, and tells anyone else who does. An inactive resource's profile was checked in the browser at
+  1280 and 390 px: its badge is an item of the badge list, read as *Status: Inactive*, and the browser suite now
+  asserts it. So is the unsent-visit offer after navigating away: *Resume your unsent visit?* restores the fields,
+  and Discard clears them.
 - **A publication release does not offer "Export everything to Excel"**, the program's own record-level workbook
   for internal checking; the submission run still does.
 

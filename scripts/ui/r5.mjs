@@ -9,7 +9,10 @@
 //    7. the search box says what it found (a live region) and that it finds resources too;
 //   10. wording: the supervisor's time page, the Read-only role, the overdose help, the "n" shortcut on a client;
 //   11. a publication release does not offer "Export everything to Excel";
-//   market 3. finance opens the syringe services summary from the funder report, and SUPRT-A completion.
+//   market 3. finance opens the syringe services summary from the funder report, and SUPRT-A completion;
+//   retest of 1.15.3: the expiring-consent alert says "consent" once; an empty Waitlist offers a next step; an
+//   inactive resource's profile reads "Status: Inactive" in its badge list (1280 and 390 px); an unsent visit left by
+//   navigating away is offered back, restored by Resume and cleared by Discard.
 // Pages it changes are checked with axe (WCAG 2.1 A/AA).
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
@@ -227,6 +230,86 @@ try {
     ok(!(await page.$('[data-funder-export="workbook"]')), 'offers no "Export everything to Excel" beside it');
     await go(`funder?from=${from}&to=${end}&purpose=submission`);
     ok(await page.$('[data-funder-export="workbook"]'), 'the submission still does');
+  }
+
+  // ------------------------------------------------------------ retest: the expiring consent, said once
+  {
+    const exp = daysAgo(-10);
+    const k = await nav.api('POST', `/api/clients/${c2.id}/consents`, { type: 'part2_disclosure', recipient: `Test Clinic ${tag}`, purpose: 'Referral and care coordination', signed_at: daysAgo(30), scope: 'Referral information', expires_at: exp, signed_on_paper: true, redisclosure_notice_given: true, revocation_right_given: true, refusal_consequences_given: true });
+    eq(k.status, 201, 'a Part 2 consent that expires in 10 days');
+    await nav.go(`client/${c2.id}`);
+    const alert = await nav.page.textContent('[data-consent-alert]');
+    ok(alert.includes(`The Part 2 consent to Test Clinic ${tag} expires on`), 'the Overview names it once as "the Part 2 consent to …"', alert.slice(0, 160));
+    ok(!/consent consent/i.test(alert), 'never "consent consent"');
+  }
+
+  // ------------------------------------------------------------------ retest: an empty Waitlist
+  {
+    const w = (await sup.api('GET', '/api/waitlist?limit=500')).data.rows;
+    for (const r of w) await sup.api('PUT', `/api/clients/${r.id}`, { status: 'active' });
+    await nav.go('waitlist');
+    ok(/Nobody is waiting/.test(await nav.page.textContent('.main')), 'an empty Waitlist says so');
+    const btn = await nav.page.$('.main [data-empty-action="waitlist-add"]');
+    ok(btn, 'and offers the next step: add someone to it');
+    await btn.click(); await nav.page.waitForSelector('.modal select[name=status]'); await settle(nav.page);
+    eq(await nav.page.inputValue('.modal select[name=status]'), 'waitlist', 'the intake form opens with the status Waitlist');
+    await nav.page.fill('.modal input[name=first_name]', `Wait${tag}`); await nav.page.fill('.modal input[name=last_name]', 'Listed');
+    await nav.page.click(`${top} .btn-row button[type=submit]`); await settle(nav.page);
+    await until(async () => (await dialogs(nav.page)) === 0);
+    await nav.go('waitlist');
+    ok((await nav.page.textContent('.main')).includes(`Wait${tag}`), 'and the person is then on the Waitlist');
+    await axe(nav.page, 'Waitlist');
+    const ro = await session('rreader');
+    await ro.go('waitlist');
+    const t = await ro.page.textContent('.main');
+    ok(/Nobody is waiting|Not available/.test(t) && !(await ro.page.$('[data-empty-action="waitlist-add"]')), 'a role that cannot add clients is not offered the button');
+    await ro.ctx.close();
+  }
+
+  // ------------------------------------------------- retest: an inactive resource's profile, 1280 and 390 px
+  {
+    const res = await sup.api('POST', '/api/resources', { name: `Closed Clinic ${tag}`, category: 'outpatient' });
+    eq(res.status, 201, 'a resource');
+    eq((await sup.api('PUT', `/api/resources/${res.data.id}`, { is_active: false })).status, 200, 'deactivated');
+    for (const [label, s] of [['1280 px', sup], ['390 px', await session('jwalker', PW, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })]]) {
+      await s.go(`resource/${res.data.id}`);
+      const inList = await s.page.$eval('[data-inactive]', el => !!el.closest('ul.badge-list > li')).catch(() => false);
+      ok(inList, `${label}: the profile's Inactive badge is an item of its badge list`);
+      const snap = await s.page.locator('ul.badge-list').first().ariaSnapshot();
+      ok(/listitem: "?Status: Inactive"?/.test(snap), `${label}: a screen reader reads "Status: Inactive" as its own list item`, snap.slice(0, 200));
+      ok(await s.page.$eval('[data-inactive]', el => getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0), `${label}: and it is visible`);
+      if (s !== sup) await s.ctx.close();
+    }
+  }
+
+  // ------------------------------------------ retest: an unsent visit left by navigating away is offered back
+  {
+    const { page, go } = nav;
+    await go('dashboard');
+    const logVisit = async () => { await page.locator('button.quick:visible').first().click(); await page.click(`${top} .quick-list button:has-text("Log a visit")`); await page.waitForSelector('.modal select[name=type]'); await settle(page); };
+    await logVisit();
+    await page.selectOption('.modal select[name=type]', 'outreach');
+    await page.fill('.modal textarea[name=summary]', `r5 left unsent ${tag}`);
+    await page.waitForTimeout(700); // the draft is kept 400 ms after the last keystroke
+    await page.evaluate(() => { location.hash = '#/clients'; }); await settle(page);
+    await page.waitForSelector('.main h1'); await closeModals(page);
+    ok((await page.textContent('.main h1')).includes('Clients'), 'navigated away without saving');
+    await go('dashboard');
+    await logVisit();
+    ok(await page.$('.modal [data-resume-question]'), 'opening Log a visit again offers the unsent visit');
+    eq(await page.inputValue('.modal textarea[name=summary]'), '', 'without filling it in unasked');
+    await page.click('.modal [data-resume-answer="resume"]'); await settle(page);
+    eq(await page.inputValue('.modal textarea[name=summary]'), `r5 left unsent ${tag}`, 'Resume restores the summary');
+    eq(await page.inputValue('.modal select[name=type]'), 'outreach', 'and what was done');
+    await page.waitForTimeout(700); await closeModals(page);
+    await logVisit();
+    ok(await page.$('.modal [data-resume-answer="discard"]'), 'still offered until it is saved or discarded');
+    await page.click('.modal [data-resume-answer="discard"]'); await settle(page);
+    eq(await page.inputValue('.modal textarea[name=summary]'), '', 'Discard leaves the form empty');
+    await closeModals(page);
+    await logVisit();
+    ok(!(await page.$('.modal [data-resume-question]')), 'and the next visit starts fresh');
+    await closeModals(page);
   }
 
   // --------------------------------------------------------------- market 3: finance and the SSP summary

@@ -83,6 +83,11 @@ try {
   ok(await until(async () => /Client questionnaire/.test(await nav.page.textContent('[data-suprt-form] .banner.danger').catch(() => ''))), 'completing it without a required answer says which one');
   await nav.page.selectOption('[data-suprt-form] select[name="answers.A_suprt_c"]', 'declined');
   await nav.page.selectOption('[data-suprt-form] select[name="answers.C_trauma_screen"]', 'not_screened');
+  // Every question of the sections a baseline asks is needed to complete it (1.16.0): what the record does not
+  // answer, the worker answers, "don't know" or "not screened" where that is the truth.
+  await nav.page.click('[data-suprt-form] button[type=submit]'); await settle(nav.page);
+  ok(await until(async () => /before marking it complete/.test(await nav.page.textContent('[data-suprt-form] .banner.danger').catch(() => ''))), 'with sections still unanswered, it says which questions');
+  await nav.page.$$eval('[data-suprt-form] select[name^="answers."]', (sels) => { for (const s of sels) if (!s.value) { const vals = [...s.options].map(o => o.value).filter(Boolean); s.value = vals.includes('unknown') ? 'unknown' : vals.includes('not_screened') ? 'not_screened' : vals[0]; s.dispatchEvent(new Event('change', { bubbles: true })); } });
   await nav.page.click('[data-suprt-form] button[type=submit]'); await settle(nav.page);
   ok(await until(async () => !(await nav.page.$('[data-suprt-form]'))), 'the baseline is saved');
   ok(await until(async () => /Complete/.test(await nav.page.textContent('[data-suprt-tab]'))), 'and listed as complete');

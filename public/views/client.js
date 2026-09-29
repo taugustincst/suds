@@ -153,7 +153,9 @@ route('client', async (r) => {
     if (!can('consents:read') && !can('consents:write')) return null;
     const today = fmt.today(); const soon = fmt.isoLocal(new Date(Date.now() + 30 * 86400000)).slice(0, 10);
     const daysTo = (d) => Math.round((Date.parse(`${d}T00:00`) - Date.parse(`${today}T00:00`)) / 86400000);
-    const named = (x) => `${consentTypeLabel(x.type)} consent${x.recipient ? ` to ${x.recipient}` : ''}`;
+    // The type's short name already says "consent" ("Part 2 consent"), or is an ROI: "consent" is added only where it
+    // does not ("Part 2 — counseling notes consent"), never twice ("Part 2 consent consent", 1.16.0).
+    const named = (x) => { const t = consentTypeLabel(x.type); return `${/\bconsent\b|\bROI\b|release/i.test(t) ? t : `${t} consent`}${x.recipient ? ` to ${x.recipient}` : ''}`; };
     const lines = (c.active_consents || []).filter(x => x.expires_at && x.expires_at >= today && x.expires_at <= soon).sort((a, b) => a.expires_at.localeCompare(b.expires_at))
       .map(x => { const n = daysTo(x.expires_at); return `The ${named(x)} expires on ${fmt.date(x.expires_at)} (${n === 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`}).`; });
     // Only when a referral points at a consent that is no longer in force is anything more read.
