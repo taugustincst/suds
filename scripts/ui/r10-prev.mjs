@@ -129,6 +129,9 @@ try {
   ok(await codeHidden(), 'the participant code is not offered for a service that needs a client');
   await mp.page.selectOption('.modal select[name=type]', 'outreach');
   ok(!(await codeHidden()), 'it is offered for outreach, which may have no client');
+  // Folded under its own heading, so a new visit keeps to seven fields at 390 px (ux13): one tap opens it.
+  ok(!(await mp.page.$eval('.modal details[data-section-key="participant"]', d => d.open)), 'folded under "Participant code (optional)" on a new visit');
+  await mp.page.click('.modal details[data-section-key="participant"] summary');
   await axe(mp.page, 'the visit form with the participant code on a phone');
   await mp.page.fill('.modal input[name=participant_code]', `m${tag.slice(0, 1)}-07 85`);
   await mp.page.click('.modal button[type=submit]');
