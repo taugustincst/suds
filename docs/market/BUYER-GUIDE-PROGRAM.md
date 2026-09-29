@@ -19,6 +19,7 @@ grey cases (Part 2 records, CalOMS, DMC).
 | Workflow | In SUDS |
 | --- | --- |
 | **Outreach encounters** | **+ Log** (one button, bottom-right on a phone): visit, call, text, note, to-do or time. Outreach, naloxone distribution, post-overdose follow-up, warm hand-off and the other navigation service types. A follow-up date creates a reminder; time is logged automatically. |
+| **Street outreach** (1.17.0) | One phone screen for anonymous field contacts, used with one hand: the kind of contact, − count + for naloxone, test strips, syringes, wound care and your other supplies, roughly where, and a line of notes without identifiers. It saves as an anonymous visit, so the kits come off the stock and every report counts it; *My shift* counts what the worker has logged. On a phone with an offline copy it works with no signal and syncs later. A worker can make it the screen SUDS opens on. |
 | **Anonymous and community work** | Outreach and naloxone distribution can be recorded with no client named, and still count in the funder report. Overdose and reversal events, including community ones. |
 | **Naloxone and supplies** | Supplies kept by **item, site and lot** (1.14.0): naloxone by product, fentanyl test strips, syringes, sharps containers and whatever else you list; sites for the office, a van, a drop-in or a partner; lot numbers and expiry dates. Deliveries, moves between sites, counts and disposal are recorded in a stock ledger. Each visit or anonymous outreach contact draws the items it hands out from its site, earliest expiry first; expiring lots, low stock and shortfalls show on Home. A repeated visit copies what kind of visit it was, never the quantities. Syringes and sharps brought back are recorded too, counted or estimated from the container ([docs/SUPPLIES.md](../SUPPLIES.md)). |
 | **Grants and budget** | Funding sources (opioid settlement, SOR, SABG, county…), budget lines, burn rate against time elapsed, client assistance (bus passes, IDs, motel nights) charged to the right line, staff time by funding source. |
@@ -62,6 +63,15 @@ CalOMS Tx, and the county EHR hand-off. Most harm-reduction programmes will not 
   so publish one period per funder cycle ([docs/HIPAA.md](../HIPAA.md#small-cells-in-aggregate-reports)).
   (Only the funder report, the naloxone log and the settlement report suppress small cells; the other reports
   show exact counts.)
+- **Settlement outcomes** (1.17.0), for finance, supervisors and administrators: each opioid settlement fund (a
+  county's, a city's and the state's share, each on its own) with what it spent beside what the programme recorded
+  of the work it paid for — naloxone kits and reversals reported for naloxone spending, people served, referrals and
+  people linked to treatment for treatment and recovery spending, people trained for training — by category and by
+  month, with the cost per outcome where that means something. Counts of people are small-cell suppressed as in the
+  funder report (finance sees `<11` too) and no cost per outcome is shown beside a hidden count; an Excel or CSV
+  file and a printed page are made when someone asks for them, and nothing is sent anywhere. These are the
+  programme's own figures from its own records: **not an official state report**, and the outcome each category is
+  measured by is SUDS's reading, to check against your agreement.
 - **Naloxone distribution log** in the style of the DHCS Naloxone Distribution Project reporting, and an
   **opioid-settlement expenditure report** by allowable-use category, also in the DHCS settlement expenditure
   layout (one row per activity, people served on the activity their services fall under) or your county's own

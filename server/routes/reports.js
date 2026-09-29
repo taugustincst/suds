@@ -332,6 +332,9 @@ module.exports = (r) => {
   require('../harm-reduction-reports').layoutRoutes(r);
   // The syringe services program summary (server/ssp-report.js): the program's own submission, never a release.
   require('../ssp-report').routes(r, range);
+  // Settlement outcomes (server/settlement-outcomes.js): each settlement fund's spending beside what the program
+  // recorded of the work charged to it. The program's own figures, never a release; small counts suppressed.
+  require('../settlement-outcomes').routes(r, range);
 
   // Exports: CSV or Excel per table, or one Excel workbook with every table. Needs export:read; de-identified
   // (HIPAA Safe Harbor) unless identified=1 and the user holds export:identified — and an identified export

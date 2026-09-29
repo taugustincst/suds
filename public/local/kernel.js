@@ -30938,6 +30938,484 @@ var require_ssp_report = __commonJS({
   }
 });
 
+// server/settlement-outcome-map.js
+var require_settlement_outcome_map = __commonJS({
+  "server/settlement-outcome-map.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var INDICATORS = {
+      contacts: { label: "Contacts (visits and outreach contacts)", short: "Contacts", kind: "count", cost: true, unit: "contact" },
+      naloxone_kits: { label: "Naloxone kits distributed", short: "Naloxone kits", kind: "count", cost: true, unit: "kit" },
+      reversals: { label: "Overdose reversals reported (naloxone used, the person survived)", short: "Reversals reported", kind: "event", cost: true, unit: "reversal reported" },
+      fentanyl_strips: { label: "Fentanyl test strips distributed", short: "Test strips", kind: "count", cost: false },
+      syringes: { label: "Syringes distributed", short: "Syringes", kind: "count", cost: false },
+      people_served: { label: "People served (unduplicated)", short: "People served", kind: "person", cost: true, unit: "person served" },
+      referrals_made: { label: "Referrals made for the people served", short: "Referrals made", kind: "person", cost: false },
+      people_linked: { label: "People linked to care (a referral admitted or completed)", short: "People linked to care", kind: "person", cost: true, unit: "person linked" },
+      moud_linked: { label: "People linked to medication for OUD (a MAT referral admitted or completed)", short: "Linked to MOUD", kind: "person", cost: true, unit: "person linked to MOUD" },
+      treatment_admissions: { label: "Treatment admissions (episodes of care opened)", short: "Admissions", kind: "event", cost: true, unit: "admission" },
+      education_contacts: { label: "Education and training sessions (visits recorded as Education)", short: "Education sessions", kind: "count", cost: true, unit: "session" },
+      people_trained: { label: "People trained (unduplicated participants in education sessions)", short: "People trained", kind: "person", cost: true, unit: "person trained" },
+      staff_training_hours: { label: "Staff training hours (approved time recorded as Training)", short: "Staff training hours", kind: "count", cost: false }
+    };
+    var PROFILES = {
+      naloxone: { label: "Overdose reversal (naloxone)", indicators: ["naloxone_kits", "reversals", "contacts"] },
+      harm_reduction: { label: "Harm reduction and syringe services", indicators: ["contacts", "naloxone_kits", "fentanyl_strips", "syringes", "reversals", "people_served"] },
+      treatment: { label: "Treatment", indicators: ["people_served", "treatment_admissions", "people_linked", "moud_linked"] },
+      connections: { label: "Connections to care and recovery", indicators: ["people_served", "referrals_made", "people_linked", "moud_linked"] },
+      prevention: { label: "Prevention", indicators: ["education_contacts", "people_trained", "contacts"] },
+      training: { label: "Training", indicators: ["people_trained", "education_contacts", "staff_training_hours"] },
+      // Leadership, planning, research and data, and spending that is not a remediation use: nothing SUDS records
+      // measures them, so only the spending is shown (with a sentence saying so).
+      none: { label: "No outcome SUDS records", indicators: [] }
+    };
+    var BY_USE = {
+      core_a: "naloxone",
+      core_b: "treatment",
+      core_c: "treatment",
+      core_d: "treatment",
+      core_e: "connections",
+      core_f: "treatment",
+      core_g: "prevention",
+      core_h: "harm_reduction",
+      core_i: "none",
+      approved_a: "treatment",
+      approved_b: "connections",
+      approved_c: "connections",
+      approved_d: "treatment",
+      approved_e: "treatment",
+      approved_f: "prevention",
+      approved_g: "prevention",
+      approved_h: "harm_reduction",
+      approved_i: "training",
+      approved_j: "none",
+      approved_k: "training",
+      approved_l: "none",
+      none: "none"
+    };
+    var BY_HIAA = { hiaa_1: "treatment", hiaa_2: "treatment", hiaa_3: "connections", hiaa_4: "harm_reduction", hiaa_5: "prevention", hiaa_6: "naloxone", none: "none" };
+    function profileFor(use, hiaa) {
+      if (use && BY_USE[use]) return BY_USE[use];
+      if (hiaa && BY_HIAA[hiaa]) return BY_HIAA[hiaa];
+      return "none";
+    }
+    var indicatorsFor = (use, hiaa) => PROFILES[profileFor(use, hiaa)].indicators;
+    function costPer(amount, count) {
+      if (typeof amount !== "number" || !(amount > 0) || typeof count !== "number" || !(count > 0)) return null;
+      return Math.round(amount / count * 100) / 100;
+    }
+    var NO_OUTCOME_NOTE = "SUDS records no outcome for this kind of spending (planning, leadership, research or administration): only the spending is shown. Describe what it achieved in the narrative of your report.";
+    var UNCATEGORISED_NOTE = "This fund has no settlement category, so SUDS cannot say which outcomes its spending is for. Set its allowable use under Funding & spending.";
+    module.exports = { INDICATORS, PROFILES, BY_USE, BY_HIAA, profileFor, indicatorsFor, costPer, NO_OUTCOME_NOTE, UNCATEGORISED_NOTE };
+  }
+});
+
+// server/settlement-outcomes.js
+var require_settlement_outcomes = __commonJS({
+  "server/settlement-outcomes.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var FR = require_funder_report();
+    var SC = require_small_cells();
+    var MAP = require_settlement_outcome_map();
+    var { badRequest, forbidden } = require_http();
+    var NOTE = "What the program recorded in SUDS for the work charged to each opioid settlement fund, beside what the fund spent. SUDS reports what the program records; it is not an official state reporting system, and these figures are not the DHCS settlement expenditure report (Reports \u203A Harm-reduction reporting has that, in the DHCS layout). Outcomes are counted for visits, overdose events, episodes and time charged to the fund, and for referrals of the people it served; spending under the fund's own category is what a cost per outcome divides.";
+    var MOUD = ["mat_otp", "mat_obot"];
+    var LINKED = ["admitted", "completed"];
+    var money = (n) => Math.round((n || 0) * 100) / 100;
+    var isFund = `(f.source_type='opioid_settlement' OR f.settlement_use IS NOT NULL OR f.settlement_hiaa IS NOT NULL)`;
+    var USE = Object.fromEntries(C.SETTLEMENT_USES.map((x) => [x.code, x]));
+    var HIAA = Object.fromEntries([...C.SETTLEMENT_HIAA.map((x) => [x.code, x.label]), ["none", "Not a High Impact Abatement Activity"]]);
+    var KEYS = Object.keys(MAP.INDICATORS);
+    var PEOPLE = KEYS.filter((k) => MAP.INDICATORS[k].kind !== "count");
+    function allowed(ctx) {
+      if (auth3.hasPerm(ctx.user, "reports:internal") || auth3.submissionRunAllowed(ctx.user)) return;
+      audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms: ["reports:internal|reports:funder"], path: ctx.path } });
+      throw forbidden("Settlement outcomes are for the people who account for the program's settlement money: finance, supervisors and administrators.");
+    }
+    function counting(ctx, period) {
+      const asked = ctx.query.get("purpose");
+      if (asked === "publication") throw badRequest("Settlement outcomes are the program's own figures, not a publication release. Run them without purpose=publication.");
+      if (asked && asked !== "submission" && !auth3.hasPerm(ctx.user, "reports:internal")) throw forbidden("Your role runs settlement outcomes as the program's own figures (purpose=submission).");
+      const q = new URLSearchParams(ctx.query);
+      if (!asked) q.set("purpose", "submission");
+      if (!q.get("counts")) q.set("counts", "suppressed");
+      const c = FR.countingMode({ ...ctx, query: q }, period);
+      return { counting: c, sc: { threshold: c.threshold, exact: c.mode === "exact" } };
+    }
+    function monthReader() {
+      const B2 = require_budget();
+      const tz = B2.orgTimezone();
+      let fmt = null;
+      try {
+        fmt = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+      } catch {
+        fmt = null;
+      }
+      return (at) => {
+        const s = String(at || "");
+        if (s.length === 10) return s.slice(0, 7);
+        const d = new Date(s);
+        return !Number.isFinite(d.getTime()) ? s.slice(0, 7) : (fmt ? fmt.format(d) : B2.localDate(s)).slice(0, 7);
+      };
+    }
+    function monthsOf(from, to) {
+      const out2 = [];
+      let y = Number(from.slice(0, 4));
+      let m = Number(from.slice(5, 7));
+      const end = to.slice(0, 7);
+      for (let guard = 0; guard < 600; guard++) {
+        const k = `${y}-${String(m).padStart(2, "0")}`;
+        if (k > end) break;
+        out2.push(k);
+        m++;
+        if (m > 12) {
+          m = 1;
+          y++;
+        }
+      }
+      return out2;
+    }
+    var bucket = () => ({
+      contacts: 0,
+      naloxone_kits: 0,
+      fentanyl_strips: 0,
+      syringes: 0,
+      reversals: 0,
+      treatment_admissions: 0,
+      education_contacts: 0,
+      staff_minutes: 0,
+      refs: /* @__PURE__ */ new Set(),
+      served: /* @__PURE__ */ new Set(),
+      linked: /* @__PURE__ */ new Set(),
+      moud: /* @__PURE__ */ new Set(),
+      trained: /* @__PURE__ */ new Set(),
+      spend: 0
+    });
+    var values = (b) => ({
+      contacts: b.contacts,
+      naloxone_kits: b.naloxone_kits,
+      fentanyl_strips: b.fentanyl_strips,
+      syringes: b.syringes,
+      reversals: b.reversals,
+      treatment_admissions: b.treatment_admissions,
+      education_contacts: b.education_contacts,
+      staff_training_hours: Math.round(b.staff_minutes / 6) / 10,
+      referrals_made: b.refs.size,
+      people_served: b.served.size,
+      people_linked: b.linked.size,
+      moud_linked: b.moud.size,
+      people_trained: b.trained.size
+    });
+    function figures({ from, to, ts, tsP }) {
+      const monthOf = monthReader();
+      const months = monthsOf(from, to);
+      const funds = db3.all(`SELECT f.id, f.name, f.grant_number, f.source_type, f.settlement_use, f.settlement_hiaa, f.is_active, f.total_amount FROM funding_sources f WHERE ${isFund} ORDER BY f.name, f.id`);
+      const F = new Map(funds.map((f) => [f.id, { f, period: bucket(), months: new Map(months.map((m) => [m, bucket()])), own: 0, other: 0, pending: 0, active: false }]));
+      const catKey = (f) => f.settlement_use && USE[f.settlement_use] ? f.settlement_use : "uncategorised";
+      const cats = /* @__PURE__ */ new Map();
+      const total = bucket();
+      const totalMonths = new Map(months.map((m) => [m, bucket()]));
+      for (const x of F.values()) if (!cats.has(catKey(x.f))) cats.set(catKey(x.f), bucket());
+      const add = (fid, month, fn) => {
+        const x = F.get(fid);
+        if (!x) return;
+        x.active = true;
+        fn(x.period);
+        fn(cats.get(catKey(x.f)));
+        fn(total);
+        if (x.months.has(month)) {
+          fn(x.months.get(month));
+          fn(totalMonths.get(month));
+        }
+      };
+      for (const e of db3.all(`SELECT e.funding_source_id fid, e.spent_at, e.amount, e.status, COALESCE(e.settlement_use, f.settlement_use) use_code FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id
+      WHERE ${isFund} AND e.spent_at BETWEEN ? AND ? AND e.status IN ('pending','approved','reimbursed')`, from, to)) {
+        const x = F.get(e.fid);
+        if (!x) continue;
+        x.active = true;
+        if (e.status === "pending") {
+          x.pending += e.amount;
+          continue;
+        }
+        const own = (e.use_code || null) === (x.f.settlement_use || null);
+        if (own) x.own += e.amount;
+        else x.other += e.amount;
+        const m = String(e.spent_at).slice(0, 7);
+        x.period.spend += e.amount;
+        total.spend += e.amount;
+        if (own) cats.get(catKey(x.f)).spend += e.amount;
+        if (x.months.has(m)) {
+          x.months.get(m).spend += e.amount;
+          totalMonths.get(m).spend += e.amount;
+        }
+      }
+      const syringes = new Map(db3.all(`SELECT l.intervention_id id, SUM(l.quantity) q FROM intervention_supplies l JOIN supply_items it ON it.id=l.item_id JOIN interventions i ON i.id=l.intervention_id
+      JOIN funding_sources f ON f.id=i.funding_source_id WHERE ${isFund} AND ${ts("i.occurred_at")} AND it.category='syringes' GROUP BY l.intervention_id`, ...tsP).map((x) => [x.id, x.q]));
+      const servedBy = /* @__PURE__ */ new Map();
+      for (const v of db3.all(`SELECT i.id, i.funding_source_id fid, i.occurred_at, i.type, i.client_id, c.deleted_at, i.naloxone_kits, i.fentanyl_strips FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id
+      LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts("i.occurred_at")}`, ...tsP)) {
+        const person = v.client_id && !v.deleted_at ? v.client_id : null;
+        add(v.fid, monthOf(v.occurred_at), (b) => {
+          b.contacts++;
+          b.naloxone_kits += v.naloxone_kits || 0;
+          b.fentanyl_strips += v.fentanyl_strips || 0;
+          b.syringes += syringes.get(v.id) || 0;
+          if (v.type === "education") {
+            b.education_contacts++;
+            if (person) b.trained.add(person);
+          }
+          if (person) b.served.add(person);
+        });
+        if (person) {
+          if (!servedBy.has(person)) servedBy.set(person, /* @__PURE__ */ new Set());
+          servedBy.get(person).add(v.fid);
+        }
+      }
+      for (const o of db3.all(`SELECT o.funding_source_id fid, o.occurred_at FROM overdose_events o JOIN funding_sources f ON f.id=o.funding_source_id LEFT JOIN clients c ON c.id=o.client_id
+      WHERE ${isFund} AND ${ts("o.occurred_at")} AND (o.naloxone_used=1 OR o.kind='reversal') AND o.survived=1 AND (o.client_id IS NULL OR c.deleted_at IS NULL)`, ...tsP)) {
+        add(o.fid, monthOf(o.occurred_at), (b) => {
+          b.reversals++;
+        });
+      }
+      for (const e of db3.all(`SELECT e.funding_source_id fid, e.opened_at FROM episodes e JOIN funding_sources f ON f.id=e.funding_source_id JOIN clients c ON c.id=e.client_id
+      WHERE ${isFund} AND c.deleted_at IS NULL AND ${ts("e.opened_at")}`, ...tsP)) {
+        add(e.fid, monthOf(e.opened_at), (b) => {
+          b.treatment_admissions++;
+        });
+      }
+      if (servedBy.size) {
+        for (const r of db3.all(`SELECT r.id, r.client_id, r.referred_at, r.status, res.category FROM referrals r JOIN resources res ON res.id=r.resource_id
+        WHERE ${ts("r.referred_at")} AND r.client_id IN (SELECT value FROM json_each(?))`, ...tsP, JSON.stringify([...servedBy.keys()]))) {
+          const linked = LINKED.includes(r.status);
+          const moud = linked && MOUD.includes(r.category);
+          for (const fid of servedBy.get(r.client_id) || []) add(fid, monthOf(r.referred_at), (b) => {
+            b.refs.add(r.id);
+            if (linked) b.linked.add(r.client_id);
+            if (moud) b.moud.add(r.client_id);
+          });
+        }
+      }
+      for (const t of db3.all(`SELECT t.funding_source_id fid, t.work_date, t.minutes FROM time_entries t JOIN funding_sources f ON f.id=t.funding_source_id
+      WHERE ${isFund} AND t.category='training' AND t.status='approved' AND t.work_date BETWEEN ? AND ?`, from, to)) {
+        add(t.fid, String(t.work_date).slice(0, 7), (b) => {
+          b.staff_minutes += t.minutes || 0;
+        });
+      }
+      const shownFunds = [...F.values()].filter((x) => x.f.is_active || x.active);
+      const fundRows = shownFunds.map((x) => {
+        const profile = MAP.profileFor(x.f.settlement_use, x.f.settlement_hiaa);
+        return {
+          id: x.f.id,
+          name: x.f.name,
+          grant_number: x.f.grant_number || null,
+          is_active: !!x.f.is_active,
+          category: catKey(x.f),
+          hiaa: x.f.settlement_hiaa || null,
+          category_label: USE[x.f.settlement_use]?.label || "No settlement category recorded",
+          schedule: USE[x.f.settlement_use]?.schedule || "Uncategorised",
+          hiaa_label: x.f.settlement_hiaa ? HIAA[x.f.settlement_hiaa] || null : null,
+          profile,
+          profile_label: MAP.PROFILES[profile].label,
+          indicators: MAP.PROFILES[profile].indicators,
+          spend: { own_category: money(x.own), other_categories: money(x.other), approved: money(x.own + x.other), pending: money(x.pending) },
+          values: values(x.period),
+          months: months.map((m) => ({ month: m, spend: money(x.months.get(m).spend), values: values(x.months.get(m)) }))
+        };
+      });
+      const catRows = [...cats].filter(([k]) => shownFunds.some((x) => catKey(x.f) === k)).map(([k, b]) => {
+        const profile = k === "uncategorised" ? "none" : MAP.profileFor(k, null);
+        return {
+          key: k,
+          label: USE[k]?.label || "No settlement category recorded",
+          schedule: USE[k]?.schedule || "Uncategorised",
+          profile,
+          profile_label: MAP.PROFILES[profile].label,
+          indicators: MAP.PROFILES[profile].indicators,
+          funds: shownFunds.filter((x) => catKey(x.f) === k).map((x) => x.f.name),
+          spend_own_category: money(b.spend),
+          values: values(b)
+        };
+      }).sort((a, b) => (a.key === "uncategorised") - (b.key === "uncategorised") || a.schedule.localeCompare(b.schedule) || a.key.localeCompare(b.key));
+      return {
+        from,
+        to,
+        months,
+        funds: fundRows,
+        categories: catRows,
+        total: {
+          spend: { approved: money(shownFunds.reduce((n, x) => n + x.own + x.other, 0)), pending: money(shownFunds.reduce((n, x) => n + x.pending, 0)) },
+          values: values(total),
+          months: months.map((m) => ({ month: m, spend: money(totalMonths.get(m).spend), values: values(totalMonths.get(m)) }))
+        }
+      };
+    }
+    function protect(raw, sc, served) {
+      const out2 = {
+        ...raw,
+        total: { ...raw.total, values: { ...raw.total.values }, months: raw.total.months.map((m) => ({ ...m, values: { ...m.values } })) },
+        categories: raw.categories.map((c) => ({ ...c, values: { ...c.values } })),
+        funds: raw.funds.map((f) => ({ ...f, values: { ...f.values }, months: f.months.map((m) => ({ ...m, values: { ...m.values } })) }))
+      };
+      if (!sc.exact) {
+        for (const k of PEOPLE) {
+          const cats = raw.categories.map((c) => c.values[k]);
+          const funds = raw.funds.map((f) => f.values[k]);
+          const tot = raw.total.values[k];
+          let shownTot;
+          let shownCats;
+          let shownFunds;
+          if (MAP.INDICATORS[k].kind === "event") {
+            const s = SC.star({ total: tot, partitions: [cats, funds] }, sc);
+            shownTot = s.total;
+            shownCats = s.partitions[0] || cats.map(() => SC.WITHHELD);
+            shownFunds = s.partitions[1] || funds.map(() => SC.WITHHELD);
+          } else if (k === "people_served") {
+            const N = Math.max(served, tot);
+            const s = SC.star({ total: N, subsets: [tot, ...cats, ...funds].map((n) => Math.min(n, N)) }, { ...sc, fixedTotal: true });
+            shownTot = s.subsets[0];
+            shownCats = s.subsets.slice(1, 1 + cats.length);
+            shownFunds = s.subsets.slice(1 + cats.length);
+          } else {
+            const s = SC.star({ total: tot, subsets: [...cats, ...funds].map((n) => Math.min(n, tot)) }, sc);
+            shownTot = s.total;
+            shownCats = s.subsets.slice(0, cats.length);
+            shownFunds = s.subsets.slice(cats.length);
+          }
+          shownCats = SC.noLonely(shownCats);
+          shownFunds = SC.noLonely(shownFunds);
+          out2.total.values[k] = shownTot;
+          out2.categories.forEach((c, i) => {
+            c.values[k] = shownCats[i];
+          });
+          out2.funds.forEach((f, i) => {
+            f.values[k] = shownFunds[i];
+          });
+          const byMonth = (list, periodTrue, periodShown) => {
+            const vals = list.map((m) => m.values[k]);
+            const fixed = typeof periodShown === "number";
+            const opts = { ...sc, ...fixed ? { fixedTotal: true } : { hidden: { total: true } } };
+            const s = MAP.INDICATORS[k].kind === "event" ? SC.star({ total: periodTrue, partitions: [vals] }, opts) : SC.star({ total: periodTrue, subsets: vals.map((n) => Math.min(n, periodTrue)) }, opts);
+            const shown2 = SC.noLonely(MAP.INDICATORS[k].kind === "event" ? s.partitions[0] || vals.map(() => SC.WITHHELD) : s.subsets);
+            list.forEach((m, i) => {
+              m.values[k] = shown2[i];
+            });
+          };
+          out2.funds.forEach((f, i) => byMonth(f.months, raw.funds[i].values[k], f.values[k]));
+          byMonth(out2.total.months, tot, shownTot);
+        }
+      }
+      const cost = (spend, v, keys) => Object.fromEntries(keys.filter((k) => MAP.INDICATORS[k].cost).map((k) => [k, MAP.costPer(spend, v[k])]));
+      for (const f of out2.funds) f.cost_per = cost(f.spend.own_category, f.values, f.indicators);
+      for (const c of out2.categories) c.cost_per = cost(c.spend_own_category, c.values, c.indicators);
+      return out2;
+    }
+    async function build(ctx, range) {
+      const { from, to, ts, tsP } = range;
+      const { counting: c, sc } = counting(ctx, { from, to });
+      const raw = await db3.readSnapshot(async () => figures(range));
+      const d = protect(raw, sc, sc.exact ? 0 : FR.servedCount(ts, tsP));
+      return {
+        ...d,
+        note: NOTE,
+        indicators: MAP.INDICATORS,
+        profiles: MAP.PROFILES,
+        no_outcome_note: MAP.NO_OUTCOME_NOTE,
+        uncategorised_note: MAP.UNCATEGORISED_NOTE,
+        empty_note: d.funds.length ? null : "No funding source is marked as opioid settlement money. Under Funding & spending, set the fund's source type to Opioid settlement and choose the allowable use it pays for.",
+        suppression: FR.suppressionOf(c),
+        counting_statement: FR.countingStatement(c)
+      };
+    }
+    var shown = (v) => v === null || v === void 0 ? "" : v;
+    function sheets(d, ctx) {
+      const L = (k) => MAP.INDICATORS[k].label;
+      const about = [
+        { k: "Report", v: "Opioid settlement outcomes: spending and what the program recorded, by fund and category" },
+        { k: "Period", v: `${d.from} to ${d.to}` },
+        { k: "Organization", v: db3.getSetting("org_name", "") || "" },
+        { k: "What this is", v: d.note },
+        { k: "Funds", v: d.funds.map((f) => f.name).join("; ") || "No settlement funds" },
+        { k: "Purpose", v: "The program's own figures, not for publication" },
+        { k: "Counts", v: d.counting_statement },
+        { k: "Cost per outcome", v: "Spending under the fund's own settlement category (approved or reimbursed) divided by the figure; not shown where the figure is 0 or hidden." },
+        { k: "Classification", v: "Aggregate figures only: no names, client codes, record ids or dates of service." },
+        { k: "Generated", v: db3.now() },
+        { k: "Generated by", v: ctx.user.display_name || ctx.user.username }
+      ];
+      const long = [];
+      const unit = (section, fund, category, spend, v, cost, keys) => {
+        long.push({ section, fund, category, measure: "Spent under this category ($, approved or reimbursed)", value: spend, cost_per: "" });
+        for (const k of keys) long.push({ section, fund, category, measure: L(k), value: shown(v[k]), cost_per: cost && cost[k] !== void 0 ? shown(cost[k]) : "" });
+      };
+      long.push({ section: "All settlement funds", fund: "All", category: "All", measure: "Spent ($, approved or reimbursed)", value: d.total.spend.approved, cost_per: "" });
+      long.push({ section: "All settlement funds", fund: "All", category: "All", measure: "Pending approval ($)", value: d.total.spend.pending, cost_per: "" });
+      for (const k of KEYS) long.push({ section: "All settlement funds", fund: "All", category: "All", measure: L(k), value: shown(d.total.values[k]), cost_per: "" });
+      for (const c of d.categories) unit("By category", c.funds.join("; "), c.label, c.spend_own_category, c.values, c.cost_per, c.indicators);
+      for (const f of d.funds) {
+        unit("By fund", f.name, f.category_label, f.spend.own_category, f.values, f.cost_per, f.indicators);
+        long.push({ section: "By fund", fund: f.name, category: f.category_label, measure: "Spent under other categories ($)", value: f.spend.other_categories, cost_per: "" });
+        long.push({ section: "By fund", fund: f.name, category: f.category_label, measure: "Pending approval ($)", value: f.spend.pending, cost_per: "" });
+      }
+      const trend = [];
+      for (const f of d.funds) for (const m of f.months) {
+        trend.push({ fund: f.name, month: m.month, measure: "Spent ($, approved or reimbursed)", value: m.spend });
+        for (const k of f.indicators) trend.push({ fund: f.name, month: m.month, measure: L(k), value: shown(m.values[k]) });
+      }
+      const longCols = [["section", "Section"], ["fund", "Fund"], ["category", "Category (Exhibit E)"], ["measure", "Measure"], ["value", "Value"], ["cost_per", "Cost per ($)"]].map(([key, label]) => ({ key, label }));
+      const trendCols = [["fund", "Fund"], ["month", "Month"], ["measure", "Measure"], ["value", "Value"]].map(([key, label]) => ({ key, label }));
+      const fundCols = [
+        ["name", "Fund"],
+        ["grant_number", "Grant or agreement number"],
+        ["schedule", "Exhibit E schedule"],
+        ["category_label", "Exhibit E category"],
+        ["hiaa_label", "High Impact Abatement Activity"],
+        ["own", "Spent under its category ($)"],
+        ["other", "Spent under other categories ($)"],
+        ["pending", "Pending ($)"]
+      ].map(([key, label]) => ({ key, label }));
+      return {
+        workbook: [
+          { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: about },
+          { name: "Outcomes", columns: longCols, rows: long },
+          { name: "Funds", columns: fundCols, rows: d.funds.map((f) => ({ ...f, grant_number: f.grant_number || "", hiaa_label: f.hiaa_label || "", own: f.spend.own_category, other: f.spend.other_categories, pending: f.spend.pending })) },
+          { name: "By month", columns: trendCols, rows: trend }
+        ],
+        csv: [...about.map((x) => ({ section: "About", fund: "", category: "", measure: x.k, value: x.v, cost_per: "" })), ...long, ...trend.map((t) => ({ section: `Month ${t.month}`, fund: t.fund, category: "", measure: t.measure, value: t.value, cost_per: "" }))],
+        csvColumns: longCols
+      };
+    }
+    function routes(r, range) {
+      r.get("/api/reports/settlement-outcomes", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("budget:read"), allowed, async (ctx) => {
+        const d = await build(ctx, range(ctx));
+        audit3.log({ user: ctx.user, action: "report.settlement_outcomes", ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
+        return d;
+      });
+      r.get("/api/reports/settlement-outcomes/export", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("budget:read"), auth3.requirePerm("export:read"), allowed, async (ctx) => {
+        const d = await build(ctx, range(ctx));
+        const xlsx = ctx.query.get("format") === "xlsx";
+        const sh = sheets(d, ctx);
+        const S = require_spreadsheet();
+        audit3.log({ user: ctx.user, action: "report.settlement_outcomes.export", ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv" } });
+        const mode = d.suppression.mode === "exact" ? "exact-counts" : "internal-suppressed";
+        ctx.res.writeHead(200, {
+          "Content-Type": xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="suds-settlement-outcomes-${d.from}_${d.to}-${mode}.${xlsx ? "xlsx" : "csv"}"`,
+          "X-SUDS-Export": "Opioid settlement outcomes (the program's own figures; not an official state report). Aggregate, no identifiers.",
+          "X-SUDS-Report-Counts": d.suppression.mode === "exact" ? "exact" : `suppressed (threshold ${d.suppression.threshold})`,
+          "X-SUDS-Report-Purpose": d.suppression.purpose
+        });
+        ctx.res.end(xlsx ? S.writeWorkbook(sh.workbook) : S.toCsv(sh.csv, sh.csvColumns));
+      });
+    }
+    module.exports = { figures, protect, build, sheets, routes, monthsOf, NOTE };
+  }
+});
+
 // server/routes/reports.js
 var require_reports = __commonJS({
   "server/routes/reports.js"(exports, module) {
@@ -31247,6 +31725,7 @@ var require_reports = __commonJS({
       require_harm_reduction_reports().routes(hrRouter, range);
       require_harm_reduction_reports().layoutRoutes(r);
       require_ssp_report().routes(r, range);
+      require_settlement_outcomes().routes(r, range);
       r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("export:read"), async (ctx) => {
         const period = range(ctx);
         const { from, to } = period;
@@ -32857,6 +33336,65 @@ var require_notes2 = __commonJS({
   }
 });
 
+// server/outreach.js
+var require_outreach = __commonJS({
+  "server/outreach.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var C = require_constants();
+    var { badRequest } = require_http();
+    var MAX_SHIFT_MS = 36 * 3600 * 1e3;
+    function startOfToday() {
+      const B2 = require_budget();
+      return B2.localMidnight(B2.localDate());
+    }
+    function shift(user, since) {
+      const now2 = Date.now();
+      let from = since || startOfToday();
+      const t = Date.parse(from);
+      if (!Number.isFinite(t)) throw badRequest("since must be a date and time (ISO 8601)");
+      if (t > now2 + 5 * 6e4) throw badRequest("since is in the future");
+      if (now2 - t > MAX_SHIFT_MS) from = new Date(now2 - MAX_SHIFT_MS).toISOString();
+      else from = new Date(t).toISOString();
+      const types = C.CLIENTLESS_INTERVENTION_TYPES;
+      const mine = `i.user_id=? AND i.client_id IS NULL AND i.type IN (${types.map(() => "?").join(",")}) AND i.occurred_at >= ?`;
+      const p = [user.id, ...types, from];
+      const visits = db3.all(`SELECT i.id, i.type, i.occurred_at, i.location, i.supply_site_id, i.naloxone_kits, i.fentanyl_strips, i.syringes_returned FROM interventions i WHERE ${mine} ORDER BY i.occurred_at DESC`, ...p);
+      const lines = db3.all(`SELECT l.intervention_id, l.quantity, it.id AS item_id, it.name, it.category, it.unit FROM intervention_supplies l JOIN supply_items it ON it.id=l.item_id JOIN interventions i ON i.id=l.intervention_id WHERE ${mine}`, ...p);
+      const items = /* @__PURE__ */ new Map();
+      const byVisit = /* @__PURE__ */ new Map();
+      for (const l of lines) {
+        if (!items.has(l.item_id)) items.set(l.item_id, { item_id: l.item_id, item: l.name, category: l.category, unit: l.unit, quantity: 0 });
+        items.get(l.item_id).quantity += l.quantity;
+        if (!byVisit.has(l.intervention_id)) byVisit.set(l.intervention_id, []);
+        byVisit.get(l.intervention_id).push({ item: l.name, quantity: l.quantity });
+      }
+      const sites = new Map(db3.all(`SELECT id, name FROM supply_sites`).map((s) => [s.id, s.name]));
+      const byType = /* @__PURE__ */ new Map();
+      for (const v of visits) byType.set(v.type, (byType.get(v.type) || 0) + 1);
+      const sum = (k) => visits.reduce((n, v) => n + (v[k] || 0), 0);
+      return {
+        since: from,
+        contacts: visits.length,
+        by_type: [...byType].map(([type, n]) => ({ type, n })),
+        naloxone_kits: sum("naloxone_kits"),
+        fentanyl_strips: sum("fentanyl_strips"),
+        syringes_returned: sum("syringes_returned"),
+        supplies: [...items.values()].sort((a, b) => a.item.localeCompare(b.item)),
+        participants: null,
+        // The last few contacts, to check one was saved: when, what, where, what was given. Never the notes.
+        recent: visits.slice(0, 8).map((v) => ({ id: v.id, occurred_at: v.occurred_at, type: v.type, location: v.location, site: v.supply_site_id ? sites.get(v.supply_site_id) || null : null, supplies: byVisit.get(v.id) || [] }))
+      };
+    }
+    function routes(r) {
+      r.get("/api/outreach/shift", auth3.requireAuth, auth3.requirePerm("interventions:write"), (ctx) => shift(ctx.user, ctx.query.get("since") || null));
+    }
+    module.exports = { shift, routes, startOfToday, MAX_SHIFT_MS };
+  }
+});
+
 // server/routes/interventions.js
 var require_interventions2 = __commonJS({
   "server/routes/interventions.js"(exports, module) {
@@ -33124,6 +33662,7 @@ var require_interventions2 = __commonJS({
         }
       });
       supplies(r);
+      require_outreach().routes(r);
       r.get("/api/meta/constants", auth3.requireAuth, () => {
         const m = O.meta();
         return { ...C, ...m.visible, option_lists: m.option_lists, DEFAULT_LOCATION: require_programme().defaultLocation(m.visible.LOCATIONS || C.LOCATIONS) };

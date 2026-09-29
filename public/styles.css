@@ -513,6 +513,39 @@ details.section > summary .summary-heading { display: inline; font-size: 1rem; m
 .supply-add { margin-top: .5rem; gap: .4rem; }
 .supply-add select { flex: 1 1 10rem; min-width: 0; max-width: 100%; }
 
+/* ---- Street outreach (views/outreach.js): one screen, one hand, at 390px. Every control is at least 48px tall,
+   the − and + sit on the right where a thumb reaches, the item name wraps, and nothing scrolls sideways at 320px. */
+.outreach { max-width: 40rem; }
+.outreach-form fieldset { border: 0; padding: 0; margin: 0 0 1rem; min-width: 0; }
+.outreach-form legend { font-weight: 650; font-size: 1rem; margin-bottom: .4rem; padding: 0; }
+.outreach-types { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: .5rem; }
+.outreach-type { display: flex; align-items: center; gap: .6rem; min-height: 3.25rem; padding: .5rem .8rem; border: 2px solid var(--border); border-radius: var(--radius); background: var(--panel-2); cursor: pointer; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.outreach-type input { width: 1.35rem; height: 1.35rem; flex: 0 0 auto; margin: 0; accent-color: var(--primary); }
+.outreach-type:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+.outreach-type:has(input:focus-visible) { outline: 3px solid var(--focus, var(--primary)); outline-offset: 2px; }
+.outreach-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .35rem .75rem; padding: .45rem 0; border-bottom: 1px solid var(--border); }
+.outreach-item > label { flex: 1 1 8rem; min-width: 0; overflow-wrap: anywhere; font-weight: 600; font-size: 1rem; }
+.outreach-step { display: flex; align-items: center; gap: .4rem; flex: 0 0 auto; margin-left: auto; }
+.outreach-btn { min-width: 3rem; min-height: 3rem; padding: 0; justify-content: center; font-size: 1.5rem; line-height: 1; font-weight: 700; }
+.outreach-qty { width: 3.75rem; min-height: 3rem; text-align: center; font-size: 1.15rem; font-weight: 650; }
+.outreach-other { margin-top: .6rem; } .outreach-other > label { display: block; font-weight: 600; margin-bottom: .25rem; }
+.outreach-other .row { gap: .5rem; flex-wrap: nowrap; } .outreach-other select { flex: 1 1 auto; min-width: 0; }
+.outreach-other .btn, .outreach-where select, .outreach-other select { min-height: 3rem; }
+.outreach-where { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: .5rem .75rem; }
+.outreach-where select { width: 100%; }
+.outreach-notes textarea { width: 100%; font-size: 1rem; }
+.outreach-save { width: 100%; min-height: 3.5rem; font-size: 1.15rem; justify-content: center; margin-top: .5rem; }
+.outreach-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin-bottom: .75rem; }
+.outreach-list { margin: 0 0 .75rem; padding-left: 1.1rem; } .outreach-list li { margin: .2rem 0; overflow-wrap: anywhere; }
+.outreach-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem 1rem; margin: 1rem 0 5rem; }
+.outreach-foot .check { margin-top: 0; min-height: 44px; }
+
+/* ---- Settlement outcomes (views/settlement.js): a card per fund, spending beside outcomes; prints as a report. ---- */
+.settlement-fund .kv { margin-bottom: .75rem; }
+.settlement-note { max-width: 60rem; }
+@media print { .settlement-print-head { display: block !important; } .settlement-controls { display: none !important; } .settlement-fund { break-inside: avoid; } }
+.settlement-print-head { display: none; }
+
 /* ---- Navigation (1.14.0 usability): a sideways-scrolling tab strip says it scrolls, the welcome card on
    Home, and the phone's Clients shortcut. ---- */
 /* app.js pageTabs: a chevron on the side that has more tabs, instead of a faded, cut-off last label. */

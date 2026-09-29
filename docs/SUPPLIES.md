@@ -53,6 +53,12 @@ to someone who gives no name: it opens the visit form preset to a naloxone distr
 item that is not naloxone), with the item on it and the site chosen above, and the client left optional. It is an
 ordinary visit, so the stock, the NDP log and the funder report count it like any other.
 
+**Street outreach** (1.17.0; **+ Log → Street outreach contact**) is the same thing for a worker in the field logging
+contact after contact on a phone: − count + for naloxone, test strips, syringes, wound care and the usual items (any
+other item one choice away), the site the supplies came from, and a place. Each contact is an anonymous visit with
+those items, drawn from the site's stock by the same rules, on a device too (offline, and again at the office once
+it syncs), and *My shift* adds up what the worker has handed out ([USER_GUIDE.md](USER_GUIDE.md#street-outreach)).
+
 The visit form lists the programme's usual items as rows with a − count + stepper; any other item is one choice
 away, and anonymous outreach contacts use the same list. The visit records every item handed out
 (`intervention_supplies`), the site the stock came from, and the **syringes and sharps brought back**: a count, or an

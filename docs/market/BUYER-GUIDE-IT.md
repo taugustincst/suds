@@ -88,6 +88,10 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
   defaults that is the whole programme, clinical notes included** (about 460 MB of JSON on first sync at
   20,000 clients). Deny *See every client* to anyone whose device should hold only their caseload, before it
   first syncs; turn local mode off where no documented field-work need exists.
+- **Settlement outcomes and street outreach (1.17.0) add no data flow.** The settlement outcomes page and its
+  Excel/CSV file are aggregate figures made in the browser session of the person who asks for them (audited);
+  nothing is sent to the state or anyone else. A street outreach contact is an ordinary anonymous visit, saved on
+  the server or, offline, on the device and pushed by the existing sync.
 - Data classification by table: [docs/HIPAA.md](../HIPAA.md), *Data classification inside the database*.
 
 ## Security controls and evidence

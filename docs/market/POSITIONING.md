@@ -65,6 +65,10 @@ not delete records.
   keep billing in their EHR; SUDS can hand encounters to it ([docs/SCOPE.md](../SCOPE.md)).
 - **Not a prescribing or medication system.** No eMAR, e-prescribing, medication administration or labs.
 - **Not a replacement for SmartCare, Netsmart or any county EHR.** Do not propose it as one.
+- **Not an official state reporting system.** The funder, NDP, settlement and settlement-outcome reports are
+  built from what the programme records in SUDS, laid out as SUDS understands the forms. None is a verified state
+  template until someone has checked it against the current one ([docs/compliance/HARM-REDUCTION-REPORTING.md](../compliance/HARM-REDUCTION-REPORTING.md)),
+  and SUDS submits nothing to the state or a county: people download the files and submit them.
 - **Not a multi-tenant, high-availability platform.** One single-server instance per programme
   ([docs/architecture/ADR-0001](../architecture/ADR-0001-single-process-sqlite.md)).
 
@@ -80,7 +84,8 @@ no EHR at all; for them SUDS is the programme record.
 **For programme directors (value)**
 
 1. *Outreach you can count.* Log a contact in the field — named or anonymous — on a phone, even offline where the
-   programme allows it; it counts in the funder report.
+   programme allows it; it counts in the funder report. Street outreach (1.17.0) is one screen for it, one-handed:
+   what kind of contact, what was handed out, roughly where.
 2. *Supplies you can account for.* Every kit handed out comes off the stock of the site it left from; stock-outs and reversals are
    visible before the funder asks.
 3. *Funder reports from the records you already keep.* Unduplicated people served by funding source and period,
@@ -90,6 +95,10 @@ no EHR at all; for them SUDS is the programme record.
    separation of duties: nobody approves their own.
 5. *Privacy participants can trust.* Consent that names who may receive information, an accounting of every
    disclosure, identifiers and notes encrypted field by field.
+6. *Settlement money you can show the results of* (1.17.0). Each settlement fund's spending beside what the
+   programme recorded of the work it paid for — kits and reversals, people served and linked to treatment, people
+   trained — with small counts hidden as in the funder report. Say it plainly: SUDS reports what the programme
+   records; it is not the state's outcome measure and not a state report.
 
 **For the IT partner or county IT (the gate)**
 

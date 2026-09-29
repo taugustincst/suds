@@ -224,6 +224,8 @@ module.exports = (r) => {
   // Only ever called post-login (public/app.js's loadRefData(), itself only reached after /api/auth/me
   // succeeds) — no reason for this to be the one route in the app reachable without a session.
   supplies(r);
+  // Street outreach's "my shift" summary (server/outreach.js): the worker's own anonymous contacts since the shift began.
+  require('../outreach').routes(r);
   // The lists as this programme has set them up (Settings → Lists): each managed list is the choices a new
   // record may use, in order, and option_lists carries the wording, including for retired choices an old
   // record still shows.

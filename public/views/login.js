@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions, roleSummary } from '../app.js';
+import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, startPage, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions, roleSummary } from '../app.js';
 import { restoreBackupButton, requestPersistentStorage, showRecoveryCode, resetRecoveryPrompt } from './local.js';
 
 const OIDC_ERRORS = {
@@ -38,7 +38,7 @@ function sponsorBox(f, { shown }) {
 }
 async function signInAs(username, password) {
   await post('/api/auth/login', { username, password });
-  await loadSession(); navAndRender('dashboard');
+  await loadSession(); navAndRender(startPage());
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -114,7 +114,7 @@ async function loginPanel(r, noAccount, back = '', status = {}) {
     // Past the deadline the server refuses everything else anyway; inside it, the banner on every page says
     // when -- an error toast and a hijacked landing page every morning is not "advisory".
     else if (r2.mfaSetupRequired && (!r2.mfaSetupDeadline || Date.parse(r2.mfaSetupDeadline) < Date.now())) { toast('Two-step verification must be set up before you can continue.', 'error'); to = 'profile?mfa=1'; }
-    else to = back || 'dashboard';
+    else to = back || startPage();
     navAndRender(to);
   } }));
   if (state.local) showSponsor = sponsorBox(f, { shown: false });

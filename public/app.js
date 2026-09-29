@@ -1434,6 +1434,8 @@ export function quickActions() {
   // One verb per action, the same words as the buttons on the pages ("Log a visit", "Make a referral").
   const items = [
     can('interventions:write') ? ['✚', 'Log a visit', async () => (await import('./views/interventions.js')).openInterventionForm(null, hereClient())] : null,
+    // Street outreach: the phone screen for anonymous field contacts (supplies with − count +, no client).
+    can('interventions:write') ? ['🚶', 'Street outreach contact', () => nav('outreach')] : null,
     // An overdose or a naloxone reversal is logged in the field as often as a visit is.
     can('overdose:write') ? ['⛑', 'Overdose or reversal', async () => (await import('./views/overdose.js')).openOverdoseForm(null, hereClient())] : null,
     can('calls:write') ? ['☎', 'Phone call', async () => (await import('./views/calls.js')).openCallForm(null, hereClient())] : null,
@@ -1764,6 +1766,11 @@ export function parseHash() {
   const parts = path.split('/').filter(Boolean);
   return { name: parts[0] || 'dashboard', id: parts[1], sub: parts[2], query: new URLSearchParams(qs || '') };
 }
+/**
+ * Where this person starts after signing in: Street outreach when they chose it as their start page (prefs
+ * start_page, set on that screen) and may still record visits, else Home.
+ */
+export function startPage() { return state.prefs && state.prefs.start_page === 'outreach' && can('interventions:write') ? 'outreach' : 'dashboard'; }
 export function nav(to) { location.hash = to.startsWith('#') ? to : '#/' + to; }
 /**
  * Go to `to` and show it, rendering once. A changed address renders through the hashchange listener; calling
@@ -1805,6 +1812,9 @@ export const NAV = [
   { name: 'calls', team: true, label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
   { name: 'notes', team: true, label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
   { name: 'supplies', label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires soonest first.' },
+  // Street outreach (1.17.0): the one-screen, phone-first logger for anonymous field contacts; also on + Log, and a
+  // worker's start page if they choose (My profile, or the box on the screen).
+  { name: 'outreach', label: 'Street outreach', ico: '🚶', perm: 'interventions:write', more: true, help: 'Log a field contact in a few taps: what kind, what you handed out, and roughly where. Anonymous, works with no connection on a device, and the supplies come off the stock.' },
   { name: 'overdose', label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
   { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', more: true, help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
   { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. A call adds its time, and a visit does when you tick "Also log this as a time entry"; log meetings, travel and paperwork here.' },
@@ -1818,6 +1828,9 @@ export const NAV = [
   // the same test the Reports page's cards use, so the entry and the card come and go together.
   { name: 'caloms', label: 'State reporting', ico: '⚑', perm: ['episodes:read', 'episodes:write', 'export:identified'], more: true, show: () => ((can('episodes:read') || can('episodes:write')) && moduleOn('caloms')) || (can('export:identified') && (moduleOn('caloms') || moduleOn('handoff'))), help: 'CalOMS Tx admission, discharge and annual update records for DHCS, their validation report and the extract, and the county EHR hand-off.' },
   { name: 'suprt', label: 'SUPRT-A', ico: '◎', perm: ['clients:read', 'reports:funder'], more: true, show: () => moduleOn('suprt'), help: 'SAMHSA SUPRT-A records for clients served with State Opioid Response money: completion, the follow-ups due, and the file for SPARS.' },
+  // Settlement outcomes (1.17.0): each opioid settlement fund's spending beside what the program recorded of the work
+  // it paid for. For the people who account for the money (reports:funder or reports:internal, with budget:read).
+  { name: 'settlement', label: 'Settlement outcomes', ico: '◈', perm: ['reports:funder', 'reports:internal'], show: () => can('budget:read'), programme: true, more: true, help: 'For each opioid settlement fund: what it spent, what the program recorded of the work it paid for (kits, reversals, people served and linked to care, people trained), the cost per outcome where that means something, and the trend by month. Small counts of people are hidden as in the funder report.' },
   { name: 'budget', label: 'Funding & spending', ico: '$', perm: 'budget:read', programme: true, help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
   { name: 'documents', label: 'Policies & contracts', ico: '📋', perm: 'documents:read', programme: true, help: 'County policies, procedures and signed contracts, searchable by title and category.' },
   { name: 'compliance', label: 'Privacy & Part 2', ico: '⚖', perm: ['consents:read', 'complaints:read', 'incidents:read', 'settings:manage'], more: true, help: '42 CFR Part 2: the patient notice and who has not been given it, the privacy complaint log, and the incident and breach register with its 60-day notification clock.' },
@@ -2402,6 +2415,8 @@ export async function boot(force = false) {
   checkVersion();
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkVersion(); });
   await loadSession();
+  // Opened with no page in the address (the home-screen icon, a bookmark of the site): the person's start page.
+  if (state.user && !state.mfaPending && /^#?\/?$/.test(location.hash) && startPage() !== 'dashboard') { try { history.replaceState(history.state, '', `#/${startPage()}`); } catch {} }
   startIdleWatch();
   window.addEventListener('hashchange', render);
   render();
