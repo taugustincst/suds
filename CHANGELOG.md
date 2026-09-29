@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.16.3 — 2026-09-29
 
 ### Engineering
 
