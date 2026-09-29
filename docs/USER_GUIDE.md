@@ -150,7 +150,7 @@ Some programmes turn on an AI copilot that drafts documentation for you to revie
 see it as a folded **Draft with the AI copilot** section in the note form, the six-dimension assessment form and
 the CalOMS questions of an episode, and as **Suggest with AI** on a client's care plan.
 
-* Type or paste **your own** notes or transcript for **this** session and **this** client, then **Draft**. Never
+* Type or paste **your own** notes or transcript for **this** session and **this** client, then **Draft with AI**. Never
   paste another client's information. SUDS replaces this client's name, date of birth, phone, address and
   other identifiers it holds before anything is sent, but anything else you type (other people's names,
   places) is sent as written: leave out what the note does not need.
@@ -256,7 +256,7 @@ The **Validation report** lists every problem in the period by client code and f
 **SUDS does not submit Drug Medi-Cal claims.** Where a service must be billed, the **County EHR hand-off** on the same page produces the encounters (one row per client, per day, per kind of service and worker, with minutes, place and funding source) for entry into the county EHR. It includes names and Medi-Cal IDs, so it needs a recipient, a purpose and a lawful basis; with the consent basis, clients with no consent on file naming that recipient are left out and listed. It is never made on an "other" basis: a supervisor's justified override covers one client's disclosure, not a whole file. Identified exports on Reports work the same way; an *internal* export may only go to this program or its staff, and a QSOA, research or audit export needs the agreement or approval with the recipient on file. See `docs/SCOPE.md`.
 
 ## Importing spreadsheets
-Import → *Import from Excel or CSV*. Choose what you are importing (clients, resources, visits, calls, time, to-dos, expenditures), download the template or upload the spreadsheet you already keep. SUDS matches your column names automatically (you can adjust them), checks every row, tells you exactly what is wrong with any row, flags people who already exist, and only saves when you click Import. For visits, calls and other client records, refer to the client by code (C26-0012) or "Last, First".
+Import → *Import a spreadsheet or EHR export*. Choose what you are importing (clients, resources, visits, calls, time, to-dos, expenditures), download the template or upload the spreadsheet you already keep. SUDS matches your column names automatically (you can adjust them), checks every row, tells you exactly what is wrong with any row, flags people who already exist, and only saves when you click Import. For visits, calls and other client records, refer to the client by code (C26-0012) or "Last, First".
 
 ## Working faster
 * **Keyboard shortcuts.** **/** puts the cursor in the search box at the top, **n** opens *Log a visit*, **?** lists the shortcuts, and **Ctrl + Enter** (**⌘ + Enter** on a Mac) saves the form that is open, exactly as its Save button would. The single keys work only when you are not typing in a field and no dialog is open. If they get in your way (for example with speech recognition, which can send a single letter), switch them off under **My profile → Keyboard shortcuts**; Ctrl + Enter keeps working. This is the setting WCAG 2.1.4 asks for.

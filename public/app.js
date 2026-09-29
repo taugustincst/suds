@@ -1821,7 +1821,7 @@ export const NAV = [
   { name: 'overdose', hideIn: ['part2_layer'], label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
   // Group and community prevention events (1.17.0): a front-line worker finds it under More. Whoever reads reports
   // but not visits (finance, read-only) gets its activity summary alone.
-  { name: 'prevention', label: 'Prevention', ico: '◈', perm: ['interventions:read', 'reports:read'], more: true, help: 'Group and community prevention events — presentations, trainings, community events, campaigns — with their CSAP strategy, IOM population category, hours and attendance (counts, never names), and the prevention activity summary.' },
+  { name: 'prevention', label: 'Prevention', ico: '☂', perm: ['interventions:read', 'reports:read'], more: true, help: 'Group and community prevention events — presentations, trainings, community events, campaigns — with their CSAP strategy, IOM population category, hours and attendance (counts, never names), and the prevention activity summary.' },
   { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', more: true, help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
   { name: 'time', hideIn: ['part2_layer'], label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. A call adds its time, and a visit does when you tick "Also log this as a time entry"; log meetings, travel and paperwork here.' },
   { sec: 'Connect clients' },

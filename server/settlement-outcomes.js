@@ -282,14 +282,20 @@ function sheets(d, ctx) {
 }
 
 function routes(r, range) {
+  // A period that ends before it starts is a mistake to say, not an empty report to show (1.17.1).
+  const period = (ctx) => {
+    const p = range(ctx);
+    if (p.from > p.to) throw badRequest(`The start date (${p.from}) is after the end date (${p.to}). Choose a start date on or before the end date.`);
+    return p;
+  };
   r.get('/api/reports/settlement-outcomes', auth.requireAuth, auth.requirePerm('reports:read'), auth.requirePerm('budget:read'), allowed, async (ctx) => {
-    const d = await build(ctx, range(ctx));
+    const d = await build(ctx, period(ctx));
     audit.log({ user: ctx.user, action: 'report.settlement_outcomes', ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
     return d;
   });
   // The same figures as a file, made on request for the signed-in user (nothing is sent anywhere).
   r.get('/api/reports/settlement-outcomes/export', auth.requireAuth, auth.requirePerm('reports:read'), auth.requirePerm('budget:read'), auth.requirePerm('export:read'), allowed, async (ctx) => {
-    const d = await build(ctx, range(ctx)); const xlsx = ctx.query.get('format') === 'xlsx';
+    const d = await build(ctx, period(ctx)); const xlsx = ctx.query.get('format') === 'xlsx';
     const sh = sheets(d, ctx); const S = require('./spreadsheet');
     audit.log({ user: ctx.user, action: 'report.settlement_outcomes.export', ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv' } });
     const mode = d.suppression.mode === 'exact' ? 'exact-counts' : 'internal-suppressed';

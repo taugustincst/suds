@@ -21,14 +21,22 @@ route('settlement', async (r) => {
   const exactOk = can('reports:exact') || can('reports:funder');
   const counts = exactOk && r.query.get('counts') === 'exact' ? 'exact' : '';
   const qs = `from=${from}&to=${to}${counts ? '&counts=exact' : ''}`;
-  const d = await get(`/api/reports/settlement-outcomes?${qs}`);
-  const I = d.indicators;
+  // A period that ends before it starts is said at the dates (1.17.1), not run as an empty report: the server
+  // refuses it too.
+  const backwards = (f, t) => !!f && !!t && f > t;
+  const rangeProblem = (f, t) => `The start date (${fmt.date(f)}) is after the end date (${fmt.date(t)}). Choose a start date on or before the end date.`;
 
-  const fromI = h('input', { type: 'date', value: from, id: 'so-from' }); const toI = h('input', { type: 'date', value: to, id: 'so-to' });
+  const fromI = h('input', { type: 'date', value: from, id: 'so-from', 'aria-describedby': 'so-range-err' }); const toI = h('input', { type: 'date', value: to, id: 'so-to', 'aria-describedby': 'so-range-err' });
+  const rangeErr = h('div', { class: 'err', id: 'so-range-err', role: 'alert', 'data-so-range-error': '1', style: { flexBasis: '100%' } });
+  const showRange = (msg) => {
+    rangeErr.textContent = msg || '';
+    for (const i of [fromI, toI]) { if (msg) i.setAttribute('aria-invalid', 'true'); else i.removeAttribute('aria-invalid'); }
+  };
+  for (const i of [fromI, toI]) i.addEventListener('change', () => { if (rangeErr.textContent && !backwards(fromI.value, toI.value)) showRange(''); });
   const countsSel = exactOk ? h('select', { id: 'so-counts', 'data-so-counts': '1' },
     h('option', { value: '', selected: !counts }, 'Hide small counts (as reported)'),
     h('option', { value: 'exact', selected: counts === 'exact' }, 'Exact counts (not for sharing)')) : null;
-  const go = (f, t, c = countsSel ? countsSel.value : '') => nav(`settlement?from=${f}&to=${t}${c ? `&counts=${c}` : ''}`);
+  const go = (f, t, c = countsSel ? countsSel.value : '') => (backwards(f, t) ? (showRange(rangeProblem(f, t)), fromI.focus()) : nav(`settlement?from=${f}&to=${t}${c ? `&counts=${c}` : ''}`));
   const q0 = `${today.slice(0, 5)}${String(Math.floor((Number(today.slice(5, 7)) - 1) / 3) * 3 + 1).padStart(2, '0')}`;
   const controls = h('div', { class: 'filters settlement-controls' },
     h('div', { class: 'field' }, h('label', { for: 'so-from' }, 'From'), fromI), h('div', { class: 'field' }, h('label', { for: 'so-to' }, 'To'), toI),
@@ -37,7 +45,15 @@ route('settlement', async (r) => {
     h('button', { class: 'btn ghost sm', onClick: () => go(`${q0}-01`, today) }, 'This quarter'),
     h('button', { class: 'btn ghost sm', onClick: () => go(`${today.slice(0, 4)}-01-01`, today) }, 'Year to date'),
     h('button', { class: 'btn ghost sm', onClick: () => go(`${addMonths(today.slice(0, 7), -11)}-01`, today) }, 'Last 12 months'),
-    h('button', { class: 'btn ghost sm', onClick: () => { const lm = addMonths(today.slice(0, 7), -1); go(`${lm}-01`, lastDay(lm)); } }, 'Last month'));
+    h('button', { class: 'btn ghost sm', onClick: () => { const lm = addMonths(today.slice(0, 7), -1); go(`${lm}-01`, lastDay(lm)); } }, 'Last month'),
+    rangeErr);
+  // Opened with such a period (a link, the address bar): the dates and what is wrong with them, and no report.
+  if (backwards(from, to)) {
+    showRange(rangeProblem(from, to));
+    return h('div', { 'data-settlement-outcomes': '1' }, pageHead('Settlement outcomes'), controls);
+  }
+  const d = await get(`/api/reports/settlement-outcomes?${qs}`);
+  const I = d.indicators;
 
   const download = (format) => fetchDownload(`/api/reports/settlement-outcomes/export?${qs}${format === 'xlsx' ? '&format=xlsx' : ''}`).then(() => toast('Downloaded. It is aggregate: no names or client codes.', 'ok')).catch(e => toast(e.message, 'error'));
   const actions = [h('button', { class: 'btn', 'data-so-print': '1', onClick: () => window.print() }, 'Print'),

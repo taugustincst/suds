@@ -23899,11 +23899,11 @@ var require_ai = __commonJS({
           counsel_reviewed: { type: "boolean" }
         });
         const missing = {};
-        if (!v.baa) missing.baa = "confirm a business associate agreement (HIPAA) is in place";
-        if (!v.qsoa) missing.qsoa = "confirm it includes qualified service organisation terms (42 CFR Part 2)";
-        if (!v.counsel_reviewed) missing.counsel_reviewed = "confirm counsel has reviewed this use";
-        if (Object.keys(missing).length) throw badRequest("The agreement cannot be recorded until each statement is confirmed", { fields: missing });
-        if (v.agreement_date > (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) throw badRequest("Validation failed", { fields: { agreement_date: "cannot be in the future" } });
+        if (!v.baa) missing.baa = "Confirm that a HIPAA business associate agreement with this provider is in place.";
+        if (!v.qsoa) missing.qsoa = "Confirm that it includes qualified service organization terms under 42 CFR Part 2.";
+        if (!v.counsel_reviewed) missing.counsel_reviewed = "Confirm that your counsel has reviewed this use of client records.";
+        if (Object.keys(missing).length) throw badRequest("The agreement cannot be recorded until each statement is confirmed.", { fields: missing });
+        if (v.agreement_date > (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) throw badRequest("Validation failed", { fields: { agreement_date: "The date the agreement was signed cannot be in the future." } });
         const a = {
           provider: v.provider,
           signed_by: v.signed_by,
@@ -34217,13 +34217,18 @@ var require_settlement_outcomes = __commonJS({
       };
     }
     function routes(r, range) {
+      const period = (ctx) => {
+        const p = range(ctx);
+        if (p.from > p.to) throw badRequest(`The start date (${p.from}) is after the end date (${p.to}). Choose a start date on or before the end date.`);
+        return p;
+      };
       r.get("/api/reports/settlement-outcomes", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("budget:read"), allowed, async (ctx) => {
-        const d = await build(ctx, range(ctx));
+        const d = await build(ctx, period(ctx));
         audit3.log({ user: ctx.user, action: "report.settlement_outcomes", ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length, counts: d.suppression.mode, purpose: d.suppression.purpose } });
         return d;
       });
       r.get("/api/reports/settlement-outcomes/export", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("budget:read"), auth3.requirePerm("export:read"), allowed, async (ctx) => {
-        const d = await build(ctx, range(ctx));
+        const d = await build(ctx, period(ctx));
         const xlsx = ctx.query.get("format") === "xlsx";
         const sh = sheets(d, ctx);
         const S = require_spreadsheet();

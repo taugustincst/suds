@@ -164,6 +164,19 @@ test('the download: CSV and Excel, made on request, aggregate, labelled with how
   assert.equal(a.format, 'xlsx'); assert.equal(a.counts, 'suppressed');
 });
 
+test('a period that ends before it starts is refused with a clear message, on the page and for the file (1.17.1)', async () => {
+  const bad = 'from=2026-09-01&to=2026-01-01';
+  const before = H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action LIKE 'report.settlement_outcomes%'`).n;
+  for (const path of [`/api/reports/settlement-outcomes?${bad}`, `/api/reports/settlement-outcomes/export?${bad}`, `/api/reports/settlement-outcomes/export?${bad}&format=xlsx`]) {
+    const r = await fin.get(path);
+    assert.equal(r.status, 400, path);
+    assert.match(r.data.error, /start date \(2026-09-01\) is after the end date \(2026-01-01\)/, path);
+  }
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action LIKE 'report.settlement_outcomes%'`).n, before, 'nothing was run');
+  // One day (from = to) is a period.
+  assert.equal((await fin.get('/api/reports/settlement-outcomes?from=2026-03-05&to=2026-03-05')).status, 200);
+});
+
 test('no settlement funds: the page says what to do', async () => {
   H.db.run(`UPDATE funding_sources SET source_type='county_general', settlement_use=NULL, settlement_hiaa=NULL WHERE source_type='opioid_settlement'`);
   try {

@@ -31,8 +31,9 @@ export const mayUseAi = () => can('ai:draft');
 const NOT_OFFERED = new Set(['no_agreement', 'off', 'no_key', 'endpoint', 'none']);
 export const aiOffered = (st) => !!st && (!!st.available || !NOT_OFFERED.has(st.code));
 
-// What is sent and what is not, in the words every panel uses.
-const WHAT_IS_SENT = 'Only the text you give here is sent to the AI provider, after SUDS replaces this client\'s name, date of birth, phone, email, address, Medi-Cal number, emergency contact, client code and your name with placeholders, and masks anything that looks like a phone number, email, SSN or long ID number. Other names, places or details you type can still identify someone: leave out what the note does not need, and never paste another client\'s information.';
+// What is sent and what is not, in the words every panel uses, for what the panel helps with (`purpose`: "the
+// note", "the CalOMS answers"…) and anything sent beside the text (`also`: the care plan's chosen assessment).
+const whatIsSent = ({ purpose = 'the note', also = '' } = {}) => `Only the text you give here${also} is sent to the AI provider, after SUDS replaces this client's name, date of birth, phone, email, address, Medi-Cal number, emergency contact, client code and your name with placeholders, and masks anything that looks like a phone number, email, SSN or long ID number. Other names, places or details you type can still identify someone: leave out anything not needed for ${purpose}, and never paste another client's information.`;
 
 /** How many identifiers were replaced, in words (from the draft route's identifiers_replaced). */
 function replacedText(counts) {
@@ -48,13 +49,14 @@ export function focusOn(el) {
 }
 
 /**
- * The copilot panel: a folded section with its own heading, what is sent, the text box, and a Draft button.
+ * The copilot panel: a folded section with its own heading, what is sent, the text box, and its button ("Draft with
+ * AI", or `button`).
  * `draft(text, { ask })` asks the server and applies the result to the form; it returns a sentence for the status
  * line, or { message, focus } to move the focus to what it added (the draft's banner). `ask(question, choices)`
  * puts a question inside the panel (never a dialog over the form's dialog) and resolves with the choice made.
  * The panel's own typing is kept from the form around it (no autosave of the note for a keystroke here).
  */
-export function aiPanel({ key, title = 'Draft with the AI copilot', label, help, intro, draft, open = false }) {
+export function aiPanel({ key, title = 'Draft with the AI copilot', label, help, intro, purpose, button = 'Draft with AI', draft, open = false }) {
   const id = `ai-${key}-${Math.random().toString(36).slice(2, 7)}`;
   const body = h('div', { class: 'ai-panel-body' }, h('p', { class: 'small muted' }, 'Checking whether the AI copilot is available…'));
   // Hidden until the status says the copilot is offered here at all.
@@ -99,10 +101,10 @@ export function aiPanel({ key, title = 'Draft with the AI copilot', label, help,
         else if (document.activeElement === document.body) focusOn(btn);
       } catch (e) { status.textContent = ''; err.textContent = e.message || 'The AI copilot failed. Your form is unchanged: write it yourself.'; }
       finally { busy = false; btn.removeAttribute('aria-disabled'); }
-    } }, 'Draft');
+    } }, button);
     body.replaceChildren(...[
       intro ? h('p', { class: 'small' }, intro) : null,
-      h('p', { class: 'small muted', 'data-ai-what-is-sent': '1' }, WHAT_IS_SENT),
+      h('p', { class: 'small muted', 'data-ai-what-is-sent': '1' }, whatIsSent({ purpose })),
       h('div', { class: 'field' }, h('label', { for: id }, label), ta, h('div', { class: 'small muted', id: `${id}-help` }, help || 'Your own notes or transcript for this session only.')),
       err, choiceBox, h('div', { class: 'row', style: { gap: '.6rem', alignItems: 'center', flexWrap: 'wrap' } }, btn, status)].filter(Boolean));
   });
@@ -195,7 +197,7 @@ export function asamCopilot({ clientId, form: f, dims }) {
   if (!mayUseAi() || !can('assessments:write')) return { panel: null, confirmed: () => true };
   const boxes = {};
   let applied = false; let banner = null;
-  const panel = aiPanel({ key: 'asam', label: 'Intake or assessment notes', help: 'Your notes from the intake or assessment interview for this client.',
+  const panel = aiPanel({ key: 'asam', label: 'Intake or assessment notes', help: 'Your notes from the intake or assessment interview for this client.', purpose: 'the assessment',
     draft: async (text, { ask }) => {
       const r = await post('/api/ai/draft/asam', { client_id: clientId, source_text: text }, { quiet: true });
       const put1 = await putDraft(dims.map(d => ({ el: f.inputs[`note_${d.key}`], label: d.label.split(':')[0], text: (r.dimensions[d.key] || {}).narrative })), ask);
@@ -203,16 +205,19 @@ export function asamCopilot({ clientId, form: f, dims }) {
       const ratingLabel = (v) => ((state.constants?.ASAM_RATINGS || []).find(x => x.value === v) || {}).label || String(v);
       for (const d of dims) {
         const x = r.dimensions[d.key] || {};
+        const dimName = d.label.split(':')[0];
         const field = f.querySelector(`[data-field="${d.key}_rating"]`);
         if (!field) continue;
         field.parentElement.querySelectorAll(`[data-ai-asam-suggest="${d.key}"]`).forEach(el => el.remove());
         const sel = f.inputs[`${d.key}_rating`];
-        const useBtn = x.suggested_rating === null || x.suggested_rating === undefined ? null : h('button', { type: 'button', class: 'btn sm', 'data-ai-use-rating': d.key, onClick: () => { sel.value = String(x.suggested_rating); sel.dispatchEvent(new Event('change', { bubbles: true })); } }, `Use ${x.suggested_rating}`);
+        // Six buttons that all said "Use 2" did not say which dimension each was for (1.17.1): the name says it.
+        const useBtn = x.suggested_rating === null || x.suggested_rating === undefined ? null : h('button', { type: 'button', class: 'btn sm', 'data-ai-use-rating': d.key, 'aria-label': `Use rating ${x.suggested_rating} for ${dimName}`,
+          onClick: () => { sel.value = String(x.suggested_rating); sel.dispatchEvent(new Event('change', { bubbles: true })); announce(`${dimName} rating set to ${ratingLabel(x.suggested_rating)}.`); } }, `Use rating ${x.suggested_rating}`);
         const cbId = `ai-ok-${d.key}-${Math.random().toString(36).slice(2, 6)}`;
         boxes[d.key] = h('input', { type: 'checkbox', id: cbId, 'data-ai-dim-reviewed': d.key });
         field.after(h('div', { class: 'span small banner warn', 'data-ai-asam-suggest': d.key },
           h('div', {}, h('strong', {}, 'AI suggestion: '), x.suggested_rating === null || x.suggested_rating === undefined ? 'not enough information to suggest a rating' : ratingLabel(x.suggested_rating), x.rationale ? ` — ${x.rationale}` : ''),
-          h('div', { class: 'row', style: { gap: '.6rem', alignItems: 'center', flexWrap: 'wrap' } }, useBtn, h('span', {}, boxes[d.key], ' ', h('label', { for: cbId }, `I have reviewed ${d.label.split(':')[0]} and chosen its rating myself`)))));
+          h('div', { class: 'row', style: { gap: '.6rem', alignItems: 'center', flexWrap: 'wrap' } }, useBtn, h('span', {}, boxes[d.key], ' ', h('label', { for: cbId }, `I have reviewed ${dimName} and chosen its rating myself`)))));
       }
       applied = true;
       if (banner) banner.remove();
@@ -265,7 +270,7 @@ export async function carePlanCopilot(clientId, { onChange } = {}) {
       focusOn(renderEntries(r));
     } catch (e) { status.textContent = ''; err.textContent = e.message; }
     finally { busy = false; btn.removeAttribute('aria-disabled'); }
-  } }, 'Suggest');
+  } }, 'Suggest with AI');
   function renderEntries(r) {
     const banner = aiDraftBanner({ gaps: r.gaps, notice: 'AI suggestions — review before adding', text: 'Nothing is added until you press Add. Change each one to the client\'s own words, and replace anything marked [needs clinician input] first.' });
     results.replaceChildren(...[banner,
@@ -279,22 +284,28 @@ export async function carePlanCopilot(clientId, { onChange } = {}) {
     let problemId = null; let goalId = null;
     const checks = [];
     const recheck = () => checks.forEach(fn => fn());
-    const part = ({ kind, fieldLabel, label, text, attr, max, rows = 2, blocked, add }) => {
+    // The Add button is never `disabled`: that drops the keyboard focus to the page when it is pressed (1.17.1).
+    // It is aria-disabled while the text is not ready (the reason beside it, and said when it is pressed), while it
+    // adds, and once added; the focus stays on it, and what was added is announced.
+    const part = ({ kind, fieldLabel, label, text, attr, max, rows = 2, blocked, add, addedText }) => {
       const id = `ai-cp-${i}-${kind}-${checks.length}`;
       const box = h('textarea', { id, rows, maxLength: max, 'aria-describedby': `${id}-why`, [`data-ai-cp-${kind}`]: String(i) }, text);
       const why = h('div', { class: 'small muted', id: `${id}-why`, 'data-ai-cp-why': kind });
-      let done = false;
-      const b = h('button', { type: 'button', class: 'btn sm', [attr]: String(i), onClick: async () => {
-        if (b.disabled) return;
-        b.disabled = true;
-        try { await add(box.value.trim()); done = true; box.readOnly = true; b.textContent = '✓ Added'; why.textContent = ''; added = true; recheck(); }
-        catch (x) { b.disabled = false; toast(x.message, 'error'); }
+      let done = false; let adding = false; let reason = '';
+      const b = h('button', { type: 'button', class: 'btn sm', 'aria-describedby': `${id}-why`, [attr]: String(i), onClick: async () => {
+        if (done || adding) return;
+        if (reason) { announce(reason); return; }
+        adding = true; b.setAttribute('aria-disabled', 'true');
+        try { await add(box.value.trim()); done = true; box.readOnly = true; b.textContent = '✓ Added'; why.textContent = ''; added = true; recheck(); announce(addedText); }
+        catch (x) { b.removeAttribute('aria-disabled'); toast(x.message, 'error'); }
+        finally { adding = false; }
       } }, label);
       const check = () => {
         if (done) return;
         const v = box.value.trim();
-        const reason = !v ? 'Write it first.' : NEEDS_INPUT.test(v) ? 'Replace the part marked [needs clinician input] with what the client said, then add it.' : (blocked && blocked()) || '';
-        b.disabled = !!reason; why.textContent = reason;
+        reason = !v ? 'Write it first.' : NEEDS_INPUT.test(v) ? 'Replace the part marked [needs clinician input] with what the client said, then add it.' : (blocked && blocked()) || '';
+        if (reason) b.setAttribute('aria-disabled', 'true'); else if (!adding) b.removeAttribute('aria-disabled');
+        why.textContent = reason;
       };
       checks.push(check); box.addEventListener('input', check);
       return h('div', { class: 'field span' }, h('label', { for: id }, fieldLabel), box, h('div', { class: 'row', style: { gap: '.6rem', alignItems: 'center', flexWrap: 'wrap' } }, b, why));
@@ -308,13 +319,13 @@ export async function carePlanCopilot(clientId, { onChange } = {}) {
     const card = h('div', { class: 'card mt', 'data-ai-careplan-entry': String(i) }, ...[
       h('h3', {}, `Suggestion ${i + 1}: ${String(e.problem || e.goal || 'a goal').replace(NEEDS_INPUT, '').trim().slice(0, 80)}`),
       e.evidence ? h('p', { class: 'small muted' }, `From: ${e.evidence}`) : null,
-      e.problem ? part({ kind: 'problem', fieldLabel: 'Problem', label: 'Add problem', text: e.problem, attr: 'data-ai-add-problem', max: 500,
+      e.problem ? part({ kind: 'problem', fieldLabel: 'Problem', label: 'Add problem', addedText: 'Problem added to the care plan.', text: e.problem, attr: 'data-ai-add-problem', max: 500,
         add: async (v) => { problemId = (await post(`/api/clients/${clientId}/problems`, { problem: v, source: assessments.length && sel && sel.value ? 'assessment' : 'other' })).id; if (ownOpt) ownOpt.textContent = `This suggestion's problem: ${v.slice(0, 60)}`; } }) : null,
       e.goal && (ownOpt || problems.length) ? h('div', { class: 'field span' }, h('label', { for: psId }, 'The goal addresses'), probSel) : null,
-      e.goal ? part({ kind: 'goal', fieldLabel: 'Goal, in the client\'s words', label: 'Add goal', text: e.goal, attr: 'data-ai-add-goal', max: 1000, rows: 3,
+      e.goal ? part({ kind: 'goal', fieldLabel: 'Goal, in the client\'s words', label: 'Add goal', addedText: 'Goal added to the care plan.', text: e.goal, attr: 'data-ai-add-goal', max: 1000, rows: 3,
         blocked: () => (goalProblem() ? '' : e.problem ? 'Add the problem first, or choose one already on the list.' : 'Add a problem to the list first: a goal addresses a problem.'),
         add: async (v) => { goalId = (await post(`/api/clients/${clientId}/goals`, { goal: v, problem_id: goalProblem() })).id; probSel.disabled = true; } }) : null,
-      ...steps.map(([kind, text]) => part({ kind: 'step', fieldLabel: kind, label: `Add as a step`, text, attr: 'data-ai-add-step', max: 1000,
+      ...steps.map(([kind, text]) => part({ kind: 'step', fieldLabel: kind, label: 'Add as a step', addedText: `${kind} added as a step of the goal.`, text, attr: 'data-ai-add-step', max: 1000,
         blocked: () => (goalId ? '' : 'Add the goal first, then its steps.'),
         add: async (v) => { await post(`/api/goals/${goalId}/steps`, { step: v, owner_role: 'staff' }); } }))].filter(Boolean));
     recheck();
@@ -322,7 +333,7 @@ export async function carePlanCopilot(clientId, { onChange } = {}) {
   }
   const m = modal('Care plan suggestions from the AI copilot', h('div', { 'data-ai-careplan': '1' }, ...[
     h('p', { class: 'small' }, 'The copilot suggests problems, goals, objectives and interventions. Nothing is added until you add it; goals belong to the client, so change the wording to theirs.'),
-    h('p', { class: 'small muted' }, WHAT_IS_SENT),
+    h('p', { class: 'small muted', 'data-ai-what-is-sent': '1' }, whatIsSent({ purpose: 'the care plan', also: sel ? ' (and the six-dimension assessment you choose, if any)' : '' })),
     sel ? h('div', { class: 'field' }, h('label', { for: selId }, 'Six-dimension assessment to draw on'), sel) : null,
     h('div', { class: 'field' }, h('label', { for: taId }, sel ? 'Notes to add (optional)' : 'Notes to draw on'), ta),
     err, h('div', { class: 'row', style: { gap: '.6rem', alignItems: 'center', flexWrap: 'wrap' } }, btn, status),
@@ -339,15 +350,22 @@ export async function carePlanCopilot(clientId, { onChange } = {}) {
 export function calomsCopilot({ clientId, form: f, type }) {
   if (!mayUseAi() || !can('episodes:write')) return null;
   const list = h('div', { 'data-ai-caloms-results': '1' });
-  const panel = aiPanel({ key: `caloms-${type}`, title: 'Suggest CalOMS answers with the AI copilot', label: 'Intake notes', help: 'Your notes from this intake. Suggestions only: check each against what the client told you.',
+  // An admission's answers come from the intake; a discharge's from the discharge or the client's last session.
+  const discharge = type === 'discharge';
+  const panel = aiPanel({ key: `caloms-${type}`, title: 'Suggest CalOMS answers with the AI copilot', button: 'Suggest with AI', purpose: 'the CalOMS answers',
+    label: discharge ? 'Discharge or last-session notes' : 'Intake notes',
+    help: `${discharge ? 'Your notes from the discharge, or from the client\'s last session.' : 'Your notes from this intake.'} Suggestions only: check each against what the client told you.`,
     draft: async (text) => {
       const r = await post('/api/ai/draft/caloms', { client_id: clientId, record_type: type, source_text: text }, { quiet: true });
       const banner = aiDraftBanner({ gaps: r.gaps, notice: 'AI suggestions — check each before you apply it', text: 'Nothing is filled in until you press Apply beside it.' });
       list.replaceChildren(banner, !r.suggestions.length ? h('p', { class: 'small' }, 'The notes did not clearly answer any CalOMS question.') : h('ul', {}, r.suggestions.map(s => {
-        const b = h('button', { type: 'button', class: 'btn sm', 'data-ai-caloms-apply': s.field, onClick: () => {
+        // Named for its question (a list of "Apply" buttons said nothing of which was which, 1.17.1), and what it
+        // set is said.
+        const b = h('button', { type: 'button', class: 'btn sm', 'data-ai-caloms-apply': s.field, 'aria-label': `Apply ${s.label}`, onClick: () => {
           if (Array.isArray(s.value)) { for (const code of s.value) { const cb = f.inputs[`caloms_${s.field}__${code}`]; if (cb) cb.checked = true; } }
           else { const i = f.inputs[`caloms_${s.field}`]; if (!i) { toast('That question is not on this form', 'error'); return; } i.value = String(s.value); i.dispatchEvent(new Event('change', { bubbles: true })); }
-          b.textContent = 'Applied ✓';
+          b.replaceChildren('Applied ', h('span', { 'aria-hidden': 'true' }, '✓')); b.setAttribute('aria-label', `Applied ${s.label}`);
+          announce(`${s.label} set to ${s.value_label}.`);
         } }, 'Apply');
         return h('li', { 'data-ai-caloms-suggestion': s.field }, h('b', {}, `${s.label}: `), s.value_label, s.evidence ? h('span', { class: 'muted' }, ` (“${s.evidence}”)`) : null, ' ', b);
       })));
