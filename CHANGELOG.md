@@ -146,8 +146,8 @@ on a SUDS install. The owner has repository settings to make (below).
 
 ### Documentation
 
-Evidence for county IT and procurement review. No migration, no new permission, no new route; nothing that ships
-changes.
+Evidence for county IT and procurement review, and the 1.17.0 go-to-market documents. Documentation only: no
+migration, no new permission, no new route.
 
 - **A software bill of materials.** `scripts/sbom.js` (Node built-ins and git only) writes a CycloneDX 1.5 SBOM of
   a tag or the working tree:
@@ -198,6 +198,17 @@ changes.
 - SDLC.md and VULNERABILITY-MANAGEMENT.md describe the current release flow and the SBOM. HIPAA.md's summary table
   points to the inventory, and no longer calls visit summaries and time and spending descriptions plaintext. The
   pen-test scope adds the 1.16.3–1.16.4 classes.
+- **Go-to-market strategy for 1.17.0** (`docs/market/`). New: `STRATEGY.md` (the owner's strategy: segments, the
+  create / capture / defend wedges, sequencing with the AI documentation copilot first, the forward-deployed
+  (FDE) delivery model, built vs planned stated exactly, risks and metrics), `PRICING-OPTIONS.md` (pricing models
+  for the owner to decide, with a worksheet; nothing decided, no competitor prices) and `DATA-NETWORK.md` (the
+  de-identified outcomes dataset and the referral network as a design, not built, with the HIPAA §164.514, 42 CFR
+  Part 2 §2.52–§2.54 and California analysis and what counsel must review). Positioning now leads with the Part 2
+  layer beside the EHR, field-ready outreach and funder outcomes (`POSITIONING.md`, the pack's `README.md`, the
+  top-level README); `PILOT-KIT.md` adds a county pilot delivered with the FDE service; the buyer guides, the
+  pricing hypothesis and `docs/PLATFORM.md` say what is planned (the copilot is planned for 1.17.0 and is
+  office-server only). The CalOMS extract is described as checked by SUDS's own edits and still to be verified
+  against the DHCS data dictionary; SUDS does not submit to DHCS.
 
 ## 1.16.4 — 2026-09-29
 

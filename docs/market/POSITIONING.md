@@ -1,8 +1,28 @@
 # SUDS positioning
 
-> **The operations system for harm-reduction and outreach programmes, prevention-funded outreach included —
-> outreach encounters, naloxone and supply distribution, and grant/funder reporting — with privacy controls built
-> to support 42 CFR Part 2.**
+> **Privacy controls built to support 42 CFR Part 2, for the outreach and harm-reduction work that happens beside
+> an EHR — or without one: field-ready outreach (named or anonymous, on a phone, offline where the programme
+> allows), naloxone and supply distribution, and outcome reporting to the people who fund it, opioid-settlement
+> funders included.**
+
+Three leads, in this order, each stated no further than the software goes:
+
+1. **The Part 2 layer beside the EHR.** SUDS holds the outreach, navigation and referral records an EHR does not,
+   under consent that names the recipient, one disclosure gate and an accounting of disclosures, and hands the EHR
+   what it needs (a FHIR R4 feed with Part 2 consent enforcement, an encounter hand-off file). It is a Part 2 layer
+   for the records SUDS holds; it does not manage consent for records kept in the EHR. No live EHR connection has
+   been made yet; the first is to be tested in a pilot.
+2. **Field-ready outreach.** One **+ Log** button on a phone, anonymous contacts that still count, supplies drawn
+   from the van or site they left, and an offline copy that syncs with the office where the programme turns it on.
+   A dedicated street-outreach mode (participant codes, minimal personal information) is planned, not built.
+3. **Funder outcomes.** Funder report, NDP log, settlement expenditure report by allowable use and the layouts for
+   DHCS and county settlement reporting, as exact submissions or screened publication releases. Each layout is to
+   be checked against the funder's current template. A funder-facing view across the CBOs a county funds is
+   planned, not built.
+
+What comes next, and what is only planned, is in [STRATEGY.md](STRATEGY.md): the AI documentation copilot is
+**planned for 1.17.0** (office server only, off by default, gated on a BAA and QSOA, identifiers removed before
+sending, drafts only, a person signs). Do not show or promise it before that release is tagged.
 
 ## Category
 
@@ -40,7 +60,7 @@ event record in SUDS and key PPSDS from the summary; it cannot submit from SUDS 
 | --- | --- | --- |
 | **1** | **Small and mid-sized harm-reduction and prevention CBOs** (roughly 3–40 staff) funded by **opioid-settlement** allocations, **SOR** / the **Naloxone Distribution Project**, or **SABG prevention** funds spent on outreach and distribution (not primary-prevention reporting) — running today on spreadsheets, shared drives and paper sign-out sheets | The pain (quarter-end reporting, supply counts, anonymous contacts) is theirs daily; the buyer is the programme director; the purchase is small enough for a programme budget |
 | **2** | **Their IT partner** (a managed-IT provider, a fiscal sponsor's IT, or a staff member who runs servers) | Today SUDS is self-hosted, so every CBO customer needs one; they are the gate, not the champion |
-| **3** | **Counties, as sponsors of CBO pilots** — a county SUD / behavioral-health or public-health department that funds CBOs and wants consistent, privacy-safe outcome data from them | A county can host a CBO's instance or fund the pilot; selling SUDS *to* a county as a department system is a later, slower sale (procurement 6–24+ months) and is not the first market |
+| **3** | **Counties, as sponsors of CBO pilots** — a county SUD / behavioral-health or public-health department that funds CBOs and wants consistent, privacy-safe outcome data from them | The county holds the money (settlement allocations, SABG, county funds) and needs outcome evidence from its grantees: "sell to the money". A county can host its CBOs' instances or fund their implementation, and is the natural steward of any pooled outcome data ([DATA-NETWORK.md](DATA-NETWORK.md)). The first county sale is a sponsored pilot of 2–3 CBOs with paid implementation ([PILOT-KIT.md](PILOT-KIT.md)); selling SUDS *to* a county as a department system is a later, slower sale (procurement 6–24+ months) |
 
 **Hosting, honestly.** SUDS is not a hosted service today. A CBO runs it through its **IT partner** (a VM, an
 office server or a container), or a **sponsoring county hosts it**. A **vendor-hosted single-tenant tier** is
@@ -115,9 +135,10 @@ no EHR at all; for them SUDS is the programme record.
 ## Objection handling
 
 **"We already have an EHR / the county has SmartCare."**
-Keep it for billable treatment and the clinical record. SUDS is for the outreach, supply and grant work that
-lives in spreadsheets today. Where a service must also appear in the EHR, SUDS hands it over rather than asking
-staff to double-enter.
+Keep it for billable treatment and the clinical record; SUDS does not compete with it. SUDS is the Part 2-controlled
+layer for the outreach, supply, referral and grant work that lives in spreadsheets today. Where a service must also
+appear in the EHR, SUDS hands it over (encounter hand-off file, FHIR R4 feed with Part 2 consent enforcement) rather
+than asking staff to double-enter. No live EHR connection has been made yet; the first is a pilot task.
 
 **"Who sees which clients? Can a navigator read everything?"**
 By default (since 1.16.0), yes to seeing: navigators and clinicians can open every client, for coverage and
@@ -171,6 +192,16 @@ records ([docs/architecture/](../architecture/README.md)) are written so a new m
 support is business-hours ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)).
 
 **"It's open source — why pay?"**
-You don't have to. The software is free. Programmes pay, if they choose, for implementation, business-hours
-support and (when offered) hosting — flat annual amounts per programme, still being validated
-([templates/PRICING.md](templates/PRICING.md)).
+You don't have to. The software is free. Programmes and counties pay, if they choose, for the people around it:
+implementation delivered alongside your team (discovery, deployment, data migration, training, reporting setup),
+business-hours support and (when offered) hosting. The current hypothesis is flat annual amounts per programme
+([templates/PRICING.md](templates/PRICING.md)); other models (per active user, county site licence) are options
+the owner has not decided ([PRICING-OPTIONS.md](PRICING-OPTIONS.md)). Nothing is a quote.
+
+**"Will an AI read our clients' records?"**
+Not in any released version. An AI documentation copilot is planned for 1.17.0. As designed it runs only from an
+office server, is off until an administrator turns it on, cannot be turned on until the programme records a BAA and
+a Part 2 QSOA with the AI provider, removes the identifiers SUDS holds before sending, and returns drafts that a
+person edits and signs. Removing known identifiers does not make free text de-identified (a note can still name a
+place or another person), which is why the agreements are required. Your counsel should review it before use
+([STRATEGY.md](STRATEGY.md), *Create 1*).

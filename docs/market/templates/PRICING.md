@@ -5,6 +5,10 @@
 > when evidence says so. Record what was learned in the table at the bottom. The owner must validate each
 > range before quoting it.
 
+The owner is weighing other models — per active user, per-organisation tiers, a county site licence covering
+several CBOs, implementation packaged as forward-deployed services, and support tiers — in
+[PRICING-OPTIONS.md](../PRICING-OPTIONS.md). Nothing there is decided; until it is, this page is the hypothesis.
+
 ## What is (and is not) being sold
 
 - **The software is free.** SUDS is MIT-licensed. Anyone — a CBO, its IT partner, a county — may download,

@@ -15,6 +15,17 @@ a system to bill DMC, prescribe, or be your treatment medical record — keep th
 ([POSITIONING.md](POSITIONING.md), *The boundary*). The decision tree in [PILOT-KIT.md](PILOT-KIT.md) settles the
 grey cases (Part 2 records, CalOMS, DMC).
 
+**If your county funds you.** The route we prefer is a county-sponsored pilot: your county funds the
+implementation for you and one or two other CBOs it funds, and the vendor does the setup, import, training and
+funder-report checks with your team ([PILOT-KIT.md](PILOT-KIT.md), section 8). Ask your county contract manager
+whether that is possible.
+
+**What is planned, not available.** An AI documentation copilot that drafts notes for staff to edit and sign is
+planned for 1.17.0 (office server only, off unless your administrator turns it on after a BAA and QSOA with the
+AI provider). A county view of its grantees' outcomes, a street-outreach mode with participant codes and
+referral links for partner organisations are planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS
+for what it does today.
+
 ## What it does for the work
 
 | Workflow | In SUDS |

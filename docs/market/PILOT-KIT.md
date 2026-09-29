@@ -7,6 +7,11 @@ live with it. Nothing in the market pack claims a time saving until a pilot has 
 the county adoption plan in [docs/ADOPTION.md](../ADOPTION.md) (60-day pilot, drills, independent review) and
 extends it to 90 days so a full reporting cycle — a month-end and most of a quarter — falls inside it.
 
+Sections 1–7 describe one programme's pilot. Section 8 describes the pilot the strategy prefers
+([STRATEGY.md](STRATEGY.md), *Sequencing*): a **county pilot** in which a sponsoring county funds 2–3 of its CBOs'
+pilots at once and the vendor delivers them as a paid implementation service (the forward-deployed, or FDE,
+model). Each CBO in it still runs sections 1–7.
+
 ## 1. Scope
 
 | | |
@@ -180,3 +185,57 @@ DECISION: [ ] continue under contract  [ ] extend pilot to ____  [ ] exit (secti
 Reference/case study permission: [ ] yes [ ] anonymised only [ ] no
 Signed: Sponsor ____________  IT ____________  Privacy ____________  Vendor ____________
 ```
+
+## 8. County pilot with the FDE service
+
+The county holds the money and needs outcome evidence from the CBOs it funds; the CBOs need implementation
+capacity more than software. A county pilot puts both in one engagement. It is a proposal structure, not an
+offer: the prices are [owner to decide] ([PRICING-OPTIONS.md](PRICING-OPTIONS.md)), and every organisational item in
+the [readiness scorecard](README.md#organisational-gaps-owner-vendor--company) that a county will ask about
+(entity, insurance, counsel-reviewed BAA/QSOA and DPA, pen test, repository controls in force) should be done
+before it is proposed.
+
+### Shape
+
+| | |
+| --- | --- |
+| **Sponsor** | A county behavioural-health or public-health department that funds harm-reduction or outreach CBOs (settlement, SOR / NDP, SABG prevention-funded outreach) |
+| **CBOs** | 2–3, each passing the eligibility check (section 2) on its own; at least one with a settlement-funded programme |
+| **Hosting** | County-hosted (one server per CBO, on county infrastructure) or each CBO's IT partner. Vendor hosting is not offered |
+| **Length** | 2–4 weeks of county discovery, then each CBO's 90-day pilot, staggered by 2–4 weeks so the vendor is not deploying three at once |
+| **Paid work (FDE packages)** | Discovery (county and each CBO), deployment, data migration, training, reporting setup against each funder's template, county programme management ([PRICING-OPTIONS.md](PRICING-OPTIONS.md), model D) |
+| **Out of scope** | Everything section 1 excludes; the AI copilot unless it has been released (planned for 1.17.0) and county counsel has reviewed its data flow; the planned county funder view, referral links and pooled benchmarks, which are not built |
+
+### What the county gets
+
+- Its CBOs' funder submissions for the pilot period produced from SUDS: exact aggregate counts, no client-level
+  data, as its funding contracts already provide for.
+- One security and privacy review covering every CBO's instance ([BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md)).
+- A measured answer to "does this reduce our grantees' reporting burden and improve what we receive?"
+- The information it needs to decide whether to act as data steward for pooled outcomes later
+  ([DATA-NETWORK.md](DATA-NETWORK.md)); no data is pooled in the pilot.
+
+### Additional roles
+
+| Role | Who | Responsibilities |
+| --- | --- | --- |
+| **County sponsor** | County SUD / behavioural-health programme manager | Chooses the CBOs, owns the county's success measures, signs the county decision |
+| **County IT and privacy** | County IT security and the county privacy officer | One review for all instances; BAA/QSOA and DPA; the restore drill where the county hosts |
+| **Vendor FDE lead** | Vendor | Delivers the packages; keeps the time log that measures implementation hours per CBO |
+
+### County measures (in addition to each CBO's section 5)
+
+| Measure | How | Target (agree before starting) |
+| --- | --- | --- |
+| Funder submissions from SUDS accepted by the county without rework | Count per CBO per reporting period | Every CBO, at least one period |
+| County staff hours to compile its grantees' figures | Baseline from the last period; same method in the pilot | Recorded; target agreed with the county |
+| Settlement spending recorded with an allowable use | Settlement report, per CBO | All settlement spending categorised |
+| Implementation hours per CBO against the estimate | Vendor time log | Recorded — feeds [PRICING-OPTIONS.md](PRICING-OPTIONS.md) |
+| Support hours per CBO per month | Ticket log | Recorded |
+| Integrity incidents | As section 5 | Zero |
+
+### Decision at the end
+
+The county decides whether to continue (a county agreement covering its CBOs, [PRICING-OPTIONS.md](PRICING-OPTIONS.md)
+model C), extend, or stop. Each CBO decides for itself as in section 6: its data stays with whoever hosted it, and
+the software stays free to keep.
