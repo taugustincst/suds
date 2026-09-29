@@ -10,6 +10,8 @@ const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
 const AI = require('../ai-copilot');
+const AP = require('../ai-providers');
+const COST = require('../ai-cost');
 const P = require('../ai-prompts');
 const CL = require('../clinical');
 const { badRequest, forbidden, notFound, HttpError } = require('../http');
@@ -74,24 +76,35 @@ module.exports = (r) => {
   // ---- Settings → AI copilot (administrators)
   r.get('/api/ai/settings', auth.requireAuth, auth.requirePerm('settings:manage'), () => {
     const st = AI.settings();
-    return { ...st, key_configured: AI.keyConfigured(), endpoint_problem: AI.endpointProblem(), custom_endpoint: !!process.env.SUDS_AI_BASE_URL, status: AI.status(), usage: AI.usage() };
+    return { ...st, key_configured: AI.keyConfigured(), endpoint_problem: AI.endpointProblem(), custom_endpoint: !!process.env.SUDS_AI_BASE_URL, status: AI.status(), usage: AI.usage(),
+      provider: AP.describe(), attestation_provider: st.attestation ? AI.attestedProvider(st.attestation) : null };
   });
+  // Prices (dollars per million input / output tokens, for the estimate on the This month card) and the optional
+  // monthly spending limit in dollars (server/ai-cost.js): non-negative numbers, or null / blank to clear.
   r.put('/api/ai/settings', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
-    const v = validate(ctx.body, { enabled: { type: 'boolean' }, model: { type: 'string', maxLen: 64 }, monthly_cap: { type: 'number', integer: true, min: 0, max: 100000 } }, { partial: true });
-    if (v.model !== undefined && v.model !== null && v.model !== '' && !AI.MODEL_ID.test(v.model)) throw badRequest('Validation failed', { fields: { model: 'must be a model id such as claude-…' } });
+    const price = { type: 'number', min: 0, max: COST.MAX_PRICE };
+    const v = validate(ctx.body, { enabled: { type: 'boolean' }, model: { type: 'string', maxLen: 100 }, monthly_cap: { type: 'number', integer: true, min: 0, max: 100000 },
+      price_input: price, price_output: price, monthly_cost_cap: { type: 'number', min: 0, max: COST.MAX_COST_CAP } }, { partial: true });
+    if (v.model !== undefined && v.model !== null && v.model !== '' && !AP.modelOk(v.model)) throw badRequest('Validation failed', { fields: { model: `must be ${AP.current() ? AP.current().modelHint : 'a model id'} (the provider is ${AP.label()})` } });
     const was = AI.settings();
+    const next = { ...COST.pricing(), ...Object.fromEntries(['price_input', 'price_output', 'monthly_cost_cap'].filter(k => v[k] !== undefined).map(k => [k, v[k]])) };
+    if (next.monthly_cost_cap !== null && !COST.priced(next)) throw badRequest('A monthly spending limit needs both prices, to estimate the cost', { fields: { monthly_cost_cap: 'enter the prices per million input and output tokens first' } });
     if (v.enabled === 1 && !was.enabled) {
       if (!was.attestation) throw badRequest('Record the programme\'s agreement (BAA / QSOA) with the AI provider before switching the copilot on', { fields: { enabled: 'needs the agreement recorded first' } });
-      if (!AI.keyConfigured()) throw badRequest('This server has no AI provider key (ANTHROPIC_API_KEY in its environment). Set it and restart SUDS, then switch the copilot on.', { fields: { enabled: 'no provider key on the server' } });
+      if (!AI.keyConfigured()) throw badRequest(AP.id() === 'anthropic' ? 'This server has no AI provider key (ANTHROPIC_API_KEY in its environment). Set it and restart SUDS, then switch the copilot on.'
+        : `This server has no credentials for ${AP.label()} (${AP.describe().credentials_hint} in its environment). Set them and restart SUDS, then switch the copilot on.`, { fields: { enabled: 'no provider key on the server' } });
+      if (AI.attestedProvider(was.attestation) !== AP.id()) throw badRequest(`The agreement recorded is with ${AP.label(AI.attestedProvider(was.attestation))}, but this server sends drafts to ${AP.label()}. Withdraw it and record the agreement with ${AP.label()} first.`, { fields: { enabled: 'the agreement is with another provider' } });
     }
     const changed = [];
     db.transaction(() => {
       if (v.enabled !== undefined) { db.setSetting('ai_enabled', v.enabled ? '1' : '0'); changed.push('enabled'); }
       if (v.model !== undefined) { if (v.model) db.setSetting('ai_model', v.model); else db.run(`DELETE FROM settings WHERE key='ai_model'`); changed.push('model'); }
       if (v.monthly_cap !== undefined && v.monthly_cap !== null) { db.setSetting('ai_monthly_cap', String(v.monthly_cap)); changed.push('monthly_cap'); }
+      changed.push(...COST.save(v));
     });
     const now = AI.settings();
-    audit.log({ user: ctx.user, action: 'ai.settings.update', ip: ctx.ip, details: { changed, enabled: now.enabled, model: now.model, monthly_cap: now.monthly_cap } });
+    audit.log({ user: ctx.user, action: 'ai.settings.update', ip: ctx.ip, details: { changed, enabled: now.enabled, model: now.model, monthly_cap: now.monthly_cap,
+      price_input: now.price_input, price_output: now.price_output, monthly_cost_cap: now.monthly_cost_cap } });
     return { ok: true, ...now };
   });
   // The attestation: who signed the agreement with the provider for the programme, when, its reference, and
@@ -109,10 +122,13 @@ module.exports = (r) => {
     if (!v.counsel_reviewed) missing.counsel_reviewed = 'Confirm that your counsel has reviewed this use of client records.';
     if (Object.keys(missing).length) throw badRequest('The agreement cannot be recorded until each statement is confirmed.', { fields: missing });
     if (v.agreement_date > new Date().toISOString().slice(0, 10)) throw badRequest('Validation failed', { fields: { agreement_date: 'The date the agreement was signed cannot be in the future.' } });
-    const a = { provider: v.provider, signed_by: v.signed_by, agreement_date: v.agreement_date, reference: v.reference, baa: true, qsoa: true, counsel_reviewed: true,
+    // configured_provider: the provider this server was set up for when the agreement was recorded (SUDS_AI_PROVIDER);
+    // drafts are refused while the server is set up for another (ai-copilot.js status(), provider_changed).
+    if (!AP.current()) throw badRequest(`This server's AI provider is not one SUDS knows (${AP.configProblem()}).`);
+    const a = { provider: v.provider, configured_provider: AP.id(), signed_by: v.signed_by, agreement_date: v.agreement_date, reference: v.reference, baa: true, qsoa: true, counsel_reviewed: true,
       recorded_by: ctx.user.id, recorded_by_name: ctx.user.display_name || ctx.user.username, recorded_at: db.now() };
     db.setSetting('ai_attestation', JSON.stringify(a));
-    audit.log({ user: ctx.user, action: 'ai.attestation.record', ip: ctx.ip, details: { provider: a.provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true } });
+    audit.log({ user: ctx.user, action: 'ai.attestation.record', ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true } });
     ctx.status = 201; return { ok: true, attestation: a };
   });
   // Withdrawing it (the agreement ended, or was never right) switches the copilot off at once.
