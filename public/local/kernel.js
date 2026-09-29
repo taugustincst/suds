@@ -11686,12 +11686,13 @@ var require_shared = __commonJS({
     }
     function recordedOrChanged(entity, table, id, userId) {
       return !!require_db().one(
-        `SELECT 1 FROM audit_log WHERE user_id=? AND entity_id=? AND ((entity=? AND action IN (?,?)) OR (entity=? AND action IN ('sync.overwrite','sync.record'))) LIMIT 1`,
+        `SELECT 1 FROM audit_log WHERE user_id=? AND entity_id=? AND ((entity=? AND action IN (?,?,?)) OR (entity=? AND action IN ('sync.overwrite','sync.record'))) LIMIT 1`,
         userId,
         id,
         entity,
         `${entity}.create`,
         `${entity}.update`,
+        entity === "time_entry" ? "time.submit" : `${entity}.create`,
         table
       );
     }
@@ -11872,6 +11873,207 @@ var require_client_filters = __commonJS({
       return { sql: `EXISTS (SELECT 1 FROM patient_requests p WHERE p.client_id=c.id AND p.status='open')`, params: [] };
     }
     module.exports = { risk, noContactSince, substance, mat, consentWindow, consentExpiring, openPatientRequest };
+  }
+});
+
+// server/rules/notes.js
+var require_notes = __commonJS({
+  "server/rules/notes.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var { define: define2, refuse, flag, notPermitted } = require_core();
+    var parseList = (v) => typeof v === "string" ? JSON.parse(v) : v;
+    var SIGNED_KEEPS = [
+      "kind",
+      "format",
+      "title_enc",
+      "content_enc",
+      "structured_enc",
+      "occurred_at",
+      "intervention_id",
+      "call_id",
+      "part2_protected",
+      "counseling_note",
+      "problem_ids",
+      "status",
+      "signed_by",
+      "signed_at",
+      "signature_hash",
+      "source",
+      "source_ref",
+      "import_item_id",
+      "deleted_at"
+    ];
+    function closeSignReminders(authorId, noteId, clientId) {
+      const { decrypt: decrypt3 } = require_crypto();
+      const ref = `Reference: supervision reminder for note ${noteId}`;
+      const done = db3.all(`SELECT id, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS ? AND description_enc IS NOT NULL`, authorId, clientId).filter((t) => {
+        try {
+          return decrypt3(t.description_enc).includes(ref);
+        } catch {
+          return false;
+        }
+      });
+      const now2 = db3.now();
+      for (const t of done) db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now2, now2, t.id);
+      return done.map((t) => t.id);
+    }
+    function reissueAddenda(noteId, was, now2) {
+      if (Number(was) && !Number(now2)) db3.run(`UPDATE note_addenda SET updated_at=? WHERE note_id=?`, db3.now(), noteId);
+    }
+    var signs = (row, c) => !!row.status && row.status !== "draft" && (!c.existing || c.existing.status === "draft");
+    module.exports = define2({
+      table: "notes",
+      deviceColumns: ["status", "signed_at", "signed_by", "signature_hash", "cosign_required", "cosigned_by", "cosigned_at", "cosignature_hash", "cosign_note_enc", "import_item_id", "deleted_at"],
+      fields: {
+        client_id: { type: "string", required: true },
+        kind: { type: "string", required: true, enum: ["clinical", "admin"] },
+        format: { type: "string", list: "NOTE_FORMATS" },
+        title: { type: "string", maxLen: 200 },
+        content: { type: "string", required: true, maxLen: 5e4 },
+        structured: { type: "object", fromColumn: JSON.parse },
+        occurred_at: { type: "datetime", required: true },
+        intervention_id: { type: "string" },
+        call_id: { type: "string" },
+        part2_protected: { type: "boolean" },
+        counseling_note: { type: "boolean" },
+        cosign_requested: { type: "boolean" },
+        source: { type: "string", enum: ["manual", "pocket_ai", "onenote", "import", "api"] },
+        source_ref: { type: "string", maxLen: 300 },
+        // The problem-list entries this note addresses (CalAIM: a progress note ties the service to the problem list).
+        problem_ids: { type: "array", maxLen: 30, of: "string", fromColumn: JSON.parse }
+      },
+      tombstone: "never",
+      createdBy: ["author_id"],
+      editableBy: (user, row) => row.status === "draft" && row.author_id !== user.id && !auth3.hasPerm(user, "records:manage-others") ? notPermitted("Only the author can edit a draft") : null,
+      authorise(row, c) {
+        const kind = c.existing ? c.existing.kind : row.kind;
+        if (kind === "clinical" && !auth3.hasPerm(c.user, "notes:clinical:write")) return refuse("clinical notes not permitted for this role", { status: 403, message: "You cannot author clinical notes" });
+        return null;
+      },
+      check(row, c) {
+        const e = c.existing || {};
+        const kind = c.existing ? e.kind : row.kind;
+        const out2 = [];
+        if (row.counseling_note && Number(row.counseling_note) && kind !== "clinical") out2.push(refuse("has a value the office does not accept (only a clinical note can be a SUD counseling note)", { message: "Only a clinical note can be a SUD counseling note" }));
+        if (row.problem_ids !== void 0 && row.problem_ids !== null && (!c.existing || String(row.problem_ids) !== String(e.problem_ids))) {
+          let ids = [];
+          try {
+            ids = parseList(row.problem_ids) || [];
+          } catch {
+            ids = [null];
+          }
+          const clientId = c.existing ? e.client_id : row.client_id;
+          for (const id of Array.isArray(ids) ? ids : [null]) {
+            const p = id ? db3.one(`SELECT client_id FROM problems WHERE id=?`, id) : null;
+            if (!p || p.client_id !== clientId) {
+              out2.push(refuse("has a value the office does not accept (it is linked to a problem that is not on this client's problem list)", { message: "Validation failed", fields: { problem_ids: "names a problem that is not on this client's problem list" } }));
+              break;
+            }
+          }
+        }
+        if (c.via === "sync" && signs(row, c) && (c.user.id !== (c.existing ? e.author_id : row.author_id) || row.signed_by && row.signed_by !== c.user.id)) {
+          out2.push(refuse("not permitted: only the author can sign a note", { status: 403, message: "Only the author can sign a note. Supervisors countersign instead." }));
+        }
+        return out2;
+      },
+      normalise(row, c) {
+        const e = c.existing;
+        const COSIGN = ["cosigned_by", "cosigned_at", "cosignature_hash"];
+        const has = (v) => v !== void 0 && v !== null && v !== "";
+        const asserted = COSIGN.some((k) => has(row[k]) && String(row[k]) !== String((e && e[k]) ?? "")) || has(row.cosign_note_enc) && String(row.cosign_note_enc) !== String((e && c.was("cosign_note_enc")) ?? "");
+        if (e) {
+          row.kind = e.kind;
+          if (e.status !== "draft") for (const col of SIGNED_KEEPS) row[col] = col.endsWith("_enc") ? void 0 : e[col];
+          if (e.author_id !== c.user.id && !auth3.hasPerm(c.user, "records:manage-others") || e.cosigned_at) row.cosign_requested = e.cosign_requested;
+          for (const k of COSIGN) row[k] = e[k];
+          row.cosign_note_enc = void 0;
+          row.cosign_required = e.cosign_required;
+        }
+        if (signs(row, c)) {
+          row.status = "signed";
+          row.signed_by = c.user.id;
+          row.signed_at = row.signed_at || db3.now();
+          row.signature_hash = null;
+        }
+        if (!e) {
+          for (const k of COSIGN) row[k] = null;
+          row.cosign_note_enc = void 0;
+          const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, row.author_id || c.user.id);
+          row.cosign_required = author && author.requires_cosign ? 1 : 0;
+        }
+        return asserted ? flag("was accepted, but not the countersignature on it: a supervisor countersigns at the office, never by sync", { code: "ruling" }) : null;
+      },
+      // A note signed on a device closes its reminder at the office too, as signing here does (routes/notes.js).
+      // The signature is recomputed as POST /api/notes/:id/sign computes it, and audited as that route audits it.
+      afterApply(row, o, c) {
+        if (c.existing) reissueAddenda(row.id, c.existing.counseling_note, o.counseling_note ?? c.existing.counseling_note);
+        if (c.existing && c.existing.status !== "draft") return;
+        const n = db3.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required FROM notes WHERE id=?`, row.id);
+        if (!n || n.status === "draft") return;
+        const hash2 = require_crypto().sha256(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ""}`);
+        db3.run(`UPDATE notes SET signature_hash=? WHERE id=?`, hash2, n.id);
+        const reminders = closeSignReminders(n.author_id, n.id, n.client_id);
+        require_audit().log({ user: c.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: "device", details: { hash: hash2, via: "sync", cosign_required: !!n.cosign_required, reminders_closed: reminders.length ? reminders : void 0 } });
+      }
+    });
+    module.exports.closeSignReminders = closeSignReminders;
+    module.exports.reissueAddenda = reissueAddenda;
+    var readsCounseling = (user) => auth3.hasPerm(user, "notes:clinical:write");
+    var mayReadCounseling = (user, n) => !Number(n.counseling_note) || readsCounseling(user) || n.author_id === user.id || !!n.cosigned_by && n.cosigned_by === user.id;
+    function counselingFilter(user, alias = "n") {
+      return readsCounseling(user) ? { sql: "1=1", params: [] } : { sql: `(${alias}.counseling_note=0 OR ${alias}.author_id=? OR ${alias}.cosigned_by IS ?)`, params: [user.id, user.id] };
+    }
+    Object.assign(module.exports, { readsCounseling, mayReadCounseling, counselingFilter });
+  }
+});
+
+// server/rules/tasks.js
+var require_tasks = __commonJS({
+  "server/rules/tasks.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var auth3 = require_auth2();
+    var { define: define2, notPermitted } = require_core();
+    var NOTICE_MARKER = "Reference: client record change notice";
+    var NOTICE_PREFIX = "Reference: client record change";
+    function isNotice(row) {
+      if (!row || !row.description_enc) return false;
+      try {
+        return require_crypto().decrypt(row.description_enc).includes(NOTICE_PREFIX);
+      } catch {
+        return false;
+      }
+    }
+    var NOTICE = "This notice tells the client's primary worker about a change to their client's record; only they (or a supervisor) can close it";
+    module.exports = define2({
+      table: "tasks",
+      deviceColumns: ["referral_id"],
+      createdBy: ["created_by"],
+      fields: {
+        client_id: { type: "string" },
+        assigned_to: { type: "string" },
+        title: { type: "string", required: true, maxLen: 200 },
+        description: { type: "string", maxLen: 2e3 },
+        due_at: { type: "datetime" },
+        priority: { type: "string", enum: ["low", "normal", "high", "urgent"] },
+        status: { type: "string", enum: ["open", "in_progress", "done", "cancelled"] },
+        is_milestone: { type: "boolean" },
+        completed_at: { type: "datetime" }
+      },
+      // A change notice is its assignee's (or a manager's) only: the 1.16.1 ones name the editor as creator.
+      editableBy: (user, row) => {
+        if (row.assigned_to === user.id || auth3.hasPerm(user, "records:manage-others")) return null;
+        if (row.created_by === user.id) return isNotice(row) ? notPermitted(NOTICE) : null;
+        return notPermitted("You cannot edit this record");
+      },
+      // Finishing someone's work closes theirs (a discharge on a device cancels the client's open to-dos); a change
+      // notice only when that someone is on the client's care team, which its editor was not.
+      othersMayChange: (existing, row, changed, c) => ["done", "cancelled"].includes(row.status) && changed.every((col) => col === "status" || col === "completed_at") && (!isNotice(existing) || !!(c && existing.client_id && require_db().one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${auth3.activeAssignment()}`, existing.client_id, c.user.id)))
+    });
+    Object.assign(module.exports, { NOTICE_MARKER, isNotice });
   }
 });
 
@@ -12707,142 +12909,6 @@ Confirm the determination with counsel. If it was a mistake, switch the program 
   }
 });
 
-// server/rules/notes.js
-var require_notes = __commonJS({
-  "server/rules/notes.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth2();
-    var { define: define2, refuse, flag, notPermitted } = require_core();
-    var parseList = (v) => typeof v === "string" ? JSON.parse(v) : v;
-    var SIGNED_KEEPS = [
-      "kind",
-      "format",
-      "title_enc",
-      "content_enc",
-      "structured_enc",
-      "occurred_at",
-      "intervention_id",
-      "call_id",
-      "part2_protected",
-      "counseling_note",
-      "problem_ids",
-      "status",
-      "signed_by",
-      "signed_at",
-      "signature_hash",
-      "source",
-      "source_ref",
-      "import_item_id",
-      "deleted_at"
-    ];
-    function closeSignReminders(authorId, noteId, clientId) {
-      const { decrypt: decrypt3 } = require_crypto();
-      const ref = `Reference: supervision reminder for note ${noteId}`;
-      const done = db3.all(`SELECT id, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS ? AND description_enc IS NOT NULL`, authorId, clientId).filter((t) => {
-        try {
-          return decrypt3(t.description_enc).includes(ref);
-        } catch {
-          return false;
-        }
-      });
-      const now2 = db3.now();
-      for (const t of done) db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now2, now2, t.id);
-      return done.map((t) => t.id);
-    }
-    module.exports = define2({
-      table: "notes",
-      deviceColumns: ["status", "signed_at", "signed_by", "signature_hash", "cosign_required", "cosigned_by", "cosigned_at", "cosignature_hash", "cosign_note_enc", "import_item_id", "deleted_at"],
-      fields: {
-        client_id: { type: "string", required: true },
-        kind: { type: "string", required: true, enum: ["clinical", "admin"] },
-        format: { type: "string", list: "NOTE_FORMATS" },
-        title: { type: "string", maxLen: 200 },
-        content: { type: "string", required: true, maxLen: 5e4 },
-        structured: { type: "object", fromColumn: JSON.parse },
-        occurred_at: { type: "datetime", required: true },
-        intervention_id: { type: "string" },
-        call_id: { type: "string" },
-        part2_protected: { type: "boolean" },
-        counseling_note: { type: "boolean" },
-        cosign_requested: { type: "boolean" },
-        source: { type: "string", enum: ["manual", "pocket_ai", "onenote", "import", "api"] },
-        source_ref: { type: "string", maxLen: 300 },
-        // The problem-list entries this note addresses (CalAIM: a progress note ties the service to the problem list).
-        problem_ids: { type: "array", maxLen: 30, of: "string", fromColumn: JSON.parse }
-      },
-      tombstone: "never",
-      owner: { col: "author_id", all: "records:manage-others" },
-      editableBy: (user, row) => row.status === "draft" && row.author_id !== user.id && !auth3.hasPerm(user, "records:manage-others") ? notPermitted("Only the author can edit a draft") : null,
-      authorise(row, c) {
-        const kind = c.existing ? c.existing.kind : row.kind;
-        if (kind === "clinical" && !auth3.hasPerm(c.user, "notes:clinical:write")) return refuse("clinical notes not permitted for this role", { status: 403, message: "You cannot author clinical notes" });
-        return null;
-      },
-      check(row, c) {
-        const e = c.existing || {};
-        const kind = c.existing ? e.kind : row.kind;
-        const out2 = [];
-        if (row.counseling_note && Number(row.counseling_note) && kind !== "clinical") out2.push(refuse("has a value the office does not accept (only a clinical note can be a SUD counseling note)", { message: "Only a clinical note can be a SUD counseling note" }));
-        if (row.problem_ids !== void 0 && row.problem_ids !== null && (!c.existing || String(row.problem_ids) !== String(e.problem_ids))) {
-          let ids = [];
-          try {
-            ids = parseList(row.problem_ids) || [];
-          } catch {
-            ids = [null];
-          }
-          const clientId = c.existing ? e.client_id : row.client_id;
-          for (const id of Array.isArray(ids) ? ids : [null]) {
-            const p = id ? db3.one(`SELECT client_id FROM problems WHERE id=?`, id) : null;
-            if (!p || p.client_id !== clientId) {
-              out2.push(refuse("has a value the office does not accept (it is linked to a problem that is not on this client's problem list)", { message: "Validation failed", fields: { problem_ids: "names a problem that is not on this client's problem list" } }));
-              break;
-            }
-          }
-        }
-        if (c.via === "sync" && row.status && row.status !== "draft" && (!c.existing || e.status === "draft") && row.signed_by && row.signed_by !== (row.author_id || e.author_id)) {
-          out2.push(refuse("not permitted: only the author can sign a note", { status: 403, message: "Only the author can sign a note. Supervisors countersign instead." }));
-        }
-        return out2;
-      },
-      normalise(row, c) {
-        const e = c.existing;
-        const COSIGN = ["cosigned_by", "cosigned_at", "cosignature_hash"];
-        const has = (v) => v !== void 0 && v !== null && v !== "";
-        const asserted = COSIGN.some((k) => has(row[k]) && String(row[k]) !== String((e && e[k]) ?? "")) || has(row.cosign_note_enc) && String(row.cosign_note_enc) !== String((e && c.was("cosign_note_enc")) ?? "");
-        if (e) {
-          row.kind = e.kind;
-          if (e.status !== "draft") for (const col of SIGNED_KEEPS) row[col] = col.endsWith("_enc") ? void 0 : e[col];
-          if (e.author_id !== c.user.id && !auth3.hasPerm(c.user, "records:manage-others") || e.cosigned_at) row.cosign_requested = e.cosign_requested;
-          for (const k of COSIGN) row[k] = e[k];
-          row.cosign_note_enc = void 0;
-          row.cosign_required = e.cosign_required;
-        } else {
-          for (const k of COSIGN) row[k] = null;
-          row.cosign_note_enc = void 0;
-          const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, row.author_id || c.user.id);
-          row.cosign_required = author && author.requires_cosign ? 1 : 0;
-        }
-        return asserted ? flag("was accepted, but not the countersignature on it: a supervisor countersigns at the office, never by sync", { code: "ruling" }) : null;
-      },
-      // A note signed on a device closes its reminder at the office too, as signing here does (routes/notes.js).
-      afterApply(row, o, c) {
-        if (c.existing && c.existing.status !== "draft") return;
-        const n = db3.one(`SELECT id, author_id, client_id, status FROM notes WHERE id=?`, row.id);
-        if (n && n.status !== "draft") closeSignReminders(n.author_id, n.id, n.client_id);
-      }
-    });
-    module.exports.closeSignReminders = closeSignReminders;
-    var readsCounseling = (user) => auth3.hasPerm(user, "notes:clinical:write");
-    var mayReadCounseling = (user, n) => !Number(n.counseling_note) || readsCounseling(user) || n.author_id === user.id || !!n.cosigned_by && n.cosigned_by === user.id;
-    function counselingFilter(user, alias = "n") {
-      return readsCounseling(user) ? { sql: "1=1", params: [] } : { sql: `(${alias}.counseling_note=0 OR ${alias}.author_id=? OR ${alias}.cosigned_by IS ?)`, params: [user.id, user.id] };
-    }
-    Object.assign(module.exports, { readsCounseling, mayReadCounseling, counselingFilter });
-  }
-});
-
 // server/routes/clients.js
 var require_clients = __commonJS({
   "server/routes/clients.js"(exports, module) {
@@ -13215,6 +13281,12 @@ var require_clients = __commonJS({
         audit3.log({ user: ctx.user, action: "client.merged_away", entity: "client", entityId: source.id, clientId: source.id, ip: ctx.ip, details: { into: keep.id } });
         return { ok: true, kept: keep.id, merged: source.id, moved };
       });
+      function noteCount(ctx, clientId) {
+        const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, `notes:${k}:read`) || auth3.hasPerm(ctx.user, `notes:${k}:write`));
+        if (!kinds.length) return 0;
+        const sud = require_notes().counselingFilter(ctx.user, "n");
+        return db3.one(`SELECT COUNT(*) n FROM notes n WHERE n.client_id=? AND n.deleted_at IS NULL AND n.kind IN (${kinds.map(() => "?").join(",")}) AND ${sud.sql}`, clientId, ...kinds, ...sud.params).n;
+      }
       r.get("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
         const row = loadClient(ctx, ctx.params.id);
         const client = M.decryptRow(row);
@@ -13224,10 +13296,13 @@ var require_clients = __commonJS({
         client.counts = {
           interventions: db3.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, row.id).n,
           calls: db3.one(`SELECT COUNT(*) n FROM calls WHERE client_id=?`, row.id).n,
-          notes: db3.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND deleted_at IS NULL`, row.id).n,
+          notes: noteCount(ctx, row.id),
+          // the notes the reader may read (1.16.2: never a counseling note they may not)
           forms: db3.one(`SELECT COUNT(*) n FROM client_forms WHERE client_id=? AND deleted_at IS NULL`, row.id).n,
           referrals: db3.one(`SELECT COUNT(*) n FROM referrals WHERE client_id=?`, row.id).n,
           open_tasks: db3.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, row.id).n,
+          // Of those, the change notices (open_tasks includes them): never overdue, shown apart (1.16.2).
+          notices: db3.all(`SELECT description_enc FROM tasks WHERE client_id=? AND status='open' AND due_at IS NULL AND created_by=assigned_to`, row.id).filter(require_tasks().isNotice).length,
           minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
           spent: db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n,
           episodes: db3.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n,
@@ -13477,30 +13552,62 @@ var require_clients2 = __commonJS({
       }
     });
     module.exports.freeClientCode = freeClientCode;
+    var LABELS = {
+      dob: "Date of birth",
+      alt_phone: "Alternate phone",
+      zip: "ZIP",
+      race_ethnicity: "Race / ethnicity",
+      ok_to_text: "OK to text",
+      ok_to_voicemail: "OK to leave voicemail",
+      contact_preferences: "Contact preferences",
+      emergency_contact: "Emergency contact",
+      referral_source: "Referred by",
+      referral_date: "Referral date",
+      medicaid_id: "Medicaid ID",
+      asam_level: "ASAM level of care",
+      mat_status: "MAT status",
+      mat_medication: "MAT medication",
+      overdose_history: "History of overdose",
+      naloxone_last_date: "Naloxone last given",
+      co_occurring_mh: "Co-occurring mental health",
+      goals: "Client goals",
+      flags: "Safety flags",
+      race_codes: "Race codes"
+    };
+    var fieldLabel = (f) => LABELS[f] || (f.charAt(0).toUpperCase() + f.slice(1)).replace(/_/g, " ");
     function notifyPrimary(user, clientId, fields) {
       if (!fields.length || db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${auth3.activeAssignment()}`, clientId, user.id)) return [];
       const { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+      const { NOTICE_MARKER } = require_tasks();
       const code = (db3.one(`SELECT client_code FROM clients WHERE id=?`, clientId) || {}).client_code || "a client";
-      const ref = `Reference: client record change by ${user.id}`;
       const since = new Date(Date.now() - 864e5).toISOString();
+      const recent = db3.all(`SELECT details FROM audit_log WHERE action='client.change_notice' AND user_id=? AND entity_id=? AND at >= ? ORDER BY id DESC`, user.id, clientId, since).map((a) => {
+        try {
+          return JSON.parse(a.details || "{}");
+        } catch {
+          return {};
+        }
+      }).filter((d) => d.task);
       const told = [];
       for (const { user_id: primary } of db3.all(`SELECT DISTINCT user_id FROM assignments WHERE client_id=? AND role_on_case='primary' AND user_id<>? AND ${auth3.activeAssignment()}`, clientId, user.id)) {
-        const open3 = db3.all(`SELECT id, description_enc FROM tasks WHERE assigned_to=? AND client_id=? AND created_by=? AND status='open' AND created_at >= ?`, primary, clientId, user.id, since).map((t) => {
+        const open3 = recent.filter((d) => d.notified === primary).map((d) => db3.one(`SELECT id, description_enc FROM tasks WHERE id=? AND assigned_to=? AND status='open'`, d.task, primary)).find(Boolean);
+        let before = "";
+        if (open3) {
           try {
-            return { id: t.id, desc: decrypt3(t.description_enc || "") };
+            before = (/^Changed: (.*)$/m.exec(decrypt3(open3.description_enc || "")) || [])[1] || "";
           } catch {
-            return { id: t.id, desc: "" };
+            before = "";
           }
-        }).find((t) => t.desc.includes(ref));
-        const before = open3 ? (/^Changed: (.*)$/m.exec(open3.desc) || [])[1] : "";
-        const all = [.../* @__PURE__ */ new Set([...String(before || "").split(", ").filter(Boolean), ...fields.map((f) => f.replace(/_/g, " "))])];
+        }
+        const all = [.../* @__PURE__ */ new Set([...String(before).split(", ").filter(Boolean), ...fields.map(fieldLabel)])];
         const title = `${user.display_name || user.username} changed ${code}'s record (${all.join(", ")})`.slice(0, 200);
         const desc = `Changed: ${all.join(", ")}
-You are this client's primary worker; open their record to see what changed.
-${ref}`;
-        if (open3) db3.run(`UPDATE tasks SET title_enc=?, description_enc=?, due_at=?, updated_at=? WHERE id=?`, encrypt3(title), encrypt3(desc), db3.now(), db3.now(), open3.id);
-        else db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, uuid2(), clientId, primary, user.id, encrypt3(title), encrypt3(desc), db3.now(), "normal");
-        require_audit().log({ user, action: "client.change_notice", entity: "client", entityId: clientId, clientId, details: { notified: primary, fields } });
+You are this client's primary worker. Only the names of the fields are given here, never their values: open the record to see them as they are now.
+${NOTICE_MARKER}`;
+        const id = open3 ? open3.id : uuid2();
+        if (open3) db3.run(`UPDATE tasks SET title_enc=?, description_enc=?, updated_at=? WHERE id=?`, encrypt3(title), encrypt3(desc), db3.now(), id);
+        else db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, clientId, primary, primary, encrypt3(title), encrypt3(desc), null, "normal");
+        require_audit().log({ user, action: "client.change_notice", entity: "client", entityId: clientId, clientId, details: { notified: primary, fields, task: id } });
         told.push(primary);
       }
       return told;
@@ -15144,34 +15251,6 @@ var require_referrals2 = __commonJS({
         gate.account("device");
         for (const id of gate.deviceIds) c.session.state.referrals.accountedByOffice.add(id);
       }
-    });
-  }
-});
-
-// server/rules/tasks.js
-var require_tasks = __commonJS({
-  "server/rules/tasks.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var auth3 = require_auth2();
-    var { define: define2, notPermitted } = require_core();
-    module.exports = define2({
-      table: "tasks",
-      deviceColumns: ["referral_id"],
-      createdBy: ["created_by"],
-      fields: {
-        client_id: { type: "string" },
-        assigned_to: { type: "string" },
-        title: { type: "string", required: true, maxLen: 200 },
-        description: { type: "string", maxLen: 2e3 },
-        due_at: { type: "datetime" },
-        priority: { type: "string", enum: ["low", "normal", "high", "urgent"] },
-        status: { type: "string", enum: ["open", "in_progress", "done", "cancelled"] },
-        is_milestone: { type: "boolean" },
-        completed_at: { type: "datetime" }
-      },
-      editableBy: (user, row) => row.assigned_to === user.id || row.created_by === user.id || auth3.hasPerm(user, "records:manage-others") ? null : notPermitted("You cannot edit this record"),
-      othersMayChange: (existing, row, changed) => ["done", "cancelled"].includes(row.status) && changed.every((col) => col === "status" || col === "completed_at")
     });
   }
 });
@@ -17387,7 +17466,7 @@ var require_intervention_supplies = __commonJS({
     var { define: define2, refuse } = require_core();
     module.exports = define2({
       table: "intervention_supplies",
-      deviceColumns: ["item_id", "quantity", "untracked", "user_id"],
+      deviceColumns: ["item_id", "quantity", "untracked"],
       owner: null,
       authorise(row, c) {
         const problem = require_supplies().linePushProblem(c.user, row, c.existing);
@@ -23194,17 +23273,21 @@ var require_calls2 = __commonJS({
         },
         afterInsert: (ctx, row) => {
           const what = row.method === "text" ? "text message" : "call";
-          if (row._log_time && row.duration_minutes > 0) db3.run(
-            `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,call_id,description_enc) VALUES(?,?,?,?,?,?,?,?)`,
-            uuid2(),
-            row.user_id,
-            row.client_id || null,
-            row.started_at.slice(0, 10),
-            row.duration_minutes,
-            "direct_service",
-            row.id,
-            encrypt3(`${row.direction} ${what}`)
-          );
+          if (row._log_time && row.duration_minutes > 0) {
+            const te2 = uuid2();
+            db3.run(
+              `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,call_id,description_enc) VALUES(?,?,?,?,?,?,?,?)`,
+              te2,
+              row.user_id,
+              row.client_id || null,
+              row.started_at.slice(0, 10),
+              row.duration_minutes,
+              "direct_service",
+              row.id,
+              encrypt3(`${row.direction} ${what}`)
+            );
+            require_audit().log({ user: ctx.user, action: "time_entry.create", entity: "time_entry", entityId: te2, clientId: row.client_id || null, ip: ctx.ip, details: { call_id: row.id, for: row.user_id !== ctx.user.id ? row.user_id : void 0 } });
+          }
           if (row.follow_up_needed && row.follow_up_due) db3.run(
             `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
             uuid2(),
@@ -24158,7 +24241,8 @@ var require_careplan = __commonJS({
       const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, `notes:${k}:read`) || auth3.hasPerm(ctx.user, `notes:${k}:write`));
       const counts = {};
       if (!kinds.length) return counts;
-      for (const n of db3.all(`SELECT problem_ids FROM notes WHERE client_id=? AND deleted_at IS NULL AND problem_ids IS NOT NULL AND kind IN (${kinds.map(() => "?").join(",")})`, clientId, ...kinds)) {
+      const sud = require_notes().counselingFilter(ctx.user, "n");
+      for (const n of db3.all(`SELECT n.problem_ids FROM notes n WHERE n.client_id=? AND n.deleted_at IS NULL AND n.problem_ids IS NOT NULL AND n.kind IN (${kinds.map(() => "?").join(",")}) AND ${sud.sql}`, clientId, ...kinds, ...sud.params)) {
         let ids = [];
         try {
           ids = JSON.parse(n.problem_ids);
@@ -32504,6 +32588,7 @@ var require_notes2 = __commonJS({
         }
         const stamp2 = sets.length ? db3.now() : n.updated_at;
         if (sets.length) db3.run(`UPDATE notes SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, n.id);
+        if (v.counseling_note !== void 0) require_notes().reissueAddenda(n.id, n.counseling_note, v.counseling_note ? 1 : 0);
         audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
         return { ok: true, updated_at: stamp2 };
       });
@@ -32665,6 +32750,7 @@ var require_interventions2 = __commonJS({
     init_globals_inject();
     var db3 = require_db();
     var auth3 = require_auth2();
+    var audit3 = require_audit();
     var crud = require_crud();
     var C = require_constants();
     var O = require_options();
@@ -32682,7 +32768,7 @@ var require_interventions2 = __commonJS({
     function checkCostPermission(ctx, v) {
       if (("cost" in v || "funding_source_id" in v || "budget_line_id" in v) && !auth3.hasPerm(ctx.user, "budget:write")) throw forbidden("You do not have permission to attach a cost to a funding source");
     }
-    function syncExpenditure(row) {
+    function syncExpenditure(ctx, row) {
       const existing = db3.one(`SELECT * FROM expenditures WHERE intervention_id=?`, row.id);
       if (existing && existing.status !== "pending") return;
       const wantsCost = row.cost > 0 && row.funding_source_id && row.budget_line_id;
@@ -32697,21 +32783,24 @@ var require_interventions2 = __commonJS({
       if (!line) return;
       const desc = `Auto-recorded from ${row.type.replace(/_/g, " ")}`;
       const spentAt = serviceDate(row);
-      if (existing) db3.run(
-        `UPDATE expenditures SET funding_source_id=?, budget_line_id=?, client_id=?, spent_at=?, amount=?, category=?, description_enc=?, updated_at=? WHERE id=?`,
-        row.funding_source_id,
-        row.budget_line_id,
-        row.client_id || null,
-        spentAt,
-        cents(row.cost),
-        line.category,
-        encrypt3(desc),
-        db3.now(),
-        existing.id
-      );
-      else db3.run(
+      const id = existing ? existing.id : uuid2();
+      if (existing) {
+        if (existing.funding_source_id === row.funding_source_id && existing.budget_line_id === row.budget_line_id && (existing.client_id || null) === (row.client_id || null) && existing.spent_at === spentAt && existing.amount === cents(row.cost)) return;
+        db3.run(
+          `UPDATE expenditures SET funding_source_id=?, budget_line_id=?, client_id=?, spent_at=?, amount=?, category=?, description_enc=?, updated_at=? WHERE id=?`,
+          row.funding_source_id,
+          row.budget_line_id,
+          row.client_id || null,
+          spentAt,
+          cents(row.cost),
+          line.category,
+          encrypt3(desc),
+          db3.now(),
+          id
+        );
+      } else db3.run(
         `INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,intervention_id,spent_at,amount,category,description_enc) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-        uuid2(),
+        id,
         row.funding_source_id,
         row.budget_line_id,
         row.client_id || null,
@@ -32722,8 +32811,9 @@ var require_interventions2 = __commonJS({
         line.category,
         encrypt3(desc)
       );
+      audit3.log({ user: ctx.user, action: existing ? "expenditure.update" : "expenditure.create", entity: "expenditure", entityId: id, clientId: row.client_id || null, ip: ctx.ip, details: { intervention_id: row.id, for: row.user_id !== ctx.user.id ? row.user_id : void 0 } });
     }
-    function syncTimeEntry(row, prev) {
+    function syncTimeEntry(ctx, row, prev) {
       if (row.duration_minutes === prev.duration_minutes && row.occurred_at === prev.occurred_at && !row._service_date) return;
       const te2 = db3.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
       if (!te2 || te2.status !== "draft" && te2.status !== "submitted") return;
@@ -32733,6 +32823,7 @@ var require_interventions2 = __commonJS({
         return;
       }
       db3.run(`UPDATE time_entries SET minutes=?, work_date=?, updated_at=? WHERE id=?`, row.duration_minutes, serviceDate(row), db3.now(), te2.id);
+      audit3.log({ user: ctx.user, action: "time_entry.update", entity: "time_entry", entityId: te2.id, clientId: te2.client_id || null, ip: ctx.ip, details: { intervention_id: row.id, fields: ["minutes", "work_date"] } });
     }
     function encodeSummary(v) {
       if (v.summary !== void 0) {
@@ -32851,9 +32942,10 @@ var require_interventions2 = __commonJS({
         },
         afterInsert: (ctx, row) => {
           if (row._log_time && row.duration_minutes > 0) {
+            const te2 = uuid2();
             db3.run(
               `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description_enc) VALUES(?,?,?,?,?,?,?,?,?)`,
-              uuid2(),
+              te2,
               row.user_id,
               row.client_id ?? null,
               serviceDate(row),
@@ -32863,6 +32955,7 @@ var require_interventions2 = __commonJS({
               row.id,
               encrypt3(O.labelOf("INTERVENTION_TYPES", row.type))
             );
+            audit3.log({ user: ctx.user, action: "time_entry.create", entity: "time_entry", entityId: te2, clientId: row.client_id ?? null, ip: ctx.ip, details: { intervention_id: row.id, for: row.user_id !== ctx.user.id ? row.user_id : void 0 } });
           }
           if (row.naloxone_kits > 0 && row.client_id) db3.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, serviceDate(row), db3.now(), row.client_id);
           if (row.follow_up_due && row.client_id) db3.run(
@@ -32875,13 +32968,13 @@ var require_interventions2 = __commonJS({
             row.follow_up_due,
             "normal"
           );
-          syncExpenditure(row);
+          syncExpenditure(ctx, row);
           applySupplies(ctx, row, row._supply_plan);
           if (row._note) row._note.id = notes.insertNote(ctx, { ...row._note, intervention_id: row.id });
         },
         afterUpdate: (ctx, row, prev) => {
-          syncExpenditure(row);
-          syncTimeEntry(row, prev);
+          syncExpenditure(ctx, row);
+          syncTimeEntry(ctx, row, prev);
           if (row.client_id !== prev.client_id || row.user_id !== prev.user_id) S.relinkLines(row);
           applySupplies(ctx, row, row._supply_plan);
         },
@@ -32936,6 +33029,7 @@ var require_tasks2 = __commonJS({
     var audit3 = require_audit();
     var { withClientName, SELECT: NAME_COLS } = require_client_name();
     var { localDate } = require_budget();
+    var { isNotice } = require_tasks();
     function dueTasks(ctx, within) {
       const cf = auth3.caseloadFilter(ctx.user, "tasks.client_id");
       const horizonMs = Date.now() + within * 6e4;
@@ -32948,7 +33042,13 @@ var require_tasks2 = __commonJS({
     ORDER BY tasks.due_at LIMIT 50`, ctx.user.id, horizonDay, horizon, ...cf.params);
       const now2 = db3.now();
       const today = localDate();
-      return rows.map((x) => withClientName(ctx, x)).map((x) => ({ ...presentTask(x), overdue: x.due_at.length === 10 ? x.due_at < today : x.due_at < now2 }));
+      const notices = db3.all(`SELECT tasks.*, c.client_code, ${NAME_COLS} FROM tasks LEFT JOIN clients c ON c.id=tasks.client_id
+    WHERE tasks.assigned_to=? AND tasks.created_by=? AND tasks.status='open' AND tasks.due_at IS NULL AND tasks.client_id IS NOT NULL AND ${cf.sql}
+    ORDER BY tasks.updated_at DESC LIMIT 50`, ctx.user.id, ctx.user.id, ...cf.params).filter(isNotice);
+      return [
+        ...notices.map((x) => ({ ...presentTask(withClientName(ctx, x)), overdue: false })),
+        ...rows.map((x) => withClientName(ctx, x)).map((x) => ({ ...presentTask(x), overdue: x.due_at.length === 10 ? x.due_at < today : x.due_at < now2 }))
+      ];
     }
     var lastDue = /* @__PURE__ */ new Map();
     module.exports = (r) => {
@@ -32960,7 +33060,7 @@ var require_tasks2 = __commonJS({
           lastDue.set(ctx.user.id, signature);
           audit3.log({ user: ctx.user, action: "task.due", ip: ctx.ip, details: { within, count: rows.length } });
         }
-        return { rows, within, overdue: rows.filter((x) => x.overdue).length, due_soon: rows.filter((x) => !x.overdue).length };
+        return { rows, within, overdue: rows.filter((x) => x.overdue).length, due_soon: rows.filter((x) => !x.overdue && !x.notice).length, notices: rows.filter((x) => x.notice).length };
       });
       crud.build(r, {
         table: "tasks",
@@ -33019,6 +33119,7 @@ var require_tasks2 = __commonJS({
         o.description = t.description_enc ? decrypt3(t.description_enc) : null;
         o.description_enc = void 0;
       }
+      if (o.description && o.description.includes("Reference: client record change")) o.notice = true;
       return o;
     }
     module.exports.presentTask = presentTask;
@@ -39085,6 +39186,7 @@ var require_sync = __commonJS({
     function pull(user, sinceRaw, { limit: limit2 = PULL_LIMIT, scope = null } = {}) {
       const serverNow = db3.now();
       let { since, bf } = parseCursor(String(sinceRaw || NEVER2));
+      const dropHidden = since !== NEVER2;
       const change = since !== NEVER2 ? scopeChange(user, scope) : null;
       const drops = change ? scopeDrops(user, change) : null;
       if (change && (change.widened || change.redacted)) {
@@ -39095,16 +39197,16 @@ var require_sync = __commonJS({
         out2.scope = syncScopeKey(user);
         if (drops) {
           out2.dropped_clients = [.../* @__PURE__ */ new Set([...out2.dropped_clients || [], ...drops.clients])];
-          out2.dropped_rows = drops.rows;
+          out2.dropped_rows = [...drops.rows, ...out2.dropped_rows || []];
           out2.scope_changed = true;
           if (change.widened || change.redacted) out2.scope_widened = true;
         }
         return out2;
       };
       if (bf) return withScope(pullBackfill(user, since, bf, limit2, serverNow));
-      return withScope(pullPage(user, since, limit2, serverNow));
+      return withScope(pullPage(user, since, limit2, serverNow, dropHidden));
     }
-    function pullPage(user, since, limit2, serverNow) {
+    function pullPage(user, since, limit2, serverNow, dropHidden = false) {
       const raw = {};
       const capped = [];
       const scopes = /* @__PURE__ */ new Map();
@@ -39126,7 +39228,7 @@ var require_sync = __commonJS({
       const cursor = capped.length ? capped.reduce((a, b) => a < b ? a : b) : serverNow;
       for (const [name, sc] of scopes) raw[name] = db3.all(`SELECT x.* FROM ${name} x WHERE x.updated_at > ? AND x.updated_at <= ? AND ${sc.sql} ORDER BY x.updated_at`, since, cursor, ...sc.params);
       const out2 = baseAnswer(cursor, serverNow, capped.length === 0);
-      exportInto(out2, user, raw, cursor);
+      exportInto(out2, user, raw, cursor, dropHidden);
       if (newlyInScope(user, since, cursor).length) {
         out2.cursor = encodeCursor(cursor, { from: since, t: bfTables()[0].name, k: null, i: null });
         out2.complete = false;
@@ -39159,13 +39261,17 @@ var require_sync = __commonJS({
       resyncCheck(out2, bf.from);
       return out2;
     }
-    function exportInto(out2, user, raw, cursor) {
+    function exportInto(out2, user, raw, cursor, dropHidden = false) {
       for (const t of SYNC2.tables) {
         let rows = raw[t.name] || [];
         if (cursor) rows = rows.filter((r) => r.updated_at <= cursor);
         if (t.name === "users") rows = rows.map((r) => ({ ...r.id === user.id ? r : { ...r, password_hash: "scrypt$0$0$0$AA==$AA==" }, mfa_secret_enc: null, mfa_enabled: 0 }));
         if (t.name === "notes" && !auth3.hasPerm(user, "notes:clinical:read")) rows = rows.filter((r) => r.kind !== "clinical");
-        if (t.name === "notes") rows = rows.filter((r) => COUNSEL.mayReadCounseling(user, r));
+        if (t.name === "notes") {
+          const hidden = rows.filter((r) => !COUNSEL.mayReadCounseling(user, r));
+          if (hidden.length) rows = rows.filter((r) => COUNSEL.mayReadCounseling(user, r));
+          if (dropHidden) for (const n of hidden) out2.dropped_rows.push(...db3.all(`SELECT id FROM note_addenda WHERE note_id=?`, n.id).map((a) => ["note_addenda", a.id]), ["notes", n.id]);
+        }
         if (t.readPerm && !auth3.hasPerm(user, t.readPerm)) rows = [];
         if (t.redact && !auth3.hasPerm(user, t.redact.perm)) rows = rows.map((r) => ({ ...r, ...t.redact.cols }));
         if (t.name === "note_addenda" && !auth3.hasPerm(user, "notes:clinical:read")) rows = rows.filter((r) => db3.one(`SELECT kind FROM notes WHERE id=?`, r.note_id)?.kind !== "clinical");
