@@ -124,6 +124,16 @@ previous one (v1.13.0)"). The owner approved it as a recorded exception, for the
 settlement layouts, supplies by item, site and lot with syringe services): it is dispatched with
 `policy_exception` set to that reason, which the release notes print at the top.
 
+**Record: 1.16.0 ships under a policy exception.** It is a feature release (the `records:manage-others`
+permission, and navigators and clinicians gaining `clients:all`, `notes:clinical:read` and `budget:read` by
+default) the day after 1.15.0, which the check above refuses on its own (`node scripts/release-policy.js
+--version 1.16.0`: "feature release 1.16.0 … after the previous one (v1.15.0)"). The owner approved it as a
+recorded exception and asked for the pending work to ship as one release rather than several: the role-permission
+expansion, the engineering review fixes (release gate, CI, tooling), and the frontline-UX, market and retest
+fixes from the reviews of 1.15.3. The 1.15.4 security fixes shipped first, as a patch, on their own. It is
+dispatched with `policy_exception` set to that reason. A feature freeze follows: the next feature release waits
+for the 28 days the check asks for.
+
 ## Cutting a release
 ```bash
 git checkout main && git pull
