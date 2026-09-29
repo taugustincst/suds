@@ -296,8 +296,64 @@ on a SUDS install. The owner has repository settings to make (below).
   refuses anything else with a line number; `test/workflow-yaml.test.js` checks write scopes, environments,
   triggers, actions and the required jobs as data. Checks of what a step's shell script does stay text matches.
   `actionlint` 1.7.7 is clean on all four workflows; it is not yet a CI step.
-- **The browser suite gives `accessibility` 1,800 s** (it now takes about 1,200 s alone); every other script keeps
-  the 900 s per-script limit, and `SUDS_SCRIPT_TIMEOUT` still overrides both (`scripts/ui/run-all.sh`).
+- **The browser suite gives `accessibility` 1,800 s** (about 600 s on CI, up to about 1,200 s on a loaded development
+  container); every other script keeps the 900 s per-script limit, and `SUDS_SCRIPT_TIMEOUT` still overrides both
+  (`scripts/ui/run-all.sh`).
+
+Fixes from the engineering review of the 1.17.0 candidate (at `c1a3578`, before the stamp). Unlike the items above,
+three change what a user sees: where the participant code sits on the visit form, and the AI copilot's cap and
+messages. No migration, permission or route.
+
+- **The whole browser suite is green on the merged candidate** (H1). Two streams had broken older scripts nobody
+  re-ran after the merges, so the candidate's required `browser` job failed: `spreadsheets` looked for the Import
+  page's file input by an accept list the FHIR import had grown (it now finds the input of the import card), and
+  the SSP participant code put an eighth field on a new outreach or naloxone-distribution visit at 390 px (ux13's
+  budget of seven): it now sits folded under **Participant code (optional)**, right below Client, one tap away,
+  opening by itself when the visit or a resumed draft has a code or for an error. RELEASE.md: when several streams
+  are merged, the whole suite must be green on the final merge commit before the stamp.
+- **The check's step skips at most one value per count** (M1, `server/sdc.js` `widenRange`). As first merged it
+  could skip at every step, never two in a row, so a count passing with a span of P = ceil(T/2) could alternate hole,
+  value, hole and stand behind ceil(P/2)+1 values rather than P+1. With one skip a passing count has at least P.
+  Every skip the review measured was a single one, so no publication rate changes. `test/sdc-skip-one.test.js`
+  tests the step alone (random holes, the alternation) and on the attacker's families (in `SDC_SWEEPS`); ADR-0009
+  says what the skip costs and corrects the enumeration-margin rationale (above).
+- **The publication perf test** (M2) no longer asserts a wall-clock bound in `npm test` (the 1,500 ms event-loop
+  bound runs in the thorough job only), and the server's worker-thread offload is tested again: since 1.17.0 the
+  5,000-person year audits too lightly to tell the worker from the inline path, so a deliberately heavy release
+  (`test/fixtures/heavy-audit.js`, about 30 million units) is audited both ways and the worker must hold the event
+  loop under half as long.
+- **A 1.16.4 upgrade fixture** (M3): `test/fixtures/release-v1.16.4.sql`, a `--rich` database the released 1.16.4
+  (`6491308`) wrote, with a permission override, an import item filed with its text and CalOMS submissions. 1.17.0's
+  first start on it is tested: the least-privilege default recorded off, every account's role, status and overrides
+  unchanged (also after a restart), migration 55's defaults on the existing submissions, the retention pass clearing
+  the filed item's text and keeping staged ones', and fresh and upgraded structurally identical.
+- **AI copilot provider calls** (M4, `server/ai-copilot.js`). A failed call (rate limited, unavailable, timed out,
+  refused as a request) is recorded and shown but **no longer counts against the monthly cap**, which counts drafts
+  the provider returned (including one it declined or cut off). A 400 or 404 says the provider refused the request
+  and to check the model setting (a 413 says to shorten the text), not "shorten the text". The deadline is 180 s (it
+  was 90 s, for a non-streamed request of up to 16,000 output tokens from a model that always thinks), and it covers
+  **one retry** after a 429, 5xx or 529 or a failed connection, after the provider's `retry-after` when that is at
+  most 10 s. Settings shows failed calls apart from drafts used.
+- **The settings check warns rather than fails until its token exists** (M6). With only the workflow's own token, a
+  setting that token is refused is "cannot verify (add SETTINGS_READ_TOKEN)", a warning; a setting it reads and finds
+  off still fails. With `SETTINGS_READ_TOKEN`, cannot-verify fails as before. The check also reads the
+  `settings-check` environment's deployment rule (`main` only), and RELEASE.md step 9 gives the order: create the
+  environment, limit it to `main`, then add the secret.
+- **The maintainer map describes 1.17.0** (M5): `docs/architecture/README.md` has a row per new module (rule file or
+  routes, tests, office-only or not); `docs/PERFORMANCE.md` describes the device's audit worker.
+- **The device audit runner hands the worker one audit at a time** (L1), so its 75 s backstop counts an audit's own
+  time, not the time it queued behind another; a worker that was only slow to start is tried once more before the
+  page is used for the session. ADR-0009 says why the device's backstop is 75 s and the server's 60 s.
+- **The CalOMS scheduled run is idempotent per provider** (L2): a provider whose file the schedule already prepared
+  (still waiting to be produced) is not prepared again, and one whose file could not be prepared leaves the month
+  open, so the next hourly pass tries only that provider instead of preparing every file twice.
+- **CI's browser job has 50 minutes** (L3; it had 75): the 51 scripts take 23 to 27 minutes on CI, accessibility
+  595 to 634 s.
+- **1.16.4 is recorded as `6491308`** (H2), the commit on `main` that is live on GitHub Pages, not `d95b69a` (not on
+  `main`, its CI failed, never published): the evidence README, the questionnaire, the SBOM (regenerated from it)
+  and HANDOFF. RELEASE.md records its publication by a direct `gh-pages` push at the owner's request, and that until
+  the owner tags `v1.16.3` (`fc5e9d7`) and `v1.16.4` (`6491308`) the release policy, the migration baseline and the
+  backport procedure measure from `v1.16.2`.
 
 ### Documentation
 
@@ -394,8 +450,9 @@ meet. No migration; no new permission or route.
 - **The check steps over one value** (`server/sdc.js`): a suppressed count's range, stepped outward from its value,
   no longer stops at a single value no world that prints the release has (a month's reversals printed exactly when
   the other months' small reversals add up to the threshold), which refused quarters whose count ranged widely on
-  both sides of it; two such values in a row still stop it. The rule (the span of the values) is unchanged, and
-  every value counted is still shown by a world found and run.
+  both sides of it. It steps over **at most one value per count**, so a count that passes stands behind at least
+  ceil(T/2) values that worlds printing the release show, one fewer than without the step (below, *Engineering*).
+  The rule (the span of the values) is unchanged, and every value counted is still shown by a world found and run.
 - **The audit log records what a release withheld, and why a release was refused.** Every report of a publication
   release (`report.funder`, `report.naloxone_ndp`, `report.opioid_settlement` and their exports) records the
   release's id and each withheld table with its reason code (`withheld: [{table, reason}]`, `protect` or `check`);
@@ -418,10 +475,12 @@ meet. No migration; no new permission or route.
   reversed. The attacker found no leak at T = 3, 5 and 11 in the existing families or the new ones (at T = 11, two
   months with 24 events, every split of events and reversals); a first run of the new outcome family, enumerated only
   two events past the sizes it checked, reported a suppressed total of 3 or 4 whose worlds, run further, include 6:
-  the families are now enumerated three past (docs/architecture/ADR-0009, *Known limits*).
+  a false alarm. The attacker is monotone (more worlds only widen what it holds possible), so a family enumerated
+  too short can only raise false alarms, never hide a leak; the families are enumerated a few past, and a reported
+  leak is enumerated further before it is acted on (docs/architecture/ADR-0009, *Known limits*).
   The month families run in a file of their own (`test/publication-release-months.test.js`, in `SDC_SWEEPS`) beside
-  the others; `node scripts/test-thorough.js --part sdc` took about 27 minutes here (the months file, 10 minutes, runs
-  beside the longest), inside the thorough-sdc job's 60.
+  the others; `node scripts/test-thorough.js --part sdc` took 9.6 minutes on CI (the months file 5 minutes), inside
+  the thorough-sdc job's 60 (about 27 minutes on a loaded 4-core development container).
 
 ## 1.16.4 — 2026-09-29
 
