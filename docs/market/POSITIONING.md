@@ -125,8 +125,10 @@ worker's is for supervisors and administrators. Finance and read-only see client
 that wants least privilege holds a person to their own caseload with a per-user deny of *See every client*, and
 keeps clinical notes from a navigator with a deny of *Read clinical notes* (Settings → Users & permissions →
 Permissions; each deny needs a reason and is audited). Set these **before** that person's records are imported
-and before their device first syncs: a device holds whatever its user may see. There is no programme-wide
-"start everyone scoped" switch yet, so each person is set individually ([PILOT-KIT.md](PILOT-KIT.md), week −1).
+and before their device first syncs: a device holds whatever its user may see. From 1.17.0 a programme setting starts
+every new navigator and clinician held to their caseload: on for a new install, off for an office upgraded from
+1.16.x until an administrator turns it on (and, once, applies it to existing staff); clinical notes stay a per-person
+deny ([PILOT-KIT.md](PILOT-KIT.md), week −1).
 Whether that internal-use limit on SUD counseling notes meets the programme's own reading of 42 CFR §2.31(b) is a
 question for its counsel ([docs/compliance/PART2.md](../compliance/PART2.md)).
 

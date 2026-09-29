@@ -18305,6 +18305,76 @@ var require_budget = __commonJS({
   }
 });
 
+// server/caseload-default.js
+var require_caseload_default = __commonJS({
+  "server/caseload-default.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var SETTING = "caseload_hold_new_staff";
+    var REASON = "programme default: held to caseload";
+    var ROLES = Object.freeze(["navigator", "clinician"]);
+    var PERMISSION = "clients:all";
+    function enabled() {
+      return db3.getSetting(SETTING, "0") === "1";
+    }
+    function heldRole(role) {
+      return ROLES.includes(role);
+    }
+    function override(userId) {
+      return db3.one(`SELECT mode, reason FROM user_permission_overrides WHERE user_id=? AND permission=?`, userId, PERMISSION);
+    }
+    function addDeny(userId, { actor, ip, cause, from, to }) {
+      db3.run(
+        `INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by) VALUES(?,?,'deny',?,?) ON CONFLICT(user_id, permission) DO NOTHING`,
+        userId,
+        PERMISSION,
+        REASON,
+        actor && actor.id || null
+      );
+      audit3.log({ user: actor, action: "user.permission.deny", entity: "user", entityId: userId, ip, details: { permission: PERMISSION, mode: "deny", cause, reason: REASON, ...from !== void 0 ? { from, to } : {} } });
+    }
+    function holdIfDefault(userId, role, { actor = null, ip = null, cause = "created", from, to } = {}) {
+      if (!enabled() || !heldRole(role)) return false;
+      if (override(userId)) return false;
+      addDeny(userId, { actor, ip, cause, from, to });
+      return true;
+    }
+    function onRoleChange(userId, from, to, { actor = null, ip = null } = {}) {
+      if (!to || from === to) return null;
+      if (heldRole(to)) return holdIfDefault(userId, to, { actor, ip, cause: "role_change", from, to }) ? "held" : null;
+      const o = override(userId);
+      if (!o || o.mode !== "deny" || o.reason !== REASON) return null;
+      db3.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=? AND mode='deny' AND reason=?`, userId, PERMISSION, REASON);
+      audit3.log({ user: actor, action: "user.permission.revoke", entity: "user", entityId: userId, ip, details: { permission: PERMISSION, mode: "deny", cause: "role_change", reason: REASON, from, to } });
+      return "lifted";
+    }
+    function candidates() {
+      const rows = db3.all(`SELECT u.id, u.username, u.display_name, u.role, u.is_active, o.mode AS override_mode, o.reason AS override_reason
+    FROM users u LEFT JOIN user_permission_overrides o ON o.user_id=u.id AND o.permission=?
+    WHERE u.role IN (${ROLES.map(() => "?").join(",")}) AND u.access_status<>'pending' ORDER BY u.display_name, u.username`, PERMISSION, ...ROLES);
+      const pick = ({ id, username, display_name, role, is_active }) => ({ id, username, display_name, role, is_active });
+      return {
+        change: rows.filter((r) => !r.override_mode).map(pick),
+        kept: rows.filter((r) => r.override_mode === "grant").map((r) => ({ ...pick(r), why: 'granted "See every client" individually' })),
+        held: rows.filter((r) => r.override_mode === "deny").length
+      };
+    }
+    function applyExisting(userIds, { actor, ip }) {
+      const wanted = new Set(userIds);
+      const eligible = candidates().change.filter((u) => wanted.has(u.id));
+      db3.transaction(() => {
+        for (const u of eligible) addDeny(u.id, { actor, ip, cause: "applied_to_existing" });
+      });
+      const changed = eligible.map((u) => u.id);
+      audit3.log({ user: actor, action: "users.caseload_default.applied", ip, details: { changed: changed.length, requested: wanted.size, skipped: wanted.size - changed.length } });
+      return { changed, skipped: [...wanted].filter((id) => !changed.includes(id)) };
+    }
+    module.exports = { SETTING, REASON, ROLES, PERMISSION, enabled, heldRole, holdIfDefault, onRoleChange, candidates, applyExisting };
+  }
+});
+
 // server/scim.js
 var require_scim = __commonJS({
   "server/scim.js"(exports, module) {
@@ -18504,6 +18574,7 @@ var require_scim = __commonJS({
         now2
       );
       audit3.log({ user: actor, action: "scim.user.create", entity: "user", entityId: id, details: { username: a.username, role, active, role_from: a.role ? "group mapping" : "default" } });
+      require_caseload_default().holdIfDefault(id, role, { actor, cause: "scim_provisioned" });
       return toResource(find(id), base);
     }
     function apply(id, a, actor, base, action) {
@@ -18549,6 +18620,7 @@ var require_scim = __commonJS({
         db3.run(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, ...vals, id);
         if (deactivated) cutOff(id);
       });
+      if (a.role && a.role !== u.role) require_caseload_default().onRoleChange(id, u.role, a.role, { actor });
       if (changed.length) audit3.log({ user: actor, action: deactivated ? "scim.user.deactivate" : action, entity: "user", entityId: id, details: { username: a.username || u.username, changed, ...a.role && a.role !== u.role ? { role: { from: u.role, to: a.role } } : {}, ...reactivated ? { reactivated: true } : {} } });
       return toResource(find(id), base);
     }
@@ -39583,6 +39655,7 @@ var require_users2 = __commonJS({
     var { validate } = require_validate();
     var { isKnownPermission, PERMISSION_CATALOG, grantProblem } = require_permissions();
     var { hashPasswordAsync, uuid: uuid2, randomToken, sha256: sha2562 } = require_crypto();
+    var caseloadDefault = require_caseload_default();
     var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
     var shape = {
       username: { type: "string", required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ },
@@ -39605,11 +39678,21 @@ var require_users2 = __commonJS({
       // made knowingly, not a side effect discovered afterwards.
       wipe_devices: { type: "boolean" }
     };
+    function clientScope(u) {
+      const person = { id: u.id, role: u.role };
+      if (auth3.hasPerm(person, "clients:read")) {
+        if (!auth3.caseloadRestricted(person)) return { scope: "all" };
+        const o = db3.one(`SELECT reason FROM user_permission_overrides WHERE user_id=? AND permission=? AND mode='deny'`, u.id, caseloadDefault.PERMISSION);
+        return { scope: "caseload", held_by_default: !!o && o.reason === caseloadDefault.REASON };
+      }
+      return { scope: auth3.hasPerm(person, "clients:list-deidentified") ? "codes" : auth3.caseloadRestricted(person) ? "caseload" : "none" };
+    }
     module.exports = (r) => {
       r.get("/api/users", auth3.requireAuth, auth3.requirePerm("users:read", "users:manage"), (ctx) => {
         const full = auth3.hasPerm(ctx.user, "users:manage");
         const rows = db3.all(full ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id,access_status,default_fund_id,
           (SELECT COUNT(*) FROM user_permission_overrides o WHERE o.user_id=users.id) AS override_count FROM users WHERE access_status<>'pending' ORDER BY display_name` : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
+        if (full) for (const u of rows) u.client_scope = clientScope(u);
         return { users: rows };
       });
       const caseloadCounts = (userId) => {
@@ -39633,6 +39716,33 @@ var require_users2 = __commonJS({
         const [u] = caseloadCounts(ctx.params.id);
         if (!u) throw notFound();
         return u;
+      });
+      r.get("/api/users/caseload-default", auth3.requireAuth, auth3.requirePerm("users:manage"), () => {
+        const c = caseloadDefault.candidates();
+        return {
+          enabled: caseloadDefault.enabled(),
+          reason: caseloadDefault.REASON,
+          roles: caseloadDefault.ROLES,
+          // Caseload restriction off (Settings -> Program) means a deny of clients:all limits nobody.
+          caseload_restriction: db3.getSetting("caseload_restriction", "1") === "1",
+          would_change: c.change,
+          kept: c.kept,
+          already_held: c.held
+        };
+      });
+      r.put("/api/users/caseload-default", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const v = validate(ctx.body || {}, { enabled: { type: "boolean", required: true } });
+        const before = caseloadDefault.enabled();
+        db3.setSetting(caseloadDefault.SETTING, v.enabled ? "1" : "0");
+        audit3.log({ user: ctx.user, action: "settings.caseload_default", ip: ctx.ip, details: { enabled: !!v.enabled, was: before } });
+        return { ok: true, enabled: !!v.enabled };
+      });
+      r.post("/api/users/caseload-default/apply", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const body = ctx.body || {};
+        if (!Array.isArray(body.user_ids) || !body.user_ids.length || body.user_ids.length > 5e3 || body.user_ids.some((x) => typeof x !== "string" || x.length > 64)) throw badRequest("user_ids must list the accounts to hold to their caseload, as the confirmation showed them");
+        if (body.user_ids.includes(ctx.user.id)) throw badRequest("You cannot change your own permissions");
+        const res = caseloadDefault.applyExisting(body.user_ids, { actor: ctx.user, ip: ctx.ip });
+        return { ok: true, changed: res.changed.length, skipped: res.skipped.length };
       });
       r.post("/api/users", auth3.requireAuth, auth3.requirePerm("users:manage"), async (ctx) => {
         const v = validate(ctx.body, shape);
@@ -39662,8 +39772,9 @@ var require_users2 = __commonJS({
           db3.now()
         );
         audit3.log({ user: ctx.user, action: "user.create", entity: "user", entityId: id, ip: ctx.ip, details: { username: v.username, role: v.role } });
+        const held = caseloadDefault.holdIfDefault(id, v.role, { actor: ctx.user, ip: ctx.ip, cause: "created" });
         ctx.status = 201;
-        return { id, temporary_password: v.password ? void 0 : temp };
+        return { id, temporary_password: v.password ? void 0 : temp, held_to_caseload: held };
       });
       r.put("/api/users/:id", auth3.requireAuth, auth3.requirePerm("users:manage"), async (ctx) => {
         const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
@@ -39709,8 +39820,9 @@ var require_users2 = __commonJS({
             audit3.log({ user: ctx.user, action: "user.permission.revoke", entity: "user", entityId: u.id, ip: ctx.ip, details: { permission: o.permission, mode: o.mode, cause: "role_change", from: u.role, to: v.role } });
           }
         }
+        const caseload = v.role !== void 0 ? caseloadDefault.onRoleChange(u.id, u.role, v.role, { actor: ctx.user, ip: ctx.ip }) : null;
         audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped2.length, wipe_devices: wipeDevices } });
-        return { ok: true, devices_wiped: wiped2.length };
+        return { ok: true, devices_wiped: wiped2.length, ...caseload ? { caseload_default: caseload } : {} };
       });
       r.get("/api/permissions/catalog", auth3.requireAuth, auth3.requirePerm("users:manage"), () => ({ permissions: PERMISSION_CATALOG }));
       r.get("/api/users/:id/permissions", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
@@ -39802,7 +39914,8 @@ var require_users2 = __commonJS({
           u.id
         );
         audit3.log({ user: ctx.user, action: "user.signup.approved", entity: "user", entityId: u.id, ip: ctx.ip, details: { username: u.username, role: v.role } });
-        return { ok: true };
+        const held = caseloadDefault.holdIfDefault(u.id, v.role, { actor: ctx.user, ip: ctx.ip, cause: "access_request_approved" });
+        return { ok: true, held_to_caseload: held };
       });
       r.post("/api/users/:id/decline", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
         const u = pendingRequest(ctx);
@@ -42169,6 +42282,7 @@ var require_db = __commonJS({
         d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
         d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('${SCRUBBED}',?)`).run((/* @__PURE__ */ new Date()).toISOString());
         d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('programme_profile',?)`).run(require_programme().DEFAULT_PROFILE);
+        d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('caseload_hold_new_staff','1')`).run();
         ensureMainSite(d);
       } else {
         encryptedColumns = 0;
@@ -42177,6 +42291,7 @@ var require_db = __commonJS({
         if (!d.prepare(`SELECT 1 FROM settings WHERE key='programme_profile'`).get()) {
           d.prepare(`INSERT INTO settings(key,value) VALUES('programme_profile',?)`).run(require_programme().defaultForExisting(d));
         }
+        d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('caseload_hold_new_staff','0')`).run();
       }
       reindexNameParts(d);
       ensureIndexes(d, schemaText);
@@ -44101,9 +44216,10 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     if (u.id === ctx.user.id) throw new import_http2.HttpError(400, "You cannot change your own role here.");
     import_db2.default.run(`UPDATE users SET role=?, updated_at=? WHERE id=?`, v.role, import_db2.default.now(), u.id);
     const lifted = v.role === "supervisor" || v.role === "admin" ? import_db2.default.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND mode='deny' AND reason=? AND permission IN (${SIGNUP_SCOPE.map(() => "?").join(",")})`, u.id, SIGNUP_SCOPE_REASON, ...SIGNUP_SCOPE).changes : 0;
+    const caseload = require_caseload_default().onRoleChange(u.id, u.role, v.role, { actor: ctx.user });
     import_auth2.default.revokeAllForUser(u.id);
     import_audit2.default.log({ user: ctx.user, action: "local.account.role", entity: "user", entityId: u.id, details: { from: u.role, to: v.role, ...lifted ? { denies_lifted: SIGNUP_SCOPE } : {} } });
-    return { ok: true, role: v.role };
+    return { ok: true, role: v.role, ...caseload ? { caseload_default: caseload } : {} };
   });
   router.get("/api/local/device", (ctx) => {
     if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");

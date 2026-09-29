@@ -7,6 +7,7 @@ const { badRequest, notFound, HttpError } = require('../http');
 const { validate } = require('../validate');
 const { isKnownPermission, PERMISSION_CATALOG, grantProblem } = require('../permissions');
 const { hashPasswordAsync, uuid, randomToken, sha256 } = require('../crypto');
+const caseloadDefault = require('../caseload-default');
 
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
 const shape = {
@@ -31,6 +32,16 @@ const shape = {
   wipe_devices: { type: 'boolean' },
 };
 
+function clientScope(u) {
+  const person = { id: u.id, role: u.role };
+  if (auth.hasPerm(person, 'clients:read')) {
+    if (!auth.caseloadRestricted(person)) return { scope: 'all' };
+    const o = db.one(`SELECT reason FROM user_permission_overrides WHERE user_id=? AND permission=? AND mode='deny'`, u.id, caseloadDefault.PERMISSION);
+    return { scope: 'caseload', held_by_default: !!o && o.reason === caseloadDefault.REASON };
+  }
+  return { scope: auth.hasPerm(person, 'clients:list-deidentified') ? 'codes' : auth.caseloadRestricted(person) ? 'caseload' : 'none' };
+}
+
 module.exports = (r) => {
   // Directory of active staff (for assignment dropdowns) — minimal fields
   r.get('/api/users', auth.requireAuth, auth.requirePerm('users:read', 'users:manage'), (ctx) => {
@@ -41,6 +52,10 @@ module.exports = (r) => {
       ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id,access_status,default_fund_id,
           (SELECT COUNT(*) FROM user_permission_overrides o WHERE o.user_id=users.id) AS override_count FROM users WHERE access_status<>'pending' ORDER BY display_name`
       : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
+    // Which clients each person reaches, for the Clients column of Users & permissions (1.17.0): every client,
+    // only their caseload (held_by_default: by the programme default's deny, server/caseload-default.js), client
+    // codes only (a de-identified role), or none. Worked out as the request-time checks do (server/auth.js).
+    if (full) for (const u of rows) u.client_scope = clientScope(u);
     return { users: rows };
   });
 
@@ -75,6 +90,32 @@ module.exports = (r) => {
     return u;
   });
 
+  // ---- The programme's least-privilege default (1.17.0, server/caseload-default.js) ----
+  // Settings -> Users & permissions: whether new navigators and clinicians start held to their caseload, who the
+  // one-off "Apply to existing navigators and clinicians" would change, and that action itself.
+  r.get('/api/users/caseload-default', auth.requireAuth, auth.requirePerm('users:manage'), () => {
+    const c = caseloadDefault.candidates();
+    return { enabled: caseloadDefault.enabled(), reason: caseloadDefault.REASON, roles: caseloadDefault.ROLES,
+      // Caseload restriction off (Settings -> Program) means a deny of clients:all limits nobody.
+      caseload_restriction: db.getSetting('caseload_restriction', '1') === '1',
+      would_change: c.change, kept: c.kept, already_held: c.held };
+  });
+  r.put('/api/users/caseload-default', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    const v = validate(ctx.body || {}, { enabled: { type: 'boolean', required: true } });
+    const before = caseloadDefault.enabled();
+    db.setSetting(caseloadDefault.SETTING, v.enabled ? '1' : '0');
+    audit.log({ user: ctx.user, action: 'settings.caseload_default', ip: ctx.ip, details: { enabled: !!v.enabled, was: before } });
+    return { ok: true, enabled: !!v.enabled };
+  });
+  r.post('/api/users/caseload-default/apply', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    const body = ctx.body || {};
+    // The accounts the administrator confirmed, by id: exactly those change (if still eligible), never more.
+    if (!Array.isArray(body.user_ids) || !body.user_ids.length || body.user_ids.length > 5000 || body.user_ids.some(x => typeof x !== 'string' || x.length > 64)) throw badRequest('user_ids must list the accounts to hold to their caseload, as the confirmation showed them');
+    if (body.user_ids.includes(ctx.user.id)) throw badRequest('You cannot change your own permissions');
+    const res = caseloadDefault.applyExisting(body.user_ids, { actor: ctx.user, ip: ctx.ip });
+    return { ok: true, changed: res.changed.length, skipped: res.skipped.length };
+  });
+
   r.post('/api/users', auth.requireAuth, auth.requirePerm('users:manage'), async (ctx) => {
     const v = validate(ctx.body, shape);
     if (db.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw badRequest('Username already exists');
@@ -90,8 +131,9 @@ module.exports = (r) => {
     db.run(`INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,hourly_cost,requires_cosign,supervisor_id,default_fund_id,must_change_password,password_changed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?)`,
       id, v.username, hash, v.display_name, v.email || null, v.title || null, v.role, v.is_active ?? 1, v.hourly_cost ?? null, v.requires_cosign ?? 0, v.supervisor_id || null, v.default_fund_id || null, db.now());
     audit.log({ user: ctx.user, action: 'user.create', entity: 'user', entityId: id, ip: ctx.ip, details: { username: v.username, role: v.role } });
+    const held = caseloadDefault.holdIfDefault(id, v.role, { actor: ctx.user, ip: ctx.ip, cause: 'created' });
     ctx.status = 201;
-    return { id, temporary_password: v.password ? undefined : temp };
+    return { id, temporary_password: v.password ? undefined : temp, held_to_caseload: held };
   });
 
   r.put('/api/users/:id', auth.requireAuth, auth.requirePerm('users:manage'), async (ctx) => {
@@ -138,8 +180,11 @@ module.exports = (r) => {
         audit.log({ user: ctx.user, action: 'user.permission.revoke', entity: 'user', entityId: u.id, ip: ctx.ip, details: { permission: o.permission, mode: o.mode, cause: 'role_change', from: u.role, to: v.role } });
       }
     }
+    // Into navigator or clinician: the programme's least-privilege default applies as to a new account; out of
+    // them, its own deny of clients:all goes (server/caseload-default.js onRoleChange).
+    const caseload = v.role !== undefined ? caseloadDefault.onRoleChange(u.id, u.role, v.role, { actor: ctx.user, ip: ctx.ip }) : null;
     audit.log({ user: ctx.user, action: 'user.update', entity: 'user', entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter(k => k !== 'password'), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length, wipe_devices: wipeDevices } });
-    return { ok: true, devices_wiped: wiped.length };
+    return { ok: true, devices_wiped: wiped.length, ...(caseload ? { caseload_default: caseload } : {}) };
   });
 
   // ---- Per-user permission overrides (admin-managed permissions) ----
@@ -240,7 +285,8 @@ module.exports = (r) => {
     db.run(`UPDATE users SET role=?, supervisor_id=?, title=COALESCE(?, title), is_active=1, access_status='active', failed_attempts=0, locked_until=NULL, created_at=?, updated_at=? WHERE id=?`,
       v.role, v.supervisor_id || null, v.title || null, db.now(), db.now(), u.id);
     audit.log({ user: ctx.user, action: 'user.signup.approved', entity: 'user', entityId: u.id, ip: ctx.ip, details: { username: u.username, role: v.role } });
-    return { ok: true };
+    const held = caseloadDefault.holdIfDefault(u.id, v.role, { actor: ctx.user, ip: ctx.ip, cause: 'access_request_approved' });
+    return { ok: true, held_to_caseload: held };
   });
   r.post('/api/users/:id/decline', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
     const u = pendingRequest(ctx);

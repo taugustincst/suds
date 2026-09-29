@@ -178,7 +178,7 @@ These are open. Each is a reason for a county to add a control of its own, or to
    - give each person their own device where records differ by person;
    - keep local mode off where there is no field-work need;
    - deactivate leavers at once.
-5. **Least privilege is not the default.** Navigators and clinicians see every client, and their devices hold the whole programme, unless the programme denies `clients:all` per person before the first sync. There is no programme-wide switch yet ([QUESTIONNAIRE.md](QUESTIONNAIRE.md) #22).
+5. **Least privilege is a setting on an upgraded office.** A new install holds new navigators and clinicians to their caseload (1.17.0, `server/caseload-default.js`). An office upgraded from 1.16.x starts with that setting off, so until an administrator turns it on and applies it to existing staff, navigators and clinicians see every client and their devices hold the whole programme, unless the programme denies `clients:all` per person before the first sync ([QUESTIONNAIRE.md](QUESTIONNAIRE.md) #22). Navigators still read clinical notes unless denied per person.
 6. **The client record has no revision history.** A change notice names the fields changed, not their earlier values. A wrong or malicious change is put right from a backup.
 7. **The index key doubles as the audit-chain key.** A holder of the index key could rebuild a consistent chain. Only the anchors on write-once storage and the log collector catch that ([../HIPAA.md](../HIPAA.md), risk register).
 8. **The publication screen has not had an independent statistical review.** It is a conservative screen, not an expert determination. Releases that 1.16.1's withdrawn rule produced are unverified ([../HIPAA.md](../HIPAA.md)).

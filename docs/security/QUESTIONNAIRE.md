@@ -81,12 +81,13 @@ Evidence that goes with this questionnaire:
 **#22, access control, in detail:**
 
 - **The roles.** There are six. The de-identified roles (finance, read-only) cannot open a client record (`test/deidentified-roles.test.js`). Administrators reach clinical notes only through break-glass.
-- **Least privilege is not the default.** Since 1.16.0, navigators and clinicians see every client, and navigators read clinical notes.
+- **Least privilege is the default for new installs, and a setting for upgraded offices (1.17.0).** A new install starts with *New navigators and clinicians start held to their caseload* on: every account that becomes a navigator or clinician (created by an administrator, an approved sign-up, SCIM provisioning, or a role change) is denied *See every client* (`clients:all`) with an audited reason (`server/caseload-default.js`; `test/least-privilege-default.test.js`, `test/least-privilege-sso.test.js`). An office upgraded from 1.16.x starts with it off, so nothing changes silently, and is shown a recommendation to turn it on; existing staff change only through the one-off, confirmed *Apply to existing navigators and clinicians*.
+  - The role defaults themselves are unchanged: since 1.16.0 navigators and clinicians hold `clients:all`, so an account the setting did not hold (made before it was on, or with it off) sees every client. Navigators read clinical notes, held or not, unless denied *Read clinical notes* per person.
 - **SUD counseling notes are restricted** to their author, the co-signer and staff who write clinical notes (clinicians, supervisors; 1.16.1). Break-glass does not open them.
 - **Client records are shared.** Anyone who sees a client may update the record. When someone not on the client's care team does, the primary worker is told which fields changed.
   - The field names are audited, but earlier values are not kept. The client record has no revision history yet (planned), so a wrong change is put right from a backup.
 - **Changing other workers' records** (visits, calls, notes, referrals, to-dos) is for supervisors and administrators only (`records:manage-others`). Both doors enforce it, REST and sync (`server/rules/`).
-- **A programme holds a person to their caseload,** or keeps clinical notes from a navigator, with a per-user deny (with a reason, audited). There is no programme-wide setting that makes new staff start scoped (**planned for 1.17.0**).
+- **A programme holds a person to their caseload,** or keeps clinical notes from a navigator, with a per-user deny (with a reason, audited). Users & permissions shows who is held to their caseload and whether by the programme default.
 
 ## Logging and monitoring
 

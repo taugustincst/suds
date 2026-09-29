@@ -4,6 +4,40 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Access
+
+- **A programme-wide least-privilege default.** Settings → Users & permissions (administrators) has *New navigators
+  and clinicians start held to their caseload*. While it is on, every account that becomes a navigator or clinician
+  is given a per-user deny of *See every client* (`clients:all`) with the reason "programme default: held to
+  caseload", each one audited (`user.permission.deny`, with its cause): an administrator creating the account
+  (`POST /api/users`), an approved access request (`POST /api/users/:id/approve`), SCIM provisioning, a role change
+  into navigator or clinician by an administrator or by SCIM, and, on SUDS on this device, the device administrator
+  creating an account or making one a navigator or clinician. Single sign-on creates no account (its first sign-in
+  links the account SCIM provisioned, which was held then). A device sign-up is held to its caseload as before,
+  whatever the setting says (and denied clinical notes too). The reset-admin script makes administrators only.
+  Only `clients:all` is denied: a navigator keeps reading clinical notes (the 1.16.0 decision); deny *Read clinical
+  notes* per person. An individual decision already recorded about `clients:all` (a grant or a deny) is left alone,
+  and moving an account out of navigator and clinician lifts the default's own deny, never an administrator's.
+- **On for a new install; off for an upgraded office.** A new database starts with the setting on. A database from
+  an earlier release starts with it off, recorded once at the first start (a settings row, `caseload_hold_new_staff`;
+  no migration), so an upgrade changes nobody's access; while it is off, Users & permissions recommends turning it on.
+  Turning it on or off changes no existing account (audited, `settings.caseload_default`).
+- **Apply to existing navigators and clinicians.** A one-off action on the same card: a confirmation lists exactly
+  who will be held (and who is left alone because they were granted *See every client* individually), and only
+  those people change, each audited (`cause: applied_to_existing`), with a summary entry
+  (`users.caseload_default.applied`).
+- **Who is held, at a glance.** The user list has a *Clients* column: *Every client*, *Caseload only* (with *program
+  default* when the setting did it), or *Client codes only* for finance and read-only.
+- New routes: `GET`/`PUT /api/users/caseload-default` and `POST /api/users/caseload-default/apply` (`users:manage`).
+  No new permission, no migration. Tests: `test/least-privilege-default.test.js` (every office path, role changes,
+  apply-to-existing, and that the REST list, search, a record and sync pull then keep to the caseload),
+  `test/least-privilege-sso.test.js` (SCIM and single sign-on), `test/least-privilege-device.test.js` (the browser
+  kernel), `test/migrations.test.js` (off after an upgrade); browser script `scripts/ui/r10-lp.mjs`.
+- Docs: QUESTIONNAIRE #22, IDENTITY.md, HIPAA.md, SOC2-READINESS.md, PART2.md, CALAIM.md, USER_GUIDE.md and the
+  buyer pack (market/README.md, BUYER-GUIDE-IT.md, POSITIONING.md, PROCUREMENT.md, PILOT-KIT.md), with the
+  threat model, the data inventory and the evidence index, no longer list
+  "least privilege is not the default" as a gap for new installs; for upgraded offices it is a setting to turn on.
+
 ### Engineering
 
 Release machinery and CI only: nothing here changes what SUDS does for a user, and no administrator action is needed
@@ -64,7 +98,7 @@ changes.
   - the attack classes the project's reviews found and fixed from 1.15.4 to 1.16.4;
   - the residual risks, stated plainly: the owner's repository settings are not in force; there is one
     maintainer and no independent review; there has been no penetration test; shared devices separate accounts
-    by rule, not by key; least privilege is not the default.
+    by rule, not by key; least privilege is a setting an upgraded office must turn on (the 1.17.0 default below).
 - **A data inventory for privacy review** (`docs/security/DATA-INVENTORY.md`) gives:
   - every encrypted column by table, whether devices receive it and what retention does to it;
   - the readable columns that are still sensitive, and the blind indexes;

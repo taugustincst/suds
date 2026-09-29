@@ -162,7 +162,8 @@ try {
     await admin.page.click('[data-perm-done]');
     await until(async () => !(await admin.page.$('.modal-bg')), { timeout: 5000 }); await settle(admin.page);
     ok(await until(() => admin.page.$(`[data-user-permissions="${uname}"]`), { timeout: 8000 }), 'the list shows the new user');
-    eq(await admin.page.locator('table tr', { hasText: uname }).locator('[data-perm-count]').getAttribute('data-perm-count'), '1', 'with a badge for their one override');
+    // Two: the grant, and (1.17.0) the program default's deny of See every client, on for a new install.
+    eq(await admin.page.locator('table tr', { hasText: uname }).locator('[data-perm-count]').getAttribute('data-perm-count'), '2', 'with a badge for their overrides (the grant and the program default\'s caseload hold)');
     ok(!(await admin.page.locator('table tr', { hasText: 'mrivera' }).locator('[data-perm-count]').count()), 'a user on their role alone has no badge');
     // The administrator's own row: explained, not editable.
     await admin.page.click('[data-user-permissions="admin"]');

@@ -571,10 +571,14 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
     // A supervisor or an administrator sees every client: the sign-up's caseload denies go with the promotion.
     const lifted = v.role === 'supervisor' || v.role === 'admin'
       ? db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND mode='deny' AND reason=? AND permission IN (${SIGNUP_SCOPE.map(() => '?').join(',')})`, u.id, SIGNUP_SCOPE_REASON, ...SIGNUP_SCOPE).changes : 0;
+    // Made a navigator or a clinician: the programme's least-privilege default applies as at the office (an
+    // account that signed up here is held already); made a supervisor or an administrator, its deny goes
+    // (server/caseload-default.js, audited per person).
+    const caseload = require('../server/caseload-default.js').onRoleChange(u.id, u.role, v.role, { actor: ctx.user });
     // A role change takes effect on the next sign-in, like an office role change: end that person's sessions.
     auth.revokeAllForUser(u.id);
     audit.log({ user: ctx.user, action: 'local.account.role', entity: 'user', entityId: u.id, details: { from: u.role, to: v.role, ...(lifted ? { denies_lifted: SIGNUP_SCOPE } : {}) } });
-    return { ok: true, role: v.role };
+    return { ok: true, role: v.role, ...(caseload ? { caseload_default: caseload } : {}) };
   });
   // What the "This device" page shows: the last backup, whether further sign-ups are allowed, and whether
   // the signed-in person manages the device.
