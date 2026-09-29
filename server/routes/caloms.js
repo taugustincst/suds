@@ -284,8 +284,10 @@ module.exports = (r) => {
     wholeProgramme(ctx, 'produce');
     const ids = JSON.parse(sub.record_ids || '[]');
     const recs = ids.length ? db.all(`SELECT id, client_id, updated_at, extracted_at FROM caloms_records WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids) : [];
-    const stale = ids.length - recs.length + recs.filter(x => x.updated_at > sub.created_at || (x.extracted_at && x.extracted_at > sub.created_at)).length;
-    if (stale) throw new HttpError(409, `${stale} record(s) in this file were changed, removed or sent in another file after it was prepared, so it no longer matches the records. Discard it and prepare a new one.`, { stale });
+    // A record already sent in any file (extracted_at set, before or after this one was prepared) is stale too
+    // (1.17.1; engineering review of 1.17.0, M1): producing it again would disclose and send it twice.
+    const stale = ids.length - recs.length + recs.filter(x => x.updated_at > sub.created_at || x.extracted_at).length;
+    if (stale) throw new HttpError(409, `${stale} record(s) in this file were changed or removed after it was prepared, or were already sent in another file, so it no longer matches what is left to send. Discard it and prepare a new one.`, { stale });
     const clientIds = [...new Set(recs.map(x => x.client_id))];
     const counts = JSON.parse(sub.counts || '{}');
     const stamp = db.now();
@@ -318,7 +320,10 @@ module.exports = (r) => {
     const v = validate(ctx.body || {}, { uploaded_on: { type: 'date', required: true }, dhcs_reference: { type: 'string', maxLen: 60, pattern: /^[A-Za-z0-9 ._/#-]*$/ } });
     if (sub.status !== 'produced') throw new HttpError(409, 'Produce the file first: a prepared file has not been accounted, so it cannot have been sent.');
     if (v.uploaded_on > require('./budget').localDate()) throw badRequest('The upload date cannot be in the future', { fields: { uploaded_on: 'in the future' } });
-    if (v.uploaded_on < sub.created_at.slice(0, 10)) throw badRequest('The upload date is before the file was produced', { fields: { uploaded_on: 'before the file existed' } });
+    // Against when it was produced, not when it was prepared (1.17.1; engineering review of 1.17.0, L4): a file the
+    // monthly run prepared on the 5th and a person produced on the 12th cannot have been uploaded on the 8th.
+    const produced = db.one(`SELECT created_at FROM caloms_submission_events WHERE submission_id=? AND action='produced' ORDER BY created_at LIMIT 1`, sub.id);
+    if (v.uploaded_on < (produced ? produced.created_at : sub.created_at).slice(0, 10)) throw badRequest('The upload date is before the file was produced', { fields: { uploaded_on: 'before the file existed' } });
     db.transaction(() => {
       db.run(`UPDATE caloms_submissions SET uploaded_at=?, uploaded_by=?, dhcs_reference=?, updated_at=? WHERE id=?`, v.uploaded_on, ctx.user.id, v.dhcs_reference || null, db.now(), sub.id);
       SCHED.logEvent(sub.id, 'uploaded', ctx.user, [v.uploaded_on, v.dhcs_reference].filter(Boolean).join(' '));

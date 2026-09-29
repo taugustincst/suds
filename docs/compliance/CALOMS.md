@@ -262,9 +262,12 @@ previous calendar month: every record in the month is validated against every im
 program-wide, and a **prepared** submission file is built for the records that pass — one file, or one per provider
 ID when *One file per provider ID* is ticked (`caloms_split_by_provider`). *Check and prepare (not sent)* on the
 page does the same for the period shown (`POST /api/caloms/schedule/run`, `export:identified`). The scheduled run is
-idempotent per period and provider: a provider whose file it already prepared, still waiting to be produced, is not
-prepared again, and a provider whose file could not be prepared (an error, logged) leaves the month open, so the
-next hourly pass tries that provider again and only that one (engineering review of the 1.17.0 candidate, L2). The
+idempotent per period and provider: a provider whose file it already made — still waiting to be produced, produced,
+or discarded — is not prepared again, and a provider whose file could not be prepared (an error, logged) leaves the
+month open, so the next hourly pass tries that provider again and only that one (engineering review of the 1.17.0
+candidate, L2; since 1.17.1 a produced or discarded file counts too, M1). A discarded file counts on purpose: a
+person decided against it, so the schedule does not silently make that month's file again; *Check and prepare*
+makes a new one when it is wanted. The
 run reads and checks the whole month on the server's main thread, once a month.
 
 **Prepared is not produced.** A prepared file is built once and kept encrypted with its SHA-256, like a
@@ -273,7 +276,8 @@ stamped. It cannot be downloaded. **Produce** (`POST /api/caloms/submissions/:id
 the disclosure, with exactly the semantics of a submission produced by hand: those bytes are accounted per client
 under the state-reporting basis (`source_ref` `caloms:<id>`, the hash in *what*), the file's records are stamped
 `extracted_at`, the mass-export check runs, and the file downloads. It is refused (409, with the count) when any
-record in the file was changed, deleted, or sent in another file after it was prepared — then **Discard** it
+record in the file was changed or deleted after it was prepared, or has already been sent in another file (any
+record with `extracted_at` set, since 1.17.1) — then **Discard** it
 (`/discard`; the file is deleted, the row stays) and prepare again. Someone held to a caseload cannot prepare or
 produce a program-wide file.
 
@@ -285,7 +289,7 @@ first. Codes, field names and dates only, as the validation report.
 **The submission log** (`caloms_submission_events`; *Log* on each submission, `GET /api/caloms/submissions/:id/events`):
 prepared (by the schedule or a person), produced, each download, discarded, and **Record upload** — the date the
 person uploaded it to DHCS and the confirmation or batch number the portal gave (`POST …/uploaded`; letters,
-digits and `._/#-` only). The list of submissions shows status, origin, provider, downloads and the upload.
+digits and `._/#-` only; the date may not be before the file was produced, as the log's *produced* entry dates it). The list of submissions shows status, origin, provider, downloads and the upload.
 
 **County mode.** Each provider ID carries its legal name and NPI; `provider_id` on a submission, or the per-provider
 monthly run, produces one provider's file (its records and its activity rows only; the README names the
