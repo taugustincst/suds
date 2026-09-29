@@ -6702,7 +6702,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.16.0" : "local",
+      version: true ? "1.16.1" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -10547,11 +10547,17 @@ var require_permissions = __commonJS({
       description,
       risk: PRIVILEGED_PERMISSIONS.includes(name) ? "privileged" : SENSITIVE.has(name) ? "sensitive" : "standard"
     }));
+    var READ_SCOPE_PERMS = Object.freeze({
+      "clients:all": "every client, not only the caseload; and every worker's records with no client",
+      "records:manage-others": "other workers' imports and their items",
+      "notes:clinical:read": "clinical notes and their addenda"
+    });
+    var CASELOAD_PERMS = Object.freeze(["clients:all", "notes:clinical:read"]);
     var KNOWN = new Set(PERMISSION_CATALOG.map((p) => p.name));
     function isKnownPermission(name) {
       return KNOWN.has(name);
     }
-    module.exports = { PERMISSION_CATALOG, PRIVILEGED_PERMISSIONS, isKnownPermission, grantProblem };
+    module.exports = { PERMISSION_CATALOG, PRIVILEGED_PERMISSIONS, READ_SCOPE_PERMS, CASELOAD_PERMS, isKnownPermission, grantProblem };
   }
 });
 
@@ -28858,6 +28864,9 @@ var require_sdc = __commonJS({
       const keep = new Set(model.keep || []);
       const byId = new Map(model.vars.map((v, i) => [v.id, i]));
       const derivedById = new Map((model.derived || []).map((d) => [d.id, d]));
+      const rules = model.preWithhold || [];
+      const pre = (vals) => rules.filter((r) => r.when(vals)).map((r) => r.table).sort();
+      const cellsOf = (tables) => new Set(model.vars.map((v, i) => tables.includes(v.table) ? i : -1).filter((i) => i >= 0));
       const neighbours = (i) => {
         const out3 = [];
         for (const k of model.cons) if (k.terms.some(([j]) => j === i)) {
@@ -28873,11 +28882,13 @@ var require_sdc = __commonJS({
         return other.length ? other : t;
       };
       const full = (vals, first2, known = null) => {
-        const base2 = known || a.run(vals, []);
+        const p = pre(vals);
+        const pk = p.join("|");
+        const base2 = known || a.run(vals, p);
         const { world: world2, ...out3 } = base2;
         let res2 = out3;
         if (base2.verified && consistency) {
-          const c = a.consistent(base2, []);
+          const c = a.consistent(base2, p, rules.length ? { validate: (v) => pre(v).join("|") === pk, derived: p.length ? cellsOf(p) : null } : {});
           res2 = { ...out3, verified: c.ok, unprotected: c.unprotected, gaveUp: c.gaveUp, consistency: { worlds: c.worlds, tried: c.tried }, ...first2 && debug ? { G: c.G } : {} };
         }
         if (res2.verified) return { res: res2, forced: [] };
@@ -28885,16 +28896,17 @@ var require_sdc = __commonJS({
         const done = new Set(res2.withheldTables);
         const more = [...new Set(res2.unprotected.flatMap(tablesFor))].filter((t) => !done.has(t)).sort();
         if (!more.length || more.some((t) => keep.has(t))) return { res: { ...res2, headline: more.some((t) => keep.has(t)) }, forced: null };
-        return { res: res2, forced: more };
+        return { res: res2, forced: [.../* @__PURE__ */ new Set([...p, ...more])].sort() };
       };
-      const stats = (res2, forced2, rounds) => ({ headline: false, ...res2, degraded: forced2, outOfBudget: meter.over, backstop: meter.backstop, steps: meter.steps, rounds });
+      const stats = (res2, forced2, rounds) => ({ headline: false, ...res2, degraded: forced2.filter((t) => !ruled.includes(t)), ruled, outOfBudget: meter.over, backstop: meter.backstop, steps: meter.steps, rounds });
+      const ruled = pre(values);
       const first = full(values, true);
       if (!first.forced || !first.forced.length) return stats(first.res, [], 1);
       const forced = first.forced;
       const key = forced.join("|");
       const memo = /* @__PURE__ */ new Map();
       const sameFailure = (vals) => {
-        const r = a.run(vals, []);
+        const r = a.run(vals, pre(vals));
         const printout = `${r.verified}|${r.withheldTables.join("|")}|${r.status.map((x, i) => x === "vis" ? vals[i] : x).join(",")}`;
         if (!memo.has(printout)) {
           const f = full(vals, false, r);
@@ -28908,8 +28920,7 @@ var require_sdc = __commonJS({
       const { world, ...out2 } = base;
       let res = out2;
       if (base.verified) {
-        const inForced = new Set(model.vars.map((v, i) => forced.includes(v.table) ? i : -1).filter((i) => i >= 0));
-        const c = a.consistent(base, forced, { validate: sameFailure, derived: inForced });
+        const c = a.consistent(base, forced, { validate: sameFailure, derived: cellsOf(forced) });
         res = { ...out2, verified: c.ok, unprotected: c.unprotected, gaveUp: c.gaveUp, consistency: { worlds: c.worlds, tried: c.tried }, ...debug ? { G: c.G } : {} };
       }
       if (meter.over && !meter.backstop && meter.limit < whole) {
@@ -29149,7 +29160,11 @@ var require_release_audit = __commonJS({
       soft([[Dall, 1], [E, -DOSES_MAX]], "<=");
       soft([[Dall, 1], [Dr, -1], [E, -DOSES_MAX], [R, DOSES_MAX]], "<=");
       mirror.push([R, Dr], [R, Dall], [E, Dall]);
-      return { model: { vars, cons, derived, mirror, watch, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] }, h };
+      const small = (x) => x >= 1 && x < T;
+      const preWithhold = [{ table: "overdose.by_month.n", when: (vals) => vals[E] >= 12 * T && h.n.some((n, m) => small(vals[n]) || small(vals[n] - vals[h.r[m]])) }];
+      const model = { vars, cons, derived, mirror, watch, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] };
+      Object.defineProperty(model, "preWithhold", { value: preWithhold });
+      return { model, h };
     }
     function digest(text) {
       let h1 = 2166136261;
@@ -29197,9 +29212,10 @@ var require_release_audit = __commonJS({
       const d = new Set(degraded);
       return [...tables].sort().map((t) => ({ table: t, label: TABLE_LABEL[t] || t, reason: d.has(t) ? "check" : "protect", why: WITHHELD_WHY[d.has(t) ? "check" : "protect"] }));
     }
-    function refusalMessage(r) {
+    function refusalMessage(r, months = 0) {
       const why = r.backstop ? "the check of this period's figures ran past the server's time limit" : r.outOfBudget ? "the check of this period's figures reached its limit before it could finish" : r.headline ? "the number of people served could not be shown without giving someone away" : "the check could not confirm that every small count in it is protected";
-      return `This period cannot be published: ${why}, so no publication release was made. Publish a longer standard period (a quarter or a year). The program's own submission to its funder, which is not for publication, is unaffected.`;
+      const next = months >= 12 ? "A year is the longest standard period: tell whoever supports your SUDS server which period was refused (the server log records the check's figures)." : `Publish a longer standard period (${months >= 3 ? "a year" : "a quarter or a year"}).`;
+      return `This period cannot be published: ${why}, so no publication release was made. ${next} The program's own submission to its funder, which is not for publication, is unaffected.`;
     }
     function protectFigures(inputs, T, { strict = false, budget, stepLimit, timeLimitMs = AUDIT_BACKSTOP_MS, degrade = true } = {}) {
       const raw = prepare(inputs.funder, inputs.domains);
@@ -29209,7 +29225,7 @@ var require_release_audit = __commonJS({
       const { status, withheldTables } = audit3;
       const stats = { steps: audit3.steps, rounds: audit3.rounds, degraded: audit3.degraded };
       if (!audit3.verified) {
-        return { refused: { out_of_budget: audit3.outOfBudget, backstop: audit3.backstop, headline: audit3.headline, unprotected: audit3.unprotected.length, message: refusalMessage(audit3) }, withheld_tables: withheldTables, status, model, audit: stats };
+        return { refused: { out_of_budget: audit3.outOfBudget, backstop: audit3.backstop, headline: audit3.headline, unprotected: audit3.unprotected.length, message: refusalMessage(audit3, (inputs.domains?.months || []).length) }, withheld_tables: withheldTables, status, model, audit: stats };
       }
       const show = (i) => status[i] === "vis" ? model.vars[i].value : status[i] === "pri" ? SC.primary(T) : status[i] === "sec" ? SC.SECONDARY : SC.WITHHELD;
       const gone = new Set(withheldTables);
@@ -29870,7 +29886,7 @@ var require_publication_release = __commonJS({
       w.terminate().catch(() => {
       });
       console.warn(`[suds] a publication release audit did not answer within ${Math.round(backstopMs / 1e3)} s; its worker was stopped and the release refused${queued.length ? ` (${queued.length} other audit(s) moved to a new worker)` : ""}`);
-      p.resolve({ refused: { out_of_budget: true, backstop: true, message: RA.refusalMessage({ backstop: true }) } });
+      p.resolve({ refused: { out_of_budget: true, backstop: true, message: RA.refusalMessage({ backstop: true }, (p.msg.inputs.domains && p.msg.inputs.domains.months || []).length) } });
     }
     function runAudit(inputs, T) {
       const opts = { ...auditOptions };
@@ -29893,7 +29909,9 @@ var require_publication_release = __commonJS({
       const hit = cache.get(key);
       if (hit && Date.now() - hit.at < CACHE_MS) return hit.p;
       const p = runAudit(inputs, T).then((r) => {
-        if (r.refused && r.refused.backstop) console.warn(`[suds] a publication release (${inputs.domains.months[0] || ""} to ${inputs.domains.months[inputs.domains.months.length - 1] || ""}) was refused: its audit ran past the wall-clock backstop`);
+        const period = `${inputs.domains.months[0] || ""} to ${inputs.domains.months[inputs.domains.months.length - 1] || ""}`;
+        if (r.refused && r.refused.backstop) console.warn(`[suds] a publication release (${period}) was refused: its audit ran past the wall-clock backstop`);
+        else if (r.refused && r.refused.out_of_budget) console.warn(`[suds] a publication release (${period}) was refused: its audit reached its budget (${JSON.stringify(r.audit || {})})`);
         return r;
       });
       p.then((r) => {
@@ -38906,7 +38924,7 @@ var require_sync = __commonJS({
     var SCOPE_V = "v1";
     var COUNSEL = require_notes();
     function scopePerms() {
-      const s = /* @__PURE__ */ new Set(["clients:all", "records:manage-others", "notes:clinical:read"]);
+      const s = new Set(Object.keys(require_permissions().READ_SCOPE_PERMS));
       for (const t of SYNC2.tables) {
         if (t.readPerm) s.add(t.readPerm);
         if (t.redact) s.add(t.redact.perm);
@@ -43338,7 +43356,7 @@ function openDatabase(bytes3) {
   ensureTables();
   scopeEarlierSignups();
 }
-var SIGNUP_SCOPE = ["clients:all", "notes:clinical:read"];
+var SIGNUP_SCOPE = require_permissions().CASELOAD_PERMS;
 var SIGNUP_SCOPE_REASON = "Signed up on a shared device: sees only their own caseload until the device administrator decides otherwise";
 function deviceAdminId() {
   return import_db2.default.getSetting("device_admin_user_id", null) || (import_db2.default.one(`SELECT id FROM users WHERE password_hash NOT LIKE 'scrypt$0$%' ORDER BY created_at, rowid LIMIT 1`) || {}).id || null;
