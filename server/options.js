@@ -66,6 +66,22 @@ const LISTS = [
     labels: { completed: 'Completed the program', transferred: 'Transferred to another provider', incarcerated: 'Incarcerated', moved: 'Moved out of the area', lost_contact: 'Lost contact',
       declined: 'Declined further services', deceased: 'Deceased', administrative: 'Administrative closure', other: 'Other' },
     protect: { deceased: 'marks the client deceased' } },
+  // Prevention (1.17.0, server/prevention.js): the CSAP strategies and IOM categories are national categories
+  // the prevention activity summary totals by, so they can be reworded but not added to.
+  { key: 'PREVENTION_STRATEGIES', group: 'Prevention', name: 'Strategy (CSAP)', codes: C.PREVENTION_STRATEGIES, custom: false,
+    labels: { information_dissemination: 'Information dissemination', education: 'Education', alternatives: 'Alternatives', problem_identification_referral: 'Problem identification and referral',
+      community_based_process: 'Community-based process', environmental: 'Environmental' },
+    why: 'The six CSAP prevention strategies: they can be reworded, but not added to, because the prevention activity summary totals by them.' },
+  { key: 'PREVENTION_IOM', group: 'Prevention', name: 'Population (IOM category)', codes: C.PREVENTION_IOM, custom: false,
+    labels: { universal_direct: 'Universal (direct)', universal_indirect: 'Universal (indirect)', selective: 'Selective', indicated: 'Indicated' },
+    why: 'The Institute of Medicine population categories: they can be reworded, but not added to, because the prevention activity summary totals by them.' },
+  { key: 'PREVENTION_EVENT_TYPES', group: 'Prevention', name: 'Kind of event', codes: C.PREVENTION_EVENT_TYPES,
+    labels: { presentation: 'Presentation', workshop: 'Workshop or class', training: 'Training', community_event: 'Community event', media_campaign: 'Media or social media campaign',
+      coalition_meeting: 'Coalition or planning meeting', alternative_activity: 'Drug-free alternative activity', screening_event: 'Screening event', policy_work: 'Policy or environmental work', other: 'Other' },
+    protect: { training: 'its attendance is counted as people trained in the prevention activity summary' } },
+  { key: 'PREVENTION_AUDIENCES', group: 'Prevention', name: 'Audience', codes: C.PREVENTION_AUDIENCES,
+    labels: { youth: 'Youth (under 18)', young_adults: 'Young adults (18–25)', parents_families: 'Parents and families', school_staff: 'School staff', general_community: 'General community',
+      older_adults: 'Older adults', health_providers: 'Health and social service providers', first_responders: 'First responders and law enforcement', employers: 'Employers and workplaces', faith_community: 'Faith communities', other: 'Other' } },
 ];
 const BY_KEY = new Map(LISTS.map(l => [l.key, l]));
 

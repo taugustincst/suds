@@ -299,7 +299,13 @@ CREATE TABLE IF NOT EXISTS interventions (
   supply_site_id TEXT,
   syringes_returned INTEGER NOT NULL DEFAULT 0,
   returns_estimated INTEGER NOT NULL DEFAULT 0,
-  sharps_returned_litres REAL
+  sharps_returned_litres REAL,
+  -- Anonymous syringe services participant code (migration 51, docs/SUPPLIES.md): on a contact with no client
+  -- record, the code the participant gives each time (built from details only they can reproduce), so the SSP
+  -- summary can count unique participants without anyone being identified. It is built from personal details,
+  -- so it is kept encrypted, and counted by its blind index (participant_code_idx, HMAC under the index key).
+  participant_code_enc TEXT,
+  participant_code_idx TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_interventions_client ON interventions(client_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_interventions_user ON interventions(user_id, occurred_at);
@@ -312,6 +318,34 @@ CREATE INDEX IF NOT EXISTS idx_interventions_updated ON interventions(updated_at
 CREATE INDEX IF NOT EXISTS idx_interventions_sync ON interventions(client_id, updated_at, user_id);
 -- The Home dashboard's pass over the period's visits (migration 47), read from the index alone.
 CREATE INDEX IF NOT EXISTS idx_interventions_dashboard ON interventions(occurred_at, client_id, user_id, type, duration_minutes, naloxone_kits, fentanyl_strips);
+-- The SSP summary's unique participants (migration 51): the period's coded anonymous contacts, from the index alone.
+CREATE INDEX IF NOT EXISTS idx_interventions_participant ON interventions(occurred_at, participant_code_idx) WHERE participant_code_idx IS NOT NULL;
+
+-- Group and community prevention events (migration 51; server/prevention.js): SABG primary prevention recorded as
+-- events, not as services to a person. Attendance is a headcount (how many people came or were reached), never
+-- a list of names: nothing here identifies anyone. The strategy (CSAP), population (IOM category), kind of event
+-- and audience are codes from Settings → Lists. The event is its worker's (user_id), or a manager's, to change.
+CREATE TABLE IF NOT EXISTS prevention_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  event_date TEXT NOT NULL,
+  title TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  strategy TEXT NOT NULL,
+  iom_category TEXT NOT NULL,
+  audience TEXT,
+  location TEXT,
+  hours REAL NOT NULL DEFAULT 0,
+  attendance INTEGER NOT NULL DEFAULT 0,
+  attendance_estimated INTEGER NOT NULL DEFAULT 0,
+  funding_source_id TEXT REFERENCES funding_sources(id),
+  notes_enc TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_prevention_events_date ON prevention_events(event_date, strategy, iom_category);
+CREATE INDEX IF NOT EXISTS idx_prevention_events_user ON prevention_events(user_id, event_date);
+CREATE INDEX IF NOT EXISTS idx_prevention_events_updated ON prevention_events(updated_at);
 
 CREATE TABLE IF NOT EXISTS calls (
   id TEXT PRIMARY KEY,

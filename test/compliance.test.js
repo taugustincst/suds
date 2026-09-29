@@ -173,7 +173,7 @@ test('a de-identified export carries exactly its allow-listed columns, whatever 
 
   const expected = {
     clients: ['Record Id', 'Age Band', 'Status', 'Intake Date', 'Discharge Date', 'Discharge Reason', 'Referral Source', 'Referral Date', 'Engagement Date', 'Days To Engagement', 'Primary Substance', 'Secondary Substances', 'Asam Level', 'Mat Status', 'Mat Medication', 'Risk Level', 'Housing Status', 'Insurance', 'Overdose History', 'Naloxone Provided', 'Naloxone Last Date', 'Co Occurring Mh', 'Justice Involved', 'Pregnant Or Parenting', 'Zip', 'Gender'],
-    interventions: ['Occurred At', 'Record Id', 'Type', 'Duration Minutes', 'Modality', 'Outcome', 'Stage Of Change', 'Naloxone Kits', 'Fentanyl Strips', 'Worker', 'Funding Source', 'Cost', 'Follow Up Due'],
+    interventions: ['Occurred At', 'Record Id', 'Participant Ref', 'Type', 'Duration Minutes', 'Modality', 'Outcome', 'Stage Of Change', 'Naloxone Kits', 'Fentanyl Strips', 'Worker', 'Funding Source', 'Cost', 'Follow Up Due'],
     calls: ['Started At', 'Record Id', 'Direction', 'Contact Type', 'Duration Minutes', 'Outcome', 'Crisis', 'Follow Up Needed', 'Follow Up Due', 'Worker'],
     time: ['Work Date', 'Worker', 'Record Id', 'Category', 'Minutes', 'Billable', 'Funding Source'],
     referrals: ['Referred At', 'Record Id', 'Resource', 'Category', 'Status', 'Urgency', 'Warm Handoff', 'Appointment At', 'Admitted At', 'Closed At', 'Worker'],

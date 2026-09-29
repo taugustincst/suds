@@ -22,11 +22,17 @@ a disclosure gate and accounting, field-level encryption of identifiers and note
 so a programme whose records *are* Part 2 records has software support for the controls the rule calls for (its own policies, training, agreements and counsel's review are the rest), and one whose records are not gets the same care. Whether a programme's own records and workflows meet Part 2 is for its counsel to confirm; the control matrix (docs/compliance/PART2.md) has not had an independent legal review.
 
 **"Prevention", precisely.** SUDS serves harm-reduction, outreach and navigation work, including
-prevention-funded outreach and naloxone / supply distribution. It does **not** support SABG **primary-prevention**
-reporting: it has no model for group or community events with attendance, CSAP strategy, IOM category
-(universal, selective, indicated) or evidence-based programme, and no export for DHCS's primary-prevention data
-system (confirm the current system and data dictionary with DHCS). A primary-prevention set-aside provider cannot
-report its main activity from SUDS today; say so ([README.md](README.md), *Readiness scorecard*).
+prevention-funded outreach and naloxone / supply distribution. Since 1.17.0 it also records SABG
+**primary-prevention events**: group and community events with their date, kind, CSAP strategy (the six), IOM
+population category (universal direct, universal indirect, selective, indicated), audience, place, hours,
+attendance (a headcount, marked when estimated) and fund, and totals them for a period in a *prevention activity
+summary* (by strategy, by IOM category, by the two together, by kind of event, and the people trained — the
+attendance of training events), as CSV or Excel. What it does **not** do: produce a **PPSDS** submission file (the
+field mapping to DHCS's Primary Prevention SUD Data Service awaits the DHCS PPSDS data dictionary; say "prevention
+activity summary", never "PPSDS export"), record an evidence-based programme's name or registry, break attendance
+down by age, race or gender, or keep a list of who attended. A primary-prevention set-aside provider can keep its
+event record in SUDS and key PPSDS from the summary; it cannot submit from SUDS ([README.md](README.md),
+*Readiness scorecard*).
 
 ## Who it is for, in order
 

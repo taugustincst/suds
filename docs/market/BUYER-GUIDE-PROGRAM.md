@@ -2,8 +2,9 @@
 
 For the director of a harm-reduction, outreach or prevention programme — usually a community-based
 organisation funded by opioid-settlement money, SOR / the Naloxone Distribution Project, or SABG prevention
-funds, and usually not billing Medi-Cal. (SABG primary-prevention reporting — group and community events with
-attendance, PPSDS — is not supported: see [POSITIONING.md](POSITIONING.md), *"Prevention", precisely*.) It explains what SUDS does for outreach, supplies and funder reporting,
+funds, and usually not billing Medi-Cal. (SABG primary-prevention events — group and community events with
+attendance, CSAP strategy and IOM category — are recorded and summarised; SUDS does not produce a PPSDS file: see
+[POSITIONING.md](POSITIONING.md), *"Prevention", precisely*.) It explains what SUDS does for outreach, supplies and funder reporting,
 what a day looks like, and what we need from you. The companion guide for your IT partner or county IT is
 [BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md); who runs the server is in [HOSTING.md](HOSTING.md).
 
@@ -68,6 +69,12 @@ CalOMS Tx, and the county EHR hand-off. Most harm-reduction programmes will not 
   template, matched without code: its columns can take kits, test strips and reversals as well, and its rows can
   be one per fund of another type, such as a block-grant (SABG) report. A **syringe services program summary**
   (participants, contacts, syringes out and back, sharps containers, naloxone by product, test strips, referrals).
+  Anonymous participants are counted too (1.17.0): a contact with no client record can carry the participant code
+  the person builds the same way each time, stored encrypted and counted without being printed anywhere.
+- **Prevention events** (1.17.0): presentations, trainings, community events, campaigns and coalition work, each
+  with its CSAP strategy, IOM population category, hours and attendance (a headcount, never names), and a
+  *prevention activity summary* by strategy and IOM category with the people trained, as CSV or Excel. It is not a
+  PPSDS file: the PPSDS field mapping awaits the DHCS data dictionary, so key PPSDS from the summary.
   All are built from the records above; **check each against the funder's current template** before you submit
   — templates change, and SUDS has not been certified by DHCS or any funder.
 - **SUPRT-A**, for State Opioid Response (SOR) programmes: SAMHSA's client-level record (baseline, reassessment,

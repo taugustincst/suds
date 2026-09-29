@@ -6,7 +6,9 @@
 // be checked against the program's current reporting requirements before it is submitted.
 //
 // A contact is a visit or an anonymous outreach contact at which supplies were handed out or sharps brought
-// back. Counts of people (participants served, people referred, referrals) are small-cell suppressed as the
+// back. Anonymous participants are the different participant codes given at anonymous contacts (1.17.0,
+// server/participant-code.js), counted by blind index. Counts of people (participants served, anonymous
+// participants, people referred, referrals) are small-cell suppressed as the
 // funder report's are (server/small-cells.js), with the same counting modes (server/funder-report.js); counts
 // of supplies and of contacts are not counts of people and are exact. It is never a publication release: it
 // is the program's own submission (or internal), so it is run by those who may run such reports
@@ -20,6 +22,7 @@ const N = require('./supply-names');
 const { badRequest, forbidden } = require('./http');
 
 const TEMPLATE_NOTE = 'The layout follows what a CDPH-authorized syringe services program reports, as SUDS understands it (contacts, participants, syringes distributed and returned, sharps containers, naloxone and test strips, referrals). It is not an official template: check it against your current reporting requirements before submitting it.';
+const PARTICIPANT_CODE_NOTE = 'Participants served are clients with a record. Anonymous participants are counted separately, as the number of different participant codes given at anonymous contacts; anonymous contacts with no code are not counted as participants. The two are not added together: someone seen both as a client and anonymously would be counted twice. No participant code is printed.';
 const RETURNS_NOTE = 'Syringes returned are counted, or estimated from the volume of the sharps container brought back (Supplies settings: syringes per litre). The estimated part is shown separately.';
 
 /**
@@ -53,7 +56,7 @@ function figures(ctx, { ts, tsP }) {
   const cf = funderOnly(ctx.user) ? { sql: '1=1', params: [] } : auth.caseloadFilter(ctx.user, 'c.id');
   const scope = `(i.client_id IS NULL OR ${cf.sql})`;
   const activity = `(EXISTS (SELECT 1 FROM intervention_supplies l WHERE l.intervention_id=i.id) OR i.syringes_returned > 0 OR i.naloxone_kits > 0 OR i.fentanyl_strips > 0)`;
-  const visits = db.all(`SELECT i.id, i.client_id, i.occurred_at, i.supply_site_id, i.naloxone_kits, i.fentanyl_strips, i.syringes_returned, i.returns_estimated, c.deleted_at
+  const visits = db.all(`SELECT i.id, i.client_id, i.occurred_at, i.supply_site_id, i.naloxone_kits, i.fentanyl_strips, i.syringes_returned, i.returns_estimated, i.participant_code_idx, c.deleted_at
     FROM interventions i LEFT JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${activity} AND ${scope}`, ...tsP, ...cf.params);
   const lines = db.all(`SELECT l.intervention_id, l.quantity, l.untracked, it.id AS item_id, it.name, it.category, it.product, it.unit FROM intervention_supplies l
     JOIN supply_items it ON it.id=l.item_id JOIN interventions i ON i.id=l.intervention_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${scope}`, ...tsP, ...cf.params);
@@ -61,6 +64,10 @@ function figures(ctx, { ts, tsP }) {
   const byVisit = new Map(); for (const l of lines) { if (!byVisit.has(l.intervention_id)) byVisit.set(l.intervention_id, []); byVisit.get(l.intervention_id).push(l); }
   const sumCat = (ls, cat) => ls.filter(l => l.category === cat).reduce((n, l) => n + l.quantity, 0);
   const participants = new Set(visits.filter(v => v.client_id && !v.deleted_at).map(v => v.client_id));
+  // Anonymous participants: the different participant codes given at the period's anonymous contacts, told apart
+  // by their blind index alone (server/participant-code.js); no code is decrypted to count them.
+  const coded = visits.filter(v => !v.client_id && v.participant_code_idx);
+  const codes = new Set(coded.map(v => v.participant_code_idx));
   const month = new Map(); const site = new Map();
   const bucket = () => ({ contacts: 0, anonymous_contacts: 0, syringes_distributed: 0, syringes_returned: 0, naloxone_kits: 0 });
   const t = { contacts: 0, anonymous_contacts: 0, syringes_distributed: 0, syringes_returned: 0, syringes_returned_estimated: 0, sharps_containers: 0, naloxone_kits: 0, fentanyl_strips: 0, xylazine_strips: 0 };
@@ -89,7 +96,7 @@ function figures(ctx, { ts, tsP }) {
   const sites = new Map(db.all(`SELECT id, name FROM supply_sites`).map(s => [s.id, s.name]));
   const ratio = (r, d) => (d ? Math.round((r / d) * 100) / 100 : null);
   return {
-    totals: { ...t, participants: participants.size, referrals: ref.n, people_referred: ref.people, return_ratio: ratio(t.syringes_returned, t.syringes_distributed) },
+    totals: { ...t, participants: participants.size, anonymous_participants: codes.size, coded_contacts: coded.length, referrals: ref.n, people_referred: ref.people, return_ratio: ratio(t.syringes_returned, t.syringes_distributed) },
     by_month: [...month].sort(([a], [b]) => a.localeCompare(b)).map(([m, b]) => ({ month: m, ...b, return_ratio: ratio(b.syringes_returned, b.syringes_distributed) })),
     by_site: [...site].map(([id, b]) => ({ site_id: id || null, site: id ? sites.get(id) || 'Unknown site' : 'No site recorded', ...b, return_ratio: ratio(b.syringes_returned, b.syringes_distributed) })).sort((a, b) => a.site.localeCompare(b.site)),
     by_item: [...items.values()].map(x => ({ ...x, category_label: N.labelOf(N.CATEGORIES, x.category) })).sort((a, b) => a.category_label.localeCompare(b.category_label) || a.item.localeCompare(b.item)),
@@ -105,12 +112,17 @@ async function build(ctx, range) {
   // People: participants served, and the people referred among them (a subset, so its complement is protected
   // too); the referrals themselves are one person's each.
   const s = SC.star({ total: t.participants, subsets: [t.people_referred] }, sc);
+  // Anonymous participants (unique participant codes) are people too: the same small-cell rule, on a cell of its
+  // own. It is never added to the clients served (someone seen both as a client and anonymously would be counted
+  // twice), so no total is printed that it could be subtracted from.
+  const anon = SC.cell(t.anonymous_participants, sc);
   const scoped = auth.caseloadRestricted(ctx.user) && !funderOnly(ctx.user);
   return {
     from, to, template_note: TEMPLATE_NOTE, returns_note: RETURNS_NOTE,
     suppression: FR.suppressionOf(c), release: c.release, counting_statement: FR.countingStatement(c),
     caseload_scope_note: scoped ? 'Counts only your caseload and anonymous contacts: participants are clients on your caseload; contacts with no client (anonymous outreach) are the whole program\'s.' : null,
-    totals: { ...t, participants: s.total, people_referred: s.subsets[0], referrals: SC.cell(t.referrals, sc) },
+    totals: { ...t, participants: s.total, anonymous_participants: anon, people_referred: s.subsets[0], referrals: SC.cell(t.referrals, sc) },
+    participant_code_note: PARTICIPANT_CODE_NOTE,
     by_month: f.by_month, by_site: f.by_site, by_item: f.by_item, naloxone_by_product: f.naloxone_by_product,
   };
 }
@@ -121,14 +133,16 @@ function sheets(d, ctx) {
     { k: 'Report', v: 'Syringe services program (SSP) summary' }, { k: 'Template', v: d.template_note }, { k: 'Period', v: `${d.from} to ${d.to}` },
     { k: 'County', v: db.getSetting('county_name', '') || '' },
     { k: 'Purpose', v: d.suppression.purpose === 'submission' ? 'The program\'s own submission, not for publication' : 'Internal, not for publication' },
-    { k: 'Counts', v: d.counting_statement }, { k: 'Returns', v: d.returns_note },
+    { k: 'Counts', v: d.counting_statement }, { k: 'Returns', v: d.returns_note }, { k: 'Participant codes', v: d.participant_code_note },
     ...(d.caseload_scope_note ? [{ k: 'Scope', v: d.caseload_scope_note }] : []),
-    { k: 'Classification', v: 'Aggregate counts: no names, client codes or dates of service.' },
+    { k: 'Classification', v: 'Aggregate counts: no names, client codes, participant codes or dates of service.' },
     { k: 'Generated', v: db.now() }, { k: 'Generated by', v: ctx.user.display_name || ctx.user.username },
   ];
   const summary = [
     ['People', 'Participants served (unduplicated)', t.participants], ['People', 'Participants referred to services', t.people_referred], ['People', 'Referrals made', t.referrals],
+    ['People', 'Anonymous participants (different participant codes)', t.anonymous_participants],
     ['Contacts', 'Contacts (visits and outreach at which supplies were given or sharps returned)', t.contacts], ['Contacts', 'Of those, anonymous', t.anonymous_contacts],
+    ['Contacts', 'Of the anonymous contacts, with a participant code', t.coded_contacts],
     ['Syringe services', 'Syringes distributed', t.syringes_distributed], ['Syringe services', 'Syringes returned', t.syringes_returned],
     ['Syringe services', 'Of those, estimated from container volume', t.syringes_returned_estimated], ['Syringe services', 'Returned per syringe distributed', t.return_ratio ?? ''],
     ['Syringe services', 'Sharps containers given', t.sharps_containers],
@@ -182,4 +196,4 @@ function routes(r, range) {
   });
 }
 
-module.exports = { build, figures, sheets, routes, TEMPLATE_NOTE };
+module.exports = { build, figures, sheets, routes, TEMPLATE_NOTE, PARTICIPANT_CODE_NOTE };

@@ -179,6 +179,8 @@ A summary. Every encrypted column, whether it reaches devices, how each can leav
 | tasks | encrypted title and description (details); plaintext dates, status, priority | description was plaintext until 1.9.3; migration 24 encrypts existing rows. De-identified exports never carry it |
 | overdose_events | encrypted substances and notes | |
 | interventions, time_entries, expenditures | encrypted visit summary, time and spending descriptions and approval notes; plaintext operational fields (type, minutes, amount, funding) linked by client_id | |
+| interventions.participant_code_enc / _idx (1.17.0) | encrypted; HMAC blind index | an anonymous contact's SSP participant code, built from personal details: counted by its index, never printed or exported ([SUPPLIES.md](SUPPLIES.md), *Participant codes*) |
+| prevention_events (1.17.0) | notes_enc encrypted; the rest plaintext | group and community prevention events: a headcount per event, no client, no names |
 | consents, disclosures | encrypted recipient, purpose, scope / what, justification, signer's name, witness (migration 39) | disclosures record the court order, proceeding and counseling-note flags and the §2.32 notice version |
 | court_orders | encrypted court, case, recipient, purpose, scope | subpart E orders; synced to devices, never hard-deleted by sync |
 | part2_notices | encrypted notes | §2.22 notice given: date, method, version, acknowledgement |

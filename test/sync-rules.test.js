@@ -144,7 +144,9 @@ const T = {
     row: (x) => ({ id: randomUUID(), client_id: x.client, user_id: U.nav, type: 'case_management', occurred_at: iso(), duration_minutes: 15, ...ts() }),
     create: (c, r) => c.post('/api/interventions', api(r)), update: (c, r, p) => c.put(`/api/interventions/${r.id}`, p), del: (c, r) => c.del(`/api/interventions/${r.id}`),
     invalid: [['type not on the list', { type: 'teleportation' }], ['a client is required for this service', { client_id: null }], ['duration over a day', { duration_minutes: 5000 }],
-      ['stage of change unknown', { stage_of_change: 'bargaining' }], ['a cost with no budget line', { cost: 10, funding_source_id: '$fund' }], ['a cost on a line of another fund', { cost: 10, funding_source_id: '$oldFund', budget_line_id: '$line' }], ['attributed to another worker', { user_id: '$nav2' }]],
+      ['stage of change unknown', { stage_of_change: 'bargaining' }], ['a cost with no budget line', { cost: 10, funding_source_id: '$fund' }], ['a cost on a line of another fund', { cost: 10, funding_source_id: '$oldFund', budget_line_id: '$line' }], ['attributed to another worker', { user_id: '$nav2' }],
+      // 1.17.0: an SSP participant code is for an anonymous contact only, and has a minimum length.
+      ['a participant code on a visit with a client', { participant_code_enc: 'MA0785' }], ['a participant code too short', { client_id: null, type: 'outreach', participant_code_enc: 'AB' }]],
     edit: { duration_minutes: 30 },
   },
   overdose_events: {
@@ -153,6 +155,15 @@ const T = {
     create: (c, r) => c.post('/api/overdose-events', api(r)), update: (c, r, p) => c.put(`/api/overdose-events/${r.id}`, p), del: (c, r) => c.del(`/api/overdose-events/${r.id}`),
     invalid: [['kind unknown', { kind: 'bad_trip' }], ['doses negative', { naloxone_doses: -1 }], ['reported by another worker', { reported_by: '$nav2' }]],
     edit: { city: 'Redding' },
+  },
+  // Group and community prevention events (1.17.0): no client; written as visits are (interventions:write).
+  prevention_events: {
+    as: 'nav', noPerm: 'fin',
+    row: () => ({ id: randomUUID(), user_id: U.nav, event_date: day(0), title: 'Parent night ' + randomUUID().slice(0, 4), event_type: 'presentation', strategy: 'education', iom_category: 'universal_direct', hours: 1.5, attendance: 20, ...ts() }),
+    create: (c, r) => c.post('/api/prevention-events', api(r)), update: (c, r, p) => c.put(`/api/prevention-events/${r.id}`, p), del: (c, r) => c.del(`/api/prevention-events/${r.id}`),
+    invalid: [['strategy not a CSAP strategy', { strategy: 'good_vibes' }], ['IOM category missing', { iom_category: null }], ['attendance negative', { attendance: -1 }],
+      ['a fund the office does not have', { funding_source_id: 'no-such-fund' }], ['attributed to another worker', { user_id: '$nav2' }]],
+    edit: { attendance: 25 },
   },
   calls: {
     as: 'nav', unlinked: true, noPerm: 'fin',

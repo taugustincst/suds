@@ -181,6 +181,9 @@ route('reports', async (r) => {
     h('div', { class: 'card mb' }, h('div', { class: 'card-head' }, h('h2', {}, `Monthly trend (last ${months} months)`), h('div', { class: 'row' }, [6, 12, 24].map(n => h('button', { class: `btn sm ${n === months ? 'primary' : ''}`, onClick: () => nav(`reports?from=${from}&to=${to}&months=${n}`) }, `${n}m`)))), monthTable()),
     moduleOn('suprt') && can('clients:read') ? h('div', { class: 'card mb', 'data-suprt-link': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'SUPRT-A (SOR client-level reporting)'), h('a', { class: 'btn sm primary', href: '#/suprt' }, 'Open')),
       h('p', { class: 'small muted' }, 'Completion of baselines, reassessments, annual assessments and closeouts, and the file for entry into SPARS.')) : null,
+    // Group and community prevention events (1.17.0): their own page, with the prevention activity summary.
+    h('div', { class: 'card mb', 'data-prevention-link': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Prevention activity summary'), h('a', { class: 'btn sm primary', href: '#/prevention?tab=summary' }, 'Open')),
+      h('p', { class: 'small muted' }, 'Group and community prevention events by CSAP strategy and IOM population category: events, hours, attendance and people trained, for Excel or CSV. Not a PPSDS file.')),
     can('export:read') ? exportsCard() : null);
 });
 

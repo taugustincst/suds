@@ -98,7 +98,16 @@ function compareMigrations(prev, next) {
  * `dependency` and `fingerprint` are what the failure names; an entry stops applying when the dependency changes
  * again. Entries can be removed once a release tag includes the change (the next comparison starts from it).
  */
-const DEPENDENCY_CHANGES = [];
+const DEPENDENCY_CHANGES = [
+  {
+    dependency: 'schema.sql:table:interventions', fingerprint: 'd780d1abc3b41803',
+    reason: '1.17.0 (migration 51) adds two nullable columns, participant_code_enc and participant_code_idx, and the index '
+      + 'idx_interventions_participant. Additive: a database that runs migration 5 now rebuilds interventions with the two '
+      + 'columns already there (every row NULL), migration 51 adds each only when missing (addColumn) and creates the '
+      + 'index IF NOT EXISTS, and test/migrations.test.js upgrades the 1.6.1 fixture through migration 5 and 51 to the '
+      + 'same structure as a fresh install.',
+  },
+];
 
 /** Tokens of JavaScript source, enough to tell code from strings, comments, templates and regular expressions. */
 function lex(src) {

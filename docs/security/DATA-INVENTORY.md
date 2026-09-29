@@ -34,11 +34,11 @@ Terms used below:
 
 | Class | Examples | Stored as | Tables |
 | --- | --- | --- | --- |
-| **Client identity and contact** | Names, preferred name, date of birth, phones, email, address, Medi-Cal ID, emergency contact, safe-contact instructions | AES-256-GCM per field (`_enc`). Blind indexes (`_idx`) for search on names, date of birth and phone | `clients` |
+| **Client identity and contact** | Names, preferred name, date of birth, phones, email, address, Medi-Cal ID, emergency contact, safe-contact instructions; from 1.17.0 the earlier values of a client's own details (revision history) | AES-256-GCM per field (`_enc`); a revision's changed values in one encrypted field. Blind indexes (`_idx`) for search on names, date of birth and phone | `clients`, `client_revisions` |
 | **Client demographics and coded status** | Client code, city, ZIP, gender, pronouns, race/ethnicity, language, veteran, housing, insurance, substances, route of use, ASAM level, MAT status, risk level, overdose history, justice involvement, pregnancy/parenting, dates | Readable columns in the database, on the encrypted volume (section 3) | `clients`, `episodes`, `overdose_events`, `interventions` and others |
 | **Clinical documentation** | Note text and structured sections, addenda, problem list with ICD-10/Z codes, care-plan goals and steps, ASAM dimension notes, PHQ-9/GAD-7/AUDIT-C/DAST-10 answers, presenting problem, discharge summary | `_enc` | `notes`, `note_addenda`, `problems`, `problem_history`, `care_plan_goals`, `care_plan_steps`, `asam_assessments`, `outcome_measures`, `episodes` |
 | **SUD counseling notes** (42 CFR §2.11) | A note flagged `counseling_note` | `_enc`, like every note. Readable only by the author, the co-signer and holders of `notes:clinical:write`. Never on FHIR. Removed from devices that may no longer read it (1.16.1–1.16.4) | `notes`, `note_addenda` |
-| **Service records** | Visit summaries, calls (contact name, number, purpose, summary), referral outcomes and barriers, to-dos, overdose substances and notes, time and spending descriptions | `_enc` for free text; readable coded fields | `interventions`, `calls`, `referrals`, `tasks`, `overdose_events`, `time_entries`, `expenditures`, `assignments` |
+| **Service records** | Visit summaries, calls (contact name, number, purpose, summary), referral outcomes and barriers, to-dos, overdose substances and notes, time and spending descriptions, an anonymous contact's SSP participant code (1.17.0), notes on a prevention event (1.17.0) | `_enc` for free text and the participant code (with a blind index for counting); readable coded fields | `interventions`, `calls`, `referrals`, `tasks`, `overdose_events`, `time_entries`, `expenditures`, `assignments`, `prevention_events` |
 | **Part 2 legal record** | Consents (recipient, purpose, scope, signer, witness), court orders, the accounting of disclosures, Part 2 notices given, the QSOA/research/audit agreement register | `_enc`. Consents, disclosures and addenda are immutable once written, even by sync (`sync-tables.js` `immutable`) | `consents`, `court_orders`, `disclosures`, `part2_notices`, `disclosure_agreements` |
 | **Forms, files and imports** | Filled county forms, scanned or signed copies, file names, OneNote and Pocket AI imports before they are filed as notes | `_enc`, including file bytes and file names | `client_forms`, `client_form_files`, `imports`, `import_items` |
 | **State and grant reporting** | CalOMS Tx answers and the submission file, SUPRT-A answers | `_enc` | `caloms_records`, `caloms_submissions`, `suprt_assessments` |
@@ -59,8 +59,9 @@ The *Devices* column says whether a local-mode device receives the column. The *
 | `assignments` | `notes_enc` | Why a worker was put on or taken off a case | Yes, with its client | Deleted with the client record |
 | `episodes` | `presenting_problem_enc`, `discharge_summary_enc`, `reopen_reason_enc` | Admission and discharge text | Yes, with its client | Deleted with the client record |
 | `caloms_records` | `answers_enc` | CalOMS Tx admission, discharge and annual answers | Yes, with its client | Deleted with the client record |
-| `interventions` | `summary_enc` | Visit or outreach summary | Yes, with its client (a contact with no client: its worker, or `clients:all`) | Deleted with the client record |
+| `interventions` | `summary_enc`, `participant_code_enc` | Visit or outreach summary; an anonymous contact's SSP participant code (1.17.0), built from personal details and counted by its blind index, never printed or exported | Yes, with its client (a contact with no client: its worker, or `clients:all`) | Deleted with the client record |
 | `overdose_events` | `substances_enc`, `notes_enc` | What was taken, what happened | Yes, with its client (no client: its reporter, or `clients:all`) | Deleted with the client record |
+| `prevention_events` | `notes_enc` | Notes on a group or community prevention event (1.17.0); the event itself holds a headcount, never names or a client | Yes, to every device whose role holds `interventions:read` | Kept: the programme's record of its prevention activity, not client data; its worker or `records:manage-others` deletes it |
 | `calls` | `contact_name_enc`, `phone_enc`, `purpose_enc`, `summary_enc` | Who was called, the number, why, what was said | Yes, with its client (no client: its worker, or `clients:all`) | Deleted with the client record |
 | `time_entries` | `description_enc`, `approval_note_enc` | What the time was spent on; the approver's note | Yes, with its client (no client: its worker, or `time:all`) | Kept, unlinked: the client link is removed, the hours stay |
 | `consents` | `recipient_enc`, `purpose_enc`, `scope_enc`, `revoked_reason_enc`, `document_ref_enc`, `witness_enc`, `signer_name_enc` | The §2.31 consent elements | Yes, with its client; never changed by a device except a revocation | Deleted with the client record |
@@ -122,7 +123,8 @@ On a device they sit inside the sealed database image ([ENCRYPTION-AND-KEYS.md](
 
 The following columns are HMAC-SHA256 values under `SUDS_INDEX_KEY`, a key separate from the encryption key:
 
-- on `clients`: `last_name_idx`, `full_name_idx`, `name_prefix_idx`, `name_phonetic_idx`, `first_name_idx`, `first_name_prefix_idx`, `preferred_name_idx`, `dob_idx`, `phone_idx`.
+- on `clients`: `last_name_idx`, `full_name_idx`, `name_prefix_idx`, `name_phonetic_idx`, `first_name_idx`, `first_name_prefix_idx`, `preferred_name_idx`, `dob_idx`, `phone_idx`;
+- on `interventions`: `participant_code_idx` (1.17.0), an anonymous contact's SSP participant code, for counting the different participants; `scripts/rotate-index-key.js` re-derives it.
 
 They make exact search possible without decrypting.
 

@@ -6,8 +6,9 @@ support 42 CFR Part 2.**
 
 SUDS is for community-based organisations and county programmes doing outreach, harm reduction, naloxone and
 test-strip distribution and prevention-funded outreach, usually on opioid-settlement, SOR / Naloxone Distribution
-Project or SABG prevention funding (SABG primary-prevention reporting — group and community events, CSAP strategy,
-IOM category — is not supported; [POSITIONING.md](docs/market/POSITIONING.md)). It records outreach contacts
+Project or SABG prevention funding (group and community prevention events are recorded with their CSAP strategy,
+IOM category, hours and attendance, and summarised for a period; a PPSDS submission file is not produced — its
+mapping awaits the DHCS data dictionary; [POSITIONING.md](docs/market/POSITIONING.md)). It records outreach contacts
 (named or anonymous), draws supplies down from stock kept by item, site and lot, tracks referrals and a verified
 resource directory, holds grant budgets, expenditures and staff time with approvals, and produces the funder reports that go with them. Its privacy controls are built to support
 42 CFR Part 2: consents that name the recipient, one disclosure gate with an accounting of disclosures, AES-256-GCM

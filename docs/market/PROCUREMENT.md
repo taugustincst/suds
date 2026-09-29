@@ -87,8 +87,9 @@ does not hold.
    SUDS is the operations system for harm-reduction and outreach programmes, including prevention-
    funded outreach and distribution: outreach encounters (named or anonymous), naloxone and supply
    distribution, and grant/funder reporting, with privacy controls built to support 42 CFR Part 2.
-   It does not support SABG primary-prevention reporting (group and community events, CSAP strategy,
-   IOM category). Clinical modules (care plan, assessments, CalOMS Tx,
+   It records SABG primary-prevention events (CSAP strategy, IOM category, hours, attendance) and
+   summarises them; it does not produce a PPSDS submission file (its mapping awaits the DHCS PPSDS
+   data dictionary). Clinical modules (care plan, assessments, CalOMS Tx,
    FHIR, EHR hand-off) are optional. It is not an EHR and does not bill Drug Medi-Cal.
 
 3. DEPLOYMENT AND HOSTING

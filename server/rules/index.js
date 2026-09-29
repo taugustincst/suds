@@ -19,6 +19,7 @@ const DECLARED = {
   caloms_records: () => require('./caloms_records'),
   interventions: () => require('./interventions'),
   overdose_events: () => require('./overdose_events'),
+  prevention_events: () => require('./prevention_events'),
   calls: () => require('./calls'),
   time_entries: () => require('./time_entries'),
   consents: () => require('./consents'),

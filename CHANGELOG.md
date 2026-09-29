@@ -73,6 +73,44 @@ All notable changes to SUDS are documented here. The project follows semantic ve
     QUESTIONNAIRE #22, POSITIONING, BUYER-GUIDE-IT and BUYER-GUIDE-PROGRAM (earlier values are now kept). Tests:
     `test/client-revisions.test.js`; browser: `scripts/ui/r10-hist.mjs`.
 
+### Prevention and syringe services
+
+A feature release item (1.17.0): migration 51, one new table, two new columns, new routes, no new permission.
+
+- **Anonymous SSP participant code.** A contact with no client record (outreach, community distribution) can carry
+  the participant code the person builds the same way each time by the programme's recipe (the visit form suggests
+  one; SUDS stores only the code, never the details it is built from). It is kept in one form (capitals, letters and
+  digits, 4–20 characters), **encrypted** (`interventions.participant_code_enc`) and counted by its **blind index**
+  (`participant_code_idx`, HMAC under the index key; `scripts/rotate-index-key.js` re-derives it). A code on a
+  contact with a client is refused, over REST and by sync alike (`server/rules/interventions.js`); a device's code is
+  normalised and indexed with the office's key (`server/sync-tables.js` importRow), and a pull never sends the index.
+  The **SSP summary** (`GET /api/reports/ssp`) now counts **Anonymous participants** — the different codes at the
+  period's anonymous contacts — beside the participants served (clients), never added to them, under the same
+  small-cell rule, with the anonymous contacts that had a code; its files print no code. A visits export,
+  de-identified or identified, carries a **participant reference** (`P-…`, random for each file) instead of the
+  code. The count is not part of any publication release. The docs no longer say that no field holds a participant
+  code ([docs/SUPPLIES.md](docs/SUPPLIES.md), *Participant codes*).
+- **Group and community prevention events** (SABG primary prevention). A **Prevention** page
+  (`/api/prevention-events`, `interventions:read`/`interventions:write`; another worker's event is theirs or a
+  holder of `records:manage-others`'s to change or delete, from a device as over REST —
+  `server/rules/prevention_events.js`): date, what it was, kind of event, **CSAP strategy**, **IOM population
+  category**, audience, place, hours, attendance (a headcount, marked when estimated; never names), fund and notes
+  (encrypted). The strategies, IOM categories, kinds of event and audiences are Settings › Lists option lists with
+  codes and labels; the CSAP strategies and IOM categories can be reworded but not added to, and *Training* cannot be
+  retired. The table synchronises to every device whose role reads visits.
+- **Prevention activity summary** (`GET /api/reports/prevention`, `reports:read`; `/export?format=xlsx|csv`, also
+  `export:read`): events, hours, attendance and **people trained** (the attendance of training events) for a period,
+  by strategy, by IOM category, by both and by kind of event. It is **not a PPSDS file**: the PPSDS field mapping
+  awaits the DHCS PPSDS data dictionary, and the file and the page say so. Audited (`report.prevention`,
+  `report.prevention.export`).
+- Docs: the buyer guides, POSITIONING, SCOPE, the market scorecard (the SABG primary-prevention row now says
+  exactly what exists and what does not), PILOT-KIT Q0, PROCUREMENT, HIPAA data classification and the USER_GUIDE.
+  Browser script `scripts/ui/r10-prev.mjs` (the suite is 47 scripts); API tests in `test/prevention.test.js`.
+
+**Not in this change:** a PPSDS-shaped export (needs the DHCS PPSDS data dictionary); an evidence-based programme
+field and attendance by demographic group (only if the dictionary asks for them); anonymous participants in a
+publication release (a new count of people in the release's audit needs the statistical review first).
+
 ### Engineering
 
 Release machinery and CI only: nothing here changes what SUDS does for a user, and no administrator action is needed

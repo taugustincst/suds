@@ -104,6 +104,10 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
   identified exports, EHR hand-off, CalOMS, SPARS, FHIR, publication, sync, backups) with its gate and record, and
   retention; a test fails if the schema gains an encrypted column it does not list. A shorter summary is in
   [docs/HIPAA.md](../HIPAA.md), *Data classification inside the database*.
+- **Anonymous SSP participant codes (1.17.0)** are PHI-class: encrypted like names, counted by an HMAC blind index,
+  never printed in a report or exported (a per-file random reference stands in), and not in publication releases
+  ([docs/SUPPLIES.md](../SUPPLIES.md), *Participant codes*). **Prevention events** (1.17.0) hold no person-level data:
+  a headcount per event and free-text notes, which are encrypted.
 
 ## Security controls and evidence
 

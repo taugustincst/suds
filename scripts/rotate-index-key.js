@@ -38,6 +38,11 @@ const DERIVATIONS = {
       return require('../server/clients-model').clientIndexes({ first_name: p.first_name_enc, last_name: p.last_name_enc, preferred_name: p.preferred_name_enc, dob: p.dob_enc, phone: p.phone_enc });
     },
   },
+  // An anonymous contact's SSP participant code (1.17.0), as the visit routes and sync write it.
+  interventions: {
+    source: ['participant_code_enc'],
+    derive(p) { return { participant_code_idx: require('../server/participant-code').index(p.participant_code_enc) }; },
+  },
 };
 
 /**
