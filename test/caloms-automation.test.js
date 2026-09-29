@@ -164,3 +164,36 @@ test('a purged client takes every prepared file with them', () => {
   R.purgeClient(db.one(`SELECT * FROM clients WHERE id=?`, sat.client), { user: null });
   assert.equal(db.one(`SELECT COUNT(*) n FROM caloms_submissions WHERE status='prepared' AND file_enc IS NOT NULL`).n, 0);
 });
+
+test('the scheduled run is idempotent per provider: a failed provider is tried again next hour, and no file is prepared twice', async () => {
+  // Engineering review of the 1.17.0 candidate, L2: if preparing the second provider's file threw, the month was
+  // never recorded as run, and the next hourly pass prepared the first provider's file again.
+  await admin.put('/api/caloms/settings', { split_by_provider: true, schedule: 'monthly', schedule_day: 5 });
+  await admitted(PROVIDER); await admitted(SATELLITE);
+  db.run(`DELETE FROM settings WHERE key='caloms_schedule_last'`);
+  const C = require('../server/caloms');
+  const real = C.buildExtract;
+  const scheduled = (p) => db.one(`SELECT COUNT(*) n FROM caloms_submissions WHERE period_from=? AND origin='scheduled' AND status='prepared' AND file_enc IS NOT NULL AND provider_id=?`, period.from, p).n;
+  const day = `${today().slice(0, 7)}-05`;
+  try {
+    C.buildExtract = (o) => { if (o.providerId === SATELLITE) throw new Error('disk full'); return real(o); };
+    const first = SCHED().runIfDue(day);
+    assert.deepEqual(first.failed, [SATELLITE]);
+    assert.equal(first.prepared.length, 1);
+    assert.equal(scheduled(PROVIDER), 1); assert.equal(scheduled(SATELLITE), 0);
+  } finally { C.buildExtract = real; }
+  // The next pass: the month is not done; only the provider that failed is prepared.
+  const second = SCHED().runIfDue(day);
+  assert.ok(second, 'the month was not recorded as done');
+  assert.deepEqual(second.failed, []);
+  assert.equal(scheduled(PROVIDER), 1, 'the first provider\'s file is not prepared again');
+  assert.equal(scheduled(SATELLITE), 1);
+  assert.equal(second.prepared.length, 2, 'the summary lists both files');
+  assert.equal(SCHED().runIfDue(day), null, 'then the month is done');
+  // The month's record lost (a restored setting, say): the schedule's files waiting to be produced are kept, not
+  // prepared again.
+  db.run(`DELETE FROM settings WHERE key='caloms_schedule_last'`);
+  SCHED().runIfDue(day);
+  assert.equal(scheduled(PROVIDER), 1); assert.equal(scheduled(SATELLITE), 1);
+  await admin.put('/api/caloms/settings', { split_by_provider: false, schedule: 'off' });
+});

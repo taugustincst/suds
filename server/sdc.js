@@ -209,6 +209,25 @@ function intFeasibleIn(prob, c, lo, hi, { budget = 4000, meter = null } = {}) {
 /** Is there an integer point with c.x = v? */
 const intFeasible = (prob, c, v, opts) => intFeasibleIn(prob, c, v, v, opts);
 
+/**
+ * The check's step (auditor's consistent, below): from [a, b], step down, then up, while the next value is shown
+ * by a world that prints the same (shows(v)) - or, once per count, the value after it - until the span b - a
+ * reaches P, within [lo, hi] and 2T of the count's value x. Returns { range: [a, b], holes: the values skipped }.
+ */
+function widenRange({ a, b, lo, hi, x, T, P, shows, over = () => false }) {
+  const inside = (v) => v >= lo && v <= hi && v >= x - 2 * T && v <= x + 2 * T;
+  const holes = [];
+  for (let v = a - 1; b - a < P && inside(v) && !over(); v--) {
+    if (shows(v)) a = v;
+    else if (!holes.length && inside(v - 1) && !over() && shows(v - 1)) { holes.push(v); a = v - 1; v--; } else break;
+  }
+  for (let v = b + 1; b - a < P && inside(v) && !over(); v++) {
+    if (shows(v)) b = v;
+    else if (!holes.length && inside(v + 1) && !over() && shows(v + 1)) { holes.push(v); b = v + 1; v++; } else break;
+  }
+  return { range: [a, b], holes };
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // The audit.
 //
@@ -704,18 +723,15 @@ function auditor(model, T, { budget, meter = newMeter() }) {
     // other months' "<T" reversals add up to T (each can then be 1 and T-1 whatever the split) and hidden
     // otherwise, so no world that prints the release has it at that one value, and the step stopped there and
     // refused releases whose count ranged widely on both sides of it. The rule is the span of the values (the
-    // attacker's too: test/fixtures/pattern-attacker.js); one value skipped at a time, never two in a row.
+    // attacker's too: test/fixtures/pattern-attacker.js). At most ONE value is skipped per count, over both
+    // directions (engineering review of the 1.17.0 candidate, M1): a skip allowed at every step let a range
+    // alternate hole, value, hole, so a count passing with a span of P could have only ceil(P/2)+1 values an
+    // attacker cannot rule out (2 at T=3 and T=4) instead of P+1. With one skip it has at least P, which is what
+    // the motivating case needs (one impossible value) and all it gets (ADR-0009, "One value skipped").
     const widen = (q, a, b, lo, hi, x) => {
-      const inside = (v) => v >= lo && v <= hi && v >= x - 2 * T && v <= x + 2 * T;
-      for (let v = a - 1; b - a < P && inside(v) && !meter.over; v--) {
-        if (witness(q, v, 8)) a = v;
-        else if (inside(v - 1) && !meter.over && witness(q, v - 1, 8)) { a = v - 1; v--; } else break;
-      }
-      for (let v = b + 1; b - a < P && inside(v) && !meter.over; v++) {
-        if (witness(q, v, 8)) b = v;
-        else if (inside(v + 1) && !meter.over && witness(q, v + 1, 8)) { b = v + 1; v++; } else break;
-      }
-      return [a, b];
+      const r = widenRange({ a, b, lo, hi, x, T, P, shows: (v) => witness(q, v, 8), over: () => meter.over });
+      if (probe.onWiden) probe.onWiden({ id: q.id, T, P, from: [a, b], range: r.range, holes: r.holes, shown: [...new Set(G.map(vals => valueOf(vals, q.terms)).filter(y => y >= r.range[0] && y <= r.range[1]))].sort((m, n) => m - n) });
+      return r.range;
     };
     const unprotected = [];
     for (const q of w.quantities(S)) {
@@ -863,4 +879,7 @@ function protect(model, T, { budget = 4000, stepLimit = STEP_LIMIT, timeLimitMs 
 }
 
 
-module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect, STEP_LIMIT };
+// For tests only: probe.onWiden, when set, is told each range the check's step widened (test/sdc-skip-one.test.js).
+const probe = { onWiden: null };
+
+module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect, STEP_LIMIT, probe, widenRange };

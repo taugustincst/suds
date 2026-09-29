@@ -178,8 +178,15 @@ and hidden otherwise, so no world that prints the release has the hidden count a
 outward from a suppressed (or withheld, T or more) count's value stopped at the first value no world showed, and
 refused quarters whose count ranged widely on both sides of it (with the events by month gone and without this step,
 4 seeded quarters 1.16.4 published were refused; with it, 3, and 11 of 72 in all rather than 13). It now steps
-over one such value, never two in a row. The rule is unchanged - the span of the values the worlds that print the
-release allow, which is what the attacker checks - and every value counted is still shown by a world found and run.
+over one such value, **at most once per count** (both directions together). The rule is unchanged - the span of the
+values the worlds that print the release allow, which is what the attacker checks - and every value counted is still
+shown by a world found and run. What the skip does change is how many values stand behind a span: a count that passes
+with a span of P may have one value inside its range that no world shows, so at least **P distinct values** an
+attacker cannot rule out rather than P+1 (at T = 3, 2 values: a single guess right one time in two rather than one in
+three). As first merged the step could skip at every step, never two in a row, so a range could alternate hole,
+value, hole: ceil(P/2)+1 values in the worst case, and the engineering review of the 1.17.0 candidate (M1) found
+published cells behind only 2 values at T = 3 and T = 4 and 3 at T = 5. Every skip it saw was a single one, so
+capping it at one changed no publication rate; `test/sdc-skip-one.test.js` checks the cap on the counts it widens.
 
 **Determinism.** The audit's budget is counted in solver work (tableau cells touched, and since 1.14.0 the
 constraint terms scanned to find each problem, which with many funds took as long as the solving; `STEP_LIMIT` =
@@ -209,11 +216,19 @@ for about 7 s before refusing, longer on a phone). The worker is a second genera
 (built from `local/audit-worker.js` by `npm run build:local` beside the kernel, with its `.gz` and `.br`; the audit
 alone, about 110 kB; CI's drift check covers `public/local`, so an unbuilt worker fails CI, not devices), precached
 by the service worker under the kernel's version and started by `local/audit-runner.js`, which the kernel hands to
-`server/publication-release.js` (`setDeviceAuditRunner`; `public/app.js` passes its URL). One long-lived worker;
-an audit that does not answer within the backstop (75 s, as the server's) is refused and its worker stopped, and the
-audits queued on it start again on a new one. Where no worker can run - no Web Workers, the constructor throws, the
-script fails to load or does not say it started within 10 s - the audit runs on the page as before (after letting
-it paint once); once a worker has said it started, its audits are never run twice. The same code and the same
+`server/publication-release.js` (`setDeviceAuditRunner`; `public/app.js` passes its URL). One long-lived worker,
+handed one audit at a time (the next when the one before has answered), so that the backstop counts an audit's own
+time and not the time it waited behind another (until the review of the 1.17.0 candidate, L1, the timer started at
+dispatch and an audit queued behind a long one could be refused having barely run); an audit that does not answer
+within the backstop is refused and its worker stopped, and the next audit waiting starts on a new one. **The device's
+backstop is 75 s, the server's 60 s** (`server/release-audit.js` `AUDIT_BACKSTOP_MS`): a phone runs the same work
+more slowly, and the wall clock is only a guard, not what decides: the budget in units of work decides what is
+published, the same on both, so "a device's release is the office's" holds for every release either finishes within
+its clock, and a device refuses by its clock only a release that took it 75 s. Where no worker can run - no Web
+Workers, the constructor throws, the script fails to load or does not say it started within 10 s - the audit runs on
+the page as before (after letting it paint once); a worker that was only slow to start is tried once more, for the
+next audit, before the page is used for the rest of the session; once a worker has said it started, its audits are
+never run twice. The same code and the same
 budget run either way, so a device's release of some figures is the office's (`test/kernel-parity.test.js`); a
 lower on-device budget was considered and not taken, because it would make a device refuse what the office
 publishes. `test/device-audit-worker.test.js` runs the committed worker as a browser does and the runner with
@@ -265,10 +280,16 @@ the audit.
   small reversals by month beside hidden totals (its witness search finds too few worlds that print the same), not
   its budget; a cheaper sound check of those, or a reviewed coarsening of the reversals by month, which the NDP log
   prints by month, is further work. No option weighed here makes every period publish.
-- The check's step over one value (*One value skipped*) looks up to two values past the range it has shown, so an
-  attacker's family must reach that far beyond the sizes it checks: at T = 3, the new two-month family of reversed,
-  fatal and neither events enumerated only to 5 events reported a suppressed total of 3 or 4 whose worlds, run
-  further, include 6 (5 prints differently); the tests' families are sized for it.
+- **The attacker's enumeration margin can only raise false alarms, not hide a leak.** The attacker is monotone:
+  every world it adds can only widen the set of values it holds possible for a cell, so a family enumerated too few
+  sizes past the ones it checks makes a cell look narrower than it is (a false alarm), never wider. At T = 3 the
+  two-month family of reversed, fatal and neither events enumerated only to 5 events reported a suppressed total of 3
+  or 4 as a leak; enumerated further, its worlds include 6 (5 prints differently), and there was none. (Until the
+  review of the 1.17.0 candidate this page said the families must reach past the sizes checked "because the check's
+  step looks that far", which had it backwards.) So on a reported leak, enumerate that family further before acting,
+  rather than tuning the margin until the test passes. The real limit of the attacker's coverage is **which sizes
+  and thresholds it checks**: there is no three-month family at T = 11, for example, and the families at T = 11 are
+  the two-month ones of `test/publication-release-months.test.js`.
 - Nested or overlapping periods, the same period re-run after late entries, outside knowledge, and sums of several
   small cells of one breakdown are outside the audit (docs/HIPAA.md, residual risks).
 - It is a conservative automated screen, **not a statistical expert determination** (45 CFR 164.514(b)(1)). An

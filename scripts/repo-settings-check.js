@@ -7,13 +7,19 @@
 //   node scripts/repo-settings-check.js --repo owner/name            # GH_TOKEN (or GITHUB_TOKEN) in the environment
 //   node scripts/repo-settings-check.js --repo owner/name --fixtures responses.json   # offline, from saved responses
 //
-// Every setting ends in one of four states:
+// Every setting ends in one of five states:
 //   ok          read, and as documented;
 //   off         read, and not as documented (the job fails);
 //   unverified  could not be read with this token: a 401 or 403, or an error (the job fails: "cannot verify" is not
 //               a pass). The workflow's default token cannot read the admin-only settings (the Actions permissions,
 //               deploy keys, secrets' names, immutable releases); a fine-grained token with read-only access, the
 //               SETTINGS_READ_TOKEN secret of the `settings-check` environment, can (docs/RELEASE.md, step 9);
+//   warn        until that token exists (the run uses the workflow's own token), a setting the default token is
+//               refused (403) is "cannot verify (add SETTINGS_READ_TOKEN)": a warning, not a failure, so the weekly
+//               run is red only for a setting it could read and found off (engineering review of the 1.17.0
+//               candidate, M6: a job that is red every week until the owner acts gets ignored). With the token, the
+//               same row is `unverified` and fails. Also a `settings-check` environment that is not yet limited to
+//               `main` while it holds no token;
 //   manual      no read-only token can read it (the bypass lists of rulesets, which GitHub shows only to a token that
 //               may edit them): listed in the summary for the owner to look at, and not a failure.
 //
@@ -62,6 +68,7 @@ async function collect(get) {
     if (b.status === 200 && b.body && b.body.protected) await read(`branches/${def}/protection`);
   }
   for (const p of ['rules/branches/gh-pages', 'environments/release', 'environments/release/deployment-branch-policies',
+    'environments/settings-check', 'environments/settings-check/deployment-branch-policies',
     'environments/release/secrets?per_page=100', 'actions/secrets?per_page=100', 'actions/permissions', 'actions/permissions/workflow',
     'immutable-releases', 'releases/latest', 'keys?per_page=100', 'git/matching-refs/heads/maint/', 'git/matching-refs/heads/release/v']) await read(p);
   const perms = data['actions/permissions'];
@@ -83,10 +90,20 @@ function unreadable(r, needs) {
 }
 
 /**
- * The decision, from `collect`'s responses. `ctx`: { repo: 'owner/name', owner?: login of the release reviewer }.
- * @returns {Array<{ step: string, setting: string, state: 'ok'|'off'|'unverified'|'manual', detail: string }>}
+ * The decision, from `collect`'s responses. `ctx`: { repo: 'owner/name', owner?: login of the release reviewer,
+ * readToken?: false when the run has only the workflow's own token (no SETTINGS_READ_TOKEN yet; default true) }.
+ * @returns {Array<{ step: string, setting: string, state: 'ok'|'off'|'unverified'|'warn'|'manual', detail: string }>}
  */
 function evaluate(data, ctx) {
+  const checks = evaluateAll(data, ctx);
+  return ctx.readToken === false ? checks.map(withoutReadToken) : checks;
+}
+/** Without SETTINGS_READ_TOKEN, a row the default token was refused (403, or not shown to it) is a warning. */
+function withoutReadToken(c) {
+  if (c.state !== 'unverified' || !/\(403\)|not shown to this token/.test(c.detail)) return c;
+  return { ...c, state: 'warn', detail: `cannot verify (add SETTINGS_READ_TOKEN): ${c.detail}` };
+}
+function evaluateAll(data, ctx) {
   const out = [];
   const add = (step, setting, state, detail = '') => out.push({ step, setting, state, detail });
   const r = (p) => data[p] || { status: 0, body: { message: 'not requested' } };
@@ -247,6 +264,30 @@ function evaluate(data, ctx) {
   else add('7', 'No `release/v*` branches', (rel.body || []).length ? 'off' : 'ok', (rel.body || []).length ? `${rel.body.length} left (each carries the workflow files of its day)` : '');
   if (ok200(repo) && typeof repo.body.delete_branch_on_merge === 'boolean') add('7', 'Automatically delete head branches', repo.body.delete_branch_on_merge ? 'ok' : 'off', '');
   else add('7', 'Automatically delete head branches', 'unverified', ok200(repo) ? `not shown to this token: needs a token with ${WHY.admin}` : unreadable(repo));
+  // ---- Step 9: the settings-check environment, limited to main before it holds the token ----
+  // The workflow's `environment: settings-check` makes the environment on its first run, open to every branch: a
+  // secret added to it then would reach a branch's edited copy of the workflow. Limited to `main` first (RELEASE.md
+  // step 9: create it, restrict it to main, then add the secret). Open with no token in it: a warning; open with
+  // the token (this run has it): off.
+  const sc = r('environments/settings-check');
+  const scSetting = 'The `settings-check` environment: deployments from `main` only';
+  const open = (detail) => add('9', scSetting, ctx.readToken === false ? 'warn' : 'off', `${detail}${ctx.readToken === false ? ': limit it to main before adding SETTINGS_READ_TOKEN' : ': SETTINGS_READ_TOKEN is readable from any branch\'s copy of the workflow'}`);
+  if (sc.status === 404) add('9', scSetting, ctx.readToken === false ? 'warn' : 'off', 'there is no `settings-check` environment yet: create it, limited to main, before adding SETTINGS_READ_TOKEN');
+  else if (!ok200(sc)) add('9', scSetting, 'unverified', unreadable(sc, WHY.env));
+  else {
+    const dbp = sc.body.deployment_branch_policy;
+    if (!dbp) open('any branch may deploy');
+    else if (dbp.protected_branches || !dbp.custom_branch_policies) open('set to protected branches, not "Selected branches and tags"');
+    else {
+      const pol = r('environments/settings-check/deployment-branch-policies');
+      if (!ok200(pol)) add('9', scSetting, 'unverified', unreadable(pol, WHY.env));
+      else {
+        const ps = (pol.body.branch_policies || []).map((p) => `${p.name} (${p.type || 'branch'})`);
+        if (ps.length === 1 && ps[0] === `${def} (branch)`) add('9', scSetting, 'ok', ps[0]);
+        else open(ps.join(', ') || 'none listed');
+      }
+    }
+  }
   return out;
 }
 
@@ -277,13 +318,14 @@ function branchChecks(rules) {
   ];
 }
 
-const MARK = { ok: 'ok', off: '**OFF**', unverified: '**cannot verify**', manual: 'check by hand' };
+const MARK = { ok: 'ok', off: '**OFF**', unverified: '**cannot verify**', warn: 'warning', manual: 'check by hand' };
 /** The run summary: one row per setting, then what to do. */
 function summary(checks, { repo, tokenKind }) {
   const n = (s) => checks.filter((c) => c.state === s).length;
   const failing = n('off') + n('unverified');
   const lines = [`### Repository settings (${repo})`, '',
     failing ? `**${n('off')} off, ${n('unverified')} cannot be verified** with the ${tokenKind} token; ${n('ok')} as documented.` : `Every setting that can be read is as documented (${n('ok')}).`,
+    n('warn') ? `${n('warn')} warning${n('warn') === 1 ? '' : 's'}: settings the ${tokenKind} token cannot read, which are not failures until SETTINGS_READ_TOKEN is added (docs/RELEASE.md step 9), and the \`settings-check\` environment's limit.` : '',
     n('manual') ? `${n('manual')} to check by hand (no read-only token can see them).` : '', '',
     '| Step | Setting | State | Detail |', '| --- | --- | --- | --- |',
     ...checks.map((c) => `| ${c.step} | ${c.setting} | ${MARK[c.state]} | ${String(c.detail || '').replace(/\|/g, '\\|')} |`), ''];
@@ -310,11 +352,14 @@ async function main() {
     const fx = JSON.parse(fs.readFileSync(path.resolve(arg('--fixtures')), 'utf8'));
     get = async (p) => fx[p] || { status: 404, body: { message: 'Not Found' } };
   } else get = (p) => apiGet(p, { repo, token });
-  const checks = evaluate(await collect(get), { repo, owner: arg('--owner') });
+  // The workflow says which token it passed: without SETTINGS_READ_TOKEN, what the default token cannot read warns.
+  const readToken = tokenKind === 'SETTINGS_READ_TOKEN' || process.argv.includes('--strict');
+  const checks = evaluate(await collect(get), { repo, owner: arg('--owner'), readToken });
   for (const c of checks) {
     const line = `${c.step} ${c.setting}: ${c.state}${c.detail ? ` (${c.detail})` : ''}`;
     if (c.state === 'off') console.log(`::error::Setting off (docs/RELEASE.md step ${c.step}): ${line}`);
     else if (c.state === 'unverified') console.log(`::error::Cannot verify (docs/RELEASE.md step ${c.step}): ${line}`);
+    else if (c.state === 'warn') console.log(`::warning::(docs/RELEASE.md step ${c.step}): ${line}`);
     else console.log(line);
   }
   const md = summary(checks, { repo, tokenKind });
@@ -325,4 +370,4 @@ async function main() {
 if (require.main === module) {
   main().then((code) => { process.exitCode = code; }, (e) => { console.log(`::error::The settings check could not run: ${e.message}`); process.exitCode = 1; });
 }
-module.exports = { refPattern, rulesetCovers, collect, evaluate, classicRules, branchChecks, summary, unreadable, REQUIRED_JOBS };
+module.exports = { refPattern, rulesetCovers, collect, evaluate, withoutReadToken, classicRules, branchChecks, summary, unreadable, REQUIRED_JOBS };

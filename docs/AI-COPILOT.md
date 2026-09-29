@@ -65,7 +65,7 @@ administrator, under Settings → Users & permissions. And the client must be on
 | --- | --- | --- |
 | Switched on | off | Needs the agreement and the key. |
 | Model | `claude-opus-5-5` | Leave blank for the default. Another model id from the provider (a `claude-…` id) can be entered, for example a newer or a cheaper model; the request for any model other than the default leaves out the options only the default is known to accept (the explicit effort level and the provider's safeguard fallback). Test a draft after changing it. |
-| Most drafts per calendar month | 500 | For the whole programme, counted from the 1st (UTC). Every call sent counts, including one that failed. Once reached, staff are told and write documentation themselves until the 1st. 0 stops it. |
+| Most drafts per calendar month | 500 | For the whole programme, counted from the 1st (UTC). Every draft the provider returns counts, including one it declined or cut off (it did the work); since 1.17.0 a call that failed (rate limited, unavailable, timed out, refused as a request) is recorded and shown but does not use up the cap. Once reached, staff are told and write documentation themselves until the 1st. 0 stops it. |
 
 The *This month* card shows the drafts used, failures, tokens sent and received, and drafts by feature. The
 audit log's `ai.` entries show each call.
@@ -76,7 +76,7 @@ audit log's `ai.` entries show each call.
 | --- | --- |
 | `ANTHROPIC_API_KEY` | The provider API key. Required. Read at each call (a new key needs no restart, but set it where the service manager reads its environment). |
 | `SUDS_AI_BASE_URL` | Optional. Another endpoint that speaks the same Messages API (a county's own gateway to the provider, or a test double). Must be `https://`, except to this machine. Default `https://api.anthropic.com`. |
-| `SUDS_AI_TIMEOUT_MS` | Optional. How long to wait for a draft, default 90000 (90 s). |
+| `SUDS_AI_TIMEOUT_MS` | Optional. How long to wait for a draft, default 180000 (180 s; 90 s until 1.17.0), the one retry included. |
 
 The call goes out from the office server over HTTPS (`POST /v1/messages`). If your server reaches the
 internet only through an allow-list, add `api.anthropic.com` (or your gateway) for this module.
@@ -212,12 +212,19 @@ parsing prose.
   `max_tokens` 16000; the system instructions marked for prompt caching; one user message; the answer shape in
   `output_config.format` (JSON schema). For the default model it also sets effort `medium` and the provider's
   `fallbacks: "default"` (header `anthropic-beta: server-side-fallback-2026-07-01`), which re-runs a request
-  the model's safeguards decline on the provider's recommended fallback model. Not streamed: one answer, with
-  a 90-second timeout.
+  the model's safeguards decline on the provider's recommended fallback model. Not streamed: one answer, within
+  a 180-second deadline (90 s until 1.17.0: with up to 16,000 output tokens and a model that always thinks, a long
+  transcript could run past it).
 * Failures: a timeout (504), the provider unreachable or down or rate-limited (503), refusing the key or the
   request, a draft cut off or unreadable (502), the model declining (422), the monthly cap (429), the copilot
-  off (409). Each is audited and counted; none changes the form. There is no automatic retry: the person
-  tries again or writes it themselves. One person may ask for 12 drafts a minute.
+  off (409). A 400 or 404 from the provider says "the AI provider refused the request (check the model
+  setting)", since it is almost always a model id the provider does not know, not text that is too long (413
+  says that). Each is audited and recorded; only a draft the provider returned (or declined, or cut off) counts
+  against the monthly cap. None changes the form. **One retry** (1.17.0), inside the same deadline: after a rate
+  limit (429), an overloaded or failing provider (529, 500, 502, 503, 504) or a failed connection, once, after
+  the provider's `retry-after` when it is at most 10 s (else about a second), and only if the wait leaves time for
+  the answer; never after a timeout. Otherwise the person tries again or writes it themselves. One person may ask
+  for 12 drafts a minute.
 * Schema: migration 53 (`notes.ai_assisted`, `ai_usage`).
 
 ## Deferred / not done

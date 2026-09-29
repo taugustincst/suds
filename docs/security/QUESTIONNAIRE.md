@@ -6,7 +6,7 @@ These are the questions county IT typically sends, pre-answered. They follow the
 
 **How to check them.** Every answer cites the file, test or document that shows it.
 
-**Checked against:** 1.16.4 (stamp commit `d95b69a`, 29 September 2026).
+**Checked against:** 1.16.4 (the released commit `6491308`, 29 September 2026; live on GitHub Pages, not yet tagged).
 
 **Markers used in the answers:**
 

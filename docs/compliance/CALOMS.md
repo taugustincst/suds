@@ -261,7 +261,11 @@ DHCS**: there is no DHCS API, portal login or credential in SUDS. What it automa
 previous calendar month: every record in the month is validated against every implemented edit check,
 program-wide, and a **prepared** submission file is built for the records that pass — one file, or one per provider
 ID when *One file per provider ID* is ticked (`caloms_split_by_provider`). *Check and prepare (not sent)* on the
-page does the same for the period shown (`POST /api/caloms/schedule/run`, `export:identified`).
+page does the same for the period shown (`POST /api/caloms/schedule/run`, `export:identified`). The scheduled run is
+idempotent per period and provider: a provider whose file it already prepared, still waiting to be produced, is not
+prepared again, and a provider whose file could not be prepared (an error, logged) leaves the month open, so the
+next hourly pass tries that provider again and only that one (engineering review of the 1.17.0 candidate, L2). The
+run reads and checks the whole month on the server's main thread, once a month.
 
 **Prepared is not produced.** A prepared file is built once and kept encrypted with its SHA-256, like a
 submission, but nothing has left: nobody's accounting of disclosures changes and no record's `extracted_at` is

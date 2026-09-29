@@ -15,7 +15,8 @@ ok(/\.xlsx$/.test(dl.suggestedFilename()), 'the whole programme downloads as one
 ok(wb.length >= 5 && wb.every(sh => sh.rows.length >= 1), 'with a sheet per record type, each with a header row', wb.map(sh => `${sh.name}:${sh.rows.length - 1}`).join(' '));
 ok(wb.some(sh => sh.rows.length > 1), 'and data in them');
 await page.goto(base + '/#/imports'); await settle(page);
-await page.selectOption('select >> nth=0', 'clients'); await page.setInputFiles('input[type=file][accept^=".xlsx,.csv"]', '/tmp/suds-shots/clients-import.csv'); await page.waitForSelector('button:has-text("Import 2 rows")', { timeout: 15000 }).catch(() => {});
+// The spreadsheet import card: its own file input (the accept list grew with the FHIR import in 1.17.0).
+await page.selectOption('select >> nth=0', 'clients'); await page.setInputFiles('.card:has([data-import-entity]) input[type=file]', '/tmp/suds-shots/clients-import.csv'); await page.waitForSelector('button:has-text("Import 2 rows")', { timeout: 15000 }).catch(() => {});
 await page.screenshot({ path: '/tmp/suds-shots/xl_import.png', fullPage: true });
 const badges = await page.$$eval('.card .badge', b => b.map(x => x.textContent).join(' | '));
 ok(/2/.test(badges), 'the preview counts the rows that will import', badges);
@@ -31,7 +32,7 @@ await lp.fill('input[name=display_name]', 'L'); await lp.fill('input[name=userna
 await lp.goto(base + '/?local=1#/imports'); await settle(lp);
 const [ldl] = await Promise.all([lp.waitForEvent('download'), lp.click('text=Download Excel template')]); const lwb = readWorkbook(fs.readFileSync(await ldl.path()));
 ok(/First name/i.test(lwb[0].rows[0].join(',')), 'a phone with no server still builds the Excel template', lwb[0].rows[0].slice(0, 3).join(','));
-await lp.setInputFiles('input[type=file][accept^=".xlsx,.csv"]', '/tmp/suds-shots/clients-import.csv'); await lp.waitForSelector('button:has-text("Import 2 rows")', { timeout: 15000 }).catch(() => {});
+await lp.setInputFiles('.card:has([data-import-entity]) input[type=file]', '/tmp/suds-shots/clients-import.csv'); await lp.waitForSelector('button:has-text("Import 2 rows")', { timeout: 15000 }).catch(() => {});
 await lp.click('button:has-text("Import 2 rows")'); await lp.waitForSelector('.modal button.primary'); await lp.click('.modal button.primary'); await settle(lp);
 ok(await until(async () => /import/i.test((await lp.$$eval('.toast', e => e.map(x => x.textContent))).join('|'))), 'and imports a spreadsheet on the device itself');
 // The whole-programme workbook, built by the in-page kernel: it used to fail on a phone and on the static

@@ -68,6 +68,7 @@ async function main() {
       referral: { id: referral.id, resource_id: resource.id },
     });
     if (rich) Object.assign(expect, { rich: await enrich(db, call) });
+    if (rich) Object.assign(expect, { state: laterState(db) });
   } finally {
     await new Promise((r) => server.close(r));
     db.close();
@@ -150,6 +151,31 @@ async function enrich(db, call) {
     encTables[name] = d.prepare(`SELECT COUNT(*) n FROM "${name}"`).get().n;
   }
   return { encTables, unicodeClients: unicode, made };
+}
+/**
+ * --rich, for a release that has them (1.15.0 on): the state a later release's first start acts on besides the
+ * schema (release-v1.16.4.sql; engineering review of the 1.17.0 candidate, M3). A per-user permission override;
+ * an import item filed as a note with its text still held (1.17.0's retention pass clears it); the CalOMS
+ * submissions --rich made (migration 55 gives each its defaults). What the test checks after the upgrade.
+ */
+function laterState(db) {
+  const d = db.get(); const { encrypt } = req('crypto');
+  const has = (t) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(t);
+  const out = { settings: Object.fromEntries(d.prepare(`SELECT key, value FROM settings WHERE key IN ('caseload_hold_new_staff','programme_profile')`).all().map((r) => [r.key, r.value])) };
+  if (has('user_permission_overrides')) {
+    const u = d.prepare(`SELECT id FROM users WHERE username='fxnav1'`).get();
+    const admin = d.prepare(`SELECT id FROM users WHERE username='admin'`).get();
+    d.prepare(`INSERT OR REPLACE INTO user_permission_overrides(user_id,permission,mode,reason,granted_by) VALUES(?,?,?,?,?)`).run(u.id, 'reports:funder', 'grant', 'Fixture: covers the funder report', admin.id);
+    out.overrides = d.prepare(`SELECT user_id, permission, mode FROM user_permission_overrides ORDER BY user_id, permission`).all().map((r) => ({ ...r }));
+  }
+  if (has('import_items')) {
+    const item = d.prepare(`SELECT id FROM import_items ORDER BY rowid LIMIT 1`).get();
+    d.prepare(`UPDATE import_items SET status='committed', content_enc=?, title_enc=? WHERE id=?`).run(encrypt('Filed session text a 1.16 release kept'), encrypt('Filed title'), item.id);
+    out.committed_import_item = item.id;
+    out.staged_import_items = d.prepare(`SELECT id FROM import_items WHERE status='staged' AND content_enc<>''`).all().map((r) => r.id);
+  }
+  if (has('caloms_submissions')) out.caloms_submissions = d.prepare(`SELECT id FROM caloms_submissions ORDER BY rowid`).all().map((r) => r.id);
+  return out;
 }
 /** A value for a NOT NULL column with no default: the first choice its CHECK allows, else one of its type's shape. */
 function valueFor(table, c, sql, k) {

@@ -83,6 +83,33 @@ upgrades databases written by 1.6.1, 1.9.4, 1.11.0 and 1.13.0 (the last two with
 that has an encrypted column, each value checked after the upgrade); performance checks live in
 `test/thorough/` and run in the `thorough` CI job (`npm run test:thorough`), not in `npm test`.
 
+## Since 1.17.0: the new modules
+
+Each row names the module, the rule file that holds its write rules where it has a synced table (CLAUDE.md: a rule
+lives once in `server/rules/<table>.js`, for REST and sync push alike), its tests, and whether it runs on a device.
+**Office-only** means its route module is in `ROUTE_MODULES` but not in `LOCAL_ROUTE_MODULES` (`server/app.js`, the
+comment above that list says why for each): the browser kernel, and so SUDS on this device and local mode, never
+loads it. Everything else runs in the kernel too, the same code.
+
+| Module | What it does | Rules, routes, where it runs | Tests |
+| --- | --- | --- | --- |
+| `server/caseload-default.js` | The programme-wide least-privilege default: new navigators and clinicians start held to their caseload (a per-user deny of `clients:all`, with a fixed reason), on every path that makes one (users, access approval, SCIM, device accounts). A settings row, `'1'` on a new install and `'0'` written once on an upgraded database, so an upgrade changes nobody's access; no migration. | `server/routes/users.js`, `server/scim.js`, `local/kernel.js`; office and device | `test/least-privilege-default.test.js`, `-device`, `-sso`; `test/migrations.test.js` (the 1.16.4 first start) |
+| `server/client-revisions.js` | Client-record revision history: one row per change to a client's own fields, each changed value before and after in `changes_enc` (migration 50); never a value in the audit or a log. | `server/rules/clients.js`, `server/routes/clients.js`; office and device (written on sync push too) | `test/client-revisions.test.js` |
+| `server/participant-code.js` | The anonymous syringe-services participant code on a clientless visit: normalised, encrypted (`interventions.participant_code_enc`) with a blind index (`_idx`) for counting distinct participants (migration 51). | `server/rules/interventions.js`, `server/sync-tables.js`; office and device | `test/prevention.test.js` |
+| `server/prevention.js` | Group and community prevention events (`prevention_events`, migration 51) and the prevention activity summary by CSAP strategy and IOM category; not a PPSDS file. | `server/rules/prevention_events.js`, `server/routes/prevention.js`, `server/routes/reports.js`; office and device | `test/prevention.test.js` |
+| `server/ai-copilot.js`, `server/ai-prompts.js`, `server/routes/ai.js` | The optional AI documentation copilot: gating (recorded BAA/QSOA, switch, key, endpoint, monthly cap counting drafts, not failed calls), de-identification before sending and names put back after, one Messages API request (180 s deadline, one retry on 429/5xx), usage (`ai_usage`, migration 53) and audit; the prompts and answer schemas in `ai-prompts.js`. Drafts only; saves nothing. | **Office-only** (`ai`); `notes.ai_assisted` through `server/rules/notes.js` | `test/ai-copilot.test.js`; `scripts/ui/r10-ai.mjs` (fake provider) |
+| `server/referral-links.js`, `server/routes/referral-links.js` | One-time links for a referral to an organisation outside SUDS (hashed tokens, `referral_links`, migration 55): a packet that names the client only with a live Part 2 consent, through `server/disclosure.js` when made and when opened. docs/security/REFERRAL-LINKS.md. | **Office-only** (`referral-links`: only the office has an address the recipient can reach) | `test/referral-links.test.js` |
+| `server/caloms-schedule.js` | CalOMS Tx automation: the monthly run validates the month before and **prepares** its file (not a disclosure), one per provider when split, idempotent per provider; producing it is the disclosure (`server/routes/caloms.js`); the submission log (`caloms_submission_events`, migration 55). | Run hourly from `server/index.js` housekeeping; the office's (a device has no housekeeping) | `test/caloms-automation.test.js`, `test/caloms.test.js` |
+| `server/settlement-outcomes.js` (with `server/settlement-outcome-map.js`) | Each opioid-settlement fund's spending beside the outcomes recorded for the work charged to it, by category and month; the programme's own view, not a state report. | Routes registered from `server/routes/reports.js`; office and device | `test/settlement-outcomes.test.js`, `test/settlement-outcome-map.test.js` |
+| `server/outreach.js` | The street-outreach phone screen's server side: a contact is an ordinary clientless visit through `POST /api/interventions` (its supplies draw the stock down by the supply rules). | `server/rules/interventions.js`, `server/routes/interventions.js`; office and device (works with no connection) | `test/outreach.test.js`, `test/outreach-device.test.js`, `test/outreach-kernel-sync.test.js` |
+| `server/release-audit-worker.js`; `local/audit-worker.js`, `local/audit-runner.js` | Where a publication release's audit runs: a worker thread on the office server (60 s backstop); on a device a Web Worker (`public/local/audit-worker.js`, built by `npm run build:local`, precached by the service worker), handed one audit at a time (75 s backstop), falling back to the page where no worker can start. ADR-0009, *Where it runs*. | `server/publication-release.js` (`runAudit`, `setDeviceAuditRunner`) | `test/publication-release-perf.test.js` (the worker offload, with a heavy audit), `test/device-audit-worker.test.js`, `test/release-worker-timeout.test.js` |
+| `scripts/repo-settings-check.js` | The weekly check of the owner's repository settings (`.github/workflows/settings-check.yml`): GETs only; a setting off fails; one the default token cannot read warns until `SETTINGS_READ_TOKEN` exists (RELEASE.md step 9). Code-owned. | CI only | `test/repo-settings-check.test.js` |
+| `scripts/workflow-yaml.js` | A dependency-free parser for the YAML the workflows use, so the workflow tests read them as data. Code-owned. | Tests only | `test/workflow-yaml.test.js` |
+| `scripts/sbom.js` | The CycloneDX SBOM of a release (`docs/evidence/sbom-<version>.cdx.json`), from a commit (`--ref`). | Evidence, by hand after a tag | `test/sbom.test.js` |
+
+The schema for all of these is migrations 49 to 55 (`server/db.js`; 49, 52 and 54 are reserved no-ops), upgraded
+from a database 1.16.4 wrote in `test/migrations.test.js` (`release-v1.16.4.sql`).
+
 ## Read these first (a new maintainer's first two days)
 
 1. `CLAUDE.md` — the project rules. They bind people as much as the AI assistant.

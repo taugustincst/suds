@@ -118,7 +118,7 @@ const VISIT_LAST = 'visit_last';
 // unsent visit?" rather than filling it in unasked, and after signing back in the same question is at the top.
 const VISIT_DRAFT = 'intervention:new';
 offerResume(VISIT_DRAFT, { question: 'Resume your unsent visit?', open: () => openInterventionForm(null, { onDone: render }) });
-const SECTION_FIELDS = { outcome: ['outcome', 'stage_of_change', 'follow_up_due'], syringes: ['syringes_returned', 'returns_estimated', 'sharps_returned_litres'],
+const SECTION_FIELDS = { participant: ['participant_code'], outcome: ['outcome', 'stage_of_change', 'follow_up_due'], syringes: ['syringes_returned', 'returns_estimated', 'sharps_returned_litres'],
   funding: ['funding_source_id', 'budget_line_id', 'cost'], time: ['duration_minutes', 'log_time', 'time_category'], recorded_by: ['user_id'], note: ['note_title', 'note_content'] };
 const NOTE_KINDS = () => ['admin', 'clinical'].filter(k => can(`notes:${k}:write`));
 const usable = (list, code) => !!code && listEntries(list).some(e => e.code === code && !e.hidden);
@@ -175,9 +175,13 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   const f = form([
     clientField,
     // An anonymous contact's SSP participant code (1.17.0, server/participant-code.js): only where a contact can
-    // have no client, and only when it has none. Shown for outreach and community distribution (syncCodeField).
+    // have no client, and only when it has none. Shown for outreach and community distribution (syncCodeField),
+    // folded under its own heading right below Client, so a new visit still shows at most seven fields at 390 px
+    // (scripts/ui/ux13.mjs); it opens by itself when the visit or a resumed draft has a code, or for an error.
+    section('participant', 'Participant code (optional)'),
     { name: 'participant_code', label: 'Participant code (no client record)', maxLen: 20,
       help: 'Only for someone who gives no name: the code they build the same way every time, by your program\'s recipe (for example the first two letters of their mother\'s first name, their birth month and the last two digits of their birth year: MA0785). The SSP report counts different people by it without naming anyone. Stored encrypted.' },
+    { type: 'section', end: true },
     { name: 'type', label: 'What did you do?', type: 'select', list: 'INTERVENTION_TYPES', required: true },
     { name: 'occurred_at', label: 'Date & time', type: 'datetime', required: true, value: new Date().toISOString() },
     // Where and how (1.15.3): filled in from this worker's last visit, so on a new visit it is folded away with
@@ -307,9 +311,18 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   syncClientRequired();
   // The participant code is offered only where a contact may have no client (or the visit already has a code).
   const codeWrap = f.querySelector('[data-field="participant_code"]');
-  const syncCodeField = () => { if (codeWrap) codeWrap.hidden = !clientless(f.inputs.type.value) && !(values && values.participant_code); };
+  const syncCodeField = () => {
+    const hide = !clientless(f.inputs.type.value) && !(values && values.participant_code);
+    if (codeWrap) codeWrap.hidden = hide;
+    if (f.sections.participant) f.sections.participant.hidden = hide;
+  };
   f.inputs.type.addEventListener('change', syncCodeField);
   syncCodeField();
+  // A resumed draft that holds a code (form() puts the fields back, then fires change): its section opens, once.
+  f.addEventListener('change', () => {
+    const sec = f.sections.participant; const i = f.inputs.participant_code;
+    if (sec && i && !sec.hidden && !sec.dataset.shownCode && i.value.trim()) { sec.open = true; sec.dataset.shownCode = '1'; }
+  });
   if (can('budget:read')) {
     const fundSel = f.inputs.funding_source_id, lineSel = f.inputs.budget_line_id;
     const fillLines = () => { const fund = state.funds.find(x => x.id === fundSel.value); lineSel.replaceChildren(h('option', { value: '' }, '— none —'), ...flattenLines(fund ? fund.lines : []).map(l => h('option', { value: l.id, selected: l.id === seed.budget_line_id }, `${'— '.repeat(l._depth)}${l.label || fmt.label(l.category)} (${fmt.money(l.allocated_amount - l.subtree_spent)} left)`))); };
@@ -346,7 +359,7 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
 
   // ---- the sections: open when they hold something, else as this person last left them; a folded one says
   // what it holds ----
-  const defaults = { outcome: '', stage_of_change: '', follow_up_due: '', syringes_returned: '', returns_estimated: false, sharps_returned_litres: '', funding_source_id: defaultFund, budget_line_id: '', cost: '',
+  const defaults = { participant_code: '', outcome: '', stage_of_change: '', follow_up_due: '', syringes_returned: '', returns_estimated: false, sharps_returned_litres: '', funding_source_id: defaultFund, budget_line_id: '', cost: '',
     duration_minutes: '30', log_time: logTimeDefault, time_category: 'direct_service', user_id: '', note_title: '', note_content: '' };
   const differs = (n) => { const i = f.inputs[n]; if (!i) return false; return i.type === 'checkbox' ? i.checked !== !!defaults[n] : String(i.value ?? '') !== String(defaults[n] ?? ''); };
   const remembered = prefs.get(VISIT_SECTIONS, null) || {};
@@ -372,6 +385,7 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
       const help = f.querySelector('[data-field="log_time"] .help');
       if (help) help.textContent = `${i.log_time.checked && mins > 0 ? `Adds ${mins} min of ${label('TIME_CATEGORIES', i.time_category.value || 'direct_service').toLowerCase()} to ${workerName()} time (My time), as a draft to submit for approval. Check the duration above first.` : 'No time entry is made. Tick this to put the visit on your time sheet, or log the time yourself under My time.'} It starts unticked on every visit.`;
     }
+    if (i.participant_code) say('participant', i.participant_code.value.trim() ? i.participant_code.value.trim().toUpperCase() : 'only for someone who gives no name');
     say('where', [label('LOCATIONS', i.location.value), label('MODALITIES', i.modality.value)].filter(Boolean).join(' · '));
     say('outcome', [label('OUTCOMES', i.outcome.value), i.follow_up_due.value ? `follow up ${fmt.date(i.follow_up_due.value)}` : ''].filter(Boolean).join(' · '));
     if (i.syringes_returned) say('syringes', Number(i.syringes_returned.value) > 0 ? `${i.syringes_returned.value} returned${i.returns_estimated.checked ? ' (estimated)' : ''}` : '');

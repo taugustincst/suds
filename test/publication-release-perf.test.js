@@ -84,15 +84,40 @@ test('a year\'s publication release for 5,000 people: its audit\'s work is bound
   let inlineStall;
   try { inlineStall = await maxStall(() => PR.release(ctx, r, counting)); } finally { delete process.env.SUDS_AUDIT_INLINE; }
   if (process.env.SUDS_PERF_VERBOSE) console.log(`[perf] publication release, 5,000 clients, 12 months: ${times.map(x => x.toFixed(0)).join(', ')} ms; audit work ${a.audit.steps} units; longest event-loop stall ${workerStall.toFixed(0)} ms in the worker, ${inlineStall.toFixed(0)} ms inline (release ${auditMs} ms)`);
-  // The server keeps answering: the event loop is never held for long, whatever the audit costs.
-  assert.ok(workerStall < 1500, `the event loop is never held for long while a release is made (${workerStall.toFixed(0)} ms)`);
-  // The worker only helps when the audit itself is real work. Since 1.17.0 leaves the events by month out, this
-  // year audits in well under a million units, and both paths are then dominated by reading the figures (the
-  // difference is noise); the comparison is made only when the audit is heavy enough for it to mean something.
-  if (a.audit.steps >= 1e6) assert.ok(workerStall < inlineStall, `the worker holds the event loop less than the inline audit (${workerStall.toFixed(0)} vs ${inlineStall.toFixed(0)} ms)`);
+  // The server keeps answering: the event loop is never held for long, whatever the audit costs. Reading a
+  // 5,000-person year holds it on the main thread, so this is a wall-clock bound, checked in the thorough run only
+  // (a loaded runner could flake it); the worker offload itself is checked with a heavy audit in the next test.
+  if (THOROUGH) assert.ok(workerStall < 1500, `the event loop is never held for long while a release is made (${workerStall.toFixed(0)} ms)`);
+  // Since 1.17.0 leaves the events by month out, this year audits in well under a million units, and both paths are
+  // dominated by reading the figures (the difference is noise): the comparison is the next test's.
   // And the three endpoints serve it, the same release.
   const [f, n, s] = await Promise.all(['funder', 'naloxone-ndp', 'opioid-settlement'].map(p => admin.get(`/api/reports/${p}?${YEAR}${PUB}`)));
   for (const x of [f, n, s]) { assert.equal(x.status, 200); assert.equal(x.data.release.id, rel.id); }
+});
+
+test('a heavy audit runs in the worker thread: the event loop is held a fraction of what the same audit holds it inline', async () => {
+  // Engineering review of the 1.17.0 candidate, M2: the year above no longer audits heavily enough to tell the
+  // worker from the inline path, so the offload was asserted by nothing. A release made to be heavy (the benchmark
+  // year scaled to 39 events: test/fixtures/heavy-audit.js) is audited through runAudit, as release() does, once in
+  // the worker and once inline (SUDS_AUDIT_INLINE=1, the browser kernel's path without a Web Worker). Relative, not
+  // a wall-clock bound: whatever the machine, the worker's stall is the message passing, the inline one the audit.
+  const PR = require('../server/publication-release');
+  const { scaledYear } = require('./fixtures/heavy-audit');
+  const { T, inputs } = scaledYear(0.2);
+  const pure = PR.protectFigures(inputs, T);
+  assert.ok(pure.audit.steps >= 1e7, `the audit is heavy (${pure.audit.steps} units of work), so the comparison means something`);
+  const w0 = PR.auditStats.worker; const i0 = PR.auditStats.inline;
+  let inWorker; let inLine;
+  const workerStall = await maxStall(async () => { inWorker = await PR.runAudit(inputs, T); });
+  process.env.SUDS_AUDIT_INLINE = '1';
+  let inlineStall;
+  try { inlineStall = await maxStall(async () => { inLine = await PR.runAudit(inputs, T); }); } finally { delete process.env.SUDS_AUDIT_INLINE; }
+  assert.equal(PR.auditStats.worker, w0 + 1, 'the first ran in the worker thread');
+  assert.equal(PR.auditStats.inline, i0 + 1, 'the second inline');
+  assert.equal(inWorker.id, pure.id); assert.equal(inLine.id, pure.id, 'the same release either way');
+  assert.equal(inWorker.audit.steps, pure.audit.steps);
+  if (process.env.SUDS_PERF_VERBOSE) console.log(`[perf] heavy audit (${pure.audit.steps} units): longest event-loop stall ${workerStall.toFixed(0)} ms in the worker, ${inlineStall.toFixed(0)} ms inline`);
+  assert.ok(workerStall < inlineStall / 2, `the worker holds the event loop far less than the inline audit (${workerStall.toFixed(0)} vs ${inlineStall.toFixed(0)} ms)`);
 });
 
 test('800 small free-text languages and 400 small race codes: the release is audited within a small part of its budget, and served once for all three reports', async () => {

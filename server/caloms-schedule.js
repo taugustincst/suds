@@ -58,16 +58,32 @@ function prepare({ from, to, providerId = null, origin = 'scheduled', user = nul
   return { id, from, to, provider_id: providerId, clients: x.clientIds.length, counts: x.counts, held_back: x.excluded, sha256: hash, file_name: fileName };
 }
 
-/** The whole run for one period: full validation, then one prepared file (or one per provider). */
+/** A file the scheduled run already prepared for this period and provider, not yet produced or discarded. */
+function alreadyPrepared(from, to, providerId) {
+  return db.one(`SELECT id FROM caloms_submissions WHERE period_from=? AND period_to=? AND origin='scheduled' AND status='prepared' AND file_enc IS NOT NULL AND provider_id IS ? ORDER BY created_at LIMIT 1`, from, to, providerId);
+}
+
+/**
+ * The whole run for one period: full validation, then one prepared file (or one per provider). The scheduled run
+ * is idempotent per (period, provider) (engineering review of the 1.17.0 candidate, L2): a provider whose file the
+ * schedule already prepared, and that is still waiting to be produced, is not prepared again, and a provider whose
+ * file could not be prepared (an error) leaves the run incomplete, so the next hourly pass tries that provider
+ * again - and only that one - instead of the month counting as done or every file being prepared twice.
+ */
 function run({ from, to, user = null, ip = null, origin = 'scheduled' }) {
   const S = C.schedule();
   const rep = C.report({ from, to, scope: ALL });
   const targets = S.split_by_provider ? C.providers().map(p => p.id) : [null];
-  const prepared = []; const empty = [];
-  for (const p of targets) { const r = prepare({ from, to, providerId: p, origin, user, ip }); if (r.empty) empty.push(p || 'all'); else prepared.push(r.id); }
-  const summary = { period: `${from}..${to}`, from, to, ran_at: db.now(), prepared, empty, records: rep.summary.records, ready: rep.summary.ready, fatal: rep.summary.fatal, warnings: rep.summary.warnings, missing: rep.summary.missing };
+  const prepared = []; const empty = []; const kept = []; const failed = [];
+  for (const p of targets) {
+    const had = origin === 'scheduled' ? alreadyPrepared(from, to, p) : null;
+    if (had) { kept.push(had.id); continue; }
+    try { const r = prepare({ from, to, providerId: p, origin, user, ip }); if (r.empty) empty.push(p || 'all'); else prepared.push(r.id); }
+    catch (e) { failed.push(p || 'all'); console.error(`[suds] CalOMS scheduled run: the file for ${p || 'the programme'} (${from}..${to}) could not be prepared: ${e.message}`); }
+  }
+  const summary = { period: `${from}..${to}`, from, to, ran_at: db.now(), prepared: [...kept, ...prepared], empty, failed, records: rep.summary.records, ready: rep.summary.ready, fatal: rep.summary.fatal, warnings: rep.summary.warnings, missing: rep.summary.missing };
   db.setSetting('caloms_schedule_last', JSON.stringify(summary));
-  audit.log({ user, action: 'caloms.schedule.run', ip, details: { from, to, origin, prepared: prepared.length, fatal: rep.summary.fatal, warnings: rep.summary.warnings } });
+  audit.log({ user, action: 'caloms.schedule.run', ip, details: { from, to, origin, prepared: prepared.length, already_prepared: kept.length || undefined, failed: failed.length || undefined, fatal: rep.summary.fatal, warnings: rep.summary.warnings } });
   return summary;
 }
 
@@ -79,8 +95,9 @@ function runIfDue(today = null) {
   const day = today || require('./routes/budget').localDate();
   if (Number(day.slice(8, 10)) < Math.min(28, Math.max(1, S.day))) return null;
   const { from, to } = previousMonth(day);
-  if (S.last && S.last.from === from && S.last.to === to) return null;
+  // Done for the month once a run for it prepared every provider's file (or found none to prepare).
+  if (S.last && S.last.from === from && S.last.to === to && !(S.last.failed && S.last.failed.length)) return null;
   return run({ from, to });
 }
 
-module.exports = { prepare, run, runIfDue, previousMonth, logEvent };
+module.exports = { prepare, run, runIfDue, previousMonth, logEvent, alreadyPrepared };

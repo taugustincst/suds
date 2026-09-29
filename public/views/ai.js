@@ -415,7 +415,7 @@ export async function aiSettingsTab(refresh) {
 
   const u = s.usage;
   box.append(h('section', { class: 'card mt', 'data-ai-usage': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'This month')),
-    h('p', {}, `${u.calls} of ${s.monthly_cap} drafts used since ${fmt.date(u.since)}${u.errors ? `, ${u.errors} of which failed` : ''}. ${u.input_tokens.toLocaleString()} tokens sent, ${u.output_tokens.toLocaleString()} received.`),
+    h('p', {}, `${u.calls} of ${s.monthly_cap} drafts used since ${fmt.date(u.since)}${u.failed ? `; ${u.failed} failed call${u.failed === 1 ? '' : 's'} (not counted against the limit)` : ''}. ${u.input_tokens.toLocaleString()} tokens sent, ${u.output_tokens.toLocaleString()} received.`),
     u.by_feature.length ? h('p', { class: 'small' }, u.by_feature.map(x => `${({ note: 'Notes', asam: 'Assessments', careplan: 'Care plans', caloms: 'CalOMS' })[x.feature] || x.feature}: ${x.calls}`).join(' · ')) : null,
     h('p', { class: 'small' }, h('a', { href: '#/admin?tab=audit&action=ai.' }, 'Copilot entries in the audit log'))));
   return box;

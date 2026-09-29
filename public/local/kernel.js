@@ -22879,11 +22879,15 @@ var require_ai_copilot = __commonJS({
     function monthStart(now2 = /* @__PURE__ */ new Date()) {
       return new Date(Date.UTC(now2.getUTCFullYear(), now2.getUTCMonth(), 1)).toISOString();
     }
+    var COUNTED = ["ok", "refused", "truncated"];
+    var COUNTED_SQL = `outcome IN (${COUNTED.map((o) => `'${o}'`).join(",")})`;
     function usage(since = monthStart()) {
-      const t = db3.one(`SELECT COUNT(*) calls, COALESCE(SUM(input_tokens),0) input_tokens, COALESCE(SUM(output_tokens),0) output_tokens FROM ai_usage WHERE at >= ?`, since);
-      const byFeature = db3.all(`SELECT feature, COUNT(*) calls FROM ai_usage WHERE at >= ? GROUP BY feature ORDER BY feature`, since);
+      const t = db3.one(`SELECT COUNT(*) attempts, COALESCE(SUM(input_tokens),0) input_tokens, COALESCE(SUM(output_tokens),0) output_tokens FROM ai_usage WHERE at >= ?`, since);
+      const drafts = db3.one(`SELECT COUNT(*) n FROM ai_usage WHERE at >= ? AND ${COUNTED_SQL}`, since).n;
+      const byFeature = db3.all(`SELECT feature, COUNT(*) calls FROM ai_usage WHERE at >= ? AND ${COUNTED_SQL} GROUP BY feature ORDER BY feature`, since);
       const errors = db3.one(`SELECT COUNT(*) n FROM ai_usage WHERE at >= ? AND outcome <> 'ok'`, since).n;
-      return { since, calls: t.calls, input_tokens: t.input_tokens, output_tokens: t.output_tokens, errors, by_feature: byFeature };
+      const failed = db3.one(`SELECT COUNT(*) n FROM ai_usage WHERE at >= ? AND NOT ${COUNTED_SQL}`, since).n;
+      return { since, calls: drafts, attempts: t.attempts, input_tokens: t.input_tokens, output_tokens: t.output_tokens, errors, failed, by_feature: byFeature };
     }
     function status() {
       const s = settings();
@@ -23252,28 +23256,53 @@ var require_ai_copilot = __commonJS({
       return { body, headers };
     }
     function classify(status2, retryAfter) {
+      if (status2 === 400 || status2 === 404) return new AiError("misconfigured", 502, "The AI provider refused the request (check the model setting in Settings \u2192 AI copilot). Your form is unchanged: write it yourself, and tell your administrator.");
+      if (status2 === 413) return new AiError("too_large", 502, "The text is too long for the AI provider. Your form is unchanged: shorten the text and try again, or write it yourself.");
       if (status2 === 429) return new AiError("rate_limited", 503, "The AI provider is busy (rate limited). Your form is unchanged: try again in a minute, or write it yourself.", { retry_after: retryAfter || null });
       if (status2 === 401 || status2 === 403) return new AiError("auth", 502, "The AI provider refused this server's key. Your form is unchanged. Tell your administrator.");
       if (status2 === 529 || status2 >= 500) return new AiError("unavailable", 503, "The AI provider is unavailable right now. Your form is unchanged: try again later, or write it yourself.");
       return new AiError("rejected", 502, "The AI provider could not take this request. Your form is unchanged: write it yourself, or shorten the text and try again.");
     }
+    var RETRY_STATUSES = /* @__PURE__ */ new Set([429, 500, 502, 503, 504, 529]);
+    var RETRY_MAX_WAIT_MS = 1e4;
+    var RETRY_DEFAULT_WAIT_MS = 1e3;
+    function retryWait(retryAfter) {
+      if (retryAfter == null || retryAfter === "") return RETRY_DEFAULT_WAIT_MS + Math.floor(Math.random() * 500);
+      const sec = Number(retryAfter);
+      if (!Number.isFinite(sec) || sec < 0) return RETRY_DEFAULT_WAIT_MS;
+      return sec * 1e3 <= RETRY_MAX_WAIT_MS ? sec * 1e3 : null;
+    }
     async function send(prompt, model) {
       const { body, headers } = buildRequest(prompt, model);
       headers["x-api-key"] = config2.ai.apiKey;
+      const deadline = Date.now() + config2.ai.timeoutMs;
+      const payload = JSON.stringify(body);
       let res;
-      try {
-        res = await fetch(`${config2.ai.baseUrl}/v1/messages`, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(config2.ai.timeoutMs) });
-      } catch (e) {
-        if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new AiError("timeout", 504, "The AI provider did not answer in time. Your form is unchanged: try again, or write it yourself.");
-        throw new AiError("unreachable", 503, "The server could not reach the AI provider. Your form is unchanged: try again later, or write it yourself.");
-      }
       let json = null;
-      try {
-        json = await res.json();
-      } catch {
-        json = null;
+      for (let attempt = 0; ; attempt++) {
+        let wait = null;
+        let failure = null;
+        try {
+          res = await fetch(`${config2.ai.baseUrl}/v1/messages`, { method: "POST", headers, body: payload, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
+        } catch (e) {
+          if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new AiError("timeout", 504, "The AI provider did not answer in time. Your form is unchanged: try again, or write it yourself.");
+          failure = new AiError("unreachable", 503, "The server could not reach the AI provider. Your form is unchanged: try again later, or write it yourself.");
+          wait = retryWait(null);
+        }
+        if (!failure) {
+          json = null;
+          try {
+            json = await res.json();
+          } catch {
+            json = null;
+          }
+          if (res.ok) break;
+          failure = classify(res.status, res.headers.get("retry-after"));
+          wait = RETRY_STATUSES.has(res.status) ? retryWait(res.headers.get("retry-after")) : null;
+        }
+        if (attempt > 0 || wait == null || Date.now() + 2 * wait + 1e3 > deadline) throw failure;
+        await new Promise((ok) => setTimeout(ok, wait));
       }
-      if (!res.ok) throw classify(res.status, res.headers.get("retry-after"));
       const u = json && json.usage || {};
       const tokens = { input_tokens: Number(u.input_tokens || 0) + Number(u.cache_read_input_tokens || 0) + Number(u.cache_creation_input_tokens || 0), output_tokens: Number(u.output_tokens || 0) };
       if (!json || !Array.isArray(json.content)) throw new AiError("bad_response", 502, "The AI provider sent an answer SUDS could not read. Your form is unchanged.", { tokens });
@@ -23336,6 +23365,9 @@ var require_ai_copilot = __commonJS({
       MODEL_ID,
       DEFAULT_CAP,
       MAX_TEXT,
+      MAX_TOKENS,
+      COUNTED,
+      retryWait,
       settings,
       attestation,
       status,
@@ -25635,20 +25667,35 @@ var require_caloms_schedule = __commonJS({
       audit3.log({ user, action: "caloms.submission.prepare", entity: "caloms_submission", entityId: id, ip, details: { from, to, provider_id: providerId || void 0, origin, ...x.counts, held_back: x.excluded, clients: x.clientIds.length, sha256: hash2 } });
       return { id, from, to, provider_id: providerId, clients: x.clientIds.length, counts: x.counts, held_back: x.excluded, sha256: hash2, file_name: fileName };
     }
+    function alreadyPrepared(from, to, providerId) {
+      return db3.one(`SELECT id FROM caloms_submissions WHERE period_from=? AND period_to=? AND origin='scheduled' AND status='prepared' AND file_enc IS NOT NULL AND provider_id IS ? ORDER BY created_at LIMIT 1`, from, to, providerId);
+    }
     function run2({ from, to, user = null, ip = null, origin = "scheduled" }) {
       const S = C.schedule();
       const rep = C.report({ from, to, scope: ALL });
       const targets = S.split_by_provider ? C.providers().map((p) => p.id) : [null];
       const prepared = [];
       const empty = [];
+      const kept = [];
+      const failed = [];
       for (const p of targets) {
-        const r = prepare({ from, to, providerId: p, origin, user, ip });
-        if (r.empty) empty.push(p || "all");
-        else prepared.push(r.id);
+        const had = origin === "scheduled" ? alreadyPrepared(from, to, p) : null;
+        if (had) {
+          kept.push(had.id);
+          continue;
+        }
+        try {
+          const r = prepare({ from, to, providerId: p, origin, user, ip });
+          if (r.empty) empty.push(p || "all");
+          else prepared.push(r.id);
+        } catch (e) {
+          failed.push(p || "all");
+          console.error(`[suds] CalOMS scheduled run: the file for ${p || "the programme"} (${from}..${to}) could not be prepared: ${e.message}`);
+        }
       }
-      const summary = { period: `${from}..${to}`, from, to, ran_at: db3.now(), prepared, empty, records: rep.summary.records, ready: rep.summary.ready, fatal: rep.summary.fatal, warnings: rep.summary.warnings, missing: rep.summary.missing };
+      const summary = { period: `${from}..${to}`, from, to, ran_at: db3.now(), prepared: [...kept, ...prepared], empty, failed, records: rep.summary.records, ready: rep.summary.ready, fatal: rep.summary.fatal, warnings: rep.summary.warnings, missing: rep.summary.missing };
       db3.setSetting("caloms_schedule_last", JSON.stringify(summary));
-      audit3.log({ user, action: "caloms.schedule.run", ip, details: { from, to, origin, prepared: prepared.length, fatal: rep.summary.fatal, warnings: rep.summary.warnings } });
+      audit3.log({ user, action: "caloms.schedule.run", ip, details: { from, to, origin, prepared: prepared.length, already_prepared: kept.length || void 0, failed: failed.length || void 0, fatal: rep.summary.fatal, warnings: rep.summary.warnings } });
       return summary;
     }
     function runIfDue(today = null) {
@@ -25658,10 +25705,10 @@ var require_caloms_schedule = __commonJS({
       const day = today || require_budget().localDate();
       if (Number(day.slice(8, 10)) < Math.min(28, Math.max(1, S.day))) return null;
       const { from, to } = previousMonth(day);
-      if (S.last && S.last.from === from && S.last.to === to) return null;
+      if (S.last && S.last.from === from && S.last.to === to && !(S.last.failed && S.last.failed.length)) return null;
       return run2({ from, to });
     }
-    module.exports = { prepare, run: run2, runIfDue, previousMonth, logEvent };
+    module.exports = { prepare, run: run2, runIfDue, previousMonth, logEvent, alreadyPrepared };
   }
 });
 
@@ -30630,6 +30677,27 @@ var require_sdc = __commonJS({
       return { feasible: false, exact: true };
     }
     var intFeasible = (prob, c, v, opts) => intFeasibleIn(prob, c, v, v, opts);
+    function widenRange({ a, b, lo, hi, x, T, P: P2, shows, over = () => false }) {
+      const inside = (v) => v >= lo && v <= hi && v >= x - 2 * T && v <= x + 2 * T;
+      const holes = [];
+      for (let v = a - 1; b - a < P2 && inside(v) && !over(); v--) {
+        if (shows(v)) a = v;
+        else if (!holes.length && inside(v - 1) && !over() && shows(v - 1)) {
+          holes.push(v);
+          a = v - 1;
+          v--;
+        } else break;
+      }
+      for (let v = b + 1; b - a < P2 && inside(v) && !over(); v++) {
+        if (shows(v)) b = v;
+        else if (!holes.length && inside(v + 1) && !over() && shows(v + 1)) {
+          holes.push(v);
+          b = v + 1;
+          v++;
+        } else break;
+      }
+      return { range: [a, b], holes };
+    }
     function auditor(model, T, { budget, meter = newMeter() }) {
       const { vars, derived = [], mirror = [] } = model;
       const P2 = Math.ceil(T / 2);
@@ -31162,22 +31230,9 @@ var require_sdc = __commonJS({
           return false;
         };
         const widen = (q, a, b, lo, hi, x) => {
-          const inside = (v) => v >= lo && v <= hi && v >= x - 2 * T && v <= x + 2 * T;
-          for (let v = a - 1; b - a < P2 && inside(v) && !meter.over; v--) {
-            if (witness(q, v, 8)) a = v;
-            else if (inside(v - 1) && !meter.over && witness(q, v - 1, 8)) {
-              a = v - 1;
-              v--;
-            } else break;
-          }
-          for (let v = b + 1; b - a < P2 && inside(v) && !meter.over; v++) {
-            if (witness(q, v, 8)) b = v;
-            else if (inside(v + 1) && !meter.over && witness(q, v + 1, 8)) {
-              b = v + 1;
-              v++;
-            } else break;
-          }
-          return [a, b];
+          const r = widenRange({ a, b, lo, hi, x, T, P: P2, shows: (v) => witness(q, v, 8), over: () => meter.over });
+          if (probe.onWiden) probe.onWiden({ id: q.id, T, P: P2, from: [a, b], range: r.range, holes: r.holes, shown: [...new Set(G.map((vals) => valueOf(vals, q.terms)).filter((y) => y >= r.range[0] && y <= r.range[1]))].sort((m, n) => m - n) });
+          return r.range;
         };
         const unprotected = [];
         for (const q of w.quantities(S)) {
@@ -31302,7 +31357,8 @@ var require_sdc = __commonJS({
       meter.limit = whole;
       return stats(res, forced, 2);
     }
-    module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect, STEP_LIMIT };
+    var probe = { onWiden: null };
+    module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect, STEP_LIMIT, probe, widenRange };
   }
 });
 
@@ -47083,16 +47139,32 @@ function auditRunner(url, { WorkerCtor = globalThis.Worker, backstopMs = 75e3, s
   let worker = null;
   let seq = 0;
   let broken = typeof WorkerCtor !== "function" || !url ? "no Web Worker" : null;
+  let retryStart = true;
   const pending = /* @__PURE__ */ new Map();
+  const waiting = [];
+  let current2 = null;
   const settle = (id, how, value) => {
     const p = pending.get(id);
     if (!p) return;
     pending.delete(id);
     clearTimeout(p.timer);
     p[how](value);
+    if (current2 === id) {
+      current2 = null;
+      pump();
+    }
   };
-  const failAll = (w, err2) => {
-    for (const [id, p] of [...pending]) if (p.w === w) settle(id, "reject", err2);
+  const failAll = (err2) => {
+    const ids = [current2, ...waiting].filter((x) => x != null);
+    waiting.length = 0;
+    current2 = null;
+    for (const id of ids) {
+      const p = pending.get(id);
+      if (!p) continue;
+      pending.delete(id);
+      clearTimeout(p.timer);
+      p.reject(err2);
+    }
   };
   const drop = (w) => {
     if (worker === w) worker = null;
@@ -47107,6 +47179,7 @@ function auditRunner(url, { WorkerCtor = globalThis.Worker, backstopMs = 75e3, s
       w = new WorkerCtor(url, { name: "suds-publication-audit" });
     } catch (e) {
       broken = `it could not be started: ${e && e.message}`;
+      retryStart = false;
       return null;
     }
     w.suds = { ready: false, startTimer: null };
@@ -47114,7 +47187,7 @@ function auditRunner(url, { WorkerCtor = globalThis.Worker, backstopMs = 75e3, s
       if (w.suds.ready) return;
       broken = "it did not start";
       drop(w);
-      failAll(w, noWorker(broken));
+      failAll(noWorker(broken));
     }, startMs);
     w.onmessage = (ev) => {
       const d = ev && ev.data || {};
@@ -47134,28 +47207,35 @@ function auditRunner(url, { WorkerCtor = globalThis.Worker, backstopMs = 75e3, s
       drop(w);
       if (!w.suds.ready) {
         broken = "its script did not load";
-        failAll(w, noWorker(broken));
-      } else failAll(w, new Error("the publication audit worker stopped"));
+        retryStart = false;
+        failAll(noWorker(broken));
+      } else failAll(new Error("the publication audit worker stopped"));
     };
     worker = w;
     return w;
   }
-  function dispatch(id) {
+  function pump() {
+    if (current2 != null) return;
+    const id = waiting.shift();
+    if (id == null) return;
     const p = pending.get(id);
-    if (!p) return;
-    const w = worker || (broken ? null : spawn());
-    if (!w) {
-      settle(id, "reject", noWorker(broken));
+    if (!p) {
+      pump();
       return;
     }
+    const w = worker || (broken ? null : spawn());
+    if (!w) {
+      failAll(noWorker(broken));
+      pending.delete(id);
+      p.reject(noWorker(broken));
+      return;
+    }
+    current2 = id;
     p.w = w;
-    clearTimeout(p.timer);
     p.timer = setTimeout(() => {
       if (!pending.has(id)) return;
-      const others = [...pending].filter(([qid, q]) => qid !== id && q.w === w).map(([qid]) => qid);
-      settle(id, "reject", Object.assign(new Error("the publication audit did not answer in time"), { code: "SUDS_AUDIT_BACKSTOP" }));
       drop(w);
-      for (const qid of others) dispatch(qid);
+      settle(id, "reject", Object.assign(new Error("the publication audit did not answer in time"), { code: "SUDS_AUDIT_BACKSTOP" }));
     }, backstopMs);
     try {
       w.postMessage(p.msg);
@@ -47164,11 +47244,16 @@ function auditRunner(url, { WorkerCtor = globalThis.Worker, backstopMs = 75e3, s
     }
   }
   const run2 = (inputs, T, opts = {}) => new Promise((resolve2, reject) => {
+    if (broken === "it did not start" && retryStart && !worker) {
+      broken = null;
+      retryStart = false;
+    }
     const id = ++seq;
     pending.set(id, { resolve: resolve2, reject, timer: null, w: null, msg: { id, inputs, T, opts } });
-    dispatch(id);
+    waiting.push(id);
+    pump();
   });
-  run2.stats = () => ({ broken, running: pending.size, started: !!(worker && worker.suds.ready) });
+  run2.stats = () => ({ broken, running: current2 != null ? 1 : 0, waiting: waiting.length, started: !!(worker && worker.suds.ready) });
   return run2;
 }
 

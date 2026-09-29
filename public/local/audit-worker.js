@@ -475,6 +475,27 @@
         return { feasible: false, exact: true };
       }
       var intFeasible = (prob, c, v, opts) => intFeasibleIn(prob, c, v, v, opts);
+      function widenRange({ a, b, lo, hi, x, T, P, shows, over = () => false }) {
+        const inside = (v) => v >= lo && v <= hi && v >= x - 2 * T && v <= x + 2 * T;
+        const holes = [];
+        for (let v = a - 1; b - a < P && inside(v) && !over(); v--) {
+          if (shows(v)) a = v;
+          else if (!holes.length && inside(v - 1) && !over() && shows(v - 1)) {
+            holes.push(v);
+            a = v - 1;
+            v--;
+          } else break;
+        }
+        for (let v = b + 1; b - a < P && inside(v) && !over(); v++) {
+          if (shows(v)) b = v;
+          else if (!holes.length && inside(v + 1) && !over() && shows(v + 1)) {
+            holes.push(v);
+            b = v + 1;
+            v++;
+          } else break;
+        }
+        return { range: [a, b], holes };
+      }
       function auditor(model, T, { budget, meter = newMeter() }) {
         const { vars, derived = [], mirror = [] } = model;
         const P = Math.ceil(T / 2);
@@ -1007,22 +1028,9 @@
             return false;
           };
           const widen = (q, a, b, lo, hi, x) => {
-            const inside = (v) => v >= lo && v <= hi && v >= x - 2 * T && v <= x + 2 * T;
-            for (let v = a - 1; b - a < P && inside(v) && !meter.over; v--) {
-              if (witness(q, v, 8)) a = v;
-              else if (inside(v - 1) && !meter.over && witness(q, v - 1, 8)) {
-                a = v - 1;
-                v--;
-              } else break;
-            }
-            for (let v = b + 1; b - a < P && inside(v) && !meter.over; v++) {
-              if (witness(q, v, 8)) b = v;
-              else if (inside(v + 1) && !meter.over && witness(q, v + 1, 8)) {
-                b = v + 1;
-                v++;
-              } else break;
-            }
-            return [a, b];
+            const r = widenRange({ a, b, lo, hi, x, T, P, shows: (v) => witness(q, v, 8), over: () => meter.over });
+            if (probe.onWiden) probe.onWiden({ id: q.id, T, P, from: [a, b], range: r.range, holes: r.holes, shown: [...new Set(G.map((vals) => valueOf(vals, q.terms)).filter((y) => y >= r.range[0] && y <= r.range[1]))].sort((m, n) => m - n) });
+            return r.range;
           };
           const unprotected = [];
           for (const q of w.quantities(S)) {
@@ -1147,7 +1155,8 @@
         meter.limit = whole;
         return stats(res, forced, 2);
       }
-      module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect, STEP_LIMIT };
+      var probe = { onWiden: null };
+      module.exports = { simplex, intMax, intFeasible, intFeasibleIn, protect, STEP_LIMIT, probe, widenRange };
     }
   });
 

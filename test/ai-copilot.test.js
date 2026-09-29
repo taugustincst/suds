@@ -315,17 +315,23 @@ test('CalOMS: suggestions checked against the code sets; identifying elements ar
 test('provider failures: rate limit, down, overloaded, refusal, cut off, unreadable, timeout; the form is untouched and it is audited', async () => {
   fresh();
   const cases = [
-    [() => ({ status: 429, json: { type: 'error', error: { type: 'rate_limit_error', message: 'slow down' } }, headers: { 'retry-after': '30' } }), 503, 'rate_limited'],
-    [() => ({ status: 500, json: { type: 'error', error: { type: 'api_error', message: 'x' } } }), 503, 'unavailable'],
-    [() => ({ status: 529, json: { type: 'error', error: { type: 'overloaded_error', message: 'x' } } }), 503, 'unavailable'],
-    [() => ({ status: 401, json: { type: 'error', error: { type: 'authentication_error', message: 'x' } } }), 502, 'auth'],
-    [() => ({ status: 400, json: { type: 'error', error: { type: 'invalid_request_error', message: 'x' } } }), 502, 'rejected'],
-    [() => okJson({}, { stop_reason: 'refusal', content: [] }), 422, 'refused'],
-    [() => okJson({ narrative: 'half' }, { stop_reason: 'max_tokens' }), 502, 'truncated'],
-    [() => ({ status: 200, raw: '{"content":[{"type":"text","text":"not json"}],"stop_reason":"end_turn"}' }), 502, 'bad_response'],
+    // [reply, status, kind, requests sent]: a rate limit whose retry-after is over 10 s, and every answer that is
+    // not transient, is not retried; a 500 or 529 is retried once (and fails again here).
+    [() => ({ status: 429, json: { type: 'error', error: { type: 'rate_limit_error', message: 'slow down' } }, headers: { 'retry-after': '30' } }), 503, 'rate_limited', 1],
+    [() => ({ status: 500, json: { type: 'error', error: { type: 'api_error', message: 'x' } } }), 503, 'unavailable', 2],
+    [() => ({ status: 529, json: { type: 'error', error: { type: 'overloaded_error', message: 'x' } } }), 503, 'unavailable', 2],
+    [() => ({ status: 401, json: { type: 'error', error: { type: 'authentication_error', message: 'x' } } }), 502, 'auth', 1],
+    // A 400 or 404 is almost always the model setting, not the length of the text.
+    [() => ({ status: 400, json: { type: 'error', error: { type: 'invalid_request_error', message: 'x' } } }), 502, 'misconfigured', 1],
+    [() => ({ status: 404, json: { type: 'error', error: { type: 'not_found_error', message: 'model: x' } } }), 502, 'misconfigured', 1],
+    [() => ({ status: 413, json: { type: 'error', error: { type: 'request_too_large', message: 'x' } } }), 502, 'too_large', 1],
+    [() => okJson({}, { stop_reason: 'refusal', content: [] }), 422, 'refused', 1],
+    [() => okJson({ narrative: 'half' }, { stop_reason: 'max_tokens' }), 502, 'truncated', 1],
+    [() => ({ status: 200, raw: '{"content":[{"type":"text","text":"not json"}],"stop_reason":"end_turn"}' }), 502, 'bad_response', 1],
   ];
-  for (const [fn, status, kind] of cases) {
+  for (const [fn, status, kind, sent] of cases) {
     reply = fn; fresh();
+    const c0 = calls.length;
     const n0 = H.db.one(`SELECT COUNT(*) n FROM notes`).n;
     const r = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', format: 'SOAP', source_text: 'Session' });
     assert.equal(r.status, status, `${kind}: ${JSON.stringify(r.data)}`);
@@ -335,7 +341,10 @@ test('provider failures: rate limit, down, overloaded, refusal, cut off, unreada
     const a = lastAudit('ai.draft'); assert.equal(a.success, 0); assert.equal(JSON.parse(a.details).outcome, kind);
     assert.equal(H.db.one(`SELECT outcome FROM ai_usage ORDER BY rowid DESC LIMIT 1`).outcome, kind);
     if (kind === 'rate_limited') assert.equal(r.data.retry_after, '30');
+    if (kind === 'misconfigured') assert.match(r.data.error, /refused the request \(check the model setting/);
+    assert.equal(calls.length - c0, sent, `${kind}: requests sent`);
   }
+  // A timeout is not retried: the deadline (SUDS_AI_TIMEOUT_MS) covers the retry too.
   process.env.SUDS_AI_TIMEOUT_MS = '1000';
   try {
     reply = () => ({ ...okJson({ narrative: 'late', gaps: [] }), delay: 1600 });
@@ -354,6 +363,42 @@ test('provider failures: rate limit, down, overloaded, refusal, cut off, unreada
     const st = (await clin.get('/api/ai/status')).data;
     assert.equal(st.available, false); assert.equal(st.code, 'endpoint');
   } finally { process.env.SUDS_AI_BASE_URL = url; }
+});
+
+test('one retry: a rate limit with a short retry-after, then a draft; recorded once, as a draft', async () => {
+  fresh();
+  let n = 0;
+  reply = () => (++n === 1 ? { status: 429, json: { type: 'error', error: { type: 'rate_limit_error', message: 'x' } }, headers: { 'retry-after': '0' } } : okJson({ narrative: 'after a retry', gaps: [] }));
+  const c0 = calls.length; const u0 = H.db.one(`SELECT COUNT(*) n FROM ai_usage`).n;
+  const r = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'Session' });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(calls.length - c0, 2, 'the request was sent twice');
+  assert.equal(calls[calls.length - 1].raw, calls[calls.length - 2].raw, 'the same request both times');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM ai_usage`).n, u0 + 1);
+  assert.equal(H.db.one(`SELECT outcome FROM ai_usage ORDER BY rowid DESC LIMIT 1`).outcome, 'ok');
+  const AI = require('../server/ai-copilot');
+  assert.equal(AI.retryWait('0'), 0); assert.equal(AI.retryWait('10'), 10000); assert.equal(AI.retryWait('11'), null, 'over 10 s: no retry');
+  assert.ok(AI.retryWait(null) >= 1000 && AI.retryWait(null) < 1500);
+});
+
+test('failed calls do not use up the monthly cap; drafts, refusals and cut-off drafts do', async () => {
+  fresh();
+  const u0 = (await admin.get('/api/ai/settings')).data.usage;
+  assert.equal((await admin.put('/api/ai/settings', { monthly_cap: u0.calls + 1 })).status, 200);
+  try {
+    reply = () => ({ status: 401, json: { type: 'error', error: { type: 'authentication_error', message: 'x' } } });
+    for (let i = 0; i < 3; i++) { fresh(); assert.equal((await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'x' })).status, 502); }
+    const u1 = (await admin.get('/api/ai/settings')).data.usage;
+    assert.equal(u1.calls, u0.calls, 'three failed calls: no draft counted');
+    assert.equal(u1.failed, u0.failed + 3); assert.equal(u1.attempts, u0.attempts + 3);
+    assert.equal((await clin.get('/api/ai/status')).data.available, true, 'the cap is not reached by failures');
+    fresh(); reply = () => okJson({}, { stop_reason: 'refusal', content: [] });
+    assert.equal((await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'x' })).status, 422);
+    const st = (await clin.get('/api/ai/status')).data;
+    assert.equal(st.code, 'cap', 'a refusal is a draft the provider did the work for: it counts');
+  } finally {
+    assert.equal((await admin.put('/api/ai/settings', { monthly_cap: 500 })).status, 200);
+  }
 });
 
 test('the monthly cap: once reached, no call is sent until next month', async () => {

@@ -196,7 +196,10 @@ const config = {
   ai: {
     get apiKey() { return process.env.ANTHROPIC_API_KEY || ''; },
     get baseUrl() { return (process.env.SUDS_AI_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, ''); },
-    get timeoutMs() { const v = Number(process.env.SUDS_AI_TIMEOUT_MS || 90000); return Number.isFinite(v) && v >= 1000 ? v : 90000; },
+    // 180 s (1.17.0; 90 s until the engineering review of its candidate, M4): the request is not streamed, asks for
+    // up to 16,000 output tokens (server/ai-copilot.js MAX_TOKENS) and the default model always thinks, so a long
+    // transcript can take minutes. It is the whole deadline, the one retry included.
+    get timeoutMs() { const v = Number(process.env.SUDS_AI_TIMEOUT_MS || 180000); return Number.isFinite(v) && v >= 1000 ? v : 180000; },
   },
   // Off by default: GET /api/metrics answers 404 unless this is set, and requires it as a bearer token
   // when it is (no PHI in it, but row counts and session activity are not for just anyone who can reach the
