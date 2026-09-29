@@ -55,6 +55,7 @@ function recordBreakGlass(ctx, { clientId, noteId = null, reason }) {
   return id;
 }
 function canRead(ctx, note) {
+  if (!require('../rules/notes').mayReadCounseling(ctx.user, note)) return false; // a SUD counseling note (1.16.1)
   if (auth.hasPerm(ctx.user, kindPerm(note.kind, 'read')) || auth.hasPerm(ctx.user, kindPerm(note.kind, 'write'))) return true;
   if (note.kind === 'clinical' && auth.hasPerm(ctx.user, 'notes:clinical:breakglass') && breakGlassReason(ctx)) return 'breakglass';
   return false;
@@ -124,6 +125,7 @@ module.exports = (r) => {
     }
     const where = ['n.deleted_at IS NULL', `n.kind IN (${kinds.map(() => '?').join(',') || "''"})`]; const params = [...kinds];
     const cf = auth.caseloadFilter(ctx.user, 'n.client_id'); where.push(cf.sql); params.push(...cf.params);
+    const sud = require('../rules/notes').counselingFilter(ctx.user, 'n'); where.push(sud.sql); params.push(...sud.params); // counseling notes (1.16.1)
     for (const [q, col] of [['client_id', 'n.client_id'], ['kind', 'n.kind'], ['status', 'n.status'], ['author_id', 'n.author_id'], ['source', 'n.source']]) { const v = ctx.query.get(q); if (v) { where.push(`${col}=?`); params.push(v); } }
     if (ctx.query.get('mine') === '1') { where.push('n.author_id=?'); params.push(ctx.user.id); }
     if (ctx.query.get('unsigned') === '1') where.push("n.status='draft'");
@@ -247,6 +249,7 @@ module.exports = (r) => {
   // Why a note cannot be countersigned by this user, or null. Shared by the single and the batch route.
   function cosignRefusal(ctx, n) {
     if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'read')) && !auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) return `You cannot read ${n.kind} notes`;
+    if (!require('../rules/notes').mayReadCounseling(ctx.user, n)) return 'You cannot read SUD counseling notes';
     if (n.status === 'draft') return 'The author has not signed this note yet';
     if (n.author_id === ctx.user.id) return 'A note cannot be countersigned by its own author';
     if (n.cosigned_at) return 'This note has already been countersigned';

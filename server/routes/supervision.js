@@ -52,11 +52,12 @@ module.exports = (r) => {
       // A note is here because the author's account requires countersignature, or because the author asked
       // for a review of this one (cosign_requested) -- a navigator flagging a hard contact is a request
       // to any supervisor, so the supervised-staff filter does not narrow those.
-      out.awaiting_cosignature = named(ctx, db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.signed_at, n.title_enc, n.cosign_requested, u.display_name AS author, c.client_code, ${NAME_COLS}
+      out.awaiting_cosignature = named(ctx, db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.signed_at, n.title_enc, n.cosign_requested, n.counseling_note, n.author_id, n.cosigned_by, u.display_name AS author, c.client_code, ${NAME_COLS}
         FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
         WHERE n.deleted_at IS NULL AND n.status<>'draft' AND n.cosigned_at IS NULL AND n.author_id<>? AND ((n.cosign_required=1 AND ${sf.sql}) OR n.cosign_requested=1)
         ORDER BY n.signed_at LIMIT 100`, ctx.user.id, ...sf.params))
-        .map(x => ({ ...x, title: x.title_enc ? decrypt(x.title_enc) : null, title_enc: undefined }));
+        // A SUD counseling note's title only for someone who may read it (server/rules/notes.js, 1.16.1).
+        .map(({ counseling_note, cosigned_by, ...x }) => ({ ...x, title: x.title_enc && require('../rules/notes').mayReadCounseling(ctx.user, { counseling_note, author_id: x.author_id, cosigned_by }) ? decrypt(x.title_enc) : null, title_enc: undefined }));
       // author_id: who a "Remind author" to-do goes to (views/supervision.js, POST /api/tasks).
       out.unsigned_notes = named(ctx, db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS},
           (n.created_at < ?) AS overdue

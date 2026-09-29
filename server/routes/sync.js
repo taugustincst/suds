@@ -80,13 +80,15 @@ function droppedClients(user, since) {
 //    device keeps what it has and receives the rest, as at its first sync. A redacted table whose permission
 //    changed either way is re-sent the same way, so the device holds the amounts, or the placeholders, it may.
 const SCOPE_V = 'v1';
+const COUNSEL = require('../rules/notes');
 function scopePerms() {
   const s = new Set(['clients:all', 'records:manage-others', 'notes:clinical:read']);
   for (const t of SYNC.tables) { if (t.readPerm) s.add(t.readPerm); if (t.redact) s.add(t.redact.perm); if (t.unlinked) s.add(t.unlinked.all); }
   return [...s].sort();
 }
 function syncScopeKey(user) {
-  return [SCOPE_V, `caseload=${auth.caseloadRestricted(user) ? 1 : 0}`, ...scopePerms().map(p => `${p}=${auth.hasPerm(user, p) ? 1 : 0}`)].join(';');
+  // counseling: whether every SUD counseling note is readable (1.16.1, server/rules/notes.js readsCounseling).
+  return [SCOPE_V, `caseload=${auth.caseloadRestricted(user) ? 1 : 0}`, ...scopePerms().map(p => `${p}=${auth.hasPerm(user, p) ? 1 : 0}`), `counseling=${COUNSEL.readsCounseling(user) ? 1 : 0}`].join(';');
 }
 function parseScopeKey(key) {
   const parts = String(key || '').split(';');
@@ -101,6 +103,8 @@ function scopeChange(user, sent) {
   const prevKey = sent === 'legacy' ? syncScopeKey(auth.asBefore1_16(user)) : sent;
   const prev = parseScopeKey(prevKey); const cur = parseScopeKey(syncScopeKey(user));
   if (!prev) return null;
+  // A device that synced before 1.16.1 was sent the counseling notes of every clinical note it could read.
+  if (!('counseling' in prev)) prev.counseling = prev['notes:clinical:read'] !== false;
   const change = { widened: false, redacted: false, caseloadNarrowed: false, lost: new Set() };
   const redactPerms = new Set(SYNC.tables.filter(t => t.redact).map(t => t.redact.perm));
   for (const [k, now] of Object.entries(cur)) {
@@ -139,6 +143,12 @@ function scopeDrops(user, change) {
     const cf = auth.caseloadFilter(user, 'n.client_id');
     const notes = db.all(`SELECT n.id FROM notes n WHERE n.kind='clinical' AND ${cf.sql}`, ...cf.params).map(r => r.id);
     // Addenda first: the device removes children before what they hang off.
+    for (const id of notes) for (const a of db.all(`SELECT id FROM note_addenda WHERE note_id=?`, id)) rows.push(['note_addenda', a.id]);
+    for (const id of notes) rows.push(['notes', id]);
+  }
+  if (lost.has('counseling') && !COUNSEL.readsCounseling(user)) {
+    const cf = auth.caseloadFilter(user, 'n.client_id'); const sud = COUNSEL.counselingFilter(user, 'n');
+    const notes = db.all(`SELECT n.id FROM notes n WHERE n.kind='clinical' AND NOT ${sud.sql} AND ${cf.sql}`, ...sud.params, ...cf.params).map(r => r.id);
     for (const id of notes) for (const a of db.all(`SELECT id FROM note_addenda WHERE note_id=?`, id)) rows.push(['note_addenda', a.id]);
     for (const id of notes) rows.push(['notes', id]);
   }
@@ -343,9 +353,11 @@ function exportInto(out, user, raw, cursor) {
     if (cursor) rows = rows.filter(r => r.updated_at <= cursor);
     if (t.name === 'users') rows = rows.map(r => ({ ...(r.id === user.id ? r : { ...r, password_hash: 'scrypt$0$0$0$AA==$AA==' }), mfa_secret_enc: null, mfa_enabled: 0 })); // devices get own password hash for offline login; never MFA secrets
     if (t.name === 'notes' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => r.kind !== 'clinical'); // minimum necessary
+    if (t.name === 'notes') rows = rows.filter(r => COUNSEL.mayReadCounseling(user, r)); // SUD counseling notes (1.16.1)
     if (t.readPerm && !auth.hasPerm(user, t.readPerm)) rows = []; // minimum necessary (clinical assessments, the care plan, spending)
     if (t.redact && !auth.hasPerm(user, t.redact.perm)) rows = rows.map(r => ({ ...r, ...t.redact.cols })); // fund names without their money
     if (t.name === 'note_addenda' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => db.one(`SELECT kind FROM notes WHERE id=?`, r.note_id)?.kind !== 'clinical');
+    if (t.name === 'note_addenda' && !COUNSEL.readsCounseling(user)) rows = rows.filter(r => { const n = db.one(`SELECT counseling_note, author_id, cosigned_by FROM notes WHERE id=?`, r.note_id); return !n || COUNSEL.mayReadCounseling(user, n); });
     const exported = [];
     for (const r of rows) {
       const e = exportRow(t, r);

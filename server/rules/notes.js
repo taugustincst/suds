@@ -100,3 +100,19 @@ module.exports = define({
   },
 });
 module.exports.closeSignReminders = closeSignReminders;
+
+/**
+ * Who may read a SUD counseling note (42 CFR §2.11), restricted by design from 1.16.1 (the owner's decision): its
+ * author, its co-signer, and staff who write clinical notes (notes:clinical:write: clinicians and supervisors).
+ * notes:clinical:read alone (a navigator, from 1.16.0) reads every other clinical note, never a counseling note,
+ * and break-glass does not open one. As §2.31(b) keeps a counseling note out of any consent but one given for it
+ * alone, and 45 CFR 164.508(a)(2) treats psychotherapy notes apart: an analogy, not a certification. Every door
+ * that reads notes asks this (routes/notes.js, the client timeline, sync pull and its scope key).
+ */
+const readsCounseling = (user) => auth.hasPerm(user, 'notes:clinical:write');
+const mayReadCounseling = (user, n) => !Number(n.counseling_note) || readsCounseling(user) || n.author_id === user.id || (!!n.cosigned_by && n.cosigned_by === user.id);
+/** The same rule as SQL on a notes alias. */
+function counselingFilter(user, alias = 'n') {
+  return readsCounseling(user) ? { sql: '1=1', params: [] } : { sql: `(${alias}.counseling_note=0 OR ${alias}.author_id=? OR ${alias}.cosigned_by IS ?)`, params: [user.id, user.id] };
+}
+Object.assign(module.exports, { readsCounseling, mayReadCounseling, counselingFilter });

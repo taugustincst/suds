@@ -44,6 +44,14 @@ see every client, so "who may change this row" can no longer be left to the case
   colleague's pending amount, and then approve it. Approving is now refused to anyone who recorded or changed the
   entry, read from the audit trail (without a migration there is no creator column on these rows); a device's
   entry recorded for someone else is audited for it (`sync.record`). Returning an entry is unchanged.
+- **SUD counseling notes are restricted by design** (the owner's decision). A counseling note (42 CFR §2.11) is
+  read only by its author, its co-signer and staff who write clinical notes (`notes:clinical:write`); a navigator's
+  `notes:clinical:read` reads every other clinical note, never a counseling note, and break-glass does not open one.
+  Enforced on the note, note lists, the client timeline, the supervision queue and sync: a navigator's device is not
+  sent one or its addenda, and a device that received them before is told to remove them at its next sync.
+- **Changes to a client's record are told to their primary worker** (the owner's decision). Anyone who can see a
+  client may still update the record; when the editor is not on the client's care team, the primary worker gets a
+  to-do (the bell) naming who changed which fields, never the values. An edit arriving by sync does the same.
 - **Smaller fixes (L1–L5).** A problem-list change arriving by sync is kept in the problem's history; a device
   cannot ask for a review of another worker's signed note; a spreadsheet import needs `imports:write` (as the
   Import page does), checks each record against its table's shape and rules, and audits each record; a goal's or

@@ -499,6 +499,9 @@ module.exports = (r) => {
     const stamp = db.now();
     db.run(`UPDATE clients SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => cols[k]), stamp, row.id);
     audit.log({ user: ctx.user, action: 'client.update', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, details: { fields: Object.keys(v) } });
+    // Someone off the care team changed it: the primary worker is told which fields (server/rules/clients.js).
+    const was = M.decryptRow(row); const same = (x) => (typeof x === 'boolean' ? Number(x) : Array.isArray(x) ? x.join(',') : x) ?? '';
+    require('../rules/clients').notifyPrimary(ctx.user, row.id, Object.keys(v).filter(k => String(same(v[k])) !== String(same(was[k]))));
     return { ok: true, updated_at: stamp };
   });
 
@@ -548,8 +551,9 @@ module.exports = (r) => {
       add(x.occurred_at, () => ({ kind: 'intervention', id: x.id, at: x.occurred_at, title: O.labelOf('INTERVENTION_TYPES', x.type), detail: x.summary_enc ? decrypt(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf('OUTCOMES', x.outcome) : null, location: x.location } }));
     for (const x of db.all(`SELECT c.*, u.display_name AS worker FROM calls c JOIN users u ON u.id=c.user_id WHERE client_id=? ${cut('c.started_at')} ORDER BY c.started_at DESC LIMIT ?`, id, ...cutP, per))
       add(x.started_at, () => ({ kind: 'call', id: x.id, at: x.started_at, title: `${x.direction} ${x.method === 'text' ? 'text message' : 'call'} (${O.labelOf('CALL_CONTACT_TYPES', x.contact_type)})`, detail: x.summary_enc ? decrypt(x.summary_enc) : (x.purpose_enc ? decrypt(x.purpose_enc) : null), worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf(x.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES', x.outcome) : null, crisis: !!x.crisis } }));
-    for (const x of db.all(`SELECT n.id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.source,u.display_name AS worker FROM notes n JOIN users u ON u.id=n.author_id WHERE client_id=? AND deleted_at IS NULL ${cut('n.occurred_at')} ORDER BY n.occurred_at DESC LIMIT ?`, id, ...cutP, per))
-      if (x.kind === 'admin' || canClinical) add(x.occurred_at, () => ({ kind: 'note', id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt(x.title_enc) : O.labelOf('NOTE_FORMATS', x.format)}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } }));
+    const sud = require('../rules/notes');
+    for (const x of db.all(`SELECT n.id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.source,n.counseling_note,n.author_id,n.cosigned_by,u.display_name AS worker FROM notes n JOIN users u ON u.id=n.author_id WHERE client_id=? AND deleted_at IS NULL ${cut('n.occurred_at')} ORDER BY n.occurred_at DESC LIMIT ?`, id, ...cutP, per))
+      if ((x.kind === 'admin' || canClinical) && sud.mayReadCounseling(ctx.user, x)) add(x.occurred_at, () => ({ kind: 'note', id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt(x.title_enc) : O.labelOf('NOTE_FORMATS', x.format)}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } }));
     for (const x of db.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=? ${cut('r.referred_at')} ORDER BY r.referred_at DESC LIMIT ?`, id, ...cutP, per))
       add(x.referred_at, () => ({ kind: 'referral', id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes_enc ? decrypt(x.notes_enc) : null, worker: x.worker, meta: { status: x.status, outcome: x.outcome_enc ? decrypt(x.outcome_enc) : null } }));
     for (const x of db.all(`SELECT t.*, u.display_name AS worker FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE client_id=? ORDER BY COALESCE(t.completed_at, t.due_at, t.created_at) DESC LIMIT ?`, id, per))

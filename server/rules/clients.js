@@ -118,7 +118,12 @@ module.exports = define({
   beforeStore(row, c) { if (!c.existing && !row.created_by) row.created_by = c.user.id; },
   storeRow(o, row) { o.client_code = freeClientCode(o.client_code, row.id); },
   afterApply(row, o, c) {
-    if (c.existing) return;
+    if (c.existing) {
+      // An edit from a device tells the primary worker as one made here does (notifyPrimary): field names only.
+      const byCol = Object.fromEntries(Object.entries(module.exports.columns).map(([k, col]) => [col, k]));
+      notifyPrimary(c.user, c.existing.id, c.changed().map(col => byCol[col]).filter(Boolean));
+      return;
+    }
     // The office's own auto-assignment for a client created in the field, unless the device is sending the one
     // it made (server/rules/assignments.js), in which case that row is the assignment. A navigator or clinician
     // is assigned whether or not they are caseload-scoped, as POST /api/clients does: from 1.16.0 they hold
@@ -132,4 +137,34 @@ module.exports = define({
   },
 });
 module.exports.freeClientCode = freeClientCode;
+
+/**
+ * Anyone who can see a client may update their record (1.16.1, the owner's decision); when someone who is not on
+ * the client's care team does, the client's primary worker is told: a to-do on their list, due now so the bell
+ * shows it, naming who changed which fields -- field names only, never a value (the to-do's text is encrypted like
+ * every to-do's, and the audit entry names the fields). The same editor's further changes within a day are added to
+ * the open to-do rather than raising another. Called by PUT /api/clients/:id and, for a device's edit, afterApply.
+ */
+function notifyPrimary(user, clientId, fields) {
+  if (!fields.length || db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${auth.activeAssignment()}`, clientId, user.id)) return [];
+  const { encrypt, decrypt, uuid } = require('../crypto');
+  const code = (db.one(`SELECT client_code FROM clients WHERE id=?`, clientId) || {}).client_code || 'a client';
+  const ref = `Reference: client record change by ${user.id}`;
+  const since = new Date(Date.now() - 86400000).toISOString();
+  const told = [];
+  for (const { user_id: primary } of db.all(`SELECT DISTINCT user_id FROM assignments WHERE client_id=? AND role_on_case='primary' AND user_id<>? AND ${auth.activeAssignment()}`, clientId, user.id)) {
+    const open = db.all(`SELECT id, description_enc FROM tasks WHERE assigned_to=? AND client_id=? AND created_by=? AND status='open' AND created_at >= ?`, primary, clientId, user.id, since)
+      .map(t => { try { return { id: t.id, desc: decrypt(t.description_enc || '') }; } catch { return { id: t.id, desc: '' }; } }).find(t => t.desc.includes(ref));
+    const before = open ? (/^Changed: (.*)$/m.exec(open.desc) || [])[1] : '';
+    const all = [...new Set([...String(before || '').split(', ').filter(Boolean), ...fields.map(f => f.replace(/_/g, ' '))])];
+    const title = `${user.display_name || user.username} changed ${code}'s record (${all.join(', ')})`.slice(0, 200);
+    const desc = `Changed: ${all.join(', ')}\nYou are this client's primary worker; open their record to see what changed.\n${ref}`;
+    if (open) db.run(`UPDATE tasks SET title_enc=?, description_enc=?, due_at=?, updated_at=? WHERE id=?`, encrypt(title), encrypt(desc), db.now(), db.now(), open.id);
+    else db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, uuid(), clientId, primary, user.id, encrypt(title), encrypt(desc), db.now(), 'normal');
+    require('../audit').log({ user, action: 'client.change_notice', entity: 'client', entityId: clientId, clientId, details: { notified: primary, fields } });
+    told.push(primary);
+  }
+  return told;
+}
+module.exports.notifyPrimary = notifyPrimary;
 module.exports.contactProblems = contactProblems;

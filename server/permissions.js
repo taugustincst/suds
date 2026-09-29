@@ -68,7 +68,7 @@ const DEFS = [
   ['budget:manage', 'Manage the budget', 'Funding sources, budget lines and allocations.'],
   ['notes:admin:read', 'Read admin notes', 'Non-clinical case notes.'],
   ['notes:admin:write', 'Write admin notes', 'Create and edit non-clinical case notes.'],
-  ['notes:clinical:read', 'Read clinical notes', 'Clinical notes, including SUD counseling notes (clinicians, supervisors and, read only, navigators by default from 1.16.0). Deny it to keep clinical notes from a person.'],
+  ['notes:clinical:read', 'Read clinical notes', 'Clinical notes (clinicians, supervisors and, read only, navigators by default from 1.16.0). A SUD counseling note is read only by its author, its co-signer and staff who write clinical notes (1.16.1). Deny it to keep clinical notes from a person.'],
   ['notes:clinical:write', 'Write clinical notes', 'Create and sign clinical notes.'],
   ['notes:clinical:breakglass', 'Clinical notes via break-glass', 'Open a clinical note only with a written reason; audited and queued for supervisor review.'],
   ['notes:cosign', 'Countersign notes', 'Countersign trainee notes.'],
