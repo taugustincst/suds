@@ -6,7 +6,7 @@
 //      no client says "Anonymous" (no empty link to #/client/null); M6 a colleague's referral says the outcome can
 //      still be recorded rather than "view only";
 //   L2 "My hours logged" is not among the program's tiles; L3 Visits name the client as Calls do; L4 a new visit
-//      starts where the worker's own latest visit was; L6 a supervisor editing a colleague's overdose event is told
+//      starts at the programme's default location when nothing is remembered; L6 a supervisor editing a colleague's overdose event is told
 //      whose it is; L7 no permission is labelled "(all)"; L8 Finance's welcome tips are things Finance can do;
 //      L9 Finance and Read-only are not offered as to-do assignees; L10 the two-step banner is one line on a phone.
 // Pages and dialogs it changes are checked with axe (WCAG 2.1 A/AA).
@@ -87,14 +87,14 @@ try {
   const named = await page.$$eval('.main td[data-label=Client] a', as => as.map(a => a.textContent));
   ok(named.some(t => /,/.test(t)), 'visits name the client (Last, First) as Calls and To-dos do', named.slice(0, 3).join(' | '));
   await axe(page, 'Visits with an anonymous visit');
-  // L4: with no visit remembered on this browser, a new visit starts where Maria's own latest one was.
-  const where = await page.evaluate(async () => { const { state } = await import('/app.js'); return (state.constants.option_lists.LOCATIONS || []).map(e => e.code).find(c => !['office', 'phone', 'telehealth'].includes(c)); });
-  await api('POST', '/api/interventions', { type: 'outreach', occurred_at: new Date(Date.now() + 60000).toISOString(), location: where, modality: 'in_person' });
+  // L4: with no visit remembered on this browser, a new visit starts at the programme's default location (the
+  // street for a harm-reduction programme), not a fixed "Office" and not another visit fetched for it.
+  const where = (await api('GET', '/api/meta/constants')).data.DEFAULT_LOCATION;
   await api('PUT', '/api/me/prefs', { visit_last: null });
   await page.evaluate(async () => { const { state } = await import('/app.js'); delete state.prefs.visit_last; });
   await page.evaluate(async () => (await import('/views/interventions.js')).openInterventionForm(null, {}));
   await page.waitForSelector('.modal select[name=location]', { state: 'attached' });
-  eq(await page.$eval('.modal select[name=location]', s => s.value), where, 'a new visit starts at the location of Maria\'s latest visit, not the office');
+  eq(await page.$eval('.modal select[name=location]', s => s.value), where, "with nothing remembered, a new visit starts at the programme's default location");
   await closeModals(page);
 
   // M4 / M6: Referrals at 1280 px.

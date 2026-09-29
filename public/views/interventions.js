@@ -153,11 +153,9 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   // A new visit (not a repeat, which has its own) starts where this worker's last one was: same type, place
   // and way of meeting, while those are still on the programme's lists.
   if (!values && !template) {
-    let last = prefs.get(VISIT_LAST, null);
-    // Nothing logged through this form yet (a new browser, or visits that came in by sync or import): where this
-    // worker's own latest visit was, not always the office (r7 L4).
-    if (!last) { try { const { rows } = await get('/api/interventions?mine=1&limit=1', { quiet: true }); if (rows && rows[0]) last = { location: rows[0].location, modality: rows[0].modality }; } catch { /* the programme default */ } }
-    last = last || {};
+    // The last visit logged here, else the programme's default location (a harm-reduction programme's is the
+    // street, DEFAULT_LOCATION), never another visit fetched for it.
+    const last = prefs.get(VISIT_LAST, null) || {};
     // A preset (Supplies' Hand out) says what kind of visit this is; the last visit only fills what it leaves open.
     if (usable('INTERVENTION_TYPES', last.type) && !(preset && preset.type)) seed.type = last.type;
     if (usable('LOCATIONS', last.location) && !(preset && preset.location)) seed.location = last.location;

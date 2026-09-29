@@ -107,11 +107,11 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
     const vp = p.viewportSize();
     await p.setViewportSize({ width: 390, height: 844 }); await settle(p);
     const b = await p.$eval('[data-banner="mfa-required"]', (el) => ({ h: el.getBoundingClientRect().height, text: el.querySelector('span').textContent,
-      visible: [...el.querySelector('span').childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(''),
+      visible: el.querySelector('span').innerText, // what is rendered: the short wording on a phone (1.16.2)
       setup: el.querySelector('a[data-mfa-setup]')?.getAttribute('href'), setupText: el.querySelector('a[data-mfa-setup]')?.textContent, dismiss: !!el.querySelector('button[aria-label=Dismiss]'),
       linkH: el.querySelector('a[data-mfa-setup]')?.getBoundingClientRect().height, sw: document.documentElement.scrollWidth }));
     ok(b.h <= 64, `the two-step banner is one compact line at 390 px (${Math.round(b.h)}px tall)`, b);
-    ok(/Two-step verification required (by .*\d{4}|now)/.test(b.visible), 'the deadline is in the visible text', b.visible);
+    ok(/(Two-step verification required|2-step due) (by .*\d{4}|now)/.test(b.visible), 'the deadline is in the visible text', b.visible);
     ok(/will not let you in until it is done/.test(b.text), 'and what happens after it is said to a screen reader', b.text);
     eq(b.setup, '#/profile?mfa=1', 'a "Set up" action goes to enrolment'); eq(b.setupText, 'Set up', 'labelled "Set up"');
     ok(b.dismiss, 'and it can be dismissed');
