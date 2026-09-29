@@ -76,6 +76,12 @@ export function calomsDefaults(cfg, client) {
 }
 
 const RECORD_LABEL = { admission: 'Admission', discharge: 'Discharge', annual_update: 'Annual update' };
+/** "3 clients", "1 client". */
+const n = (count, word) => `${fmt.num(count)} ${word}${Number(count) === 1 ? '' : 's'}`;
+/** A server message's ISO dates ("opened 2026-05-02") as the rest of the page shows dates ("May 2, 2026"). */
+const localDates = (msg) => String(msg || '').replace(/\b(\d{4}-\d{2}-\d{2})(T[\d:.]+Z?)?\b/g, (m0, d) => fmt.date(d));
+/** The upload's log detail ("2026-09-29 BATCH-42"): the day uploaded, and the DHCS reference if one was given. */
+const uploadDetail = (s) => { const m = /^(\d{4}-\d{2}-\d{2})\s*(.*)$/.exec(String(s || '')); return m ? `Uploaded on ${fmt.date(m[1])}${m[2] ? ` · DHCS reference ${m[2]}` : ''}` : String(s || ''); };
 const sevBadge = (s) => badge(s === 'fatal' ? 'Fatal' : 'Warning', s === 'fatal' ? 'danger' : 'warn');
 
 /** One episode's CalOMS records: what it has, what is wrong with each, and what it still needs. */
@@ -91,7 +97,7 @@ export async function calomsEpisodeDialog(episode, { onChange } = {}) {
       const { plain, caloms } = splitCaloms(cfg, type, data);
       const body = { record_type: type, provider_id: caloms.provider_id, record_date: plain.record_date || undefined, answers: caloms.answers };
       const r = rec ? await put(`/api/caloms/records/${rec.id}`, body) : await post(`/api/episodes/${episode.id}/caloms`, body);
-      m.close(); toast(r.warnings && r.warnings.length ? `Saved, with ${r.warnings.length} warning(s)` : 'CalOMS record saved', 'ok');
+      m.close(); toast(r.warnings && r.warnings.length ? `Saved, with ${r.warnings.length} warning${r.warnings.length === 1 ? '' : 's'}` : 'CalOMS record saved', 'ok');
       box.close(); calomsEpisodeDialog(episode, { onChange }); if (onChange) onChange();
     } });
     const m = modal(`CalOMS ${RECORD_LABEL[type].toLowerCase()} — episode from ${fmt.date(episode.opened_at)}`, f, { wide: true });
@@ -103,16 +109,101 @@ export async function calomsEpisodeDialog(episode, { onChange } = {}) {
       { label: 'Record', render: r => RECORD_LABEL[r.record_type] },
       { label: 'Date', render: r => fmt.date(r.record_date) },
       { label: 'Provider', key: 'provider_id' },
-      { label: 'Problems', render: r => r.issues.length ? h('ul', { class: 'small', style: { margin: 0, paddingLeft: '1rem' } }, r.issues.map(i => h('li', {}, sevBadge(i.severity), ' ', i.message))) : badge('Ready', 'ok') },
+      { label: 'Problems', render: r => r.issues.length ? h('ul', { class: 'small', style: { margin: 0, paddingLeft: '1rem' } }, r.issues.map(i => h('li', {}, sevBadge(i.severity), ' ', localDates(i.message)))) : badge('Ready', 'ok') },
       { label: 'Sent', render: r => (r.extracted_at ? fmt.date(r.extracted_at) : '—') },
       { label: '', render: r => can('episodes:write') && (r.record_type !== 'discharge' || episode.status === 'closed') ? h('button', { class: 'btn sm', 'data-caloms-edit': r.record_type, onClick: (e) => { e.stopPropagation(); editRecord(r.record_type, r); } }, 'Edit') : null },
     ], rows, { rowLabel: r => `${RECORD_LABEL[r.record_type]} ${r.record_date}` }) : emptyState('No CalOMS records yet', can('episodes:write') ? 'Complete the admission record below (Still needed).' : 'A supervisor, clinician or anyone who may edit episodes completes the admission record.'),
-    d.expected.length ? h('div', { class: 'mt' }, h('h3', {}, 'Still needed'), h('ul', {}, d.expected.map(x => h('li', {}, x.message, ' ',
+    d.expected.length ? h('div', { class: 'mt' }, h('h3', {}, 'Still needed'), h('ul', {}, d.expected.map(x => h('li', {}, localDates(x.message), ' ',
       can('episodes:write') && x.record_type !== 'discharge' ? h('button', { class: 'btn sm primary', 'data-caloms-add': x.record_type, onClick: () => editRecord(x.record_type, null, x.record_type === 'annual_update' ? fmt.today() : null) }, x.record_type === 'admission' ? 'Complete admission record' : 'Record annual update') : null,
       x.record_type === 'discharge' ? h('span', { class: 'small muted' }, '(recorded with the discharge: reopen and discharge again, or ask a supervisor)') : null)))) : null,
     can('episodes:write') && rows.some(r => r.record_type === 'admission') ? h('div', { class: 'btn-row' }, h('button', { class: 'btn sm', 'data-caloms-add': 'annual_update', onClick: () => editRecord('annual_update') }, '+ Annual update')) : null);
   const box = modal(`CalOMS Tx — episode from ${fmt.date(episode.opened_at)}`, body, { wide: true });
   return box;
+}
+
+// ---- CalOMS provider IDs: one row of fields per provider (r10 M6) ----
+// It was one textarea line per provider, "ID, name | legal name | NPI": a comma and pipes mixed, a line typed with
+// one more "|" put the legal name in the NPI's place, and the error named "providers.0.npi". Now each part has its
+// own field, and a problem names the provider and what was typed.
+const PROVIDER_ID_RE = /^[0-9A-Za-z]{4,10}$/;
+/** The NPI check digit (Luhn over 80840 + the first nine digits), as server/caloms.js validNpi. */
+export function validNpi(v) {
+  if (!/^\d{10}$/.test(String(v || ''))) return false;
+  const digits = `80840${String(v).slice(0, 9)}`.split('').map(Number);
+  let sum = 0;
+  for (let i = digits.length - 1, dbl = true; i >= 0; i--, dbl = !dbl) { let d = digits[i]; if (dbl) { d *= 2; if (d > 9) d -= 9; } sum += d; }
+  return (10 - (sum % 10)) % 10 === Number(String(v)[9]);
+}
+function providerEditor(initial) {
+  const rows = h('div', { class: 'caloms-prov-rows' });
+  const err = h('div', { class: 'err', role: 'alert', 'data-caloms-providers-error': '1' });
+  let n = 0;
+  const renumber = () => [...rows.children].forEach((r, i) => {
+    r.querySelector('legend').textContent = `Provider ${i + 1}`;
+    const rm = r.querySelector('[data-prov-remove]'); rm.setAttribute('aria-label', `Remove this provider (provider ${i + 1})`);
+  });
+  const addRow = (p = {}, focus = false) => {
+    const k = n++;
+    const input = (key, label, attrs = {}) => {
+      const id = `cal-prov-${k}-${key}`;
+      const i = h('input', { type: 'text', id, value: p[key] || '', 'data-prov': key, autocomplete: 'off', spellcheck: 'false', ...attrs });
+      return h('div', { class: 'field' }, h('label', { for: id }, label), i);
+    };
+    const row = h('fieldset', { class: 'caloms-prov', 'data-caloms-provider-row': '1' }, h('legend', {}, 'Provider'),
+      h('div', { class: 'grid cols-2' },
+        input('id', 'Provider ID *', { maxLength: 10, 'aria-required': 'true' }), input('name', 'Site or program name', { maxLength: 80 }),
+        input('legal_name', 'Legal name of the provider organization', { maxLength: 120 }), input('npi', 'NPI (10 digits)', { maxLength: 10, inputMode: 'numeric' })),
+      h('div', { class: 'err small', 'data-prov-error': '1' }),
+      h('button', { type: 'button', class: 'btn sm ghost', 'data-prov-remove': '1', onClick: () => { row.remove(); renumber(); addBtn.focus(); } }, 'Remove this provider'));
+    rows.append(row); renumber();
+    if (focus) row.querySelector('input').focus();
+  };
+  const addBtn = h('button', { type: 'button', class: 'btn sm', 'data-prov-add': '1', onClick: () => addRow({}, true) }, '+ Add a provider');
+  for (const p of initial) addRow(p);
+  if (!initial.length) addRow();
+  const el = h('div', { class: 'span', 'data-caloms-providers': '1' },
+    h('h3', { class: 'eyebrow' }, 'CalOMS provider IDs'),
+    h('p', { class: 'small muted' }, 'The provider ID DHCS assigned to each reporting site or program (4 to 10 letters or digits). A county server reporting for several provider organizations adds each one\'s legal name and NPI.'),
+    rows, addBtn, err);
+  const clear = () => { err.textContent = ''; el.querySelectorAll('[data-prov-error]').forEach(x => { x.textContent = ''; }); el.querySelectorAll('[aria-invalid]').forEach(x => x.removeAttribute('aria-invalid')); };
+  /** Show problems: [{ row (0-based) | null, key, message }]; focuses the first field named. */
+  const show = (problems) => {
+    clear();
+    const all = [...rows.children]; let first = null;
+    for (const p of problems) {
+      const r = p.row === null || p.row === undefined ? null : all[p.row];
+      const box = r ? r.querySelector('[data-prov-error]') : err;
+      box.textContent = box.textContent ? `${box.textContent} ${p.message}` : p.message;
+      const i = r && p.key ? r.querySelector(`[data-prov="${p.key}"]`) : null;
+      if (i) { i.setAttribute('aria-invalid', 'true'); if (!first) first = i; }
+    }
+    err.textContent = err.textContent || `${problems.length === 1 ? 'One provider needs' : 'Some providers need'} changing before the settings can be saved: ${problems.map(p => p.message).join(' ')}`;
+    (first || addBtn).focus();
+  };
+  /** The providers typed, and what is wrong with them (in words that name the provider and what was typed). */
+  const read = () => {
+    const out = []; const problems = []; const seen = new Map();
+    [...rows.children].forEach((r, i) => {
+      const v = (k) => r.querySelector(`[data-prov="${k}"]`).value.trim();
+      const p = { id: v('id'), name: v('name'), legal_name: v('legal_name'), npi: v('npi').replace(/[\s-]/g, '') };
+      if (!p.id && !p.name && !p.legal_name && !p.npi) return;
+      const who = `Provider ${i + 1}`;
+      if (!p.id) problems.push({ row: i, key: 'id', message: `${who}: enter the provider ID DHCS assigned.` });
+      else if (!PROVIDER_ID_RE.test(p.id)) problems.push({ row: i, key: 'id', message: `${who}: "${p.id}" is not a CalOMS provider ID, which is 4 to 10 letters or digits.` });
+      else if (seen.has(p.id.toUpperCase())) problems.push({ row: i, key: 'id', message: `${who}: ${p.id} is already listed as provider ${seen.get(p.id.toUpperCase()) + 1}.` });
+      else seen.set(p.id.toUpperCase(), i);
+      if (p.npi && !validNpi(p.npi)) problems.push({ row: i, key: 'npi', message: /^\d{10}$/.test(p.npi) ? `${who}: ${p.npi} is not a valid NPI (its check digit does not match). Check the number on the NPI registry.` : `${who}: "${p.npi}" is not an NPI, which is 10 digits.` });
+      out.push({ id: p.id, name: p.name, ...(p.legal_name ? { legal_name: p.legal_name } : {}), ...(p.npi ? { npi: p.npi } : {}) });
+    });
+    return { providers: out, problems };
+  };
+  /** A refusal from the server (field keys such as providers.0.npi), in the same words. */
+  const serverProblems = (fields) => Object.entries(fields || {}).map(([k, msg]) => {
+    const m = /^providers\.(\d+)\.(\w+)$/.exec(k);
+    if (!m) return { row: null, key: null, message: k === 'providers' ? `${String(msg).charAt(0).toUpperCase()}${String(msg).slice(1)}.` : String(msg) };
+    return { row: Number(m[1]), key: m[2], message: `Provider ${Number(m[1]) + 1}: the ${m[2] === 'npi' ? 'NPI' : m[2] === 'id' ? 'provider ID' : m[2].replace(/_/g, ' ')} ${msg}.` };
+  });
+  return { el, read, show, clear, serverProblems };
 }
 
 // ---- the page ----
@@ -136,9 +227,6 @@ route('caloms', async (r) => {
     if (!can('settings:manage')) return null;
     const f = form([
       { name: 'enabled', label: 'This program reports CalOMS Tx (adds the CalOMS questions to admission and discharge)', type: 'checkbox', span: true, value: cfg.enabled },
-      { name: 'providers', label: 'CalOMS provider IDs, one per line: ID, name | legal name | NPI', type: 'textarea', rows: 3, span: true,
-        value: cfg.providers.map(p => [p.name ? `${p.id}, ${p.name}` : p.id, ...(p.legal_name || p.npi ? [p.legal_name || '', p.npi || ''] : [])].join(' | ').replace(/( \| )+$/, '')).join('\n'),
-        help: 'The provider ID DHCS assigned to each reporting site or program (4 to 10 letters or digits). A county server reporting for several provider organizations can add each one\'s legal name and NPI after a "|".' },
       { name: 'start_date', label: 'CalOMS records expected for episodes opened on or after', type: 'date', value: cfg.start_date || '' },
       { type: 'section', label: 'Monthly run' },
       { name: 'schedule', label: 'Check the month before and prepare its file', type: 'select', noBlank: true, value: (cfg.schedule && cfg.schedule.frequency) || 'off', options: [{ value: 'off', label: 'Off — produce files by hand' }, { value: 'monthly', label: 'Every month' }],
@@ -146,13 +234,22 @@ route('caloms', async (r) => {
       { name: 'schedule_day', label: 'On this day of the month', type: 'number', min: 1, max: 28, step: 1, value: (cfg.schedule && cfg.schedule.day) || 5 },
       { name: 'split_by_provider', label: 'One file per provider ID (a county server reporting for several providers)', type: 'checkbox', span: true, value: !!(cfg.schedule && cfg.schedule.split_by_provider) },
     ], { submitText: 'Save CalOMS settings', onSubmit: async (d) => {
-      const providers = String(d.providers || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => {
-        const [head, legal, npi] = l.split('|').map(x => x.trim()); const [id, ...rest] = head.split(',');
-        return { id: id.trim(), name: rest.join(',').trim(), ...(legal ? { legal_name: legal } : {}), ...(npi ? { npi } : {}) };
-      });
-      await put('/api/caloms/settings', { enabled: !!d.enabled, providers, start_date: d.start_date || null, schedule: d.schedule, schedule_day: d.schedule_day ? Number(d.schedule_day) : undefined, split_by_provider: !!d.split_by_provider });
+      const { providers, problems } = provEd.read();
+      if (!problems.length && d.enabled && !providers.length) problems.push({ row: 0, key: 'id', message: 'Add at least one CalOMS provider ID before turning CalOMS reporting on.' });
+      if (problems.length) { provEd.show(problems); return; }
+      provEd.clear();
+      try { await put('/api/caloms/settings', { enabled: !!d.enabled, providers, start_date: d.start_date || null, schedule: d.schedule, schedule_day: d.schedule_day ? Number(d.schedule_day) : undefined, split_by_provider: !!d.split_by_provider }); }
+      catch (e) {
+        // A provider the server refused is shown on its own row; anything else goes to the form's own message.
+        const fields = (e.data && e.data.fields) || {};
+        const mine = Object.fromEntries(Object.entries(fields).filter(([k]) => /^providers(\.|$)/.test(k)));
+        if (Object.keys(mine).length) { provEd.show(provEd.serverProblems(mine)); if (Object.keys(mine).length === Object.keys(fields).length) return; e.data = { ...e.data, fields: Object.fromEntries(Object.entries(fields).filter(([k]) => !(k in mine))) }; }
+        throw e;
+      }
       toast('CalOMS settings saved', 'ok'); cached = null; go(from, to);
     } });
+    const provEd = providerEditor(cfg.providers || []);
+    f.querySelector('[data-field="start_date"]').before(provEd.el);
     return h('div', { class: 'card', 'data-caloms-settings': '1' }, h('h2', {}, 'Settings'), h('p', { class: 'small muted' }, 'Off by default: a prevention, outreach or navigation program that does not report CalOMS is never asked these questions.'), f);
   };
 
@@ -170,7 +267,7 @@ route('caloms', async (r) => {
         { label: 'Record', render: x => RECORD_LABEL[x.record_type] || x.record_type },
         { label: 'Date', render: x => fmt.date(x.record_date) },
         { label: 'Field', key: 'field_label' },
-        { label: 'Problem', key: 'message' },
+        { label: 'Problem', render: x => localDates(x.message) },
       ], v.rows, { rowLabel: x => `${x.severity} ${x.client_code} ${x.field_label}` }) : emptyState('No problems found', 'Every CalOMS record in this period passes the edit checks, and every episode has the records it needs.'));
   };
 
@@ -184,7 +281,7 @@ route('caloms', async (r) => {
       work.rows.length ? table([
         { label: 'Severity', render: x => sevBadge(x.severity) }, { label: 'Client', render: clientCell },
         { label: 'Record', render: x => RECORD_LABEL[x.record_type] || x.record_type }, { label: 'Date', render: x => fmt.date(x.record_date) },
-        { label: 'Field', key: 'field_label' }, { label: 'Problem', key: 'message' },
+        { label: 'Field', key: 'field_label' }, { label: 'Problem', render: x => localDates(x.message) },
         showAll ? { label: 'For', render: x => x.owner_name || h('span', { class: 'muted' }, 'Unassigned') } : null,
       ].filter(Boolean), work.rows, { rowLabel: x => `${x.severity} ${x.client_code} ${x.field_label}` }) : emptyState(showAll ? 'Nothing to fix' : 'Nothing for you to fix', 'Every CalOMS record in this period you are responsible for passes the edit checks.'));
   };
@@ -197,8 +294,9 @@ route('caloms', async (r) => {
   };
   const STATUS = { prepared: ['Prepared — not sent', 'warn'], produced: ['Produced', 'ok'], discarded: ['Discarded', 'info'] };
   const produce = async (x) => {
-    if (!await confirmDialog('Produce this file for DHCS', `Produce the prepared CalOMS Tx file for ${fmt.date(x.period_from)} – ${fmt.date(x.period_to)}${x.provider_id ? ` (provider ${x.provider_id})` : ''}. Each of its ${x.clients} client(s) gets an entry in their accounting of disclosures and its records are marked as sent. Then upload the file that downloads to DHCS unchanged.`, { okText: 'Produce file' })) return;
-    try { const res = await post(`/api/caloms/submissions/${x.id}/produce`, {}); toast(`Produced: ${res.clients_disclosed} client(s) accounted for.`, 'ok'); await downloadSubmission({ ...x, sha256: res.sha256 }); go(from, to); }
+    const held = Number((x.counts || {}).held_back) || 0;
+    if (!await confirmDialog('Produce this file for DHCS', `Produce the prepared CalOMS Tx file for ${fmt.date(x.period_from)} – ${fmt.date(x.period_to)}${x.provider_id ? ` (provider ${x.provider_id})` : ''}. ${x.clients === 1 ? 'Its 1 client gets an entry in their' : `Each of its ${x.clients} clients gets an entry in their`} accounting of disclosures and its records are marked as sent. ${held ? `${n(held, 'record')} with fatal errors ${held === 1 ? 'was' : 'were'} held back and ${held === 1 ? 'is' : 'are'} not in this file: fix ${held === 1 ? 'it' : 'them'} and prepare a new file. ` : ''}Then upload the file that downloads to DHCS unchanged.`, { okText: 'Produce file' })) return;
+    try { const res = await post(`/api/caloms/submissions/${x.id}/produce`, {}); toast(`Produced: ${n(res.clients_disclosed, 'client')} accounted for.`, 'ok'); await downloadSubmission({ ...x, sha256: res.sha256 }); go(from, to); }
     catch (e) { toast(e.message, 'error'); }
   };
   const discard = async (x) => { if (!await confirmDialog('Discard this prepared file', 'It was never sent. The records stay as they are; prepare a new file when they are ready.', { danger: true, okText: 'Discard' })) return; await post(`/api/caloms/submissions/${x.id}/discard`, {}); toast('Discarded', 'ok'); go(from, to); };
@@ -213,7 +311,7 @@ route('caloms', async (r) => {
     const d = await get(`/api/caloms/submissions/${x.id}/events`);
     const ACTION = { prepared: 'Prepared', produced: 'Produced (accounted)', downloaded: 'Downloaded', uploaded: 'Recorded as uploaded to DHCS', discarded: 'Discarded' };
     modal(`Submission log — ${x.file_name}`, h('div', { 'data-caloms-log': x.id }, h('p', { class: 'small mono' }, `SHA-256 ${d.sha256}`),
-      table([{ label: 'When', render: e => fmt.dt(e.created_at) }, { label: 'What', render: e => ACTION[e.action] || e.action }, { label: 'Who', key: 'who' }, { label: 'Detail', render: e => (e.action === 'uploaded' ? e.detail : '') }], d.rows, { rowLabel: e => `${e.action} ${e.created_at}` })), { wide: true });
+      table([{ label: 'When', render: e => fmt.dt(e.created_at) }, { label: 'What', render: e => ACTION[e.action] || e.action }, { label: 'Who', key: 'who' }, { label: 'Detail', render: e => (e.action === 'uploaded' ? uploadDetail(e.detail) : '') }], d.rows, { rowLabel: e => `${e.action} ${e.created_at}` })), { wide: true });
   };
   const provs = (cfg && cfg.providers) || [];
   const extractCard = () => {
@@ -230,22 +328,22 @@ route('caloms', async (r) => {
       h('div', { class: 'row' },
         h('button', { class: 'btn', disabled: !cfg.enabled, 'data-caloms-download': '1', onClick: () => downloadCsv(`/api/caloms/extract?from=${from}&to=${to}`) }, 'Download preview (not for submission)'),
         h('button', { class: 'btn primary', disabled: !cfg.enabled, 'data-caloms-submitted': '1', onClick: async () => {
-          if (!await confirmDialog('Produce the submission file for DHCS', `Produce the CalOMS Tx submission for ${fmt.date(from)} – ${fmt.date(to)}. It includes client names and dates of birth. Each client in it gets an entry in their accounting of disclosures (a disclosure required by law) and its records are marked as sent. ${v && v.summary.blocked ? `${v.summary.blocked} record(s) with fatal errors will be held back. ` : ''}Send the file that downloads to DHCS unchanged.`, { okText: 'Produce submission file' })) return;
+          if (!await confirmDialog('Produce the submission file for DHCS', `Produce the CalOMS Tx submission for ${fmt.date(from)} – ${fmt.date(to)}. It includes client names and dates of birth. Each client in it gets an entry in their accounting of disclosures (a disclosure required by law) and its records are marked as sent. ${v && v.summary.blocked ? `${n(v.summary.blocked, 'record')} with fatal errors will be held back: ${v.summary.blocked === 1 ? 'it is' : 'they are'} not in the file. ` : ''}Send the file that downloads to DHCS unchanged.`, { okText: 'Produce submission file' })) return;
           try {
             const r = await post('/api/caloms/submissions', { from, to, provider_id: provSel && provSel.value ? provSel.value : undefined });
-            toast(`Submission produced: ${r.clients_disclosed} client(s) accounted for as disclosed to DHCS.`, 'ok');
+            toast(`Submission produced: ${n(r.clients_disclosed, 'client')} accounted for as disclosed to DHCS.`, 'ok');
             await downloadSubmission(r);
             go(from, to);
           } catch (e) { toast(e.message, 'error'); }
         } }, 'Produce submission file'),
         provSel,
         h('button', { class: 'btn ghost', disabled: !cfg.enabled, 'data-caloms-run': '1', onClick: async () => {
-          try { const res = await post('/api/caloms/schedule/run', { from, to }); toast(res.prepared.length ? `Checked: ${res.fatal} fatal error(s). ${res.prepared.length} file(s) prepared — produce each below to send it.` : `Checked: ${res.fatal} fatal error(s). Nothing ready to prepare.`, res.prepared.length ? 'ok' : 'error'); go(from, to); }
+          try { const res = await post('/api/caloms/schedule/run', { from, to }); toast(res.prepared.length ? `Checked: ${n(res.fatal, 'fatal error')}. ${n(res.prepared.length, 'file')} prepared — produce ${res.prepared.length === 1 ? 'it' : 'each'} below to send it.` : `Checked: ${n(res.fatal, 'fatal error')}. Nothing ready to prepare.`, res.prepared.length ? 'ok' : 'error'); go(from, to); }
           catch (e) { toast(e.message, 'error'); }
         } }, 'Check and prepare (not sent)')),
       cfg.enabled ? null : h('p', { class: 'small muted' }, 'CalOMS reporting is off for this program.'),
       h('p', { class: 'small muted', 'data-caloms-no-dhcs': '1' }, 'SUDS does not send anything to DHCS and holds no DHCS credentials: a person uploads the produced file through the county\'s DHCS channel and records the upload here.'),
-      cfg.schedule && cfg.schedule.frequency === 'monthly' ? h('p', { class: 'small', 'data-caloms-schedule': '1' }, `Monthly run: on day ${cfg.schedule.day}, for the month before${cfg.schedule.split_by_provider ? ', one file per provider' : ''}.${cfg.schedule.last ? ` Last run ${fmt.dt(cfg.schedule.last.ran_at)} for ${fmt.date(cfg.schedule.last.from)} – ${fmt.date(cfg.schedule.last.to)}: ${cfg.schedule.last.fatal} fatal error(s), ${cfg.schedule.last.prepared.length} file(s) prepared.` : ''}`) : null,
+      cfg.schedule && cfg.schedule.frequency === 'monthly' ? h('p', { class: 'small', 'data-caloms-schedule': '1' }, `Monthly run: on day ${cfg.schedule.day}, for the month before${cfg.schedule.split_by_provider ? ', one file per provider' : ''}.${cfg.schedule.last ? ` Last run ${fmt.dt(cfg.schedule.last.ran_at)} for ${fmt.date(cfg.schedule.last.from)} – ${fmt.date(cfg.schedule.last.to)}: ${n(cfg.schedule.last.fatal, 'fatal error')}, ${n(cfg.schedule.last.prepared.length, 'file')} prepared.` : ''}`) : null,
       rows.length ? h('div', { 'data-caloms-submissions': '1' }, h('h3', {}, 'Submissions'), table([
         { label: 'Period', render: x => h('div', {}, `${fmt.date(x.period_from)} – ${fmt.date(x.period_to)}`, x.provider_id ? h('div', { class: 'small muted' }, `Provider ${x.provider_id}`) : null) },
         { label: 'Status', render: x => h('div', { 'data-caloms-status-of': x.id }, badge(...(STATUS[x.status] || [x.status, 'info'])), x.origin === 'scheduled' ? h('div', { class: 'small muted' }, 'Monthly run') : null,
@@ -268,7 +366,7 @@ route('caloms', async (r) => {
     const summary = h('div', { class: 'small muted', 'data-handoff-summary': '1' }, 'Checking the period…');
     // Checked against the recipient in the form: a consent covers only the recipient it names.
     const check = (recipient) => get(`/api/handoff/summary?from=${from}&to=${to}&recipient=${encodeURIComponent(recipient || '')}`).then(s => {
-      summary.textContent = `${s.rows} encounter row(s) for ${s.clients} client(s), ${fmt.mins(s.minutes)} in total.${s.without_consent.length ? ` No consent that can authorise the hand-off to ${recipient || 'this recipient'} (a 42 CFR Part 2 consent naming it, such as the single treatment, payment and operations consent) on file for: ${s.without_consent.join(', ')} — with the consent basis they are left out.` : ''}${s.restricted ? ` ${s.restricted} client(s) have an agreed restriction: you will be asked to confirm the file respects it.` : ''}`;
+      summary.textContent = `${n(s.rows, 'encounter row')} for ${n(s.clients, 'client')}, ${fmt.mins(s.minutes)} in total.${s.without_consent.length ? ` No consent that can authorise the hand-off to ${recipient || 'this recipient'} (a 42 CFR Part 2 consent naming it, such as the single treatment, payment and operations consent) on file for: ${s.without_consent.join(', ')} — with the consent basis they are left out.` : ''}${s.restricted ? ` ${n(s.restricted, 'client')} ${s.restricted === 1 ? 'has' : 'have'} an agreed restriction: you will be asked to confirm the file respects it.` : ''}`;
     }).catch(e => { summary.textContent = e.message; });
     const f = form([
       { name: 'recipient', label: 'Recipient', required: true, value: 'County EHR / billing unit', span: true },

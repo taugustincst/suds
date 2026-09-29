@@ -13,7 +13,7 @@ import { makeChecks, until, settle } from './assert.mjs';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const PW = 'Navigator2026!!';
-const { ok, eq, fail, finish } = makeChecks('r10-lp');
+const { ok, eq, fail, finish, noStrayText } = makeChecks('r10-lp');
 const require = createRequire(import.meta.url);
 let axeSource = null; try { axeSource = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8'); } catch { /* checked in axe() */ }
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium/chrome' }).catch(() => chromium.launch());
@@ -43,6 +43,8 @@ async function axe(page, where) {
     return r.violations.map(x => `${x.id}: ${x.nodes.slice(0, 3).map(n => n.target.join(' ')).join(' | ')}`);
   });
   eq(v.length, 0, `${where}: no WCAG 2.1 A/AA findings${v.length ? ' — ' + v.join('; ') : ''}`);
+  // Every page and dialog checked here: no "null" or "undefined" written out as text (r10 H1, assert.mjs).
+  await noStrayText(page, where);
 }
 const closeModals = async (page) => { for (let i = 0; i < 5 && await page.$('.modal-bg'); i++) { await page.keyboard.press('Escape'); await settle(page); } };
 const toastText = (page, re) => until(async () => { const t = await page.$$eval('#toasts .toast', ts => ts.map(x => x.textContent).join(' | ')); return re.test(t) ? t : null; }, { timeout: 6000 });

@@ -105,13 +105,37 @@ test('revert puts the fields back as a new revision, never deleting history; onl
   assert.equal(h.find(x => x.id === r.data.revision).reverts, bad);
   // Reverting it again: the fields no longer hold what it set, so it is refused and named (never a value).
   const again = await C.primary.post(`/api/clients/${id}/history/${bad}/revert`, {});
-  assert.equal(again.status, 409); assert.match(again.data.error, /(Phone, Date of birth|Date of birth, Phone) have been changed again since/);
+  assert.equal(again.status, 409); assert.match(again.data.error, /(Phone and Date of birth|Date of birth and Phone) have been changed again since/);
   assert.ok(!/0666|0101/.test(JSON.stringify(again.data)));
   // A supervisor off the care team may revert (the revert of the revert), and the primary worker is told.
   const sup = await C.sup.post(`/api/clients/${id}/history/${r.data.revision}/revert`, {});
   assert.equal(sup.status, 200, JSON.stringify(sup.data));
   assert.equal((await C.primary.get(`/api/clients/${id}`)).data.client.phone, '916-555-0666');
   assert.ok(audits('client.change_notice', id).some(n => n.user_id === U.sup && n.d.revision === sup.data.revision), 'the notice names the revision');
+});
+
+test('a revert blocked by a later change names the field, and the other fields can still be put back (r10 L3)', async () => {
+  const id = await newClient({ city: 'Davis' });
+  const opened = (await C.primary.get(`/api/clients/${id}`)).data.client.updated_at;
+  const bad = (await C.other.put(`/api/clients/${id}`, { phone: '916-555-0777', dob: '1992-02-02', city: 'Woodland' })).data.revision;
+  assert.equal((await C.other.put(`/api/clients/${id}`, { phone: '916-555-0888' })).status, 200);
+  // The history was opened before either edit: the refusal still says which field and what can be done.
+  const r = await C.primary.post(`/api/clients/${id}/history/${bad}/revert`, { if_updated_at: opened });
+  assert.equal(r.status, 409);
+  assert.match(r.data.error, /^Phone has been changed again since, so it cannot be put back\./);
+  assert.match(r.data.error, /(Date of birth and City|City and Date of birth) can still be put back on their own/);
+  assert.deepEqual(r.data.changed_since, ['phone']);
+  assert.deepEqual(r.data.revertible.map(x => x.field).sort(), ['city', 'dob']);
+  assert.ok(!/0777|0888|1992|Woodland/.test(JSON.stringify(r.data)), 'no values in the refusal');
+  // The others, on their own (with the record as it is now).
+  const now = (await C.primary.get(`/api/clients/${id}`)).data.client;
+  const part = await C.primary.post(`/api/clients/${id}/history/${bad}/revert`, { fields: ['dob', 'city'], if_updated_at: now.updated_at });
+  assert.equal(part.status, 200, JSON.stringify(part.data));
+  const after2 = (await C.primary.get(`/api/clients/${id}`)).data.client;
+  assert.equal(after2.dob, '1990-02-03'); assert.equal(after2.city, 'Davis'); assert.equal(after2.phone, '916-555-0888', 'the later change stays');
+  assert.deepEqual([...audits('client.revert', id).at(-1).d.fields].sort(), ['city', 'dob']);
+  // Fields the change never touched are refused.
+  assert.equal((await C.primary.post(`/api/clients/${id}/history/${bad}/revert`, { fields: ['last_name'] })).status, 400);
 });
 
 test('revert follows the record\'s own rules: a name is never put back to nothing', async () => {

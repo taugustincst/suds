@@ -105,6 +105,33 @@ export async function passRecoveryCode(page) {
 export const PLAYWRIGHT_WEBKIT_LINUX = (process.env.SUDS_BROWSER || 'chromium') === 'webkit' && process.platform === 'linux';
 export const WEBKIT_LINUX_SW_CACHE = 'Playwright WebKit on Linux does not reproduce iOS service-worker cache storage/offline emulation; checked on a real iPhone instead (docs/ADOPTION.md §4)';
 
+/**
+ * Text a page must never show: a null or undefined written out as a word ("nullnull" under My shift, r10 H1 —
+ * the DOM's own append() and replaceChildren() write a null as the text "null", where h() leaves it out), NaN, or
+ * "[object Object]". Looks at every text node outside script/style/form fields and user-written blocks (a note's
+ * <pre>, code, a record's stored JSON such as the audit log's details), and at the names and hints a screen reader or a pointer shows (aria-label, title, placeholder,
+ * alt). Returns one line per finding, naming the element and the nearest dialog, card or section.
+ */
+export const STRAY_TEXT_PROBE = () => {
+  const out = [];
+  const where = (el) => { const box = el.closest('.modal, [data-ai-panel], [data-outreach-shift], .card, section, main, nav, header'); return `${el.tagName.toLowerCase()}${el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : ''} in ${box ? (box.getAttribute('aria-label') || box.className || box.tagName).toString().slice(0, 40) : 'body'}`; };
+  const bad = (t) => /\b(null|undefined|NaN)\b|(null|undefined){2,}|\[object \w+\]/.test(t);
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = w.nextNode(); n; n = w.nextNode()) {
+    const p = n.parentElement;
+    if (!p || p.closest('script, style, textarea, template, noscript, code, pre, [contenteditable]')) continue;
+    const t = n.textContent.trim();
+    // A record shown as its stored JSON (the audit log's details) says null legitimately.
+    if (t && bad(t) && !/^[[{]"/.test(t)) out.push(`${where(p)}: "${t.slice(0, 60)}"`);
+  }
+  for (const el of document.body.querySelectorAll('[aria-label], [title], [placeholder], img[alt]')) {
+    for (const a of ['aria-label', 'title', 'placeholder', 'alt']) { const v = el.getAttribute(a); if (v && /\b(undefined|null|NaN)\b|\[object \w+\]/.test(v)) out.push(`${where(el)} [${a}]: "${v.slice(0, 60)}"`); }
+  }
+  return [...new Set(out)];
+};
+/** STRAY_TEXT_PROBE on the page as it is now. */
+export const strayText = (page) => page.evaluate(STRAY_TEXT_PROBE);
+
 export function makeChecks(name) {
   const failures = [];
   const results = [];
@@ -152,5 +179,11 @@ export function makeChecks(name) {
     return all.length === 0;
   };
 
-  return { ok, eq, fail, okUnless, finish, failures, results, skipped };
+  /** ok() that the page shows no stray "null", "undefined", NaN or "[object Object]" (STRAY_TEXT_PROBE). */
+  const noStrayText = async (page, where) => {
+    const found = await strayText(page).catch((e) => [`the check could not run: ${e.message}`]);
+    return ok(found.length === 0, `${where}: no stray "null" or "undefined" text`, found.length ? found.slice(0, 8) : undefined);
+  };
+
+  return { ok, eq, fail, okUnless, finish, noStrayText, failures, results, skipped };
 }

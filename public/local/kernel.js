@@ -13860,15 +13860,27 @@ var require_clients = __commonJS({
         }
         const rev2 = REV.one(row.id, ctx.params.rev);
         if (!rev2) throw notFound("That change was not found on this client's record");
-        require_crud().assertFresh(ctx, row, "client");
+        const only = Array.isArray(ctx.body && ctx.body.fields) ? ctx.body.fields.map(String) : null;
+        const changes = only ? rev2.changes.filter((ch) => only.includes(ch.field)) : rev2.changes;
+        if (only && !changes.length) throw badRequest("None of those fields were changed by that change", { fields: { fields: "must name fields that change changed" } });
         const now2 = M.decryptRow(row);
-        const since = rev2.changes.filter((ch) => !REV.same(now2[ch.field], ch.after));
+        const since = changes.filter((ch) => !REV.same(now2[ch.field], ch.after));
         if (since.length) {
+          const rest = changes.filter((ch) => !since.includes(ch));
+          const names = (list) => {
+            const l = list.map((ch) => ch.label);
+            return l.length === 1 ? l[0] : `${l.slice(0, -1).join(", ")} and ${l[l.length - 1]}`;
+          };
           audit3.log({ user: ctx.user, action: "client.revert.refused", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, success: false, details: { revision: rev2.id, changed_since: since.map((ch) => ch.field) } });
-          throw new HttpError3(409, `${since.map((ch) => ch.label).join(", ")} ${since.length === 1 ? "has" : "have"} been changed again since. Put back the later change first, or edit the record.`, { changed_since: since.map((ch) => ch.field) });
+          throw new HttpError3(
+            409,
+            `${names(since)} ${since.length === 1 ? "has" : "have"} been changed again since, so ${since.length === 1 ? "it" : "they"} cannot be put back. Put back the later change first, or edit the record.${rest.length ? ` ${names(rest)} can still be put back on ${rest.length === 1 ? "its" : "their"} own.` : ""}`,
+            { changed_since: since.map((ch) => ch.field), revertible: rest.map((ch) => ({ field: ch.field, label: ch.label })) }
+          );
         }
-        const body = Object.fromEntries(rev2.changes.map((ch) => [ch.field, ch.before]));
-        const v = validate(body, Object.fromEntries(rev2.changes.map((ch) => [ch.field, { ...shape[ch.field], required: false }])), { partial: true, existing: row });
+        require_crud().assertFresh(ctx, row, "client");
+        const body = Object.fromEntries(changes.map((ch) => [ch.field, ch.before]));
+        const v = validate(body, Object.fromEntries(changes.map((ch) => [ch.field, { ...shape[ch.field], required: false }])), { partial: true, existing: row });
         for (const f of ["first_name", "last_name"]) if (f in v && !v[f]) throw badRequest("This change cannot be put back: it would leave the client without a name. Edit the record instead.");
         const done = updateClient(ctx, row, v, { reverts: rev2.id });
         audit3.log({ user: ctx.user, action: "client.revert", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reverted: rev2.id, revision: done.revision, fields: Object.keys(v) } });
@@ -22869,11 +22881,12 @@ var require_ai_copilot = __commonJS({
         reason = r;
       };
       if (config2.local) no("device", "The AI copilot runs only on an office server. SUDS on this device never sends anything to an AI provider.");
-      else if (!s.attestation) no("no_agreement", "The AI copilot is off: an administrator has not recorded the programme's agreement (BAA / QSOA) with the AI provider.");
-      else if (!s.enabled) no("off", "The AI copilot is switched off for this programme (Settings \u2192 AI copilot).");
+      else if (!s.attestation) no("no_agreement", "The AI copilot is off: an administrator has not recorded the program's agreement (BAA / QSOA) with the AI provider.");
+      else if (!s.enabled) no("off", "The AI copilot is switched off for this program (Settings \u2192 AI copilot).");
       else if (!keyConfigured()) no("no_key", "The AI copilot is not configured on this server (no provider API key). Tell your administrator.");
       else if (endpointProblem()) no("endpoint", `The AI copilot is misconfigured on this server: ${endpointProblem()}.`);
-      else if (used >= s.monthly_cap) no("cap", `This programme has used its ${s.monthly_cap} AI drafts for this month. Write the documentation yourself; the limit resets on the 1st.`);
+      else if (!s.monthly_cap) no("cap", "The AI copilot is paused for this program. Write the documentation yourself as usual.");
+      else if (used >= s.monthly_cap) no("cap", `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? "" : "s"} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
       return { available: !reason, reason, code, enabled: s.enabled, attested: !!s.attestation, key_configured: keyConfigured(), model: s.model, monthly_cap: s.monthly_cap, used_this_month: used };
     }
     var esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -33379,7 +33392,7 @@ var require_settlement_outcomes = __commonJS({
           category: catKey(x.f),
           hiaa: x.f.settlement_hiaa || null,
           category_label: USE[x.f.settlement_use]?.label || "No settlement category recorded",
-          schedule: USE[x.f.settlement_use]?.schedule || "Uncategorised",
+          schedule: USE[x.f.settlement_use]?.schedule || "Uncategorized",
           hiaa_label: x.f.settlement_hiaa ? HIAA[x.f.settlement_hiaa] || null : null,
           profile,
           profile_label: MAP.PROFILES[profile].label,
@@ -33394,7 +33407,7 @@ var require_settlement_outcomes = __commonJS({
         return {
           key: k,
           label: USE[k]?.label || "No settlement category recorded",
-          schedule: USE[k]?.schedule || "Uncategorised",
+          schedule: USE[k]?.schedule || "Uncategorized",
           profile,
           profile_label: MAP.PROFILES[profile].label,
           indicators: MAP.PROFILES[profile].indicators,
@@ -35281,7 +35294,7 @@ var require_notes2 = __commonJS({
         const w = "WHERE " + where.join(" AND ");
         const pageIds = db3.all(`SELECT n.rowid AS rid FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset).map((x) => x.rid);
         const byId = new Map(db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
-      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,${require_client_name().SELECT},
+      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,n.ai_assisted,u.display_name AS author,cs.display_name AS cosigner,c.client_code,${require_client_name().SELECT},
       (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda, n.rowid AS rid
       FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id WHERE n.rowid IN (SELECT value FROM json_each(?))`, JSON.stringify(pageIds)).map(({ rid, ...x }) => [rid, x]));
         const rows = pageIds.map((id) => byId.get(id));
@@ -37003,6 +37016,7 @@ var require_referral_links = __commonJS({
         }
       } else {
         if (!code) return { ...base, code_required: true };
+        if (String(code).replace(/[\s-]/g, "").length !== 6 || /\D/.test(String(code).replace(/[\s-]/g, ""))) throw new HttpError3(400, "An access code is 6 digits. Check the code and enter it again.", { code_required: true, malformed: true });
         if (hashCode(link.id, code) !== link.code_hash) {
           db3.run(`UPDATE referral_links SET failed_attempts=failed_attempts+1, updated_at=? WHERE id=?`, db3.now(), link.id);
           const left = MAX_FAILED - (link.failed_attempts + 1);

@@ -100,6 +100,12 @@ test('wrong codes lock the link; unknown, expired and revoked links get the same
   const k = await addConsent(c, consent('Lakeside Detox'));
   const made = await nav.post(`/api/referrals/${ref}/links`, { kind: 'packet', consent_id: k });
   const token = tokenOf(made.data.path); const wrong = made.data.code === '999999' ? '888888' : '999999';
+  // A code that is not six digits is a slip, not a guess: refused without using up one of the tries (r10 L6).
+  for (const slip of ['12345', '1234567', 'abcdef']) {
+    const r = await anon.post('/api/referral-links/open', { token, code: slip });
+    assert.equal(r.status, 400); assert.equal(r.data.malformed, true); assert.match(r.data.error, /6 digits/);
+  }
+  assert.equal(H.db.one(`SELECT failed_attempts FROM referral_links WHERE id=?`, made.data.id).failed_attempts, 0, 'no try used up');
   for (let i = 0; i < 4; i++) assert.equal((await anon.post('/api/referral-links/open', { token, code: wrong })).status, 401);
   const locked = await anon.post('/api/referral-links/open', { token, code: wrong });
   assert.equal(locked.status, 404);

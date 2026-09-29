@@ -542,12 +542,21 @@ details.section > summary .summary-heading { display: inline; font-size: 1rem; m
 .outreach-list { margin: 0 0 .75rem; padding-left: 1.1rem; } .outreach-list li { margin: .2rem 0; overflow-wrap: anywhere; }
 .outreach-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem 1rem; margin: 1rem 0 5rem; }
 .outreach-foot .check { margin-top: 0; min-height: 44px; }
+.outreach-where { margin-bottom: 1rem; }
+.outreach-newshift { min-height: 3rem; min-width: 3rem; }
+/* The screen is itself the logger: the floating + Log button would only cover the − / + counters (r10 M2). */
+body:has([data-outreach]) .fab { display: none; }
+/* State reporting › Settings: one row of fields per CalOMS provider (views/caloms.js providerEditor). */
+.caloms-prov { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .75rem .75rem; margin: 0 0 .75rem; min-width: 0; }
+.caloms-prov legend { font-weight: 650; padding: 0 .25rem; }
+.caloms-prov .grid { gap: .25rem .75rem; }
 
 /* ---- Settlement outcomes (views/settlement.js): a card per fund, spending beside outcomes; prints as a report. ---- */
 .settlement-fund .kv { margin-bottom: .75rem; }
 .settlement-note { max-width: 60rem; }
 @media print { .settlement-print-head { display: block !important; } .settlement-controls { display: none !important; } .settlement-fund { break-inside: avoid; } }
 .settlement-print-head { display: none; }
+.settlement-controls .field:has(#so-counts) { flex: 1 1 14rem; } .settlement-controls #so-counts { width: 100%; max-width: 100%; }
 
 /* ---- Navigation (1.14.0 usability): a sideways-scrolling tab strip says it scrolls, the welcome card on
    Home, and the phone's Clients shortcut. ---- */

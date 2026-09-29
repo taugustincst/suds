@@ -71,11 +71,12 @@ function status() {
   let reason = null; let code = null;
   const no = (c, r) => { code = c; reason = r; };
   if (config.local) no('device', 'The AI copilot runs only on an office server. SUDS on this device never sends anything to an AI provider.');
-  else if (!s.attestation) no('no_agreement', 'The AI copilot is off: an administrator has not recorded the programme\'s agreement (BAA / QSOA) with the AI provider.');
-  else if (!s.enabled) no('off', 'The AI copilot is switched off for this programme (Settings → AI copilot).');
+  else if (!s.attestation) no('no_agreement', 'The AI copilot is off: an administrator has not recorded the program\'s agreement (BAA / QSOA) with the AI provider.');
+  else if (!s.enabled) no('off', 'The AI copilot is switched off for this program (Settings → AI copilot).');
   else if (!keyConfigured()) no('no_key', 'The AI copilot is not configured on this server (no provider API key). Tell your administrator.');
   else if (endpointProblem()) no('endpoint', `The AI copilot is misconfigured on this server: ${endpointProblem()}.`);
-  else if (used >= s.monthly_cap) no('cap', `This programme has used its ${s.monthly_cap} AI drafts for this month. Write the documentation yourself; the limit resets on the 1st.`);
+  else if (!s.monthly_cap) no('cap', 'The AI copilot is paused for this program. Write the documentation yourself as usual.');
+  else if (used >= s.monthly_cap) no('cap', `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? '' : 's'} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
   return { available: !reason, reason, code, enabled: s.enabled, attested: !!s.attestation, key_configured: keyConfigured(), model: s.model, monthly_cap: s.monthly_cap, used_this_month: used };
 }
 

@@ -217,12 +217,16 @@ test('a draft is never saved: no note is written; the author saves it, marked AI
   const sign = JSON.parse(lastAudit('note.sign').details);
   assert.equal(sign.ai_assisted, true); assert.equal(sign.ai_reviewed, true);
   assert.equal((await clin.get(`/api/notes/${saved.data.id}`)).data.note.ai_assisted, 1);
+  // The Notes list says which notes were AI-assisted, so a supervisor sees it without opening each (r10 L2).
+  const listed = (await clin.get(`/api/notes?client_id=${clientId}`)).data.rows;
+  assert.equal(listed.find(n => n.id === saved.data.id).ai_assisted, 1);
   // A signed note cannot be redrafted by the copilot.
   const redo = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', format: 'narrative', source_text: 'x', note_id: saved.data.id });
   assert.equal(redo.status, 400);
   // A note without AI text signs as before.
   const plain = await clin.post('/api/notes', { client_id: clientId, kind: 'clinical', content: 'Own words.', occurred_at: new Date().toISOString() });
   assert.equal((await clin.post(`/api/notes/${plain.data.id}/sign`, { password: 'StaffPassw0rd!x' })).status, 200);
+  assert.equal((await clin.get(`/api/notes?client_id=${clientId}`)).data.rows.find(n => n.id === plain.data.id).ai_assisted, 0);
 });
 
 test('Part 2: the copilot drafts only in the author\'s own note, for a client in their reach, of a kind they may write', async () => {
@@ -365,6 +369,19 @@ test('the monthly cap: once reached, no call is sent until next month', async ()
   assert.equal(calls.length, before);
   const st = (await clin.get('/api/ai/status')).data;
   assert.equal(st.code, 'cap'); assert.equal(st.used_this_month, used + 1);
+  assert.equal((await admin.put('/api/ai/settings', { monthly_cap: 500 })).status, 200);
+});
+
+test('a cap of 0 pauses the copilot, and says so in those words (r10 M3)', async () => {
+  fresh();
+  assert.equal((await admin.put('/api/ai/settings', { monthly_cap: 0 })).status, 200);
+  const before = calls.length;
+  const st = (await clin.get('/api/ai/status')).data;
+  assert.equal(st.available, false); assert.equal(st.code, 'cap');
+  assert.match(st.reason, /paused for this program/); assert.doesNotMatch(st.reason, /its 0/);
+  const r = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'x' });
+  assert.equal(r.status, 429); assert.match(r.data.error, /paused/);
+  assert.equal(calls.length, before, 'nothing is sent');
   assert.equal((await admin.put('/api/ai/settings', { monthly_cap: 500 })).status, 200);
 });
 

@@ -12,6 +12,9 @@
 //   5. Care plan suggestions, added one at a time (axe-clean dialog).
 //   6. CalOMS suggestions in the admission dialog, applied one by one.
 //   7. SUDS on this device: no copilot, and it says why.
+// And the frontline fixes of the r10 review: no panel or "Suggest with AI" at all while the copilot is off (M3);
+// a draft never replaces what the clinician wrote without asking, and can be undone (H2); focus goes to the draft
+// (M7); no "null" printed in a panel (H1); care plan suggestions need the clinician's words and a problem (M4).
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -22,7 +25,7 @@ const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const staticBase = process.env.SUDS_STATIC_URL || null;
 const PW = 'Navigator2026!!';
 const FAKE_PORT = Number(process.env.SUDS_AI_FAKE_PORT || 8097);
-const { ok, eq, fail, finish } = makeChecks('r10-ai');
+const { ok, eq, fail, finish, noStrayText } = makeChecks('r10-ai');
 const require = createRequire(import.meta.url);
 let axeSource = null; try { axeSource = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8'); } catch { /* checked below */ }
 const errors = [];
@@ -79,6 +82,8 @@ async function axe(page, where) {
     return r.violations.map(x => `${x.id}: ${x.nodes.slice(0, 3).map(n => n.target.join(' ')).join(' | ')}`);
   });
   eq(v.length, 0, `${where}: no WCAG 2.1 A/AA findings${v.length ? ' — ' + v.join('; ') : ''}`);
+  // Every page and dialog checked here: no "null" or "undefined" written out as text (r10 H1, assert.mjs).
+  await noStrayText(page, where);
 }
 const openPanel = async (page, key) => {
   await page.click(`[data-ai-panel="${key}"] > summary`);
@@ -86,6 +91,22 @@ const openPanel = async (page, key) => {
 };
 
 try {
+  // ------------------------------------------------------------------------------------------------ 0
+  // The copilot is off (the default): a clinician sees nothing of it.
+  {
+    const early = await session('kpatel', PW);
+    const c0 = await early.api('POST', '/api/clients', { first_name: 'Offa', last_name: 'Copilot', confirm_duplicate: true });
+    await early.page.evaluate(async (id) => (await import('./views/notes.js')).openNoteForm(null, { clientId: id, clientDisplay: 'Copilot, Offa' }), c0.data.id);
+    await early.page.waitForSelector('.modal select[name=format]'); await settle(early.page);
+    ok(!(await early.page.$('.modal [data-ai-panel]')), 'with the copilot off, the note form has no AI panel (r10 M3)');
+    await early.page.keyboard.press('Escape'); await until(async () => !(await early.page.$('.modal-bg')));
+    await early.go(`client/${c0.data.id}/careplan`);
+    ok(!(await early.page.$('[data-ai-careplan-open]')), 'and the care plan has no "Suggest with AI"');
+    await early.go(`client/${c0.data.id}/assessments`);
+    await early.page.click('[data-add-asam]'); await early.page.waitForSelector('.modal form'); await settle(early.page);
+    ok(!(await early.page.$('.modal [data-ai-panel]')), 'and the six-dimension assessment has no AI panel');
+    await early.ctx.close();
+  }
   // ------------------------------------------------------------------------------------------------ 1
   const admin = await session('admin', 'AdminPassw0rd!x');
   {
@@ -117,6 +138,15 @@ try {
     eq((await api('GET', '/api/ai/settings')).data.enabled, true, 'the copilot is on');
     await page.waitForSelector('[data-ai-usage]');
     await axe(page, 'Settings › AI copilot, agreement recorded and switched on');
+    const settingsText = await page.textContent('[data-ai-settings]');
+    ok(/resets on the 1st of each month/.test(settingsText) && !/UTC/.test(settingsText), 'the monthly cap help says when it resets, without "UTC"');
+    ok(!/programme|organisation/.test(settingsText), 'US spelling on the AI settings ("program", "organization")');
+    // A cap of 0 pauses it, and says so (not "used its 0 AI drafts").
+    const cap0 = (await api('GET', '/api/ai/settings')).data.monthly_cap;
+    eq((await api('PUT', '/api/ai/settings', { monthly_cap: 0 })).status, 200, 'the administrator sets the cap to 0');
+    const paused = (await api('GET', '/api/ai/status')).data;
+    ok(/paused for this program/.test(paused.reason || '') && !/its 0/.test(paused.reason || ''), 'a cap of 0 reads as paused', paused.reason);
+    eq((await api('PUT', '/api/ai/settings', { monthly_cap: cap0 })).status, 200, 'and puts it back');
     // CalOMS reporting on, for step 6.
     const cal = await api('PUT', '/api/caloms/settings', { enabled: true, providers: [{ id: '123456', name: 'Main' }] });
     eq(cal.status, 200, 'CalOMS reporting is on for the CalOMS step');
@@ -134,6 +164,7 @@ try {
     await page.selectOption('.modal select[name=format]', 'DAP');
     await openPanel(page, 'note');
     ok(await page.$('[data-ai-panel="note"] [data-ai-what-is-sent]'), 'the panel says what is sent and what is not');
+    await noStrayText(page, 'Note form with the AI copilot panel open (r10 H1)');
     await axe(page, 'Note form with the AI copilot panel open');
     await page.fill('[data-ai-panel="note"] textarea', 'Aurelia Quintero said she used twice this week; call 530-555-0142. Reviewed naloxone.');
     const before = calls.length;
@@ -144,6 +175,10 @@ try {
     ok(!/Aurelia|Quintero|555-0142/.test(sent), 'the client\'s name and phone were not sent');
     ok(/\[CLIENT_FULL_NAME\]/.test(sent) && /\[PHONE\]/.test(sent), 'placeholders were sent in their place');
     ok(/AI draft — review before signing/.test(await page.textContent('.modal [data-ai-draft-banner]')), 'the draft is marked "AI draft — review before signing"');
+    ok(await until(() => page.evaluate(() => !!document.activeElement && !!document.activeElement.closest('[data-ai-draft-banner]'))), 'focus moves to the draft\'s banner once it is in (r10 M7)', await page.evaluate(() => document.activeElement && document.activeElement.outerHTML.slice(0, 80)));
+    ok(!(await page.$('.modal [data-ai-reviewed]')), 'one review step: no "I have reviewed" button on the banner, the statement is asked when signing (r10 L1)');
+    ok(await page.$('.modal [data-ai-draft-banner] [data-ai-undo]'), 'the banner offers Undo');
+    await noStrayText(page, 'Note form with an AI draft in it');
     const d = await page.inputValue('.modal textarea[data-sec=D]');
     ok(/^D: Aurelia discussed cravings/.test(d), 'the Data section holds the draft, with the name put back', d);
     ok(/needs clinician input/.test(await page.inputValue('.modal textarea[data-sec=A]')), 'gaps are left for the clinician');
@@ -171,6 +206,11 @@ try {
     await page.waitForSelector('.modal [data-ai-assisted]');
     ok(await page.$('.modal [data-ai-signed]'), 'the signed note says it was drafted with the copilot and reviewed');
     await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal-bg')));
+    // r10 L2: the Notes list says which notes are AI-assisted.
+    await go(`client/${clientId}/notes`);
+    ok(await page.$(`[data-ai-assisted-row="${note.id}"]`), 'the client\'s Notes list marks the note AI-assisted');
+    await go('notes');
+    ok(await page.$(`[data-ai-assisted-row="${note.id}"]`), 'and so does the Notes page');
   }
 
   // ------------------------------------------------------------------------------------------------ 3
@@ -194,6 +234,48 @@ try {
     mode = 'ok';
   }
 
+  // ------------------------------------------------------------------------------------------------ 3b
+  // r10 H2: what the clinician wrote is never replaced without asking; the draft can be added below it, the
+  // question can be cancelled, and Undo takes the draft out again.
+  {
+    await page.evaluate(async (id) => (await import('./views/notes.js')).openNoteForm(null, { clientId: id, clientDisplay: 'Quintero, Aurelia' }), clientId);
+    await page.waitForSelector('.modal select[name=format]');
+    await page.selectOption('.modal select[name=format]', 'SOAP');
+    await page.fill('.modal textarea[data-sec=S]', 'My own subjective words.');
+    await page.fill('.modal textarea[data-sec=P]', 'My own plan.');
+    await openPanel(page, 'note');
+    await page.fill('[data-ai-panel="note"] textarea', 'Session text for a SOAP note.');
+    const ask = async () => { await page.click('[data-ai-draft="note"]'); await page.waitForSelector('[data-ai-panel="note"] [data-ai-choice-box]:not([hidden])', { timeout: 20000 }); };
+    await ask();
+    ok(/S \(Subjective\) and P \(Plan\)/.test(await page.textContent('[data-ai-choice-box]')), 'a draft for sections already written asks first, naming them', await page.textContent('[data-ai-choice-box]'));
+    eq(await page.evaluate(() => document.activeElement && document.activeElement.dataset.aiChoice), 'below', 'focus is on the default, which keeps what was written');
+    eq(await page.inputValue('.modal textarea[data-sec=S]'), 'My own subjective words.', 'nothing is changed while it asks');
+    await axe(page, 'Note form asking before a draft goes over what was written');
+    await noStrayText(page, 'Note form asking before a draft');
+    await page.click('[data-ai-choice="cancel"]');
+    await until(async () => /not added/.test(await page.textContent('[data-ai-panel="note"] [data-ai-status]')));
+    eq(await page.inputValue('.modal textarea[data-sec=S]'), 'My own subjective words.', 'Cancel leaves the note as it was');
+    eq(await page.inputValue('.modal textarea[data-sec=O]'), '', 'every section, empty ones too');
+    ok(!(await page.$('.modal [data-ai-draft-banner]')), 'and nothing is marked as an AI draft');
+    await ask();
+    await page.click('[data-ai-choice="below"]');
+    await page.waitForSelector('.modal [data-ai-draft-banner]', { timeout: 10000 });
+    const sBelow = await page.inputValue('.modal textarea[data-sec=S]');
+    ok(sBelow.startsWith('My own subjective words.\n\nS: Aurelia discussed'), 'Keep mine, add below: the draft goes under what was written', sBelow);
+    ok(/^O: Aurelia discussed/.test(await page.inputValue('.modal textarea[data-sec=O]')), 'and an empty section is filled');
+    await page.click('.modal [data-ai-undo]');
+    await page.waitForSelector('.modal [data-ai-undone]');
+    eq(await page.inputValue('.modal textarea[data-sec=S]'), 'My own subjective words.', 'Undo takes the draft out of a section that had text');
+    eq(await page.inputValue('.modal textarea[data-sec=O]'), '', 'and out of one that was empty');
+    ok(await page.evaluate(() => !!document.activeElement.closest('[data-ai-undone]')), 'and says so where the focus is');
+    await ask();
+    await page.click('[data-ai-choice="replace"]');
+    await page.waitForSelector('.modal [data-ai-draft-banner]', { timeout: 10000 });
+    ok(/^S: Aurelia discussed/.test(await page.inputValue('.modal textarea[data-sec=S]')), 'Replace, chosen, replaces');
+    await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal-bg')));
+    await settle(page);
+  }
+
   // ------------------------------------------------------------------------------------------------ 4
   {
     await go(`client/${clientId}/assessments`);
@@ -205,6 +287,8 @@ try {
     await page.click('[data-ai-draft="asam"]');
     await page.waitForSelector('.modal [data-ai-asam-suggest="d6"]', { timeout: 20000 });
     ok(/d1: what the intake notes say about Aurelia/.test(await page.inputValue('.modal textarea[name=note_d1]')), 'each dimension\'s notes hold the draft');
+    ok(await until(() => page.evaluate(() => !!document.activeElement && !!document.activeElement.closest('[data-ai-draft-banner]'))), 'focus moves to the draft\'s banner (r10 M7)');
+    await noStrayText(page, 'Six-dimension assessment with an AI draft');
     eq(await page.inputValue('.modal select[name=d1_rating]'), '', 'no rating is chosen for the clinician');
     ok(/not enough information/.test(await page.textContent('.modal [data-ai-asam-suggest="d2"]')), 'a dimension without enough information says so');
     await axe(page, 'Six-dimension assessment with AI suggestions');
@@ -219,6 +303,7 @@ try {
     await page.click('.modal form button[type=submit]');
     await until(async () => !(await page.$('.modal-bg')), { timeout: 10000 });
     eq(((await api('GET', `/api/clients/${clientId}/asam`)).data.rows || []).length, 1, 'once reviewed, the clinician saves it');
+    ok(await until(async () => (await page.$$eval('.toast', e => e.map(x => x.textContent))).some(t => /Assessment saved/.test(t))), 'and saving it says so (r10 L11)');
   }
 
   // ------------------------------------------------------------------------------------------------ 5
@@ -230,12 +315,25 @@ try {
     await page.click('.modal [data-ai-draft="careplan"]');
     await page.waitForSelector('.modal [data-ai-careplan-entry="0"]', { timeout: 20000 });
     await axe(page, 'Care plan suggestions listed');
+    await noStrayText(page, 'Care plan suggestions listed (r10 H1)');
+    ok(/AI suggestions — review before adding/.test(await page.textContent('.modal [data-ai-draft-banner]')), 'the banner says "review before adding" (a care plan is not signed)');
+    ok(await page.evaluate(() => !!document.activeElement.closest('[data-ai-draft-banner]')), 'focus moves to the suggestions');
     eq(((await api('GET', `/api/clients/${clientId}/care-plan`)).data.goals || []).length, 0, 'nothing is added until the clinician adds it');
-    await page.click('.modal [data-ai-add-problem="0"]'); await until(async () => /added/.test(await page.textContent('.modal [data-ai-add-problem="0"]')));
-    await page.click('.modal [data-ai-add-goal="0"]'); await until(async () => /added/.test(await page.textContent('.modal [data-ai-add-goal="0"]')));
-    await page.click('.modal [data-ai-add-step="0"] >> nth=0'); await until(async () => /added/.test(await page.textContent('.modal [data-ai-add-step="0"] >> nth=0')));
+    // r10 M4: the goal still holds the copilot's gap marker, and its problem is not on the list yet.
+    ok(await page.$eval('.modal [data-ai-add-goal="0"]', b => b.disabled), 'Add goal waits while the goal holds [needs clinician input…]');
+    ok(/needs clinician input/.test(await page.textContent('.modal [data-ai-cp-why="goal"]')), 'and says why, beside it');
+    ok(await page.$$eval('.modal [data-ai-add-step="0"]', b => b[0].disabled), 'a step waits for its goal');
+    await page.fill('.modal textarea[data-ai-cp-goal="0"]', 'Stop using fentanyl');
+    ok(await page.$eval('.modal [data-ai-add-goal="0"]', b => b.disabled), 'in the client\'s words, the goal still waits for its problem');
+    ok(/Add the problem first/.test(await page.textContent('.modal [data-ai-cp-why="goal"]')), 'and says so');
+    await page.click('.modal [data-ai-add-problem="0"]'); await until(async () => /Added/.test(await page.textContent('.modal [data-ai-add-problem="0"]')));
+    ok(await until(() => page.$eval('.modal [data-ai-add-goal="0"]', b => !b.disabled)), 'with the problem added, Add goal is ready');
+    await page.click('.modal [data-ai-add-goal="0"]'); await until(async () => /Added/.test(await page.textContent('.modal [data-ai-add-goal="0"]')));
+    await page.click('.modal [data-ai-add-step="0"] >> nth=0'); await until(async () => /Added/.test(await page.textContent('.modal [data-ai-add-step="0"] >> nth=0')));
+    await axe(page, 'Care plan suggestions, some added');
     const plan = (await api('GET', `/api/clients/${clientId}/care-plan`)).data.goals;
     eq(plan.length, 1, 'the goal the clinician added is on the care plan');
+    eq(plan[0].goal, 'Stop using fentanyl', 'in their words, with no [needs clinician input] placeholder');
     eq(plan[0].steps.length, 1, 'with the one step they added');
     ok(plan[0].problem === 'Daily cravings', 'tied to the problem they added', plan[0].problem);
     await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal-bg')));

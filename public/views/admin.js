@@ -164,11 +164,11 @@ async function renderPermissionsSection(box, userId) {
   const widened = { navigator: 'A navigator sees every client (See every client) and reads clinical notes without writing them (Read clinical notes); SUD counseling notes stay with their author, the co-signer and clinical staff.',
     clinician: 'A clinician sees every client (See every client) and the budget (See the budget), without recording spending.' }[data.role];
   const own = ' They add their own work to any client and change only their own visits, calls, notes, referrals and to-dos: changing or deleting another worker\'s (Manage other workers\' records) is for supervisors and administrators. Client records are shared: they may update any client they see, and the client\'s primary worker is notified.';
-  box.append(h('h3', {}, `Role baseline — ${fmt.label(data.role)}`), ROLE_SUMMARY[data.role] ? h('p', { class: 'small', 'data-perm-role-summary': data.role }, ROLE_SUMMARY[data.role]) : null,
+  box.append(h('div', {}, h('h3', {}, `Role baseline — ${fmt.label(data.role)}`), ROLE_SUMMARY[data.role] ? h('p', { class: 'small', 'data-perm-role-summary': data.role }, ROLE_SUMMARY[data.role]) : null,
     widened ? h('p', { class: 'small muted', 'data-perm-role-note': data.role }, `${widened}${own} To hold this person to their own caseload, deny See every client below (clients:all)${data.role === 'navigator' ? '; to keep clinical notes from them, deny Read clinical notes (notes:clinical:read)' : ''}. Their devices follow at their next sync.`) : null,
     h('div', { 'data-perm-baseline': '1' }, permNamespaceGroups(data.role_permissions || []).map(([ns, names]) =>
       h('details', {}, h('summary', {}, `${ns} (${names.length})`),
-        h('ul', {}, names.map((n) => h('li', {}, label(n), h('code', { class: 'small muted' }, ` ${n}`))))))));
+        h('ul', {}, names.map((n) => h('li', {}, label(n), h('code', { class: 'small muted' }, ` ${n}`)))))))));
 
   // The effective permissions with their provenance: a granted override, a denied override, or the role.
   const grantSet = new Set((data.overrides || []).filter((o) => o.mode === 'grant').map((o) => o.permission));
@@ -335,6 +335,9 @@ function programmeCard(s, refresh) {
     try { state.programme = (await get('/api/auth/me')).programme || state.programme; } catch { /* the next sign-in picks it up */ }
     toast('Program profile saved', 'ok'); refresh();
   } });
+  // The help under the profile says what the one chosen does, as soon as it is chosen (r10 L4), not after saving.
+  const profHelp = f.querySelector('[data-field="programme_profile"] .help');
+  f.inputs.programme_profile.addEventListener('change', () => { if (profHelp) profHelp.textContent = (p.profiles.find(x => x.value === f.inputs.programme_profile.value) || {}).help || ''; });
   const onNow = p.module_list.filter(m => m.clinical !== false && p.modules[m.key]).map(m => m.label);
   const othersOn = p.module_list.filter(m => m.clinical === false && p.modules[m.key]).map(m => m.label);
   return h('div', { class: 'card', 'data-programme-profile': p.profile }, h('h2', {}, 'Program profile & modules'),

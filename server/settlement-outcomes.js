@@ -152,14 +152,14 @@ function figures({ from, to, ts, tsP }) {
   const fundRows = shownFunds.map(x => {
     const profile = MAP.profileFor(x.f.settlement_use, x.f.settlement_hiaa);
     return { id: x.f.id, name: x.f.name, grant_number: x.f.grant_number || null, is_active: !!x.f.is_active, category: catKey(x.f), hiaa: x.f.settlement_hiaa || null,
-      category_label: USE[x.f.settlement_use]?.label || 'No settlement category recorded', schedule: USE[x.f.settlement_use]?.schedule || 'Uncategorised',
+      category_label: USE[x.f.settlement_use]?.label || 'No settlement category recorded', schedule: USE[x.f.settlement_use]?.schedule || 'Uncategorized',
       hiaa_label: x.f.settlement_hiaa ? HIAA[x.f.settlement_hiaa] || null : null, profile, profile_label: MAP.PROFILES[profile].label, indicators: MAP.PROFILES[profile].indicators,
       spend: { own_category: money(x.own), other_categories: money(x.other), approved: money(x.own + x.other), pending: money(x.pending) },
       values: values(x.period), months: months.map(m => ({ month: m, spend: money(x.months.get(m).spend), values: values(x.months.get(m)) })) };
   });
   const catRows = [...cats].filter(([k]) => shownFunds.some(x => catKey(x.f) === k)).map(([k, b]) => {
     const profile = k === 'uncategorised' ? 'none' : MAP.profileFor(k, null);
-    return { key: k, label: USE[k]?.label || 'No settlement category recorded', schedule: USE[k]?.schedule || 'Uncategorised', profile, profile_label: MAP.PROFILES[profile].label,
+    return { key: k, label: USE[k]?.label || 'No settlement category recorded', schedule: USE[k]?.schedule || 'Uncategorized', profile, profile_label: MAP.PROFILES[profile].label,
       indicators: MAP.PROFILES[profile].indicators, funds: shownFunds.filter(x => catKey(x.f) === k).map(x => x.f.name), spend_own_category: money(b.spend), values: values(b) };
   }).sort((a, b) => (a.key === 'uncategorised') - (b.key === 'uncategorised') || a.schedule.localeCompare(b.schedule) || a.key.localeCompare(b.key));
   return {

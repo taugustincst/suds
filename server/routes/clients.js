@@ -571,15 +571,25 @@ module.exports = (r) => {
     }
     const rev = REV.one(row.id, ctx.params.rev);
     if (!rev) throw notFound('That change was not found on this client\'s record');
-    require('../crud').assertFresh(ctx, row, 'client');
+    // `fields` (optional): put back only these of the change's fields — the others of a change whose remaining
+    // fields were changed again since (r10 L3).
+    const only = Array.isArray(ctx.body && ctx.body.fields) ? ctx.body.fields.map(String) : null;
+    const changes = only ? rev.changes.filter(ch => only.includes(ch.field)) : rev.changes;
+    if (only && !changes.length) throw badRequest('None of those fields were changed by that change', { fields: { fields: 'must name fields that change changed' } });
     const now = M.decryptRow(row);
-    const since = rev.changes.filter(ch => !REV.same(now[ch.field], ch.after));
+    // Checked before the record's freshness: a field changed again since is the refusal that says what to do, by
+    // name, whether or not this page was opened before that later change.
+    const since = changes.filter(ch => !REV.same(now[ch.field], ch.after));
     if (since.length) {
+      const rest = changes.filter(ch => !since.includes(ch));
+      const names = (list) => { const l = list.map(ch => ch.label); return l.length === 1 ? l[0] : `${l.slice(0, -1).join(', ')} and ${l[l.length - 1]}`; };
       audit.log({ user: ctx.user, action: 'client.revert.refused', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, success: false, details: { revision: rev.id, changed_since: since.map(ch => ch.field) } });
-      throw new HttpError(409, `${since.map(ch => ch.label).join(', ')} ${since.length === 1 ? 'has' : 'have'} been changed again since. Put back the later change first, or edit the record.`, { changed_since: since.map(ch => ch.field) });
+      throw new HttpError(409, `${names(since)} ${since.length === 1 ? 'has' : 'have'} been changed again since, so ${since.length === 1 ? 'it' : 'they'} cannot be put back. Put back the later change first, or edit the record.${rest.length ? ` ${names(rest)} can still be put back on ${rest.length === 1 ? 'its' : 'their'} own.` : ''}`,
+        { changed_since: since.map(ch => ch.field), revertible: rest.map(ch => ({ field: ch.field, label: ch.label })) });
     }
-    const body = Object.fromEntries(rev.changes.map(ch => [ch.field, ch.before]));
-    const v = validate(body, Object.fromEntries(rev.changes.map(ch => [ch.field, { ...shape[ch.field], required: false }])), { partial: true, existing: row });
+    require('../crud').assertFresh(ctx, row, 'client');
+    const body = Object.fromEntries(changes.map(ch => [ch.field, ch.before]));
+    const v = validate(body, Object.fromEntries(changes.map(ch => [ch.field, { ...shape[ch.field], required: false }])), { partial: true, existing: row });
     // A name cannot be put back to nothing: the record needs one (the form's own rule).
     for (const f of ['first_name', 'last_name']) if (f in v && !v[f]) throw badRequest('This change cannot be put back: it would leave the client without a name. Edit the record instead.');
     const done = updateClient(ctx, row, v, { reverts: rev.id });

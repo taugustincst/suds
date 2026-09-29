@@ -1,6 +1,6 @@
 import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv } from '../app.js';
 import { problemPicker } from './clinical.js';
-import { noteCopilot, aiDraftBanner } from './ai.js';
+import { noteCopilot, aiDraftBanner, putDraft } from './ai.js';
 
 export const SECTIONS = { SOAP: [['S', 'Subjective'], ['O', 'Objective'], ['A', 'Assessment'], ['P', 'Plan']], DAP: [['D', 'Data'], ['A', 'Assessment'], ['P', 'Plan']], BIRP: [['B', 'Behavior'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']], GIRP: [['G', 'Goal'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']],
   // Stanley-Brown style safety plan, as a structured note so it prints and reads the same for everyone.
@@ -71,6 +71,7 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
     try {
       if (!noteId) { const r = await post('/api/notes', data, { quiet: !explicit }); noteId = r.id; version = r.updated_at || null; }
       else { const r = await put(`/api/notes/${noteId}`, { ...data, if_updated_at: version || undefined }, { quiet: !explicit }); if (r && r.updated_at) version = r.updated_at; }
+      if (data.ai_assisted) aiAssistedSaved = true;
       status.textContent = `Saved ${new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · continue on any device`;
     } catch (e) {
       // Changed elsewhere since this editor loaded it: retrying would never succeed, so stop autosaving and
@@ -119,20 +120,37 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   function readStructured() { const out = {}; let any = false; structuredBox.querySelectorAll('textarea[data-sec]').forEach(t => { out[t.dataset.sec] = t.value; if (t.value.trim()) any = true; }); return any ? out : null; }
   fmtSel.addEventListener('change', renderStructured); renderStructured();
   // ---- the AI copilot (views/ai.js): a draft from the author's own session notes, put into the sections
-  // above for them to review. Marked "AI draft — review before signing" until they say they have.
+  // above for them to review, marked "AI draft — review before signing"; signing asks for the review statement.
+  // A section the author already wrote in is never replaced unless they choose to (putDraft), and Undo on the
+  // banner takes the draft out again.
   let aiAssisted = !!(values && Number(values.ai_assisted)); let aiBanner = null;
-  const showAiBanner = (b) => { if (aiBanner) aiBanner.remove(); aiBanner = b; structuredBox.before(b); };
-  if (aiAssisted) showAiBanner(aiDraftBanner({ onReviewed: () => {} }));
+  let aiAssistedSaved = aiAssisted; // the server keeps AI-assisted for good once a save has carried it
+  const showAiBanner = (b) => { if (aiBanner) aiBanner.remove(); aiBanner = b; if (b) structuredBox.before(b); };
+  if (aiAssisted) showAiBanner(aiDraftBanner({}));
   const copilot = noteCopilot({
     read: () => ({ client_id: f.inputs.client_id?.value || null, kind: f.inputs.kind.value, format: fmtSel.value, note_id: noteId }),
-    apply: (r) => {
-      if (r.structured) {
-        if (fmtSel.value !== r.format) { fmtSel.value = r.format; renderStructured(); }
-        structuredBox.querySelectorAll('textarea[data-sec]').forEach(t => { if (r.draft.sections[t.dataset.sec] !== undefined) { t.value = r.draft.sections[t.dataset.sec]; t.dispatchEvent(new Event('input', { bubbles: true })); } });
-      } else { contentArea.value = r.draft.narrative; contentArea.dataset.auto = '0'; contentArea.dispatchEvent(new Event('input', { bubbles: true })); }
+    apply: async (r, ask) => {
+      if (r.structured && fmtSel.value !== r.format) { fmtSel.value = r.format; renderStructured(); }
+      const targets = r.structured
+        ? [...structuredBox.querySelectorAll('textarea[data-sec]')].map(t => ({ el: t, label: t.dataset.sec.length <= 2 ? `${t.dataset.sec} (${sectionLabel(fmtSel.value, t.dataset.sec)})` : sectionLabel(fmtSel.value, t.dataset.sec), text: r.draft.sections[t.dataset.sec] }))
+        : [{ el: contentArea, label: 'the narrative', text: r.draft.narrative, after: () => { contentArea.dataset.auto = '0'; } }];
+      const done = await putDraft(targets, ask);
+      if (!done) return null;
+      const wasAssisted = aiAssisted;
       aiAssisted = true;
-      showAiBanner(aiDraftBanner({ gaps: r.gaps, counts: r.identifiers_replaced, onReviewed: () => {} }));
+      const banner = aiDraftBanner({ gaps: r.gaps, counts: r.identifiers_replaced, onUndo: (box) => {
+        done.undo();
+        if (!aiAssistedSaved) aiAssisted = wasAssisted;
+        const back = h('p', { class: 'banner info span small', 'data-ai-undone': '1' }, aiAssisted
+          ? 'The draft was taken out: what you had written is back. The note stays marked AI-assisted, because it was saved with AI-drafted text in it.'
+          : 'The draft was taken out: what you had written is back.');
+        box.replaceWith(back); aiBanner = back;
+        back.setAttribute('tabindex', '-1'); back.focus();
+        scheduleSave();
+      } });
+      showAiBanner(banner);
       scheduleSave();
+      return banner;
     },
   });
   if (copilot) (aiBanner || structuredBox).before(copilot);
@@ -149,9 +167,9 @@ function verifyPanel(n, breakGlass) {
     btn.disabled = true; out.replaceChildren(h('span', { class: 'small muted' }, 'Checking…'));
     try {
       const v = await get(`/api/notes/${n.id}/verify`, breakGlass ? { headers: { 'X-Break-Glass-Reason': breakGlass } } : undefined);
-      out.replaceChildren(
+      out.replaceChildren(...[
         line(v.intact, v.intact ? `The note is exactly as ${v.signer || 'the signer'} signed it${v.signed_at ? ` on ${fmt.dt(v.signed_at)}` : ''}.` : 'The stored note no longer matches its signature. Report this to your privacy officer.'),
-        v.cosignature_intact === undefined ? null : line(v.cosignature_intact, v.cosignature_intact ? `Countersignature by ${v.cosigner || 'the supervisor'} also matches.` : 'The countersignature no longer matches.'));
+        v.cosignature_intact === undefined ? null : line(v.cosignature_intact, v.cosignature_intact ? `Countersignature by ${v.cosigner || 'the supervisor'} also matches.` : 'The countersignature no longer matches.')].filter(Boolean));
     } catch (e) { out.replaceChildren(h('span', { class: 'err' }, e.message || 'Could not check the signature')); }
     finally { btn.disabled = false; }
   } }, 'Verify signature');
@@ -273,7 +291,7 @@ function signNote(n, done, { onCancel = null } = {}) {
     intro: h('p', { 'data-attestation': '1' }, 'By signing you attest that this documentation is accurate and complete. Signed notes cannot be edited or deleted; corrections are made by addendum.'),
     fields: ai ? [{ name: 'ai_reviewed', label: 'Some of this note was drafted by the AI copilot. I have reviewed and corrected it, and it accurately records what happened.', type: 'checkbox', span: true }] : [],
     send: (body) => {
-      if (ai && !body.ai_reviewed) { const e = new Error('Confirm you have reviewed the AI-drafted text before signing.'); e.data = { fields: { ai_reviewed: 'tick to confirm you reviewed the AI-drafted text' } }; throw e; }
+      if (ai && !body.ai_reviewed) { const e = new Error('Confirm you have reviewed the AI-drafted text before signing.'); e.data = { fields: { ai_reviewed: 'Tick to confirm you reviewed the AI-drafted text.' } }; throw e; }
       return post(`/api/notes/${n.id}/sign`, body);
     }, returnTo: `#/notes/${n.id}`,
     done: () => { toast('Note signed and locked', 'ok'); done(); }, onCancel });
@@ -293,13 +311,13 @@ export function noteTable(rows, { showClient = true, onChange } = {}) {
   return table([
     { label: 'Date of service', render: n => h('span', { class: 'nowrap' }, fmt.dt(n.occurred_at)) }, showClient ? { label: 'Client', render: n => h('span', { class: 'link-like', onClick: (e) => { e.stopPropagation(); nav(`client/${n.client_id}`); } }, n.client_name || n.client_code, n.client_name ? h('div', { class: 'muted small mono' }, n.client_code) : null) } : null,
     { label: 'Type', render: n => badge(n.kind === 'clinical' ? 'Clinical' : 'Admin', n.kind === 'clinical' ? 'purple' : 'info') }, { label: 'Format', render: n => fmt.label(n.format, 'NOTE_FORMATS') }, { label: 'Title', render: n => n.title || h('span', { class: 'muted' }, '(untitled)') },
-    { label: 'Status', render: n => [badge(fmt.label(n.status), statusKind(n.status)), n.addenda ? [' ', badge(`${n.addenda} addend.`)] : null, n.cosigned_at ? [' ', badge('Countersigned', 'ok')] : n.awaiting_cosign ? [' ', badge('Awaiting review', 'warn')] : n.cosign_requested ? [' ', badge('Review requested', 'warn')] : null] }, { label: 'Source', render: n => n.source === 'manual' ? '' : badge(fmt.label(n.source), 'warn') }, { label: 'Author', key: 'author' },
+    { label: 'Status', render: n => [badge(fmt.label(n.status), statusKind(n.status)), Number(n.ai_assisted) ? [' ', h('span', { 'data-ai-assisted-row': n.id }, badge('AI-assisted', 'info'))] : null, n.addenda ? [' ', badge(`${n.addenda} addend.`)] : null, n.cosigned_at ? [' ', badge('Countersigned', 'ok')] : n.awaiting_cosign ? [' ', badge('Awaiting review', 'warn')] : n.cosign_requested ? [' ', badge('Review requested', 'warn')] : null] }, { label: 'Source', render: n => n.source === 'manual' ? '' : badge(fmt.label(n.source), 'warn') }, { label: 'Author', key: 'author' },
     // Said on every row, not only known to those who try clicking one (r8 L3).
     { label: '', render: n => h('button', { type: 'button', class: 'btn sm', 'data-note-open': n.id, onClick: (e) => { e.stopPropagation(); openNote(n.id, { onChange }); } }, 'Open') },
   ].filter(Boolean), rows, { onRow: n => openNote(n.id, { onChange }), empty: 'No notes yet. Notes save as drafts automatically while you type, and you sign them when they are complete.',
     // On a phone, two lines a note (as Visits): who and what kind, then when, its title, where it stands and whose (r8 L4).
     compact: { primary: n => [h('span', {}, showClient ? (n.client_name || n.client_code) : (n.title || fmt.label(n.format, 'NOTE_FORMATS'))), badge(n.kind === 'clinical' ? 'Clinical' : 'Admin', n.kind === 'clinical' ? 'purple' : 'info')],
-      secondary: n => [h('span', {}, fmt.dt(n.occurred_at)), showClient && n.title ? h('span', {}, n.title) : null, badge(fmt.label(n.status), statusKind(n.status)), n.awaiting_cosign ? badge('Awaiting review', 'warn') : null, n.author ? h('span', {}, `by ${n.author}`) : null] } });
+      secondary: n => [h('span', {}, fmt.dt(n.occurred_at)), showClient && n.title ? h('span', {}, n.title) : null, badge(fmt.label(n.status), statusKind(n.status)), Number(n.ai_assisted) ? h('span', { 'data-ai-assisted-row': n.id }, badge('AI-assisted', 'info')) : null, n.awaiting_cosign ? badge('Awaiting review', 'warn') : null, n.author ? h('span', {}, `by ${n.author}`) : null] } });
 }
 route('notes', async (r) => {
   const status = r.query.get('status') || '', kind = r.query.get('kind') || '', mine = r.query.get('mine') === '1';

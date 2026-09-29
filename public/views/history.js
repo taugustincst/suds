@@ -52,7 +52,21 @@ export async function historyTab(id, c, { refresh, highlight = [] } = {}) {
     try {
       await post(`/api/clients/${id}/history/${r.id}/revert`, { if_updated_at: c.updated_at });
       toast('Change put back', 'ok'); refresh && refresh();
-    } catch (e) { toast(e.message || 'The change could not be put back', 'error'); }
+    } catch (e) {
+      // Some of its fields were changed again since (named by the server): the rest can still go back on their own.
+      const rest = (e.data && e.data.revertible) || [];
+      if (e.status === 409 && e.data && e.data.changed_since && rest.length) {
+        const others = rest.map(x => label(x)).join(', ');
+        if (!(await confirmDialog('Put back the other fields?', `${e.message} Put back ${others} now?`, { okText: `Put back ${rest.length === 1 ? 'that field' : 'those fields'}` }))) return;
+        try {
+          const fresh = (await get(`/api/clients/${id}`)).client;
+          await post(`/api/clients/${id}/history/${r.id}/revert`, { fields: rest.map(x => x.field), if_updated_at: fresh.updated_at });
+          toast(`${others} put back`, 'ok'); refresh && refresh();
+        } catch (e2) { toast(e2.message || 'The change could not be put back', 'error'); }
+        return;
+      }
+      toast(e.message || 'The change could not be put back', 'error');
+    }
   };
   const entry = (r) => {
     const when = fmt.dt(r.at);

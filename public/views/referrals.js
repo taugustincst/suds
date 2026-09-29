@@ -20,6 +20,10 @@ const consentsUrl = (clientId, resourceId) => `/api/clients/${clientId}/consents
 // Statuses that mean the referral is still under way: the outcome and barrier are recorded when it closes
 // (openOutcomeForm), so a new referral in one of these does not ask for them (1.14.0).
 const UNDER_WAY = ['pending', 'contacted', 'accepted', 'scheduled'];
+// A referral the client declined, the provider declined, or that is closed is not sent anywhere: no Secure link
+// (r10 M5). A consent that names the provider does not mean the client still wants this referral sent. The
+// office server refuses a link for a closed referral as well.
+const NO_SECURE_LINK = ['declined_by_client', 'declined_by_provider', 'closed'];
 
 export async function openReferralForm(values, { clientId, clientDisplay, resourceId, onDone } = {}) {
   const C = state.constants; const isNew = !values;
@@ -316,7 +320,8 @@ export async function openSecureLinkDialog(r, onChange) {
     const res = await withRestrictionCheck((extra) => post(`/api/referrals/${r.id}/links`, { ...payload, ...extra }), '_restriction_reviewed');
     f.replaceWith(shown(res));
   } });
-  body.append(
+  // Through h(): the DOM's own append writes a null (no links yet) as the text "null" (r10 H1).
+  body.append(h('div', {},
     h('p', { class: 'small muted' }, `For a provider that does not use SUDS. ${r.resource_name || 'The provider'} opens the link in a browser without an account and can tell you what happened. With the client's details it needs an access code, works in one browser only, and is written to the client's accounting of disclosures when it is opened.`),
     links.rows.length ? table([
       { label: 'Sent', render: l => fmt.dt(l.created_at) }, { label: 'What', render: l => (l.kind === 'packet' ? 'Referral' : 'Contact notice') },
@@ -324,7 +329,7 @@ export async function openSecureLinkDialog(r, onChange) {
       { label: 'Status', render: l => h('div', {}, badge(...(LINK_STATUS[l.status] || [l.status, 'info'])), l.ack_status ? h('div', { class: 'small' }, `${l.ack_by || 'They'} ${ACK_LABEL[l.ack_status] || l.ack_status}${l.ack_note ? `: ${l.ack_note}` : ''}`) : null) },
       { label: '', render: l => (['sent', 'opened', 'acknowledged'].includes(l.status) ? h('button', { class: 'btn sm ghost', 'data-revoke-link': l.id, 'aria-label': `Withdraw link ${l.reference}`, onClick: () => revoke(l) }, 'Withdraw') : null) },
     ], links.rows, { rowLabel: l => `Link ${l.reference}` }) : null,
-    f);
+    f));
   const m = modal(`Secure link to ${r.resource_name || 'the provider'}`, body, { wide: true });
   return m;
 }
@@ -333,7 +338,7 @@ function referralActions(r, onChange) {
   return can('referrals:write') ? h('div', {}, h('div', { class: 'row' },
       !r.outcome_recorded_at ? h('button', { class: 'btn sm primary', onClick: () => openOutcomeForm(r, onChange) }, 'Record outcome') : null,
       // Office server only: a device has no address an outside provider could open.
-      !isLocalMode() ? h('button', { class: 'btn sm', 'data-secure-link-open': r.id, 'aria-label': `Secure link to ${r.resource_name || 'the provider'}`, onClick: () => openSecureLinkDialog(r, onChange) }, 'Secure link') : null,
+      !isLocalMode() && !NO_SECURE_LINK.includes(r.status) ? h('button', { class: 'btn sm', 'data-secure-link-open': r.id, 'aria-label': `Secure link to ${r.resource_name || 'the provider'}`, onClick: () => openSecureLinkDialog(r, onChange) }, 'Secure link') : null,
       mayChange(r.user_id) ? h('button', { class: 'btn sm', onClick: () => openReferralForm(r, { onDone: onChange }) }, 'Edit') : null, mayChange(r.user_id) ? h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this referral', onClick: async () => { if (await confirmDialog('Delete referral', 'Delete this referral?', { danger: true, okText: 'Delete' })) { await del(`/api/referrals/${r.id}`); onChange && onChange(); } } }, '✕') : null),
       mayChange(r.user_id) ? null : r.outcome_recorded_at ? viewOnly(null, { short: true })
         : h('span', { class: 'small muted', 'data-view-only': '1' }, `You can record the outcome; only ${r.worker || 'the worker who made it'} or a supervisor can change the referral.`)) : null;

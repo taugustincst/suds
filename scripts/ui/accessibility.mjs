@@ -36,7 +36,7 @@
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
-import { makeChecks, settle, until, passRecoveryCode } from './assert.mjs';
+import { makeChecks, settle, until, passRecoveryCode, strayText } from './assert.mjs';
 
 const require = createRequire(import.meta.url);
 let axeSource;
@@ -85,6 +85,10 @@ async function axe(page, where) {
   if (res.error) { fail(`${where}: ${res.error}`); return; }
   record(where, res.violations);
   ok(res.violations.length === 0, `${where}: no WCAG 2.1 A/AA violations`, res.violations.length ? describe(res.violations) : undefined);
+  // On every page and dialog audited: no "null" or "undefined" written out as text (r10 H1, assert.mjs).
+  const stray = await strayText(page).catch(() => []);
+  if (stray.length) record(where, [{ ...own('stray-text', 'No "null", "undefined" or "[object Object]" shown as text'), nodes: stray.slice(0, 6).map(t => ({ target: [t] })) }]);
+  ok(stray.length === 0, `${where}: no stray "null" or "undefined" text`, stray.length ? stray.slice(0, 6) : undefined);
 }
 
 // ------------------------------------------------------------------------------ checks axe cannot make

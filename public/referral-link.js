@@ -21,7 +21,10 @@
   }
   const LABEL = { received: 'We received this referral', accepted: 'We accepted the client', scheduled: 'We scheduled an appointment', declined: 'We cannot take this referral', unable_to_reach: 'We could not reach the client' };
   function row(dl, term, value) { if (!value) return; const dt = document.createElement('dt'); dt.textContent = term; const dd = document.createElement('dd'); dd.textContent = value; dl.append(dt, dd); }
-  const day = (v) => { if (!v) return ''; const d = new Date(v); return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString(); };
+  // A day and time as people write them ("Sep 3, 2026, 10:15 AM"), not the browser's default with seconds (r10 L6).
+  const day = (v) => { if (!v) return ''; const d = new Date(v); return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+  const URGENCY = { routine: 'Routine', urgent: 'Urgent', emergent: 'Emergent (same day)' };
+  const urgency = (u) => (u ? URGENCY[u] || (u.charAt(0).toUpperCase() + u.slice(1)).replace(/_/g, ' ') : '');
 
   function render(d) {
     $('title').textContent = d.kind === 'packet' && !d.withheld ? 'Secure referral' : 'Please contact us about a referral';
@@ -30,7 +33,7 @@
       status(`${d.programme} has referred a client to ${d.recipient || 'you'}. Reference ${d.reference}.`);
       const p = d.packet;
       row(dl, 'Client', p.client.name); row(dl, 'Goes by', p.client.preferred_name); row(dl, 'Date of birth', p.client.dob); row(dl, 'Phone', p.client.phone);
-      row(dl, 'Urgency', p.urgency ? p.urgency.replace(/_/g, ' ') : ''); row(dl, 'Referred', day(p.referred_at)); row(dl, 'Referred by', p.referred_by);
+      row(dl, 'Urgency', urgency(p.urgency)); row(dl, 'Referred', day(p.referred_at)); row(dl, 'Referred by', p.referred_by);
       row(dl, 'Program', d.programme); row(dl, 'Program contact', d.contact); row(dl, 'Reference', d.reference); row(dl, 'This link expires', day(d.expires_at));
       if (p.reason) { $('reason').textContent = p.reason; show('reason-wrap'); }
       show('content');
@@ -63,12 +66,19 @@
       saved.kind = r.data.kind; saved.withheld = !!r.data.withheld; store();
       show('code-form', false); render(r.data); return;
     }
-    if (r.status === 401) { $('code-error').textContent = r.data.error || 'That code is not right.'; $('code').setAttribute('aria-invalid', 'true'); $('code').focus(); return; }
+    if (r.status === 401 || (r.status === 400 && r.data.code_required)) { $('code-error').textContent = r.data.error || 'That code is not right.'; $('code').setAttribute('aria-invalid', 'true'); $('code').focus(); return; }
     show('code-form', false);
     status(r.data.error || 'This link is not valid.', 'err');
   }
 
-  $('code-form').addEventListener('submit', (e) => { e.preventDefault(); $('code-error').textContent = ''; open($('code').value.trim()); });
+  // Checked here first: a code that is not six digits is a slip, and is never sent (it would not use up a try at
+  // the server either, but saying so at once is kinder).
+  $('code-form').addEventListener('submit', (e) => {
+    e.preventDefault(); $('code-error').textContent = ''; $('code').removeAttribute('aria-invalid');
+    const code = $('code').value.replace(/[\s-]/g, '');
+    if (!/^\d{6}$/.test(code)) { $('code-error').textContent = code ? 'An access code is 6 digits. Check the code and enter it again.' : 'Enter the 6-digit access code.'; $('code').setAttribute('aria-invalid', 'true'); $('code').focus(); return; }
+    open(code);
+  });
   $('ack-form').addEventListener('submit', async (e) => {
     e.preventDefault(); $('ack-error').textContent = '';
     const by = $('ack-by').value.trim();
