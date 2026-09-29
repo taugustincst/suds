@@ -2,6 +2,49 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Engineering
+
+Fixes from the engineering and release-process review of 1.16.1. No migration, no new permission, no new route.
+
+- **1.16.1's published withholding rule is withdrawn: it leaked (H1).** 1.16.1 withheld the overdose events by
+  month from the start, in a period of at least 12T overdose events with a month of 1 to T-1 events or not
+  reversed, and its check counted every world that printed the same through the suppression and for which the rule
+  decided the same, including worlds whose own release was refused. The project's own algorithm-aware attacker,
+  run by the reviewer at the rule's gate (T = 3, two months, 36 events, every split: 9,139 worlds), found 6
+  printouts that told it a month's events not reversed were not 1. Validating each such world by its own release,
+  as the degrade step does, cost more than the budget wherever the rule fired (the benchmark's 2,000-client year:
+  55 worlds at about 72 million units each), and one level of it still leaked in the suite's smallest two-month
+  family with the gate lowered. So there is no published rule: `server/sdc.js` `protect` is 1.16.0's again, and
+  the same attacker finds 0 leaks in all 4,883 printouts of the reviewer's family that print the 36 events
+  (`test/publication-release.test.js`; the part with 0 to 2 and 32 reversals in the thorough run).
+  **What changes for a programme:** a year like the benchmark's 2,000-client one is refused whole again, as in
+  1.16.0 (refusal publishes nothing, so it is safe; the submission to the funder is unaffected). On scaled copies
+  of that year at T = 11, 17 of 60 were refused, all with 126 to 237 overdose events in the year; more budget does
+  not help, so there is no degrade-round budget floor (M1; docs/PERFORMANCE.md, *Which programmes are refused*).
+  **A 1.16.1 publication release whose overdose events by month were withheld by that rule is unverified**
+  (docs/HIPAA.md). ADR-0009, PERFORMANCE.md and HIPAA.md say what is actually guaranteed.
+- **Release gate (M2, M3, L7).** The notes step runs the policy script from the same `main` commit the gate ran
+  (a job output), not `main`'s tip at publish time; a pushed tag that is not `v<package.json version>` is refused by
+  the gate, before the approval; the gate warns when the released commit is not the version-stamp commit.
+  docs/RELEASE.md now says exactly what running `main`'s copy of the gate guarantees and what it does not (the
+  workflow file at the released ref decides, the policy runs the released tree's server code, a loosening merged
+  to `main` governs its own release), that there is no backport path yet (with a proposal), and that the released
+  commit must be the version-stamp commit.
+- **Pages publishing and repository settings (H2).** Refs made before 1.16.1 carry a `web-app.yml` that publishes
+  to the public URL with no approval. `web-app.yml` now pushes `gh-pages` with a deploy key held as a secret of the
+  `release` environment when there is one, and docs/RELEASE.md, *Owner: repository settings*, gives the owner the
+  exact steps: the `release` environment's reviewer and refs, branch protection on `main`, a `v*` tag ruleset, a
+  read-only default token, a `gh-pages` ruleset that admits only that key, stale branches, and CodeQL (optional).
+  None of it is in force until the owner makes those settings.
+- **Tests (L1, L2, L4).** The device-recovery test counts only the backoff's own timers; the browser suite's
+  `r5` script waits for the draft to be kept instead of 700 ms, and `test/ui-fixed-waits.test.js` fails on a new
+  fixed wait of 300 ms or more that does not say why; the `READ_SCOPE_PERMS` test records the permissions a real
+  sync pull asks about instead of reading `sync.js` with a regular expression.
+- **Release record (L5).** docs/RELEASE.md records the behaviour changes the owner decided inside 1.16.1 (the
+  to-do for a client changed off the care team, the counseling-note restriction) as owner decisions within a patch.
+
 ## 1.16.1 — 2026-09-29
 
 ### Security
