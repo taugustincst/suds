@@ -186,10 +186,12 @@ tag, and it is started in two ways:
 - someone starts it by hand (Actions → *Web app* → *Run workflow*, choosing the release tag as the ref) —
   for example the product owner republishing the current release for QA.
 
-Either way the job runs only on a `v*` tag ref, first checks that a GitHub Release (not a draft) exists for
-that tag and that the tag points at the very commit being built, and runs in the **`release` environment**,
-so it waits for the owner's approval like the release itself (docs/RELEASE.md, *Owner control over
-releases*). Until 1.16.1 a bare `v*` tag push and a `release: published` event started it too, beside
+Either way it runs only on a `v*` tag ref and first checks that a GitHub Release (not a draft) exists for
+that tag and that the tag points at the very commit being built. Since 1.16.3 it is two jobs: `build` builds and
+checks the site with a read-only token and no secret, and `publish` runs in the **`release` environment**, so it
+waits for the owner's approval like the release itself (docs/RELEASE.md, *Owner control over releases*), then
+pushes the site `build` handed over, and nothing else, with the environment's deploy key (docs/RELEASE.md, *Owner:
+repository settings*, step 6); its run summary says which credential pushed. Until 1.16.1 a bare `v*` tag push and a `release: published` event started it too, beside
 `release.yml` rather than after it: a tag whose gate failed, or that the owner never approved, was still
 published, and a dispatch on a branch published unreleased code.
 

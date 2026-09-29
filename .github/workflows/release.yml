@@ -1,5 +1,10 @@
 name: Release
-# Uses no marketplace actions. Refuses to release a commit whose CI did not pass (the `gate` job). Creates the tag + GitHub Release with the source zip, then asks web-app.yml to
+# Uses no marketplace actions. Refuses to release a commit whose CI did not pass (the `gate` job). Releases a v* tag
+# only (1.16.3): the owner pushes the tag at the version-stamp commit on main once its CI is green, and that push
+# starts this workflow; *Run workflow* runs it again on an existing v* tag (a retry, or with policy_exception), and
+# is refused on a branch. The workflow never creates a tag, so the `v*` tag ruleset (only the owner makes release
+# tags) and the `release` environment's `v*`-only deployment rule both hold (docs/RELEASE.md, "Cutting a release"
+# and "Owner: repository settings"). It creates the GitHub Release with the source zip, then asks web-app.yml to
 # publish the web app for that tag. The native apps and desktop launchers were removed in 1.9.3
 # (docs/PLATFORM.md): nothing else is built or attached.
 on:
@@ -8,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type 'release' to publish the version in package.json"
+        description: "Choose an existing v* tag under 'Use workflow from', then type 'release' to release it (a branch is refused)"
         required: true
         default: ''
       # The release policy (docs/RELEASE.md, "Release cadence"): a patch release carries no migration, no new
@@ -51,6 +56,12 @@ jobs:
     outputs:
       main_sha: ${{ steps.src.outputs.main_sha }}
     steps:
+      # 1.16.3: a release is always of a v* tag. Until then *Run workflow* on a release/v* branch created the tag
+      # itself, which the owner's settings (the `release` environment limited to v* tags, the v* tag ruleset) refuse
+      # after the approval; now the one path is the tag, and a branch is refused here, before anything waits.
+      - name: Release a v* tag only (a pushed tag, or Run workflow on an existing one)
+        run: |
+          case "${GITHUB_REF}" in refs/tags/v*) ;; *) echo "::error::Releases are made from a v* tag, not ${GITHUB_REF}: push the tag at the version-stamp commit on main (docs/RELEASE.md, Cutting a release), or choose an existing v* tag in Run workflow"; exit 1;; esac
       # The gate's own scripts are main's copy, not the released commit's (1.16.1): a commit that trims
       # REQUIRED_JOBS or lifts a policy limit, with the tests that pin them, could otherwise release itself.
       # History without file contents (--filter=blob:none), so the policy can ask whether the commit is on main.
@@ -76,9 +87,9 @@ jobs:
         env:
           RELEASE_POLICY_EXCEPTION: ${{ github.event.inputs.policy_exception }}
           ALLOW_PATCH_CHANGES: ${{ github.event.inputs.allow_patch_changes }}
-          # A pushed tag must name package.json's version (1.16.2); a dispatch has none.
-          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
-        run: node "$RUNNER_TEMP/main/scripts/release-policy.js" --root src --sha "${GITHUB_SHA}" --main origin/main ${RELEASE_TAG:+--tag "$RELEASE_TAG"}
+          # The tag must name package.json's version (1.16.2 for a pushed tag; since 1.16.3 every run is on a tag).
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node "$RUNNER_TEMP/main/scripts/release-policy.js" --root src --sha "${GITHUB_SHA}" --main origin/main --tag "$RELEASE_TAG"
   # The `release` environment: once the owner adds a required reviewer to it (GitHub -> Settings ->
   # Environments -> release; docs/RELEASE.md, "Owner control over releases"), this job waits for that person's
   # approval before anything is tested, packaged or published, however the workflow was started. Without the
@@ -142,7 +153,7 @@ jobs:
           ALLOW_PATCH_CHANGES: ${{ github.event.inputs.allow_patch_changes }}
         run: |
           ver="v$(node -p "require('./package.json').version")"
-          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_NAME}" != "$ver" ]; then echo "Tag ${GITHUB_REF_NAME} does not match package.json $ver"; exit 1; fi
+          if [ "${GITHUB_REF_NAME}" != "$ver" ]; then echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json $ver"; exit 1; fi
           node scripts/package.js "suds-$ver.zip"
           # A checksum beside the zip: docs/DEPLOYMENT.md tells an installer to compare it before unpacking.
           sha256sum "suds-$ver.zip" > "suds-$ver.zip.sha256"
@@ -171,7 +182,8 @@ jobs:
             elif [ "$n" = 0 ]; then gh release upload "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256"
             else echo "::error::The release $ver has only one of its zip and checksum; fix it by hand rather than pair a new file with a published one"; exit 1; fi
           else
-            gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --target "$(git rev-parse HEAD)" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}"; fi
+            # --verify-tag: the tag exists already (the owner pushed it); this workflow never creates one.
+            gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --verify-tag --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}"; fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$ver"
       # Only after the tests passed and the release exists. A release (or tag) this workflow creates with
       # GITHUB_TOKEN starts no other workflow, so the web app publish is asked for explicitly: this dispatch, on

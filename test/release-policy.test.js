@@ -157,6 +157,15 @@ test('a release that is not the version-stamp commit is warned about (1.16.2; 1.
   assert.equal(P.stampWarning({ version: '1.16.2', sha, stampSha: null }), null, 'unknown: nothing to say');
   assert.match(P.stampWarning({ version: '1.16.1', sha, stampSha: stamp }), /is not the commit that set package\.json's version to 1\.16\.1 \(b{40}\)/);
 });
+test('the stamp warning is written to the run summary, where the approver sees it (1.16.3)', () => {
+  const w = P.stampWarning({ version: '1.16.1', sha: 'a'.repeat(40), stampSha: 'b'.repeat(40) });
+  const md = P.stampSummary(w);
+  assert.match(md, /^### Check before approving: the released commit is not the version stamp\n/);
+  assert.ok(md.includes(w), 'the warning itself');
+  assert.equal(P.stampSummary(null), '', 'nothing when the commit is the stamp');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'release-policy.js'), 'utf8');
+  assert.match(src, /if \(w && process\.env\.GITHUB_STEP_SUMMARY\) fs\.appendFileSync\(process\.env\.GITHUB_STEP_SUMMARY, stampSummary\(w\)\);/);
+});
 test('release.yml runs main\'s copy of the gate and policy scripts, with --sha and --main, and never replaces a published file (1.16.1)', () => {
   const rel = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8');
   const gate = rel.slice(rel.indexOf('\n  gate:'), rel.indexOf('\n  release:'));
@@ -164,27 +173,90 @@ test('release.yml runs main\'s copy of the gate and policy scripts, with --sha a
   assert.match(gate, /git archive "\$\{main_sha\}" scripts\/release-gate\.js scripts\/release-policy\.js \| tar -x -C "\$RUNNER_TEMP\/main"/);
   assert.match(gate, /\n {6}main_sha: \$\{\{ steps\.src\.outputs\.main_sha \}\}\n/);
   assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-gate\.js" "\$\{GITHUB_SHA\}"/);
-  assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-policy\.js" --root src --sha "\$\{GITHUB_SHA\}" --main origin\/main \$\{RELEASE_TAG:\+--tag "\$RELEASE_TAG"\}/);
-  assert.match(gate, /RELEASE_TAG: \$\{\{ github\.event_name == 'push' && github\.ref_name \|\| '' \}\}/);
+  assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-policy\.js" --root src --sha "\$\{GITHUB_SHA\}" --main origin\/main --tag "\$RELEASE_TAG"/);
+  assert.match(gate, /RELEASE_TAG: \$\{\{ github\.ref_name \}\}/, 'every run is on a tag (1.16.3), so the tag is always checked');
   assert.ok(!/\n\s+run: node scripts\/release-(gate|policy)/.test(gate), 'not the released commit\'s copy');
   assert.ok(!/--clobber/.test(rel), 'a published zip or checksum is never overwritten');
   assert.match(rel, /MAIN_SHA: \$\{\{ needs\.gate\.outputs\.main_sha \}\}/);
   assert.match(rel, /git show "\$\{MAIN_SHA\}:scripts\/release-policy\.js"/, 'the notes come from the main commit the gate ran (1.16.2), not main\'s tip at publish time');
   assert.ok(!/origin\/main:scripts/.test(rel));
 });
+test('a release is always of an existing v* tag: a branch is refused before anything waits, and the workflow never creates a tag (1.16.3)', () => {
+  // Engineering review of 1.16.2, M1: 1.16.0 to 1.16.2 were dispatched on release/v* branches and the workflow made
+  // the tag with GITHUB_TOKEN, which the owner's settings (the release environment limited to v* tags, the v* tag
+  // ruleset with only the owner as bypass) refuse after the approval. One path now: the owner's tag.
+  const rel = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8');
+  const gate = rel.slice(rel.indexOf('\n  gate:'), rel.indexOf('\n  release:'));
+  const steps = gate.slice(gate.indexOf('steps:'));
+  const first = steps.indexOf('- name:'); const check = steps.indexOf('case "${GITHUB_REF}" in refs/tags/v*) ;; *)');
+  assert.ok(check > first && check < steps.indexOf('- name:', first + 1), 'the first step of the gate refuses anything but a v* tag');
+  assert.match(steps, /refs\/tags\/v\*\) ;; \*\) echo "::error::Releases are made from a v\* tag[^\n]*; exit 1;; esac/);
+  const job = rel.slice(rel.indexOf('\n  release:'));
+  assert.match(job, /gh release create "\$ver" [^\n]*--verify-tag/, 'the GitHub Release is made for the existing tag');
+  assert.ok(!/--target/.test(job), 'never a tag at a target commit');
+  assert.ok(!/git (tag|push)\b/.test(rel), 'the workflow pushes no tag');
+  assert.match(job, /if \[ "\$\{GITHUB_REF_NAME\}" != "\$ver" \]; then echo "::error::Tag/, 'the tag is checked against package.json on every run, not only a push');
+  const release = fs.readFileSync(path.join(__dirname, '..', 'docs', 'RELEASE.md'), 'utf8');
+  assert.ok(!/it then creates the tag itself/.test(release), 'RELEASE.md no longer says a dispatch creates the tag');
+  const cut = release.slice(release.indexOf('## Cutting a release'), release.indexOf('### Release gate'));
+  assert.match(cut, /git push origin v1\.0\.1/, 'Cutting a release pushes the tag');
+  const env = release.slice(release.indexOf('**1. The `release` environment'), release.indexOf('**2. '));
+  assert.ok(!/`main`\s*\n?\s*\(Ref type: Branch/.test(env), 'the environment is not opened to main');
+  assert.match(env, /`v\*`\s+\(Ref type: \*\*Tag\*\*\), and nothing else/);
+});
 test('the web app is published only by a dispatch on a released tag, after the owner\'s approval (1.16.1)', () => {
   const wa = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'web-app.yml'), 'utf8');
   const on = wa.slice(wa.indexOf('\non:\n') + 1, wa.indexOf('\nconcurrency:'));
   assert.deepEqual(on.split('\n').filter((l) => /^\s*[a-z_]+:/.test(l)).map((l) => l.trim()), ['on:', 'workflow_dispatch: {}'], 'no tag push, release event or push trigger');
-  assert.match(wa, /\n {4}if: startsWith\(github\.ref, 'refs\/tags\/v'\)\n/);
-  assert.match(wa, /\n {4}environment: release\n/);
-  const steps = wa.slice(wa.indexOf('steps:'));
+  const build = wa.slice(wa.indexOf('\n  build:'), wa.indexOf('\n  publish:'));
+  const publish = wa.slice(wa.indexOf('\n  publish:'));
+  assert.ok(build.length > 100 && publish.length > 100, 'a build job and a publish job (1.16.3)');
+  assert.match(build, /\n {4}if: startsWith\(github\.ref, 'refs\/tags\/v'\)\n/);
+  assert.match(publish, /\n {4}environment: release\n/);
+  const steps = build.slice(build.indexOf('steps:'));
   assert.ok(steps.indexOf('gh release view "${GITHUB_REF_NAME}"') > 0 && steps.indexOf('gh release view') < steps.indexOf('Check out'), 'the release is checked before anything is built');
   assert.match(steps, /\[ "\$at" = "\$\{GITHUB_SHA\}" \]/, 'at this commit');
   // 1.16.2: pushes with the release environment's deploy key when there is one (the gh-pages ruleset admits only it).
-  assert.match(steps, /PAGES_DEPLOY_KEY: \$\{\{ secrets\.PAGES_DEPLOY_KEY \}\}/);
-  assert.match(steps, /StrictHostKeyChecking=yes/, 'github.com\'s host keys pinned from the API, not trusted on first use');
-  assert.match(steps, /git push -q --force "\$\{remote\}" gh-pages:gh-pages/);
+  assert.match(publish, /PAGES_DEPLOY_KEY: \$\{\{ secrets\.PAGES_DEPLOY_KEY \}\}/);
+  assert.match(publish, /StrictHostKeyChecking=yes/, 'github.com\'s host keys pinned from the API, not trusted on first use');
+  assert.match(publish, /git push -q --force "\$\{remote\}" gh-pages:gh-pages/);
+});
+test('the deploy key is read only by a publish job that runs no third-party code, and the summary names the credential (1.16.3)', () => {
+  // Engineering review of 1.16.2, M2: the key was exposed in the job that had just run npm ci, Playwright and apt,
+  // any of which could reach a later step ($GITHUB_ENV, $GITHUB_PATH, git configuration or hooks). The build now
+  // runs in a job with no environment, no secret and a read-only token, and hands the site over as an artifact.
+  const wa = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'web-app.yml'), 'utf8');
+  const build = wa.slice(wa.indexOf('\n  build:'), wa.indexOf('\n  publish:'));
+  const publish = wa.slice(wa.indexOf('\n  publish:'));
+  assert.ok(!/environment:|secrets\./.test(build), 'the build job has no environment and no secret');
+  assert.match(build, /\n {4}permissions:\n {6}contents: read\n {4}[a-z]/, 'and a read-only token');
+  assert.ok(!/PAGES_DEPLOY_KEY/.test(wa.slice(0, wa.indexOf('\n  publish:')).replace(/^#.*$/gm, '')), 'the key is named in no other job');
+  assert.match(publish, /\n {4}needs: build\n/);
+  for (const bad of [/\bnpm\b/, /\bnpx\b/, /\bnode\b/, /apt-get|\bapt\b/, /playwright/i, /git clone|git fetch/, /actions\/checkout/, /GITHUB_ENV|GITHUB_PATH/]) {
+    assert.ok(!bad.test(publish.replace(/^\s*#.*$/gm, '')), `the publish job runs no ${bad}`);
+  }
+  // The only actions are GitHub's artifact pair, pinned to a commit.
+  const uses = [...wa.matchAll(/\n\s+uses: (\S+)/g)].map((m) => m[1]);
+  assert.deepEqual(uses.map((u) => u.split('@')[0]), ['actions/upload-artifact', 'actions/download-artifact']);
+  for (const u of uses) assert.match(u, /@[0-9a-f]{40}$/, `${u} is pinned to a full commit SHA`);
+  assert.ok(build.indexOf('actions/upload-artifact') > 0 && publish.indexOf('actions/download-artifact') > 0);
+  // What the build hands over is checked as data: its checksum, files and directories only, no .git or parent path.
+  assert.match(build, /site_sha256: \$\{\{ steps\.pack\.outputs\.sha256 \}\}/);
+  assert.match(publish, /SITE_SHA256: \$\{\{ needs\.build\.outputs\.site_sha256 \}\}/);
+  assert.match(publish, /sha256sum -c -/);
+  assert.match(publish, /if \(t != "-" && t != "d"\) print/);
+  assert.match(publish, /\(\^\|\/\)\\\.git\(\/\|\$\)/);
+  // git runs with no global or system configuration and no hooks; the key file is removed after the push.
+  assert.match(publish, /export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=\/dev\/null/);
+  assert.match(publish, /git config core\.hooksPath \/dev\/null/);
+  assert.match(publish, /rm -f "\$RUNNER_TEMP\/pages_key"/);
+  // Which credential pushed goes to the summary; no key and a guarded gh-pages is a clear failure, not an opaque GH013.
+  assert.match(publish, /who="the deploy key PAGES_DEPLOY_KEY \(\$\{fp\}/);
+  assert.match(publish, /who="the workflow token \(GITHUB_TOKEN\)/);
+  assert.match(publish, /with \$\{who\}\." \| tee -a "\$GITHUB_STEP_SUMMARY"/);
+  assert.match(publish, /rules\/branches\/gh-pages" --jq 'length'/);
+  assert.match(publish, /\[ "\$rules" = "0" \] \|\| \{ echo "::error::PAGES_DEPLOY_KEY is not a secret of the release environment/);
+  assert.ok(!/id-token/.test(wa), 'no OIDC token is asked for');
 });
 test('a policy exception lets the early feature release through, with its reason at the top of the release notes', () => {
   const out = P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.13.0', diff: P.diffSurfaces(base, clone(base)), feature: V1120, now: Date.parse(V1120.date) + 22 * HOUR, override: 'Encrypts document references (migration 43)\nbefore the county pilot' });
