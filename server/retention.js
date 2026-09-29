@@ -144,8 +144,12 @@ function purgeClient(client, { user = { username: 'system' }, reason = 'retentio
     // The code is filled in for a link made before the snapshot existed (it is the same client's code).
     counts.privacy_incident_clients = db.run(`UPDATE privacy_incident_clients SET client_code=COALESCE(client_code, ?), client_purged_at=?, client_id=NULL, updated_at=? WHERE client_id=?`,
       client.client_code, db.now(), db.now(), client.id).changes;
-    // An import item that was guessed to be this person keeps a plain (non-FK) pointer; it must not dangle.
-    counts.import_items_unlinked = db.run(`UPDATE import_items SET suggested_client_id=NULL, updated_at=? WHERE suggested_client_id=?`, db.now(), client.id).changes;
+    // An imported page filed as one of this client's notes, or guessed to be about them, goes with the record:
+    // it may still hold the page's text (one committed by an earlier version, or a staged one never filed).
+    const items = [...new Set([...db.all(`SELECT id FROM import_items WHERE suggested_client_id=?`, client.id),
+      ...noteIds.flatMap(id => db.all(`SELECT id FROM import_items WHERE note_id=?`, id))].map(r => r.id))];
+    counts.import_items = items.length;
+    for (const id of items) { db.run(`DELETE FROM import_items WHERE id=?`, id); db.tombstone('import_items', id); }
     // Records merged into this one are the same person: they go with it, not on a clock of their own.
     for (const dup of db.all(`SELECT id, client_code, legal_hold FROM clients WHERE merged_into=?`, client.id)) {
       if (dup.legal_hold) { db.run(`UPDATE clients SET merged_into=NULL, updated_at=? WHERE id=?`, db.now(), dup.id); continue; }
@@ -194,12 +198,25 @@ function clearOldCalomsFiles(days = CALOMS_FILE_DAYS) {
   return n;
 }
 
+/**
+ * Clear the text an imported page kept after it was filed as a note (content, title, and the client-name
+ * hints sniffed from it). Filing clears it now (routes/imports.js, rules/import_items.js); this catches items
+ * committed by earlier versions. Idempotent: nothing to clear is a no-op and writes no audit row. Audited by
+ * count only. Returns how many items were cleared.
+ */
+function clearCommittedImportText() {
+  const n = db.run(`UPDATE import_items SET content_enc='', title_enc=NULL, metadata_enc=NULL, updated_at=? WHERE status='committed' AND (content_enc<>'' OR title_enc IS NOT NULL OR metadata_enc IS NOT NULL)`, db.now()).changes;
+  if (n) audit.log({ user: { username: 'system' }, action: 'import.committed_text_cleared', entity: 'import_item', details: { items: n } });
+  return n;
+}
+
 /** Run at most once a day from the hourly housekeeping pass. */
 function runIfDue() {
   const last = db.getSetting('client_retention_ran_at', null);
   if (last && Date.now() - Date.parse(last) < 86400000) return null;
+  try { clearCommittedImportText(); } catch (e) { console.error(`[suds] retention: could not clear filed import text: ${e.message}`); }
   try { clearOldCalomsFiles(); } catch (e) { console.error(`[suds] retention: could not clear old CalOMS files: ${e.message}`); }
   return purgeExpiredClients();
 }
 
-module.exports = { ACTIVITY, NOT_ACTIVITY, retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, runIfDue, DELETE_TABLES, UNLINK_TABLES, CALOMS_FILE_DAYS, clearOldCalomsFiles };
+module.exports = { ACTIVITY, NOT_ACTIVITY, retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, runIfDue, DELETE_TABLES, UNLINK_TABLES, CALOMS_FILE_DAYS, clearOldCalomsFiles, clearCommittedImportText };

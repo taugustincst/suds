@@ -15894,6 +15894,15 @@ var require_import_items = __commonJS({
       editableBy: ofImport,
       authorise(row, c) {
         return c.existing ? null : ofImport(c.user, row);
+      },
+      // A filed page's text lives in its note; the item keeps none of it, whatever a device sends (the REST commit
+      // clears it the same way: routes/imports.js).
+      storeRow(o, row, c) {
+        if ((o.status ?? c.existing?.status) === "committed") {
+          o.content_enc = "";
+          o.title_enc = null;
+          o.metadata_enc = null;
+        }
       }
     });
   }
@@ -24479,7 +24488,15 @@ var require_retention = __commonJS({
           db3.now(),
           client.id
         ).changes;
-        counts.import_items_unlinked = db3.run(`UPDATE import_items SET suggested_client_id=NULL, updated_at=? WHERE suggested_client_id=?`, db3.now(), client.id).changes;
+        const items = [...new Set([
+          ...db3.all(`SELECT id FROM import_items WHERE suggested_client_id=?`, client.id),
+          ...noteIds.flatMap((id) => db3.all(`SELECT id FROM import_items WHERE note_id=?`, id))
+        ].map((r) => r.id))];
+        counts.import_items = items.length;
+        for (const id of items) {
+          db3.run(`DELETE FROM import_items WHERE id=?`, id);
+          db3.tombstone("import_items", id);
+        }
         for (const dup of db3.all(`SELECT id, client_code, legal_hold FROM clients WHERE merged_into=?`, client.id)) {
           if (dup.legal_hold) {
             db3.run(`UPDATE clients SET merged_into=NULL, updated_at=? WHERE id=?`, db3.now(), dup.id);
@@ -24524,9 +24541,19 @@ var require_retention = __commonJS({
       if (n) audit3.log({ user: { username: "system" }, action: "caloms.submission.file_cleared", details: { files: n, older_than_days: days } });
       return n;
     }
+    function clearCommittedImportText() {
+      const n = db3.run(`UPDATE import_items SET content_enc='', title_enc=NULL, metadata_enc=NULL, updated_at=? WHERE status='committed' AND (content_enc<>'' OR title_enc IS NOT NULL OR metadata_enc IS NOT NULL)`, db3.now()).changes;
+      if (n) audit3.log({ user: { username: "system" }, action: "import.committed_text_cleared", entity: "import_item", details: { items: n } });
+      return n;
+    }
     function runIfDue() {
       const last = db3.getSetting("client_retention_ran_at", null);
       if (last && Date.now() - Date.parse(last) < 864e5) return null;
+      try {
+        clearCommittedImportText();
+      } catch (e) {
+        console.error(`[suds] retention: could not clear filed import text: ${e.message}`);
+      }
       try {
         clearOldCalomsFiles();
       } catch (e) {
@@ -24534,7 +24561,7 @@ var require_retention = __commonJS({
       }
       return purgeExpiredClients();
     }
-    module.exports = { ACTIVITY, NOT_ACTIVITY, retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, runIfDue, DELETE_TABLES, UNLINK_TABLES, CALOMS_FILE_DAYS, clearOldCalomsFiles };
+    module.exports = { ACTIVITY, NOT_ACTIVITY, retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, runIfDue, DELETE_TABLES, UNLINK_TABLES, CALOMS_FILE_DAYS, clearOldCalomsFiles, clearCommittedImportText };
   }
 });
 
@@ -32565,7 +32592,7 @@ var require_imports2 = __commonJS({
             it.id,
             interventionId
           );
-          db3.run(`UPDATE import_items SET status='committed', note_id=? WHERE id=?`, noteId, it.id);
+          db3.run(`UPDATE import_items SET status='committed', note_id=?, content_enc='', title_enc=NULL, metadata_enc=NULL, updated_at=? WHERE id=?`, noteId, db3.now(), it.id);
           const left = db3.one(`SELECT COUNT(*) n FROM import_items WHERE import_id=? AND status='staged'`, it.import_id).n;
           if (left === 0) db3.run(`UPDATE imports SET status='completed' WHERE id=?`, it.import_id);
         });
@@ -32587,6 +32614,7 @@ var require_imports2 = __commonJS({
         if (!imp) throw notFound();
         if (imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden();
         db3.run(`DELETE FROM import_items WHERE import_id=? AND status<>'committed'`, imp.id);
+        db3.run(`UPDATE import_items SET content_enc='', title_enc=NULL, metadata_enc=NULL, updated_at=? WHERE import_id=? AND status='committed' AND (content_enc<>'' OR title_enc IS NOT NULL OR metadata_enc IS NOT NULL)`, db3.now(), imp.id);
         db3.run(`UPDATE imports SET status='purged' WHERE id=?`, imp.id);
         audit3.log({ user: ctx.user, action: "import.purge", entity: "import", entityId: imp.id, ip: ctx.ip });
         return { ok: true };

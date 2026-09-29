@@ -109,7 +109,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 - **Documents:** [DATA-INVENTORY.md](../security/DATA-INVENTORY.md); [DATA-LIFECYCLE.md](../security/DATA-LIFECYCLE.md); [ARCHITECTURE.md](../security/ARCHITECTURE.md) (the diagram).
 - **Tests:** `data-inventory` (checked against the schema, the sync tables and retention), `load-review` (every client table is on the retention clock), `deid-safe-harbor`.
 - **CI:** `test`.
-- **Status:** In place. Known gap: a committed import item's text outlives its client (DATA-INVENTORY section 8).
+- **Status:** In place. The committed-import-text gap the inventory found is fixed in 1.17.0 (`import-text-retention`; DATA-INVENTORY section 8).
 
 ### 42 CFR Part 2 and disclosures
 

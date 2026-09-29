@@ -111,6 +111,24 @@ A feature release item (1.17.0): migration 51, one new table, two new columns, n
 field and attendance by demographic group (only if the dictionary asks for them); anonymous participants in a
 publication release (a new count of people in the release's audit needs the statistical review first).
 
+### Privacy
+
+- **A filed import page no longer outlives its note or its client.** When an imported page (a OneNote export, a
+  Pocket AI transcript) was filed as a note, its `import_items` row kept its own encrypted copy of the text, title and
+  the client-name hints sniffed from it. A client's retention purge only unlinked the row's suggested client, and
+  purging the import deleted only staged and discarded pages, so the text stayed indefinitely after the record it
+  belonged to was gone (evidence-pack review of 1.16.4). Now filing clears the item's text, title and hints (the note
+  is the record; nothing needs the copy, as no import is deduplicated by its text), at both doors: `POST
+  /api/imports/items/:id/commit` and a device's sync push of a committed item (`server/rules/import_items.js`).
+  Purging a client hard-deletes (and tombstones) every import item filed as one of its notes or suggested for it,
+  staged or committed (`counts.import_items` on the `client.purge` audit row, replacing `import_items_unlinked`).
+  The daily retention pass clears the copies earlier versions left on committed items (`import.committed_text_cleared`,
+  audited with a count only), and purging an import batch clears them for its committed items too. No migration: it
+  is a data cleanup in the retention pass, done the next time it runs (within a day of the upgrade).
+  The data inventory, the threat model and QUESTIONNAIRE #13 no longer list it as a gap. Tests:
+  `test/import-text-retention.test.js`; `test/sync.test.js` now expects a purged client's import items deleted and
+  tombstoned.
+
 ### Engineering
 
 Release machinery and CI only: nothing here changes what SUDS does for a user, and no administrator action is needed
@@ -180,8 +198,8 @@ migration, no new permission, no new route.
 
   `test/data-inventory.test.js` fails when `schema.sql` gains or loses an `_enc` column the inventory does not
   list, or when the inventory disagrees with `server/sync-tables.js` or `server/retention.js`. Writing it found one
-  gap, not fixed here: a committed import item keeps its encrypted text after its client is purged, and nothing
-  deletes it.
+  gap: a committed import item kept its encrypted text after its client was purged, and nothing deleted it (fixed
+  in 1.17.0, *Privacy* above).
 - **The security questionnaire was checked against 1.16.4.**
   - Every answer cites its file or test, and owner items are marked.
   - New answers #46–#50 cover the SBOM, the threat model and data flows, vulnerability disclosure, support, and
