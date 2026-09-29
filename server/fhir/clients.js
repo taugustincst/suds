@@ -20,7 +20,7 @@ const { FhirError } = require('./common');
 
 // Every FHIR resource type SUDS serves, and whether it identifies a client (and so is a Part 2 disclosure).
 const RESOURCE_TYPES = {
-  Patient: true, EpisodeOfCare: true, Encounter: true, Consent: true, ServiceRequest: true, Task: true, Observation: true, DocumentReference: true,
+  Patient: true, EpisodeOfCare: true, Encounter: true, Consent: true, Provenance: true, ServiceRequest: true, Task: true, Observation: true, DocumentReference: true,
   Organization: false, Location: false, HealthcareService: false,
 };
 const TOKEN_TTL_SECONDS = 900;

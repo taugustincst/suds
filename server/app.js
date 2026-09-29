@@ -30,7 +30,7 @@ function rateLimitReset(key) { buckets.delete(key); }
 // fails loudly if it is missing a loader for one, so adding a route file cannot silently leave the feature
 // out of the local-mode kernel.
 const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
-  'interventions', 'overdose', 'calls', 'time', 'supervision', 'resources', 'referrals', 'tasks', 'budget', 'notes',
+  'interventions', 'overdose', 'calls', 'time', 'supervision', 'resources', 'referrals', 'referral-links', 'tasks', 'budget', 'notes',
   'consents', 'patient-requests', 'part2', 'compliance', 'careplan', 'assessments', 'suprt', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors', 'fhir', 'scim'];
 
 // Not on a device: setup and app are office-server concerns (first-run wizard, connection info), sync is the
@@ -39,8 +39,9 @@ const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport
 // security is the office server's recovery drill, audit anchors and Security status (server/routes/security.js).
 // fhir is the office server's integration surface for the county EHR (docs/integration/FHIR.md): a device
 // is nobody's system of record and discloses to no one. scim is provisioning from the county identity
-// provider (server/routes/scim.js), which a device does not have.
-const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security', 'scim'].includes(m));
+// provider (server/routes/scim.js), which a device does not have. referral-links serves one-time links to
+// organisations outside the programme (server/referral-links.js): only the office has an address they can reach.
+const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security', 'scim', 'referral-links'].includes(m));
 
 // Served in place of the app shell when local mode is off (the wizard's answer in server.json, or LOCAL_MODE_ENABLED). No scripts, nothing to configure.
 const LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS — local mode is off</title>

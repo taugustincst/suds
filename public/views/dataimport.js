@@ -4,21 +4,28 @@ import { h, route, get, post, state, toast, nav, table, badge, fmt, can, pageHea
 export async function spreadsheetImportCard() {
   const { entities } = await get('/api/imports/data/entities');
   if (!entities.length) return null;
-  const entSel = h('select', {}, entities.map(e => h('option', { value: e.key }, e.label)));
+  // Patients and encounters exported from the host EHR as FHIR R4 (1.17.0, docs/integration/EHR-PART2-LAYER.md):
+  // the same preview and commit, from a Bundle or Bulk Data NDJSON instead of a spreadsheet.
+  const EHR = { clients: 'Patients from your EHR (FHIR export)', interventions: 'Encounters from your EHR (FHIR export; import its patients first)' };
+  const entSel = h('select', { 'data-import-entity': '1' }, [...entities.map(e => h('option', { value: e.key }, e.label)),
+    ...entities.filter(e => EHR[e.key]).map(e => h('option', { value: `ehr:${e.key}` }, EHR[e.key]))]);
+  const entityOf = () => entSel.value.replace(/^ehr:/, '');
+  const fromEhr = () => entSel.value.startsWith('ehr:');
   // .sr-only, not .hidden (display:none) — a good few mobile browsers/WebViews refuse to honor a
   // programmatic .click() on a file input that display:none has taken out of the render tree.
-  const fileIn = h('input', { type: 'file', tabindex: '-1', 'aria-hidden': 'true', accept: '.xlsx,.csv', class: 'sr-only' });
+  const fileIn = h('input', { type: 'file', tabindex: '-1', 'aria-hidden': 'true', accept: '.xlsx,.csv,.json,.ndjson', class: 'sr-only' });
   const status = h('div', { class: 'small muted mt' });
   const review = h('div', { class: 'mt' });
   let preview = null; let file = null;
-  const drop = h('div', { class: 'dropzone', role: 'button', tabindex: '0', onClick: () => fileIn.click(), onKeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileIn.click(); } }, onDragover: e => { e.preventDefault(); drop.classList.add('over'); }, onDragleave: () => drop.classList.remove('over'), onDrop: e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); } }, 'Drop an Excel (.xlsx) or CSV file here, or click to choose', h('div', { class: 'small' }, 'Column names are matched automatically; you can adjust them before anything is saved.'));
+  const drop = h('div', { class: 'dropzone', role: 'button', tabindex: '0', onClick: () => fileIn.click(), onKeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileIn.click(); } }, onDragover: e => { e.preventDefault(); drop.classList.add('over'); }, onDragleave: () => drop.classList.remove('over'), onDrop: e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); } }, 'Drop an Excel (.xlsx) or CSV file — or, for the EHR choices, its FHIR export (.json or .ndjson) — here, or click to choose', h('div', { class: 'small' }, 'Column names are matched automatically; you can adjust them before anything is saved.'));
   fileIn.addEventListener('change', () => { if (fileIn.files[0]) load(fileIn.files[0]); });
   async function load(f, mapping, sheet = 0) {
     file = f; status.textContent = `Reading ${f.name}…`; clear(review);
     try {
       const buf = await f.arrayBuffer();
-      const q = `entity=${entSel.value}&sheet=${sheet}${mapping ? '&mapping=' + encodeURIComponent(JSON.stringify(mapping)) : ''}`;
-      preview = await post(`/api/imports/data/preview?${q}`, buf, { headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': f.name } });
+      const q = `entity=${entityOf()}&sheet=${sheet}${mapping ? '&mapping=' + encodeURIComponent(JSON.stringify(mapping)) : ''}`;
+      preview = fromEhr() ? await post(`/api/imports/ehr/preview?entity=${entityOf()}`, buf, { headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': f.name } })
+        : await post(`/api/imports/data/preview?${q}`, buf, { headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': f.name } });
       status.textContent = ''; renderReview();
     } catch (e) { status.textContent = e.message; }
   }
@@ -41,7 +48,7 @@ export async function spreadsheetImportCard() {
         p.valid ? h('button', { class: 'btn primary', onClick: async (e) => {
           const ok = await confirmDialog('Import rows', `Import ${p.valid} ${entities.find(x => x.key === p.entity).label.toLowerCase()} row(s)${errRows.length ? ` and skip ${errRows.length} with problems` : ''}?`, { okText: 'Import' }); if (!ok) return;
           e.target.disabled = true;
-          try { const r = await post('/api/imports/data/commit', { entity: p.entity, records: p.rows.filter(x => !x.errors.length).map(x => ({ ...x.record, _n: x.n })), partial: true, skip_duplicates: dupes.length ? skipDup.checked : false });
+          try { const r = await post('/api/imports/data/commit', { entity: p.entity, records: p.rows.filter(x => !x.errors.length).map(x => ({ ...x.record, _n: x.n })), partial: true, skip_duplicates: dupes.length ? skipDup.checked : false, source: p.source || undefined });
             toast(`Imported ${r.created} row(s)${r.skipped ? `, skipped ${r.skipped} duplicate(s)` : ''}${r.skipped_duplicates ? `, ${r.skipped_duplicates} already imported` : ''}${r.errors.length ? `, ${r.errors.length} failed` : ''}`, r.errors.length ? 'error' : 'ok');
             clear(review); preview = null; if (r.errors.length) review.append(table([{ label: 'Row', key: 'n' }, { label: 'Problem', key: 'error' }], r.errors, { wrap: false })); else status.textContent = 'Done. You can import another file.';
           } catch (ex) { toast(ex.message, 'error'); e.target.disabled = false; }
@@ -49,7 +56,7 @@ export async function spreadsheetImportCard() {
   }
   return h('div', { class: 'card' }, h('h2', {}, 'Import from Excel or CSV'),
     h('p', { class: 'small muted' }, 'Bring in a list you already keep in a spreadsheet. Download the template for the exact columns, or upload your own file — columns are matched by name and every row is checked before anything is saved.'),
-    h('div', { class: 'row mb' }, h('div', { class: 'field grow', style: { margin: 0 } }, h('label', {}, 'What are you importing?'), entSel), h('button', { class: 'btn sm', onClick: () => downloadCsv(`/api/imports/data/template/${entSel.value}`) }, 'Download Excel template'), h('button', { class: 'btn sm ghost', onClick: () => downloadCsv(`/api/imports/data/template/${entSel.value}?format=csv`) }, 'CSV template')),
+    h('div', { class: 'row mb' }, h('div', { class: 'field grow', style: { margin: 0 } }, h('label', {}, 'What are you importing?'), entSel), h('button', { class: 'btn sm', onClick: () => downloadCsv(`/api/imports/data/template/${entityOf()}`) }, 'Download Excel template'), h('button', { class: 'btn sm ghost', onClick: () => downloadCsv(`/api/imports/data/template/${entityOf()}?format=csv`) }, 'CSV template')),
     drop, fileIn, status, review);
 }
 

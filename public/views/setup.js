@@ -29,7 +29,7 @@ route('setup', async () => {
     // The programme profile (server/programme.js): what the screens lead with. Harm reduction is the default;
     // Settings › Programme changes it, and switches single clinical modules on, at any time.
     { name: 'programme_profile', label: 'What kind of program is this?', type: 'select', noBlank: true, required: true, value: 'harm_reduction', span: true,
-      options: [{ value: 'harm_reduction', label: 'Harm reduction & outreach — outreach, visits, supplies, referrals and grant reporting (recommended)' }, { value: 'treatment', label: 'Treatment-adjacent — adds care plans, assessments (ASAM), CalOMS Tx, the FHIR API and the county EHR hand-off' }],
+      options: [{ value: 'harm_reduction', label: 'Harm reduction & outreach — outreach, visits, supplies, referrals and grant reporting (recommended)' }, { value: 'treatment', label: 'Treatment-adjacent — adds care plans, assessments (ASAM), CalOMS Tx, the FHIR API and the county EHR hand-off' }, { value: 'part2_layer', label: 'Part 2 compliance module beside your EHR — consents, disclosures, notices, breaches and patient requests; the EHR stays the clinical record' }],
       help: 'Changes only what the screens show. You can switch any clinical module on later in Settings › Program.' },
     // Optional: the fund most of the work is charged to. Created for this fiscal year (July–June) and made the
     // default for new visits, so they are not all "No funding source" until someone finds Settings.

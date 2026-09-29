@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Secure referral — SUDS</title><link rel="icon" href="favicon.svg"><meta name="theme-color" content="#1f5f8b"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex, nofollow"><link rel="stylesheet" href="styles.css"></head>
+<body><a class="skip-link" href="#main">Skip to content</a>
+<!-- A referral sent to an organisation that does not use SUDS (server/referral-links.js, docs/security/REFERRAL-LINKS.md).
+     The link's token is in the address after "#", which a browser never sends to a server; referral-link.js posts it
+     in a request body and then takes it out of the address bar. Nothing on this page needs an account. -->
+<main class="login-wrap" id="main"><div class="card statement referral-link" data-referral-link="1">
+<div class="brand"><img src="favicon.svg" alt=""><div><h1 class="brand-title" id="title">Secure referral</h1><small>Sent through SUDS</small></div></div>
+<div id="status" role="status" aria-live="polite"><p>Opening the referral…</p></div>
+<form id="code-form" class="hidden" novalidate data-code-form="1">
+  <p>This referral is protected by an access code. The program that sent it gives you the code separately, usually by phone.</p>
+  <div class="field"><label for="code">Access code (6 digits)</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required aria-describedby="code-help"><div class="help" id="code-help">A few wrong tries lock the link; the program can then send a new one.</div></div>
+  <p id="code-error" class="err" role="alert"></p>
+  <div class="btn-row"><button class="btn primary" type="submit">Open the referral</button></div>
+</form>
+<section id="content" class="hidden" aria-labelledby="content-title"><h2 id="content-title">Referral</h2><dl id="details" class="kv"></dl><div id="reason-wrap" class="hidden"><h3>Reason for the referral</h3><p id="reason"></p></div></section>
+<section id="notice-wrap" class="hidden" aria-labelledby="notice-title"><h2 id="notice-title">Notice to the recipient (42 CFR § 2.32)</h2><p id="notice" class="small"></p></section>
+<form id="ack-form" class="hidden" novalidate data-ack-form="1" aria-labelledby="ack-title">
+  <h2 id="ack-title">Let the program know</h2>
+  <div class="field"><label for="ack-status">What happened</label><select id="ack-status" name="status"></select></div>
+  <div class="field"><label for="ack-by">Your name and organization</label><input id="ack-by" name="by" maxlength="120" required autocomplete="name"></div>
+  <div class="field" id="ack-note-field"><label for="ack-note">Anything the program should know (optional)</label><textarea id="ack-note" name="note" rows="3" maxlength="1000"></textarea></div>
+  <p id="ack-error" class="err" role="alert"></p>
+  <div class="btn-row"><button class="btn primary" type="submit">Send</button></div>
+</form>
+<section id="invite" class="hidden" aria-labelledby="invite-title"><h2 id="invite-title">Receive referrals through SUDS</h2>
+  <p>SUDS is free, open-source case-management software for substance use disorder programs. Organizations that use it receive referrals like this one directly, with the consent checks and the accounting of disclosures that 42 CFR Part 2 asks for.</p>
+  <p id="invite-link-wrap" class="hidden"><a id="invite-link" rel="noopener noreferrer">Find out about receiving referrals through SUDS</a></p>
+  <p id="invite-contact-wrap" class="hidden">Ask <span id="invite-contact"></span> how to set it up.</p>
+</section>
+</div></main>
+<script src="referral-link.js"></script></body></html>

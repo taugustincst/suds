@@ -906,9 +906,33 @@ CREATE TABLE IF NOT EXISTS caloms_submissions (
   file_cleared_at TEXT,
   created_by TEXT NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- 1.17.0 (migration 55): a scheduled run prepares a file before anyone has sent anything. 'prepared' is
+  -- built and kept (encrypted) but not yet a disclosure: nobody's accounting changes and no record is stamped
+  -- until someone with export:identified produces it ('produced'), which accounts exactly these bytes.
+  status TEXT NOT NULL DEFAULT 'produced' CHECK (status IN ('prepared','produced','discarded')),
+  origin TEXT NOT NULL DEFAULT 'manual' CHECK (origin IN ('manual','scheduled')),
+  provider_id TEXT,                    -- one provider's file (county mode), or NULL for every provider
+  record_ids TEXT,                     -- JSON: the caloms_records ids in the file (ids, not PHI)
+  uploaded_at TEXT,                    -- when someone recorded uploading it to DHCS (SUDS never uploads)
+  uploaded_by TEXT REFERENCES users(id),
+  dhcs_reference TEXT                  -- the confirmation or batch number the DHCS portal gave, if any
 );
 CREATE INDEX IF NOT EXISTS idx_caloms_submissions_created ON caloms_submissions(created_at);
+
+-- The CalOMS Tx submission log (migration 55): who prepared, produced, downloaded, recorded as uploaded or
+-- discarded each file, and when. Periods, counts and hashes live on the submission; nothing here names a
+-- client. Office server only, never synchronised.
+CREATE TABLE IF NOT EXISTS caloms_submission_events (
+  id TEXT PRIMARY KEY,
+  submission_id TEXT NOT NULL REFERENCES caloms_submissions(id) ON DELETE CASCADE,
+  action TEXT NOT NULL CHECK (action IN ('prepared','produced','downloaded','uploaded','discarded')),
+  user_id TEXT REFERENCES users(id),   -- NULL for the scheduled run
+  detail TEXT,                         -- not PHI: a DHCS reference, a reason code, a SHA-256
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_caloms_submission_events_sub ON caloms_submission_events(submission_id, created_at);
 
 -- Overdose and reversal events. Every SUD funder asks for these counts; they were previously only
 -- inferable from two boolean columns on the client record, which cannot answer "how many this quarter".
@@ -1390,3 +1414,40 @@ CREATE INDEX IF NOT EXISTS idx_suprt_assessments_client ON suprt_assessments(cli
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_date ON suprt_assessments(assessment_date);
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_updated ON suprt_assessments(updated_at);
 CREATE INDEX IF NOT EXISTS idx_suprt_assessments_sync ON suprt_assessments(client_id, updated_at);
+
+-- Secure referral links (1.17.0, migration 55; server/referral-links.js, docs/security/REFERRAL-LINKS.md). A
+-- referral to an organisation that does not use SUDS can be sent as a one-time link the recipient opens
+-- without an account. The token and the access code are stored only as hashes; the packet the recipient reads
+-- is a snapshot taken when the link was made, encrypted. kind 'packet' names the client and needs a live Part 2
+-- consent naming the recipient (server/disclosure.js, checked when it is made and again when it is opened; the
+-- disclosure is accounted when it is first opened); kind 'contact_notice' names nobody ("please contact us").
+-- Office server only, never synchronised.
+CREATE TABLE IF NOT EXISTS referral_links (
+  id TEXT PRIMARY KEY,
+  referral_id TEXT NOT NULL REFERENCES referrals(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  resource_id TEXT NOT NULL REFERENCES resources(id),
+  kind TEXT NOT NULL CHECK (kind IN ('packet','contact_notice')),
+  token_hash TEXT NOT NULL UNIQUE,
+  code_hash TEXT,                      -- packet only: the access code given to the recipient separately
+  consent_id TEXT REFERENCES consents(id) ON DELETE SET NULL,
+  packet_enc TEXT,                     -- encrypted JSON: exactly what the recipient is shown
+  reference TEXT NOT NULL,             -- a short random reference both sides quote; not PHI
+  expires_at TEXT NOT NULL,
+  failed_attempts INTEGER NOT NULL DEFAULT 0,
+  claim_hash TEXT,                     -- the browser that opened it first (hash of a secret it holds)
+  opened_at TEXT,
+  open_count INTEGER NOT NULL DEFAULT 0,
+  disclosure_id TEXT REFERENCES disclosures(id) ON DELETE SET NULL,
+  ack_status TEXT CHECK (ack_status IS NULL OR ack_status IN ('received','accepted','scheduled','declined','unable_to_reach')),
+  ack_at TEXT,
+  ack_by_enc TEXT,                     -- who at the recipient acknowledged (as they typed it)
+  ack_note_enc TEXT,
+  revoked_at TEXT,
+  revoked_by TEXT REFERENCES users(id),
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_referral_links_referral ON referral_links(referral_id);
+CREATE INDEX IF NOT EXISTS idx_referral_links_client ON referral_links(client_id);

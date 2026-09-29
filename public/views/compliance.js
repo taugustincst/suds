@@ -5,7 +5,7 @@
 // Everything here is enforced and audited by the server (server/routes/part2.js, compliance.js);
 // docs/compliance/PART2.md maps each rule to it. SUDS provides the controls; the programme's policies and
 // counsel decide how they are used.
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, stat, tabStrip, confirmDialog, clientPicker } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, stat, tabStrip, confirmDialog, clientPicker, programmeProfile, moduleOn } from '../app.js';
 import { AGREEMENT_KIND_LABELS } from './part2.js';
 
 const CHANNELS = ['in_person', 'phone', 'mail', 'email', 'web', 'other'];
@@ -21,19 +21,81 @@ function printNotice(n) {
   w.document.close(); w.focus(); setTimeout(() => w.print(), 300);
 }
 
+// Where each source of a disclosure comes from, in words (the accounting's `source`).
+const SOURCE_LABEL = { referral: 'Referrals', manual: 'Recorded by hand', export: 'Identified exports', fhir: 'FHIR API (the EHR reading)', caloms: 'CalOMS Tx (state reporting)', ehr_handoff: 'County EHR hand-off', referral_link: 'Secure referral links' };
+const REQUEST_LABEL = { access: 'Access to records', amendment: 'Amendment', accounting: 'Accounting of disclosures', restriction: 'Restriction' };
+
+// The page a provider who opens a secure referral link is invited to (server/referral-links.js): an
+// administrator's choice, https only. Without one, the recipient page names the program contact instead.
+async function inviteCard(refresh) {
+  const s = await get('/api/referral-links/settings', { quiet: true }).catch(() => null);
+  if (!s) return null;
+  return h('div', { class: 'card mt', 'data-invite-settings': '1' }, h('h2', {}, 'Secure referral links'),
+    h('p', { class: 'small muted' }, 'A provider who opens a secure referral link is invited to receive referrals through SUDS. Give the page they should go to — your own page about it, or the SUDS project — or leave it blank to show the program contact instead.'),
+    form([{ name: 'invite_url', label: 'Invitation link (https://)', value: s.invite_url || '', span: true, maxLen: 300 }],
+      { submitText: 'Save', onSubmit: async (v) => { await put('/api/referral-links/settings', { invite_url: v.invite_url || null }); toast('Saved', 'ok'); refresh(); } }));
+}
+
 route('compliance', async (r) => {
+  // SUDS as the Part 2 layer beside an EHR (1.17.0, profile part2_layer): the layer's own view leads.
+  const layerTab = (can('consents:read') || can('consents:write') || can('settings:manage')) ? ['layer', 'Part 2 layer'] : null;
+  const layerFirst = programmeProfile() === 'part2_layer';
   const tabs = [
+    layerFirst ? layerTab : null,
     (can('complaints:read') || can('incidents:read') || can('settings:manage')) ? ['overview', 'Overview'] : null,
     ['notice', 'Patient notice'],
     can('consents:read') ? ['notices', 'Notice not given'] : null,
     can('complaints:read') ? ['complaints', 'Complaints'] : null,
     can('incidents:read') ? ['incidents', 'Incidents & breaches'] : null,
     can('agreements:read') ? ['agreements', 'Agreements'] : null,
+    layerFirst ? null : layerTab,
   ].filter(Boolean);
   const tab = tabs.some(([k]) => k === r.query.get('tab')) ? r.query.get('tab') : tabs[0][0];
   const refresh = () => nav(`compliance?tab=${tab}&_=${Date.now()}`);
   const body = h('div', { 'data-compliance-tab': tab });
   const T = {
+    // Everything a program that keeps its clinical record in an EHR runs SUDS for, at a glance: counts only
+    // (GET /api/part2/layer), each linked to where the work is done. docs/integration/EHR-PART2-LAYER.md.
+    async layer() {
+      const d = await get('/api/part2/layer');
+      const c = d.consents; const pr = d.patient_requests; const rl = d.referral_links_90d; const it = d.integration;
+      const sources = Object.entries(d.disclosures_90d || {});
+      const card = (title, attr, ...body) => h('div', { class: 'card mt', [`data-layer-${attr}`]: '1' }, h('h2', {}, title), ...body);
+      return h('div', { 'data-part2-layer': d.profile },
+        h('p', { class: 'small muted' }, d.profile === 'part2_layer'
+          ? 'This program keeps its clinical record in its EHR and uses SUDS for what the EHR does not do under 42 CFR Part 2: consents, the accounting of disclosures, redisclosure notices, SUD counseling notes kept apart, the breach register, patient requests and secure referrals. SUDS provides the controls; your policies and counsel decide how they are used.'
+          : 'The 42 CFR Part 2 controls at a glance. A program whose EHR is its clinical record can run SUDS as just this layer: Settings › Program › "Part 2 compliance module (beside an EHR)".'),
+        card('Consents (§2.31)', 'consents', h('div', { class: 'grid cols-4' },
+          stat('Live Part 2 consents', c.active),
+          stat('Expiring in 30 days', c.expiring_30d, c.expiring_30d ? 'warn' : ''),
+          stat('On the pre-2024 form', c.pre_2024_form, c.pre_2024_form ? 'warn' : ''),
+          stat('Active clients with no live Part 2 consent', c.active_clients_without, c.active_clients_without ? 'warn' : '')),
+          h('p', { class: 'small muted' }, 'Record, print and revoke consents on each client\'s Consents tab. A consent authorises a disclosure only to the recipient it names, with every §2.31 element.')),
+        card('Disclosures, last 90 days (§2.25 accounting)', 'disclosures', sources.length
+          ? table([{ label: 'Source', render: x => SOURCE_LABEL[x[0]] || fmt.label(x[0]) }, { label: 'Disclosures', render: x => x[1] }], sources, { rowLabel: x => SOURCE_LABEL[x[0]] || x[0] })
+          : h('p', { class: 'small muted' }, 'None in the last 90 days.'),
+          h('p', { class: 'small muted' }, 'Each client\'s accounting of disclosures is printable from their Consents tab.')),
+        card('Redisclosure notice (§2.32)', 'notice', h('p', {}, badge(`Version ${d.notice.version}`, 'info'), ' ', d.notice.short),
+          h('p', { class: 'small muted' }, 'Travels with every disclosure SUDS makes: referrals and secure referral links, printed forms, identified exports, FHIR responses and the CalOMS extract.'),
+          stat('Active clients not yet given the patient notice (§2.22)', d.patient_notice_missing, d.patient_notice_missing ? 'warn' : '', can('consents:read') ? 'compliance?tab=notices' : null)),
+        card('SUD counseling notes (§2.11, §2.31(b))', 'counseling', h('p', {}, `${d.counseling_notes} counseling note${d.counseling_notes === 1 ? '' : 's'} on record.`),
+          h('p', { class: 'small muted' }, 'Kept apart from the rest of the record: read only by their author, their co-signer and staff who write clinical notes; never over FHIR, in an export or on a device that may not read them; disclosed only under a consent for counseling notes alone or a court order that names them.')),
+        pr ? card('Patient requests (access, amendment, accounting)', 'requests', h('div', { class: 'grid cols-4' },
+          ...Object.entries(REQUEST_LABEL).map(([k, label]) => stat(`${label} — open`, (pr.open || {})[k] || 0)),
+          stat('Past their 30-day deadline', pr.overdue, pr.overdue ? 'danger' : '')),
+          h('p', { class: 'small muted' }, 'Recorded and answered on each client\'s Requests tab.')) : null,
+        (d.incidents_open !== null || d.complaints_open !== null) ? card('Breaches and complaints', 'breaches', h('div', { class: 'grid cols-4' },
+          d.incidents_open !== null ? stat('Open incidents', d.incidents_open, d.incidents_open ? 'danger' : '', 'compliance?tab=incidents') : null,
+          d.complaints_open !== null ? stat('Open complaints', d.complaints_open, d.complaints_open ? 'warn' : '', 'compliance?tab=complaints') : null)) : null,
+        card('Secure referrals, last 90 days', 'referrals', h('div', { class: 'grid cols-4' }, stat('Links sent', rl.sent), stat('Opened', rl.opened), stat('Answered', rl.acknowledged)),
+          h('p', { class: 'small muted' }, 'A referral to an organization that does not use SUDS can go as a one-time secure link (Referrals → a referral → Secure link): the client\'s details only with a consent naming it, otherwise a "please contact us" notice that names nobody.')),
+        card('Integration with the EHR', 'integration', h('div', { class: 'grid cols-4' },
+          stat('FHIR API', it.fhir_module && moduleOn('fhir') ? 'On' : 'Off', it.fhir_module ? 'ok' : 'warn'),
+          stat('FHIR clients registered', it.fhir_clients),
+          stat('Last import from the EHR', it.last_ehr_import ? fmt.date(it.last_ehr_import) : 'Never')),
+          h('p', { class: 'small muted' }, 'The EHR reads consents (with their Provenance) over the FHIR API, registered under Settings › FHIR clients; patients and encounters come in from the EHR\'s FHIR export under Import. See docs/integration/EHR-PART2-LAYER.md.'),
+          h('div', { class: 'row' }, can('imports:write') ? h('a', { class: 'btn sm', href: '#/imports', 'data-layer-import': '1' }, 'Import from the EHR') : null)));
+    },
     async overview() {
       const [s, cfg] = await Promise.all([get('/api/part2/summary'), get('/api/part2/settings')]);
       const settingsCard = can('settings:manage') ? h('div', { class: 'card mt' }, h('h2', {}, 'Program settings'),
@@ -57,7 +119,7 @@ route('compliance', async (r) => {
           stat('SUD counseling notes', s.counseling_notes),
           stat('Open complaints', s.complaints_open, s.complaints_open ? 'warn' : '', can('complaints:read') ? 'compliance?tab=complaints' : null),
           stat('Open incidents', s.incidents_open, s.incidents_open ? 'danger' : '', can('incidents:read') ? 'compliance?tab=incidents' : null)),
-        settingsCard);
+        settingsCard, can('settings:manage') ? await inviteCard(refresh) : null);
     },
     async notice() {
       const n = await get('/api/part2/notice');

@@ -651,6 +651,39 @@ const migrations = [
     )`);
     d.exec(`CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id)`);
   },
+  // 49: reserved for another 1.17.0 change (replaced by its own migration when the branches are merged)
+  () => {},
+  // 50: reserved for another 1.17.0 change (replaced by its own migration when the branches are merged)
+  () => {},
+  // 51: reserved for another 1.17.0 change (replaced by its own migration when the branches are merged)
+  () => {},
+  // 52: reserved for another 1.17.0 change (replaced by its own migration when the branches are merged)
+  () => {},
+  // 53: reserved for another 1.17.0 change (replaced by its own migration when the branches are merged)
+  () => {},
+  // 54: reserved for another 1.17.0 change (replaced by its own migration when the branches are merged)
+  () => {},
+  // 55: CalOMS Tx automation and secure referral links (1.17.0). caloms_submissions learns prepared (scheduled,
+  //     not yet a disclosure) and produced files, which provider a file is for, the records in it, and who
+  //     recorded uploading it to DHCS; caloms_submission_events is the submission log; referral_links holds
+  //     the one-time links a referral to an organisation not on SUDS is sent as (hashed tokens). Every existing
+  //     submission was produced by hand. Self-contained and idempotent, so it can be renumbered.
+  (d) => {
+    addColumn(d, 'caloms_submissions', 'status', "TEXT NOT NULL DEFAULT 'produced' CHECK (status IN ('prepared','produced','discarded'))");
+    addColumn(d, 'caloms_submissions', 'origin', "TEXT NOT NULL DEFAULT 'manual' CHECK (origin IN ('manual','scheduled'))");
+    addColumn(d, 'caloms_submissions', 'provider_id', 'TEXT');
+    addColumn(d, 'caloms_submissions', 'record_ids', 'TEXT');
+    addColumn(d, 'caloms_submissions', 'uploaded_at', 'TEXT');
+    addColumn(d, 'caloms_submissions', 'uploaded_by', 'TEXT REFERENCES users(id)');
+    addColumn(d, 'caloms_submissions', 'dhcs_reference', 'TEXT');
+    const schemaText = safeSchema();
+    for (const t of ['caloms_submission_events', 'referral_links']) {
+      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+      if (!m) throw new Error(`migration 55: no definition for ${t} in schema`);
+      d.exec(m[0]);
+      for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
+    }
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

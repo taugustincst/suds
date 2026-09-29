@@ -72,6 +72,26 @@ module.exports = (r) => {
     let parsed; try { parsed = S.parseFile(buf, ctx.headers['x-filename'] || ''); } catch (e) { throw badRequest('Could not read the file: ' + e.message); }
     const sheetIdx = Number(ctx.query.get('sheet') || 0); const sheet = parsed.sheets[sheetIdx] || parsed.sheets[0]; if (!sheet) throw badRequest('The file has no sheets');
     let mapping = null; try { mapping = ctx.query.get('mapping') ? JSON.parse(ctx.query.get('mapping')) : null; } catch { mapping = null; }
+    return previewSheet(ctx, entity, sheet, mapping, { sheets: parsed.sheets.map(s => ({ name: s.name, rows: s.rows.length })), sheetIdx });
+  });
+
+  // Patients and encounters exported from the host EHR as FHIR R4 (a Bundle or Bulk Data NDJSON; 1.17.0,
+  // server/importers/fhir-ehr.js, docs/integration/EHR-PART2-LAYER.md): turned into the rows a spreadsheet of
+  // clients or visits would give, then previewed — and committed with /api/imports/data/commit — exactly as one.
+  r.post('/api/imports/ehr/preview', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => {
+    const entity = ctx.query.get('entity') || (ctx.body && ctx.body.entity);
+    if (!['clients', 'interventions'].includes(entity)) throw badRequest('entity must be clients (from Patient resources) or interventions (from Encounter resources)');
+    if (!auth.hasPerm(ctx.user, permFor(entity))) throw forbidden();
+    const input = ctx.rawBody && ctx.rawBody.length ? ctx.rawBody.toString('utf8') : (ctx.body && (ctx.body.bundle || ctx.body.text));
+    if (!input) throw badRequest('Upload the FHIR export: a Bundle (.json) or NDJSON (.ndjson) of Patient and Encounter resources');
+    let sheet; try { sheet = require('../importers/fhir-ehr').toSheet(input, entity); } catch (e) { throw badRequest('Could not read the FHIR file: ' + e.message); }
+    if (!sheet.rows.length) throw badRequest(entity === 'clients' ? 'The file has no Patient resources' : 'The file has no Encounter resources that took place');
+    const out = previewSheet(ctx, entity, sheet, null, { sheets: [{ name: sheet.name, rows: sheet.rows.length }], sheetIdx: 0, source: 'ehr_fhir' });
+    return { ...out, source: 'ehr_fhir', skipped_resources: sheet.skipped, missing_patient: sheet.missing_patient || 0 };
+  });
+
+  function previewSheet(ctx, entity, sheet, mapping, { sheets, sheetIdx, source } = {}) {
+    const def = DI.ENTITIES[entity];
     if (!mapping) mapping = DI.suggestMapping(entity, sheet.headers.map(h => h.replace(/\s*\*$/, '')));
     // headers in the template carry a trailing " *"; map both spellings
     const normalizedMapping = {}; for (const h of sheet.headers) { const clean = h.replace(/\s*\*$/, ''); if (mapping[h]) normalizedMapping[h] = mapping[h]; else if (mapping[clean]) normalizedMapping[h] = mapping[clean]; }
@@ -82,9 +102,9 @@ module.exports = (r) => {
       if (entity === 'clients' && record.first_name && record.last_name && !errors.length) { const dup = db.one(`SELECT client_code FROM clients WHERE full_name_idx=? AND deleted_at IS NULL`, blindIndex(record.last_name + record.first_name)); if (dup) record._duplicate_of = dup.client_code; }
       return { n: i + 2, record, errors };
     });
-    audit.log({ user: ctx.user, action: 'import.data.preview', ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name } });
-    return { entity, sheets: parsed.sheets.map(s => ({ name: s.name, rows: s.rows.length })), sheet: sheetIdx, headers: sheet.headers, mapping: normalizedMapping, fields: def.fields.map(f => ({ key: f.key, label: f.label, required: !!f.required })), rows, valid: rows.filter(x => !x.errors.length).length, invalid: rows.filter(x => x.errors.length).length, truncated: sheet.rows.length > 2000 };
-  });
+    audit.log({ user: ctx.user, action: 'import.data.preview', ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name, source: source || undefined } });
+    return { entity, sheets, sheet: sheetIdx, headers: sheet.headers, mapping: normalizedMapping, fields: def.fields.map(f => ({ key: f.key, label: f.label, required: !!f.required })), rows, valid: rows.filter(x => !x.errors.length).length, invalid: rows.filter(x => x.errors.length).length, truncated: sheet.rows.length > 2000 };
+  }
 
   // Commit validated rows (client sends back the records from the preview; server re-validates)
   r.post('/api/imports/data/commit', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => {
@@ -130,7 +150,7 @@ module.exports = (r) => {
       if (errors.length && !ctx.body.partial) throw badRequest(`${errors.length} row(s) could not be imported; nothing was saved`, { rows: errors });
       for (const [hash, id] of imported) db.run(`INSERT OR IGNORE INTO import_rows(row_hash,entity,record_id,imported_by) VALUES(?,?,?,?)`, hash, entity, id, ctx.user.id);
     });
-    audit.log({ user: ctx.user, action: 'import.data.commit', ip: ctx.ip, details: { entity, created, skipped, skipped_duplicates: skippedDuplicates, errors: errors.length } });
+    audit.log({ user: ctx.user, action: 'import.data.commit', ip: ctx.ip, details: { entity, created, skipped, skipped_duplicates: skippedDuplicates, errors: errors.length, source: ctx.body.source === 'ehr_fhir' ? 'ehr_fhir' : undefined } });
     return { created, skipped, skipped_duplicates: skippedDuplicates, errors };
   });
 };

@@ -2,6 +2,54 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Part 2 layer, CalOMS and referrals
+
+Schema migration 55 (49–54 are reserved for other 1.17.0 changes and are placeholders on this branch). New routes,
+each with API tests; no new permission.
+
+- **SUDS as the Part 2 layer beside an EHR.** A third programme profile, **Part 2 compliance module (beside an
+  EHR)** (`part2_layer`; Settings › Program, and the setup wizard), for a treatment programme whose EHR
+  (eClinicalWorks, Epic, SmartCare…) stays the clinical record: the care plan, assessments, CalOMS and the hand-off
+  are off by default, the FHIR API on; Supplies, Overdose, My time, Funding and the funder report leave the sidebar;
+  Privacy & Part 2 leads it and opens on a new **Part 2 layer** tab — consents (live, expiring, pre-2024 form, active
+  clients without one), disclosures by source, the §2.32 notice, counseling notes, patient requests and their
+  deadlines, breaches and complaints, secure referrals and the EHR integration, as counts (`GET /api/part2/layer`,
+  caseload-scoped). Every Part 2 control is the same in every profile.
+- **Import from the EHR.** Import offers *Patients from your EHR* and *Encounters from your EHR*: a FHIR R4 Bundle or
+  Bulk Data NDJSON is turned into the rows a spreadsheet would give and goes through the spreadsheet import's own
+  preview, validation, duplicate check and commit (`POST /api/imports/ehr/preview`; `server/importers/fhir-ehr.js`).
+  SUDS never connects to the EHR.
+- **FHIR Provenance.** Each Consent the FHIR API serves has a `Provenance` (`consent-<id>`: who holds it, when it
+  was signed and recorded, and §2.31/§2.32 as policy), listed exactly when its Consent is and accounted the same way.
+- **Integration guide and positioning.** docs/integration/EHR-PART2-LAYER.md (what to connect, data flows, what
+  stays in the EHR); docs/market/POSITIONING.md gains "the disclosure-compliance module your EHR doesn't have",
+  stating plainly that it is software support for Part 2 controls, not a certification.
+- **CalOMS Tx monthly automation.** An administrator can have SUDS check the previous month on a set day and
+  **prepare** its submission file — program-wide, every implemented edit check — one file or one per provider ID. A
+  prepared file is not a disclosure: nothing is accounted or stamped until someone with `export:identified`
+  **produces** it (`POST /api/caloms/submissions/:id/produce`), which accounts exactly those bytes and sets
+  `extracted_at` as a hand-produced submission does, and is refused if any record in it changed since (then
+  **discard** and prepare again). A **worklist** assigns each validation error to the record's owner
+  (`GET /api/caloms/worklist`; *Mine* / *Everyone's*). A **submission log** records who prepared, produced,
+  downloaded, recorded the upload to DHCS (with the portal's reference) or discarded each file
+  (`caloms_submission_events`). SUDS still does not submit to DHCS and holds no DHCS credentials.
+- **County mode, the safe part.** Each CalOMS provider ID can carry its legal name and NPI (check digit verified), and
+  a submission can be made for one provider. SUDS has no multi-organisation concept; several unrelated provider
+  organisations on one server is not supported. The design for it is docs/architecture/COUNTY-MULTI-TENANT.md (until
+  then: one instance per provider, hosted by the county).
+- **Secure referral links.** A referral to an organisation not on SUDS can go as a one-time link the provider opens
+  without an account (*Secure link* on a referral; `/referral-link.html`). With a live Part 2 consent naming the
+  provider it carries a minimal referral (name, reason, urgency; phone and date of birth only if ticked), behind an
+  access code given separately and claimed by the first browser; the consent is re-checked at every open and the
+  disclosure is accounted when it is first opened. Without one, only a "please contact us" notice that names nobody.
+  Tokens are 256-bit, in the URL fragment (never in a server log or Referer), stored hashed; links last 1–7 days, can
+  be withdrawn, lock after five wrong codes, and every open is audited. The provider can say what happened, which
+  gives the worker a to-do to record the outcome, and is invited to receive referrals through SUDS. Office server
+  only. Threat model: docs/security/REFERRAL-LINKS.md.
+- Browser suite: `scripts/ui/r10-part2.mjs`.
+
 ## 1.16.4 — 2026-09-29
 
 ### Security

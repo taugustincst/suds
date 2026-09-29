@@ -178,6 +178,24 @@ function mapConsent(k) {
   });
 }
 
+// ---- Provenance (1.17.0): where a Consent came from and the rules it is held under ----
+// One Provenance per Consent served (id consent-<consent id>), so an EHR that keeps the consent beside its own
+// records (SUDS as the Part 2 layer beside the EHR; docs/integration/EHR-PART2-LAYER.md) can show who recorded
+// it, when, and that 42 CFR Part 2 §§2.31 and 2.32 govern it: redisclosure needs the patient's consent. Listed
+// exactly when its Consent is (same consent coverage). Not a US Core profile claim.
+const PART2_POLICY = ['https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2/subpart-C/section-2.31', 'https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2/subpart-C/section-2.32'];
+function mapProvenance(k) {
+  const part2 = k.type.startsWith('part2_');
+  return prune({
+    resourceType: 'Provenance', id: `consent-${k.id}`, meta: meta(k.updated_at),
+    target: [{ reference: `Consent/${k.id}` }], occurredDateTime: dt(k.signed_at), recorded: instant(k.created_at || k.updated_at),
+    policy: part2 ? PART2_POLICY : undefined,
+    activity: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-DataOperation', code: k.revoked_at ? 'UPDATE' : 'CREATE', display: k.revoked_at ? 'revise' : 'create' }] },
+    agent: [{ type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/provenance-participant-type', code: 'custodian', display: 'Custodian' }] }, who: programRef() }],
+    entity: k.document_ref_enc ? [{ role: 'source', what: { display: 'The signed consent form held by the program' } }] : undefined,
+  });
+}
+
 // ---- ServiceRequest (referrals) ----
 const SR_STATUS = { pending: 'active', contacted: 'active', accepted: 'active', waitlisted: 'on-hold', scheduled: 'active', admitted: 'completed', completed: 'completed', declined_by_client: 'revoked', declined_by_provider: 'revoked', no_show: 'revoked', closed: 'completed' };
 const SR_PRIORITY = { routine: 'routine', urgent: 'urgent', emergent: 'stat' };
@@ -360,6 +378,14 @@ const DEFS = {
     // general release is listed only outside a Part 2 programme): which other organisations a client has
     // agreed to share with is none of this recipient's business.
     keep: (row, client) => disclosure.consentCovers({ type: row.type, recipient: dec(row.recipient_enc), purpose: dec(row.purpose_enc), categories: row.info_categories }, { recipients: client.recipients, purposeOfUse: client.purpose, category: '*' }),
+  },
+  Provenance: {
+    src: `SELECT 'consent-' || k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.created_at _date
+      FROM consents k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT} AND k.type IN (${disclosure.FHIR_CONSENT_TYPES.map(t => `'${t}'`).join(',')})`,
+    load: (kind, id) => db.one(`SELECT * FROM consents WHERE id=?`, id), map: mapProvenance, date: 'recorded',
+    params: {},
+    // Exactly the consents the Consent search would list for this recipient.
+    keep: (row, client) => DEFS.Consent.keep(row, client),
   },
   ServiceRequest: {
     src: `SELECT r.id _fid, 'referral' _kind, r.id _rid, r.client_id _cid, r.updated_at _upd, r.referred_at _date, r.status _st FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${LIVE_CLIENT}`,

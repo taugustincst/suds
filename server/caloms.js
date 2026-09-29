@@ -15,9 +15,26 @@ const { encrypt, decrypt } = require('./crypto');
 // Reporting is on when the programme has turned it on and the CalOMS module is not switched off
 // (server/programme.js): a module switched off stops asking the admission and discharge questions.
 function enabled() { return db.getSetting('caloms_enabled', '0') === '1' && require('./programme').moduleOn('caloms'); }
+// Each provider: { id, name } and, from 1.17.0, the organisation's legal name and NPI — for a county-hosted
+// server reporting for several provider organisations, each with its own CalOMS provider number and file
+// (docs/architecture/COUNTY-MULTI-TENANT.md). Not PHI.
 function providers() {
   try { const v = JSON.parse(db.getSetting('caloms_providers', '[]') || '[]'); return Array.isArray(v) ? v.filter(p => p && p.id) : []; }
   catch { return []; }
+}
+/** A National Provider Identifier: 10 digits whose last is the Luhn check digit over 80840 and the first nine. */
+function validNpi(v) {
+  if (!/^\d{10}$/.test(String(v || ''))) return false;
+  const digits = `80840${String(v).slice(0, 9)}`.split('').map(Number);
+  let sum = 0;
+  for (let i = digits.length - 1, dbl = true; i >= 0; i--, dbl = !dbl) { let d = digits[i]; if (dbl) { d *= 2; if (d > 9) d -= 9; } sum += d; }
+  return (10 - (sum % 10)) % 10 === Number(String(v)[9]);
+}
+/** The scheduled run's settings (server/caloms-schedule.js). */
+function schedule() {
+  let last = null; try { last = JSON.parse(db.getSetting('caloms_schedule_last', 'null')); } catch { last = null; }
+  return { frequency: db.getSetting('caloms_schedule', 'off') === 'monthly' ? 'monthly' : 'off', day: Number(db.getSetting('caloms_schedule_day', '5')) || 5,
+    split_by_provider: db.getSetting('caloms_split_by_provider', '0') === '1', last };
 }
 function startDate() { return db.getSetting('caloms_start_date', null) || null; }
 const PROVIDER_ID = /^[0-9A-Za-z]{4,10}$/;
@@ -25,7 +42,7 @@ const PROVIDER_ID = /^[0-9A-Za-z]{4,10}$/;
 /** The configuration and layout the forms need, as plain data (requiredness functions become 'conditional'). */
 function config() {
   return {
-    enabled: enabled(), providers: providers(), start_date: startDate(),
+    enabled: enabled(), providers: providers(), start_date: startDate(), schedule: schedule(),
     spec: {
       version: S.SPEC_VERSION, source: S.SPEC_SOURCE, sets: S.SETS, record_types: S.RECORD_TYPES, multi_max: S.MULTI_MAX,
       administrative_discharge: S.ADMINISTRATIVE_DISCHARGE,
@@ -302,9 +319,12 @@ function columnsFor(type) {
  */
 // A preview's records carry these in place of the name, and no date of birth: it can be checked, never sent.
 const PREVIEW_NAME = { last_name: 'PREVIEW', first_name: 'NOT FOR SUBMISSION', dob: '' };
-function buildExtract({ from, to, scope, generatedBy, preview = false, submissionId = null }) {
+function buildExtract({ from, to, scope, generatedBy, preview = false, submissionId = null, providerId = null }) {
   const rep = report({ from, to, scope });
-  const ready = rep.checked.filter(x => !fatal(x.issues).length).map(x => x.record);
+  // One provider's file (county mode): only its records, and its activity rows; the others are not held back,
+  // they belong in their own provider's file.
+  const mine = (r) => !providerId || r.provider_id === providerId;
+  const ready = rep.checked.filter(x => mine(x.record) && !fatal(x.issues).length).map(x => x.record);
   const names = new Map();
   const nameOf = (clientId) => {
     if (names.has(clientId)) return names.get(clientId);
@@ -333,20 +353,20 @@ function buildExtract({ from, to, scope, generatedBy, preview = false, submissio
   }
   // Provider activity: every configured provider, every month of the period.
   const activity = [];
-  for (const p of providers()) for (const month of monthsBetween(from, to)) {
+  for (const p of providers().filter(x => !providerId || x.id === providerId)) for (const month of monthsBetween(from, to)) {
     const inMonth = ready.filter(r => r.provider_id === p.id && r.record_date.slice(0, 7) === month);
     const n = (t) => inMonth.filter(r => r.record_type === t).length;
     activity.push({ provider_id: p.id, report_month: month.replace('-', ''), admissions: n('admission'), discharges: n('discharge'), annual_updates: n('annual_update'), no_activity: inMonth.length ? 'N' : 'Y' });
   }
   files.push(['provider_activity.csv', T.toCsv(activity, [{ key: 'provider_id', label: 'ProviderID' }, { key: 'report_month', label: 'ReportMonth' }, { key: 'admissions', label: 'Admissions' }, { key: 'discharges', label: 'Discharges' }, { key: 'annual_updates', label: 'AnnualUpdates' }, { key: 'no_activity', label: 'NoActivity' }])]);
-  const excluded = rep.summary.blocked;
-  files.push(['README.txt', readme({ from, to, counts, excluded, activity, generatedBy, missing: rep.summary.missing, preview, submissionId })]);
+  const excluded = providerId ? rep.checked.filter(x => mine(x.record) && fatal(x.issues).length).length : rep.summary.blocked;
+  files.push(['README.txt', readme({ from, to, counts, excluded, activity, generatedBy, missing: rep.summary.missing, preview, submissionId, providerId })]);
   // Every file in a preview says so in its own name, so a stray copy cannot be taken for the submission.
   if (preview) for (const f of files) f[0] = `PREVIEW-${f[0]}`;
   return { files, ready, clientIds: [...new Set(ready.map(r => r.client_id))], counts, excluded, activity_rows: activity.length, no_activity_months: activity.filter(a => a.no_activity === 'Y').length };
 }
 
-function readme({ from, to, counts, excluded, activity, generatedBy, missing, preview = false, submissionId = null }) {
+function readme({ from, to, counts, excluded, activity, generatedBy, missing, preview = false, submissionId = null, providerId = null }) {
   return [
     ...(preview ? [
       'PREVIEW - NOT FOR SUBMISSION',
@@ -366,10 +386,12 @@ function readme({ from, to, counts, excluded, activity, generatedBy, missing, pr
       'CONTAINS PHI. Identified client records for the California Department of Health Care Services (DHCS),',
       'disclosed as required by law for state treatment outcome reporting. The disclosure is recorded in each',
       'client\'s accounting of disclosures in SUDS. Transmit only through the county\'s approved DHCS channel.',
+      'SUDS does not send this file to DHCS itself (it has no DHCS connection or credentials): a person uploads it.',
     ]),
     '',
     ...(submissionId ? [`Submission: ${submissionId} (its SHA-256 is recorded in SUDS; send this file unchanged)`] : []),
     `Period: ${from} to ${to}`,
+    ...(providerId ? [`Provider: ${providerId}${(() => { const p = providers().find(x => x.id === providerId) || {}; return [p.legal_name || p.name, p.npi ? `NPI ${p.npi}` : ''].filter(Boolean).map(x => ` - ${x}`).join(''); })()}`] : []),
     `Generated: ${db.now()}${generatedBy ? ` by ${generatedBy}` : ''}`,
     `Layout: ${S.SPEC_VERSION}`,
     `Source: ${S.SPEC_SOURCE}`,
@@ -403,4 +425,4 @@ function readme({ from, to, counts, excluded, activity, generatedBy, missing, pr
   ].join('\r\n');
 }
 
-module.exports = { enabled, providers, startDate, config, PROVIDER_ID, normalize, check, fatal, blocking, CROSS_RECORD, present, recordsForEpisode, contextFor, save, report, buildExtract, monthsBetween, columnsFor, ANNUAL_EARLY, ANNUAL_LATE, addYears, addDays };
+module.exports = { enabled, providers, validNpi, schedule, startDate, config, PROVIDER_ID, normalize, check, fatal, blocking, CROSS_RECORD, present, recordsForEpisode, contextFor, save, report, buildExtract, monthsBetween, columnsFor, ANNUAL_EARLY, ANNUAL_LATE, addYears, addDays };

@@ -1786,6 +1786,9 @@ export function navAndRender(to) {
 //                      Marked both (the funder report, state reporting, SUPRT-A): in More for a front-line worker,
 //                      who runs them for their own caseload (the API allows it), in the Program section for others.
 //   show()           — shown only when this returns true (a reporting module switched on for the programme).
+//   hideIn: [...]    — not shown under these programme profiles (server/programme.js): the harm-reduction pages
+//                      a program running SUDS as its Part 2 layer beside an EHR does not use (1.17.0). Their
+//                      addresses still open for anyone whose role may; the sidebar just stops leading with them.
 //   team: true       — for someone who supervises a team (supervising() below) it stays in the main list, and
 //                      everything else folds into "More": their day is the supervision queue, the caseloads and
 //                      the team's daily pages, not the programme's every page. Supervision leads their list.
@@ -1804,21 +1807,21 @@ export const NAV = [
   { name: 'interventions', team: true, label: 'Visits', ico: '✚', perm: 'interventions:read', help: 'Every visit: the face-to-face or phone services you provide — outreach, screenings, warm handoffs, naloxone, transport and more.' },
   { name: 'calls', team: true, label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
   { name: 'notes', team: true, label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
-  { name: 'supplies', label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires soonest first.' },
-  { name: 'overdose', label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
+  { name: 'supplies', hideIn: ['part2_layer'], label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires soonest first.' },
+  { name: 'overdose', hideIn: ['part2_layer'], label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
   { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', more: true, help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
-  { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. A call adds its time, and a visit does when you tick "Also log this as a time entry"; log meetings, travel and paperwork here.' },
+  { name: 'time', hideIn: ['part2_layer'], label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. A call adds its time, and a visit does when you tick "Also log this as a time entry"; log meetings, travel and paperwork here.' },
   { sec: 'Connect clients' },
   { name: 'referrals', team: true, label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
   { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Syringe services, drop-ins, shelters, MAT and treatment programs, legal aid and the other partners you refer people to.' },
   { sec: 'Program' },
   { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', more: true, help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
-  { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', programme: true, more: true, help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
+  { name: 'funder', hideIn: ['part2_layer'], label: 'Funder report', ico: '▦', perm: 'reports:read', programme: true, more: true, help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
   // The two state and federal reporting modules, for a programme that uses them (Settings › Program › Modules):
   // the same test the Reports page's cards use, so the entry and the card come and go together.
   { name: 'caloms', label: 'State reporting', ico: '⚑', perm: ['episodes:read', 'episodes:write', 'export:identified'], more: true, show: () => ((can('episodes:read') || can('episodes:write')) && moduleOn('caloms')) || (can('export:identified') && (moduleOn('caloms') || moduleOn('handoff'))), help: 'CalOMS Tx admission, discharge and annual update records for DHCS, their validation report and the extract, and the county EHR hand-off.' },
   { name: 'suprt', label: 'SUPRT-A', ico: '◎', perm: ['clients:read', 'reports:funder'], more: true, show: () => moduleOn('suprt'), help: 'SAMHSA SUPRT-A records for clients served with State Opioid Response money: completion, the follow-ups due, and the file for SPARS.' },
-  { name: 'budget', label: 'Funding & spending', ico: '$', perm: 'budget:read', programme: true, help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
+  { name: 'budget', hideIn: ['part2_layer'], label: 'Funding & spending', ico: '$', perm: 'budget:read', programme: true, help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
   { name: 'documents', label: 'Policies & contracts', ico: '📋', perm: 'documents:read', programme: true, help: 'County policies, procedures and signed contracts, searchable by title and category.' },
   { name: 'compliance', label: 'Privacy & Part 2', ico: '⚖', perm: ['consents:read', 'complaints:read', 'incidents:read', 'settings:manage'], more: true, help: '42 CFR Part 2: the patient notice and who has not been given it, the privacy complaint log, and the incident and breach register with its 60-day notification clock.' },
   { name: 'imports', label: 'Import', ico: '⇩', perm: 'imports:write', programme: true, more: true, help: 'Bring in spreadsheets (Excel / CSV) of clients, visits, calls, resources and more, or notes from Pocket AI and OneNote. Everything is checked before it is saved.' },
@@ -1844,11 +1847,16 @@ export function supervising() {
 /** Where a NAV entry goes in this person's sidebar: 'main', 'more' (folded away), or null (not shown). */
 export function navPlacement(n) {
   if (!n.name || (n.perm && !canAny(n.perm)) || (n.show && !n.show())) return null;
+  if (n.hideIn && n.hideIn.includes(programmeProfile())) return null;
+  // SUDS as the Part 2 layer beside an EHR: Privacy & Part 2 is what it is for, so it leads for everyone who may open it.
+  if (n.name === 'compliance' && programmeProfile() === 'part2_layer') return 'main';
   if (supervising()) return n.team ? 'main' : 'more';
   if (!frontline()) return 'main';
   if (n.more) return 'more';
   return n.programme ? null : 'main';
 }
+/** The programme profile (server/programme.js): harm_reduction, treatment or part2_layer; null before sign-in. */
+export function programmeProfile() { return (state.programme && state.programme.profile) || null; }
 /** Is a module of the programme profile switched on (server/programme.js)? Unknown means on. */
 export function moduleOn(key) { const m = state.programme && state.programme.modules; return !m || m[key] !== false; }
 

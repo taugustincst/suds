@@ -254,6 +254,55 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'part2.summary', ip: ctx.ip });
     return out;
   });
+
+  // ---- the Part 2 layer (1.17.0; docs/integration/EHR-PART2-LAYER.md): what a program that keeps its clinical
+  // record in an EHR runs SUDS for, in one view — consents, disclosures, the §2.32 notice, counseling notes,
+  // breaches, patient requests and the integration with the EHR. Counts only, for the clients the caller may see
+  // (caseload scoping as every list); the registers a role cannot read are left out rather than shown as zero.
+  r.get('/api/part2/layer', auth.requireAuth, auth.requirePerm('consents:read', 'consents:write', 'settings:manage'), (ctx) => {
+    const n = (sql, ...p) => db.one(sql, ...p).n;
+    const scope = auth.caseloadFilter(ctx.user, 'c.id');
+    const inScope = (alias) => `${alias}.client_id IN (SELECT c.id FROM clients c WHERE c.deleted_at IS NULL AND ${scope.sql})`;
+    const today = new Date().toISOString().slice(0, 10);
+    const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
+    const T = C.PART2_CONSENT_TYPES; const q = T.map(() => '?').join(',');
+    const live = `k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= ?)`;
+    const has = (p) => auth.hasPerm(ctx.user, p);
+    const P = require('../programme');
+    const out = {
+      profile: P.profile(), part2_program: disclosure.part2Program(),
+      consents: {
+        active: n(`SELECT COUNT(*) n FROM consents k WHERE k.type IN (${q}) AND ${live} AND ${inScope('k')}`, ...T, today, ...scope.params),
+        expiring_30d: n(`SELECT COUNT(*) n FROM consents k WHERE k.type IN (${q}) AND k.revoked_at IS NULL AND k.expires_at BETWEEN ? AND ? AND ${inScope('k')}`, ...T, today, in30, ...scope.params),
+        pre_2024_form: n(`SELECT COUNT(*) n FROM consents k WHERE k.type IN (${q}) AND (k.rule_version IS NULL OR k.rule_version<>'2024') AND ${live} AND ${inScope('k')}`, ...T, today, ...scope.params),
+        active_clients_without: n(`SELECT COUNT(*) n FROM clients c WHERE c.deleted_at IS NULL AND c.merged_into IS NULL AND c.status='active' AND ${scope.sql} AND NOT EXISTS (SELECT 1 FROM consents k WHERE k.client_id=c.id AND k.type IN (${q}) AND ${live})`, ...scope.params, ...T, today),
+        revoked_90d: n(`SELECT COUNT(*) n FROM consents k WHERE k.revoked_at >= ? AND ${inScope('k')}`, since90, ...scope.params),
+      },
+      disclosures_90d: Object.fromEntries(db.all(`SELECT COALESCE(d.source, 'manual') AS source, COUNT(*) n FROM disclosures d WHERE d.disclosed_at >= ? AND ${inScope('d')} GROUP BY COALESCE(d.source, 'manual')`, since90, ...scope.params).map(x => [x.source, x.n])),
+      notice: { version: disclosure.notice().version, short: disclosure.notice().short },
+      patient_notice_missing: n(`SELECT COUNT(*) n FROM clients c WHERE ${MISSING_NOTICE} AND ${scope.sql}`, ...scope.params),
+      counseling_notes: n(`SELECT COUNT(*) n FROM notes x WHERE x.counseling_note=1 AND x.deleted_at IS NULL AND ${inScope('x')}`, ...scope.params),
+      patient_requests: has('patient-requests:read') || has('patient-requests:write') ? {
+        open: Object.fromEntries(db.all(`SELECT x.kind, COUNT(*) n FROM patient_requests x WHERE x.status='open' AND ${inScope('x')} GROUP BY x.kind`, ...scope.params).map(x => [x.kind, x.n])),
+        overdue: n(`SELECT COUNT(*) n FROM patient_requests x WHERE x.status='open' AND x.due_at < ? AND ${inScope('x')}`, today, ...scope.params),
+      } : null,
+      incidents_open: has('incidents:read') ? n(`SELECT COUNT(*) n FROM privacy_incidents WHERE status='open'`) : null,
+      complaints_open: has('complaints:read') ? n(`SELECT COUNT(*) n FROM complaints WHERE status IN ('open','investigating')`) : null,
+      referral_links_90d: {
+        sent: n(`SELECT COUNT(*) n FROM referral_links x WHERE x.created_at >= ? AND ${inScope('x')}`, since90, ...scope.params),
+        opened: n(`SELECT COUNT(*) n FROM referral_links x WHERE x.created_at >= ? AND x.opened_at IS NOT NULL AND ${inScope('x')}`, since90, ...scope.params),
+        acknowledged: n(`SELECT COUNT(*) n FROM referral_links x WHERE x.created_at >= ? AND x.ack_status IS NOT NULL AND ${inScope('x')}`, since90, ...scope.params),
+      },
+      integration: {
+        fhir_module: P.moduleOn('fhir'),
+        fhir_clients: n(`SELECT COUNT(*) n FROM settings WHERE key LIKE 'fhir_client:%'`),
+        last_ehr_import: (db.one(`SELECT at FROM audit_log WHERE action='import.data.commit' AND details LIKE '%"source":"ehr_fhir"%' ORDER BY id DESC LIMIT 1`) || {}).at || null,
+      },
+    };
+    audit.log({ user: ctx.user, action: 'part2.layer', ip: ctx.ip });
+    return out;
+  });
 };
 module.exports.latestNotice = latestNotice;
 module.exports.MISSING_NOTICE = MISSING_NOTICE;

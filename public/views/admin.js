@@ -324,7 +324,7 @@ function programmeCard(s, refresh) {
     { type: 'section', label: 'Modules', heading: false },
     ...p.module_list.map(m => ({ name: `module_${m.key}`, label: m.label, type: 'select', noBlank: true, value: p.overrides[m.key] ?? '', help: m.help,
       // A clinical module follows the profile; SUPRT-A and publication releases have their own default.
-      options: [{ value: '', label: m.clinical === false ? `Default (${m.default_on ? 'on' : 'off'}: ${m.defaultWhy})` : `As the profile has it (${p.profile === 'treatment' ? 'on' : 'off'} for ${profileLabel(p.profile)})` }, { value: '1', label: 'On' }, { value: '0', label: 'Off' }] })),
+      options: [{ value: '', label: m.clinical === false ? `Default (${m.default_on ? 'on' : 'off'}: ${m.defaultWhy})` : `As the profile has it (${m.default_on ? 'on' : 'off'} for ${profileLabel(p.profile)})` }, { value: '1', label: 'On' }, { value: '0', label: 'Off' }] })),
   ], { submitText: 'Save program profile', onSubmit: async (d) => {
     await put('/api/admin/settings', d);
     try { state.programme = (await get('/api/auth/me')).programme || state.programme; } catch { /* the next sign-in picks it up */ }

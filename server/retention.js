@@ -13,14 +13,14 @@ const audit = require('./audit');
 // staff-time bookkeeping (time_entries, expenditures) keep their rows with the client link removed:
 // the money was spent and the hours were worked whether or not the person's record still exists.
 // A disclosure cites the court order it relied on, so disclosures go before court_orders.
-const DELETE_TABLES = ['care_plan_steps', 'care_plan_goals', 'problem_history', 'problems', 'asam_assessments', 'outcome_measures', 'client_form_files', 'client_forms', 'disclosures', 'court_orders', 'part2_notices', 'consents', 'patient_requests', 'referrals', 'tasks', 'calls', 'overdose_events', 'intervention_supplies', 'interventions', 'caloms_records', 'suprt_assessments', 'episodes', 'assignments', 'breakglass_events'];
+const DELETE_TABLES = ['care_plan_steps', 'care_plan_goals', 'problem_history', 'problems', 'asam_assessments', 'outcome_measures', 'client_form_files', 'client_forms', 'disclosures', 'court_orders', 'part2_notices', 'consents', 'patient_requests', 'referral_links', 'referrals', 'tasks', 'calls', 'overdose_events', 'intervention_supplies', 'interventions', 'caloms_records', 'suprt_assessments', 'episodes', 'assignments', 'breakglass_events'];
 // A complaint is the programme's record of how it answered one, and stays (unlinked) when the person's
 // record goes. So does an incident's link to the person: breach documentation is kept six years (45 CFR
 // §164.530(j)), longer than a record may be, so the link keeps the snapshot taken when the client was
 // linked (code, encrypted name) and records when the record was purged (purgeClient).
 const UNLINK_TABLES = ['time_entries', 'expenditures', 'complaints'];
 // Tables that never synchronise leave no tombstone behind.
-const NO_TOMBSTONE = ['breakglass_events'];
+const NO_TOMBSTONE = ['breakglass_events', 'referral_links'];
 
 function retentionYears() {
   const v = Number(db.getSetting('client_retention_years', ''));
@@ -58,6 +58,8 @@ const ACTIVITY = {
   outcome_measures: ['administered_at'],
   court_orders: ['issued_at'],
   part2_notices: ['given_at'],
+  // A secure referral link the recipient opened or answered is work on the record like the referral itself.
+  referral_links: ['created_at', 'opened_at', 'ack_at'],
   time_entries: ['work_date'],
   expenditures: ['spent_at'],
 };
@@ -130,6 +132,9 @@ function purgeClient(client, { user = { username: 'system' }, reason = 'retentio
     // accounting rows, before they are deleted below.
     const inFiles = db.all(`SELECT DISTINCT source_ref FROM disclosures WHERE client_id=? AND source='caloms' AND source_ref LIKE 'caloms:%'`, client.id).map(r => r.source_ref.slice('caloms:'.length));
     counts.caloms_files_cleared = inFiles.reduce((n, id) => n + db.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE id=? AND file_enc IS NOT NULL`, db.now(), db.now(), id).changes, 0);
+    // A prepared file (a scheduled run's, not yet produced) has no accounting rows to find it by, and may name
+    // this client: every one still kept is cleared. It was never sent; the next run prepares another.
+    counts.caloms_files_cleared += db.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE status='prepared' AND file_enc IS NOT NULL`, db.now(), db.now()).changes;
     for (const t of DELETE_TABLES) {
       const ids = db.all(`SELECT id FROM ${t} WHERE client_id=?`, client.id).map(r => r.id);
       counts[t] = ids.length;

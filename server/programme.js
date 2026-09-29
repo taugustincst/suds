@@ -15,7 +15,7 @@
 // Records a device pushes through sync are accepted even while their module is off: the device may have
 // recorded them offline while it was on, and refusing the push would lose that work without a trace.
 //
-// Settings: programme_profile ('harm_reduction' | 'treatment') and module_<key> ('1' on, '0' off; absent
+// Settings: programme_profile ('harm_reduction' | 'treatment' | 'part2_layer') and module_<key> ('1' on, '0' off; absent
 // means the module's default). All are synchronised to device copies (server/sync-tables.js).
 //
 // Two modules are not clinical and do not follow the profile (1.14.0):
@@ -33,6 +33,11 @@ const { HttpError } = require('./http');
 const PROFILES = {
   harm_reduction: { label: 'Harm reduction & outreach', help: 'Outreach, visits, supplies, calls, referrals and grant reporting. The clinical modules are hidden until you switch one on.' },
   treatment: { label: 'Treatment-adjacent', help: 'Everything above plus the clinical modules: care plan and problem list, assessments, CalOMS Tx, the FHIR API and the county EHR hand-off.' },
+  // 1.17.0: SUDS beside an EHR that stays the clinical record (docs/integration/EHR-PART2-LAYER.md). The EHR-like
+  // modules are off; the FHIR API is on, for the EHR to read consents and their provenance; the harm-reduction
+  // pages (supplies, overdose events, staff time, the budget) are hidden from the sidebar (public/app.js NAV
+  // hideIn) and Privacy & Part 2 leads it. Every Part 2 control is the same in every profile.
+  part2_layer: { label: 'Part 2 compliance module (beside an EHR)', help: 'For a program whose EHR (eClinicalWorks, Epic, SmartCare…) stays the clinical record: consent management, the accounting of disclosures, redisclosure notices, SUD counseling notes kept apart, the breach register, patient requests and secure referrals, with patients and encounters imported from the EHR and consents readable by it over FHIR. The care plan, assessments, CalOMS and the hand-off are off until you switch one on.' },
 };
 const DEFAULT_PROFILE = 'harm_reduction';
 const MODULES = [
@@ -59,7 +64,9 @@ function profile() {
 function moduleDefault(key) {
   if (key === 'publication') return true;
   if (key === 'suprt') { try { return !!db.one(`SELECT 1 FROM funding_sources WHERE source_type='sor_grant' LIMIT 1`); } catch { return false; } }
-  return profile() === 'treatment';
+  const p = profile();
+  if (p === 'part2_layer') return key === 'fhir';
+  return p === 'treatment';
 }
 function moduleOn(key) {
   const v = db.getSetting(`module_${key}`, null);
