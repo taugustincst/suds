@@ -26,6 +26,15 @@
 
 - Customer Data is stored and processed only in the United States `[and only in region ___]`.
 - Current subprocessors: `[cloud hosting provider — list; ideally no other subprocessor receives Customer Data]`.
+- **AI provider, only when the AI documentation copilot is turned on** (`docs/AI-COPILOT.md`; office server only,
+  off by default, never for SUD counseling notes): `[AI provider legal name; SUDS calls Anthropic's Messages API by
+  default]` receives the text a worker gives for one client, with the identifiers SUDS holds replaced. It is listed
+  here, with the notice and objection rights below, before the copilot is turned on, if the Vendor hosts SUDS or
+  holds the provider's key; if the Customer contracts with the provider directly, it is the Customer's own processor
+  and the Vendor sends it nothing. Either way the written terms with the provider must cover `[no retention of
+  request or response content beyond the call ("zero retention"), or at most ___ days]` and `[no use to train or
+  improve any model]`, consistent with section 2: **to be confirmed by counsel against the provider's current
+  agreement; this draft does not state what any provider offers.**
 - `[30]` days' notice of a new subprocessor, with a right to object and, if unresolved, to terminate without penalty.
 - SUDS itself loads no third-party scripts, CDNs, analytics or telemetry; the Vendor will not add any that
   receive Customer Data without written approval.

@@ -37,6 +37,7 @@ STRATEGY.md exist; the rest is planned, and the organisational items below remai
 | [BUYER-GUIDE-PROGRAM.md](BUYER-GUIDE-PROGRAM.md) | Programme directors | Outreach, supplies and funder reporting in SUDS, a day in the life, what we need from you |
 | [BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md) | IT partners, county IT, security, privacy | Deployment options, identity, data flows, controls with evidence, questionnaire, accessibility, integration, support |
 | [HOSTING.md](HOSTING.md) | Programme directors, IT partners, vendor | Hosting models, who does what at 2am, what vendor hosting requires, a unit-cost model, current status |
+| [DEMO-SCRIPT.md](DEMO-SCRIPT.md) | Vendor, presenters | A 20-minute first-meeting walkthrough on the fictional sample data: one path for a CBO director, one for a county funder |
 | [PILOT-KIT.md](PILOT-KIT.md) | Sponsor, pilot lead, vendor | 90-day pilot: scope, eligibility decision tree, roles, week-by-week plan, **measurement plan**, exit plan, evaluation template |
 | [PROCUREMENT.md](PROCUREMENT.md) | Purchasing, counsel, vendor | Small purchase, CMAS, RFI/RFP, CalMHSA; RFI boilerplate; contract exhibits; vendor to-do list |
 | [EVALUATION-RESPONSE.md](EVALUATION-RESPONSE.md) | Owner, reviewers | Point-by-point response to the critical evaluation, with evidence and what is still open |

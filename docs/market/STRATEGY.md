@@ -99,7 +99,7 @@ draft is audited without its text, under a monthly cap and a per-person limit.
     never sees PHI". Say this in every buyer document.
   - **Part 2.** Sending a Part 2 record to an AI provider is a disclosure unless the provider is a qualified
     service organisation under a QSOA (42 CFR §2.11, §2.12(c)(4)). SUD counseling notes (§2.11) are excluded
-    from the copilot (built for 1.17.0: the draft route refuses one) unless counsel says otherwise.
+    from the copilot (released in 1.17.0: the draft route refuses one) unless counsel says otherwise.
   - **Accuracy and liability.** A drafted note that is signed unread is the signer's note. The design answers
     this (drafts only, human signs); the pilot must measure how often drafts are changed, and training must say
     that the signer owns the content.
@@ -159,7 +159,7 @@ worker needs rather than everything the worker may see (planned), and a sync tha
 **Assessment.** It is the most differentiated of the three for harm-reduction buyers, and the one that fits the
 product's privacy stance best: the least data collected is the least data to protect. Two cautions. First, a
 device today holds every record its user may see, which under the 1.16.0 defaults is the whole programme; a
-real outreach mode needs the least-privilege default (built for 1.17.0: on for a new install, a setting an upgraded office turns on)
+real outreach mode needs the least-privilege default (released in 1.17.0: on for a new install, a setting an upgraded office turns on)
 or a device scope of its own. Second,
 offline sync is the area where most 1.16.x security findings were; each change to it needs the same review.
 

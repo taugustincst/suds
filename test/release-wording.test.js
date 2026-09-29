@@ -41,6 +41,24 @@ test('no document says the stamped version is not yet released', () => {
   assert.deepEqual(stale, [], `stamped ${[...new Set(stale.map(([, v]) => v))].join(', ')} (package.json: ${version}) but still "not yet released" in: ${stale.map(([f]) => f).join(', ')}. Rewrite each to say what is now true (docs/RELEASE.md, stamp checklist).`);
 });
 
+/** Every "built for X.Y.Z" in the documents, with or without "not yet released": [file, version, context]. */
+function builtFor() {
+  const out = [];
+  for (const f of docs()) {
+    const text = flat(fs.readFileSync(f, 'utf8'));
+    for (const m of text.matchAll(/built for (\d+\.\d+\.\d+)/gi)) out.push([rel(f), m[1], text.slice(Math.max(0, m.index - 40), m.index + m[0].length + 20)]);
+  }
+  return out;
+}
+
+test('no document says a stamped version\'s feature is only "built for" it', () => {
+  // "Built for X.Y.Z" describes a candidate. Once X.Y.Z is stamped, the line says "released in X.Y.Z" or
+  // "available from X.Y.Z" instead, even where "not yet released" was already taken out (market review of 1.17.0).
+  const dated = stamped();
+  const stale = builtFor().filter(([, v]) => dated.has(v));
+  assert.deepEqual(stale.map(([f, v, c]) => `${f} (${v}): "…${c}…"`), [], 'say "released in X.Y.Z" or "available from X.Y.Z" for a stamped version');
+});
+
 test('one phrase for an unreleased version: "built for X.Y.Z, not yet released"', () => {
   const bad = [];
   for (const f of docs()) {
@@ -58,6 +76,9 @@ test('the check finds what it is for', () => {
   assert.ok(!stamped().has('9.9.9'));
   const m = [...flat('the copilot is **built for 1.17.0,\nnot yet released** (office only)').matchAll(/built for (\d+\.\d+\.\d+),? not yet released/gi)];
   assert.equal(m.length, 1); assert.equal(m[0][1], '1.17.0');
+  // A bare "built for" a stamped version is found too, across a line break and bold.
+  const bare = [...flat('the copilot **built for\n1.16.4** (office only)').matchAll(/built for (\d+\.\d+\.\d+)/gi)];
+  assert.equal(bare.length, 1); assert.ok(stamped().has(bare[0][1]));
   // While package.json's version is not yet stamped, the documents describe what it adds with the phrase; once it is
   // stamped, none may (the test above).
   const version = require('../package.json').version;

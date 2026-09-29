@@ -9,7 +9,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.16.4, the released commit `6491308` ("Release 1.16.4", on `main`, CI green, and published to GitHub Pages by a direct `gh-pages` push at the owner's request); the owner has not tagged it yet. (Until the review of the 1.17.0 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed, and that was never published.)
+**Version.** It describes 1.17.0, the stamp commit `485548c` ("Release 1.17.0", on `main`, and published to GitHub Pages by a direct `gh-pages` push at the owner's request); the owner has not tagged it yet ([../RELEASE.md](../RELEASE.md), *Record: 1.17.0*). The SBOM for 1.16.4 (`6491308`) stays in this folder for that release. (Until the review of the 1.17.0 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed, and that was never published.)
 
 **Other ways in.** The same ground is covered question by question in [../security/QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md), and for buyers in [../market/BUYER-GUIDE-IT.md](../market/BUYER-GUIDE-IT.md).
 
@@ -17,7 +17,8 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 | File | What it is | How to check it |
 | --- | --- | --- |
-| [sbom-1.16.4.cdx.json](sbom-1.16.4.cdx.json) | CycloneDX 1.5 software bill of materials for 1.16.4. See *The SBOM*, below | `node scripts/sbom.js --ref 6491308` prints the same bytes, and `test/sbom.test.js` checks it |
+| [sbom-1.17.0.cdx.json](sbom-1.17.0.cdx.json) | CycloneDX 1.5 software bill of materials for 1.17.0. See *The SBOM*, below. Generated from the stamp commit, since the tag is not pushed yet | `node scripts/sbom.js --ref 485548c7b076954cdbf1ec4445335d7459662048` prints the same bytes, and `test/sbom.test.js` checks it |
+| [sbom-1.16.4.cdx.json](sbom-1.16.4.cdx.json) | The SBOM for 1.16.4 | `node scripts/sbom.js --ref 6491308` prints the same bytes |
 | [dr-drill-2026-09-29.md](dr-drill-2026-09-29.md) and [its folder](dr-drill-2026-09-29/) | Recovery drill on the released 1.16.2 at 20,000 fictional clients: 11 of 11 checks, drill RTO 3.8 s. A signed JSON report, the text report and the public key | `npm run verify-dr-report -- dr-drill-2026-09-29/<report>.json --public-key dr-drill-2026-09-29/suds-signing-key.pem` |
 | [dr-drill-2026-09-25.md](dr-drill-2026-09-25.md) and [its folder](dr-drill-2026-09-25/) | The earlier drill (1.11.0 branch, schema 37) | As above |
 
@@ -86,7 +87,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 ### Vulnerability management and supply chain
 
-- **Documents:** [VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md); the SBOM ([sbom-1.16.4.cdx.json](sbom-1.16.4.cdx.json)); `.github/dependabot.yml`.
+- **Documents:** [VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md); the SBOM ([sbom-1.17.0.cdx.json](sbom-1.17.0.cdx.json)); `.github/dependabot.yml`.
 - **Tests:** `sbom` (the server requires only Node built-ins; the committed SBOM equals a fresh run), `kernel-parity`.
 - **CI:** `test` (the kernel and schema must match their sources); Node pinned by SHA-256.
 - **Status:** The server has zero runtime npm packages, and the SBOM is published. **Owner-pending:** CodeQL and secret scanning (repository settings), private vulnerability reporting and a `SECURITY.md`, and a penetration test. SAST and DAST are not in CI.
@@ -123,7 +124,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 - **Documents:** [../AI-COPILOT.md](../AI-COPILOT.md) (what is sent, the residual risk, what is recorded); [DATA-INVENTORY.md](../security/DATA-INVENTORY.md) section 5; [THREAT-MODEL.md](../security/THREAT-MODEL.md).
 - **Tests:** `ai-copilot`, `ssrf`, `role-expansion`; browser `r10-ai` (against a local fake provider).
 - **CI:** `test`; `browser` (`r10-ai`).
-- **Status:** Off by default; not yet in a released version. **Programme-pending:** a BAA with Part 2 QSOA terms with the AI provider, and counsel's review, before it is switched on.
+- **Status:** Released in 1.17.0; off by default, and office server only. **Programme-pending:** a BAA with Part 2 QSOA terms with the AI provider, and counsel's review, before it is switched on.
 
 ### De-identification and publication
 
@@ -169,7 +170,7 @@ These close review questions that software cannot. The status of each is on the 
    - immutable releases, with older releases' checksums recorded;
    - stale branches deleted;
    - CodeQL, secret scanning and push protection.
-2. **Tag the released versions.** 1.16.3 (`fc5e9d7`) and 1.16.4 (`6491308`, live on GitHub Pages) are released but not tagged (HANDOFF.md, *Release waiting*; docs/RELEASE.md, *Record: 1.16.4 published without a tag*): `git fetch origin && git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3" && git tag -a v1.16.4 6491308 -m "SUDS 1.16.4" && git push origin v1.16.3 v1.16.4`. The SBOM already describes `6491308`.
+2. **Tag the released versions.** 1.16.3 (`fc5e9d7`) and 1.16.4 (`6491308`, live on GitHub Pages) are released but not tagged (HANDOFF.md, *Release waiting*; docs/RELEASE.md, *Record: 1.16.4 published without a tag*): `git fetch origin && git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3" && git tag -a v1.16.4 6491308 -m "SUDS 1.16.4" && git push origin v1.16.3 v1.16.4`. The 1.16.4 SBOM describes `6491308`. 1.17.0 (`485548c`) is untagged too (`git tag -a v1.17.0 485548c -m "SUDS 1.17.0"`); its SBOM describes that commit.
 3. **Vulnerability disclosure.** Turn on private vulnerability reporting, add a `SECURITY.md`, and name a security contact `[owner to complete]`.
 4. **Licence file.** `package.json` says MIT; add the `LICENSE` file `[owner to complete]`.
 5. **Organisation** `[owner to complete]`:
@@ -199,7 +200,7 @@ These close review questions that software cannot. The status of each is on the 
 
 | Evidence | Command |
 | --- | --- |
-| SBOM for a release | After the owner tags it: `node scripts/sbom.js --ref v<version> --out docs/evidence/sbom-<version>.cdx.json`. Commit the file on `main`: evidence follows the release, as the drill reports do. `test/sbom.test.js` checks the newest SBOM against its recorded commit wherever that commit is in the clone. In CI, that is once the tag exists, since the `test` job fetches the release tags |
+| SBOM for a release | After the owner tags it: `node scripts/sbom.js --ref v<version> --out docs/evidence/sbom-<version>.cdx.json` (while a released version is untagged, as 1.16.4 and 1.17.0 are, `--ref <stamp commit>`; the file records the full commit either way). Commit the file on `main`: evidence follows the release, as the drill reports do. `test/sbom.test.js` checks the newest SBOM against its recorded commit wherever that commit is in the clone. In CI, that is once the tag exists, since the `test` job fetches the release tags |
 | Recovery drill (development) | `node --no-warnings=ExperimentalWarning scripts/dr-exercise.js --clients 20000 --out docs/evidence/dr-drill-<date>`, from the released tree |
 | Recovery drill (production, by the operator) | Settings → System & backups → *Run a recovery drill now*, or `npm run dr-drill -- --offsite --keys-file <escrowed keys.json>` |
 | Audit export | Settings → Security status → *Download audit export*; verify with `npm run verify-audit-export -- <file> --public-key <key>.pem` |
