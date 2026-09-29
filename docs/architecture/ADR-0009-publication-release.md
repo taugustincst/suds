@@ -1,7 +1,7 @@
 # ADR-0009: One audited publication release per ended period
 
 - **Status:** accepted (independent statistical review pending; see *Known limits*)
-- **Date recorded:** 2026-09-26 (the release object in 1.12.2, the check against the method in 1.12.4, the defaults, degrade step, work budget and worker thread in 1.13.0; written down retrospectively. 1.14.0: small funds combined, the read from a snapshot, the release kept by the data's version, the budget measured and reset, a timed-out audit refused on its own)
+- **Date recorded:** 2026-09-26 (the release object in 1.12.2, the check against the method in 1.12.4, the defaults, degrade step, work budget and worker thread in 1.13.0; written down retrospectively. 1.14.0: small funds combined, the read from a snapshot, the release kept by the data's version, the budget measured and reset, a timed-out audit refused on its own. 1.16.1: a table withheld by a published rule; 1.16.2: withdrawn, *Withheld by rule*)
 
 ## Context
 
@@ -83,23 +83,39 @@ suppression and check are run, once per printout), withheld cells of T or more m
 counts worked out from the withheld tables' cells are held to the rule against the method. The release is refused
 (422) when a table to withhold is the headline, when the degraded release fails, or when the budget runs out.
 
-**Withheld by rule** (1.16.1; `release-audit.js` `buildModel` `preWithhold`, `sdc.js` `protect`). The degrade
-step validates each witness world by running that world's full release, check included; when the full release's
-check fails expensively (every candidate world tried), each validation costs about as much as the first round, and
-the degrade step, which shares the first round's budget, cannot finish. A 2,000-client year was refused this way
-(the per-month overdose events not reversed were 1, 2 and 3; 206 million units for the first round, the rest of
-the budget less than one validation; raising the budget fourfold did not help). So a table known to fail that way
-is withheld **from the start by a published rule**: in a period with at least 12T overdose events, the events by
-month (`overdose.by_month.n`) whenever a month has 1 to T-1 events or 1 to T-1 not reversed. The rule reads figures
-the release does not print, but the attacker knows it: the check counts only worlds for which the rule decides the
-same (a dozen comparisons per world, not an audit), and the counts worked out from the table's cells are held to
-the rule against the method, as in a degraded release. It reads a month's events as well as what was not
-reversed, so that it not firing never says a small month's events were all reversed; below 12T events (every
-family the pattern attacker enumerates) it never fires and the check settles the months itself, as before. That
-year now publishes in about 77 million units with only that table withheld; a 20,000-client year is unchanged.
-A rule-withheld table reads "Too few people to show it without giving someone away", like one the suppression
-withholds. The general hazard remains for any other table whose check fails expensively: its fix is another rule
-of this kind, found by the benchmark (`scripts/bench/run.js`), not a larger budget.
+**Withheld by rule** (1.16.1; **withdrawn in 1.16.2**). The degrade step validates each witness world by running
+that world's full release, check included; when the full release's check fails expensively (every candidate world
+tried), each validation costs about as much as the first round, and the degrade step, which shares the first
+round's budget, cannot finish. A 2,000-client year is refused this way (the per-month overdose events not reversed
+are 1, 2 and 3; about 206 million units for the first round, the rest of the budget less than one validation;
+raising the budget fourfold does not help). 1.16.1 withheld that table **from the start by a published rule**: in
+a period with at least 12T overdose events, the events by month (`overdose.by_month.n`) whenever a month had 1 to
+T-1 events or 1 to T-1 not reversed; the check counted every world that printed the same through the suppression
+and for which the rule decided the same ("a dozen comparisons per world, not an audit").
+
+That was not sound. Whether the rule fires depends on figures the release does not print, and a world that prints
+the same through the suppression and fires the rule the same way can still have its own release refused (its own
+check fails), so it is not behind the printout; counting it overstated the protection. The engineering review of
+1.16.1 ran the attacker on the rule's own gate (T = 3, two months, 36 = 12T events, every split of events and
+reversals): 6 printouts leaked, each saying that a month's events not reversed were not 1 (E 36, R 32, the months'
+reversals 0 and 32 was printed only by E=1+35 and E=2+34); with the gate lowered, the suite's two-month families
+leaked at T = 3 and 5. No test had put the rule under the attacker, because the gate kept it away from every family
+the tests enumerate. The degrade step's standard - a world counts only if its own release, check included, prints
+the same - was tried for 1.16.2: it removed those leaks, but it runs a whole check for each world the rule's check
+counts, and wherever the rule fired at the size it was for it took the audit past its budget (the 2,000-client
+year: 55 worlds at about 72 million units each), so the rule refused every year it was meant to publish. Nor was
+it sound at one level (each world's own check counting worlds by the suppression and the rule alone, as the check
+inside `sameFailure` does): with the gate lowered it still leaked at T = 3 in the suite's two-month family (E=2+2,
+R=0+0 printed alone), because each of those worlds' own releases is in turn checked the stricter way. A rule's decision
+depends on the figures, so a sound check of it is a fixed point over worlds' releases, which the audit cannot
+afford. **So 1.16.2 publishes no rule**: `buildModel` returns no `preWithhold`, `server/sdc.js` `protect` is
+1.16.0's, and a year like the benchmark's is refused whole again (refusal is always safe). Measured on scaled
+copies of that year at T = 11 (docs/PERFORMANCE.md, *Which programmes are refused*), 17 of 60 are refused, all
+with 126 to 237 overdose events. A release 1.16.1 published with the events by month withheld by the rule is not
+verified (docs/HIPAA.md). A future rule of this kind must be a function of what the release prints, or come with a
+check whose witnesses are validated by their own releases at a cost the budget allows, and must be run under the
+attacker with its gate lowered before it ships (`test/publication-release.test.js`, "the reviewer's case against
+1.16.1's rule").
 
 **Determinism.** The audit's budget is counted in solver work (tableau cells touched, and since 1.14.0 the
 constraint terms scanned to find each problem, which with many funds took as long as the solving; `STEP_LIMIT` =
@@ -138,8 +154,8 @@ case is not "a few seconds": 400 million units are 2 to 7 seconds of a server-cl
 - A supervisor's first click is the submission, exact; publication is an explicit step with a review confirmation.
 - In the reviewer's simulation (8 seeds per size, quarter and month) no release of 40 to 200 people was refused
   (1.12.4: 7 of 8 at 60, 6 of 8 at 80 per quarter); the random "realistic" property programmes refuse about 1 in 70.
-  That is not a guarantee: the benchmark's 2,000-client year was refused whole until 1.16.1 (above, *Withheld by
-  rule*), and a table whose check fails expensively can still exhaust the budget.
+  That is not a guarantee: the benchmark's 2,000-client year is refused whole (above, *Withheld by rule*), and so
+  is a table whose check fails expensively wherever it exhausts the budget: 17 of 60 scaled copies of that year.
 - A year for 5,000 people costs about 17 million units of work (4% of the budget; the release 0.6 to 0.9 s); while
   it runs the event loop is held only for the read's phases (0.1 to 0.2 s at 20,000 clients, 1.14.0; 0.6 to 1.5 s
   before, the whole read at once).
@@ -151,7 +167,9 @@ case is not "a few seconds": 400 million units are 2 to 7 seconds of a server-cl
 
 - The check proves that its witness worlds print the release through the suppression (and, for a degraded
   release, fail the full release the same way); not that each would pass the check itself. The tests run the whole
-  release, degrade step included, on every world of small families.
+  release, degrade step included, on every world of small families. That gap is what 1.16.1's rule turned into
+  a leak (*Withheld by rule*): the families enumerated are the evidence, not a proof, and a family must reach
+  whatever gate a mechanism has.
 - Counts printed nowhere are held to the rule against the method only in a degraded release's withheld tables and
   by the tests' families; otherwise against the printout. The attacker's family of two small funds of one
   allowable use at T = 5 finds one such count - the people served not under that use - narrowed by the method
@@ -202,7 +220,7 @@ docs/compliance/HARM-REDUCTION-REPORTING.md.
 
 `test/publication-release.test.js` (the independent attacker `test/fixtures/release-attacker.js`, the
 algorithm-aware attacker `test/fixtures/pattern-attacker.js` over families in `test/fixtures/release-worlds.js`
-including the race-code cover and two small funds combined (`test/publication-release-funds.test.js`), realistic programmes, programmes of many small funds and random
+including the race-code cover, two small funds combined (`test/publication-release-funds.test.js`) and the reviewer's two-month, 36-event family against 1.16.1's rule (`pattern.monthsWith`), realistic programmes, programmes of many small funds and random
 programmes, their small funds combined, the degrade fixture `test/fixtures/degraded-release.json`, the reviewer reproductions, the
 audit running in the worker; full sweeps with `SUDS_THOROUGH=1`), `test/publication-release-perf.test.js` (work,
 determinism, event-loop stall, a year of 60 funds - 120 in the thorough run - most of them small),

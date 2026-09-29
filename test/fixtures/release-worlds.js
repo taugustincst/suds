@@ -107,6 +107,18 @@ const pattern = {
     for (let a = 0; a <= outer; a++) for (let b = 0; a + b <= outer; b++) for (let ra = 0; ra <= a; ra++) for (let rb = 0; rb <= b; rb++) out.push([`E=${a}+${b} R=${ra}+${rb}`, { period: ['2025-01', '2025-02'], people: many(30, () => plain()), events: [...ev('2025-01', a, ra), ...ev('2025-02', b, rb)] }, a + b]);
     return worldsOf(out, inner);
   },
+  // Two months with exactly `events` events between them (printed, so every world of the family has it), every
+  // split of them and of their reversals whose total is in `inner` (checked) or `outer` (enumerated beside them,
+  // so that a printout that hides the reversals is not cut off): the engineering reviewer's case for the rule of
+  // 1.16.1 (T = 3, 36 events = 12T), in which the attacker found six printouts that leaked.
+  monthsWith: (events, inner, outer = []) => {
+    const out = []; const ev = (month, n, r) => many(n, i => ({ month, reversed: i < r, by: 'staff', doses: i < r ? 1 : 0 }));
+    for (let a = 0; a <= events; a++) for (let ra = 0; ra <= a; ra++) for (let rb = 0; rb <= events - a; rb++) {
+      if (!inner.includes(ra + rb) && !outer.includes(ra + rb)) continue;
+      out.push([`E=${a}+${events - a} R=${ra}+${rb}`, { period: ['2025-01', '2025-02'], people: many(30, () => plain()), events: [...ev('2025-01', a, ra), ...ev('2025-02', events - a, rb)] }, inner.includes(ra + rb) ? 0 : 1]);
+    }
+    return worldsOf(out, 0);
+  },
   // Race codes, a cover (a person may report several, so the codes add up to at least the people served): people
   // with code a alone, b alone, both, and none reported ("unknown"). Every set of codes a person can have is in
   // the family, so it tells its attacker no more than a reader knows (a is at most the people served, a, b and

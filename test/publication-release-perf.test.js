@@ -191,27 +191,23 @@ test('a year with 60 funds (120 in the thorough run), most of them small: the sm
   }
 });
 
-test('a year of a 2,000-client programme publishes, with only the overdose events by month withheld, by rule (1.16.1; 1.16.0 refused it whole)', () => {
+test('a year of a 2,000-client programme is refused whole within the budget, as in 1.16.0 (1.16.2 withdrew 1.16.1\'s rule)', () => {
   // The benchmark's small programme (test/fixtures/release-small-programme.json): three months with 1, 2 and 3
-  // overdose events not reversed. 1.16.0's check tried every candidate world for them (about half its budget),
-  // then its degrade step re-ran that check for each world it tried, ran out of budget and refused the year. The
-  // table is now withheld from the start by a published rule, whose decision each world is checked against in a
-  // few operations (server/release-audit.js buildModel, server/sdc.js protect).
+  // overdose events not reversed. The check fails for the months after trying every candidate world, and the
+  // degrade step, which re-runs that check for each world it tries, runs out of budget. 1.16.1 published it by
+  // withholding the events by month by a rule whose check leaked (test/publication-release.test.js, "the
+  // reviewer's case against 1.16.1's rule"); checked soundly the rule cost more than the budget here too, so it
+  // was withdrawn. A refusal is safe; raising the budget fourfold does not help (docs/PERFORMANCE.md).
   const RA = require('../server/release-audit');
   const { T, inputs } = require('./fixtures/release-small-programme.json');
   const p = RA.protectFigures({ ...inputs, perFund: new Map(inputs.perFund) }, T);
-  assert.ok(!p.refused, JSON.stringify(p.refused));
-  assert.deepEqual(p.withheld_tables, ['overdose.by_month.n']);
-  assert.deepEqual(p.audit.degraded, [], 'withheld by the rule, not by the degrade step');
-  assert.equal(p.audit.rounds, 1);
-  assert.ok(p.audit.steps < SDC.STEP_LIMIT / 4, `the audit took ${p.audit.steps} of ${SDC.STEP_LIMIT} units of work`);
-  assert.equal(p.withheld_reasons[0].reason, 'protect');
-  assert.equal(typeof p.funder.unduplicated.served, 'number', 'the headline is published');
-  assert.deepEqual(p.funder.overdose.by_month.map(x => x.n), inputs.domains.months.map(() => 'withheld'), 'no month\'s events are printed');
-  // The rule reads the figures; the check counts only worlds for which it decides the same.
-  const { model } = RA.buildModel({ ...inputs, perFund: new Map(inputs.perFund), funder: RA.prepare(inputs.funder, inputs.domains) }, T);
-  assert.deepEqual(model.preWithhold.map(r => r.table), ['overdose.by_month.n']);
-  assert.ok(!Object.keys(model).includes('preWithhold'), 'not enumerable: the model is posted back from the audit worker');
+  assert.ok(p.refused, 'refused');
+  assert.equal(p.refused.out_of_budget, true);
+  assert.equal(p.funder, undefined, 'nothing printed');
+  assert.equal(p.audit.rounds, 2);
+  assert.deepEqual(p.audit.degraded, ['overdose.by_month.n'], 'the degrade step found the table, and could not afford to check without it');
+  assert.ok(p.audit.steps <= SDC.STEP_LIMIT * 1.01, `the audit took ${p.audit.steps} of ${SDC.STEP_LIMIT} units of work`);
+  assert.match(p.refused.message, /A year is the longest standard period/);
 });
 
 test('a refusal for want of budget is logged with the audit\'s work, and a refused year is not told to publish a longer period (1.16.1)', async () => {

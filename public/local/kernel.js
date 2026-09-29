@@ -28864,9 +28864,6 @@ var require_sdc = __commonJS({
       const keep = new Set(model.keep || []);
       const byId = new Map(model.vars.map((v, i) => [v.id, i]));
       const derivedById = new Map((model.derived || []).map((d) => [d.id, d]));
-      const rules = model.preWithhold || [];
-      const pre = (vals) => rules.filter((r) => r.when(vals)).map((r) => r.table).sort();
-      const cellsOf = (tables) => new Set(model.vars.map((v, i) => tables.includes(v.table) ? i : -1).filter((i) => i >= 0));
       const neighbours = (i) => {
         const out3 = [];
         for (const k of model.cons) if (k.terms.some(([j]) => j === i)) {
@@ -28882,13 +28879,11 @@ var require_sdc = __commonJS({
         return other.length ? other : t;
       };
       const full = (vals, first2, known = null) => {
-        const p = pre(vals);
-        const pk = p.join("|");
-        const base2 = known || a.run(vals, p);
+        const base2 = known || a.run(vals, []);
         const { world: world2, ...out3 } = base2;
         let res2 = out3;
         if (base2.verified && consistency) {
-          const c = a.consistent(base2, p, rules.length ? { validate: (v) => pre(v).join("|") === pk, derived: p.length ? cellsOf(p) : null } : {});
+          const c = a.consistent(base2, []);
           res2 = { ...out3, verified: c.ok, unprotected: c.unprotected, gaveUp: c.gaveUp, consistency: { worlds: c.worlds, tried: c.tried }, ...first2 && debug ? { G: c.G } : {} };
         }
         if (res2.verified) return { res: res2, forced: [] };
@@ -28896,17 +28891,16 @@ var require_sdc = __commonJS({
         const done = new Set(res2.withheldTables);
         const more = [...new Set(res2.unprotected.flatMap(tablesFor))].filter((t) => !done.has(t)).sort();
         if (!more.length || more.some((t) => keep.has(t))) return { res: { ...res2, headline: more.some((t) => keep.has(t)) }, forced: null };
-        return { res: res2, forced: [.../* @__PURE__ */ new Set([...p, ...more])].sort() };
+        return { res: res2, forced: more };
       };
-      const stats = (res2, forced2, rounds) => ({ headline: false, ...res2, degraded: forced2.filter((t) => !ruled.includes(t)), ruled, outOfBudget: meter.over, backstop: meter.backstop, steps: meter.steps, rounds });
-      const ruled = pre(values);
+      const stats = (res2, forced2, rounds) => ({ headline: false, ...res2, degraded: forced2, outOfBudget: meter.over, backstop: meter.backstop, steps: meter.steps, rounds });
       const first = full(values, true);
       if (!first.forced || !first.forced.length) return stats(first.res, [], 1);
       const forced = first.forced;
       const key = forced.join("|");
       const memo = /* @__PURE__ */ new Map();
       const sameFailure = (vals) => {
-        const r = a.run(vals, pre(vals));
+        const r = a.run(vals, []);
         const printout = `${r.verified}|${r.withheldTables.join("|")}|${r.status.map((x, i) => x === "vis" ? vals[i] : x).join(",")}`;
         if (!memo.has(printout)) {
           const f = full(vals, false, r);
@@ -28920,7 +28914,8 @@ var require_sdc = __commonJS({
       const { world, ...out2 } = base;
       let res = out2;
       if (base.verified) {
-        const c = a.consistent(base, forced, { validate: sameFailure, derived: cellsOf(forced) });
+        const inForced = new Set(model.vars.map((v, i) => forced.includes(v.table) ? i : -1).filter((i) => i >= 0));
+        const c = a.consistent(base, forced, { validate: sameFailure, derived: inForced });
         res = { ...out2, verified: c.ok, unprotected: c.unprotected, gaveUp: c.gaveUp, consistency: { worlds: c.worlds, tried: c.tried }, ...debug ? { G: c.G } : {} };
       }
       if (meter.over && !meter.backstop && meter.limit < whole) {
@@ -29160,11 +29155,7 @@ var require_release_audit = __commonJS({
       soft([[Dall, 1], [E, -DOSES_MAX]], "<=");
       soft([[Dall, 1], [Dr, -1], [E, -DOSES_MAX], [R, DOSES_MAX]], "<=");
       mirror.push([R, Dr], [R, Dall], [E, Dall]);
-      const small = (x) => x >= 1 && x < T;
-      const preWithhold = [{ table: "overdose.by_month.n", when: (vals) => vals[E] >= 12 * T && h.n.some((n, m) => small(vals[n]) || small(vals[n] - vals[h.r[m]])) }];
-      const model = { vars, cons, derived, mirror, watch, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] };
-      Object.defineProperty(model, "preWithhold", { value: preWithhold });
-      return { model, h };
+      return { model: { vars, cons, derived, mirror, watch, keep: [HEADLINE], headlineVar: N, companions: [h.newAdm, h.epAdm] }, h };
     }
     function digest(text) {
       let h1 = 2166136261;

@@ -779,6 +779,31 @@ test('algorithm-aware attacker: small programmes at thresholds 3 and 5', () => {
   }
 });
 
+test('algorithm-aware attacker: the reviewer\'s case against 1.16.1\'s rule - two months, 36 events at T = 3 - leaks nothing (1.16.2)', () => {
+  // 1.16.1 withheld the events by month from the start by a published rule (a period of at least 12T events with a
+  // month of 1 to T-1 events or not reversed), and its check counted every world that printed the same through the
+  // suppression and for which the rule decided the same - some of them worlds whose own release was refused. At
+  // T = 3 with 36 events (the rule's gate), "E 36, R 32, the months' reversals 0 and 32" was printed only by
+  // E=1+35 and E=2+34: month 2's events not reversed were not 1 (six such printouts over every split). A check
+  // that runs each such world's own release cost more than the budget wherever the rule fired, and one level of
+  // it still leaked, so 1.16.2 withdrew the rule (docs/architecture/ADR-0009, "Withheld by rule").
+  const RA = require('../server/release-audit');
+  const { T, inputs } = require('./fixtures/release-small-programme.json');
+  const { model } = RA.buildModel({ ...inputs, perFund: new Map(inputs.perFund), funder: RA.prepare(inputs.funder, inputs.domains) }, T);
+  assert.equal(model.preWithhold, undefined, 'no published rule');
+  // A family of one total of events has every world behind the printouts that print that total (and, here, the
+  // reversals), not behind those that hide it: only those are checked.
+  const printed = (e, rs) => (p) => p.funder.overdose.events === e && rs.includes(p.funder.overdose.reversals);
+  const check = (name, worlds, only) => {
+    const { leaks, checked } = attackAll(worlds, 3, { only });
+    assert.ok(checked > 0, `${name}: nothing published`);
+    assert.deepEqual(leaks, [], `${name}: ${JSON.stringify(leaks.slice(0, 6), null, 1)}`);
+  };
+  check('two months, 36 events, 32 reversals', pattern.monthsWith(36, [32]), printed(36, [32]));
+  // Every printout the reviewer found leaking: the reversals 0 to 2 and 32 (and those near 32 beside them).
+  if (THOROUGH) check('two months, 36 events', pattern.monthsWith(36, [0, 1, 2, 32], [28, 29, 30, 31, 33, 34, 35, 36]), printed(36, [0, 1, 2, '<3', 32]));
+});
+
 test('reviewer reproduction (1.12.4 market review): six race codes of about ten people each publish, with the small one protected', () => {
   // 80 people, race codes 17, 12, 11, 15, 16 and 9. 1.12.4 hid code 1 only when it pinned code 7 from below
   // (at most 24), which said code 7 was at least 2, and refused the quarter.
