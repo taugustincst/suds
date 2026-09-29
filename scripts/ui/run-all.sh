@@ -102,8 +102,9 @@ for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-featu
   t0=$SECONDS
   # A hung script (a wait that never resolves) fails after SUDS_SCRIPT_TIMEOUT seconds instead of holding the
   # whole run open; its last lines are then in the failure digest at the end like any other failure.
-  # accessibility runs axe over every page and dialog in both themes and takes about 1,200 s on its own (1.17.0),
-  # so its default is 1,800 s; every other script keeps 900 s. SUDS_SCRIPT_TIMEOUT, when set, applies to all.
+  # accessibility runs axe over every page and dialog in both themes: about 600 s on a CI runner (595 to 634 s
+  # measured for the 1.17.0 candidate), up to about 1,200 s on a loaded 4-core development container, so its default
+  # is 1,800 s; every other script keeps 900 s. SUDS_SCRIPT_TIMEOUT, when set, applies to all.
   limit=900; [ "$s" = accessibility ] && limit=1800
   limit=${SUDS_SCRIPT_TIMEOUT:-$limit}
   timeout --kill-after=10 "$limit" node scripts/ui/$s.mjs > $T/suds-ui-$s.log 2>&1; rc=$?

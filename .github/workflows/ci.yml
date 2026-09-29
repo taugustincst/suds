@@ -140,7 +140,9 @@ jobs:
         run: node scripts/test-thorough.js --part sdc
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    # Measured on CI (1.17.0 candidate, runs 36612230830 and 36614997483): the whole job 27.9 min, the 51 scripts
+    # 23 to 27 min, accessibility alone 595 to 634 s. 50 minutes is about 1.8 times that; a hang costs 50, not 75.
+    timeout-minutes: 50
     steps:
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
