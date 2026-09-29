@@ -287,6 +287,25 @@ try {
   await nav.go('imports');
   const opts = await nav.page.$$eval('[data-import-entity] option', os => os.map(o => o.value));
   ok(opts.includes('ehr:clients') && opts.includes('ehr:interventions'), 'Import offers patients and encounters from the EHR');
+  // 1.17.1: the card says it takes an EHR export too; the spreadsheet templates are not offered for one; what
+  // happens is said in a live region, and a file that cannot be read is an alert in the error colour.
+  const card = '.card:has([data-import-entity])';
+  eq((await nav.page.textContent(`${card} h2`)).trim(), 'Import a spreadsheet or EHR export', 'the import card is named for both');
+  ok(/exported from your EHR/.test(await nav.page.textContent(`${card} > p`)), 'and its introduction says so');
+  const templatesShown = () => nav.page.$$eval(`${card} [data-import-template]`, bs => bs.filter(b => b.offsetParent !== null).length);
+  eq(await templatesShown(), 2, 'a spreadsheet choice offers its Excel and CSV templates');
+  await nav.page.selectOption('[data-import-entity]', 'ehr:clients');
+  eq(await templatesShown(), 0, 'an EHR choice does not offer spreadsheet templates');
+  eq(await nav.page.getAttribute('[data-import-status]', 'role'), 'status', 'the import status is a live region');
+  await nav.page.setInputFiles(`${card} input[type=file]`, { name: 'not-fhir.json', mimeType: 'application/json', buffer: Buffer.from('{"resourceType":"Nothing"}') });
+  ok(await until(async () => (await nav.page.textContent('[data-import-error]')).trim().length > 0), 'a file that is not a FHIR export is refused');
+  eq(await nav.page.getAttribute('[data-import-error]', 'role'), 'alert', 'as an alert');
+  ok(/not-fhir\.json could not be read/.test(await nav.page.textContent('[data-import-error]')), 'naming the file', await nav.page.textContent('[data-import-error]'));
+  ok(await nav.page.$eval('[data-import-error]', e => e.classList.contains('err') && getComputedStyle(e).color !== getComputedStyle(document.body).color), 'in the error colour');
+  eq((await nav.page.textContent('[data-import-status]')).trim(), '', 'and the status line does not also hold it');
+  await axe(nav.page, 'Import with an EHR file refused');
+  await nav.page.selectOption('[data-import-entity]', 'clients');
+  eq(await templatesShown(), 2, 'back on a spreadsheet choice, the templates are offered again');
 } catch (e) {
   fail(`crashed: ${e.stack || e.message}`);
 }

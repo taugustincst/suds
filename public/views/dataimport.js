@@ -14,20 +14,23 @@ export async function spreadsheetImportCard() {
   // .sr-only, not .hidden (display:none) — a good few mobile browsers/WebViews refuse to honor a
   // programmatic .click() on a file input that display:none has taken out of the render tree.
   const fileIn = h('input', { type: 'file', tabindex: '-1', 'aria-hidden': 'true', accept: '.xlsx,.csv,.json,.ndjson', class: 'sr-only' });
-  const status = h('div', { class: 'small muted mt' });
+  // What is happening is said as it happens (a live region), and a file that cannot be read is an alert, in the
+  // error colour, apart from it (1.17.1).
+  const status = h('div', { class: 'small muted mt', role: 'status', 'aria-live': 'polite', 'data-import-status': '1' });
+  const error = h('div', { class: 'err small mt', role: 'alert', 'data-import-error': '1' });
   const review = h('div', { class: 'mt' });
   let preview = null; let file = null;
   const drop = h('div', { class: 'dropzone', role: 'button', tabindex: '0', onClick: () => fileIn.click(), onKeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileIn.click(); } }, onDragover: e => { e.preventDefault(); drop.classList.add('over'); }, onDragleave: () => drop.classList.remove('over'), onDrop: e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); } }, 'Drop an Excel (.xlsx) or CSV file — or, for the EHR choices, its FHIR export (.json or .ndjson) — here, or click to choose', h('div', { class: 'small' }, 'Column names are matched automatically; you can adjust them before anything is saved.'));
   fileIn.addEventListener('change', () => { if (fileIn.files[0]) load(fileIn.files[0]); });
   async function load(f, mapping, sheet = 0) {
-    file = f; status.textContent = `Reading ${f.name}…`; clear(review);
+    file = f; status.textContent = `Reading ${f.name}…`; error.textContent = ''; clear(review);
     try {
       const buf = await f.arrayBuffer();
       const q = `entity=${entityOf()}&sheet=${sheet}${mapping ? '&mapping=' + encodeURIComponent(JSON.stringify(mapping)) : ''}`;
       preview = fromEhr() ? await post(`/api/imports/ehr/preview?entity=${entityOf()}`, buf, { headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': f.name } })
         : await post(`/api/imports/data/preview?${q}`, buf, { headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': f.name } });
-      status.textContent = ''; renderReview();
-    } catch (e) { status.textContent = e.message; }
+      status.textContent = `${f.name}: ${preview.rows.length} row${preview.rows.length === 1 ? '' : 's'} read. Check the columns and rows below before importing.`; renderReview();
+    } catch (e) { status.textContent = ''; error.textContent = `${f.name} could not be read: ${e.message}`; }
   }
   function renderReview() {
     const p = preview; clear(review);
@@ -54,10 +57,14 @@ export async function spreadsheetImportCard() {
           } catch (ex) { toast(ex.message, 'error'); e.target.disabled = false; }
         } }, `Import ${p.valid} row${p.valid === 1 ? '' : 's'}`) : h('span', { class: 'muted small' }, 'Fix the column matching or the file, then try again.'))].filter(Boolean));
   }
-  return h('div', { class: 'card' }, h('h2', {}, 'Import from Excel or CSV'),
-    h('p', { class: 'small muted' }, 'Bring in a list you already keep in a spreadsheet. Download the template for the exact columns, or upload your own file — columns are matched by name and every row is checked before anything is saved.'),
-    h('div', { class: 'row mb' }, h('div', { class: 'field grow', style: { margin: 0 } }, h('label', {}, 'What are you importing?'), entSel), h('button', { class: 'btn sm', onClick: () => downloadCsv(`/api/imports/data/template/${entityOf()}`) }, 'Download Excel template'), h('button', { class: 'btn sm ghost', onClick: () => downloadCsv(`/api/imports/data/template/${entityOf()}?format=csv`) }, 'CSV template')),
-    drop, fileIn, status, review);
+  // The templates are spreadsheets: an EHR's FHIR export has its own layout, so they are not offered for it.
+  const templates = [h('button', { class: 'btn sm', 'data-import-template': 'xlsx', onClick: () => downloadCsv(`/api/imports/data/template/${entityOf()}`) }, 'Download Excel template'), h('button', { class: 'btn sm ghost', 'data-import-template': 'csv', onClick: () => downloadCsv(`/api/imports/data/template/${entityOf()}?format=csv`) }, 'CSV template')];
+  const showTemplates = () => { for (const b of templates) b.classList.toggle('hidden', fromEhr()); };
+  entSel.addEventListener('change', showTemplates); showTemplates();
+  return h('div', { class: 'card', 'data-import-card': '1' }, h('h2', {}, 'Import a spreadsheet or EHR export'),
+    h('p', { class: 'small muted' }, 'Bring in a list you already keep in a spreadsheet, or patients and encounters exported from your EHR (FHIR). For a spreadsheet, download the template for the exact columns or upload your own file — columns are matched by name. Every row is checked before anything is saved.'),
+    h('div', { class: 'row mb' }, h('div', { class: 'field grow', style: { margin: 0 } }, h('label', {}, 'What are you importing?'), entSel), ...templates),
+    drop, fileIn, status, error, review);
 }
 
 export function exportButtons({ kind, from, to, label = 'Export' }) {

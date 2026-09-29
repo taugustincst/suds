@@ -80,12 +80,12 @@ label { display: block; font-size: .8rem; font-weight: 600; color: var(--muted);
 input, select, textarea { width: 100%; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--input-border, var(--border)); border-radius: 8px; padding: .5rem .6rem; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary-soft); border-color: var(--primary); }
 input[type="checkbox"] { width: auto; margin-right: .4rem; } textarea { min-height: 90px; resize: vertical; }
-.field { margin-bottom: .8rem; } .dt-pair { display: flex; gap: .4rem; } .dt-pair input[type="date"] { flex: 1 1 58%; min-width: 0; } .dt-pair input[type="time"] { flex: 1 1 42%; min-width: 0; } .date-with-pick { display: flex; gap: .4rem; } .date-with-pick input[type="date"] { flex: 1 1 auto; min-width: 0; } .date-pick { flex: 0 0 auto; padding-left: .55rem; padding-right: .55rem; } .field .help { font-size: .78rem; color: var(--muted); margin-top: .2rem; } .field.error input, .field.error select, .field.error textarea { border-color: var(--danger); } .field .err { color: var(--danger); font-size: .78rem; }
+.field { margin-bottom: .8rem; } .dt-pair { display: flex; gap: .4rem; } .dt-pair input[type="date"] { flex: 1 1 58%; min-width: 0; } .dt-pair input[type="time"] { flex: 1 1 42%; min-width: 0; } .date-with-pick { display: flex; gap: .4rem; } .date-with-pick input[type="date"] { flex: 1 1 auto; min-width: 0; } .date-pick { flex: 0 0 auto; padding-left: .55rem; padding-right: .55rem; } .field .help { font-size: .78rem; color: var(--muted); margin-top: .2rem; } .field.error input, .field.error select, .field.error textarea { border-color: var(--danger); } .err { color: var(--danger); } .field .err { font-size: .78rem; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 1rem; } .form-grid .span { grid-column: 1 / -1; }
 .check { display: flex; align-items: center; gap: .3rem; font-weight: 500; color: var(--text); margin-top: 1.4rem; }
 fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .9rem; margin: 0 0 1rem; } legend { font-size: .8rem; font-weight: 700; color: var(--muted); padding: 0 .3rem; }
 .btn { display: inline-flex; align-items: center; gap: .4rem; font: inherit; font-weight: 600; padding: .5rem .85rem; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; white-space: nowrap; max-width: 100%; }
-.btn:hover { background: var(--panel-2); } .btn:disabled { opacity: .55; cursor: not-allowed; }
+.btn:hover { background: var(--panel-2); } .btn:disabled, .btn[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
 /* A button that is really a file input: the input covers the label, invisible but hit-testable, so both a
    tap on the words and a click aimed at the input open the picker; the label carries the focus ring. */
 .file-btn { position: relative; overflow: hidden; }
@@ -402,7 +402,7 @@ input, select, textarea { max-width: 100%; }
 @media (pointer: coarse) {
   /* A checkbox is 24px to look at but 44px to hit: its label is the target (tasks.js, dashboard.js). */
   .tap-target { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin: 0; cursor: pointer; flex: 0 0 auto; }
-  .today-item .check { min-height: 44px; }
+  .today-item .check, .outreach-foot .check { min-height: 44px; }
   .today-item { padding: .35rem 0; }
   a.bar.link { min-height: 44px; }
 }
@@ -541,7 +541,7 @@ details.section > summary .summary-heading { display: inline; font-size: 1rem; m
 .outreach-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin-bottom: .75rem; }
 .outreach-list { margin: 0 0 .75rem; padding-left: 1.1rem; } .outreach-list li { margin: .2rem 0; overflow-wrap: anywhere; }
 .outreach-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem 1rem; margin: 1rem 0 5rem; }
-.outreach-foot .check { margin-top: 0; min-height: 44px; }
+.outreach-foot .check { margin-top: 0; }
 .outreach-where { margin-bottom: 1rem; }
 .outreach-newshift { min-height: 3rem; min-width: 3rem; }
 /* The screen is itself the logger: the floating + Log button would only cover the − / + counters (r10 M2). */

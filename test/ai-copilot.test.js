@@ -114,8 +114,11 @@ test('settings: administrators only; switching on needs the attestation, whose e
   assert.equal(on.status, 400); assert.ok(on.data.fields.enabled);
   const partial = await admin.post('/api/ai/attestation', { provider: 'Anthropic', signed_by: 'Director', agreement_date: '2026-01-15', reference: 'BAA-1', baa: true });
   assert.equal(partial.status, 400); assert.ok(partial.data.fields.qsoa && partial.data.fields.counsel_reviewed);
+  // Said in sentences, with the spelling the form's own label uses (1.17.1).
+  assert.equal(partial.data.fields.qsoa, 'Confirm that it includes qualified service organization terms under 42 CFR Part 2.');
+  assert.match(partial.data.fields.counsel_reviewed, /^Confirm that your counsel has reviewed/);
   const future = await admin.post('/api/ai/attestation', { provider: 'Anthropic', signed_by: 'Director', agreement_date: '2999-01-01', reference: 'BAA-1', baa: true, qsoa: true, counsel_reviewed: true });
-  assert.equal(future.status, 400);
+  assert.equal(future.status, 400); assert.match(future.data.fields.agreement_date, /^The date the agreement was signed cannot be in the future\.$/);
   const missingWho = await admin.post('/api/ai/attestation', { provider: 'Anthropic', agreement_date: '2026-01-15', reference: 'BAA-1', baa: true, qsoa: true, counsel_reviewed: true });
   assert.equal(missingWho.status, 400);
   // No provider key on the server: recorded, but it cannot be switched on.

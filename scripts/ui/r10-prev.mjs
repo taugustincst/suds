@@ -93,6 +93,13 @@ try {
   // ------------------------------------------------------------------ a supervisor edits it; the summary
   const jw = await session('jwalker');
   await jw.go(`prevention?from=${today}&to=${today}`);
+  // 1.17.1: Prevention and Settlement outcomes shared the ◈ icon in the navigation.
+  const icons = await jw.page.evaluate(async () => { const { NAV } = await import('./app.js'); return NAV.map(n => [n.name, n.ico]); });
+  const icoOf = (name) => (icons.find(([n]) => n === name) || [])[1];
+  ok(icoOf('prevention') && icoOf('settlement') && icoOf('prevention') !== icoOf('settlement'), 'Prevention and Settlement outcomes have icons of their own', icons.filter(([n]) => n === 'prevention' || n === 'settlement'));
+  const dupes = icons.map(([, i]) => i).filter((i, k, all) => i && all.indexOf(i) !== k);
+  eq(dupes.length, 0, 'no two navigation entries share an icon', dupes);
+  eq(await jw.page.textContent('.sidebar a[href="#/prevention"] .ico').catch(() => icoOf('prevention')), icoOf('prevention'), 'the sidebar shows Prevention\'s own icon');
   await jw.page.click(`[data-prevention-events] tbody tr:has-text("${title}")`);
   await jw.page.waitForSelector('.modal form');
   ok(await jw.page.$('.modal [data-others-record]'), 'a supervisor editing it is told it is another worker\'s');

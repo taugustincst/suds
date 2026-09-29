@@ -137,12 +137,17 @@ route('outreach', async () => {
   const saveBtn = h('button', { type: 'submit', class: 'btn primary outreach-save', 'data-outreach-save': '1' }, 'Save contact');
   const errorBox = h('div', { class: 'banner danger hidden', role: 'alert', 'data-outreach-error': '1' });
   const shiftCard = h('section', { class: 'card', 'aria-labelledby': 'outreach-shift-h', 'data-outreach-shift': '1' });
+  // Not disabled while it saves (a disabled button drops the keyboard focus to the page, 1.17.1): aria-disabled,
+  // and a second press is ignored. After a save the focus goes back to the top of the form (Contact), ready for
+  // the next one; after a failure, to what went wrong.
+  let saving = false;
   const formEl = h('form', { class: 'card outreach-form', 'data-outreach-form': '1', novalidate: true, onSubmit: async (e) => {
     e.preventDefault();
-    if (saveBtn.disabled) return;
-    errorBox.classList.add('hidden');
+    if (saving) return;
+    errorBox.classList.add('hidden'); errorBox.textContent = '';
     const p = payload(); const what = given(p);
-    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    saving = true; saveBtn.setAttribute('aria-disabled', 'true'); saveBtn.textContent = 'Saving…';
+    let saved = false;
     try {
       const r = await post('/api/interventions', p);
       prefs.set(LAST, { type: p.type, location: p.location, site: p.supply_site_id || null });
@@ -150,12 +155,19 @@ route('outreach', async () => {
       notes.value = ''; participant.reset();
       const missed = (r && r.supplies_untracked) || [];
       toast(`Contact saved: ${what}.${missed.length ? ' Not taken off any stock (no item kept for it).' : ''}`, 'ok');
+      saved = true;
       await drawShift();
-      window.scrollTo({ top: 0, behavior: 'auto' });
     } catch (err) {
-      errorBox.textContent = `Not saved: ${err.message || 'something went wrong'}. Nothing was lost: try again.`;
+      // An offline failure already says that the entry was kept and to try again (app.js OFFLINE_MESSAGE).
+      errorBox.textContent = err && err.offline ? err.message : `Not saved: ${(err && err.message) || 'something went wrong'}. Nothing was lost: try again.`;
       errorBox.classList.remove('hidden');
-    } finally { saveBtn.disabled = false; saveBtn.textContent = 'Save contact'; }
+    } finally { saving = false; saveBtn.removeAttribute('aria-disabled'); saveBtn.textContent = 'Save contact'; }
+    if (saved) {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      (typeGroup.querySelector('input:checked') || typeGroup.querySelector('input') || saveBtn).focus({ preventScroll: true });
+    } else if (!errorBox.classList.contains('hidden')) {
+      errorBox.setAttribute('tabindex', '-1'); errorBox.focus();
+    }
   } },
   typeGroup, whereBox, participant.field, suppliesBox, notesBox, errorBox, saveBtn);
 

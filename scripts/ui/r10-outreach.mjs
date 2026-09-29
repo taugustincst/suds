@@ -75,9 +75,13 @@ try {
   await nav.selectOption('[data-outreach-place]', 'shelter');
   await nav.fill('[data-outreach-notes]', 'Asked about the evening van');
   ok(/could identify someone/.test(await nav.textContent('.outreach-notes .help')), 'the notes field says to leave identifiers out');
+  // 1.17.1: Save was `disabled` while it worked, which dropped the keyboard focus to the page.
+  await nav.evaluate(() => { const b = document.querySelector('[data-outreach-save]'); window.__saveDisabled = false; new MutationObserver(() => { if (b.disabled) window.__saveDisabled = true; }).observe(b, { attributes: true }); });
   await nav.tap('[data-outreach-save]');
   ok(await toast(nav, /Contact saved: 2 Naloxone kits, 3 Fentanyl test strips?\b/), 'saving says what was handed out, in plural where it is more than one', await nav.$$eval('.toast', e => e.map(x => x.textContent)));
   await settle(nav);
+  eq(await nav.evaluate(() => window.__saveDisabled), false, 'Save is never disabled while it saves (aria-disabled instead, 1.17.1)');
+  ok(await nav.evaluate(() => !!document.activeElement.closest('[data-outreach-types]')), 'after a save the focus is back on Contact, ready for the next one (not the page)', await nav.evaluate(() => document.activeElement.outerHTML.slice(0, 100)));
   eq(await nav.inputValue(`[data-outreach-item="${kit.id}"] input`), '0', 'the counts start again at 0 for the next contact');
   eq(await nav.inputValue('[data-outreach-place]'), 'shelter', 'the place stays for the next contact');
   await noStrayText(nav, 'Street outreach after a contact');
@@ -94,6 +98,21 @@ try {
   await nav.focus('[data-outreach-save]'); await nav.keyboard.press('Enter');
   ok(await toast(nav, /Contact saved: 1 Naloxone kit\./), 'Enter on Save saves (one kit, singular)');
   await settle(nav);
+  // No signal at the office server: the offline message once (not wrapped in "Not saved: … Nothing was lost"),
+  // with the focus on it and the entry kept (1.17.1).
+  const offlineMessage = await nav.evaluate(async () => (await import('./app.js')).OFFLINE_MESSAGE);
+  await nav.tap(`[data-outreach-item="${kit.id}"] [data-step="1"]`);
+  offline = true; await navCtx.setOffline(true);
+  await nav.focus('[data-outreach-save]'); await nav.keyboard.press('Enter');
+  ok(await until(() => nav.$eval('[data-outreach-error]', e => !e.classList.contains('hidden'))), 'saving with no connection says so');
+  eq(await nav.textContent('[data-outreach-error]'), offlineMessage, 'in the offline message alone, said once');
+  ok(await nav.evaluate(() => document.activeElement && document.activeElement.matches('[data-outreach-error]')), 'and the focus moves to it');
+  eq(await nav.inputValue(`[data-outreach-item="${kit.id}"] input`), '1', 'the entry is kept');
+  offline = false; await navCtx.setOffline(false);
+  await nav.focus('[data-outreach-save]'); await nav.keyboard.press('Enter');
+  ok(await toast(nav, /Contact saved: 1 Naloxone kit\./), 'back online, the same entry saves');
+  await settle(nav);
+  ok(await nav.$eval('[data-outreach-error]', e => e.classList.contains('hidden')), 'and the error is gone');
   await nav.selectOption('[data-outreach-place]', 'community');
   await go(nav, 'dashboard'); await go(nav, 'outreach');
   eq(await nav.inputValue('[data-outreach-place]'), 'community', 'the worker\'s last place is remembered as soon as it is chosen, before any save');
@@ -101,7 +120,9 @@ try {
   // A new shift starts the counts again.
   await nav.tap('[data-new-shift]'); await settle(nav);
   ok(/Contacts\s*0/.test((await nav.textContent('[data-outreach-shift] .outreach-stats')).replace(/\s+/g, ' ')), 'Start a new shift starts the counts again', await nav.textContent('[data-outreach-shift] .outreach-stats'));
-  // The start page.
+  // The start page. Its label is the checkbox's 44 px target on a touch screen (1.17.1).
+  const startBox = await nav.$eval('[data-outreach-start]', e => { const r = e.getBoundingClientRect(); return { h: r.height, w: r.width }; });
+  ok(startBox.h >= 44 && startBox.w >= 44, '"Open SUDS on this screen when I sign in" is a 44 px target on a touch screen', startBox);
   await nav.check('[data-outreach-start] input'); await settle(nav);
   await nav.evaluate(() => fetch('/api/auth/logout', { method: 'POST', headers: { 'X-Requested-With': 'suds' } }));
   await nav.goto(base + '/'); await nav.waitForSelector('input[name=username]');
@@ -148,6 +169,22 @@ try {
   ok(await fin.$eval('.settlement-print-head', e => getComputedStyle(e).display !== 'none'), 'printed, the page carries its own heading with the period and the kind of run');
   ok(await fin.$eval('.settlement-controls', e => getComputedStyle(e).display === 'none'), 'and leaves the controls out');
   await fin.emulateMedia({ media: 'screen' });
+  // A period that ends before it starts (1.17.1): said at the dates, not run as an empty report.
+  await fin.fill('#so-from', '2026-09-01'); await fin.fill('#so-to', '2026-01-01');
+  const urlBefore = fin.url();
+  await fin.click('[data-so-apply]');
+  ok(/start date .* is after the end date/.test(await fin.textContent('[data-so-range-error]')), 'Apply with From after To says what is wrong');
+  eq(await fin.getAttribute('#so-from', 'aria-invalid'), 'true', 'the dates are marked invalid');
+  ok((await fin.getAttribute('#so-from', 'aria-describedby') || '').split(' ').includes('so-range-err'), 'and point to the message');
+  ok(await fin.evaluate(() => document.activeElement && document.activeElement.id === 'so-from'), 'the focus goes to From');
+  eq(fin.url(), urlBefore, 'and the report is not run');
+  await fin.fill('#so-from', '2026-01-01'); await fin.dispatchEvent('#so-from', 'change');
+  eq((await fin.textContent('[data-so-range-error]')).trim(), '', 'a period put right clears the message');
+  const badRun = (await api(fin, 'GET', '/api/reports/settlement-outcomes?from=2026-09-01&to=2026-01-01'));
+  eq(badRun.status, 400, 'the server refuses such a period too');
+  await go(fin, 'settlement?from=2026-09-01&to=2026-01-01');
+  ok(/start date .* is after the end date/.test(await fin.textContent('[data-so-range-error]')), 'opened with such a period, the page says so at the dates');
+  ok(!(await fin.$('[data-so-total]')), 'and shows no report');
   await go(fin, 'reports');
   ok(await fin.$('[data-settlement-outcomes-link]'), 'Reports links to it');
   await finCtx.close();
