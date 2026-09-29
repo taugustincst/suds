@@ -58,6 +58,11 @@ jobs:
           [ "$draft" = "false" ] || { echo "::error::The GitHub Release ${GITHUB_REF_NAME} is a draft"; exit 1; }
           at="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}" --jq .sha)"
           [ "$at" = "${GITHUB_SHA}" ] || { echo "::error::${GITHUB_REF_NAME} is at ${at}, not ${GITHUB_SHA}"; exit 1; }
+          # The newest release only (1.17.0): a maintenance release of an older minor (1.16.5 after 1.17.0), or any
+          # older tag, would take the public URL back to older code (docs/RELEASE.md, "Backports").
+          newest="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" --jq '.[].ref' | sed 's#^refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+          [ -n "$newest" ] || { echo "::error::Could not list the release tags"; exit 1; }
+          [ "$newest" = "${GITHUB_REF_NAME}" ] || { echo "::error::${GITHUB_REF_NAME} is not the newest release (${newest}): the web app is published from the newest release only"; exit 1; }
       # The token is dropped from the clone's remote once it has fetched (it is read-only here anyway).
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}" && git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
@@ -140,6 +145,11 @@ jobs:
           gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft | grep -qx false || { echo "::error::There is no published GitHub Release ${GITHUB_REF_NAME}"; exit 1; }
           at="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}" --jq .sha)"
           [ "$at" = "${GITHUB_SHA}" ] || { echo "::error::${GITHUB_REF_NAME} is at ${at}, not ${GITHUB_SHA}"; exit 1; }
+          # The newest release only (1.17.0): a maintenance release of an older minor (1.16.5 after 1.17.0), or any
+          # older tag, would take the public URL back to older code (docs/RELEASE.md, "Backports").
+          newest="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" --jq '.[].ref' | sed 's#^refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+          [ -n "$newest" ] || { echo "::error::Could not list the release tags"; exit 1; }
+          [ "$newest" = "${GITHUB_REF_NAME}" ] || { echo "::error::${GITHUB_REF_NAME} is not the newest release (${newest}): the web app is published from the newest release only"; exit 1; }
       - name: Take the site the build job packed
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

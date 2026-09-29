@@ -63,6 +63,9 @@ jobs:
       # The policy exception's paragraph for the top of the release notes (1.16.4: written here, by main's policy
       # script, so the release job runs none of the released commit's code).
       policy_notes: ${{ steps.policy.outputs.policy_notes }}
+      # "true" on the newest release line; "false" for a maintenance release of an older minor (1.17.0), which the
+      # release job neither marks Latest nor publishes to the web app.
+      latest: ${{ steps.policy.outputs.latest }}
     steps:
       # 1.16.3: a release is always of a v* tag. Until then *Run workflow* on a release/v* branch created the tag
       # itself, which the owner's settings (the `release` environment limited to v* tags, the v* tag ruleset) refuse
@@ -79,7 +82,8 @@ jobs:
         run: |
           git clone --quiet --filter=blob:none --no-checkout "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
           cd src
-          git fetch --quiet origin "${GITHUB_SHA}" '+refs/heads/main:refs/remotes/origin/main' '+refs/tags/v*:refs/tags/v*'
+          # The maintenance branches too (1.17.0): a patch of an older minor may be on maint/X.Y instead of main.
+          git fetch --quiet origin "${GITHUB_SHA}" '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/maint/*:refs/remotes/origin/maint/*' '+refs/tags/v*:refs/tags/v*'
           git checkout --quiet "${GITHUB_SHA}"
           mkdir -p "$RUNNER_TEMP/main"
           main_sha="$(git rev-parse origin/main)"; echo "main_sha=${main_sha}" >> "$GITHUB_OUTPUT"
@@ -99,7 +103,10 @@ jobs:
           # The tag must name package.json's version (1.16.2 for a pushed tag; since 1.16.3 every run is on a tag).
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          node "$RUNNER_TEMP/main/scripts/release-policy.js" --root src --sha "${GITHUB_SHA}" --main origin/main --tag "$RELEASE_TAG" --notes-out "$RUNNER_TEMP/policy-notes.md"
+          node "$RUNNER_TEMP/main/scripts/release-policy.js" --root src --sha "${GITHUB_SHA}" --main origin/main --maint origin/maint --tag "$RELEASE_TAG" --notes-out "$RUNNER_TEMP/policy-notes.md" --latest-out "$RUNNER_TEMP/latest"
+          latest="$(cat "$RUNNER_TEMP/latest")"
+          case "$latest" in true|false) echo "latest=${latest}" >> "$GITHUB_OUTPUT" ;; *) echo "::error::The release policy did not say whether this is the newest release line"; exit 1 ;; esac
+          if [ "$latest" = false ]; then echo "### A maintenance release of an older minor: it will not be marked Latest, and the web app is not published from it" >> "$GITHUB_STEP_SUMMARY"; fi
           d="NOTES_$(openssl rand -hex 16)"
           { echo "policy_notes<<${d}"; cat "$RUNNER_TEMP/policy-notes.md"; echo; echo "${d}"; } >> "$GITHUB_OUTPUT"
       # A GitHub Release someone else made for the tag stops the release here, before the owner is asked to approve
@@ -187,6 +194,8 @@ jobs:
       RELEASE_ACTOR: ${{ github.actor }}
       RELEASE_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
       MAIN_SHA: ${{ needs.gate.outputs.main_sha }}
+      # "false" for a maintenance release of an older minor (the gate's policy step decided; docs/RELEASE.md, "Backports").
+      LATEST: ${{ needs.gate.outputs.latest }}
     steps:
       - name: Check out
         run: git clone --quiet --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
@@ -235,17 +244,20 @@ jobs:
           cd "$RUNNER_TEMP/pkg"
           # A published file is never replaced (until 1.16.1 a re-run uploaded over them): the check above said what
           # is missing, and refused a release that is not this workflow's or whose files are not the tag's.
+          # A maintenance release (1.16.5 after 1.17.0) is never marked the repository's Latest release: GitHub would
+          # otherwise mark the newest-made release Latest, and "latest" downloads would go back to the older minor.
+          case "${LATEST}" in true) latest_flag="--latest" ;; false) latest_flag="--latest=false" ;; *) echo "::error::The gate did not say whether this is the newest release line"; exit 1 ;; esac
           case "${ACTION}" in
             create)
               # --verify-tag: the tag exists already (the owner pushed it); this workflow never creates one.
-              gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --verify-tag --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}" ;;
+              gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --verify-tag "$latest_flag" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}" ;;
             upload) gh release upload "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" ;;
             none) echo "The release $ver already has its zip and checksum, the ones built from the tag; nothing is replaced." ;;
             *) echo "::error::Unknown action '${ACTION}'"; exit 1 ;;
           esac
           # A draft this workflow left behind (a create interrupted before it published) is published now that its
           # files are checked (engineering review of 1.16.3, L1); a draft anyone else made was refused above.
-          if [ "${PUBLISH_DRAFT}" = "true" ]; then gh release edit "$ver" --draft=false; fi
+          if [ "${PUBLISH_DRAFT}" = "true" ]; then gh release edit "$ver" --draft=false "$latest_flag"; fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$ver"
       - name: What is published is this workflow's release, with the files built from the tag
         run: node "$RUNNER_TEMP/release-existing.js" --tag "${GITHUB_REF_NAME}" --dir "$RUNNER_TEMP/pkg" --repo "${GITHUB_REPOSITORY}" --after-publish
@@ -253,8 +265,13 @@ jobs:
       # GITHUB_TOKEN starts no other workflow, so the web app publish is asked for explicitly: this dispatch, on
       # the release tag, is the only way web-app.yml runs besides a person republishing a released tag (since
       # 1.16.1 a tag push no longer starts it), and it checks the GitHub Release exists at the tag's commit.
+      # Not for a maintenance release (1.17.0): the public web app stays on the newest minor.
       - name: Publish the web app for this release
         run: |
+          if [ "${LATEST}" != true ]; then
+            echo "${GITHUB_REF_NAME} is a maintenance release of an older minor: the web app stays on the newest release." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           gh workflow run web-app.yml --repo "${GITHUB_REPOSITORY}" --ref "${GITHUB_REF_NAME}"
           echo "Started the web app publish for ${GITHUB_REF_NAME}. QA: open it and check the on-screen version reads ${GITHUB_REF_NAME#v}."
       - name: Release QA reminder

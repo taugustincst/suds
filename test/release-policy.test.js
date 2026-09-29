@@ -173,7 +173,7 @@ test('release.yml runs main\'s copy of the gate and policy scripts, with --sha a
   assert.match(gate, /git archive "\$\{main_sha\}" scripts\/release-gate\.js scripts\/release-policy\.js scripts\/release-existing\.js \| tar -x -C "\$RUNNER_TEMP\/main"/);
   assert.match(gate, /\n {6}main_sha: \$\{\{ steps\.src\.outputs\.main_sha \}\}\n/);
   assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-gate\.js" "\$\{GITHUB_SHA\}"/);
-  assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-policy\.js" --root src --sha "\$\{GITHUB_SHA\}" --main origin\/main --tag "\$RELEASE_TAG"/);
+  assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-policy\.js" --root src --sha "\$\{GITHUB_SHA\}" --main origin\/main --maint origin\/maint --tag "\$RELEASE_TAG"/);
   assert.match(gate, /RELEASE_TAG: \$\{\{ github\.ref_name \}\}/, 'every run is on a tag (1.16.3), so the tag is always checked');
   assert.ok(!/\n\s+run: node scripts\/release-(gate|policy)/.test(gate), 'not the released commit\'s copy');
   assert.ok(!/--clobber/.test(rel), 'a published zip or checksum is never overwritten');
@@ -401,4 +401,105 @@ test('the size is measured against the previous tag with git diff --numstat', ()
   // 1.14.1 was a 24-line fix; skip in a checkout without the tags (a shallow CI clone).
   let s; try { s = P.measureSize('v1.14.0', 'v1.14.1'); } catch { return; }
   assert.ok(s.added > 0 && s.added < 100, `1.14.1 added ${s.added} counted lines`);
+});
+
+// ---- Backports: a patch of the previous minor from its maint/X.Y branch (1.17.0; docs/RELEASE.md, "Backports") ----
+test('a patch of an older minor than main\'s may come from its maint/X.Y branch; nothing else may', () => {
+  assert.equal(P.maintBranch('1.16.5', '1.17.0'), 'maint/1.16');
+  assert.equal(P.maintBranch('1.16.5', '1.18.2'), 'maint/1.16', 'any older minor: the support table, not the gate, says which lines get fixes');
+  assert.equal(P.maintBranch('1.16.5', '2.0.0'), 'maint/1.16');
+  assert.equal(P.maintBranch('1.17.1', '1.17.0'), null, 'main\'s own minor comes from main');
+  assert.equal(P.maintBranch('1.18.1', '1.17.0'), null, 'a newer minor than main\'s never');
+  assert.equal(P.maintBranch('1.16.0', '1.17.0'), null, 'the first release of a minor comes from main');
+  assert.equal(P.maintBranch('1.16.5', null), null, 'main\'s version unknown: main only (fails closed)');
+  assert.equal(P.maintBranch('1.16.5', 'x'), null);
+});
+
+test('the gate accepts a commit on the version\'s maint branch in place of main, and says where it looked when it is on neither', () => {
+  const sha = 'a'.repeat(40);
+  const ref = 'origin/maint/1.16';
+  assert.deepEqual(P.commitProblems({ version: '1.16.5', sha, onMain: false, tag: 'v1.16.5', maint: { ref, on: true } }), []);
+  const neither = P.commitProblems({ version: '1.16.5', sha, onMain: false, tag: 'v1.16.5', maint: { ref, on: false } });
+  assert.equal(neither.length, 1);
+  assert.match(neither[0], /is not on origin\/main or origin\/maint\/1\.16: only a commit merged to one of them is released/);
+  // No maintenance branch for this version (main's own minor, or a .0): main only, as before.
+  assert.match(P.commitProblems({ version: '1.17.1', sha, onMain: false })[0], /is not on origin\/main: only a commit merged to it is released$/);
+  // The other refusals still apply on a maintenance branch.
+  assert.equal(P.commitProblems({ version: '1.16.5', sha, onMain: false, tag: 'v1.16.6', tagSha: 'b'.repeat(40), maint: { ref, on: true } }).length, 2);
+});
+
+test('a maintenance release is compared with the previous tag on its own line, and is not the newest release line', () => {
+  const tags = ['v1.15.4', 'v1.16.0', 'v1.16.3', 'v1.16.4', 'v1.17.0', 'v1.17.1'];
+  assert.equal(P.previousTag(tags, '1.16.5'), 'v1.16.4', 'v1.16.4, not v1.17.x: the patch rules and the size limit see the backport alone');
+  assert.equal(P.bumpKind(P.previousTag(tags, '1.16.5'), '1.16.5'), 'patch');
+  assert.equal(P.isLatest(tags, '1.16.5'), false);
+  assert.equal(P.isLatest(tags, '1.17.2'), true);
+  assert.equal(P.isLatest(tags, '1.17.1'), true, 'a re-run of the newest release');
+  assert.equal(P.isLatest([...tags, 'vnext', 'v2.0.0-rc1'], '1.17.2'), true, 'only vX.Y.Z tags count');
+});
+
+test('release-policy.js --sha --main --maint, end to end in a scratch repository: a backport on maint/1.16 releases, a stray branch does not', () => {
+  const os = require('node:os');
+  const { execFileSync, spawnSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-maint-'));
+  const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', ...a], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const write = (f, s) => { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), s); };
+  // The smallest tree the policy's probe loads: a schema version, a permission table and no route modules.
+  const tree = (version, note) => {
+    write('package.json', JSON.stringify({ name: 'x', version }) + '\n');
+    write('server/db.js', 'module.exports = { LATEST_SCHEMA_VERSION: 48 };\n');
+    write('server/auth.js', "module.exports = { PERMS: { admin: ['a:read'] } };\n");
+    write('server/app.js', 'module.exports = { ROUTE_MODULES: [] };\n');
+    write('server/fix.js', `// ${note}\n`);
+  };
+  const commit = (msg) => { git('add', '-A'); git('commit', '-q', '-m', msg); return git('rev-parse', 'HEAD'); };
+  const policy = (...a) => spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'release-policy.js'), '--root', dir, ...a], { encoding: 'utf8', env: { PATH: process.env.PATH } });
+  try {
+    git('init', '-q', '-b', 'main');
+    tree('1.16.4', 'the 1.16.4 release'); const v1164 = commit('Release 1.16.4'); git('tag', 'v1.16.4');
+    tree('1.17.0', 'a feature'); commit('Release 1.17.0'); git('tag', 'v1.17.0');
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    // maint/1.16 from the minor's last tag, with a backported fix and its stamp.
+    git('checkout', '-q', '-b', 'maint/1.16', v1164);
+    tree('1.16.5', 'the backported fix'); const fix = commit('Release 1.16.5');
+    git('update-ref', 'refs/remotes/origin/maint/1.16', 'HEAD');
+    const latest = path.join(dir, '.latest');
+    const ok = policy('--sha', fix, '--main', 'origin/main', '--maint', 'origin/maint', '--tag', 'v1.16.5', '--latest-out', latest);
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    assert.match(ok.stdout, /pass: patch release v1\.16\.4 -> 1\.16\.5/, 'measured against v1.16.4, not v1.17.0');
+    assert.equal(fs.readFileSync(latest, 'utf8'), 'false', 'not the newest line: not marked Latest, no web app');
+    // Without --maint (an older main's copy of the gate): refused as not on main.
+    const old = policy('--sha', fix, '--main', 'origin/main', '--tag', 'v1.16.5');
+    assert.equal(old.status, 1); assert.match(old.stdout, /is not on origin\/main: only a commit merged to it is released/);
+    // The same version on some other branch (maint/1.16 does not contain it): refused.
+    git('checkout', '-q', '-b', 'stray', v1164); tree('1.16.5', 'unreviewed'); const stray = commit('Release 1.16.5');
+    const bad = policy('--sha', stray, '--main', 'origin/main', '--maint', 'origin/maint', '--tag', 'v1.16.5');
+    assert.equal(bad.status, 1); assert.match(bad.stdout, /is not on origin\/main or origin\/maint\/1\.16/);
+    // A 1.17.x patch is never taken from a maintenance branch, even one named for it.
+    git('checkout', '-q', '-b', 'maint/1.17', 'origin/main'); tree('1.17.1', 'fix'); const m117 = commit('Release 1.17.1');
+    git('update-ref', 'refs/remotes/origin/maint/1.17', 'HEAD');
+    const own = policy('--sha', m117, '--main', 'origin/main', '--maint', 'origin/maint', '--tag', 'v1.17.1');
+    assert.equal(own.status, 1); assert.match(own.stdout, /is not on origin\/main: only a commit merged to it is released/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('release.yml: the gate fetches the maint branches and passes --maint; a maintenance release is not Latest and does not publish the web app', () => {
+  const rel = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8');
+  const gate = rel.slice(rel.indexOf('\n  gate:'), rel.indexOf('\n  verify:'));
+  const job = rel.slice(rel.indexOf('\n  release:'));
+  assert.match(gate, /'\+refs\/heads\/maint\/\*:refs\/remotes\/origin\/maint\/\*'/);
+  assert.match(gate, /--main origin\/main --maint origin\/maint /);
+  assert.match(gate, /--latest-out "\$RUNNER_TEMP\/latest"/);
+  assert.match(gate, /\n {6}latest: \$\{\{ steps\.policy\.outputs\.latest \}\}\n/);
+  assert.match(gate, /case "\$latest" in true\|false\) echo "latest=\$\{latest\}" >> "\$GITHUB_OUTPUT" ;; \*\)[^\n]*exit 1 ;; esac/, 'fails closed on anything but true or false');
+  assert.match(job, /\n {6}LATEST: \$\{\{ needs\.gate\.outputs\.latest \}\}\n/);
+  assert.match(job, /case "\$\{LATEST\}" in true\) latest_flag="--latest" ;; false\) latest_flag="--latest=false" ;; \*\)[^\n]*exit 1 ;; esac/);
+  assert.match(job, /gh release create "\$ver" [^\n]*--verify-tag "\$latest_flag"/);
+  const web = job.slice(job.indexOf('Publish the web app for this release'));
+  const skip = web.indexOf('if [ "${LATEST}" != true ]');
+  assert.ok(skip >= 0 && skip < web.indexOf('gh workflow run web-app.yml'), 'the dispatch is skipped for a maintenance release');
+  // And web-app.yml refuses anything but the newest release tag itself, before the build and again after the approval.
+  const wa = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'web-app.yml'), 'utf8');
+  assert.equal((wa.match(/\[ "\$newest" = "\$\{GITHUB_REF_NAME\}" \] \|\| \{ echo "::error::[^\n]*is not the newest release/g) || []).length, 2, 'in the build job and the publish job');
+  assert.equal((wa.match(/git\/matching-refs\/tags\/v" --jq '\.\[\]\.ref' \| sed 's#\^refs\/tags\/##' \| grep -E '\^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$' \| sort -V \| tail -n 1\)"/g) || []).length, 2);
 });

@@ -110,7 +110,7 @@ test('release.yml checks an existing release in the gate, before the approval, a
   // What the check decided is all the publish step does; a draft is published only after the check.
   assert.match(job, /ACTION: \$\{\{ steps\.existing\.outputs\.action \}\}/);
   assert.match(job, /case "\$\{ACTION\}" in\n\s+create\)\n[^\n]*\n\s+gh release create "\$ver" [^\n]*--verify-tag[^\n]*;;\n\s+upload\) gh release upload "\$ver" "suds-\$ver\.zip" "suds-\$ver\.zip\.sha256" ;;\n\s+none\) echo/);
-  assert.match(job, /if \[ "\$\{PUBLISH_DRAFT\}" = "true" \]; then gh release edit "\$ver" --draft=false; fi/);
+  assert.match(job, /if \[ "\$\{PUBLISH_DRAFT\}" = "true" \]; then gh release edit "\$ver" --draft=false "\$latest_flag"; fi/);
   assert.ok(!/--clobber/.test(y));
 });
 
