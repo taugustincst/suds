@@ -229,6 +229,8 @@ function open({ token, code, claim, ip }) {
     }
   } else {
     if (!code) return { ...base, code_required: true };
+    // Not six digits (a slip of the keyboard, not a guess at the code): said, and no try is used up (r10 L6).
+    if (String(code).replace(/[\s-]/g, '').length !== 6 || /\D/.test(String(code).replace(/[\s-]/g, ''))) throw new HttpError(400, 'An access code is 6 digits. Check the code and enter it again.', { code_required: true, malformed: true });
     if (hashCode(link.id, code) !== link.code_hash) {
       db.run(`UPDATE referral_links SET failed_attempts=failed_attempts+1, updated_at=? WHERE id=?`, db.now(), link.id);
       const left = MAX_FAILED - (link.failed_attempts + 1);

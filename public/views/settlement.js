@@ -26,8 +26,8 @@ route('settlement', async (r) => {
 
   const fromI = h('input', { type: 'date', value: from, id: 'so-from' }); const toI = h('input', { type: 'date', value: to, id: 'so-to' });
   const countsSel = exactOk ? h('select', { id: 'so-counts', 'data-so-counts': '1' },
-    h('option', { value: '', selected: !counts }, 'Small counts of people hidden (as the funder report)'),
-    h('option', { value: 'exact', selected: counts === 'exact' }, 'Exact counts: the program\'s own use, not for sharing')) : null;
+    h('option', { value: '', selected: !counts }, 'Hide small counts (as reported)'),
+    h('option', { value: 'exact', selected: counts === 'exact' }, 'Exact counts (not for sharing)')) : null;
   const go = (f, t, c = countsSel ? countsSel.value : '') => nav(`settlement?from=${f}&to=${t}${c ? `&counts=${c}` : ''}`);
   const q0 = `${today.slice(0, 5)}${String(Math.floor((Number(today.slice(5, 7)) - 1) / 3) * 3 + 1).padStart(2, '0')}`;
   const controls = h('div', { class: 'filters settlement-controls' },

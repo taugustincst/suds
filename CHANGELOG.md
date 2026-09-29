@@ -489,6 +489,69 @@ meet. No migration; no new permission or route.
   the others; `node scripts/test-thorough.js --part sdc` took about 27 minutes here (the months file, 10 minutes, runs
   beside the longest), inside the thorough-sdc job's 60.
 
+### Frontline
+
+Fixes from the frontline-UX review of the 1.17.0 candidate (round 10). No migration and no new permission or route;
+the revert route takes an optional `fields`, the Notes list returns `ai_assisted`, and the referral-link open route
+refuses a code that is not six digits without counting it.
+
+- **No "null" on screen (H1).** *My shift* showed "nullnull" at the start of every shift, every AI copilot panel and
+  the care plan suggestions showed "null", and so did the Secure link dialog: the DOM's own `append()` and
+  `replaceChildren()` write a null as text, where `h()` leaves it out. Those calls (and the same shape in the
+  signature check, the role baseline and the recovery drill card) now go through `h()` or `.filter(Boolean)`.
+  `test/no-null-append.test.js` finds that shape in the browser code, and `STRAY_TEXT_PROBE` in `scripts/ui/assert.mjs`
+  checks every page and dialog the accessibility audit and the r10 scripts open for "null", "undefined", NaN or
+  "[object Object]" shown as text or in a name.
+- **An AI draft never replaces what the clinician wrote without asking (H2).** An empty section is filled. When
+  sections already hold the clinician's words, the panel asks, naming them (*You have already written in S
+  (Subjective) and P (Plan). Keep what you wrote?*): **Keep mine, add the draft below it** (the default, where the
+  focus lands), **Keep mine, fill only the empty ones**, **Replace what I wrote** or **Cancel**, which leaves the note
+  as it was. The banner's **Undo: take the draft out** puts every section back. The six-dimension assessment follows the
+  same rule for each dimension's notes.
+- **Street outreach is logged where it happens (M1).** *Where* starts at Street (or the field, or the first place that
+  is not the office), not the program's office default, and is asked right after *Contact*, before the supplies. The
+  place is remembered as soon as it is chosen, not only after the first save.
+- **Nothing covers the counters on a phone (M2).** The floating **+ Log** button is not shown on Street outreach (the
+  screen is the logger), and **Start a new shift** is a 48 px target.
+- **The AI copilot is out of sight while it is off (M3).** With no agreement recorded, the copilot switched off, or no
+  provider configured, no panel is shown on the note, assessment or CalOMS forms and there is no **Suggest with AI** on
+  the care plan; the administrator's Settings › AI copilot says staff see nothing of it until it is on. A monthly
+  limit reached still says so in the panel; a cap of 0 reads *The AI copilot is paused for this program*.
+- **Care plan suggestions are the clinician's before they are added (M4).** Each problem, goal and step is in a box to
+  edit. **Add** waits, and says why beside it, while the text still holds *[needs clinician input…]*; a goal is added to
+  a problem (the suggestion's own once it is added, or one already on the list: **The goal addresses**), and a step to
+  its goal. The banner reads *AI suggestions — review before adding*.
+- **No Secure link on a declined or closed referral (M5).** A referral the client or the provider declined, or one that
+  is closed, has no **Secure link** button.
+- **CalOMS provider IDs as rows (M6).** State reporting › Settings has a row of fields per provider — Provider ID, site
+  or program name, legal name, NPI — with **+ Add a provider** and **Remove this provider**, in place of one line of
+  "ID, name | legal name | NPI". A problem names the provider and what was typed (*Provider 2: 1234567890 is not a
+  valid NPI (its check digit does not match)*), on that row, with the focus on the field; never *providers.0.npi*.
+- **Focus follows the draft (M7).** **Draft** is no longer disabled while it works (which dropped the focus to the
+  page); the focus moves to the draft's banner once the draft is in, on the note, the assessment, the care plan
+  suggestions and the CalOMS suggestions.
+- **Lows.** One review step for an AI-assisted note: the banner's **I have reviewed the draft** button (which did
+  nothing) is gone; the statement ticked when signing is the review, and its message starts with a capital (L1). The
+  Notes list and a client's Notes tab mark each **AI-assisted** note (L2). A put-back blocked by a later change names
+  the field whether or not the History was opened before that change (*Phone has been changed again since, so it
+  cannot be put back… City can still be put back on its own*), and offers **Put back that field** for the others (L3).
+  The help under *What kind of program is this?* follows the choice before saving (L4). CalOMS says *1 client*, *12
+  fatal errors*, *2 files* (not "(s)"), gives the problems' dates as the page does (*May 2, 2026*), shows an upload's
+  log entry as *Uploaded on Sep 29, 2026 · DHCS reference BATCH-42*, and the produce dialog says how many records with
+  fatal errors are held back and left out of the file (L5). The referral recipient page shows dates without seconds
+  and the urgency in words (*Routine*); a code that is not six digits is caught in the browser, never sent, and the
+  server refuses one without using up a try; the field takes 7 characters, not 12 (L6). The outreach toast and My shift
+  say *2 Naloxone kits*, *1 Naloxone kit*, and the stat is *Fentanyl test strips*; the participant code's help says
+  spaces and dashes are dropped (L7). Settlement outcomes' Counts choice fits a phone (*Hide small counts (as
+  reported)*, *Exact counts (not for sharing)*) (L8). US spelling on the 1.17.0 screens: the AI settings and their
+  messages say *program* and *organization*, Settlement outcomes *Uncategorized* (L9). The AI cap's help says *resets
+  on the 1st of each month*, without "UTC" (L10). Saving a new assessment says *Assessment saved* (L11).
+- **Browser checks:** r10-outreach, r10-ai, r10-part2, r10-hist, r10-lp and r10-prev check every page and dialog they
+  open for stray "null" text, and each fix above; caloms fills the provider rows.
+- **Not in this release:** the Settlement outcomes page's by-month cards and the message when the only fund is
+  uncategorized (L8), "Check and prepare" on a part month (L5), and a divider line between the clinician's text and a
+  draft added below it.
+
 ## 1.16.4 — 2026-09-29
 
 ### Security

@@ -14,7 +14,7 @@ function participantInput() {
   const id = `or-code-${rid()}`;
   const input = h('input', { type: 'text', id, maxlength: 20, autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', 'aria-describedby': `${id}-help`, 'data-outreach-code': '1' });
   const field = h('div', { class: 'field outreach-code' }, h('label', { for: id }, 'Participant code (optional)'), input,
-    h('p', { class: 'help small muted', id: `${id}-help` }, 'Only if the person gives one: the code they build the same way every time, by your program\'s recipe. Never a name. Stored encrypted.'));
+    h('p', { class: 'help small muted', id: `${id}-help` }, 'Only if the person gives one: the code they build the same way every time, by your program\'s recipe. Never a name. Letters and digits count; spaces and dashes are dropped. Stored encrypted.'));
   return { field, value: () => (input.value.trim() ? { participant_code: input.value.trim() } : {}), reset: () => { input.value = ''; } };
 }
 
@@ -27,6 +27,19 @@ const FIRST = ['naloxone', 'fentanyl_test_strips', 'xylazine_test_strips', 'syri
 // Counted on the visit when the programme keeps no item for them (as the visit form does): not taken off any stock.
 const UNTRACKED = { naloxone: ['naloxone_kits', 'Naloxone kits'], fentanyl_test_strips: ['fentanyl_strips', 'Fentanyl test strips'] };
 const rid = () => Math.random().toString(36).slice(2, 7);
+// "3 Naloxone kits", "1 Naloxone kit", "10 Syringe 1 mL": the last word of an item's name or unit takes a plural
+// when it is an ordinary word (a unit such as "mL" or a name ending in a number is left as it is).
+export function plural(n, name) {
+  const s = String(name || '');
+  if (Number(n) === 1) return s;
+  const m = /^(.*?)([A-Za-z][a-z]+)$/.exec(s);
+  if (!m) return s;
+  const [, head, w] = m;
+  if (/(s|x|z|ch|sh)$/.test(w)) return /s$/.test(w) ? s : `${head}${w}es`;
+  if (/[^aeiou]y$/.test(w)) return `${head}${w.slice(0, -1)}ies`;
+  return `${head}${w}s`;
+}
+const counted = (n, name) => `${fmt.num(n)} ${plural(n, name)}`;
 
 function counter(name, unit, { id = `or-${rid()}`, dataset = {} } = {}) {
   const input = h('input', { type: 'number', id, min: 0, max: 1000, step: 1, inputmode: 'numeric', value: '0', class: 'outreach-qty', ...dataset });
@@ -87,8 +100,13 @@ route('outreach', async () => {
   // ---- where: a coarse place, and the site the supplies came from ----
   const remote = C.REMOTE_LOCATIONS || ['phone', 'telehealth'];
   const places = listEntries('LOCATIONS').filter(e => !e.hidden && !remote.includes(e.code));
-  const placeDefault = places.some(p => p.code === last.location) ? last.location : places.some(p => p.code === C.DEFAULT_LOCATION) ? C.DEFAULT_LOCATION : places.some(p => p.code === 'street') ? 'street' : (places[0] || {}).code;
-  const placeSel = h('select', { id: `or-place-${rid()}`, 'data-outreach-place': '1' }, places.map(p => h('option', { value: p.code, selected: p.code === placeDefault }, p.label)));
+  // An outreach contact is in the field by definition (r10 M1): the worker's last place here, else the street (or
+  // the field), else the first place that is not the office; the program's usual visit location (DEFAULT_LOCATION,
+  // the office in most programs) only when nothing else is kept.
+  const known = (c) => places.some(p => p.code === c);
+  const placeDefault = known(last.location) ? last.location : ['street', 'field', 'community'].find(known)
+    || (places.find(p => p.code !== 'office' && p.code !== C.DEFAULT_LOCATION) || {}).code || (known(C.DEFAULT_LOCATION) ? C.DEFAULT_LOCATION : (places[0] || {}).code);
+  const placeSel = h('select', { id: `or-place-${rid()}`, 'data-outreach-place': '1', onChange: () => prefs.set(LAST, { ...(prefs.get(LAST, null) || {}), location: placeSel.value }) }, places.map(p => h('option', { value: p.code, selected: p.code === placeDefault }, p.label)));
   const siteDefault = sites.some(s => s.id === last.site) ? last.site : cat && cat.site_id;
   const siteSel = sites.length > 1 ? h('select', { id: `or-site-${rid()}`, 'data-outreach-site': '1' }, sites.map(s => h('option', { value: s.id, selected: s.id === siteDefault }, s.name))) : null;
   const whereBox = h('div', { class: 'outreach-where' },
@@ -113,7 +131,7 @@ route('outreach', async () => {
       ...(notes.value.trim() ? { summary: notes.value.trim() } : {}), ...participant.value() };
   };
   const given = (p) => {
-    const parts = counters.filter(c => c.value() > 0).map(c => `${c.value()} ${c.kind === 'item' ? c.item.name : UNTRACKED[Object.keys(UNTRACKED).find(k => UNTRACKED[k][0] === c.col)][1]}`);
+    const parts = counters.filter(c => c.value() > 0).map(c => (c.kind === 'item' ? counted(c.value(), c.item.name) : counted(c.value(), UNTRACKED[Object.keys(UNTRACKED).find(k => UNTRACKED[k][0] === c.col)][1].replace(/s$/, ''))));
     return parts.length ? parts.join(', ') : 'no supplies';
   };
   const saveBtn = h('button', { type: 'submit', class: 'btn primary outreach-save', 'data-outreach-save': '1' }, 'Save contact');
@@ -139,7 +157,7 @@ route('outreach', async () => {
       errorBox.classList.remove('hidden');
     } finally { saveBtn.disabled = false; saveBtn.textContent = 'Save contact'; }
   } },
-  typeGroup, participant.field, suppliesBox, whereBox, notesBox, errorBox, saveBtn);
+  typeGroup, whereBox, participant.field, suppliesBox, notesBox, errorBox, saveBtn);
 
   // ---- my shift ----
   const shiftSince = () => { const s = prefs.get(SHIFT, null); const t = s ? Date.parse(s) : NaN; return Number.isFinite(t) && Date.now() - t < SHIFT_MS && t <= Date.now() ? s : null; };
@@ -148,16 +166,17 @@ route('outreach', async () => {
     try { const since = shiftSince(); d = await get(`/api/outreach/shift${since ? `?since=${encodeURIComponent(since)}` : ''}`, { quiet: true }); }
     catch { clear(shiftCard).append(h('h2', { id: 'outreach-shift-h' }, 'My shift'), h('p', { class: 'muted small' }, 'Could not load your shift just now.')); return; }
     const typeLabel = (t) => fmt.label(t, 'INTERVENTION_TYPES');
-    clear(shiftCard).append(
+    // Through h(): the DOM's own append writes a null as the text "null" (r10 H1), h() leaves it out.
+    clear(shiftCard).append(h('div', { class: 'outreach-shift-body' },
       h('div', { class: 'card-head' }, h('h2', { id: 'outreach-shift-h' }, 'My shift'),
-        h('button', { type: 'button', class: 'btn sm', 'data-new-shift': '1', onClick: async () => { prefs.set(SHIFT, new Date().toISOString()); await prefs.flush(); await drawShift(); announce('A new shift started: the counts start again from now.'); } }, 'Start a new shift')),
+        h('button', { type: 'button', class: 'btn outreach-newshift', 'data-new-shift': '1', onClick: async () => { prefs.set(SHIFT, new Date().toISOString()); await prefs.flush(); await drawShift(); announce('A new shift started: the counts start again from now.'); } }, 'Start a new shift')),
       h('p', { class: 'small muted', 'data-shift-since': '1' }, `Since ${fmt.dt(d.since)}. Only contacts you logged here.`),
-      h('div', { class: 'grid cols-3 outreach-stats' }, stat('Contacts', d.contacts), stat('Naloxone kits', d.naloxone_kits), stat('Test strips', d.fentanyl_strips)),
+      h('div', { class: 'grid cols-3 outreach-stats' }, stat('Contacts', d.contacts), stat('Naloxone kits', d.naloxone_kits), stat('Fentanyl test strips', d.fentanyl_strips)),
       d.participants ? h('p', { class: 'small', 'data-shift-participants': '1' }, `${d.participants} different participant code${d.participants === 1 ? '' : 's'} this shift.`) : null,
-      d.supplies.length ? h('div', {}, h('h3', { class: 'eyebrow' }, 'Supplies given'), h('ul', { class: 'outreach-list', 'data-shift-supplies': '1' }, d.supplies.map(s => h('li', {}, `${s.item}: ${fmt.num(s.quantity)}${s.unit && s.unit !== 'each' ? ` ${s.unit}` : ''}`)))) : null,
+      d.supplies.length ? h('div', {}, h('h3', { class: 'eyebrow' }, 'Supplies given'), h('ul', { class: 'outreach-list', 'data-shift-supplies': '1' }, d.supplies.map(s => h('li', {}, `${s.item}: ${s.unit && s.unit !== 'each' ? counted(s.quantity, s.unit) : fmt.num(s.quantity)}`)))) : null,
       d.recent.length ? h('div', {}, h('h3', { class: 'eyebrow' }, 'Latest contacts'), h('ul', { class: 'outreach-list', 'data-shift-recent': '1' }, d.recent.map(v => h('li', {},
         h('span', { class: 'nowrap' }, fmt.time(v.occurred_at)), ` · ${typeLabel(v.type)} · ${fmt.label(v.location, 'LOCATIONS')}${v.site ? ` · ${v.site}` : ''}`,
-        v.supplies.length ? h('span', { class: 'muted' }, ` · ${v.supplies.map(s => `${s.quantity} ${s.item}`).join(', ')}`) : null)))) : h('p', { class: 'muted small' }, 'No contacts yet this shift.'));
+        v.supplies.length ? h('span', { class: 'muted' }, ` · ${v.supplies.map(s => counted(s.quantity, s.item)).join(', ')}`) : null)))) : h('p', { class: 'muted small' }, 'No contacts yet this shift.')));
   }
   await drawShift();
 

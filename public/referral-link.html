@@ -9,7 +9,7 @@
 <div id="status" role="status" aria-live="polite"><p>Opening the referral…</p></div>
 <form id="code-form" class="hidden" novalidate data-code-form="1">
   <p>This referral is protected by an access code. The program that sent it gives you the code separately, usually by phone.</p>
-  <div class="field"><label for="code">Access code (6 digits)</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required aria-describedby="code-help"><div class="help" id="code-help">A few wrong tries lock the link; the program can then send a new one.</div></div>
+  <div class="field"><label for="code">Access code (6 digits)</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required aria-describedby="code-help code-error"><div class="help" id="code-help">A few wrong tries lock the link; the program can then send a new one.</div></div>
   <p id="code-error" class="err" role="alert"></p>
   <div class="btn-row"><button class="btn primary" type="submit">Open the referral</button></div>
 </form>

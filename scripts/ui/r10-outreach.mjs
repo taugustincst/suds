@@ -10,7 +10,7 @@ import { chromium } from 'playwright';
 import { makeChecks, until, settle, saved, passRecoveryCode, signInAgain, skipTour } from './assert.mjs';
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const staticBase = process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8878';
-const { ok, eq, fail, finish } = makeChecks('r10-outreach');
+const { ok, eq, fail, finish, noStrayText } = makeChecks('r10-outreach');
 const browser = await chromium.launch();
 const errors = [];
 const PHONE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
@@ -48,6 +48,15 @@ try {
   await until(() => nav.url().includes('#/outreach')); await settle(nav);
   eq((await nav.textContent('.main h1')).trim(), 'Street outreach', '+ Log › Street outreach contact opens the outreach screen');
   ok(await noSideScroll(nav), 'nothing scrolls sideways at 390 px');
+  // r10 H1: an empty shift (no participant codes, no supplies yet) wrote "nullnull" under the counts.
+  await noStrayText(nav, 'Street outreach at the start of a shift');
+  // r10 M1: a contact out here is in the field; the office default is not taken.
+  eq(await nav.inputValue('[data-outreach-place]'), 'street', 'Where starts at Street, not the program\'s office default');
+  ok(await nav.$eval('[data-outreach-place]', (sel) => { const f = document.querySelector('[data-outreach-form] [data-outreach-supplies]'); return !!(sel.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING); }), 'and Where is asked before the supplies, next to Contact');
+  // r10 M2: the screen is itself the logger: no floating + Log over the − / + counters.
+  ok(await nav.$eval('.fab', e => getComputedStyle(e).display === 'none').catch(() => true), 'the floating + Log button is not shown on the outreach screen');
+  const nsBox = await nav.$eval('[data-new-shift]', e => { const r = e.getBoundingClientRect(); return { h: r.height, w: r.width }; });
+  ok(nsBox.h >= 48 && nsBox.w >= 48, '"Start a new shift" is a 48 px target', nsBox);
   eq(await nav.$$eval('[data-contact-type]', e => e.map(x => x.value).sort().join(',')), 'naloxone_distribution,outreach', 'the kinds of contact are the services that need no client');
   const small = await nav.$$eval('.outreach-btn, .outreach-qty, .outreach-type, .outreach-save, [data-outreach-place]', els => els.map(e => e.getBoundingClientRect()).filter(r => r.height < 44 || r.width < 44).length);
   eq(small, 0, 'every stepper, count, contact type, the place and Save are at least 44 px for a thumb');
@@ -67,10 +76,11 @@ try {
   await nav.fill('[data-outreach-notes]', 'Asked about the evening van');
   ok(/could identify someone/.test(await nav.textContent('.outreach-notes .help')), 'the notes field says to leave identifiers out');
   await nav.tap('[data-outreach-save]');
-  ok(await toast(nav, /Contact saved: 2 Naloxone kit/), 'saving says what was handed out');
+  ok(await toast(nav, /Contact saved: 2 Naloxone kits, 3 Fentanyl test strips?\b/), 'saving says what was handed out, in plural where it is more than one', await nav.$$eval('.toast', e => e.map(x => x.textContent)));
   await settle(nav);
   eq(await nav.inputValue(`[data-outreach-item="${kit.id}"] input`), '0', 'the counts start again at 0 for the next contact');
   eq(await nav.inputValue('[data-outreach-place]'), 'shelter', 'the place stays for the next contact');
+  await noStrayText(nav, 'Street outreach after a contact');
   eq(await stockOf(nav, kit.id, siteId), kitsBefore - 2, 'two kits came off the stock at the worker\'s site');
   const shift = (await api(nav, 'GET', '/api/outreach/shift')).data;
   eq(shift.contacts, 1, 'my shift counts the contact'); eq(shift.naloxone_kits, 2, 'and its kits');
@@ -82,8 +92,12 @@ try {
   await nav.focus(`[data-outreach-item="${kit.id}"] [data-step="1"]`); await nav.keyboard.press('Enter');
   eq(await nav.inputValue(`[data-outreach-item="${kit.id}"] input`), '1', 'Enter on + adds one');
   await nav.focus('[data-outreach-save]'); await nav.keyboard.press('Enter');
-  ok(await toast(nav, /Contact saved: 1 Naloxone kit/), 'Enter on Save saves');
+  ok(await toast(nav, /Contact saved: 1 Naloxone kit\./), 'Enter on Save saves (one kit, singular)');
   await settle(nav);
+  await nav.selectOption('[data-outreach-place]', 'community');
+  await go(nav, 'dashboard'); await go(nav, 'outreach');
+  eq(await nav.inputValue('[data-outreach-place]'), 'community', 'the worker\'s last place is remembered as soon as it is chosen, before any save');
+  await nav.selectOption('[data-outreach-place]', 'shelter');
   // A new shift starts the counts again.
   await nav.tap('[data-new-shift]'); await settle(nav);
   ok(/Contacts\s*0/.test((await nav.textContent('[data-outreach-shift] .outreach-stats')).replace(/\s+/g, ' ')), 'Start a new shift starts the counts again', await nav.textContent('[data-outreach-shift] .outreach-stats'));

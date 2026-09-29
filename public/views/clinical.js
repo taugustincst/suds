@@ -5,7 +5,7 @@
 // come from the server (GET /api/meta/constants, built from server/clinical.js), so the score shown while
 // the form is filled in is the one the server saves.
 import { h, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, confirmDialog, kv, emptyState, clear, flag, moduleOn } from '../app.js';
-import { asamCopilot, carePlanCopilot, mayUseAi } from './ai.js';
+import { asamCopilot, carePlanCopilot, mayUseAi, aiStatus, aiOffered } from './ai.js';
 
 const C = () => state.constants || {};
 // SUDS stores only the six dimension names and 0-4 ratings. The ASAM Criteria are copyrighted and "ASAM" is a
@@ -210,7 +210,12 @@ export async function carePlanTab(clientId, { refresh, clientDisplay } = {}) {
       h('div', { class: 'row nowrap' },
         h('button', { class: 'btn sm', 'data-print-careplan': '1', onClick: () => printCarePlan(clientDisplay || '', problems, goals) }, 'Print'),
         // Suggestions from the AI copilot (views/ai.js), added one at a time by the clinician; office server only.
-        writable && mayUseAi() && !state.local ? h('button', { class: 'btn sm', 'data-ai-careplan-open': '1', onClick: () => carePlanCopilot(clientId, { onChange: refresh }) }, 'Suggest with AI') : null,
+        // Only where the copilot is on for the program (r10 M3): switched off, it is not offered at all.
+        writable && mayUseAi() && !state.local ? (() => {
+          const slot = h('span', {});
+          aiStatus().then((st) => { if (aiOffered(st)) slot.replaceWith(h('button', { class: 'btn sm', 'data-ai-careplan-open': '1', onClick: () => carePlanCopilot(clientId, { onChange: refresh }) }, 'Suggest with AI')); else slot.remove(); });
+          return slot;
+        })() : null,
         writable ? h('button', { class: 'btn sm primary', 'data-add-goal': '1', onClick: () => openGoalForm(clientId, null, active, { onDone: refresh }) }, '+ Goal') : null)),
       !goals.length ? emptyState('No goals yet', !writable ? 'The client\'s care team (a navigator or clinician who may edit the care plan) sets goals with the client.' : active.length ? 'Start with what the client most wants to change, in their words.' : 'Goals usually follow from the problem list — add problems first, then a goal for the ones the client wants to work on.',
         writable ? (active.length ? h('button', { class: 'btn primary', 'data-empty-action': 'goal', onClick: () => openGoalForm(clientId, null, active, { onDone: refresh }) }, '+ Add the first goal') : h('a', { class: 'btn primary', 'data-empty-action': 'problems', href: `#/client/${clientId}/problems` }, 'Go to the problem list')) : null) : null),
@@ -241,7 +246,7 @@ function openAsamForm(clientId, a, { onDone } = {}) {
     const body = { assessed_at: d.assessed_at, recommended_loc: d.recommended_loc, actual_loc: d.actual_loc, discrepancy_reason: d.discrepancy_reason, discrepancy_notes: d.discrepancy_notes, summary: d.summary, dimension_notes: {} };
     for (const dm of dims) { body[`${dm.key}_rating`] = d[`${dm.key}_rating`] === null ? null : Number(d[`${dm.key}_rating`]); if (d[`note_${dm.key}`]) body.dimension_notes[dm.key] = d[`note_${dm.key}`]; }
     if (a) await put(`/api/asam/${a.id}`, { ...body, if_updated_at: a.updated_at });
-    else { const r = await post(`/api/clients/${clientId}/asam`, body); if (r.client_asam_level) toast(`Assessment saved. The client's level of care is now ${r.client_asam_level}.`, 'ok'); }
+    else { const r = await post(`/api/clients/${clientId}/asam`, body); toast(r.client_asam_level ? `Assessment saved. The client's level of care is now ${r.client_asam_level}.` : 'Assessment saved', 'ok'); }
     if (a) toast('Assessment saved', 'ok');
     m.close(); onDone && onDone();
   } });

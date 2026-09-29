@@ -9,7 +9,9 @@
 //   3. CalOMS automation — the monthly-run settings, the worklist, "Check and prepare (not sent)", a prepared file
 //      produced (the disclosure), its upload recorded and the submission log; SUDS says it never contacts DHCS;
 //   4. Import offers patients and encounters from the EHR's FHIR export.
-// Every page and dialog it adds is checked with axe (WCAG 2.1 A/AA).
+// Every page and dialog it adds is checked with axe (WCAG 2.1 A/AA). And the r10 frontline fixes: no "null" in the
+// Secure link dialog (H1), no Secure link on a declined or closed referral (M5), the recipient page's date, urgency
+// and a mistyped code (L6), and CalOMS providers as rows with messages that name the provider (M6) and plurals (L5).
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -17,7 +19,7 @@ import { makeChecks, until, settle } from './assert.mjs';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const PW = 'Navigator2026!!';
-const { ok, eq, fail, finish } = makeChecks('r10-part2');
+const { ok, eq, fail, finish, noStrayText } = makeChecks('r10-part2');
 const require = createRequire(import.meta.url);
 let axeSource = null; try { axeSource = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8'); } catch { /* checked in axe() */ }
 const browser = await chromium.launch();
@@ -51,6 +53,8 @@ async function axe(page, where) {
     return r.violations.map(x => `${x.id}: ${x.nodes.slice(0, 3).map(n => n.target.join(' ')).join(' | ')}`);
   });
   eq(v.length, 0, `${where}: no WCAG 2.1 A/AA findings${v.length ? ' — ' + v.join('; ') : ''}`);
+  // Every page and dialog checked here: no "null" or "undefined" written out as text (r10 H1, assert.mjs).
+  await noStrayText(page, where);
 }
 const sidebar = (page) => page.evaluate(() => {
   const nav = document.querySelector('.sidebar nav.nav');
@@ -66,6 +70,12 @@ let admin, nav;
 try {
   // ------------------------------------------------------------------ 1. the Part 2 compliance module profile
   admin = await session('admin', 'AdminPassw0rd!x');
+  // r10 L4: the help under the profile says what the one chosen does as soon as it is chosen, before saving.
+  await admin.go('admin?tab=settings');
+  await admin.page.waitForSelector('[data-programme-profile] select[name=programme_profile]');
+  await admin.page.selectOption('[data-programme-profile] select[name=programme_profile]', 'part2_layer');
+  ok(await until(async () => /beside an EHR|stays the clinical record/.test(await admin.page.textContent('[data-programme-profile] [data-field="programme_profile"] .help'))), 'choosing the Part 2 compliance module shows its own help at once', await admin.page.textContent('[data-programme-profile] [data-field="programme_profile"] .help'));
+  await admin.page.selectOption('[data-programme-profile] select[name=programme_profile]', 'treatment');
   eq((await admin.api('PUT', '/api/admin/settings', { programme_profile: 'part2_layer' })).status, 200, 'an administrator chooses the Part 2 compliance module profile');
   await admin.page.reload(); await admin.page.waitForSelector('.layout'); await settle(admin.page);
   const aside = await sidebar(admin.page);
@@ -112,6 +122,7 @@ try {
   eq(await nav.page.$eval('.modal select[name=kind]', s => s.value), 'packet', 'with a consent naming the provider, the referral itself is offered');
   await nav.page.fill('.modal textarea[name=message]', 'Needs an intake appointment this week');
   await axe(nav.page, 'the secure link dialog');
+  await noStrayText(nav.page, 'the secure link dialog (r10 H1)');
   await nav.page.click('.modal button[type=submit]');
   await nav.page.waitForSelector('.modal [data-secure-link-made="packet"]');
   const url = await nav.page.$eval('.modal [data-secure-link-url]', i => i.value);
@@ -119,6 +130,7 @@ try {
   ok(/\/referral-link\.html#[A-Za-z0-9_-]{43}$/.test(url), 'the link carries its token after "#", never in the path or query', url.replace(/#.*/, '#…'));
   ok(/^\d{6}$/.test(code), 'and a six-digit access code is shown separately');
   await axe(nav.page, 'the link and code, shown once');
+  await noStrayText(nav.page, 'the link and code, shown once');
   await nav.page.click('.modal button:has-text("Done")');
 
   // The provider, in a browser with no account.
@@ -128,14 +140,25 @@ try {
   ok(!pp.url().includes('#'), 'the token is taken out of the address bar at once');
   ok(!/Rosa/.test(await pp.textContent('main')), 'nothing about the client before the code');
   await axe(pp, 'the recipient page asking for the code (phone)');
+  // r10 L6: a code that is not six digits is a slip: said at once, never sent, no try used up.
+  let opens = 0; pp.on('request', (rq) => { if (rq.url().includes('/api/referral-links/open')) opens++; });
+  await pp.fill('#code', code.slice(0, 5)); await pp.click('[data-code-form] button[type=submit]');
+  ok(await until(async () => /6 digits/.test(await pp.textContent('#code-error'))), 'a five-digit code is caught in the browser: "An access code is 6 digits"');
+  eq(opens, 0, 'and is never sent, so it uses up no try');
+  eq(await pp.getAttribute('#code', 'aria-invalid'), 'true', 'the field is marked invalid');
+  eq(await pp.getAttribute('#code', 'maxlength'), '7', 'the field takes six digits (and a space), not twelve characters');
   await pp.fill('#code', code === '000000' ? '111111' : '000000'); await pp.click('[data-code-form] button[type=submit]');
   ok(await until(async () => /not right/.test(await pp.textContent('#code-error'))), 'a wrong code is refused, with the tries left');
+  ok(/4 tries left/.test(await pp.textContent('#code-error')), 'the mistyped code did not count: 4 of 5 tries left', await pp.textContent('#code-error'));
   await pp.fill('#code', code); await pp.click('[data-code-form] button[type=submit]');
   await pp.waitForSelector('#content:not(.hidden)');
   const shown = await pp.textContent('#content');
   ok(shown.includes(`Rosa Linkman${tag}`) && shown.includes('Needs an intake appointment this week'), 'the code opens the referral: the client and the reason');
   ok(!shown.includes('555-0199'), 'the phone number only when the worker ticks it');
   ok(/42 CFR/i.test(await pp.textContent('#notice-wrap')), 'with the §2.32 notice');
+  const details = await pp.textContent('#details');
+  ok(!/\d{1,2}:\d{2}:\d{2}/.test(details), 'dates and times without seconds', details);
+  ok(/UrgencyRoutine/.test(details.replace(/\s+/g, '')), 'urgency in words ("Routine"), not the stored code', details);
   ok(await pp.$('#invite:not(.hidden)'), 'and the invitation to receive referrals through SUDS');
   await axe(pp, 'the opened referral (phone)');
   await pp.selectOption('#ack-status', 'scheduled'); await pp.fill('#ack-by', 'T. Nguyen, Harbor Clinic intake'); await pp.fill('#ack-note', 'Tuesday 10am');
@@ -179,6 +202,13 @@ try {
   ok(/would like to talk to you about a referral/.test(await np.textContent('#status')) && !/Noel|Noconsent/.test(await np.textContent('main')), 'the notice asks the provider to call, and names nobody');
   await axe(np, 'the contact notice');
   await nctx.close();
+  // r10 M5: a referral the client declined, or one that is closed, is not sent anywhere: no Secure link.
+  for (const status of ['declined_by_client', 'closed']) {
+    const rx = await nav.api('POST', '/api/referrals', { client_id: cl.data.id, resource_id: res.data.id, referred_at: new Date().toISOString(), status, warm_handoff: false });
+    eq(rx.status, 201, `a ${status.replace(/_/g, ' ')} referral`);
+    await nav.go(`client/${cl.data.id}/referrals`);
+    ok(await nav.page.$(`[data-secure-link-open="${ref.data.id}"]`) && !(await nav.page.$(`[data-secure-link-open="${rx.data.id}"]`)), `no Secure link on it (the pending one keeps its own)`);
+  }
 
   // ------------------------------------------------------------------ 3. CalOMS automation
   eq((await admin.api('PUT', '/api/admin/settings', { module_caloms: '1' })).status, 200, 'CalOMS switched on for this programme (off by default in the profile)');
@@ -186,7 +216,22 @@ try {
   await admin.page.reload(); await admin.page.waitForSelector('.layout'); await settle(admin.page);
   await admin.go('caloms');
   ok(await admin.page.$('[data-caloms-no-dhcs]'), 'the page says SUDS never contacts DHCS');
-  ok(/Harbor Recovery Inc\. \| 1234567893/.test(await admin.page.$eval('[data-caloms-settings] textarea[name=providers]', t => t.value)), 'the settings show the legal name and NPI');
+  // r10 M6: one row of fields per provider, not "ID, name | legal name | NPI" on a line.
+  const provRows = await admin.page.$$eval('[data-caloms-provider-row]', rows => rows.map(r => Object.fromEntries([...r.querySelectorAll('[data-prov]')].map(i => [i.dataset.prov, i.value]))));
+  eq(JSON.stringify(provRows[0]), JSON.stringify({ id: '123456', name: 'Main clinic', legal_name: 'Harbor Recovery Inc.', npi: '1234567893' }), 'the settings show each provider as a row: ID, name, legal name and NPI');
+  eq(provRows.length, 2, 'one row per provider');
+  ok(!(await admin.page.$('[data-caloms-settings] textarea[name=providers]')), 'no separator format to get wrong');
+  await axe(admin.page, 'State reporting settings with the provider rows');
+  // A mistyped NPI: the message names the provider and what was typed, never "providers.0.npi".
+  await admin.page.fill('[data-caloms-provider-row] >> nth=1 >> [data-prov=npi]', '1234567890');
+  await admin.page.click('[data-caloms-settings] button[type=submit]');
+  ok(await until(async () => /Provider 2: 1234567890 is not a valid NPI/.test(await admin.page.textContent('[data-caloms-providers]'))), 'a bad NPI is named with its provider and the number typed', await admin.page.textContent('[data-caloms-providers] [data-caloms-providers-error]'));
+  ok(!/providers\.\d/.test(await admin.page.textContent('[data-caloms-settings]')), 'with no internal field path in the message');
+  eq(await admin.page.evaluate(() => document.activeElement && document.activeElement.dataset.prov), 'npi', 'and the focus on that NPI');
+  eq((await admin.api('GET', '/api/caloms/config')).data.providers.find(p => p.id === '654321').npi, undefined, 'nothing was saved');
+  await admin.page.click('[data-prov-add]');
+  eq(await admin.page.evaluate(() => document.activeElement && document.activeElement.dataset.prov), 'id', '+ Add a provider puts the cursor in the new row\'s ID');
+  await admin.go('caloms');
   await admin.page.selectOption('[data-caloms-settings] select[name=schedule]', 'monthly');
   await admin.page.fill('[data-caloms-settings] input[name=schedule_day]', '5');
   await admin.page.click('[data-caloms-settings] button[type=submit]');
@@ -208,6 +253,11 @@ try {
   ok(/Prepared/.test(await admin.page.textContent(`[data-caloms-status-of="${sid}"]`)), 'marked Prepared — not sent');
   const dl = admin.page.waitForEvent('download', { timeout: 15000 }).catch(() => null);
   await admin.page.click(`[data-caloms-produce="${sid}"]`);
+  await admin.page.waitForSelector('.modal button:has-text("Produce file")');
+  const produceText = await admin.page.textContent('.modal');
+  ok(!/\(s\)/.test(produceText), 'the produce dialog words its counts ("1 client", "2 clients"), not "client(s)"', produceText);
+  const subRow = ((await admin.api('GET', '/api/caloms/submissions')).data.rows || []).find(x => x.id === sid);
+  if (subRow && subRow.counts && subRow.counts.held_back) ok(/held back and (is|are) not in this file/.test(produceText), 'and says the records with fatal errors are held back', produceText);
   await admin.page.click('.modal button:has-text("Produce file")');
   ok(await dl, 'producing it downloads the file (the disclosure)');
   await settle(admin.page);
@@ -222,12 +272,15 @@ try {
   await admin.page.waitForSelector(`.modal [data-caloms-log="${sid}"]`);
   const log = await admin.page.textContent('.modal');
   ok(/Prepared/.test(log) && /Produced \(accounted\)/.test(log) && /Downloaded/.test(log) && /Recorded as uploaded to DHCS/.test(log) && /BATCH-42/.test(log), 'the submission log shows each step', log.slice(0, 300));
+  ok(/Uploaded on [A-Z][a-z]{2} \d{1,2}, \d{4} · DHCS reference BATCH-42/.test(log) && !/\d{4}-\d{2}-\d{2} BATCH/.test(log), 'the upload\'s detail reads as a date and a reference, not "2026-09-29 BATCH-42"', log.slice(0, 400));
   await axe(admin.page, 'the submission log');
   await admin.page.keyboard.press('Escape');
   // A navigator's own worklist.
   await nav.page.reload(); await nav.page.waitForSelector('.layout'); await settle(nav.page);
   await nav.go('caloms');
   ok(await nav.page.$('[data-caloms-worklist="mine"]'), 'a navigator sees their own errors first');
+  ok(!/\b\d{4}-\d{2}-\d{2}\b/.test(await nav.page.textContent('[data-caloms-worklist]')), 'problems give their dates as the page does ("May 2, 2026"), not as ISO dates');
+  await noStrayText(nav.page, 'State reporting for a navigator');
   await axe(nav.page, 'State reporting for a navigator');
 
   // ------------------------------------------------------------------ 4. Import from the EHR

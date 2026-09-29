@@ -100,7 +100,7 @@ export async function drillCard() {
         await post('/api/admin/dr-drill', body); keysInput.value = ''; toast('Recovery drill started', 'ok'); poll();
       } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
     } }, running ? 'Drill running…' : 'Run a recovery drill now');
-    box.replaceChildren(h('h2', {}, 'Recovery drill'),
+    box.replaceChildren(...[h('h2', {}, 'Recovery drill'),
       h('p', { class: 'small muted' }, 'Restores the newest backup into a temporary copy (never the live database), starts SUDS against it, verifies the schema, row counts, the audit chain and its anchors, decrypts a sample of encrypted fields and signs in with a second factor. RTO is the time from starting the restore to the copy serving; RPO is the age of the backup it restored.'),
       l ? h('div', { 'data-drill-last': l.ok ? 'passed' : 'failed' },
         h('p', {}, l.ok ? badge('Last drill passed', 'ok') : badge('Last drill failed', 'danger'), ` ${fmt.dt(l.at)} — ${l.checks_passed}/${l.checks_total} checks`),
@@ -116,7 +116,7 @@ export async function drillCard() {
       running ? null : h('div', { class: 'grid cols-2' },
         h('div', { class: 'field' }, h('label', { for: 'drill-copy' }, 'Which copy to restore'), copySel),
         h('div', { class: 'field' }, h('label', { for: 'drill-keys-file' }, 'Escrowed key backup file (optional)'), keysInput, h('div', { class: 'small muted', id: 'drill-keys-help' }, 'The key backup kept offline. With it, the drill decrypts with that file only, proving it opens the backups; it is not stored.'))),
-      h('div', { class: 'row' }, btn), progress);
+      h('div', { class: 'row' }, btn), progress].filter(Boolean));
   };
   let timer = null;
   const poll = async () => {

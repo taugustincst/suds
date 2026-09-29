@@ -13,7 +13,7 @@ import { makeChecks, until, settle } from './assert.mjs';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const PW = 'Navigator2026!!';
-const { ok, eq, fail, finish } = makeChecks('r10-hist');
+const { ok, eq, fail, finish, noStrayText } = makeChecks('r10-hist');
 const require = createRequire(import.meta.url);
 let axeSource = null; try { axeSource = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8'); } catch { /* checked in axe() */ }
 const browser = await chromium.launch();
@@ -24,7 +24,7 @@ async function session(username, password = PW, viewport = { width: 1280, height
   const ctx = await browser.newContext({ viewport, ...extra });
   const page = await ctx.newPage();
   page.on('pageerror', e => errors.push(`${username} PAGEERROR ${e.message}`));
-  page.on('console', m => { if (m.type() === 'error' && !/40[0134]/.test(m.text())) errors.push(`${username} CONSOLE ${m.text().slice(0, 200)}`); });
+  page.on('console', m => { if (m.type() === 'error' && !/40[01349]/.test(m.text())) /* 409: the put-back refused by a later change, expected */ errors.push(`${username} CONSOLE ${m.text().slice(0, 200)}`); });
   page.on('response', r => { if (r.status() >= 500) errors.push(`${username} HTTP ${r.status()} ${r.url()}`); });
   await page.goto(base + '/#/login'); await settle(page);
   await page.fill('input[name=username]', username); await page.fill('input[name=password]', password); await page.click('button[type=submit]');
@@ -44,6 +44,8 @@ async function axe(page, where) {
     return r.violations.map(x => `${x.id}: ${x.nodes.slice(0, 3).map(n => n.target.join(' ')).join(' | ')}`);
   });
   eq(v.length, 0, `${where}: no WCAG 2.1 A/AA findings${v.length ? ' — ' + v.join('; ') : ''}`);
+  // Every page and dialog checked here: no "null" or "undefined" written out as text (r10 H1, assert.mjs).
+  await noStrayText(page, where);
 }
 const toastText = (page, re) => until(async () => { const t = await page.$$eval('#toasts .toast', ts => ts.map(x => x.textContent).join(' | ')); return re.test(t) ? t : null; }, { timeout: 5000 });
 /** The Before and After cells of a field's row in one revision's table. */
@@ -124,6 +126,29 @@ try {
     ok(/Put back later/.test(await david.page.textContent(`[data-revision="${rev}"]`)), 'Maria\'s change says it was put back later');
     ok(!(await david.page.$(`[data-revert="${rev}"]`)), 'and offers no second put-back');
   }
+  // ------------------------------------------------------------------ r10 L3: a put-back blocked by a later change
+  // Maria changes the phone and the city; David opens the History; Maria changes the phone again. David's put-back
+  // of the first change names Phone as the field in the way (not "changed by someone else… Reload"), and offers to
+  // put back the city on its own.
+  const maria2 = await session('mrivera');
+  const two = await maria2.api('PUT', `/api/clients/${cid}`, { phone: '555-301-7777', city: 'Woodland' });
+  eq(two.status, 200, 'Maria changes the phone and the city');
+  await david.go(`client/${cid}/history`);
+  await until(() => david.page.$(`[data-revert="${two.data.revision}"]`));
+  eq((await maria2.api('PUT', `/api/clients/${cid}`, { phone: '555-301-8888' })).status, 200, 'then, with David\'s History open, the phone again');
+  await maria2.ctx.close();
+  await david.page.click(`[data-revert="${two.data.revision}"]`);
+  await until(() => david.page.$('.modal button:text-is("Put it back")'));
+  await david.page.click('.modal button:text-is("Put it back")');
+  const second = await until(async () => { const t = await david.page.textContent('.modal').catch(() => ''); return /Put back the other fields\?/.test(t) ? t : null; });
+  ok(second && /Phone has been changed again since/.test(second) && /City can still be put back on its own/.test(second), 'the refusal names the field changed since, and what can still go back', second);
+  ok(second && !/Reload to see their changes/.test(second), 'not "changed by someone else… Reload"');
+  await axe(david.page, 'the put-back of the other fields');
+  await david.page.click('.modal button:text-is("Put back that field")');
+  ok(await toastText(david.page, /City put back/), 'City is put back on its own');
+  const now2 = (await david.api('GET', `/api/clients/${cid}`)).data.client;
+  eq(now2.city || null, null, 'the city is what it was before Maria\'s change');
+  eq(now2.phone, '555-301-8888', 'and Maria\'s later phone number stays');
   await david.ctx.close();
 
   // ------------------------------------------------------------------ a supervisor; and a phone
