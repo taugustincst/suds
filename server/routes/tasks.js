@@ -77,8 +77,9 @@ function presentTask(t) {
   if (!t) return t;
   const o = { ...t, title: t.title_enc ? decrypt(t.title_enc) : '', title_enc: undefined };
   if ('description_enc' in t) { o.description = t.description_enc ? decrypt(t.description_enc) : null; o.description_enc = undefined; }
-  // A change notice (1.16.2): the UI shows it as a read-only card; only its assignee or a manager closes it.
-  if (o.description && o.description.includes('Reference: client record change')) o.notice = true;
+  // A change notice (1.16.2): the UI shows it as a read-only card; only its assignee or a manager closes it. Known
+  // by how it was raised, never by its text (1.16.3, rules/tasks.js isNotice): this flag is all the UI trusts.
+  if (o.description && isNotice(t)) o.notice = true;
   // A notice's title names the client by code (it is written once, for whoever reads it); shown as every list
   // shows a client: the name, where this reader may see it (r8 M2).
   if (o.notice && o.client_name && o.client_code) o.title = o.title.replace(`${o.client_code}'s record`, `${o.client_name}'s record`);

@@ -15,6 +15,7 @@ import { HttpError } from '../server/http.js';
 import { encrypt, decrypt, blindIndex, uuid } from '../server/crypto.js';
 import SYNC from '../server/sync-tables.js';
 import SUPPLIES from '../server/supplies.js';
+import NOTE_RULES from '../server/rules/notes.js';
 import { wipe as wipeLocalDb } from './shims/sqlite.js';
 
 // A stable identity for this physical device, generated once and kept in its own local settings — separate
@@ -175,9 +176,15 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
     // Other records the office says this person may no longer read (their access narrowed: a clinical note
     // once clinical notes were denied, another worker's call with no client once clients:all was, a table
     // whose permission went). Removed like a dropped client: not a deletion, never echoed back.
+    // Kept, as a dropped client is, while another account on this shared device may still read it; and never with
+    // changes made here that the office has not had (security review of 1.16.2, M2: a navigator's sync deleted a
+    // clinician's unsynced edit to a counseling note).
     for (const pair of payload.dropped_rows || []) {
       const [table, id] = Array.isArray(pair) ? pair : [];
       const t = SYNC.tables.find(x => x.name === table); if (!t || typeof id !== 'string') continue;
+      const row = db.one(`SELECT * FROM ${t.name} WHERE id=?`, id); if (!row) continue;
+      if (seenAt(t.name, id) !== stamp(row)) { skipped.push({ table: t.name, id, reason: 'kept on this device: it has changes not yet sent to the office' }); continue; }
+      if (anotherMayRead(t, row, officeUserId)) continue;
       db.savepoint(() => { db.run(`DELETE FROM ${t.name} WHERE id=?`, id); db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, id); },
         (err) => skipped.push({ table: t.name, id, reason: String(err && err.message || 'could not be removed').slice(0, 200) }));
     }
@@ -276,15 +283,33 @@ function applyTombstone(t, ts, toServer) {
   db.run(`INSERT OR REPLACE INTO sync_server_tombstones(table_name,id) VALUES(?,?)`, t.name, ts.id);
 }
 
-/** Rows this device has that the office has not seen in their current state. */
-function localRows() {
+/** The other accounts that sign in on this shared device (the office sends everyone else a placeholder hash). */
+const deviceAccounts = (officeUserId) => db.all(`SELECT * FROM users WHERE id<>? AND is_active=1 AND password_hash IS NOT NULL AND password_hash<>?`, officeUserId || '', DUMMY_HASH);
+/** May `u` read this row: the table's permission, whose record, and for a note the SUD counseling rule (server/rules/notes.js). */
+function mayRead(u, t, row) {
+  if ((t.readPerm && !auth.hasPerm(u, t.readPerm)) || !SYNC.mayReachUnlinked(t.name, u, row, auth.hasPerm)) return false;
+  const note = t.name === 'notes' ? row : t.name === 'note_addenda' ? db.one(`SELECT * FROM notes WHERE id=?`, row.note_id) : null;
+  return !note || ((note.kind !== 'clinical' || auth.hasPerm(u, 'notes:clinical:read')) && NOTE_RULES.mayReadCounseling(u, note));
+}
+const anotherMayRead = (t, row, officeUserId) => deviceAccounts(officeUserId).some(u => mayRead(u, t, row));
+
+/**
+ * Rows this device has that the office has not seen in their current state. For a sync, `officeUserId` is the account
+ * syncing: a note (or addendum) it may not read is left for the account that may -- on a shared device, a clinician's
+ * unsynced counseling note is theirs to send, not refused for good under a navigator's name and then forgotten.
+ */
+function localRows(officeUserId = null) {
   const out = [];
+  const syncing = officeUserId && db.one(`SELECT * FROM users WHERE id=?`, officeUserId);
   for (const t of SYNC.tables) {
     if (t.name === 'users' || t.serverOwned) continue; // the office alone keeps server-owned tables (supply items and sites)
     // A visit's draw-down here is provisional (see settleSupplies): the office works out its own.
     const own = t.name === 'supply_ledger' ? ` AND NOT ${PROVISIONAL.replace(/\b(intervention_id|kind|reason)\b/g, 'x.$1')}` : '';
     const rows = db.all(`SELECT x.* FROM ${t.name} x WHERE NOT EXISTS (SELECT 1 FROM sync_seen s WHERE s.table_name=? AND s.id=x.id AND s.updated_at IS COALESCE(x.updated_at, x.created_at))${own}`, t.name);
-    for (const r of rows) { const e = exportRow(t, r); if (e) out.push({ table: t.name, row: e }); }
+    for (const r of rows) {
+      if (syncing && (t.name === 'notes' || t.name === 'note_addenda') && !mayRead(syncing, t, r)) continue;
+      const e = exportRow(t, r); if (e) out.push({ table: t.name, row: e });
+    }
   }
   return out;
 }
@@ -546,7 +571,7 @@ export async function run({ server, username, password, code, onProgress = () =>
     // ---- push, in chunks ----
     onProgress('Uploading this device\'s changes…');
     const deviceNow = db.now();
-    const pending = localRows();
+    const pending = localRows(officeUserId);
     const chunks = chunkRows(pending);
     const pushedCounts = {}; const rejected = []; const conflicts = [...pullConflicts];
     for (let i = 0; i < chunks.length; i++) {

@@ -118,6 +118,40 @@ Fixes from the frontline-UX review of 1.16.2 (round 8). No migration, no new per
 - **The development seed's programme is named for its profile (L1):** "County Treatment and Outreach Program"
   beside the treatment profile, not the harm-reduction default name. Behaviour is unchanged.
 
+### Security
+
+Fixes from the security review of 1.16.2. No migration, no new permission, no new route.
+
+- **Opening an episode is not a way to take a client off their care team (M1).** A navigator off the care team
+  could open an episode of their own on another worker's client (a second one, by sync, was only flagged), close
+  it, and with it end the primary worker's assignment, or over REST discharge the client, cancel every open to-do
+  including the change notice, and tell nobody. The opener of an episode may still close it, but ending the rest
+  of the care team, cancelling their to-dos and discharging the client are for the care team (an active
+  assignment) or `records:manage-others`; the opener's discharge ends only their own assignment and to-dos, and a
+  client someone else is still working with stays open (the answer says so). A device's push ends an assignment
+  only with a real discharge of an episode the office holds open (one it pushes new, even already closed,
+  discharges nobody), and another worker's only for the care team or a manager; a second open episode from
+  someone off the care team is refused, as over REST. No discharge, by anyone, cancels a change notice: it is
+  the primary worker's to read.
+- **A shared device keeps what another account on it may read, and every unsynced edit (M2).** When the office named
+  a counseling note in `dropped_rows`, the next account to sync on a shared device deleted it, with a clinician's
+  unsynced edit to it; and the office named every counseling note changed since the last pull, not only those that
+  had become unreadable. Now the office names only a note flagged as a counseling note since that device's last pull
+  and written before it (which also stops it naming counseling notes the device was never sent: L4); a device keeps
+  a named row while another account signed in on it may read it, never deletes one with changes not yet sent (it
+  says so), and a sync sends only the notes the syncing account may read, leaving a clinician's to them rather than
+  having them refused for good under a navigator's account.
+- **A signature's time is bounded (L1), and a draft carries no signature (L2).** A note signed by sync keeps the
+  device's signing time, but never before the note was written nor after the office's now; a draft pushed with
+  `signed_by`, `signed_at` or `signature_hash` stores none of them.
+- **A change notice is known by how it was raised, not by its text (L3).** Anyone could write a to-do with the
+  notice's wording and have it shown, to the worker it was assigned to, as a system notice naming someone else as
+  the editor. A to-do is a notice only when the `client.change_notice` audit entry of the edit it reports names it
+  and the worker it told (a notice raised by 1.16.1: the entry of its editor's edit, telling that worker about that
+  client as it was written). The web app trusts only the API's `notice: true`, no longer the text. A device's own
+  copy of a notice is not taken by the office, which raises its own when the edit arrives; on a device, a notice
+  pulled from the office reads as an ordinary to-do.
+
 ## 1.16.2 — 2026-09-29
 
 ### Security

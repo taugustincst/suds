@@ -12,6 +12,8 @@ const C = require('../constants');
 const { badRequest, notFound, forbidden } = require('../http');
 const { validate, paging } = require('../validate');
 const { encrypt, decrypt, uuid } = require('../crypto');
+const { standing } = require('../rules/episodes');
+const { isNotice } = require('../rules/tasks');
 
 const O = require('../options');
 
@@ -95,6 +97,11 @@ module.exports = (r) => {
     // An episode cannot end before it began, and discharging is the care team's, the opener's or a supervisor's
     // (the table's rules: server/rules/episodes.js).
     rules.assertWrite('episodes', { id: e.id, status: 'closed', closed_at: when, discharge_reason: v.discharge_reason }, ctx, { existing: e });
+    // The opener off the care team ends only their own part; the care team or a manager discharges the client
+    // (security review of 1.16.2, M1). Someone else still on the case keeps it, and the client, open.
+    const whole = standing(ctx.user, e.client_id);
+    const mine = whole ? '' : ' AND user_id=?'; const who = whole ? [] : [ctx.user.id];
+    const othersStay = !whole && !!db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id<>? AND ${auth.activeAssignment()}`, e.client_id, ctx.user.id);
     const openNotes = db.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND status='draft' AND deleted_at IS NULL`, e.client_id).n;
     let endedAssignments = 0; let cancelledTasks = 0; let openReferrals = 0; let calRec = null;
     db.transaction(() => {
@@ -102,11 +109,14 @@ module.exports = (r) => {
         when, ctx.user.id, v.discharge_reason, v.discharge_disposition || null, v.discharge_summary ? encrypt(v.discharge_summary) : null, db.now(), e.id);
       if (!v.keep_client_active) {
         const status = v.discharge_reason === 'deceased' ? 'deceased' : 'closed';
-        db.run(`UPDATE clients SET status=?, discharge_date=?, discharge_reason=?, updated_at=? WHERE id=?`, status, when, v.discharge_reason, db.now(), e.client_id);
-        endedAssignments = db.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE client_id=? AND (end_date IS NULL OR end_date > ?)`, when, db.now(), e.client_id, when).changes;
+        if (!othersStay) db.run(`UPDATE clients SET status=?, discharge_date=?, discharge_reason=?, updated_at=? WHERE id=?`, status, when, v.discharge_reason, db.now(), e.client_id);
+        endedAssignments = db.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE client_id=? AND (end_date IS NULL OR end_date > ?)${mine}`, when, db.now(), e.client_id, when, ...who).changes;
         // Open to-dos for a discharged client are nobody's work any more; leaving them makes every
-        // worker's overdue list permanently wrong.
-        cancelledTasks = db.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE client_id=? AND status IN ('open','in_progress')`, db.now(), e.client_id).changes;
+        // worker's overdue list permanently wrong. A change notice is not work but something for the primary
+        // worker to read (server/rules/tasks.js), so it stays.
+        const open = db.all(`SELECT * FROM tasks WHERE client_id=? AND status IN ('open','in_progress')${mine.replace('user_id', 'assigned_to')}`, e.client_id, ...who).filter(t => !isNotice(t));
+        for (const t of open) db.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, db.now(), t.id);
+        cancelledTasks = open.length;
       }
       openReferrals = db.one(`SELECT COUNT(*) n FROM referrals WHERE client_id=? AND status IN ('pending','contacted','accepted','waitlisted','scheduled')`, e.client_id).n;
       // The CalOMS discharge record is dated by this discharge; a problem in it undoes the discharge too.
@@ -116,6 +126,7 @@ module.exports = (r) => {
     if (calRec) audit.log({ user: ctx.user, action: 'caloms.record.save', entity: 'caloms_record', entityId: calRec.id, clientId: e.client_id, ip: ctx.ip, details: { record_type: 'discharge', warnings: calRec.warnings.length || undefined } });
     return { ok: true, ended_assignments: endedAssignments, cancelled_tasks: cancelledTasks, caloms_record_id: calRec ? calRec.id : undefined,
       warnings: [
+        othersStay && !v.keep_client_active ? 'Others are still on this client\'s care team, so the client stays open with them; only your own part ended. Their care team or a supervisor discharges the client.' : null,
         openNotes ? `${openNotes} note(s) are still unsigned for this client.` : null,
         openReferrals ? `${openReferrals} referral(s) are still open; record their outcome.` : null,
       ].filter(Boolean) };

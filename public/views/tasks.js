@@ -26,11 +26,11 @@ function openTaskView(t) {
 // ---- Client-change notices (1.16.1) ----
 // When someone off a client's care team changes the client's record, the primary worker gets a to-do saying who
 // changed which fields (server/rules/clients.js notifyPrimary). It is something to read, not to edit, so it opens
-// as a card. The server marks it (`notice: true`, server/rules/tasks.js isNotice); a to-do from a server before that is
-// known by its text. This is the one place that decides it.
+// as a card. Only the server's mark (`notice: true`, server/rules/tasks.js isNotice: how the to-do was raised) makes
+// one: its text is anyone's to type (security review of 1.16.2, L3). This is the one place that decides it.
 /** { editor, code, fields } for a change notice, or null for an ordinary to-do. */
 export function changeNotice(t) {
-  if (!t || !(t.notice === true || /You are this client's primary worker/.test(t.description || ''))) return null;
+  if (!t || t.notice !== true) return null;
   const m = /^(.+?) changed (.+?)'s record\b/.exec(t.title || '') || [];
   const listed = (/^Changed: (.*)$/m.exec(t.description || '') || /\((.*)\)\s*$/.exec(t.title || '') || [])[1] || '';
   return { editor: m[1] || 'Someone off the care team', code: m[2] || t.client_code || 'the client', fields: listed.split(', ').map(x => x.trim()).filter(Boolean) };
