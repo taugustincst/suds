@@ -225,7 +225,7 @@ function importRow(t, r, existingCols) {
     if (r.phone_enc !== undefined) o.phone_idx = crypto.blindIndex(String(r.phone_enc || '').replace(/\D/g, ''));
   }
   // An anonymous contact's SSP participant code is counted by its blind index, under the receiver's own key.
-  if (t.name === 'interventions' && r.participant_code_enc !== undefined) o.participant_code_idx = require('./participant-code').index(r.participant_code_enc);
+  if (t.name === 'interventions' && r.participant_code_enc !== undefined) o.participant_code_idx = require('./rules/interventions').participantCode(r.participant_code_enc).idx;
   return o;
 }
 

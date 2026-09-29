@@ -14,7 +14,6 @@ const SN = require('../supply-names');
 // What the visit form calls a count that no supply item took off (insertResult below).
 const UNTRACKED_NAMES = { naloxone_kits: 'Naloxone kit', fentanyl_strips: 'Fentanyl test strips' };
 const { localDate, cents } = require('./budget');
-const PC = require('../participant-code');
 
 // The date a service "happened on", for the grant it is charged to and the time sheet it lands on: the
 // calendar date in the organisation's time zone (config.orgTimezone), or the service_date the caller gave
@@ -86,8 +85,8 @@ function decodeSummary(row) {
 // already refused a malformed code, or one on a contact with a client.
 function encodeCode(v) {
   if (v.participant_code === undefined) return;
-  const n = PC.normalise(v.participant_code);
-  v.participant_code_enc = n ? encrypt(n) : null; v.participant_code_idx = PC.index(n);
+  const { code, idx } = require('../rules/interventions').participantCode(v.participant_code);
+  v.participant_code_enc = code ? encrypt(code) : null; v.participant_code_idx = idx;
   delete v.participant_code;
 }
 

@@ -91,7 +91,7 @@ module.exports = define({
   // The code as stored, whoever typed it how (upper case, letters and digits): its blind index is worked out
   // from this by sync-tables importRow, so "ab-07 85" on a phone and "AB0785" at the office count as one.
   normalise(row) {
-    if (row.participant_code_enc !== undefined) row.participant_code_enc = PC.normalise(row.participant_code_enc);
+    if (row.participant_code_enc !== undefined) row.participant_code_enc = participantCode(row.participant_code_enc).code;
     return null;
   },
   // A visit that handed supplies out draws the office stock down once the whole batch has landed (finish), by the
@@ -123,3 +123,15 @@ function touchVisit(s, id, patch) {
   m.set(id, { prev: null, countsPushed: false, linesPushed: false, ...(m.get(id) || {}), ...patch });
 }
 module.exports.touchVisit = touchVisit;
+
+/**
+ * An SSP participant code as every door stores it (1.17.1; engineering review of 1.17.0, L2): `code` its
+ * program-wide form (server/participant-code.js normalise; null when blank), to be encrypted, and `idx` the blind
+ * index it is counted by. The visit routes (routes/interventions.js encodeCode), sync push (normalise above) and
+ * sync-tables importRow all take both from here, so a code typed at the office and one pushed by a device are one.
+ */
+function participantCode(value) {
+  const code = PC.normalise(value);
+  return { code, idx: PC.index(code) };
+}
+module.exports.participantCode = participantCode;
