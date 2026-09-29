@@ -46,13 +46,19 @@ export async function openChangeNotice(t, { onDone } = {}) {
   const who = t.client_name || n.code;
   const open = ['open', 'in_progress'].includes(t.status);
   const mine = t.assigned_to === state.user.id; const sentTo = t.assignee || 'the primary worker';
+  // "See what changed": the record's History, with this notice's changes brought into view.
+  const revs = Array.isArray(t.notice_revisions) ? t.notice_revisions.filter(x => /^[\w-]+$/.test(String(x))) : [];
+  const seeWhat = t.client_id && revs.length && (mine || can('records:manage-others')) ? `#/client/${t.client_id}/history?rev=${revs.map(encodeURIComponent).join(',')}` : null;
   const seen = async () => { await put(`/api/tasks/${t.id}`, { status: 'done' }); toast('Marked as seen', 'ok'); m.close(); onDone && onDone(); };
   const m = modal(mine ? 'A change to your client\'s record' : 'A change to a client\'s record', h('div', { 'data-change-notice': t.id },
     h('p', {}, `${n.editor} changed ${who}'s record. They are not on this client's care team, so ${mine ? 'you, the primary worker, are' : 'the primary worker is'} told.`),
     kv([['Changed by', n.editor], ['Client', t.client_id ? h('span', {}, who, t.client_name ? h('span', { class: 'small muted mono' }, ` ${t.client_code || n.code}`) : null) : who],
       ['When', fmt.dt(t.created_at || t.updated_at)], ['Fields changed', h('ul', { 'data-notice-fields': '1', style: { margin: 0, paddingLeft: '1.2rem' } }, n.fields.map(x => h('li', {}, label(x))))], mine ? null : ['Sent to', sentTo], ['Status', open ? (mine ? 'Not seen yet' : `Not seen yet by ${sentTo}`) : 'Seen']].filter(Boolean)),
-    h('p', { class: 'small muted' }, `The record shows each field as it is now. SUDS keeps which fields were changed, not what they held before, so if something looks wrong, ask ${n.editor}.`),
+    // What the fields held before and hold now is on the record's History (1.17.0), for the primary worker and
+    // supervisors: the notice links to the changes it reports (server/client-revisions.js).
+    h('p', { class: 'small muted' }, seeWhat ? 'See what changed shows each field\'s value before and after, and lets you put a change back.' : `The record's History shows what each field held before and after${mine ? '' : ', for the client\'s care team and supervisors'}.`),
     h('div', { class: 'btn-row' },
+      seeWhat ? h('a', { class: 'btn', href: seeWhat, 'data-notice-history': '1', onClick: () => m.close() }, 'See what changed') : null,
       t.client_id ? h('a', { class: 'btn', href: `#/client/${t.client_id}`, 'data-notice-client': '1', onClick: () => m.close() }, 'View client') : null,
       open && can('tasks:write') && mine ? h('button', { type: 'button', class: 'btn primary', 'data-notice-seen': '1', onClick: seen }, 'Mark as seen') : null)));
   return m;

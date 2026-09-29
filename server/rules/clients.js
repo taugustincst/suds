@@ -121,7 +121,13 @@ module.exports = define({
     if (c.existing) {
       // An edit from a device tells the primary worker as one made here does (notifyPrimary): field names only.
       const byCol = Object.fromEntries(Object.entries(module.exports.columns).map(([k, col]) => [col, k]));
-      notifyPrimary(c.user, c.existing.id, c.changed().map(col => byCol[col]).filter(Boolean));
+      const cols = c.changed().filter(col => byCol[col]);
+      // What the fields held before and hold now, kept as a revision (server/client-revisions.js, 1.17.0), as an
+      // edit made here is; the notice links to it.
+      const R = require('../client-revisions');
+      const revision = R.record({ user: c.user, clientId: c.existing.id, via: 'sync', ip: 'device',
+        changes: R.diff(Object.fromEntries(cols.map(col => [byCol[col], c.was(col)])), Object.fromEntries(cols.map(col => [byCol[col], c.plain(col)]))) });
+      notifyPrimary(c.user, c.existing.id, cols.map(col => byCol[col]), { revision });
       return;
     }
     // The office's own auto-assignment for a client created in the field, unless the device is sending the one
@@ -159,7 +165,7 @@ const LABELS = {
 };
 /** A client field as the client form names it ("ASAM level of care", not "asam level"). */
 const fieldLabel = (f) => LABELS[f] || (f.charAt(0).toUpperCase() + f.slice(1)).replace(/_/g, ' ');
-function notifyPrimary(user, clientId, fields) {
+function notifyPrimary(user, clientId, fields, { revision = null } = {}) {
   if (!fields.length || db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${auth.activeAssignment()}`, clientId, user.id)) return [];
   const { encrypt, decrypt, uuid } = require('../crypto');
   const { NOTICE_MARKER } = require('./tasks');
@@ -175,14 +181,15 @@ function notifyPrimary(user, clientId, fields) {
     if (open) { try { before = (/^Changed: (.*)$/m.exec(decrypt(open.description_enc || '')) || [])[1] || ''; } catch { before = ''; } }
     const all = [...new Set([...String(before).split(', ').filter(Boolean), ...fields.map(fieldLabel)])];
     const title = `${user.display_name || user.username} changed ${code}'s record (${all.join(', ')})`.slice(0, 200);
-    const desc = `Changed: ${all.join(', ')}\nYou are this client's primary worker. Only the names of the fields are given here, never their values: open the record to see them as they are now.\n${NOTICE_MARKER}`;
+    const desc = `Changed: ${all.join(', ')}\nYou are this client's primary worker. Only the names of the fields are given here, never their values: open the record's History to see what they held before and hold now.\n${NOTICE_MARKER}`;
     const id = open ? open.id : uuid();
     if (open) db.run(`UPDATE tasks SET title_enc=?, description_enc=?, updated_at=? WHERE id=?`, encrypt(title), encrypt(desc), db.now(), id);
     else db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, clientId, primary, primary, encrypt(title), encrypt(desc), null, 'normal');
-    require('../audit').log({ user, action: 'client.change_notice', entity: 'client', entityId: clientId, clientId, details: { notified: primary, fields, task: id } });
+    require('../audit').log({ user, action: 'client.change_notice', entity: 'client', entityId: clientId, clientId, details: { notified: primary, fields, task: id, revision: revision || undefined } });
     told.push(primary);
   }
   return told;
 }
 module.exports.notifyPrimary = notifyPrimary;
+module.exports.fieldLabel = fieldLabel;
 module.exports.contactProblems = contactProblems;

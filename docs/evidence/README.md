@@ -59,7 +59,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 - **Documents:** [IDENTITY.md](../security/IDENTITY.md); [QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md) #17–#24.
 - **Tests:** `auth-permissions`, `role-expansion`, `user-permissions`, `deidentified-roles`, `mfa-grace`, `mfa-enrol-hardening`, `in-session-guessing`, `signer-hardening`, `oidc`, `oidc-reauth`, `idp-lifecycle`, `scim`, `security-1154` to `security-1164`.
 - **CI:** `test`; `browser` (`permissions-admin`, `signup`).
-- **Status:** In place, with caveats. Least privilege is the default for a new install and a setting an upgraded office turns on (*New navigators and clinicians start held to their caseload*, 1.17.0; `least-privilege-default`, `least-privilege-sso`, `least-privilege-device`); an upgraded office that leaves it off keeps navigators and clinicians seeing every client. There is no revision history of the client record.
+- **Status:** In place, with caveats. Least privilege is the default for a new install and a setting an upgraded office turns on (*New navigators and clinicians start held to their caseload*, 1.17.0; `least-privilege-default`, `least-privilege-sso`, `least-privilege-device`); an upgraded office that leaves it off keeps navigators and clinicians seeing every client. The client record keeps a revision history with revert from 1.17.0 (`client-revisions`), at the office only.
 
 ### Authorisation on the sync door (local mode)
 

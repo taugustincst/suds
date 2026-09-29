@@ -8,6 +8,7 @@ const { blindIndex, uuid, decrypt, encrypt } = require('../crypto');
 const M = require('../clients-model');
 const F = require('../client-filters');
 const O = require('../options');
+const REV = require('../client-revisions');
 
 // A client's fields, and what they must satisfy (contact details that can be right; a record closed only by a
 // discharge), are the table's rules: server/rules/clients.js, which sync push applies to a device's rows too.
@@ -126,6 +127,33 @@ function flagForReview(user, { id, client_code, matches, source, ip }) {
 // The live check reads other people's records on every call, so it is limited per worker (not per address: an
 // office shares one). Plenty for a busy intake desk; too few to walk a list of names and birth dates.
 const DUPLICATE_CHECKS = 60; const DUPLICATE_CHECK_WINDOW_MS = 15 * 60_000;
+
+/**
+ * Write a validated partial update of a client's fields (PUT /api/clients/:id and a revert): the table's rules,
+ * the blind indexes, the audit entry, the revision (server/client-revisions.js: what each changed field held before
+ * and holds now) and, for an editor off the care team, the primary worker's change notice, which names it.
+ */
+function updateClient(ctx, row, v, { reverts = null } = {}) {
+  // Contact details, and closing a client only by a discharge (the Episodes tab): the table's rules.
+  rules.assertWrite('clients', { id: row.id, ...rules.toColumns('clients', v) }, ctx, { existing: row });
+  const enc = M.encryptFields(v);
+  const was = M.decryptRow(row);
+  if (v.first_name !== undefined || v.last_name !== undefined) enc.full_name_idx = blindIndex((v.last_name ?? was.last_name ?? '') + (v.first_name ?? was.first_name ?? ''));
+  const cols = { ...enc };
+  for (const f of M.PLAIN_FIELDS) if (v[f] !== undefined) cols[f] = v[f];
+  const keys = Object.keys(cols).filter(k => cols[k] !== undefined);
+  if (!keys.length) return { updated_at: row.updated_at, revision: null };
+  const stamp = db.now();
+  let revision = null;
+  db.transaction(() => {
+    db.run(`UPDATE clients SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => cols[k]), stamp, row.id);
+    revision = REV.record({ user: ctx.user, clientId: row.id, changes: REV.diff(was, v), via: 'rest', reverts, ip: ctx.ip });
+  });
+  audit.log({ user: ctx.user, action: 'client.update', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, details: { fields: Object.keys(v), revision: revision || undefined, reverts: reverts || undefined } });
+  // Someone off the care team changed it: the primary worker is told which fields (server/rules/clients.js).
+  require('../rules/clients').notifyPrimary(ctx.user, row.id, Object.keys(v).filter(k => !REV.same(v[k], was[k])), { revision });
+  return { updated_at: stamp, revision };
+}
 
 module.exports = (r) => {
   r.get('/api/clients', auth.requireAuth, auth.requirePerm('clients:read', 'clients:list-deidentified'), (ctx) => {
@@ -382,11 +410,13 @@ module.exports = (r) => {
     // Every column in the database that points at clients(id), minus the clients table itself.
     const links = [];
     for (const t of db.all(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)) {
-      if (t.name === 'clients') continue;
+      // A revision describes the record it was made on: the duplicate's stay with it (it is kept, merged away).
+      if (t.name === 'clients' || t.name === 'client_revisions') continue;
       for (const fk of db.all(`PRAGMA foreign_key_list(${t.name})`)) if (fk.table === 'clients') links.push([t.name, fk.from]);
     }
 
     const moved = {};
+    let mergeRevision = null;
     // The duplicate's open episode, if any: after the move the keeper may have two, and a person is in
     // one episode of care at a time.
     const sourceOpenEpisodes = db.all(`SELECT id FROM episodes WHERE client_id=? AND status='open'`, source.id).map(e => e.id);
@@ -410,6 +440,12 @@ module.exports = (r) => {
       if (source.intake_date && (!keep.intake_date || source.intake_date < keep.intake_date)) fills.intake_date = source.intake_date;
       const keys = Object.keys(fills);
       if (keys.length) db.run(`UPDATE clients SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => fills[k]), db.now(), keep.id);
+      // What the merge filled in on the kept record is a change to it like any other: a revision (via 'merge').
+      if (keys.length) {
+        const plainFills = M.decryptRow(Object.fromEntries(keys.map(k => [k, fills[k]])));
+        delete plainFills.display_name;
+        mergeRevision = REV.record({ user: ctx.user, clientId: keep.id, changes: REV.diff(M.decryptRow(keep), plainFills), via: 'merge', ip: ctx.ip });
+      }
       // Recompute the kept record's blind indexes in case a name field was filled in from the duplicate.
       const after = db.one(`SELECT * FROM clients WHERE id=?`, keep.id);
       const plain = M.decryptRow(after);
@@ -437,7 +473,7 @@ module.exports = (r) => {
       moved._filled_fields = keys.length;
     });
     // The detail of what moved is structural, never PHI; the reason is on the merged-away row, encrypted.
-    audit.log({ user: ctx.user, action: 'client.merge', entity: 'client', entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { merged: source.id, merged_code: source.client_code, moved, reason_recorded: v.reason ? true : undefined } });
+    audit.log({ user: ctx.user, action: 'client.merge', entity: 'client', entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { merged: source.id, merged_code: source.client_code, moved, reason_recorded: v.reason ? true : undefined, revision: mergeRevision || undefined } });
     audit.log({ user: ctx.user, action: 'client.merged_away', entity: 'client', entityId: source.id, clientId: source.id, ip: ctx.ip, details: { into: keep.id } });
     return { ok: true, kept: keep.id, merged: source.id, moved };
   });
@@ -489,6 +525,8 @@ module.exports = (r) => {
     // 42 CFR Part 2: whether the record carries the Part 2 label, and when the client was last given the
     // §2.22 notice (the Overview says so, or says it is missing).
     client.part2 = { program: require('../disclosure').part2Program(), notice: require('./part2').latestNotice(row.id) };
+    // Whether this reader sees the record's History tab, and may put a change back (server/client-revisions.js).
+    client.history = REV.access(ctx.user, row.id);
     audit.log({ user: ctx.user, action: 'client.view', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip });
     return { client };
   });
@@ -497,24 +535,56 @@ module.exports = (r) => {
     const row = loadClient(ctx, ctx.params.id);
     require('../crud').assertFresh(ctx, row, 'client');
     const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true, existing: row });
-    // Contact details, and closing a client only by a discharge (the Episodes tab): the table's rules.
-    rules.assertWrite('clients', { id: row.id, ...rules.toColumns('clients', v) }, ctx, { existing: row });
-    const enc = M.encryptFields(v);
-    if (v.first_name !== undefined || v.last_name !== undefined) {
-      const cur = M.decryptRow(row);
-      enc.full_name_idx = blindIndex((v.last_name ?? cur.last_name ?? '') + (v.first_name ?? cur.first_name ?? ''));
+    const done = updateClient(ctx, row, v);
+    return { ok: true, updated_at: done.updated_at, revision: done.revision || undefined };
+  });
+
+  // ---- revision history (1.17.0, server/client-revisions.js) ----
+  // The record's earlier values: for its care team and records:manage-others. Refused, and the refusal audited, for
+  // anyone else who can open the record; on a device that syncs with an office, the history is the office's.
+  const historyRefused = (ctx, row, what) => {
+    audit.log({ user: ctx.user, action: 'authz.denied', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, success: false, details: { reason: `client history: ${what}` } });
+  };
+  r.get('/api/clients/:id/history', auth.requireAuth, auth.requirePerm('clients:read'), (ctx) => {
+    const row = loadClient(ctx, ctx.params.id);
+    if (!REV.keptHere()) throw new HttpError(403, REV.OFFICE_ONLY, { officeOnly: true });
+    if (!REV.mayRead(ctx.user, row.id)) {
+      historyRefused(ctx, row, 'not on the care team');
+      throw forbidden('A client\'s change history is for their care team and supervisors. Ask the primary worker or a supervisor if you need to know what the record held before.');
     }
-    const cols = { ...enc };
-    for (const f of M.PLAIN_FIELDS) if (v[f] !== undefined) cols[f] = v[f];
-    const keys = Object.keys(cols).filter(k => cols[k] !== undefined);
-    if (!keys.length) return { ok: true, updated_at: row.updated_at };
-    const stamp = db.now();
-    db.run(`UPDATE clients SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => cols[k]), stamp, row.id);
-    audit.log({ user: ctx.user, action: 'client.update', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, details: { fields: Object.keys(v) } });
-    // Someone off the care team changed it: the primary worker is told which fields (server/rules/clients.js).
-    const was = M.decryptRow(row); const same = (x) => (typeof x === 'boolean' ? Number(x) : Array.isArray(x) ? x.join(',') : x) ?? '';
-    require('../rules/clients').notifyPrimary(ctx.user, row.id, Object.keys(v).filter(k => String(same(v[k])) !== String(same(was[k]))));
-    return { ok: true, updated_at: stamp };
+    const revisions = REV.list(row.id);
+    // Earlier values are PHI: the read is audited, by how many revisions were shown (never what they held).
+    audit.log({ user: ctx.user, action: 'client.history.view', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, details: { revisions: revisions.length } });
+    return { revisions, may_revert: REV.mayRevert(ctx.user, row.id) };
+  });
+
+  // Put one change back: the fields it changed return to what they held before it. Only while they still hold what
+  // it set them to -- a field changed again since is refused (named, never its value), so a revert never quietly
+  // undoes someone's later work. It is an edit like any other (the same rules, a change notice when the reverter is
+  // off the care team) and a new revision naming the one it reverts; nothing in the history is changed or deleted.
+  r.post('/api/clients/:id/history/:rev/revert', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
+    const row = loadClient(ctx, ctx.params.id);
+    if (!REV.keptHere()) throw new HttpError(403, REV.OFFICE_ONLY, { officeOnly: true });
+    if (!REV.mayRevert(ctx.user, row.id)) {
+      historyRefused(ctx, row, 'revert: not the primary worker or a supervisor');
+      throw forbidden('Only the client\'s primary worker, a supervisor or an administrator can put a change back.');
+    }
+    const rev = REV.one(row.id, ctx.params.rev);
+    if (!rev) throw notFound('That change was not found on this client\'s record');
+    require('../crud').assertFresh(ctx, row, 'client');
+    const now = M.decryptRow(row);
+    const since = rev.changes.filter(ch => !REV.same(now[ch.field], ch.after));
+    if (since.length) {
+      audit.log({ user: ctx.user, action: 'client.revert.refused', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, success: false, details: { revision: rev.id, changed_since: since.map(ch => ch.field) } });
+      throw new HttpError(409, `${since.map(ch => ch.label).join(', ')} ${since.length === 1 ? 'has' : 'have'} been changed again since. Put back the later change first, or edit the record.`, { changed_since: since.map(ch => ch.field) });
+    }
+    const body = Object.fromEntries(rev.changes.map(ch => [ch.field, ch.before]));
+    const v = validate(body, Object.fromEntries(rev.changes.map(ch => [ch.field, { ...shape[ch.field], required: false }])), { partial: true, existing: row });
+    // A name cannot be put back to nothing: the record needs one (the form's own rule).
+    for (const f of ['first_name', 'last_name']) if (f in v && !v[f]) throw badRequest('This change cannot be put back: it would leave the client without a name. Edit the record instead.');
+    const done = updateClient(ctx, row, v, { reverts: rev.id });
+    audit.log({ user: ctx.user, action: 'client.revert', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reverted: rev.id, revision: done.revision, fields: Object.keys(v) } });
+    return { ok: true, updated_at: done.updated_at, revision: done.revision };
   });
 
   // A legal hold keeps the record out of the retention purge (server/retention.js) and blocks deletion

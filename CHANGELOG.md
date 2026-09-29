@@ -38,6 +38,41 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   threat model, the data inventory and the evidence index, no longer list
   "least privilege is not the default" as a gap for new installs; for upgraded offices it is a setting to turn on.
 
+### Client records
+
+- **Revision history with revert (market review r7 finding 3, r9 1.17.0 item 2).** Since 1.16.1 anyone who can see a
+  client may change the record, and the primary worker was told only which fields changed; SUDS kept no earlier
+  values, so a wrong date of birth came back only from a backup. Every change to a client's own details is now kept
+  as a revision (`client_revisions`, migration 50): who made it, when, how it arrived (`rest`, `sync`, or the gaps a
+  `merge` filled in on the record kept) and each changed field's value before and after, encrypted
+  (`changes_enc`; the audit entry `client.revision` names the revision and the fields, never a value). Written by
+  `PUT /api/clients/:id`, by a device's edit when its push lands (`server/rules/clients.js`) and by a merge; imports
+  only create clients. `server/client-revisions.js`.
+  - **Who reads it (minimum necessary):** the client's care team (an active assignment, any role on the case) and
+    `records:manage-others` (supervisors, administrators), on the record's new **History** tab
+    (`GET /api/clients/:id/history`, audited `client.history.view`). Anyone else who can open the record sees it as
+    it is now; asking for its history is refused and audited.
+  - **Put this change back** (`POST /api/clients/:id/history/:rev/revert`): the primary worker or
+    `records:manage-others`. Only while the change's fields still hold what it set (otherwise 409, naming the fields,
+    never a value); the same rules as any edit; a new revision naming the one it reverts (`client.revert`), and a
+    change notice when the reverter is off the care team. Nothing in the history is updated or deleted.
+  - **The change notice links to it.** Its audit entry names the revision; the card's **See what changed** opens the
+    History at the changes it reports (`notice_revisions`), for the primary worker and supervisors.
+  - **Kept at the office.** Revisions never synchronise (`server/sync-tables.js` `server_only`): a device that syncs
+    keeps no earlier values and its History tab says to open the record at the office; its edits are recorded there
+    when they land. SUDS on this device, which has no office, keeps its own.
+  - **Retention:** purged with the client, leaving no tombstone; not activity (an edit does not extend a record's
+    retention). Key rotation re-encrypts `changes_enc` like every `_enc` column.
+  - Changes a discharge, an overdose event, a visit or an ASAM rating makes to the record (status, overdose history,
+    naloxone, level of care) are recorded on those records, not as revisions. Values from before this release were
+    never kept and are not in the history.
+  - `server/sync-tables.js` now declares the encrypted columns of the tables that never synchronise too
+    (`unsynced_enc`), and `test/sync.test.js` checks it against the schema. Migration 49 is a no-op (1.17.0's
+    least-privilege default needed no schema change); this one is 50.
+  - Docs: USER_GUIDE (*A client record's History*), HIPAA.md (integrity, amendment, retention), PART2.md (§2.16),
+    QUESTIONNAIRE #22, POSITIONING, BUYER-GUIDE-IT and BUYER-GUIDE-PROGRAM (earlier values are now kept). Tests:
+    `test/client-revisions.test.js`; browser: `scripts/ui/r10-hist.mjs`.
+
 ### Engineering
 
 Release machinery and CI only: nothing here changes what SUDS does for a user, and no administrator action is needed

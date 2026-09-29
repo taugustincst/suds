@@ -143,7 +143,7 @@ try {
     ok(!(await page.$('.modal input[name=title], .modal select[name=assigned_to]')), 'not as the Edit to-do form');
     ok(/Maria Rivera changed/.test(text) && /Phone/.test(text) && /Risk level/i.test(text), 'saying who changed which fields, by their labels', text.slice(0, 300));
     ok(!/Reference|[0-9a-f]{8}-[0-9a-f]{4}-/.test(text), 'with no reference or user id showing');
-    ok(/not what they held before/.test(text), 'and that earlier values are not kept');
+    ok(/before and after/.test(text), 'and that the History has what the fields held before and after (1.17.0)');
     ok(await page.$(`.modal a[data-notice-client][href="#/client/${cid}"]`), 'with View client');
     await axe(page, 'change notice card');
     await page.click('.modal [data-notice-seen]');

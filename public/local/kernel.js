@@ -7913,6 +7913,22 @@ CREATE TABLE IF NOT EXISTS problem_history (
 CREATE INDEX IF NOT EXISTS idx_problem_history_problem ON problem_history(problem_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_problem_history_updated ON problem_history(updated_at);
 
+-- Every change to a client's record (1.17.0, server/client-revisions.js): who changed it, when, how it arrived
+-- (an edit here, a device's sync, or the fields a merge filled in), and each changed field's value before and
+-- after -- encrypted JSON, because the values are the record's (names, dates of birth, phone numbers). Append-only:
+-- putting a change back is a new revision that names the one it reverts, never an edit or a deletion. Kept at the
+-- office and never synchronised (server/sync-tables.js server_only); purged with the client (server/retention.js).
+CREATE TABLE IF NOT EXISTS client_revisions (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  changed_by TEXT REFERENCES users(id),
+  via TEXT NOT NULL CHECK (via IN ('rest','sync','merge')),
+  reverts TEXT,                        -- the revision this one put back, when it is a revert
+  changes_enc TEXT NOT NULL,           -- {"field": {"before": ..., "after": ...}, ...}
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_client_revisions_client ON client_revisions(client_id, created_at);
+
 -- Care coordination plan: goals in the client's own words, each tied (optionally) to a problem, with a
 -- review date that shows as overdue once it passes; and the steps toward each goal, with who does them
 -- and by when. A step can create a to-do (task_id) so it lands on someone's list.
@@ -11233,7 +11249,24 @@ var require_sync_tables = __commonJS({
       // complaints and the privacy incident register are the privacy officer's, kept at the office likewise.
       // fhir_jwt_assertions is the FHIR token endpoint's replay guard for client assertions (office server only).
       // caloms_submissions holds each CalOMS Tx file as produced for DHCS, which only the office sends.
-      server_only: ["breakglass_events", "complaints", "privacy_incidents", "privacy_incident_clients", "fhir_jwt_assertions", "caloms_submissions"],
+      // client_revisions (1.17.0) holds every earlier value of a client's record (changes_enc): minimum necessary, it
+      // stays at the office. A device's own edits are recorded there when its push lands (server/rules/clients.js
+      // afterApply, via 'sync'); a device that syncs with an office keeps none and says the history is at the office
+      // (server/client-revisions.js keptHere). SUDS on this device, with no office, keeps its own.
+      server_only: ["breakglass_events", "complaints", "privacy_incidents", "privacy_incident_clients", "fhir_jwt_assertions", "caloms_submissions", "client_revisions"],
+      // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
+      // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
+      // list against the schema, so a table with PHI is always either synchronised or deliberately kept apart.
+      unsynced_enc: {
+        breakglass_events: ["reason_enc"],
+        complaints: ["summary_enc", "resolution_enc"],
+        privacy_incidents: ["title_enc", "description_enc", "risk_nature_enc", "risk_recipient_enc", "risk_acquired_enc", "risk_mitigation_enc", "determination_reason_enc"],
+        privacy_incident_clients: ["client_name_enc"],
+        fhir_jwt_assertions: [],
+        caloms_submissions: ["file_enc"],
+        client_revisions: ["changes_enc"],
+        idempotency_keys: ["response_enc"]
+      },
       // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
       // the answers to retried POSTs made against that database (server/idempotency.js). A device's retry is
       // answered by the device; the office never sees the key, only the rows the request created.
@@ -11311,7 +11344,8 @@ var require_sync_tables = __commonJS({
         ["disclosure_agreements", "created_by"],
         ["caloms_submissions", "created_by"],
         ["user_permission_overrides", "user_id"],
-        ["user_permission_overrides", "granted_by"]
+        ["user_permission_overrides", "granted_by"],
+        ["client_revisions", "changed_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -11883,6 +11917,105 @@ var require_client_filters = __commonJS({
   }
 });
 
+// server/client-revisions.js
+var require_client_revisions = __commonJS({
+  "server/client-revisions.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    function keptHere() {
+      const config2 = require_config();
+      let staticHost = false;
+      try {
+        staticHost = globalThis.SUDS_STATIC_HOST === true;
+      } catch {
+        staticHost = false;
+      }
+      return !(config2.local && !staticHost);
+    }
+    var OFFICE_ONLY = "A client's change history is kept at the office. Open this record in the office SUDS to see what changed or to put a change back.";
+    var fieldNames = () => Object.keys(require_clients2().fields);
+    function norm(v) {
+      if (v === void 0 || v === "") return null;
+      if (typeof v === "boolean") return v ? 1 : 0;
+      return v;
+    }
+    var same = (a, b) => String(norm(a) ?? "") === String(norm(b) ?? "");
+    function diff(before, after) {
+      const known = new Set(fieldNames());
+      const out2 = {};
+      for (const [k, v] of Object.entries(after || {})) {
+        if (!known.has(k) || v === void 0) continue;
+        if (!same(before ? before[k] : null, v)) out2[k] = { before: norm(before ? before[k] : null), after: norm(v) };
+      }
+      return out2;
+    }
+    function record({ user, clientId, changes, via, reverts = null, ip }) {
+      if (!changes || !Object.keys(changes).length || !keptHere()) return null;
+      const id = uuid2();
+      db3.run(
+        `INSERT INTO client_revisions(id,client_id,changed_by,via,reverts,changes_enc,created_at) VALUES(?,?,?,?,?,?,?)`,
+        id,
+        clientId,
+        user && user.id && db3.one(`SELECT 1 FROM users WHERE id=?`, user.id) ? user.id : null,
+        via,
+        reverts,
+        encrypt3(JSON.stringify(changes)),
+        db3.now()
+      );
+      audit3.log({ user, action: "client.revision", entity: "client", entityId: clientId, clientId, ip, details: { revision: id, via, fields: Object.keys(changes), reverts: reverts || void 0 } });
+      return id;
+    }
+    var onCareTeam = (user, clientId) => !!db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${auth3.activeAssignment()}`, clientId, user.id);
+    var isPrimary = (user, clientId) => !!db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND role_on_case='primary' AND ${auth3.activeAssignment()}`, clientId, user.id);
+    function mayRead2(user, clientId) {
+      return auth3.hasPerm(user, "clients:read") && (auth3.hasPerm(user, "records:manage-others") || onCareTeam(user, clientId));
+    }
+    function mayRevert(user, clientId) {
+      return auth3.hasPerm(user, "clients:write") && auth3.hasPerm(user, "clients:read") && (auth3.hasPerm(user, "records:manage-others") || isPrimary(user, clientId));
+    }
+    function access(user, clientId) {
+      return { read: mayRead2(user, clientId), revert: mayRevert(user, clientId), office_only: !keptHere() };
+    }
+    function present(r, names) {
+      let changes = {};
+      try {
+        changes = JSON.parse(decrypt3(r.changes_enc));
+      } catch {
+        changes = {};
+      }
+      const label = require_clients2().fieldLabel;
+      return {
+        id: r.id,
+        at: r.created_at,
+        via: r.via,
+        reverts: r.reverts || null,
+        changed_by: r.changed_by,
+        by: r.changed_by && names.get(r.changed_by) || "Someone no longer on the system",
+        changes: Object.entries(changes).map(([field, c]) => ({ field, label: label(field), before: c.before ?? null, after: c.after ?? null }))
+      };
+    }
+    function list(clientId) {
+      const rows = db3.all(`SELECT * FROM client_revisions WHERE client_id=? ORDER BY created_at DESC, rowid DESC`, clientId);
+      const names = new Map(db3.all(`SELECT id, display_name, username FROM users WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify([...new Set(rows.map((r) => r.changed_by).filter(Boolean))])).map((u) => [u.id, u.display_name || u.username]));
+      const out2 = rows.map((r) => present(r, names));
+      const by = new Map(out2.map((r) => [r.id, r]));
+      for (const r of out2) if (r.reverts && by.has(r.reverts)) (by.get(r.reverts).reverted_by = by.get(r.reverts).reverted_by || []).push(r.id);
+      return out2;
+    }
+    function one(clientId, id) {
+      const r = db3.one(`SELECT * FROM client_revisions WHERE id=? AND client_id=?`, id, clientId);
+      if (!r) return null;
+      const names = new Map(r.changed_by ? [[r.changed_by, (db3.one(`SELECT display_name FROM users WHERE id=?`, r.changed_by) || {}).display_name]] : []);
+      return present(r, names);
+    }
+    module.exports = { keptHere, OFFICE_ONLY, diff, norm, same, record, mayRead: mayRead2, mayRevert, access, list, one, onCareTeam, isPrimary };
+  }
+});
+
 // server/rules/notes.js
 var require_notes = __commonJS({
   "server/rules/notes.js"(exports, module) {
@@ -12112,7 +12245,17 @@ var require_tasks = __commonJS({
         return !!k && k.closed.size > 0 && st.standing(existing.client_id);
       }
     });
-    Object.assign(module.exports, { NOTICE_MARKER, isNotice, noticeEntry, noticeBy, noticeIds });
+    function noticeRevisions(row) {
+      if (!noticeEntry(row)) return [];
+      return require_db().all(`SELECT details FROM audit_log WHERE client_id=? AND action='client.change_notice' AND details LIKE ? ORDER BY id`, row.client_id, `%"task":"${String(row.id).replace(/[%_"\\]/g, "")}"%`).map((a) => {
+        try {
+          return JSON.parse(a.details);
+        } catch {
+          return {};
+        }
+      }).filter((d) => d.task === row.id && d.notified === row.assigned_to && d.revision).map((d) => d.revision);
+    }
+    Object.assign(module.exports, { NOTICE_MARKER, isNotice, noticeEntry, noticeBy, noticeIds, noticeRevisions });
   }
 });
 
@@ -12962,6 +13105,7 @@ var require_clients = __commonJS({
     var M = require_clients_model();
     var F = require_client_filters();
     var O = require_options();
+    var REV = require_client_revisions();
     var rules = require_rules();
     var shape = rules.forTable("clients").fields;
     function loadClient(ctx, id) {
@@ -13032,6 +13176,25 @@ var require_clients = __commonJS({
     }
     var DUPLICATE_CHECKS = 60;
     var DUPLICATE_CHECK_WINDOW_MS = 15 * 6e4;
+    function updateClient(ctx, row, v, { reverts = null } = {}) {
+      rules.assertWrite("clients", { id: row.id, ...rules.toColumns("clients", v) }, ctx, { existing: row });
+      const enc2 = M.encryptFields(v);
+      const was = M.decryptRow(row);
+      if (v.first_name !== void 0 || v.last_name !== void 0) enc2.full_name_idx = blindIndex2((v.last_name ?? was.last_name ?? "") + (v.first_name ?? was.first_name ?? ""));
+      const cols2 = { ...enc2 };
+      for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
+      const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
+      if (!keys.length) return { updated_at: row.updated_at, revision: null };
+      const stamp2 = db3.now();
+      let revision = null;
+      db3.transaction(() => {
+        db3.run(`UPDATE clients SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => cols2[k]), stamp2, row.id);
+        revision = REV.record({ user: ctx.user, clientId: row.id, changes: REV.diff(was, v), via: "rest", reverts, ip: ctx.ip });
+      });
+      audit3.log({ user: ctx.user, action: "client.update", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { fields: Object.keys(v), revision: revision || void 0, reverts: reverts || void 0 } });
+      require_clients2().notifyPrimary(ctx.user, row.id, Object.keys(v).filter((k) => !REV.same(v[k], was[k])), { revision });
+      return { updated_at: stamp2, revision };
+    }
     module.exports = (r) => {
       r.get("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:read", "clients:list-deidentified"), (ctx) => {
         const deidentify = !auth3.hasPerm(ctx.user, "clients:read");
@@ -13266,10 +13429,11 @@ var require_clients = __commonJS({
         }
         const links = [];
         for (const t of db3.all(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)) {
-          if (t.name === "clients") continue;
+          if (t.name === "clients" || t.name === "client_revisions") continue;
           for (const fk of db3.all(`PRAGMA foreign_key_list(${t.name})`)) if (fk.table === "clients") links.push([t.name, fk.from]);
         }
         const moved = {};
+        let mergeRevision = null;
         const sourceOpenEpisodes = db3.all(`SELECT id FROM episodes WHERE client_id=? AND status='open'`, source.id).map((e) => e.id);
         db3.transaction(() => {
           db3.run(`DELETE FROM privacy_incident_clients WHERE client_id=? AND incident_id IN (SELECT incident_id FROM privacy_incident_clients WHERE client_id=?)`, source.id, keep.id);
@@ -13288,6 +13452,11 @@ var require_clients = __commonJS({
           if (source.intake_date && (!keep.intake_date || source.intake_date < keep.intake_date)) fills.intake_date = source.intake_date;
           const keys = Object.keys(fills);
           if (keys.length) db3.run(`UPDATE clients SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => fills[k]), db3.now(), keep.id);
+          if (keys.length) {
+            const plainFills = M.decryptRow(Object.fromEntries(keys.map((k) => [k, fills[k]])));
+            delete plainFills.display_name;
+            mergeRevision = REV.record({ user: ctx.user, clientId: keep.id, changes: REV.diff(M.decryptRow(keep), plainFills), via: "merge", ip: ctx.ip });
+          }
           const after = db3.one(`SELECT * FROM clients WHERE id=?`, keep.id);
           const plain = M.decryptRow(after);
           db3.run(
@@ -13316,7 +13485,7 @@ var require_clients = __commonJS({
           db3.run(`UPDATE clients SET merged_into=?, status='closed', deleted_at=?, removed_reason_enc=?, updated_at=? WHERE id=?`, keep.id, db3.now(), v.reason ? encrypt3(v.reason) : null, db3.now(), source.id);
           moved._filled_fields = keys.length;
         });
-        audit3.log({ user: ctx.user, action: "client.merge", entity: "client", entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { merged: source.id, merged_code: source.client_code, moved, reason_recorded: v.reason ? true : void 0 } });
+        audit3.log({ user: ctx.user, action: "client.merge", entity: "client", entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { merged: source.id, merged_code: source.client_code, moved, reason_recorded: v.reason ? true : void 0, revision: mergeRevision || void 0 } });
         audit3.log({ user: ctx.user, action: "client.merged_away", entity: "client", entityId: source.id, clientId: source.id, ip: ctx.ip, details: { into: keep.id } });
         return { ok: true, kept: keep.id, merged: source.id, moved };
       });
@@ -13359,6 +13528,7 @@ var require_clients = __commonJS({
         const sp = kinds.length ? db3.one(`SELECT id, occurred_at, status FROM notes WHERE client_id=? AND format='safety_plan' AND deleted_at IS NULL AND status IN ('signed','amended') AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY occurred_at DESC LIMIT 1`, row.id, ...kinds) : null;
         client.safety_plan = sp || null;
         client.part2 = { program: require_disclosure().part2Program(), notice: require_part2().latestNotice(row.id) };
+        client.history = REV.access(ctx.user, row.id);
         audit3.log({ user: ctx.user, action: "client.view", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip });
         return { client };
       });
@@ -13366,23 +13536,45 @@ var require_clients = __commonJS({
         const row = loadClient(ctx, ctx.params.id);
         require_crud().assertFresh(ctx, row, "client");
         const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true, existing: row });
-        rules.assertWrite("clients", { id: row.id, ...rules.toColumns("clients", v) }, ctx, { existing: row });
-        const enc2 = M.encryptFields(v);
-        if (v.first_name !== void 0 || v.last_name !== void 0) {
-          const cur = M.decryptRow(row);
-          enc2.full_name_idx = blindIndex2((v.last_name ?? cur.last_name ?? "") + (v.first_name ?? cur.first_name ?? ""));
+        const done = updateClient(ctx, row, v);
+        return { ok: true, updated_at: done.updated_at, revision: done.revision || void 0 };
+      });
+      const historyRefused = (ctx, row, what) => {
+        audit3.log({ user: ctx.user, action: "authz.denied", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, success: false, details: { reason: `client history: ${what}` } });
+      };
+      r.get("/api/clients/:id/history", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
+        const row = loadClient(ctx, ctx.params.id);
+        if (!REV.keptHere()) throw new HttpError3(403, REV.OFFICE_ONLY, { officeOnly: true });
+        if (!REV.mayRead(ctx.user, row.id)) {
+          historyRefused(ctx, row, "not on the care team");
+          throw forbidden("A client's change history is for their care team and supervisors. Ask the primary worker or a supervisor if you need to know what the record held before.");
         }
-        const cols2 = { ...enc2 };
-        for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
-        const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
-        if (!keys.length) return { ok: true, updated_at: row.updated_at };
-        const stamp2 = db3.now();
-        db3.run(`UPDATE clients SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => cols2[k]), stamp2, row.id);
-        audit3.log({ user: ctx.user, action: "client.update", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { fields: Object.keys(v) } });
-        const was = M.decryptRow(row);
-        const same = (x) => (typeof x === "boolean" ? Number(x) : Array.isArray(x) ? x.join(",") : x) ?? "";
-        require_clients2().notifyPrimary(ctx.user, row.id, Object.keys(v).filter((k) => String(same(v[k])) !== String(same(was[k]))));
-        return { ok: true, updated_at: stamp2 };
+        const revisions = REV.list(row.id);
+        audit3.log({ user: ctx.user, action: "client.history.view", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { revisions: revisions.length } });
+        return { revisions, may_revert: REV.mayRevert(ctx.user, row.id) };
+      });
+      r.post("/api/clients/:id/history/:rev/revert", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
+        const row = loadClient(ctx, ctx.params.id);
+        if (!REV.keptHere()) throw new HttpError3(403, REV.OFFICE_ONLY, { officeOnly: true });
+        if (!REV.mayRevert(ctx.user, row.id)) {
+          historyRefused(ctx, row, "revert: not the primary worker or a supervisor");
+          throw forbidden("Only the client's primary worker, a supervisor or an administrator can put a change back.");
+        }
+        const rev2 = REV.one(row.id, ctx.params.rev);
+        if (!rev2) throw notFound("That change was not found on this client's record");
+        require_crud().assertFresh(ctx, row, "client");
+        const now2 = M.decryptRow(row);
+        const since = rev2.changes.filter((ch) => !REV.same(now2[ch.field], ch.after));
+        if (since.length) {
+          audit3.log({ user: ctx.user, action: "client.revert.refused", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, success: false, details: { revision: rev2.id, changed_since: since.map((ch) => ch.field) } });
+          throw new HttpError3(409, `${since.map((ch) => ch.label).join(", ")} ${since.length === 1 ? "has" : "have"} been changed again since. Put back the later change first, or edit the record.`, { changed_since: since.map((ch) => ch.field) });
+        }
+        const body = Object.fromEntries(rev2.changes.map((ch) => [ch.field, ch.before]));
+        const v = validate(body, Object.fromEntries(rev2.changes.map((ch) => [ch.field, { ...shape[ch.field], required: false }])), { partial: true, existing: row });
+        for (const f of ["first_name", "last_name"]) if (f in v && !v[f]) throw badRequest("This change cannot be put back: it would leave the client without a name. Edit the record instead.");
+        const done = updateClient(ctx, row, v, { reverts: rev2.id });
+        audit3.log({ user: ctx.user, action: "client.revert", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reverted: rev2.id, revision: done.revision, fields: Object.keys(v) } });
+        return { ok: true, updated_at: done.updated_at, revision: done.revision };
       });
       r.post("/api/clients/:id/legal-hold", auth3.requireAuth, auth3.requirePerm("clients:legal-hold"), (ctx) => {
         const row = loadClient(ctx, ctx.params.id);
@@ -13598,7 +13790,16 @@ var require_clients2 = __commonJS({
       afterApply(row, o, c) {
         if (c.existing) {
           const byCol = Object.fromEntries(Object.entries(module.exports.columns).map(([k, col]) => [col, k]));
-          notifyPrimary(c.user, c.existing.id, c.changed().map((col) => byCol[col]).filter(Boolean));
+          const cols2 = c.changed().filter((col) => byCol[col]);
+          const R = require_client_revisions();
+          const revision = R.record({
+            user: c.user,
+            clientId: c.existing.id,
+            via: "sync",
+            ip: "device",
+            changes: R.diff(Object.fromEntries(cols2.map((col) => [byCol[col], c.was(col)])), Object.fromEntries(cols2.map((col) => [byCol[col], c.plain(col)])))
+          });
+          notifyPrimary(c.user, c.existing.id, cols2.map((col) => byCol[col]), { revision });
           return;
         }
         const own = (c.session.state.assignments || {}).selfForClient;
@@ -13630,7 +13831,7 @@ var require_clients2 = __commonJS({
       race_codes: "Race codes"
     };
     var fieldLabel = (f) => LABELS[f] || (f.charAt(0).toUpperCase() + f.slice(1)).replace(/_/g, " ");
-    function notifyPrimary(user, clientId, fields) {
+    function notifyPrimary(user, clientId, fields, { revision = null } = {}) {
       if (!fields.length || db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${auth3.activeAssignment()}`, clientId, user.id)) return [];
       const { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
       const { NOTICE_MARKER } = require_tasks();
@@ -13657,17 +13858,18 @@ var require_clients2 = __commonJS({
         const all = [.../* @__PURE__ */ new Set([...String(before).split(", ").filter(Boolean), ...fields.map(fieldLabel)])];
         const title = `${user.display_name || user.username} changed ${code}'s record (${all.join(", ")})`.slice(0, 200);
         const desc = `Changed: ${all.join(", ")}
-You are this client's primary worker. Only the names of the fields are given here, never their values: open the record to see them as they are now.
+You are this client's primary worker. Only the names of the fields are given here, never their values: open the record's History to see what they held before and hold now.
 ${NOTICE_MARKER}`;
         const id = open3 ? open3.id : uuid2();
         if (open3) db3.run(`UPDATE tasks SET title_enc=?, description_enc=?, updated_at=? WHERE id=?`, encrypt3(title), encrypt3(desc), db3.now(), id);
         else db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, clientId, primary, primary, encrypt3(title), encrypt3(desc), null, "normal");
-        require_audit().log({ user, action: "client.change_notice", entity: "client", entityId: clientId, clientId, details: { notified: primary, fields, task: id } });
+        require_audit().log({ user, action: "client.change_notice", entity: "client", entityId: clientId, clientId, details: { notified: primary, fields, task: id, revision: revision || void 0 } });
         told.push(primary);
       }
       return told;
     }
     module.exports.notifyPrimary = notifyPrimary;
+    module.exports.fieldLabel = fieldLabel;
     module.exports.contactProblems = contactProblems;
   }
 });
@@ -23975,9 +24177,9 @@ var require_retention = __commonJS({
     var db3 = require_db();
     var config2 = require_config();
     var audit3 = require_audit();
-    var DELETE_TABLES = ["care_plan_steps", "care_plan_goals", "problem_history", "problems", "asam_assessments", "outcome_measures", "client_form_files", "client_forms", "disclosures", "court_orders", "part2_notices", "consents", "patient_requests", "referrals", "tasks", "calls", "overdose_events", "intervention_supplies", "interventions", "caloms_records", "suprt_assessments", "episodes", "assignments", "breakglass_events"];
+    var DELETE_TABLES = ["care_plan_steps", "care_plan_goals", "problem_history", "problems", "asam_assessments", "outcome_measures", "client_form_files", "client_forms", "disclosures", "court_orders", "part2_notices", "consents", "patient_requests", "referrals", "tasks", "calls", "overdose_events", "intervention_supplies", "interventions", "caloms_records", "suprt_assessments", "episodes", "assignments", "breakglass_events", "client_revisions"];
     var UNLINK_TABLES = ["time_entries", "expenditures", "complaints"];
-    var NO_TOMBSTONE = ["breakglass_events"];
+    var NO_TOMBSTONE = ["breakglass_events", "client_revisions"];
     function retentionYears() {
       const v = Number(db3.getSetting("client_retention_years", ""));
       return Number.isFinite(v) && v > 0 ? v : config2.clientRetentionYears;
@@ -24010,7 +24212,7 @@ var require_retention = __commonJS({
       time_entries: ["work_date"],
       expenditures: ["spent_at"]
     };
-    var NOT_ACTIVITY = ["assignments", "breakglass_events", "complaints", "privacy_incident_clients", "intervention_supplies"];
+    var NOT_ACTIVITY = ["assignments", "breakglass_events", "complaints", "privacy_incident_clients", "intervention_supplies", "client_revisions"];
     function lastActivitySql() {
       const parts = [];
       for (const [t, cols2] of Object.entries(ACTIVITY)) {
@@ -33216,7 +33418,7 @@ var require_tasks2 = __commonJS({
     var audit3 = require_audit();
     var { withClientName, SELECT: NAME_COLS } = require_client_name();
     var { localDate } = require_budget();
-    var { isNotice, noticeBy } = require_tasks();
+    var { isNotice, noticeBy, noticeRevisions } = require_tasks();
     function dueTasks(ctx, within) {
       const cf = auth3.caseloadFilter(ctx.user, "tasks.client_id");
       const horizonMs = Date.now() + within * 6e4;
@@ -33311,6 +33513,8 @@ var require_tasks2 = __commonJS({
         const by = noticeBy(t);
         const u = by && db3.one(`SELECT display_name FROM users WHERE id=?`, by);
         if (u) o.notice_by = u.display_name;
+        const revs = noticeRevisions(t);
+        if (revs.length) o.notice_revisions = revs;
       }
       if (o.notice && o.client_name && o.client_code) o.title = o.title.replace(`${o.client_code}'s record`, `${o.client_name}'s record`);
       return o;
@@ -42217,6 +42421,21 @@ var require_db = __commonJS({
       PRIMARY KEY (user_id, permission)
     )`);
         d.exec(`CREATE INDEX IF NOT EXISTS idx_user_perm_overrides_user ON user_permission_overrides(user_id)`);
+      },
+      // 49: reserved for a parallel 1.17.0 stream (a programme-wide least-privilege default), whose own migration takes
+      //     this place when the streams are merged. A no-op here, so that the revision history below is number 50.
+      (d) => {
+      },
+      // 50: client-record revision history (1.17.0, server/client-revisions.js): one row per change to a client's
+      //     record, with each changed field's value before and after, encrypted. A new table; nothing to backfill
+      //     (the values a record held before this release were never kept). Created from schema.sql's own text, so an
+      //     upgraded database and a fresh one match; self-contained and idempotent, so it can be renumbered.
+      (d) => {
+        const text = safeSchema();
+        const m = text.match(/CREATE TABLE IF NOT EXISTS client_revisions \([\s\S]*?\n\);/);
+        if (!m) throw new Error("migration 50: no definition for client_revisions in schema");
+        d.exec(m[0]);
+        createIndexesFromSchema(d, text, ["idx_client_revisions_client"]);
       }
     ];
     var PERF_INDEXES_47 = [

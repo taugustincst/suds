@@ -217,6 +217,19 @@ test('the sync table description matches the actual schema', () => {
       if (order.indexOf(fk.table) > order.indexOf(t.name)) problems.push(`${t.name}.${fk.from} references ${fk.table}, which is listed after it`);
     }
   }
+  // A table that never synchronises (server_only, per_database) declares its encrypted columns too (1.17.0,
+  // client_revisions): every table holding PHI is either synchronised or deliberately kept apart, never neither.
+  for (const t of H.db.all(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)) {
+    if (SYNC.tables.some(x => x.name === t.name)) continue;
+    const enc = colsOf(t.name).filter(c => c.endsWith('_enc'));
+    const kept = SYNC.server_only.includes(t.name) || SYNC.per_database.includes(t.name);
+    if (enc.length && !kept) problems.push(`${t.name} has encrypted columns but is neither synchronised nor declared server_only or per_database`);
+    if (!kept) continue;
+    const declared = SYNC.unsynced_enc[t.name];
+    if (!declared) { problems.push(`${t.name} is not synchronised but its encrypted columns are not declared in unsynced_enc`); continue; }
+    for (const c of enc) if (!declared.includes(c)) problems.push(`${t.name}.${c} is encrypted PHI but is not declared in sync-tables (unsynced_enc)`);
+    for (const c of declared) if (!enc.includes(c)) problems.push(`${t.name}.${c} is listed as encrypted but is not a column`);
+  }
   for (const [table, col] of SYNC.user_refs) {
     if (!tableExists(table)) { problems.push(`user_refs names missing table ${table}`); continue; }
     if (!colsOf(table).includes(col)) problems.push(`user_refs names missing column ${table}.${col}`);

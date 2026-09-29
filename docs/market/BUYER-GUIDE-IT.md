@@ -57,8 +57,9 @@ process and one SQLite database per programme; a second process is refused
 - **Role-based access** (navigator, clinician, supervisor, finance, readonly, admin). **Role defaults since
   1.16.0:** navigators and clinicians see every client, and navigators read clinical notes without writing
   them. From 1.16.1 SUD counseling notes are readable only by their author, the co-signer and staff who write clinical notes (clinicians, supervisors). Client records are shared: anyone who sees a client may update it, and the client's
-  primary worker is told which fields changed when someone not on the care team does (field names are audited; earlier
-  values are not kept: the client record has no revision history yet, planned). Only supervisors and administrators change or delete other
+  primary worker is told which fields changed when someone not on the care team does (field names are audited; from 1.17.0
+  earlier values are kept too: each change is an encrypted revision with every changed field's value before and after,
+  readable by the care team, supervisors and administrators, and a change can be put back as a new revision). Only supervisors and administrators change or delete other
   workers' visits, calls, notes, referrals and to-dos. **Least privilege for new staff (1.17.0):** with *New navigators
   and clinicians start held to their caseload* on (Settings → Users & permissions), every account that becomes a
   navigator or clinician — created by an administrator, an approved sign-up, SCIM provisioning (single sign-on links

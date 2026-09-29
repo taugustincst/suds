@@ -1146,6 +1146,22 @@ CREATE TABLE IF NOT EXISTS problem_history (
 CREATE INDEX IF NOT EXISTS idx_problem_history_problem ON problem_history(problem_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_problem_history_updated ON problem_history(updated_at);
 
+-- Every change to a client's record (1.17.0, server/client-revisions.js): who changed it, when, how it arrived
+-- (an edit here, a device's sync, or the fields a merge filled in), and each changed field's value before and
+-- after -- encrypted JSON, because the values are the record's (names, dates of birth, phone numbers). Append-only:
+-- putting a change back is a new revision that names the one it reverts, never an edit or a deletion. Kept at the
+-- office and never synchronised (server/sync-tables.js server_only); purged with the client (server/retention.js).
+CREATE TABLE IF NOT EXISTS client_revisions (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  changed_by TEXT REFERENCES users(id),
+  via TEXT NOT NULL CHECK (via IN ('rest','sync','merge')),
+  reverts TEXT,                        -- the revision this one put back, when it is a revert
+  changes_enc TEXT NOT NULL,           -- {"field": {"before": ..., "after": ...}, ...}
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_client_revisions_client ON client_revisions(client_id, created_at);
+
 -- Care coordination plan: goals in the client's own words, each tied (optionally) to a problem, with a
 -- review date that shows as overdue once it passes; and the steps toward each goal, with who does them
 -- and by when. A step can create a to-do (task_id) so it lands on someone's list.

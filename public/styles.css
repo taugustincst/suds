@@ -134,6 +134,9 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
 .banner.run-kind details > p { margin: .4rem 0 0; }
 
 /* Timeline */
+/* A client record's History tab (views/history.js): one card per change; the one a change notice links to is outlined. */
+.rev-list { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; gap: 1rem; }
+.rev-highlight { outline: 3px solid var(--primary); outline-offset: 2px; }
 .timeline { list-style: none; margin: 0; padding: 0 0 0 1.4rem; border-left: 2px solid var(--border); }
 .timeline li { position: relative; padding: 0 0 1rem .9rem; }
 .timeline li::before { content: ""; position: absolute; left: -1.4rem; top: .35rem; width: 12px; height: 12px; border-radius: 50%; background: var(--panel); border: 3px solid var(--primary); transform: translateX(-50%); margin-left: 1px; }
