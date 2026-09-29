@@ -83,7 +83,7 @@ try {
   if (li) {
     const text = (await li.textContent()).replace(/\s+/g, ' ');
     ok(/Maria Rivera \(not on the care team\) changed: Phone — David Chen was told/.test(text), 'as "Maria Rivera (not on the care team) changed: Phone — David Chen was told"', text);
-    ok(/· Maria Rivera/.test(text) && !/· David Chen/.test(text), 'by Maria, not by David', text);
+    ok(text.split('Maria Rivera').length === 2 && !/· David Chen/.test(text), 'by Maria (named once, r9 L1), not by David', text);
     ok(!/You are this client's primary worker|Reference|DEMO-|record \(/.test(text), 'never the to-do\'s text', text);
     await (await li.$('a')).click();
     const card = await until(() => jw.page.$('.modal [data-change-notice]'));
@@ -93,7 +93,7 @@ try {
   const counts = (await jw.api('GET', `/api/clients/${cid}`)).data.client.counts;
   const tile = await jw.page.$$eval('.main .stat', ss => ss.map(s => ({ l: s.querySelector('.l')?.textContent || '', v: s.querySelector('.v')?.textContent || '' })).find(s => /^Open to-dos/.test(s.l)));
   ok(tile && tile.v.includes(String(counts.open_tasks - counts.notices)) && counts.notices === 1, 'the Open to-dos tile counts the to-do, not the notice', JSON.stringify({ tile, counts }));
-  ok(tile && /1 change to review/.test(tile.l), 'and says there is a change to review', tile && tile.l);
+  ok(tile && !/change to review/.test(tile.l), 'and, to a supervisor (not the one told), no "change to review" (r9 L2)', tile && tile.l);
   ok(tile && tile.v.includes('⚠') === counts.overdue_tasks > 0, 'with ⚠ because a real to-do is overdue', JSON.stringify(tile));
   await axe(jw.page, 'client Overview with a change notice');
   await jw.ctx.close();

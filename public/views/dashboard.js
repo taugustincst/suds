@@ -29,6 +29,8 @@ async function drawHome(r) {
   for (const p of Object.values(early)) if (p) p.catch(() => {});
   const [d, cont, caseload, handoffs] = await Promise.all([get('/api/reports/dashboard'), get('/api/me/continue'), can('clients:read') ? get('/api/caseload') : { caseload: [] },
     can('notes:admin:read') ? get('/api/notes/handoffs?hours=24', { quiet: true }).catch(() => null) : null]);
+  const force = !!(r && r.query && r.query.get('welcome') === '1');
+  const experienced = force || !prefs.get('tour_done') ? await priorWork() : false;
   // "Today" is really "due by the end of today": anything from before today is overdue and goes first.
   const startOfToday = new Date(new Date().setHours(0, 0, 0, 0));
   const isOverdue = (t) => fmt.isDateOnly(t.due_at) ? fmt.parse(t.due_at) < startOfToday : fmt.isPast(t.due_at);
@@ -243,7 +245,7 @@ async function drawHome(r) {
   };
   return h('div', {},
     pageHead(`${greet}, ${who}`, autoToggle),
-    welcomeCard({ force: r && r.query && r.query.get('welcome') === '1' }),
+    welcomeCard({ force, experienced }),
     recoveryPrompt,
     backupReminder,
     securityNotes,
@@ -282,5 +284,17 @@ async function drawHome(r) {
       h('div', { class: 'card' }, h('h2', { 'data-activity-heading': '1' }, activityHeading), bars(i.by_type.slice(0, 8), { list: 'INTERVENTION_TYPES', link: x => `interventions?type=${x.k}` }), h('div', { class: 'mt' }, sparkline(i.by_week.map(w => w.n), { label: 'Visits per week, last 90 days' }), h('div', { class: 'muted small' }, 'visits per week'))),
       state.user.role === 'admin' && !state.local ? h('div', { class: 'card' }, h('h2', {}, 'Use SUDS on phones and tablets'), h('p', { class: 'small muted' }, 'There is no app to install: staff open SUDS in the browser on the office Wi-Fi and add it to their home screen. Show them the QR code under Settings → Network & devices, or send them to ', h('a', { href: 'get-app.html' }, 'Use SUDS on your phone or tablet'), '.'), h('a', { class: 'btn sm', href: '#/admin?tab=network' }, 'Connect a device')) : null,
       d.consents_expiring.length ? h('div', { class: 'card' }, h('h2', {}, 'Consents expiring soon'), table([{ label: 'Client', render: r => h('a', { href: `#/client/${r.client_id}` }, r.client_code) }, { label: 'Type', render: r => fmt.label(r.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Expires', render: r => fmt.date(r.expires_at) }], d.consents_expiring, { wrap: false })) : null));
+}
+// "Your first day" is for a first day (r9 L6): someone who logged a visit or wrote a note before today, as every
+// worker has after an upgrade, is not asked to "Log your first visit". Remembered once known (prefs first_day_skip).
+async function priorWork() {
+  if (prefs.get('first_day_skip')) return true;
+  const d = new Date(); d.setDate(d.getDate() - 1); const p = n => String(n).padStart(2, '0');
+  const before = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const any = async (path) => { try { return ((await get(path, { quiet: true })).rows || []).length > 0; } catch { return false; } };
+  const seen = (can('interventions:read') && await any(`/api/interventions?mine=1&to=${before}&limit=1`))
+    || ((can('notes:admin:read') || can('notes:clinical:read')) && await any(`/api/notes?mine=1&to=${before}&limit=1`));
+  if (seen) prefs.set('first_day_skip', true);
+  return seen;
 }
 route('dashboard', drawHome);

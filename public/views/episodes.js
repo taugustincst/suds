@@ -30,6 +30,13 @@ export async function episodesPanel(clientId, { onChange, client = null } = {}) 
     const m = modal('Start an episode of care', calOn ? h('div', {}, h('p', { class: 'small muted', 'data-caloms-admission': '1' }, 'This program reports CalOMS Tx: answer the CalOMS admission questions below. They are sent to the state (DHCS) in the monthly extract.'), f) : f, { wide: calOn });
   };
 
+  // Discharging a client whose care team you are not on ends only your own part (server/routes/episodes.js): said
+  // before, and after, in those words (r9 M4). `standing` as the server has it: a manager, or on the care team.
+  const today = new Date().toISOString().slice(0, 10);
+  const team = ((client && client.assignments) || []).filter(a => !a.end_date || a.end_date > today);
+  const standing = can('records:manage-others') || team.some(a => a.user_id === state.user.id);
+  const others = standing ? [] : [...new Set(team.filter(a => a.user_id !== state.user.id).map(a => a.display_name))];
+  const names = (xs) => xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
   const closeEpisode = (e) => {
     const f = form([
       // No default: "Completed the program" is a claim the funder report counts, not something a worker
@@ -44,9 +51,15 @@ export async function episodesPanel(clientId, { onChange, client = null } = {}) 
       const { plain, caloms } = calOn ? splitCaloms(cal, 'discharge', d) : { plain: d, caloms: null };
       const r = await post(`/api/episodes/${e.id}/close`, caloms ? { ...plain, caloms } : plain);
       m.close();
-      toast(`Discharged. ${r.ended_assignments} assignment(s) ended, ${r.cancelled_tasks} to-do(s) closed.`, 'ok');
-      if (r.warnings && r.warnings.length) {
-        await confirmDialog('Discharged, with loose ends', r.warnings.join(' '), { okText: 'I will follow up' });
+      const stays = others.length > 0 && !d.keep_client_active;
+      const n = (k, one) => (k ? `${k} ${one}${k === 1 ? '' : 's'}` : null);
+      const done = [n(r.ended_assignments, 'assignment'), n(r.cancelled_tasks, 'to-do')].filter(Boolean);
+      toast(stays ? 'Episode closed' : `Discharged.${done.length ? ` Ended: ${done.join(', ')}.` : ''}`, 'ok');
+      const rest = (r.warnings || []).filter(w => !/^Others are still on this client's care team/.test(w));
+      if (stays) {
+        await confirmDialog('Episode closed — client stays open', `${names(others)} ${others.length === 1 ? 'is' : 'are'} still on this client's care team, so the client stays open with them. Only your own part ended; they or a supervisor discharge the client.${rest.length ? ` ${rest.join(' ')}` : ''}`, { okText: 'OK', cancelText: null });
+      } else if (rest.length) {
+        await confirmDialog('Discharged — still to follow up', rest.join(' '), { okText: 'I will follow up', cancelText: null });
       }
       onChange ? onChange() : nav(`client/${clientId}`);
     } });
@@ -56,7 +69,10 @@ export async function episodesPanel(clientId, { onChange, client = null } = {}) 
       if (code && !f.inputs.caloms_discharge_status.value) f.inputs.caloms_discharge_status.value = code;
     });
     const m = modal('Discharge from this episode', h('div', {},
-      h('p', { class: 'small muted' }, 'This ends the assignments on this client and closes their open to-dos, so they stop appearing on everyone\'s overdue list. Their record stays exactly as it is.'),
+      standing ? h('p', { class: 'small muted' }, 'This ends the assignments on this client and closes their open to-dos, so they stop appearing on everyone\'s overdue list. Their record stays exactly as it is.')
+        : h('p', { class: 'banner info small', 'data-discharge-own-part': '1' }, others.length
+          ? `You are not on this client's care team. Closing this episode ends only your own part: the client stays open with ${names(others)}, and only they or a supervisor can discharge the client.`
+          : 'You are not on this client\'s care team, and nobody else is: this closes the episode and the client, and your own open to-dos about them.'),
       calOn ? h('p', { class: 'small muted', 'data-caloms-discharge': '1' }, 'This program reports CalOMS Tx: the CalOMS discharge status and date of last service are required; the past-30-day questions are required unless the status is administrative (4, 6, 7 or 8).') : null, f), { wide: calOn });
   };
 

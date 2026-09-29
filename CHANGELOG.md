@@ -2,6 +2,36 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Frontline
+
+Fixes from the frontline-UX review of 1.16.3. No migration, no new permission, no new route.
+
+- **Only the person told marks a change notice seen (M2).** The notice card offers **Mark as seen** only to the primary
+  worker it was sent to. Anyone else who opens it (a supervisor, the editor) sees *A change to a client's record*,
+  **Sent to** *David Chen* and *Not seen yet by David Chen*, and no button; "your client" is said only to the one told. In
+  the to-do list, a notice sent to someone else has no box to tick it off with. (The server enforces the same rule:
+  see Security.)
+- **The 2-step bar goes as soon as 2-step verification is on (M3).** It, and the header's **🔐 2-step** link, stayed until
+  a reload, still saying access would end. My profile, the set-up dialog and the sign-in step now say *2-step
+  verification*: **Set up 2-step verification**, **Turn on 2-step**, *2-step verification is on*, **Turn off 2-step**
+  (the API names are unchanged).
+- **Discharging from off the care team says what it does (M4).** Before submit, someone not on the client's care team is
+  told that closing the episode ends only their own part and that the client stays open with the care team, by name.
+  Afterwards a one-button dialog, *Episode closed — client stays open*, says who is still on the care team; the toast
+  says *Episode closed*, and no discharge toast lists "0 assignment(s) ended, 0 to-do(s) closed" any more (only the
+  counts that are not zero). The loose-ends dialog after an ordinary discharge has one button too.
+- **Lows.** The timeline names a notice's editor once (L1). *· N changes to review* on the Open to-dos tile is shown only
+  to the primary worker (L2). Cancelling the signature after **Save & sign** says the note is saved as a draft (L3). A
+  table wider than its card says so above it, in words (every table in the frame, not only Reports), and the Outcome
+  measures headings are shorter (L4). On a phone, Notes' **Import** is under **More** and the counseling-notes line is
+  one line, so the first note is higher (L5). *Your first day* is not shown to someone who logged a visit or wrote a note
+  before today (L6). Finance's Supervision page describes staff time, not countersignatures (L7).
+- **Browser checks:** `scripts/ui/r9.mjs` (in the suite, now 44 scripts); r8, ux13 and signup follow the new wording.
+- **Not in this release:** telling the primary worker when someone off the care team closes the client's only open
+  episode, or reactivates a closed client by starting one (M4's last point, L8).
+
 ## 1.16.3 — 2026-09-29
 
 ### Engineering

@@ -330,7 +330,7 @@ route('sync', async () => {
     // name the browser has no saved credential for, plus autocomplete="new-password" (which browsers do
     // still honor, unlike "off"), keeps this field empty until the person types into it themselves.
     { name: 'office_password', label: 'Office password', type: 'password', required: true, autocomplete: 'new-password', help: 'Your office SUDS account password — not the password you use to unlock this device.' },
-    { name: 'code', label: 'MFA code (if your office account uses it)', placeholder: '123456' },
+    { name: 'code', label: '2-step code (if your office account uses it)', placeholder: '123456' },
   ], { submitText: 'Sync now', onSubmit: async (d) => {
     log.textContent = 'Connecting…';
     try {

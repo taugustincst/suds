@@ -305,6 +305,6 @@ route('mfa', async () => {
     await post('/api/auth/mfa/verify', d);
     state.mfaPending = false; await loadRefData(); navAndRender('dashboard');
   } });
-  return h('main', { class: 'login-wrap', id: 'main', tabindex: '-1' }, h('div', { class: 'card login' }, h('h1', {}, 'Two-factor verification'), h('p', { class: 'muted' }, 'Enter the 6-digit code from your authenticator app.'), f,
+  return h('main', { class: 'login-wrap', id: 'main', tabindex: '-1' }, h('div', { class: 'card login' }, h('h1', {}, '2-step verification'), h('p', { class: 'muted' }, 'Enter the 6-digit code from your authenticator app.'), f,
     h('p', { class: 'small center mt' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); await post('/api/auth/logout', {}); state.user = null; state.mfaPending = false; nav('login'); render(); } }, 'Cancel and sign out'))));
 });
