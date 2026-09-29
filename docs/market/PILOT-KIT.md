@@ -123,6 +123,22 @@ vendor may not fill it in.
 | **Vendor support effort** | — | Vendor hours per month, by ticket severity | Recorded — feeds [templates/PRICING.md](templates/PRICING.md) |
 | **Safety / integrity** | — | Records lost, shown to the wrong person, or failed audit-chain verification | Zero (any one is a stop criterion, [docs/ADOPTION.md](../ADOPTION.md)) |
 
+### Copilot arm (only where the agreement is recorded)
+
+Only for a pilot on an office server whose programme has recorded its BAA with Part 2 QSOA terms with the AI
+provider, and counsel's review, under Settings → **AI copilot** ([../AI-COPILOT.md](../AI-COPILOT.md)). Never on
+SUDS on this device, and never for SUD counseling notes (the draft route refuses one). No time saving is claimed for
+the copilot until this arm measures it. SUDS has no copilot report: the figures come from what it already keeps, which
+the pilot lead extracts (or the IT partner, from the database) and the vendor does not.
+
+| Metric | How, from what SUDS already records | Target (agree before go-live) |
+| --- | --- | --- |
+| **Time from contact to signed note, with vs without the copilot** | For signed notes in the period: `notes.signed_at` minus `notes.occurred_at` (the contact's date and time as the author entered it), split by `notes.ai_assisted` (1 = some text was drafted by the copilot and kept). Compare medians for the same staff and note kinds, and against the same measure before the copilot was switched on. Notes signed days later for reasons unrelated to writing (leave, a co-signature) are read with that in mind | Recorded; a target only once a baseline exists |
+| **Drafts that became notes vs discarded** | Drafts asked for: `ai.draft` audit entries with `feature` `note` and `outcome` `ok` (or `ai_usage` rows, which hold no client). Kept: signed notes with `ai_assisted` = 1 in the same period. The difference approximates drafts discarded; a note drafted more than once counts once as kept | Recorded |
+| **Drafts kept as written vs edited** | **Not recorded by SUDS**: a draft's text is never stored, so no field says how much the author changed. Use a sample instead: the author ticks one of *kept as drafted*, *minor edits*, *major edits*, *discarded* on a paper or spreadsheet log for 20 consecutive drafts, at day 30 and day 90, with no client detail on the log | Share discarded or majorly edited reported, not hidden |
+| **Model cost** | `ai_usage` input and output tokens for the period × the provider's price per million tokens, against the provider's invoice ([templates/ROI-CALCULATOR.md](templates/ROI-CALCULATOR.md), *AI copilot*) | Within the monthly cap |
+| **Outbound review** | A supervisor's review of a sample of copilot calls: the `ai.draft` audit entries (who, client, feature, identifiers replaced; never the text) and, with counsel, whether anything identifying remained in what staff typed | Zero incidents |
+
 ### Rules
 
 - Write the baseline down **before** anyone sees SUDS numbers, and keep the raw timings.
@@ -204,7 +220,7 @@ before it is proposed.
 | **Hosting** | County-hosted (one server per CBO, on county infrastructure) or each CBO's IT partner. Vendor hosting is not offered |
 | **Length** | 2–4 weeks of county discovery, then each CBO's 90-day pilot, staggered by 2–4 weeks so the vendor is not deploying three at once |
 | **Paid work (FDE packages)** | Discovery (county and each CBO), deployment, data migration, training, reporting setup against each funder's template, county programme management ([PRICING-OPTIONS.md](PRICING-OPTIONS.md), model D) |
-| **Out of scope** | Everything section 1 excludes; the AI copilot (1.17.0) unless county counsel has reviewed its data flow; secure referral links (1.17.0; off by default) unless counsel has reviewed the link design as built and the pilot server is reachable from the internet; the planned county funder view and pooled benchmarks, which are not built |
+| **Out of scope** | Everything section 1 excludes; the AI copilot (1.17.0) for any CBO that has not recorded its BAA and Part 2 QSOA with the AI provider under Settings → AI copilot, after county counsel has reviewed its data flow (where a CBO has, the copilot is in scope for that CBO and section 5's copilot arm applies; never for SUD counseling notes, never on SUDS on this device); secure referral links (1.17.0; off by default) unless counsel has reviewed the link design as built and the pilot server is reachable from the internet; the planned county funder view and pooled benchmarks, which are not built |
 
 ### What the county gets
 
