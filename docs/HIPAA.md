@@ -168,6 +168,8 @@ Residual risks a county should carry in its own risk register (§164.308(a)(1)).
 
 ## Data classification inside the database
 
+A summary. Every encrypted column, whether it reaches devices, how each can leave the server and how long it is kept: [security/DATA-INVENTORY.md](security/DATA-INVENTORY.md), which a test keeps in step with `schema.sql`.
+
 | Table | PHI at rest | Notes |
 | --- | --- | --- |
 | clients | encrypted identifiers; plaintext coded fields (status, substance, risk…); legal_hold flag | client_code is the non-PHI identifier used in reports |
@@ -176,7 +178,7 @@ Residual risks a county should carry in its own risk register (§164.308(a)(1)).
 | referrals | encrypted outcome, barrier, notes; plaintext status and dates | |
 | tasks | encrypted title and description (details); plaintext dates, status, priority | description was plaintext until 1.9.3; migration 24 encrypts existing rows. De-identified exports never carry it |
 | overdose_events | encrypted substances and notes | |
-| interventions, time_entries, expenditures | plaintext operational fields linked by client_id | short summaries/descriptions should not contain identifiers — the UI says so |
+| interventions, time_entries, expenditures | encrypted visit summary, time and spending descriptions and approval notes; plaintext operational fields (type, minutes, amount, funding) linked by client_id | |
 | consents, disclosures | encrypted recipient, purpose, scope / what, justification, signer's name, witness (migration 39) | disclosures record the court order, proceeding and counseling-note flags and the §2.32 notice version |
 | court_orders | encrypted court, case, recipient, purpose, scope | subpart E orders; synced to devices, never hard-deleted by sync |
 | part2_notices | encrypted notes | §2.22 notice given: date, method, version, acknowledgement |

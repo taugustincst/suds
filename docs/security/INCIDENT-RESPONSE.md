@@ -4,7 +4,7 @@ SUDS supports the county's incident-response plan; it does not replace it. The p
 
 ## Recording an incident
 
-Incidents are recorded in SUDS's incident register: **Settings → Incidents** (available to administrators). Use it to log a suspected or confirmed security incident or breach, its discovery date, what was affected, the risk assessment and the notification decisions and dates, so the record the Breach Notification Rule requires is kept beside the evidence. (The register is delivered as its own feature; this document describes how the rest of SUDS supplies the evidence for it.)
+Incidents are recorded in SUDS's incident and breach register: **Privacy & Part 2 → Incidents & breaches** (`incidents:*`: administrators and supervisors; `server/incidents.js`, `server/routes/compliance.js`). Use it to log a suspected or confirmed security incident or breach, its discovery date, the clients affected, the four-factor risk assessment and the notification decisions and dates, with the 60-day notification clock, so the record the Breach Notification Rule requires is kept beside the evidence. Its text is encrypted and it never leaves the office server ([DATA-INVENTORY.md](DATA-INVENTORY.md)). SUDS opens a draft incident itself when the audit chain fails verification or an identified export names more clients than the threshold (`chainFailure`, `maybeMassExport`).
 
 ## Detection signals SUDS produces
 

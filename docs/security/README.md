@@ -9,17 +9,21 @@ For county IT, security and privacy reviewers. Everything here describes control
 | If you are asked about… | Read |
 | --- | --- |
 | What the system is, where PHI flows, trust boundaries | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| Every encrypted field, where each kind of data can flow, retention (test-checked) | [DATA-INVENTORY.md](DATA-INVENTORY.md) |
+| Attackers, threats, mitigations, the attack classes fixed in 1.15.4–1.16.4, residual risks | [THREAT-MODEL.md](THREAT-MODEL.md) |
 | Encryption at rest and in transit, keys, rotation, customer-managed keys | [ENCRYPTION-AND-KEYS.md](ENCRYPTION-AND-KEYS.md) |
 | SSO, MFA, passwords, sessions, roles, break-glass | [IDENTITY.md](IDENTITY.md) |
 | Audit logging, immutability, log collection, auditor export | [LOGGING-AND-AUDIT.md](LOGGING-AND-AUDIT.md) |
 | Backups, RPO/RTO, tested recovery, standby | [BACKUP-AND-DR.md](BACKUP-AND-DR.md) |
 | Retention, deletion, purge, data residency, subprocessors | [DATA-LIFECYCLE.md](DATA-LIFECYCLE.md) |
-| Dependencies, patching, scanning | [VULNERABILITY-MANAGEMENT.md](VULNERABILITY-MANAGEMENT.md) |
+| Dependencies, patching, scanning, the software bill of materials | [VULNERABILITY-MANAGEMENT.md](VULNERABILITY-MANAGEMENT.md), [../evidence/sbom-1.16.4.cdx.json](../evidence/sbom-1.16.4.cdx.json) |
 | How changes are made, tested and released | [SDLC.md](SDLC.md) |
 | Breach / incident handling | [INCIDENT-RESPONSE.md](INCIDENT-RESPONSE.md) |
 | SOC 2 Trust Services Criteria mapping and gaps | [SOC2-READINESS.md](SOC2-READINESS.md) |
 | A pre-answered vendor security questionnaire (HECVAT-Lite / CAIQ style) | [QUESTIONNAIRE.md](QUESTIONNAIRE.md) |
 | Scope and rules for a penetration test | [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md) |
+
+**Evidence index:** [../evidence/README.md](../evidence/README.md) maps the questions county IT review asks to the documents, tests and CI jobs that answer them, and lists what is still the owner's to do.
 
 Related documents elsewhere: [../HIPAA.md](../HIPAA.md) (HIPAA Security Rule and 42 CFR Part 2 mapping, risk register), [../DEPLOYMENT.md](../DEPLOYMENT.md) (configuration, hardening checklist, hosting options), [../PLATFORM.md](../PLATFORM.md) (the two ways to run SUDS), [../ADOPTION.md](../ADOPTION.md) (governance of adopting it).
 

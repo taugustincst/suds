@@ -26,7 +26,7 @@ Legend — **S**: provided by SUDS (technical control, with evidence); **C**: co
 | CC6.8 | Malicious software, unauthorised software | Zero runtime dependencies; checksummed releases; read-only container/code | S+C | Dockerfile, systemd unit, endpoint protection on host |
 | CC7.1 | Detection of configuration changes and vulnerabilities | `settings.update` audited; Dependabot; Security status | S+C | Audit entries; patch records |
 | CC7.2 | Monitoring for anomalies | Audit log filters (denials, break-glass, exports, failures); health endpoint; metrics | S+C | SIEM alert rules; monthly audit review sign-off |
-| CC7.3–7.5 | Incident evaluation, response, recovery | Incident register (Settings → Incidents), containment actions, evidence export | S+C | [INCIDENT-RESPONSE.md](INCIDENT-RESPONSE.md); incident records; tabletop exercise |
+| CC7.3–7.5 | Incident evaluation, response, recovery | Incident and breach register (Privacy & Part 2 → Incidents & breaches), containment actions, evidence export | S+C | [INCIDENT-RESPONSE.md](INCIDENT-RESPONSE.md); incident records; tabletop exercise |
 | CC8.1 | Change management | Reviewed PRs, CI tests, tagged releases, staged rollout, migrations with pre-migration snapshot | S+C | CI history; release tags; deployment log ([SDLC.md](SDLC.md)) |
 | CC9.1 | Business disruption risk mitigation | Backups, drills, standby | S+C | [BACKUP-AND-DR.md](BACKUP-AND-DR.md) |
 | CC9.2 | Vendor and partner risk | No SUDS subprocessors; county's hosting / IdP / Microsoft BAAs | C | Vendor inventory, BAAs |

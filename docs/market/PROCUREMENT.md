@@ -104,7 +104,8 @@ does not hold.
    counseling notes only for their author, co-signer and clinical staff; a per-user deny holds a person to
    their caseload); tamper-evident hash-chained audit log, append-only in the
    database, anchored every hour (write-once when AUDIT_ANCHOR_DIR points at WORM storage).
-   Evidence: docs/HIPAA.md, docs/security/. Attestation: none. SOC 2: readiness self-assessment only
+   Evidence: docs/evidence/README.md (index), docs/HIPAA.md, docs/security/ (threat model, data inventory),
+   CycloneDX SBOM (docs/evidence/sbom-<version>.cdx.json). Attestation: none. SOC 2: readiness self-assessment only
    [audit planned for ___ / not planned]; independent penetration test [not yet commissioned / planned for
    ___]. Security questionnaire: docs/security/QUESTIONNAIRE.md.
 
@@ -129,7 +130,8 @@ does not hold.
 
 9. SUPPORT AND IMPLEMENTATION
    Implementation: setup, spreadsheet import, configuration, training (docs/market/PILOT-KIT.md).
-   Support: business hours, severity-based response targets (docs/market/templates/SUPPORT-SLA.md).
+   Support: today, the public issue tracker and private vulnerability reports (docs/SUPPORT.md);
+   contracted business-hours support: [owner to complete from docs/market/templates/SUPPORT-SLA.md].
    Source code: open source (MIT) — no licence lock-in; full data export on exit.
 
 10. PRICING

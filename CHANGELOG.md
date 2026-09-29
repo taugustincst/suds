@@ -4,6 +4,63 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## 1.16.4 — 2026-09-29
 
+### Documentation
+
+Evidence for county IT and procurement review. No migration, no new permission, no new route; nothing that ships
+changes.
+
+- **A software bill of materials.** `scripts/sbom.js` (Node built-ins and git only) writes a CycloneDX 1.5 SBOM of
+  a tag or the working tree:
+  - the Node.js release CI pins, with its tarball hash, and the built-ins the server uses (it fails if `server/`
+    ever requires anything else);
+  - the Docker base image;
+  - SUDS's own `server/`, `public/` and `scripts/` trees;
+  - the vendored and generated browser files (the kernel, `sql-wasm.wasm`, their compressed copies, `qr.js`,
+    `schema-text.js`) with SHA-256 and SHA-512;
+  - the seven npm packages bundled into the kernel, and the SQLite release inside the wasm;
+  - separately, scoped *excluded*, the build tooling, the test-only tools CI installs and the pinned GitHub
+    Actions.
+
+  `docs/evidence/sbom-1.16.4.cdx.json` is generated from the 1.16.4 stamp commit (`d95b69a`).
+  `test/sbom.test.js` regenerates it and requires the same bytes wherever that commit is in the clone (in CI,
+  once the tag exists), and runs the script on the current tree.
+- **A threat model** (`docs/security/THREAT-MODEL.md`) covers:
+  - the office server, local-mode sync as a second door, SUDS on this device, publication releases and the
+    release pipeline;
+  - the actors, and the threats and mitigations by area, each with its file and test;
+  - the attack classes the project's reviews found and fixed from 1.15.4 to 1.16.4;
+  - the residual risks, stated plainly: the owner's repository settings are not in force; there is one
+    maintainer and no independent review; there has been no penetration test; shared devices separate accounts
+    by rule, not by key; least privilege is not the default.
+- **A data inventory for privacy review** (`docs/security/DATA-INVENTORY.md`) gives:
+  - every encrypted column by table, whether devices receive it and what retention does to it;
+  - the readable columns that are still sensitive, and the blind indexes;
+  - every flow out of the database, with who can start it, its gate and its record;
+  - retention, and the known gaps.
+
+  `test/data-inventory.test.js` fails when `schema.sql` gains or loses an `_enc` column the inventory does not
+  list, or when the inventory disagrees with `server/sync-tables.js` or `server/retention.js`. Writing it found one
+  gap, not fixed here: a committed import item keeps its encrypted text after its client is purged, and nothing
+  deletes it.
+- **The security questionnaire was checked against 1.16.4.**
+  - Every answer cites its file or test, and owner items are marked.
+  - New answers #46–#50 cover the SBOM, the threat model and data flows, vulnerability disclosure, support, and
+    accessibility.
+  - Corrected: the commit count (480 of 512 AI-assisted), the incident register's location, and the fact that
+    there is no `LICENSE` file yet.
+- **An evidence index** (`docs/evidence/README.md`) maps each common county IT review question to its documents,
+  tests and CI jobs, and lists what is owner-pending.
+- **Support, said once** (`docs/SUPPORT.md`): the programme's administrator, whoever runs the server, the public
+  issue tracker and private vulnerability reports.
+  - The SLA template's values are now all `[owner to complete: …]`, and the template is marked as an owner template
+    that is not in force.
+  - The IT buyer guide, the scorecard and the RFI boilerplate were brought in line.
+- SDLC.md and VULNERABILITY-MANAGEMENT.md describe the current release flow and the SBOM. HIPAA.md's summary table
+  points to the inventory, and no longer calls visit summaries and time and spending descriptions plaintext. The
+  pen-test scope adds the 1.16.3–1.16.4 classes.
+
+## 1.16.4 — 2026-09-29
+
 ### Security
 
 Fixes from the security review of 1.16.3 (r9), and two findings of its UX review that are access rules. No migration,

@@ -23,10 +23,11 @@ The SUDS project has not commissioned an independent penetration test. This scop
 | Transport | TLS configuration of the deployed proxy/app, HSTS, certificate handling | `Caddyfile`, `server/listener.js` |
 | Host/container (optional) | Container escape surface, file permissions of `data/`, service hardening | `Dockerfile`, `../DEPLOYMENT.md` systemd unit |
 
-### Classes fixed after the security reviews of 1.16.0 and 1.16.1 (confirm them)
+### Classes fixed after the project's own reviews (confirm them)
 
-These were found by the project's own reviews and fixed in 1.16.1 and 1.16.2 (CHANGELOG, *Security*). Test that
-they stay fixed rather than rediscovering them; each has API tests in `test/`.
+These were found by the project's own reviews and fixed from 1.16.1 to 1.16.4 (CHANGELOG, *Security*). Test that
+they stay fixed rather than rediscovering them; each has API tests in `test/`. The full list from 1.15.4 on, with
+the test that pins each, is in [THREAT-MODEL.md](THREAT-MODEL.md), *Attack classes fixed from 1.15.4 to 1.16.4*.
 
 | Class | What to try | Reference |
 | --- | --- | --- |
@@ -36,6 +37,9 @@ they stay fixed rather than rediscovering them; each has API tests in `test/`.
 | SUD counseling-note access | Read a counseling note as a navigator, through break-glass, and through sync (the note and its addenda, and a device that held them before) | `server/rules/notes.js`, `server/routes/notes.js`, `server/routes/sync.js` |
 | Note signatures via sync | Sign, co-sign or change a signed note, or ask for a review of another worker's signed note, from a device, where the REST routes would refuse it | `server/rules/notes.js`, `server/rules/note_addenda.js` |
 | Client-change notices | As someone off a client's care team, change the client and then edit, complete or delete the notice the primary worker receives | `server/rules/clients.js`, `server/rules/tasks.js` |
+| Care-team standing by sync (1.16.3, 1.16.4) | Off a client's care team (or removed from it), open, close or re-admit an episode by push or REST to discharge the client, end the primary worker's assignment, or put yourself back on the team; close another worker's to-dos by push | `server/rules/assignments.js`, `server/rules/episodes.js`, `server/rules/tasks.js` |
+| Shared devices (1.16.3, 1.16.4) | With two accounts on one local-mode device, check what each can read after a note is flagged as a SUD counseling note at the office, after a deny, and across a paged pull; with browser developer tools, what the sealed database holds for the other account (a known residual: THREAT-MODEL.md) | `local/sync.js`, `server/routes/sync.js` |
+| Release and publish pipeline (1.16.4) | Only with the owner's agreement and on a fork or test repository: a GitHub Release created by a collaborator for the owner's tag, an old tag's web-app workflow, a replaced release asset | `scripts/release-existing.js`, `scripts/release-site-check.js`, `.github/workflows/` |
 
 ## Out of scope
 
