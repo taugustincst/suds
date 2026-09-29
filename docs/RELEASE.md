@@ -417,7 +417,8 @@ a workflow cannot change repository settings).
   same approval (a second one, after the release).
 * **`.github/CODEOWNERS`** names `@taugustincst` for the release machinery (`.github/`, `scripts/release-gate.js`,
   `scripts/release-policy.js`, `scripts/release-existing.js`, `scripts/release-site-check.js`, `scripts/build-static-site.js`,
-  `scripts/test-thorough.js`, `scripts/package.js`, their tests, this file) and for
+  `scripts/test-thorough.js`, `scripts/package.js`, and since 1.17.0 `scripts/repo-settings-check.js`,
+  `scripts/workflow-yaml.js` and `scripts/migration-order.js`, their tests, this file) and for
   the modules that decide who may do what and what may leave the programme: `server/auth.js`,
   `server/permissions.js`, `server/disclosure.js`, `server/crypto.js`, `local/vault.js`.
   `test/release-gate.test.js` fails if a listed path is renamed away from its owner.
@@ -635,6 +636,20 @@ one branch's build skipping the other's migration forever. Since 1.16.0:
   tags for it and sets `SUDS_REQUIRE_RELEASE_TAGS`, so it cannot skip there; a checkout without tags skips it.
   By hand: `node scripts/migration-order.js [--previous v1.15.3]`. Every tag from 1.6.1 to 1.15.3 passes.
   ([ADR-0007](architecture/ADR-0007-migrations.md))
+* **What a released migration runs and reads** (1.17.0; engineering review of 1.16.0, M6). A released
+  migration's text can stay the same while what it does changes: it runs helpers (`addColumn`, `encryptColumn`,
+  `rebuildTable`, `migrateSupplies`, `createIndexesFromSchema`, and functions it requires, such as `crypto.decrypt`)
+  and reads **today's** `schema.sql` (`rebuildTable` and the table-creating migrations take a table's definition
+  from the file). The same check fingerprints, for every migration of the previous release tag, each helper it runs
+  (by name, through the helpers they call, in `server/db.js` and in the modules it requires by relative path) and,
+  when it reads `schema.sql`, each table it names there (outside its own SQL) with the indexes and triggers on them.
+  One that changed fails CI, naming it, the migrations that depend on it and its new fingerprint; if the change is
+  safe (the upgrade fixtures of `test/migrations.test.js` pass; the table change is additive; the helper is still
+  idempotent), acknowledge it in `DEPENDENCY_CHANGES` in `scripts/migration-order.js`, a code-owned file, with that
+  fingerprint and the reason. Heuristic by design: it finds dependencies by name and does not follow a dynamic
+  require or a helper passed as a value. Run over history it finds 1.13.0's change to `namePhoneticIndex` (migrations 6 and 26) and to five tables that migrations 5,
+  7, 31 and 34 build from `schema.sql`, and 1.14.0's change to `encryptColumn` (migrations 5 to 43) and removal of
+  `supply_stock`, which migration 20 still reads; 1.14.1 to 1.16.2 change nothing it watches.
 
 ### Release QA: check the version on screen
 Every QA pass starts by confirming what is being tested. On the pilot server after deploy, and on the GitHub Pages site after the web-app workflow finishes (its run summary names the version it published), check that the version SUDS shows on screen is the one being released. A stale service worker or an unfinished deploy otherwise gets signed off as the new release.

@@ -13,6 +13,11 @@
 /scripts/build-static-site.js    @taugustincst
 /scripts/test-thorough.js        @taugustincst
 /scripts/package.js              @taugustincst
+/scripts/repo-settings-check.js  @taugustincst
+/scripts/workflow-yaml.js        @taugustincst
+/scripts/migration-order.js      @taugustincst
+/test/repo-settings-check.test.js @taugustincst
+/test/workflow-yaml.test.js      @taugustincst
 /test/release-gate.test.js       @taugustincst
 /test/release-policy.test.js     @taugustincst
 /test/release-existing.test.js   @taugustincst
