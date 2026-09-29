@@ -16,7 +16,7 @@ module.exports = define({
   },
   // Deleting a goal deletes its steps, whoever added them (DELETE /api/goals/:id): a step whose goal goes in the
   // same push goes with it.
-  deletableBy: (user, row, { deleting } = {}) => (row.created_by === user.id || auth.hasPerm(user, 'clients:all') || (deleting && deleting.has(`care_plan_goals:${row.goal_id}`)) ? null
+  deletableBy: (user, row, { deleting } = {}) => (row.created_by === user.id || auth.hasPerm(user, 'records:manage-others') || (deleting && deleting.has(`care_plan_goals:${row.goal_id}`)) ? null
     : notPermitted('Only the person who added this step, or a supervisor, can delete it. Mark it cancelled instead.')),
   check(row, c) {
     // A device-minted owner id is the syncing user's own offline account, remapped when the row lands.

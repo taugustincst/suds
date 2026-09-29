@@ -15,7 +15,8 @@ const csvRows = (text) => text.trim().split('\r\n').map(l => l.split(','));
 before(async () => {
   await H.start();
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
-  for (const [u, role] of [['lsup', 'supervisor'], ['lnav', 'navigator'], ['lfin', 'finance'], ['lro', 'readonly']]) H.makeUser(u, role);
+  for (const [u, role] of [['lsup', 'supervisor'], ['lfin', 'finance'], ['lro', 'readonly']]) H.makeUser(u, role);
+  H.makeCaseloadUser('lnav', 'navigator'); // held to their caseload (clients:all denied), as navigators were before 1.16.0
   sup = H.client(); await sup.login('lsup', 'StaffPassw0rd!x');
   nav = H.client(); await nav.login('lnav', 'StaffPassw0rd!x');
   fin = H.client(); await fin.login('lfin', 'StaffPassw0rd!x');

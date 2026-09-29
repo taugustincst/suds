@@ -15,7 +15,7 @@ let nav, nav2, sup, navId, theirs;
 before(async () => {
   await H.start();
   require('../server/config').localModeEnabled = true;
-  navId = H.makeUser('drnav', 'navigator').id; H.makeUser('drnav2', 'navigator'); H.makeUser('drsup', 'supervisor');
+  navId = H.makeCaseloadUser('drnav', 'navigator').id; H.makeCaseloadUser('drnav2', 'navigator'); H.makeUser('drsup', 'supervisor');
   nav = H.client(); await nav.login('drnav', 'StaffPassw0rd!x');
   nav2 = H.client(); await nav2.login('drnav2', 'StaffPassw0rd!x');
   sup = H.client(); await sup.login('drsup', 'StaffPassw0rd!x');

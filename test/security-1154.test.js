@@ -235,6 +235,8 @@ test('M1: an override row that breaks those rules (from before 1.15.4) has no ef
   assert.deepEqual(listed.overrides.filter(o => o.no_effect).map(o => o.permission).sort(), ['clients:read', 'export:identified'], 'Users & permissions says the rows do nothing');
   H.db.run(`DELETE FROM user_permission_overrides WHERE user_id=?`, U.fin);
   // A navigator granted clients:list-deidentified is still scoped to its caseload (it used to see everyone).
+  // (From 1.16.0 a navigator holds clients:all by default; one held to their caseload has it denied.)
+  H.deny({ id: U.nav2 }, 'clients:all');
   H.db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason) VALUES(?, 'clients:list-deidentified', 'grant', 'legacy')`, U.nav2);
   const nav2 = H.client(); await nav2.login('s154_nav2', 'StaffPassw0rd!x');
   assert.equal((await nav2.get(`/api/clients/${cl.id}`)).status, 403, 'not on its caseload');

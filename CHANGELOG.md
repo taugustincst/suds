@@ -2,6 +2,111 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+A feature release: the owner widened two roles' defaults. Expansion only: nobody loses a permission, and
+supervisor, administrator, finance and read-only keep exactly what they could do (finance still never holds
+`clients:read` or `export:identified`). One new permission string, `records:manage-others`, splits "manage other
+workers' records" off `clients:all`; supervisors and administrators hold it. No migration, no new route; the sync
+pull answer gains fields (below).
+
+| Role | Added | Not added |
+|---|---|---|
+| navigator | `clients:all` (outreach engages whoever walks in, not only their caseload); `notes:clinical:read` | `notes:clinical:write`, `records:manage-others` |
+| clinician | `clients:all` (coverage and on-call); `budget:read` (programme spending) | `budget:write`, `records:manage-others` |
+| supervisor, administrator | `records:manage-others` (what `clients:all` gave them before; no new power) | |
+
+**Administrators: upgrade note.** After upgrading, every navigator and clinician sees every client in the
+program, and navigators can read clinical notes (SUD counseling notes included). To keep the old scoping for a
+person, deny *See every client* (`clients:all`) — and, for a navigator, *Read clinical notes*
+(`notes:clinical:read`) — under **Settings → Users & permissions → Permissions** (1.15.0), with a reason; do it
+before their devices next sync if your program uses local mode (below). With **Caseload restriction** on (Program settings; the default), that person
+is then held to their caseload everywhere it applied before: client list and search, a record and its timeline,
+the duplicate check at intake, exports, the dashboard and reports, and what their devices sync
+(`test/role-expansion.test.js`). Minimum necessary for navigators and clinicians is from now on the programme's
+own per-user choice (docs/HIPAA.md).
+
+What follows from `clients:all`, for a navigator or clinician who holds it:
+
+- **Every client**, over REST, search, exports (de-identified, as before), the dashboard and the funder, NDP and
+  settlement reports (their first run stays *internal, suppressed*; they may also ask for a publication release
+  of the whole programme; still no exact counts), and in sync. A client they create is still assigned to them,
+  now from a device as well as over REST, so a later deny leaves it on their caseload.
+- **Seeing is not managing: `records:manage-others`** (new permission string, the owner's decision). A navigator
+  or clinician sees every client and adds their own work to any record (a visit, a call, a note, a referral, a
+  to-do), and sees another worker's records with no client (an anonymous call or outreach contact). They do NOT
+  change or delete another worker's visits, calls, referrals, overdose reports, to-dos, care-plan goals and steps,
+  assessments, outcome measures, rights requests or draft notes; record work under another worker's name; remove a
+  client record; or see another worker's staged imports. Those powers were carried by `clients:all` and are now
+  `records:manage-others`, held by supervisors and administrators (who held them through `clients:all` before, so
+  nobody loses anything). It is used by `server/crud.js` (`ownerOrManager`, the owner column on insert), every
+  `server/rules/*` `owner`/`editableBy`/`deletableBy` (so sync push refuses the same edits, deletions and
+  attributions as REST), client removal (`DELETE /api/clients/:id` and the device's equivalent, and the button on
+  the client page), a device's deletion of shared reference data, supply lines on another worker's visit with no
+  client, the imports list, Home's staged-imports count and which imports a device pulls. The screens show Edit,
+  Delete and Update only where the person may use them. In the catalog it is *Manage other workers' records*,
+  rated sensitive; a grant through the 1.15.0 overrides is refused for a role without `clients:write` (finance,
+  read-only), by the same rule as 1.15.4's other grants a role may not hold (`server/permissions.js`
+  `grantProblem`): it is also removed when the person's role changes to one of those (audited as
+  `user.permission.revoke`, `cause: "role_change"`) and ignored at request time, so a stray row does nothing (Users
+  & permissions marks it *No effect*). `test/role-expansion.test.js`: a default navigator and clinician get 403 over REST and a refusal by
+  sync push; a supervisor and an administrator still succeed. The sync-rules characterisation is back to its 1.15
+  outcomes for another worker's records (the 1.16.0 `was:` notes remain only for "client off the caseload").
+- **Clinical notes for navigators**: listed, opened, on the timeline and synced to their devices; still not written,
+  signed or added to. That includes notes marked as SUD counseling notes (42 CFR §2.11), by the owner's decision: a
+  programme whose policy keeps those to the treating clinician denies the navigator *Read clinical notes*
+  (`notes:clinical:read`) under Settings → Users & permissions → Permissions (docs/compliance/PART2.md). Assessments
+  stay clinicians' and supervisors'. An administrator still reads a clinical note only by break-glass; every Part 2
+  disclosure rule is unchanged.
+- **Budget for clinicians**: Funding & spending and the settlement report open; recording spending does not.
+- **Home**: a navigator's or clinician's activity card counts the program's visits and says so (*What the team has
+  been doing*), as the dashboard follows what a person can see. Their to-do counts, and the overdue pill, stay
+  their own: the team's are for someone who countersigns and sees every client (a supervisor or administrator,
+  as before; `tasks.team` in `GET /api/reports/dashboard`).
+- **Devices (local mode).** A navigator's first sync is now the whole programme: at 20,000 clients, 503,742 rows in
+  120 pages (29.3 MB on the wire, 460.3 MB of JSON, 19.3 s of server time) against 104,000 rows for a 2,000-client
+  caseload (docs/PERFORMANCE.md, measured with `scripts/bench/run.js`, which now measures both). A programme that
+  uses local mode should deny `clients:all` to the people who sync devices unless it is small.
+- **A device follows a change to what its person may read** (new; before, it did not). A pull used to send only
+  rows changed since the device's cursor, so a device that synced before a permission change kept what the person
+  could no longer read, and received what they newly could only as its rows happened to change. Each pull answer
+  now carries `scope` (a key of caseload scoping and the permissions sync depends on) and the device sends back
+  the one it last saw: after a narrowing (a deny of `clients:all` or `notes:clinical:read`, a role change) the
+  office names what to remove (`dropped_clients`, and `dropped_rows` for clinical notes, another worker's records
+  with no client, another worker's imports, a table whose read permission went) and the device removes it, never
+  echoing it back; after a widening the pull starts again from the beginning and the device receives the rest.
+  A device that synced before 1.16.0 sends `legacy`, compared with the 1.15 role defaults: at its first sync after
+  the upgrade a navigator's or clinician's device downloads the whole programme, unless the person was held to
+  their caseload first (then nothing changes). `server/routes/sync.js` `syncScopeKey`, `local/sync.js`;
+  `test/sync-scope-change.test.js` (the browser kernel against an office), `test/role-expansion.test.js`.
+  Removing 18,000 clients after a deny names them in one 1.1 MB answer (159 ms at the office); the device's removal
+  was not measured in a browser.
+- **A device applies the office's per-user overrides and caseload restriction.** Each pull carries the person's
+  own grants and denies (`permission_overrides`) and the office's `caseload_restriction`, and the device's kernel
+  applies them, so on a local-mode browser that several office accounts sign in to, a person held to their
+  caseload sees only their caseload there too. Before, overrides stayed at the office and a local-mode browser's
+  caseload restriction was off (set so at its first account): the device was scoped only by what each account had
+  pulled.
+- **SUDS on this device.** The first account (the device administrator) keeps its role's defaults. Anyone who
+  signs up on a shared device after it is given per-user denies of `clients:all` and `notes:clinical:read`, so they
+  still see only their own clients; so is every such account on a device that upgrades. The denies stay if the
+  device administrator makes the account a navigator or clinician, and go if it is made a supervisor or an
+  administrator (`local/kernel.js`, `test/device-signup-scope.test.js`).
+
+The sign-up and new-user role descriptions, the Caseload restriction setting, the permission catalog (*See every
+client*, *Read clinical notes*, *Export data*), the Permissions dialog's role baseline for a navigator or clinician
+(what widened, and the deny that holds someone to their caseload) and a clinician's first-day checklist (*Open the
+client list*, or *Open your caseload* for one held to it) say what the roles now see. SUD counseling notes: whether
+navigators read them is a programme policy decision (docs/compliance/PART2.md).
+Tests that exercise caseload scoping use a navigator or clinician held to their caseload (`H.makeCaseloadUser`);
+the sync-rules characterisation records the new outcomes with `was:` notes; `test/role-expansion.test.js` checks
+the matrix against 1.15.3's (only the four grants moved) and that a deny restores caseload scoping in REST, search,
+the duplicate check, exports, dashboard, reports and sync. The 1.15.3 ranked-search test now scopes a navigator held
+to their caseload (`test/ux13.test.js`), as do the 1.15.4 caseload tests that relied on a navigator's old
+defaults (`test/security-1154.test.js`). Caseload scoping still follows `clients:all` alone (1.15.4, M1), so a
+per-user deny of it is what holds a navigator or clinician to their caseload, and a supervisor held to a caseload
+cannot assign themselves past it, over REST or from a device (`test/role-expansion.test.js`).
+
 ## 1.15.4 — 2026-09-29
 
 ### Security

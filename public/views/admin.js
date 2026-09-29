@@ -37,7 +37,7 @@ async function openUserForm(values, onDone) {
   if (!isNew && !state.local) deviceCount = await get('/api/admin/devices', { quiet: true }).then(r => r.devices.filter(d => d.user_id === values.id && !d.revoked_at).length).catch(() => 0);
   const f = form([
     { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+' }, { name: 'display_name', label: 'Display name', required: true }, { name: 'email', label: 'Email' }, { name: 'title', label: 'Job title' },
-    { name: 'role', label: 'Role', type: 'select', required: true, options: [['navigator', 'Navigator — own caseload, admin notes, referrals, budget entry'], ['clinician', 'Clinician — clinical notes, own caseload'], ['supervisor', 'Supervisor — all clients, all notes, approvals, audit'], ['finance', 'Finance — budget & de-identified data only'], ['readonly', 'Read-only — reports and client summaries'], ['admin', 'Administrator — users, settings, audit (no clinical notes)']].map(([v, l]) => ({ value: v, label: l })) },
+    { name: 'role', label: 'Role', type: 'select', required: true, options: [['navigator', 'Navigator — all clients, admin notes, reads clinical notes, referrals, budget entry'], ['clinician', 'Clinician — all clients, clinical notes, sees the budget'], ['supervisor', 'Supervisor — all clients, all notes, approvals, audit'], ['finance', 'Finance — budget & de-identified data only'], ['readonly', 'Read-only — reports and client summaries'], ['admin', 'Administrator — users, settings, audit (no clinical notes)']].map(([v, l]) => ({ value: v, label: l })) },
     { name: 'hourly_cost', label: 'Loaded hourly cost ($, for budget)', type: 'number', min: 0, step: 0.01 }, { name: 'is_active', label: 'Active', type: 'checkbox', value: values ? values.is_active : true },
     { name: 'supervisor_id', label: 'Supervisor', type: 'select', placeholder: '— none —', options: state.users.filter(u => u.is_active !== 0 && ['supervisor', 'admin'].includes(u.role) && u.id !== values?.id).map(u => ({ value: u.id, label: u.display_name })), help: 'Whose Supervision page their unfinished work shows on.' },
     (state.funds || []).length ? { name: 'default_fund_id', label: 'Default funding source for their visits', type: 'select', placeholder: '— the program default —', options: state.funds.map(f => ({ value: f.id, label: f.name })), help: 'Pre-filled on the visit form; they can still choose another.' } : null,
@@ -154,7 +154,12 @@ async function renderPermissionsSection(box, userId) {
   const refresh = () => renderPermissionsSection(box, userId);
 
   // The role baseline: what this person's role gives them, grouped by namespace.
+  // 1.16.0 widened the navigator and clinician baselines; say so where an administrator decides whether a
+  // person keeps them, and how to hold someone to their caseload instead.
+  const widened = { navigator: 'Since 1.16.0 a navigator sees every client (See every client) and reads clinical notes, SUD counseling notes included, without writing them (Read clinical notes). They add their own work to any client but do not change other workers\' records (Manage other workers\' records is for supervisors and administrators).',
+    clinician: 'Since 1.16.0 a clinician sees every client (See every client) and the budget (See the budget), without recording spending. They add their own work to any client but do not change other workers\' records (Manage other workers\' records is for supervisors and administrators).' }[data.role];
   box.append(h('h3', {}, `Role baseline — ${fmt.label(data.role)}`),
+    widened ? h('p', { class: 'small muted', 'data-perm-role-note': data.role }, `${widened} To hold this person to their own caseload, deny See every client below (clients:all)${data.role === 'navigator' ? '; to keep clinical notes from them, deny Read clinical notes (notes:clinical:read)' : ''}. Their devices follow at their next sync.`) : null,
     h('div', { 'data-perm-baseline': '1' }, permNamespaceGroups(data.role_permissions || []).map(([ns, names]) =>
       h('details', {}, h('summary', {}, `${ns} (${names.length})`),
         h('ul', {}, names.map((n) => h('li', {}, label(n), h('code', { class: 'small muted' }, ` ${n}`))))))));
@@ -367,7 +372,8 @@ route('admin', async (r) => {
       const s = await get('/api/admin/settings');
       const f = form([{ type: 'section', label: 'Your program', collapsible: true, open: true, heading: true },
         { name: 'org_name', label: 'Organization / program name', required: true }, { name: 'county_name', label: 'County' }, { name: 'program_contact', label: 'Privacy officer / program contact' },
-        { name: 'caseload_restriction', label: 'Caseload restriction', type: 'select', options: [{ value: '1', label: 'On — navigators & clinicians see assigned clients only (recommended)' }, { value: '0', label: 'Off — all staff see all clients' }], noBlank: true },
+        { name: 'caseload_restriction', label: 'Caseload restriction', type: 'select', options: [{ value: '1', label: 'On — people denied "See every client" see assigned clients only (recommended)' }, { value: '0', label: 'Off — all staff see all clients' }], noBlank: true,
+          help: 'Navigators and clinicians see every client by default. To hold a person to their caseload, deny them "See every client" under Users & permissions → Permissions; this setting then limits them to the clients assigned to them.' },
         { name: 'note_lock_days', label: 'Days before unsigned drafts are flagged', type: 'number', min: 0, step: 1 },
         timezoneField(s),
         // The rest of the page is folded into sections, each opened when it is needed: the whole form used to be

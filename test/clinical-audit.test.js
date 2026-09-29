@@ -12,7 +12,7 @@ let admin, sup, nav, navId, supId;
 const day = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
 before(async () => {
   await H.start();
-  navId = H.makeUser('canav', 'navigator').id;
+  navId = H.makeCaseloadUser('canav', 'navigator').id;
   supId = H.makeUser('casup', 'supervisor').id;
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   sup = H.client(); await sup.login('casup', 'StaffPassw0rd!x');
@@ -170,7 +170,7 @@ test('M7: the dashboard counts open patient requests, and how many are overdue, 
   const fin = H.client(); await fin.login('cafin', 'StaffPassw0rd!x');
   assert.equal((await fin.get('/api/reports/dashboard')).data.patient_requests, null);
   // A caseload-restricted navigator only counts their own clients' requests.
-  const other = H.makeUser('caother', 'navigator'); const oc = H.client(); await oc.login('caother', 'StaffPassw0rd!x');
+  const other = H.makeCaseloadUser('caother', 'navigator'); const oc = H.client(); await oc.login('caother', 'StaffPassw0rd!x');
   const mine = (await oc.get('/api/reports/dashboard')).data.patient_requests;
   assert.equal(mine.n, 0);
   assert.ok(other.id);

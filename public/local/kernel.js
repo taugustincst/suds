@@ -43,9 +43,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/base64-js/index.js
+// ../../../node_modules/base64-js/index.js
 var require_base64_js = __commonJS({
-  "node_modules/base64-js/index.js"(exports) {
+  "../../../node_modules/base64-js/index.js"(exports) {
     "use strict";
     init_globals_inject();
     exports.byteLength = byteLength;
@@ -145,9 +145,9 @@ var require_base64_js = __commonJS({
   }
 });
 
-// node_modules/ieee754/index.js
+// ../../../node_modules/ieee754/index.js
 var require_ieee754 = __commonJS({
-  "node_modules/ieee754/index.js"(exports) {
+  "../../../node_modules/ieee754/index.js"(exports) {
     init_globals_inject();
     exports.read = function(buffer, offset, isLE3, mLen, nBytes) {
       var e, m;
@@ -229,9 +229,9 @@ var require_ieee754 = __commonJS({
   }
 });
 
-// node_modules/buffer/index.js
+// ../../../node_modules/buffer/index.js
 var require_buffer = __commonJS({
-  "node_modules/buffer/index.js"(exports) {
+  "../../../node_modules/buffer/index.js"(exports) {
     "use strict";
     init_globals_inject();
     var base64 = require_base64_js();
@@ -1906,7 +1906,7 @@ var init_path = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_assert.js
+// ../../../node_modules/@noble/ciphers/esm/_assert.js
 function isBytes(a) {
   return a instanceof Uint8Array || a != null && typeof a === "object" && a.constructor.name === "Uint8Array";
 }
@@ -1930,12 +1930,12 @@ function output(out2, instance) {
   }
 }
 var init_assert = __esm({
-  "node_modules/@noble/ciphers/esm/_assert.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/ciphers/esm/utils.js
+// ../../../node_modules/@noble/ciphers/esm/utils.js
 function utf8ToBytes(str) {
   if (typeof str !== "string")
     throw new Error(`string expected, got ${typeof str}`);
@@ -1998,7 +1998,7 @@ function clean(...arrays) {
 }
 var u8, u32, createView, isLE, wrapCipher;
 var init_utils = __esm({
-  "node_modules/@noble/ciphers/esm/utils.js"() {
+  "../../../node_modules/@noble/ciphers/esm/utils.js"() {
     init_globals_inject();
     init_assert();
     u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
@@ -2014,7 +2014,7 @@ var init_utils = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_polyval.js
+// ../../../node_modules/@noble/ciphers/esm/_polyval.js
 function _toGHASHKey(k) {
   k.reverse();
   const hiBit = k[15] & 1;
@@ -2037,7 +2037,7 @@ function wrapConstructorWithKey(hashCons) {
 }
 var BLOCK_SIZE, ZEROS16, ZEROS32, POLY, mul2, swapLE, estimateWindow, GHASH, Polyval, ghash, polyval;
 var init_polyval = __esm({
-  "node_modules/@noble/ciphers/esm/_polyval.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_polyval.js"() {
     init_globals_inject();
     init_assert();
     init_utils();
@@ -2212,7 +2212,7 @@ var init_polyval = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/aes.js
+// ../../../node_modules/@noble/ciphers/esm/aes.js
 function mul22(n) {
   return n << 1 ^ POLY2 & -(n >> 7);
 }
@@ -2492,7 +2492,7 @@ function decryptBlock(xk, block) {
 }
 var BLOCK_SIZE2, BLOCK_SIZE32, EMPTY_BLOCK, POLY2, sbox, invSbox, rotr32_8, rotl32_8, byteSwap, tableEncoding, tableDecoding, xPowers, ctr, ecb, cbc, cfb, gcm, limit, siv, AESW, AESKW_IV, aeskw, AESKWP_IV, aeskwp;
 var init_aes = __esm({
-  "node_modules/@noble/ciphers/esm/aes.js"() {
+  "../../../node_modules/@noble/ciphers/esm/aes.js"() {
     init_globals_inject();
     init_assert();
     init_polyval();
@@ -2965,7 +2965,7 @@ var init_aes = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_assert.js
+// ../../../node_modules/@noble/hashes/esm/_assert.js
 function number(n) {
   if (!Number.isSafeInteger(n) || n < 0)
     throw new Error(`positive integer expected, not ${n}`);
@@ -2999,21 +2999,21 @@ function output2(out2, instance) {
   }
 }
 var init_assert2 = __esm({
-  "node_modules/@noble/hashes/esm/_assert.js"() {
+  "../../../node_modules/@noble/hashes/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/hashes/esm/crypto.js
+// ../../../node_modules/@noble/hashes/esm/crypto.js
 var crypto2;
 var init_crypto = __esm({
-  "node_modules/@noble/hashes/esm/crypto.js"() {
+  "../../../node_modules/@noble/hashes/esm/crypto.js"() {
     init_globals_inject();
     crypto2 = typeof globalThis === "object" && "crypto" in globalThis ? globalThis.crypto : void 0;
   }
 });
 
-// node_modules/@noble/hashes/esm/utils.js
+// ../../../node_modules/@noble/hashes/esm/utils.js
 function byteSwap32(arr) {
   for (let i = 0; i < arr.length; i++) {
     arr[i] = byteSwap2(arr[i]);
@@ -3055,7 +3055,7 @@ function randomBytes(bytesLength = 32) {
 }
 var u322, createView2, rotr, rotl, isLE2, byteSwap2, Hash, toStr;
 var init_utils2 = __esm({
-  "node_modules/@noble/hashes/esm/utils.js"() {
+  "../../../node_modules/@noble/hashes/esm/utils.js"() {
     init_globals_inject();
     init_crypto();
     init_assert2();
@@ -3075,7 +3075,7 @@ var init_utils2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_md.js
+// ../../../node_modules/@noble/hashes/esm/_md.js
 function setBigUint642(view, byteOffset, value, isLE3) {
   if (typeof view.setBigUint64 === "function")
     return view.setBigUint64(byteOffset, value, isLE3);
@@ -3090,7 +3090,7 @@ function setBigUint642(view, byteOffset, value, isLE3) {
 }
 var Chi, Maj, HashMD;
 var init_md = __esm({
-  "node_modules/@noble/hashes/esm/_md.js"() {
+  "../../../node_modules/@noble/hashes/esm/_md.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3185,10 +3185,10 @@ var init_md = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha256.js
+// ../../../node_modules/@noble/hashes/esm/sha256.js
 var SHA256_K, SHA256_IV, SHA256_W, SHA256, sha256;
 var init_sha256 = __esm({
-  "node_modules/@noble/hashes/esm/sha256.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha256.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3343,10 +3343,10 @@ var init_sha256 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha1.js
+// ../../../node_modules/@noble/hashes/esm/sha1.js
 var SHA1_IV, SHA1_W, SHA1, sha1;
 var init_sha1 = __esm({
-  "node_modules/@noble/hashes/esm/sha1.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha1.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3425,10 +3425,10 @@ var init_sha1 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/hmac.js
+// ../../../node_modules/@noble/hashes/esm/hmac.js
 var HMAC, hmac;
 var init_hmac = __esm({
-  "node_modules/@noble/hashes/esm/hmac.js"() {
+  "../../../node_modules/@noble/hashes/esm/hmac.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3498,7 +3498,7 @@ var init_hmac = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/pbkdf2.js
+// ../../../node_modules/@noble/hashes/esm/pbkdf2.js
 function pbkdf2Init(hash2, _password, _salt, _opts) {
   hash(hash2);
   const opts = checkOpts({ dkLen: 32, asyncTick: 10 }, _opts);
@@ -3543,7 +3543,7 @@ function pbkdf2(hash2, password, salt, opts) {
   return pbkdf2Output(PRF, PRFSalt, DK, prfW, u);
 }
 var init_pbkdf2 = __esm({
-  "node_modules/@noble/hashes/esm/pbkdf2.js"() {
+  "../../../node_modules/@noble/hashes/esm/pbkdf2.js"() {
     init_globals_inject();
     init_assert2();
     init_hmac();
@@ -3551,7 +3551,7 @@ var init_pbkdf2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/scrypt.js
+// ../../../node_modules/@noble/hashes/esm/scrypt.js
 function XorAndSalsa(prev, pi, input, ii, out2, oi) {
   let y00 = prev[pi++] ^ input[ii++], y01 = prev[pi++] ^ input[ii++];
   let y02 = prev[pi++] ^ input[ii++], y03 = prev[pi++] ^ input[ii++];
@@ -3707,7 +3707,7 @@ function scrypt(password, salt, opts) {
   return scryptOutput(password, dkLen, B2, V, tmp);
 }
 var init_scrypt = __esm({
-  "node_modules/@noble/hashes/esm/scrypt.js"() {
+  "../../../node_modules/@noble/hashes/esm/scrypt.js"() {
     init_globals_inject();
     init_assert2();
     init_sha256();
@@ -3852,9 +3852,9 @@ var init_crypto2 = __esm({
   }
 });
 
-// node_modules/sql.js/dist/sql-wasm.js
+// ../../../node_modules/sql.js/dist/sql-wasm.js
 var require_sql_wasm = __commonJS({
-  "node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
+  "../../../node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
     init_globals_inject();
     var initSqlJsPromise = void 0;
     var initSqlJs = function(moduleConfig) {
@@ -6702,7 +6702,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.15.4" : "local",
+      version: true ? "1.16.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -9342,7 +9342,7 @@ var require_csp = __commonJS({
   }
 });
 
-// node_modules/fflate/esm/browser.js
+// ../../../node_modules/fflate/esm/browser.js
 function deflateSync(data, opts) {
   return dopt(data, opts || {}, 0, 0);
 }
@@ -9362,7 +9362,7 @@ function unzlibSync(data, opts) {
 }
 var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
 var init_browser = __esm({
-  "node_modules/fflate/esm/browser.js"() {
+  "../../../node_modules/fflate/esm/browser.js"() {
     init_globals_inject();
     u82 = Uint8Array;
     u16 = Uint16Array;
@@ -10443,6 +10443,7 @@ var require_permissions = __commonJS({
     var SENSITIVE = /* @__PURE__ */ new Set([
       "export:identified",
       "clients:all",
+      "records:manage-others",
       "disclosures:override",
       "notes:clinical:breakglass",
       "clients:merge",
@@ -10457,7 +10458,8 @@ var require_permissions = __commonJS({
       if (PRIVILEGED_PERMISSIONS.includes(permission) && role !== "admin") return `"${permission}" can only be granted to an administrator \u2014 change their role instead`;
       const deidentified = defaults.includes("clients:list-deidentified") && !defaults.some((p) => IDENTIFYING.includes(p));
       if (deidentified && IDENTIFYING.includes(permission)) return `A ${role} account knows clients by client code only (de-identified), so it cannot be granted "${permission}", which would let it identify them. If this person needs to open client records, give them a role that does.`;
-      if (permission === "clients:list-deidentified" && defaults.some((p) => IDENTIFYING.includes(p))) return `"clients:list-deidentified" is how a de-identified role (finance, read-only) lists clients by code. A ${role} already opens the records on their caseload; to show them every client, grant clients:all instead.`;
+      if (permission === "records:manage-others" && !defaults.includes("clients:write")) return `"${permission}" can only be granted to a role that records client work (navigator, clinician, supervisor, administrator)`;
+      if (permission === "clients:list-deidentified" && defaults.some((p) => IDENTIFYING.includes(p))) return `"clients:list-deidentified" is how a de-identified role (finance, read-only) lists clients by code. A ${role} already opens client records; to show them every client (not only their caseload), clients:all is the permission.`;
       return null;
     }
     var DEFS = [
@@ -10466,9 +10468,10 @@ var require_permissions = __commonJS({
       ["settings:manage", "Manage program settings", "Program profile, modules, MFA policy, SCIM mapping, caseload restriction."],
       ["audit:read", "Read the audit log", "Tamper-evident audit trail and the break-glass review queue."],
       ["apikeys:manage", "Manage API keys", "Intake API keys and FHIR client registrations."],
-      ["clients:read", "Open client records", "Identified client data for clients on the caseload (or all, with clients:all)."],
+      ["clients:read", "Open client records", "Identified client data: every client with clients:all, otherwise only the clients assigned to them."],
       ["clients:write", "Edit client records", "Create and edit identified client records."],
-      ["clients:all", "See every client", "Bypasses caseload scoping; required for whole-program internal reports."],
+      ["clients:all", "See every client", "Every client, not only their caseload (navigators, clinicians, supervisors and administrators by default from 1.16.0), to read and add their own work to, with whole-program reports and synced devices. Deny it to hold a person to their caseload."],
+      ["records:manage-others", "Manage other workers' records", "Change or delete another worker's visits, calls, referrals, overdose reports, to-dos, care-plan goals, assessments and draft notes; record work under another worker's name; remove a client record; see other workers' staged imports. Supervisors and administrators."],
       ["clients:list-deidentified", "List de-identified clients", "Client codes only, never names or identifiers."],
       ["clients:merge", "Merge duplicate clients", "Combine two client records, audited."],
       ["clients:legal-hold", "Place a legal hold", "Prevent deletion/merge of a client record under hold."],
@@ -10488,7 +10491,7 @@ var require_permissions = __commonJS({
       ["budget:manage", "Manage the budget", "Funding sources, budget lines and allocations."],
       ["notes:admin:read", "Read admin notes", "Non-clinical case notes."],
       ["notes:admin:write", "Write admin notes", "Create and edit non-clinical case notes."],
-      ["notes:clinical:read", "Read clinical notes", "Clinical notes and assessments content."],
+      ["notes:clinical:read", "Read clinical notes", "Clinical notes, including SUD counseling notes (clinicians, supervisors and, read only, navigators by default from 1.16.0). Deny it to keep clinical notes from a person."],
       ["notes:clinical:write", "Write clinical notes", "Create and sign clinical notes."],
       ["notes:clinical:breakglass", "Clinical notes via break-glass", "Open a clinical note only with a written reason; audited and queued for supervisor review."],
       ["notes:cosign", "Countersign notes", "Countersign trainee notes."],
@@ -10500,7 +10503,7 @@ var require_permissions = __commonJS({
       ["reports:exact", "Exact counts", "Unsuppressed counts for internal runs."],
       ["reports:funder", "File the funder submission", "The program's own submission runs of the funder report, NDP log and settlement report: exact aggregates, no client-level data."],
       ["assignments:manage", "Manage caseloads", "Assign workers to clients and move caseloads between workers."],
-      ["export:read", "Export data", "De-identified (Safe Harbor) exports, caseload-scoped."],
+      ["export:read", "Export data", "De-identified (Safe Harbor) exports of the clients they can see (their caseload without clients:all)."],
       ["export:identified", "Export identified data", "Exports with names, dates of birth, addresses. Never held with a de-identified role."],
       ["forms:*", "Forms (all)", "Manage the form library and client forms."],
       ["forms:read", "Read the form library", "Blank form templates."],
@@ -11088,6 +11091,9 @@ var require_sync_tables = __commonJS({
         "default_supply_site_id",
         "supply_expiry_warn_days",
         "supply_syringes_per_litre",
+        // Caseload restriction (1.16.0): with each person's own grants and denies (pull's permission_overrides), a
+        // device holds a person the office holds to their caseload to it too (server/auth.js caseloadRestricted).
+        "caseload_restriction",
         // The programme profile and module switches (server/programme.js): a device shows what its office shows.
         ...require_programme().SETTING_KEYS
       ],
@@ -11132,7 +11138,7 @@ var require_sync_tables = __commonJS({
         { name: "note_addenda", enc: ["content_enc", "reason_enc"], legacy: { reason: "reason_enc" }, scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
         { name: "disclosures", enc: ["recipient_enc", "purpose_enc", "what_enc", "justification_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         // An import (a OneNote page, a Pocket AI transcript) is its importer's until it is filed against a client:
-        // the REST routes show it only to them (or to clients:all), and a device gets the same -- scope 'importer'.
+        // the REST routes show it only to them (or to records:manage-others), and a device gets the same -- scope 'importer'.
         { name: "imports", enc: ["filename_enc"], legacy: { filename: "filename_enc" }, scope: "importer", writePerm: "imports:write" },
         { name: "import_items", enc: ["content_enc", "title_enc", "metadata_enc"], legacy: { metadata: "metadata_enc" }, scope: "via-import", writePerm: "imports:write", parent: ["imports", "import_id"] },
         { name: "form_templates", enc: [], scope: "all", writePerm: "forms:manage", blob: ["file_b64"] },
@@ -11672,7 +11678,7 @@ var require_expenditures = __commonJS({
         // Only when this expenditure's opioid settlement category differs from its fund's.
         ...SETTLEMENT
       },
-      owner: { col: "user_id", all: "clients:all" },
+      owner: { col: "user_id", all: "records:manage-others" },
       editableBy: (user, row) => row.status === "pending" && (row.user_id === user.id || auth3.hasPerm(user, "budget:approve")) ? null : notPermitted("You cannot edit this record"),
       // A push that only asks for a ruling (approve, reject, reimburse) reaches normalise, which keeps the office's
       // and flags the ask, whatever the item's status and whoever sent it.
@@ -13071,7 +13077,7 @@ var require_clients = __commonJS({
         audit3.log({ user: ctx.user, action: v.hold ? "client.legal_hold.set" : "client.legal_hold.clear", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason_recorded: v.reason ? true : void 0 } });
         return { ok: true, legal_hold: v.hold ? 1 : 0 };
       });
-      r.delete("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("clients:all"), (ctx) => {
+      r.delete("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("records:manage-others"), (ctx) => {
         const row = loadClient(ctx, ctx.params.id);
         if (!auth3.hasPerm(ctx.user, "clients:write")) throw forbidden();
         if (row.legal_hold) throw badRequest("This record is on legal hold and cannot be deleted until the hold is cleared");
@@ -13180,7 +13186,7 @@ var require_clients2 = __commonJS({
     };
     var GUARDED = [
       [["legal_hold", "legal_hold_reason_enc", "legal_hold_cleared_reason_enc"], (u) => auth3.hasPerm(u, "clients:legal-hold")],
-      [["deleted_at", "removed_reason_enc"], (u) => auth3.hasPerm(u, "clients:all") && auth3.hasPerm(u, "clients:write")],
+      [["deleted_at", "removed_reason_enc"], (u) => auth3.hasPerm(u, "records:manage-others") && auth3.hasPerm(u, "clients:write")],
       [["merged_into"], (u) => auth3.hasPerm(u, "clients:merge")]
     ];
     var DEFAULTS = { legal_hold: 0, legal_hold_reason_enc: null, legal_hold_cleared_reason_enc: null, deleted_at: null, removed_reason_enc: null, merged_into: null };
@@ -13258,7 +13264,7 @@ var require_clients2 = __commonJS({
       afterApply(row, o, c) {
         if (c.existing) return;
         const own = (c.session.state.assignments || {}).selfForClient;
-        if (auth3.caseloadRestricted(c.user) && !(own && own.get(row.id))) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), row.id, c.user.id, "primary", (row.intake_date || db3.now()).slice(0, 10), c.user.id);
+        if ((auth3.caseloadRestricted(c.user) || ["navigator", "clinician"].includes(c.user.role)) && !(own && own.get(row.id))) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), row.id, c.user.id, "primary", (row.intake_date || db3.now()).slice(0, 10), c.user.id);
         flagPossibleDuplicate(c.user, row, o.client_code, c.session.warnings);
       }
     });
@@ -14079,7 +14085,7 @@ var require_supplies = __commonJS({
       const visit = db3.one(`SELECT id, client_id, user_id FROM interventions WHERE id=?`, raw.intervention_id);
       if (!visit) return "refers to a record the office server does not have (the visit)";
       if (existing && existing.intervention_id !== raw.intervention_id) return "has a value the office does not accept (a supply line cannot move to another visit)";
-      if (visit.client_id ? !auth3.canAccessClient(user, visit.client_id) : visit.user_id !== user.id && !auth3.hasPerm(user, "clients:all")) return visit.client_id ? "not on caseload" : "not permitted";
+      if (visit.client_id ? !auth3.canAccessClient(user, visit.client_id) : visit.user_id !== user.id && !auth3.hasPerm(user, "records:manage-others")) return visit.client_id ? "not on caseload" : "not permitted";
       const it = item(raw.item_id);
       if (!it) return "refers to a record the office server does not have (the supply item)";
       const q = Number(raw.quantity);
@@ -14209,8 +14215,8 @@ var require_interventions = __commonJS({
         // created with it in one step and linked to it (routes/interventions.js; the note's own rules apply).
         note: { type: "object", sync: false }
       },
-      owner: { col: "user_id", all: "clients:all" },
-      editableBy: ownedBy(["user_id"], "clients:all"),
+      owner: { col: "user_id", all: "records:manage-others" },
+      editableBy: ownedBy(["user_id"], "records:manage-others"),
       authorise(row, c) {
         if (!auth3.hasPerm(c.user, "budget:write")) {
           const e = c.existing;
@@ -14313,8 +14319,8 @@ var require_overdose_events = __commonJS({
         funding_source_id: { type: "string" },
         notes: { type: "string", maxLen: 4e3 }
       },
-      owner: { col: "reported_by", all: "clients:all" },
-      editableBy: ownedBy(["reported_by"], "clients:all")
+      owner: { col: "reported_by", all: "records:manage-others" },
+      editableBy: ownedBy(["reported_by"], "records:manage-others")
     });
   }
 });
@@ -14348,8 +14354,8 @@ var require_calls = __commonJS({
         summary: { type: "string", maxLen: 4e3 },
         log_time: { type: "boolean", sync: false }
       },
-      owner: { col: "user_id", all: "clients:all" },
-      editableBy: ownedBy(["user_id"], "clients:all"),
+      owner: { col: "user_id", all: "records:manage-others" },
+      editableBy: ownedBy(["user_id"], "records:manage-others"),
       check(row, c) {
         const e = c.existing;
         if (row.outcome === void 0 || row.outcome === null) return null;
@@ -14808,8 +14814,8 @@ var require_referrals2 = __commonJS({
         notes: { type: "string", maxLen: 2e3 },
         episode_id: { type: "string" }
       },
-      owner: { col: "user_id", all: "clients:all" },
-      editableBy: ownedBy(["user_id"], "clients:all"),
+      owner: { col: "user_id", all: "records:manage-others" },
+      editableBy: ownedBy(["user_id"], "records:manage-others"),
       // What anyone on the caseload may change on someone else's referral: its outcome (POST /api/referrals/:id/outcome
       // is not the maker's alone), and the flag a consent's revocation sets on the referrals that relied on it.
       othersMayChange: (existing, row, changed) => changed.every((col) => OTHERS.includes(col)),
@@ -14875,7 +14881,7 @@ var require_tasks = __commonJS({
         is_milestone: { type: "boolean" },
         completed_at: { type: "datetime" }
       },
-      editableBy: (user, row) => row.assigned_to === user.id || row.created_by === user.id || auth3.hasPerm(user, "clients:all") ? null : notPermitted("You cannot edit this record"),
+      editableBy: (user, row) => row.assigned_to === user.id || row.created_by === user.id || auth3.hasPerm(user, "records:manage-others") ? null : notPermitted("You cannot edit this record"),
       othersMayChange: (existing, row, changed) => ["done", "cancelled"].includes(row.status) && changed.every((col) => col === "status" || col === "completed_at")
     });
   }
@@ -14932,8 +14938,8 @@ var require_notes = __commonJS({
         problem_ids: { type: "array", maxLen: 30, of: "string", fromColumn: JSON.parse }
       },
       tombstone: "never",
-      owner: { col: "author_id", all: "clients:all" },
-      editableBy: (user, row) => row.status === "draft" && row.author_id !== user.id && !auth3.hasPerm(user, "clients:all") ? notPermitted("Only the author can edit a draft") : null,
+      owner: { col: "author_id", all: "records:manage-others" },
+      editableBy: (user, row) => row.status === "draft" && row.author_id !== user.id && !auth3.hasPerm(user, "records:manage-others") ? notPermitted("Only the author can edit a draft") : null,
       authorise(row, c) {
         const kind = c.existing ? c.existing.kind : row.kind;
         if (kind === "clinical" && !auth3.hasPerm(c.user, "notes:clinical:write")) return refuse("clinical notes not permitted for this role", { status: 403, message: "You cannot author clinical notes" });
@@ -15076,7 +15082,7 @@ var require_imports = __commonJS({
     init_globals_inject();
     var auth3 = require_auth2();
     var { define: define2, notPermitted } = require_core();
-    var importersOnly = (user, row) => !row.imported_by || row.imported_by === user.id || auth3.hasPerm(user, "clients:all") ? null : notPermitted("That import belongs to another worker");
+    var importersOnly = (user, row) => !row.imported_by || row.imported_by === user.id || auth3.hasPerm(user, "records:manage-others") ? null : notPermitted("That import belongs to another worker");
     module.exports = define2({
       table: "imports",
       fields: { filename: { type: "string", maxLen: 200 } },
@@ -15784,7 +15790,7 @@ var require_patient_requests = __commonJS({
         handled_by: { type: "string" },
         closed_at: { type: "datetime" }
       },
-      editableBy: (user, row) => row.handled_by === user.id || row.created_by === user.id || auth3.hasPerm(user, "clients:all") ? null : notPermitted("You cannot edit this record")
+      editableBy: (user, row) => row.handled_by === user.id || row.created_by === user.id || auth3.hasPerm(user, "records:manage-others") ? null : notPermitted("You cannot edit this record")
     });
     module.exports.KINDS = KINDS;
     module.exports.STATUSES = STATUSES;
@@ -15862,7 +15868,7 @@ var require_care_plan_goals = __commonJS({
         target_date: { type: "date" },
         review_date: { type: "date" }
       },
-      deletableBy: ownedBy(["created_by"], "clients:all", "Only the person who added this goal, or a supervisor, can delete it. Mark it discontinued instead."),
+      deletableBy: ownedBy(["created_by"], "records:manage-others", "Only the person who added this goal, or a supervisor, can delete it. Mark it discontinued instead."),
       check(row, c) {
         const pid = row.problem_id;
         if (!pid || c.existing && pid === c.existing.problem_id) return null;
@@ -15896,7 +15902,7 @@ var require_care_plan_steps = __commonJS({
       },
       // Deleting a goal deletes its steps, whoever added them (DELETE /api/goals/:id): a step whose goal goes in the
       // same push goes with it.
-      deletableBy: (user, row, { deleting } = {}) => row.created_by === user.id || auth3.hasPerm(user, "clients:all") || deleting && deleting.has(`care_plan_goals:${row.goal_id}`) ? null : notPermitted("Only the person who added this step, or a supervisor, can delete it. Mark it cancelled instead."),
+      deletableBy: (user, row, { deleting } = {}) => row.created_by === user.id || auth3.hasPerm(user, "records:manage-others") || deleting && deleting.has(`care_plan_goals:${row.goal_id}`) ? null : notPermitted("Only the person who added this step, or a supervisor, can delete it. Mark it cancelled instead."),
       check(row, c) {
         if (c.via !== "rest" || !row.owner_user_id || c.existing && row.owner_user_id === c.existing.owner_user_id) return null;
         if (!db3.one(`SELECT 1 FROM users WHERE id=?`, row.owner_user_id)) return refuse("has a value the office does not accept (its owner is not a staff account)", { message: "Validation failed", fields: { owner_user_id: "is not a staff account" } });
@@ -15935,8 +15941,8 @@ var require_asam_assessments = __commonJS({
         summary: { type: "string", maxLen: 5e3 },
         update_client_level: { type: "boolean", sync: false }
       },
-      editableBy: ownedBy(["assessed_by"], "clients:all", "Only the person who completed this assessment, or a supervisor, can change it"),
-      deletableBy: ownedBy(["assessed_by"], "clients:all", "Only the person who completed this assessment, or a supervisor, can delete it"),
+      editableBy: ownedBy(["assessed_by"], "records:manage-others", "Only the person who completed this assessment, or a supervisor, can change it"),
+      deletableBy: ownedBy(["assessed_by"], "records:manage-others", "Only the person who completed this assessment, or a supervisor, can delete it"),
       check(row, c) {
         const val = (k) => row[k] !== void 0 ? row[k] : c.existing ? c.existing[k] : void 0;
         const rec = val("recommended_loc");
@@ -15975,8 +15981,8 @@ var require_outcome_measures = __commonJS({
         variant: { type: "string", enum: ["men", "women", "unspecified"] },
         notes: { type: "string", maxLen: 2e3 }
       },
-      editableBy: ownedBy(["administered_by"], "clients:all", "Only the person who gave this questionnaire, or a supervisor, can change it"),
-      deletableBy: ownedBy(["administered_by"], "clients:all", "Only the person who gave this questionnaire, or a supervisor, can delete it"),
+      editableBy: ownedBy(["administered_by"], "records:manage-others", "Only the person who gave this questionnaire, or a supervisor, can change it"),
+      deletableBy: ownedBy(["administered_by"], "records:manage-others", "Only the person who gave this questionnaire, or a supervisor, can delete it"),
       check(row, c) {
         const code = row.instrument || c.existing && c.existing.instrument;
         if (!instrumentEnabledHere(code) && (!c.existing || c.changed().length)) {
@@ -17342,7 +17348,7 @@ var require_crud = __commonJS({
         }
         if (canEdit && !canEdit(ctx, row)) throw forbidden(`You cannot ${what} this record`);
       }
-      const ownerAll = R.owner && R.owner.col === ownerCol ? R.owner.all : "clients:all";
+      const ownerAll = R.owner && R.owner.col === ownerCol ? R.owner.all : "records:manage-others";
       const restrictOwner = opts.restrictOwner !== void 0 ? opts.restrictOwner : !!(R.owner && R.owner.col === ownerCol);
       const base = opts.base || `/api/${entity}s`;
       const readPerm = `${perm}:read`, writePerm = `${perm}:write`;
@@ -17471,7 +17477,7 @@ var require_crud = __commonJS({
       });
     }
     function ownerOrManager(col = "user_id") {
-      return (ctx, row) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all");
+      return (ctx, row) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "records:manage-others");
     }
     module.exports = { build, ownerOrManager, clientExists, assertFresh, STALE_MESSAGE };
   }
@@ -29698,7 +29704,7 @@ var require_funder_report = __commonJS({
       const asked = ctx.query.get("purpose");
       const internalOk = auth3.hasPerm(ctx.user, "reports:internal");
       const funderOk = auth3.hasPerm(ctx.user, "reports:funder");
-      const purpose = asked || (internalOk || funderOk ? "submission" : rel.publishable ? "publication" : "internal");
+      const purpose = asked || (internalOk || funderOk ? "submission" : !rel.publishable || auth3.reportRunAllowed(ctx.user, { caseloadScoped: true }) ? "internal" : "publication");
       if (!PURPOSES.includes(purpose)) throw badRequest("purpose must be publication (a release to publish or share), submission (the program's own report to its funder) or internal");
       const exactOk = auth3.hasPerm(ctx.user, "reports:exact") || funderOk && purpose === "submission";
       const mode = ctx.query.get("counts") || (purpose === "submission" && exactOk ? "exact" : "suppressed");
@@ -30578,11 +30584,18 @@ var require_reports = __commonJS({
               return d.length ? d[Math.floor(d.length / 2)] : null;
             })()
           })),
-          tasks: {
-            open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
-            overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db3.now(), ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
-            due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
-          },
+          // The team's to-dos for someone who supervises a team (a countersigner who sees every client, as the
+          // unsigned-notes alert below): from 1.16.0 a navigator and a clinician hold clients:all too, and their Home
+          // counts their own to-dos, as it always has.
+          tasks: (() => {
+            const team = auth3.hasPerm(ctx.user, "notes:cosign") && auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0;
+            return {
+              team: !!team,
+              open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, team).n,
+              overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db3.now(), ctx.user.id, team).n,
+              due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, team).n
+            };
+          })(),
           time: auth3.hasPerm(ctx.user, "time:read") || auth3.hasPerm(ctx.user, "time:write") ? {
             minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?)`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0).n,
             by_category: db3.all(`SELECT category k, SUM(minutes) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?) GROUP BY category ORDER BY n DESC`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0)
@@ -30598,7 +30611,7 @@ var require_reports = __commonJS({
               team,
               unsigned: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope}`, ...p).n,
               unsigned_overdue: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope} AND created_at < ?`, ...p, new Date(Date.now() - Number(db3.getSetting("note_lock_days", "3")) * 864e5).toISOString()).n,
-              staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
+              staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "records:manage-others") ? 1 : 0).n
             };
           })(),
           budget: auth3.hasPerm(ctx.user, "budget:read") ? db3.one(`SELECT ROUND((SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1),2) total, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')),2) spent, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending'),2) pending`) : null,
@@ -31305,13 +31318,13 @@ var require_imports2 = __commonJS({
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='staged') AS staged,
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='committed') AS committed,
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='discarded') AS discarded
-      FROM imports i LEFT JOIN users u ON u.id=i.imported_by ${auth3.hasPerm(ctx.user, "clients:all") ? "" : "WHERE i.imported_by=? OR i.imported_by IS NULL"} ORDER BY i.created_at DESC LIMIT 200`, ...auth3.hasPerm(ctx.user, "clients:all") ? [] : [ctx.user.id]);
+      FROM imports i LEFT JOIN users u ON u.id=i.imported_by ${auth3.hasPerm(ctx.user, "records:manage-others") ? "" : "WHERE i.imported_by=? OR i.imported_by IS NULL"} ORDER BY i.created_at DESC LIMIT 200`, ...auth3.hasPerm(ctx.user, "records:manage-others") ? [] : [ctx.user.id]);
         return { imports: rows.map(importView) };
       });
       r.get("/api/imports/:id", auth3.requireAuth, auth3.requirePerm("imports:read", "imports:write"), (ctx) => {
         const imp = db3.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id);
         if (!imp) throw notFound();
-        if (imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        if (imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden();
         const items = db3.all(`SELECT x.*, c.client_code AS suggested_client_code FROM import_items x LEFT JOIN clients c ON c.id=x.suggested_client_id WHERE import_id=? ORDER BY captured_at, created_at`, imp.id).map((x) => itemView(x));
         for (const it of items) if (it.suggested_client_id) {
           const c = db3.one(`SELECT * FROM clients WHERE id=?`, it.suggested_client_id);
@@ -31376,7 +31389,7 @@ var require_imports2 = __commonJS({
         const it = db3.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id);
         if (!it) throw notFound();
         const imp = db3.one(`SELECT imported_by FROM imports WHERE id=?`, it.import_id);
-        if (imp && imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        if (imp && imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden();
         if (it.status !== "staged") throw badRequest("Item already processed");
         db3.run(`UPDATE import_items SET status='discarded' WHERE id=?`, it.id);
         audit3.log({ user: ctx.user, action: "import.discard", entity: "import_item", entityId: it.id, ip: ctx.ip });
@@ -31385,7 +31398,7 @@ var require_imports2 = __commonJS({
       r.delete("/api/imports/:id", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
         const imp = db3.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id);
         if (!imp) throw notFound();
-        if (imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        if (imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden();
         db3.run(`DELETE FROM import_items WHERE import_id=? AND status<>'committed'`, imp.id);
         db3.run(`UPDATE imports SET status='purged' WHERE id=?`, imp.id);
         audit3.log({ user: ctx.user, action: "import.purge", entity: "import", entityId: imp.id, ip: ctx.ip });
@@ -32127,7 +32140,7 @@ var require_notes2 = __commonJS({
       r.post("/api/notes/:id/request-cosign", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
         if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can ask for a review of their note");
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden("Only the author can ask for a review of their note");
         if (n.cosigned_at) throw badRequest("This note has already been countersigned");
         const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: "boolean" } });
         const flag = cosign_requested === false ? 0 : 1;
@@ -32248,7 +32261,7 @@ var require_notes2 = __commonJS({
         const n = load(ctx, ctx.params.id);
         if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
         if (n.status !== "draft") throw badRequest("Signed notes are part of the legal record and cannot be deleted");
-        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden();
         db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
         audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
         return { ok: true };
@@ -38397,7 +38410,7 @@ var require_push = __commonJS({
           this.reject(t.name, ts.id, "not on caseload");
           return;
         }
-        if (t.scope === "all" && !auth3.hasPerm(user, "clients:all")) return;
+        if (t.scope === "all" && !auth3.hasPerm(user, "records:manage-others")) return;
         if (!SYNC2.mayReachUnlinked(t.name, user, existing, auth3.hasPerm)) {
           this.reject(t.name, ts.id, "not permitted");
           return;
@@ -38453,7 +38466,7 @@ var require_sync = __commonJS({
       const cf = auth3.caseloadFilter(user, `${alias}.${t.clientCol}`);
       if (t.scope === "all" || t.scope === "users") return { sql: "1=1", params: [] };
       if (t.scope === "importer" || t.scope === "via-import") {
-        if (auth3.hasPerm(user, "clients:all")) return { sql: "1=1", params: [] };
+        if (auth3.hasPerm(user, "records:manage-others")) return { sql: "1=1", params: [] };
         if (t.scope === "importer") return { sql: `(${alias}.imported_by=? OR ${alias}.imported_by IS NULL)`, params: [user.id] };
         return { sql: `${alias}.import_id IN (SELECT i.id FROM imports i WHERE i.imported_by=? OR i.imported_by IS NULL)`, params: [user.id] };
       }
@@ -38476,6 +38489,83 @@ var require_sync = __commonJS({
     AND (ended_at > ? OR (ended_at IS NULL AND (updated_at > ? OR end_date >= date(?))))`, user.id, since, since, since).map((r) => r.client_id);
       const sc = scopeSql(SYNC2.tables.find((t) => t.name === "clients"), user, "c");
       return ids.filter((id) => !db3.one(`SELECT 1 FROM clients c WHERE c.id=? AND ${sc.sql}`, id, ...sc.params));
+    }
+    var SCOPE_V = "v1";
+    function scopePerms() {
+      const s = /* @__PURE__ */ new Set(["clients:all", "records:manage-others", "notes:clinical:read"]);
+      for (const t of SYNC2.tables) {
+        if (t.readPerm) s.add(t.readPerm);
+        if (t.redact) s.add(t.redact.perm);
+        if (t.unlinked) s.add(t.unlinked.all);
+      }
+      return [...s].sort();
+    }
+    function syncScopeKey(user) {
+      return [SCOPE_V, `caseload=${auth3.caseloadRestricted(user) ? 1 : 0}`, ...scopePerms().map((p) => `${p}=${auth3.hasPerm(user, p) ? 1 : 0}`)].join(";");
+    }
+    function parseScopeKey(key) {
+      const parts = String(key || "").split(";");
+      if (parts[0] !== SCOPE_V) return null;
+      const m = {};
+      for (const x of parts.slice(1)) {
+        const [k, v] = x.split("=");
+        if (k && (v === "0" || v === "1")) m[k] = v === "1";
+      }
+      return m;
+    }
+    function scopeChange(user, sent) {
+      if (!sent) return null;
+      const prevKey = sent === "legacy" ? syncScopeKey(auth3.asBefore1_16(user)) : sent;
+      const prev = parseScopeKey(prevKey);
+      const cur = parseScopeKey(syncScopeKey(user));
+      if (!prev) return null;
+      const change = { widened: false, redacted: false, caseloadNarrowed: false, lost: /* @__PURE__ */ new Set() };
+      const redactPerms = new Set(SYNC2.tables.filter((t) => t.redact).map((t) => t.redact.perm));
+      for (const [k, now2] of Object.entries(cur)) {
+        if (!(k in prev) || prev[k] === now2) continue;
+        if (k === "caseload") {
+          if (now2) change.caseloadNarrowed = true;
+          else change.widened = true;
+          continue;
+        }
+        if (now2) change.widened = true;
+        else change.lost.add(k);
+        if (redactPerms.has(k)) change.redacted = true;
+      }
+      return change.widened || change.redacted || change.caseloadNarrowed || change.lost.size ? change : null;
+    }
+    function scopeDrops(user, change) {
+      const clients = [];
+      const rows = [];
+      if (change.caseloadNarrowed) {
+        const sc = scopeSql(SYNC2.tables.find((t) => t.name === "clients"), user, "c");
+        clients.push(...db3.all(`SELECT c.id FROM clients c WHERE NOT (${sc.sql})`, ...sc.params).map((r) => r.id));
+      }
+      const lost = change.lost;
+      for (const t of SYNC2.tables) {
+        if (t.readPerm && lost.has(t.readPerm)) {
+          const sc = scopeSql(t, user, "x");
+          rows.push(...db3.all(`SELECT x.id FROM ${t.name} x WHERE ${sc.sql}`, ...sc.params).map((r) => [t.name, r.id]));
+          continue;
+        }
+        if (t.unlinked && lost.has(t.unlinked.all)) {
+          const sc = scopeSql(t, user, "x");
+          rows.push(...db3.all(`SELECT x.id FROM ${t.name} x WHERE x.${t.clientCol || "client_id"} IS NULL AND NOT (${sc.sql})`, ...sc.params).map((r) => [t.name, r.id]));
+        }
+        if ((t.scope === "importer" || t.scope === "via-import") && lost.has("records:manage-others")) {
+          const sc = scopeSql(t, user, "x");
+          rows.push(...db3.all(`SELECT x.id FROM ${t.name} x WHERE NOT (${sc.sql})`, ...sc.params).map((r) => [t.name, r.id]));
+        }
+      }
+      if (lost.has("notes:clinical:read") && !auth3.hasPerm(user, "notes:clinical:read")) {
+        const cf = auth3.caseloadFilter(user, "n.client_id");
+        const notes = db3.all(`SELECT n.id FROM notes n WHERE n.kind='clinical' AND ${cf.sql}`, ...cf.params).map((r) => r.id);
+        for (const id of notes) for (const a of db3.all(`SELECT id FROM note_addenda WHERE note_id=?`, id)) rows.push(["note_addenda", a.id]);
+        for (const id of notes) rows.push(["notes", id]);
+      }
+      const order = new Map(SYNC2.tables.map((t, i) => [t.name, i]));
+      const kidsFirst = rows.map((r, i) => [r, i]).sort((a, b) => order.get(b[0][0]) - order.get(a[0][0]) || a[1] - b[1]).map((x) => x[0]);
+      return { clients, rows: kidsFirst };
     }
     function newlyInScopeSql(user, since, cursor) {
       return {
@@ -38552,10 +38642,29 @@ var require_sync = __commonJS({
       }
       return { raw, next };
     }
-    function pull(user, sinceRaw, { limit: limit2 = PULL_LIMIT } = {}) {
+    function pull(user, sinceRaw, { limit: limit2 = PULL_LIMIT, scope = null } = {}) {
       const serverNow = db3.now();
-      const { since, bf } = parseCursor(String(sinceRaw || NEVER2));
-      if (bf) return pullBackfill(user, since, bf, limit2, serverNow);
+      let { since, bf } = parseCursor(String(sinceRaw || NEVER2));
+      const change = since !== NEVER2 ? scopeChange(user, scope) : null;
+      const drops = change ? scopeDrops(user, change) : null;
+      if (change && (change.widened || change.redacted)) {
+        since = NEVER2;
+        bf = null;
+      }
+      const withScope = (out2) => {
+        out2.scope = syncScopeKey(user);
+        if (drops) {
+          out2.dropped_clients = [.../* @__PURE__ */ new Set([...out2.dropped_clients || [], ...drops.clients])];
+          out2.dropped_rows = drops.rows;
+          out2.scope_changed = true;
+          if (change.widened || change.redacted) out2.scope_widened = true;
+        }
+        return out2;
+      };
+      if (bf) return withScope(pullBackfill(user, since, bf, limit2, serverNow));
+      return withScope(pullPage(user, since, limit2, serverNow));
+    }
+    function pullPage(user, since, limit2, serverNow) {
       const raw = {};
       const capped = [];
       const scopes = /* @__PURE__ */ new Map();
@@ -38589,8 +38698,9 @@ var require_sync = __commonJS({
       return out2;
     }
     function baseAnswer(cursor, serverNow, complete) {
-      const out2 = { cursor, server_now: serverNow, complete, db_generation: db3.getSetting("db_generation", null), tables: {}, tombstones: [], settings: {}, skipped: [], dropped_clients: [] };
+      const out2 = { cursor, server_now: serverNow, complete, db_generation: db3.getSetting("db_generation", null), tables: {}, tombstones: [], settings: {}, skipped: [], dropped_clients: [], dropped_rows: [] };
       for (const k of SYNC2.settings_keys) out2.settings[k] = db3.getSetting(k, null);
+      out2.settings.caseload_restriction = db3.getSetting("caseload_restriction", "1");
       out2.settings.org_timezone = require_budget().orgTimezone() || null;
       return out2;
     }
@@ -38637,8 +38747,9 @@ var require_sync = __commonJS({
         if (!auth3.hasPerm(ctx.user, "clients:read")) throw forbidden("Your role cannot sync client data");
         const since = ctx.query.get("since") || NEVER2;
         const limit2 = Math.min(Number(ctx.query.get("limit")) || PULL_LIMIT, PULL_LIMIT);
-        const out2 = pull(ctx.user, since, { limit: limit2 });
-        audit3.log({ user: ctx.user, action: "sync.pull", ip: ctx.ip, details: { since: since.split(BF_MARK)[0], backfill: since.includes(BF_MARK) || void 0, complete: out2.complete, rows: Object.fromEntries(Object.entries(out2.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
+        const out2 = pull(ctx.user, since, { limit: limit2, scope: ctx.query.get("scope") });
+        out2.permission_overrides = db3.all(`SELECT permission, mode, reason, granted_at FROM user_permission_overrides WHERE user_id=? ORDER BY permission`, ctx.user.id);
+        audit3.log({ user: ctx.user, action: "sync.pull", ip: ctx.ip, details: { since: since.split(BF_MARK)[0], backfill: since.includes(BF_MARK) || void 0, complete: out2.complete, scope_changed: out2.scope_changed || void 0, dropped: out2.scope_changed ? { clients: out2.dropped_clients.length, rows: out2.dropped_rows.length } : void 0, rows: Object.fromEntries(Object.entries(out2.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
         return out2;
       });
       r.post("/api/sync/push", requireLocalMode, auth3.requireAuth, (ctx) => {
@@ -39422,6 +39533,7 @@ var require_auth2 = __commonJS({
         "clients:read",
         "clients:write",
         "clients:all",
+        "records:manage-others",
         "interventions:*",
         "calls:*",
         "time:read",
@@ -39470,6 +39582,7 @@ var require_auth2 = __commonJS({
         "clients:read",
         "clients:write",
         "clients:all",
+        "records:manage-others",
         "interventions:*",
         "calls:*",
         "time:read",
@@ -39518,10 +39631,12 @@ var require_auth2 = __commonJS({
         "supplies:*"
       ],
       // Front-line staff hold export:read so the Export buttons on their own screens work; without
-      // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
+      // export:identified every file they can produce is de-identified (Safe Harbor), and caseload-scoped for a
+      // person denied clients:all. budget:read (1.16.0): a clinician sees programme spending; no budget:write.
       clinician: [
         "clients:read",
         "clients:write",
+        "clients:all",
         "interventions:*",
         "calls:*",
         "time:read",
@@ -39529,6 +39644,7 @@ var require_auth2 = __commonJS({
         "resources:read",
         "referrals:*",
         "tasks:*",
+        "budget:read",
         "notes:admin:read",
         "notes:admin:write",
         "notes:clinical:read",
@@ -39554,6 +39670,7 @@ var require_auth2 = __commonJS({
       navigator: [
         "clients:read",
         "clients:write",
+        "clients:all",
         "interventions:*",
         "calls:*",
         "time:read",
@@ -39565,6 +39682,7 @@ var require_auth2 = __commonJS({
         "budget:write",
         "notes:admin:read",
         "notes:admin:write",
+        "notes:clinical:read",
         "consents:*",
         "imports:*",
         "reports:read",
@@ -39624,6 +39742,19 @@ var require_auth2 = __commonJS({
       const out2 = { allow: [...allow].sort(), deny: [...deny].sort() };
       user._effectivePerms = out2;
       return out2;
+    }
+    var WIDENED_1_16 = { navigator: ["clients:all", "notes:clinical:read"], clinician: ["clients:all", "budget:read"] };
+    function asBefore1_16(user) {
+      const eff = effectivePerms(user);
+      const widened = WIDENED_1_16[user.role] || [];
+      if (!widened.length) return user;
+      let granted = [];
+      try {
+        granted = db3.all(`SELECT permission FROM user_permission_overrides WHERE user_id=? AND mode='grant'`, user.id).map((r) => r.permission);
+      } catch {
+      }
+      const drop = widened.filter((p) => !granted.includes(p));
+      return { id: user.id, role: user.role, _effectivePerms: { allow: eff.allow.filter((p) => !drop.includes(p)), deny: eff.deny } };
     }
     function hasPerm(user, perm) {
       if (!user) return false;
@@ -40031,6 +40162,8 @@ var require_auth2 = __commonJS({
       auditUsername,
       policy,
       PERMS,
+      WIDENED_1_16,
+      asBefore1_16,
       hasPerm,
       rolePerms,
       effectivePerms,
@@ -41742,6 +41875,7 @@ function ensureTables() {
   import_db.default.get().exec(`CREATE TABLE IF NOT EXISTS sync_server_tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
 }
 var cursorKey = (userId) => `sync_cursor:${userId}`;
+var scopeSettingKey = (userId) => `sync_scope:${userId}`;
 function readCursor(userId, username) {
   const own = import_db.default.getSetting(cursorKey(userId), null);
   if (own) return own;
@@ -41853,6 +41987,26 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
         const removed = import_sync_tables.default.purgeClient(import_db.default, id);
         if (removed) import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.caseload_removed", entity: "client", entityId: id, clientId: id, details: { rows: removed } });
       }, (err2) => skipped.push({ table: "clients", id, reason: String(err2 && err2.message || "could not be removed").slice(0, 200) }));
+    }
+    for (const pair of payload.dropped_rows || []) {
+      const [table, id] = Array.isArray(pair) ? pair : [];
+      const t = import_sync_tables.default.tables.find((x) => x.name === table);
+      if (!t || typeof id !== "string") continue;
+      import_db.default.savepoint(
+        () => {
+          import_db.default.run(`DELETE FROM ${t.name} WHERE id=?`, id);
+          import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, id);
+        },
+        (err2) => skipped.push({ table: t.name, id, reason: String(err2 && err2.message || "could not be removed").slice(0, 200) })
+      );
+    }
+    if ((payload.dropped_rows || []).length) import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.scope_removed", details: { rows: payload.dropped_rows.length } });
+    if (officeUserId && Array.isArray(payload.permission_overrides)) {
+      import_db.default.run(`DELETE FROM user_permission_overrides WHERE user_id=?`, officeUserId);
+      for (const o of payload.permission_overrides) {
+        if (!o || typeof o.permission !== "string" || !["grant", "deny"].includes(o.mode)) continue;
+        import_db.default.run(`INSERT OR REPLACE INTO user_permission_overrides(user_id, permission, mode, reason, granted_at) VALUES(?,?,?,?,?)`, officeUserId, o.permission, o.mode, String(o.reason || "set at the office"), o.granted_at || import_db.default.now());
+      }
     }
     for (const [k, v] of Object.entries(payload.settings || {})) if (v !== null && v !== void 0) import_db.default.setSetting(k, v);
     settleSupplies(payload, officeUserId, skipped);
@@ -42128,7 +42282,8 @@ async function run({ server, username, password, code, onProgress = () => {
     for (; ; ) {
       const backfilling = String(since).includes(BACKFILL_MARK);
       onProgress(backfilling ? `Downloading the records of newly assigned clients (page ${backfillPages + 1})\u2026` : pages ? `Downloading changes from the office (page ${pages + 1})\u2026` : "Downloading changes from the office\u2026");
-      const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}`, {}, token2);
+      const scopeKey = since === NEVER ? null : import_db.default.getSetting(scopeSettingKey(officeUserId), null) || "legacy";
+      const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}${scopeKey ? `&scope=${encodeURIComponent(scopeKey)}` : ""}`, {}, token2);
       const generation = generationOf(pulled);
       const known = import_db.default.getSetting("office_db_generation", null);
       if (known !== null && known !== generation && !generationReset) {
@@ -42159,6 +42314,8 @@ async function run({ server, username, password, code, onProgress = () => {
       serverNow = pulled.server_now;
       since = pulled.cursor;
       import_db.default.setSetting(cursorKey(officeUserId), since);
+      if (typeof pulled.scope === "string") import_db.default.setSetting(scopeSettingKey(officeUserId), pulled.scope);
+      if (pulled.scope_changed) notices.push(pulled.scope_widened ? "Your access at the office changed: this device downloaded everything you may now see." : "Your access at the office changed: records you may no longer see were removed from this device.");
       if (pulled.complete) break;
       if (backfilling || pulled.backfill) {
         if (++backfillPages > MAX_BACKFILL_PAGES) break;
@@ -42700,6 +42857,23 @@ function openDatabase(bytes3) {
     throw e;
   }
   ensureTables();
+  scopeEarlierSignups();
+}
+var SIGNUP_SCOPE = ["clients:all", "notes:clinical:read"];
+var SIGNUP_SCOPE_REASON = "Signed up on a shared device: sees only their own caseload until the device administrator decides otherwise";
+function deviceAdminId() {
+  return import_db2.default.getSetting("device_admin_user_id", null) || (import_db2.default.one(`SELECT id FROM users WHERE password_hash NOT LIKE 'scrypt$0$%' ORDER BY created_at, rowid LIMIT 1`) || {}).id || null;
+}
+function scopeSignup(userId, by) {
+  for (const p of SIGNUP_SCOPE) import_db2.default.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by) VALUES(?,?,'deny',?,?) ON CONFLICT(user_id, permission) DO NOTHING`, userId, p, SIGNUP_SCOPE_REASON, by || null);
+}
+function scopeEarlierSignups() {
+  if (!isStaticHost() || import_db2.default.getSetting("signup_scope_v1_16", null) !== null) return;
+  const admin = deviceAdminId();
+  import_db2.default.transaction(() => {
+    if (admin) for (const u of import_db2.default.all(`SELECT id FROM users WHERE role IN ('navigator','clinician') AND password_hash NOT LIKE 'scrypt$0$%' AND id<>?`, admin)) scopeSignup(u.id, admin);
+    import_db2.default.setSetting("signup_scope_v1_16", "1");
+  });
 }
 function hints() {
   const users = import_db2.default.one(`SELECT COUNT(*) n FROM users WHERE is_active=1 AND password_hash NOT LIKE 'scrypt$0$%'`).n;
@@ -43057,7 +43231,6 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     mod(router);
   }
   register(router);
-  const deviceAdminId = () => import_db2.default.getSetting("device_admin_user_id", null) || (import_db2.default.one(`SELECT id FROM users WHERE password_hash NOT LIKE 'scrypt$0$%' ORDER BY created_at, rowid LIMIT 1`) || {}).id || null;
   const isDeviceAdmin = (u) => !!u && u.id === deviceAdminId();
   const userCount = () => import_db2.default.one(`SELECT COUNT(*) n FROM users`).n;
   const clientCount = () => import_db2.default.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n;
@@ -43102,8 +43275,9 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     import_db2.default.transaction(() => {
       import_db2.default.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,'navigator',0,?)`, id, v.username, hashPassword(v.password), v.display_name, import_db2.default.now());
       import_db2.default.setSetting("caseload_restriction", "1");
+      scopeSignup(id, deviceAdminId());
     });
-    import_audit2.default.log({ user: { id, username: v.username }, action: "local.signup", entity: "user", entityId: id });
+    import_audit2.default.log({ user: { id, username: v.username }, action: "local.signup", entity: "user", entityId: id, details: { denied: SIGNUP_SCOPE } });
     return { ok: true, role: "navigator" };
   });
   const DEVICE_ROLES = ["navigator", "clinician", "supervisor", "admin"];
@@ -43125,8 +43299,9 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     if (!u) throw new import_http2.HttpError(404, "No such account on this device");
     if (u.id === ctx.user.id) throw new import_http2.HttpError(400, "You cannot change your own role here.");
     import_db2.default.run(`UPDATE users SET role=?, updated_at=? WHERE id=?`, v.role, import_db2.default.now(), u.id);
+    const lifted = v.role === "supervisor" || v.role === "admin" ? import_db2.default.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND mode='deny' AND reason=? AND permission IN (${SIGNUP_SCOPE.map(() => "?").join(",")})`, u.id, SIGNUP_SCOPE_REASON, ...SIGNUP_SCOPE).changes : 0;
     import_auth2.default.revokeAllForUser(u.id);
-    import_audit2.default.log({ user: ctx.user, action: "local.account.role", entity: "user", entityId: u.id, details: { from: u.role, to: v.role } });
+    import_audit2.default.log({ user: ctx.user, action: "local.account.role", entity: "user", entityId: u.id, details: { from: u.role, to: v.role, ...lifted ? { denies_lifted: SIGNUP_SCOPE } : {} } });
     return { ok: true, role: v.role };
   });
   router.get("/api/local/device", (ctx) => {

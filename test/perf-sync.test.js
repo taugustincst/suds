@@ -14,8 +14,8 @@ const { uuid, encrypt } = require('../server/crypto');
 let navUser, adminUser;
 before(async () => {
   await H.start();
-  const navId = H.makeUser('psync_nav', 'navigator').id;
-  const other = H.makeUser('psync_other', 'navigator').id;
+  const navId = H.makeCaseloadUser('psync_nav', 'navigator').id;
+  const other = H.makeCaseloadUser('psync_other', 'navigator').id;
   const stamp = (i) => new Date(Date.parse('2026-01-01T00:00:00Z') + i * 3600000).toISOString();
   const clients = [];
   db.transaction(() => {
@@ -115,7 +115,8 @@ test('who came onto a caseload is looked up by worker and client together, not b
   const plan = db.all(`EXPLAIN QUERY PLAN ${sql}`, 'u', '1970', '2030', 'u', '1970').map(p => p.detail).join(' | ');
   assert.match(plan, /idx_assign_caseload \(user_id=\? AND client_id=\?\)/, plan);
   // And a caseload filter is answered from the index alone.
-  const cf = auth.caseloadFilter({ id: 'u', role: 'navigator' }, 'c.id');
+  const cf = auth.caseloadFilter({ id: navUser.id, role: 'navigator' }, 'c.id'); // held to their caseload (clients:all denied)
+  assert.notEqual(cf.sql, '1=1');
   const p2 = db.all(`EXPLAIN QUERY PLAN SELECT COUNT(*) FROM clients c WHERE ${cf.sql}`, ...cf.params).map(p => p.detail).join(' | ');
   assert.match(p2, /COVERING INDEX idx_assign_caseload/, p2);
 });

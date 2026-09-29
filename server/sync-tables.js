@@ -24,6 +24,9 @@ module.exports = {
     // SUPRT-A's grant and site IDs and reassessment interval: a device pre-fills and schedules the same way.
     'suprt_grant_id', 'suprt_site_id', 'suprt_reassessment_months',
     'default_supply_site_id', 'supply_expiry_warn_days', 'supply_syringes_per_litre',
+    // Caseload restriction (1.16.0): with each person's own grants and denies (pull's permission_overrides), a
+    // device holds a person the office holds to their caseload to it too (server/auth.js caseloadRestricted).
+    'caseload_restriction',
     // The programme profile and module switches (server/programme.js): a device shows what its office shows.
     ...require('./programme').SETTING_KEYS],
   tables: [
@@ -67,7 +70,7 @@ module.exports = {
     { name: 'note_addenda', enc: ['content_enc', 'reason_enc'], legacy: { reason: 'reason_enc' }, scope: 'via-note', writePerm: 'notes:admin:write', parent: ['notes', 'note_id'] },
     { name: 'disclosures', enc: ['recipient_enc', 'purpose_enc', 'what_enc', 'justification_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     // An import (a OneNote page, a Pocket AI transcript) is its importer's until it is filed against a client:
-    // the REST routes show it only to them (or to clients:all), and a device gets the same -- scope 'importer'.
+    // the REST routes show it only to them (or to records:manage-others), and a device gets the same -- scope 'importer'.
     { name: 'imports', enc: ['filename_enc'], legacy: { filename: 'filename_enc' }, scope: 'importer', writePerm: 'imports:write' },
     { name: 'import_items', enc: ['content_enc', 'title_enc', 'metadata_enc'], legacy: { metadata: 'metadata_enc' }, scope: 'via-import', writePerm: 'imports:write', parent: ['imports', 'import_id'] },
     { name: 'form_templates', enc: [], scope: 'all', writePerm: 'forms:manage', blob: ['file_b64'] },

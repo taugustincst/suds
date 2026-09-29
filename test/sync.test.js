@@ -15,7 +15,7 @@ before(async () => {
   await H.start();
   // These tests sync like a device does, which needs local mode on (it is off by default on a server).
   require('../server/config').localModeEnabled = true;
-  H.makeUser('snav', 'navigator'); H.makeUser('snav2', 'navigator'); H.makeUser('ssup', 'supervisor'); H.makeUser('sclin', 'clinician');
+  H.makeCaseloadUser('snav', 'navigator'); H.makeCaseloadUser('snav2', 'navigator'); H.makeUser('ssup', 'supervisor'); H.makeUser('sclin', 'clinician');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   nav = H.client(); await nav.login('snav', 'StaffPassw0rd!x');
   nav2 = H.client(); await nav2.login('snav2', 'StaffPassw0rd!x');
@@ -696,7 +696,7 @@ test('a device may name another worker only when its user could over REST', asyn
   assert.deepEqual(r2.data.rejected, []);
   assert.equal(H.db.one(`SELECT user_id FROM interventions WHERE id=?`, onBehalf.id).user_id, navId);
   // But never to an account the office has deactivated.
-  const ghost = H.makeUser('sgone', 'navigator'); H.db.run(`UPDATE users SET is_active=0 WHERE id=?`, ghost.id);
+  const ghost = H.makeCaseloadUser('sgone', 'navigator'); H.db.run(`UPDATE users SET is_active=0 WHERE id=?`, ghost.id);
   const r3 = await push(admin, { tables: { interventions: [mk(ghost.id)] } });
   assert.ok(r3.data.rejected.some(y => /deactivated/.test(y.reason)));
   // The pushing user's own id, or none, is always fine.

@@ -51,6 +51,9 @@ else {
   ok(await page.$('[data-perm-baseline]'), 'the section shows the role baseline');
   ok(/Open client records/.test(await page.textContent('[data-perm-baseline]')), 'with catalog labels, not bare permission strings', await page.textContent('[data-perm-baseline]'));
   ok(await page.$('[data-perm-grant-form]'), 'and the grant form');
+  // 1.16.0: the navigator baseline says what widened and how to hold the person to their caseload.
+  const roleNote = await page.$('[data-perm-role-note="navigator"]');
+  ok(roleNote && /sees every client/.test(await roleNote.textContent()) && /deny See every client/.test(await roleNote.textContent()), 'the navigator baseline explains the 1.16.0 defaults and the caseload deny', roleNote && await roleNote.textContent());
 
   // Grant audit:read with a reason; the badge appears.
   await page.selectOption('[data-perm-select]', 'audit:read');

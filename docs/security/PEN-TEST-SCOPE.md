@@ -5,7 +5,7 @@ The SUDS project has not commissioned an independent penetration test. This scop
 ## Target
 
 * A **staging** installation of the release the county runs (never production PHI), seeded with fictional data (`npm run seed`), deployed exactly as production: same proxy, TLS, `SUDS_ENV=production`, same settings (MFA required, SSO if used, local mode as in production).
-* One account per role (admin, supervisor, clinician, navigator, finance, readonly), plus two navigators with different caseloads, an API key, and — if local mode will be enabled — a local-mode device.
+* One account per role (admin, supervisor, clinician, navigator, finance, readonly), plus two navigators with different caseloads held to them (per-user denies of `clients:all`, 1.16.0) and one with the role's defaults, an API key, and — if local mode will be enabled — a local-mode device.
 * Source code access (white-box) is recommended; it is public.
 
 ## In scope

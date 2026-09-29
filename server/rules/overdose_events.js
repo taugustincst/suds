@@ -22,6 +22,6 @@ module.exports = define({
     location_type: { type: 'string', maxLen: 60 }, city: { type: 'string', maxLen: 100 },
     funding_source_id: { type: 'string' }, notes: { type: 'string', maxLen: 4000 },
   },
-  owner: { col: 'reported_by', all: 'clients:all' },
-  editableBy: ownedBy(['reported_by'], 'clients:all'),
+  owner: { col: 'reported_by', all: 'records:manage-others' },
+  editableBy: ownedBy(['reported_by'], 'records:manage-others'),
 });

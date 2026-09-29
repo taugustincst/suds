@@ -43,8 +43,19 @@ function ssoPolicy() {
 }
 
 // ---- Role-based permissions (minimum necessary) ----
-// clinical notes are visible only to clinical roles and supervisors; admins are system administrators,
-// not treating staff, and must use break-glass (audited) to read clinical content.
+// clinical notes are written by clinicians and supervisors and read by them and (1.16.0, read only) navigators;
+// admins are system administrators, not treating staff, and must use break-glass (audited) to read clinical
+// content.
+// clients:all (1.16.0: navigators and clinicians too, by the owner's decision: outreach engages whoever walks
+// in, clinicians cover for each other) takes a role out of caseload scoping: it is seeing, and adding one's own
+// work to, every client. A programme that wants a person held to their caseload denies them clients:all with a
+// per-user override (effectivePerms below), which restores the scoping everywhere (test/role-expansion.test.js).
+// records:manage-others (1.16.0) is the "or a manager" power that clients:all used to carry, separated from it by
+// the owner's decision: changing or deleting another worker's visits, calls, referrals, overdose reports, to-dos,
+// care-plan goals and steps, assessments, outcome measures, rights requests and draft notes; recording work under
+// another worker's name; soft-deleting a client record; and seeing another worker's staged imports
+// (server/rules/*, server/crud.js, sync push). Held by supervisors and administrators, who held it through
+// clients:all before, so nobody lost anything; a navigator or clinician edits only their own work.
 // careplan (the CalAIM problem list and care coordination plan) is everyday case-management work, held by
 // every role that works with clients, as clients:write is; an administrator may read it. assessments (ASAM
 // ratings and scored screening instruments such as the PHQ-9) are clinical content, held like clinical
@@ -53,8 +64,9 @@ function ssoPolicy() {
 // publication release (purpose internal or submission: a custom range, one fund, a period not yet ended).
 // Suppression inside one report cannot stop two being subtracted from each other (August's release minus
 // 1-30 August is whoever was served on the 31st), so such runs are for people who can already see client-level
-// data or run the programme: supervisors and administrators. A caseload-scoped role (navigator, clinician)
-// may also run one that counts only its own caseload, whose records it can open anyway (reportRunAllowed).
+// data or run the programme: supervisors and administrators, and (1.16.0) navigators and clinicians, who hold
+// clients:all. A caseload-scoped role (one denied clients:all) may run one that counts only its own caseload,
+// whose records it can open anyway (reportRunAllowed).
 // Finance and readonly get publication releases only; finance's money and hours are exact in those and on
 // Budget / Time, and it needs no people counts beyond them.
 // graph:import: browse and fetch the shared OneNote notebook the server's Microsoft Graph credentials open
@@ -75,23 +87,24 @@ function ssoPolicy() {
 // adjustments after a count, disposal of expired stock), held by supervisors and administrators. A visit's own
 // draw-down needs only interventions:write, as it always has.
 const PERMS = {
-  admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
+  admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all','records:manage-others',
                'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve','budget:manage',
                'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','graph:import','reports:read','assignments:manage','export:read','export:identified','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','clients:legal-hold','patient-requests:*','careplan:read',
                'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*'],
-  supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
+  supervisor: ['clients:read','clients:write','clients:all','records:manage-others','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
                'consents:*','imports:*','graph:import','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*',
                'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*'],
   // Front-line staff hold export:read so the Export buttons on their own screens work; without
-  // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
-  clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
-               'notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
+  // export:identified every file they can produce is de-identified (Safe Harbor), and caseload-scoped for a
+  // person denied clients:all. budget:read (1.16.0): a clinician sees programme spending; no budget:write.
+  clinician:  ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
+               'budget:read','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
                'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','assessments:*','court-orders:read','agreements:read','supplies:read','supplies:receive'],
-  navigator:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:*','referrals:*','tasks:*',
-               'budget:read','budget:write','notes:admin:read','notes:admin:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
+  navigator:  ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','resources:*','referrals:*','tasks:*',
+               'budget:read','budget:write','notes:admin:read','notes:admin:write','notes:clinical:read','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
                'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','court-orders:read','agreements:read','supplies:read','supplies:receive'],
   // finance sees money, not people: export:read without export:identified means every export it can run
   // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
@@ -139,6 +152,21 @@ function effectivePerms(user) {
   const out = { allow: [...allow].sort(), deny: [...deny].sort() };
   user._effectivePerms = out;
   return out;
+}
+
+// The role defaults widened in 1.16.0 (the owner's decision; CHANGELOG). A local-mode device that synced before
+// then holds what the narrower defaults allowed, so sync compares against them (server/routes/sync.js,
+// syncScopeKey). `asBefore1_16(user)` is the user as the 1.15 defaults saw them: the same overrides, without the
+// widened defaults unless an administrator granted one explicitly.
+const WIDENED_1_16 = { navigator: ['clients:all', 'notes:clinical:read'], clinician: ['clients:all', 'budget:read'] };
+function asBefore1_16(user) {
+  const eff = effectivePerms(user);
+  const widened = WIDENED_1_16[user.role] || [];
+  if (!widened.length) return user;
+  let granted = [];
+  try { granted = db.all(`SELECT permission FROM user_permission_overrides WHERE user_id=? AND mode='grant'`, user.id).map(r => r.permission); } catch { /* before migration 46 */ }
+  const drop = widened.filter(p => !granted.includes(p));
+  return { id: user.id, role: user.role, _effectivePerms: { allow: eff.allow.filter(p => !drop.includes(p)), deny: eff.deny } };
 }
 
 function hasPerm(user, perm) {
@@ -632,5 +660,5 @@ function passwordPolicy(pw) {
   return errors;
 }
 
-module.exports = { auditUsername, policy, PERMS, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
+module.exports = { auditUsername, policy, PERMS, WIDENED_1_16, asBefore1_16, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
   createSession, markReauth, noteSsoProof, reauthStatus, verifySigner, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

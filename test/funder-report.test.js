@@ -183,7 +183,7 @@ test('visits with no funding source get their own row and a warning', async () =
 
 test('staff hours: logged but not yet approved are shown beside approved, with a warning', async () => {
   const f = (await admin.post('/api/budget/funds', { name: 'Hours fund', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 1000 })).data.id;
-  const worker = H.makeUser('frhours', 'navigator');
+  const worker = H.makeCaseloadUser('frhours', 'navigator');
   for (const [m, s] of [[4770, 'submitted'], [60, 'draft'], [30, 'rejected']]) H.db.run(`INSERT INTO time_entries(id,user_id,work_date,minutes,funding_source_id,status) VALUES(?,?,?,?,?,?)`, require('node:crypto').randomUUID(), worker.id, '2026-08-03', m, f, s);
   const r = (await admin.get('/api/reports/funder?from=2026-08-01&to=2026-08-31')).data;
   const row = r.by_funding_source.find(x => x.id === f);
@@ -221,7 +221,7 @@ test('a default fund per worker and for the programme pre-fills new visits', asy
 test('filtered to one fund: its staff hours, its services and no other fund\'s', async () => {
   const x = (await admin.post('/api/budget/funds', { name: 'Filter fund X', fiscal_year_start: '2027-01-01', fiscal_year_end: '2027-12-31', total_amount: 1000 })).data.id;
   const y = (await admin.post('/api/budget/funds', { name: 'Filter fund Y', fiscal_year_start: '2027-01-01', fiscal_year_end: '2027-12-31', total_amount: 1000 })).data.id;
-  const worker = H.makeUser('frfilter', 'navigator');
+  const worker = H.makeCaseloadUser('frfilter', 'navigator');
   for (const [m, s, f] of [[120, 'submitted', x], [60, 'approved', x], [300, 'draft', y], [90, 'approved', y], [30, 'submitted', null]]) {
     H.db.run(`INSERT INTO time_entries(id,user_id,work_date,minutes,funding_source_id,status) VALUES(?,?,?,?,?,?)`, require('node:crypto').randomUUID(), worker.id, '2027-01-12', m, f, s);
   }

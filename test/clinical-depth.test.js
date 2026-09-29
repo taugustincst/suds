@@ -19,8 +19,8 @@ before(async () => {
   await H.start();
   require('../server/config').localModeEnabled = true;
   clinId = H.makeUser('cdclin', 'clinician').id;
-  navId = H.makeUser('cdnav', 'navigator').id;
-  H.makeUser('cdnav2', 'navigator'); H.makeUser('cdsup', 'supervisor'); H.makeUser('cdfin', 'finance'); H.makeUser('cdro', 'readonly');
+  navId = H.makeCaseloadUser('cdnav', 'navigator').id;
+  H.makeCaseloadUser('cdnav2', 'navigator'); H.makeUser('cdsup', 'supervisor'); H.makeUser('cdfin', 'finance'); H.makeUser('cdro', 'readonly');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   sup = H.client(); await sup.login('cdsup', 'StaffPassw0rd!x');
   clin = H.client(); await clin.login('cdclin', 'StaffPassw0rd!x');
@@ -222,8 +222,12 @@ test('care plan: goals tied to problems, steps with owners that can create to-do
   assert.equal(plan.goals.find(x => x.id === gid).review_overdue, false);
   assert.equal(plan.goals.find(x => x.id === gid).reviewed_at, plan.today);
 
-  // Only the author or a supervisor deletes; the steps go with the goal, as tombstones for devices.
-  assert.equal((await clin.del(`/api/goals/${gid}`)).status, 403);
+  // Only the author or a clients:all holder deletes; the steps go with the goal, as tombstones for devices. A
+  // clinician holds clients:all from 1.16.0 (was: 403 for every clinician); one held to their caseload does not.
+  const scopedClin = H.makeCaseloadUser('cdclin_scoped', 'clinician');
+  H.db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date) VALUES(?,?,?,?,?)`, require('node:crypto').randomUUID(), clientId, scopedClin.id, 'clinician', day(-1));
+  const sc = H.client(); await sc.login(scopedClin.username, scopedClin.password);
+  assert.equal((await sc.del(`/api/goals/${gid}`)).status, 403);
   assert.equal((await admin.put(`/api/goals/${gid}`, { status: 'met' })).status, 403, 'an administrator reads the plan but does not change it');
   assert.equal((await sup.del(`/api/goals/${gid}`)).status, 200);
   assert.ok(H.db.one(`SELECT 1 FROM tombstones WHERE table_name='care_plan_steps' AND id=?`, sid));

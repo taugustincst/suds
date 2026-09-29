@@ -15,7 +15,7 @@ const auth = require('../server/auth');
 let ro, fin, sup, nav1;
 before(async () => {
   await H.start();
-  nav1 = H.makeUser('dnav1', 'navigator'); const nav2 = H.makeUser('dnav2', 'navigator');
+  nav1 = H.makeCaseloadUser('dnav1', 'navigator'); const nav2 = H.makeCaseloadUser('dnav2', 'navigator');
   const clin = H.makeUser('dclin', 'clinician'); sup = H.makeUser('dsup', 'supervisor');
   fin = H.makeUser('dfin', 'finance'); ro = H.makeUser('dro', 'readonly');
   require('../server/demo').seed({ actor: sup.id, workers: [nav1.id, nav2.id], clinician: clin.id, supervisor: sup.id });

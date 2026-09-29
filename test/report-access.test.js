@@ -4,8 +4,9 @@
 // subtracted from each other: the August publication release (housing 15 of 15) minus an internal run for
 // 1–30 August (15 of 14) says the one person served on 31 August is unhoused. So a run that is not a
 // publication release (purpose internal or submission, suppressed or exact) needs reports:internal —
-// supervisors and administrators — or client-level access to everyone the run counts (a navigator's or
-// clinician's own caseload). The one exception is reports:funder (finance): the programme's own SUBMISSION to
+// supervisors and administrators — or client-level access to everyone the run counts (from 1.16.0 a navigator
+// or clinician holds clients:all and so sees the whole programme; one the programme holds to their caseload
+// with a per-user deny of clients:all counts its own caseload only). The one exception is reports:funder (finance): the programme's own SUBMISSION to
 // its funder — exact aggregate counts, by fund and for any range — without clients:read and without anything
 // client-level. Read-only accounts get publication releases only.
 const { test, before, after } = require('node:test');
@@ -25,7 +26,9 @@ const RUNS = {
   'submission, small cells suppressed': `${SHORT}&purpose=submission&counts=suppressed`,
   'internal, exact': `${SHORT}&purpose=internal&counts=exact`,
 };
-const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
+const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly', 'clinician_scoped', 'navigator_scoped'];
+// A navigator or clinician held to their caseload (clients:all denied), as both roles were before 1.16.0.
+const SCOPED = { clinician_scoped: 'clinician', navigator_scoped: 'navigator' };
 const ALL = Object.keys(RUNS);
 // What each role may run, per kind of run (the funder report and the NDP log, which count a caseload-scoped
 // role's own caseload only). A caseload-scoped role's run counts only its caseload, so it is never a
@@ -33,23 +36,28 @@ const ALL = Object.keys(RUNS);
 const ALLOWED = {
   admin: ALL,
   supervisor: ALL,
-  clinician: ['default (no purpose asked)', 'custom range (no purpose asked)', 'purpose=internal', 'purpose=submission', 'submission, small cells suppressed'],
-  navigator: ['default (no purpose asked)', 'custom range (no purpose asked)', 'purpose=internal', 'purpose=submission', 'submission, small cells suppressed'],
+  // 1.16.0: clients:all, so the whole programme: a publication release can be asked for too (was: 400, a
+  // caseload run is never one). Still no exact counts (reports:exact).
+  clinician: ['default (no purpose asked)', 'publication', 'custom range (no purpose asked)', 'purpose=internal', 'purpose=submission', 'submission, small cells suppressed'],
+  navigator: ['default (no purpose asked)', 'publication', 'custom range (no purpose asked)', 'purpose=internal', 'purpose=submission', 'submission, small cells suppressed'],
+  clinician_scoped: ['default (no purpose asked)', 'custom range (no purpose asked)', 'purpose=internal', 'purpose=submission', 'submission, small cells suppressed'],
+  navigator_scoped: ['default (no purpose asked)', 'custom range (no purpose asked)', 'purpose=internal', 'purpose=submission', 'submission, small cells suppressed'],
   // reports:funder: every submission run (exact or suppressed, any range) and a publication release; never an internal run.
   finance: ['default (no purpose asked)', 'publication', 'custom range (no purpose asked)', 'purpose=submission', 'exact counts', 'custom range submission, exact', 'submission, small cells suppressed'],
   readonly: ['default (no purpose asked)', 'publication'],
 };
 // What each role's first click is (no purpose asked), for a period that could be published: a supervisor's,
 // an administrator's and (1.14.0) finance's is the programme's own submission to its funder, with exact
-// counts; a caseload-scoped role's is internal (its caseload); read-only gets the publication release.
-const DEFAULT = { admin: ['submission', 'exact'], supervisor: ['submission', 'exact'], clinician: ['internal', 'suppressed'], navigator: ['internal', 'suppressed'], finance: ['submission', 'exact'], readonly: ['publication', 'suppressed'] };
+// counts; a navigator's and a clinician's is internal (the whole programme from 1.16.0, or their caseload when
+// held to it; server/funder-report.js countingMode); read-only gets the publication release.
+const DEFAULT = { admin: ['submission', 'exact'], supervisor: ['submission', 'exact'], clinician: ['internal', 'suppressed'], navigator: ['internal', 'suppressed'], finance: ['submission', 'exact'], readonly: ['publication', 'suppressed'], clinician_scoped: ['internal', 'suppressed'], navigator_scoped: ['internal', 'suppressed'] };
 const c = {};
 let fund; let clientId; let clientCode;
 
 before(async () => {
   await H.start();
   c.admin = H.client(); await c.admin.login('admin', 'AdminPassw0rd!x');
-  for (const role of ROLES.slice(1)) { H.makeUser(`ra${role}`, role); c[role] = H.client(); await c[role].login(`ra${role}`, 'StaffPassw0rd!x'); }
+  for (const role of ROLES.slice(1)) { (SCOPED[role] ? H.makeCaseloadUser(`ra${role}`, SCOPED[role]) : H.makeUser(`ra${role}`, role)); c[role] = H.client(); await c[role].login(`ra${role}`, 'StaffPassw0rd!x'); }
   fund = (await c.admin.post('/api/budget/funds', { name: 'Settlement A', source_type: 'opioid_settlement', total_amount: 10000, fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', settlement_use: 'core_a' })).data.id;
   const id = (await c.supervisor.post('/api/clients', { first_name: 'Augusta', last_name: 'Last', confirm_duplicate: true })).data.id;
   clientId = id; clientCode = H.db.one(`SELECT client_code FROM clients WHERE id=?`, id).client_code;
@@ -153,15 +161,20 @@ test('the settlement report: finance runs the submission (any range) and publica
     assert.equal((await c.finance.get(`${path}/export?${q}&format=csv`)).status, 403, `finance export: ${q}`);
   }
   // A navigator holds budget:read, but the settlement report counts the whole programme's people, not a
-  // caseload, and a caseload-scoped run is never a publication release: refused while caseloads are
-  // restricted, allowed when they are not (a navigator can then open every client record anyway).
+  // caseload, and a caseload-scoped run is never a publication release: for a navigator held to their caseload
+  // it is refused while caseloads are restricted, allowed when they are not (they can then open every client
+  // record anyway). From 1.16.0 a navigator with the role's defaults holds clients:all, and runs it, as does a
+  // clinician (budget:read from 1.16.0).
   for (const q of [PUB, SHORT]) {
-    const r = await c.navigator.get(`${path}?${q}`);
+    const r = await c.navigator_scoped.get(`${path}?${q}`);
     assert.equal(r.status, 403, q);
     assert.match(r.data.error, /publication release/i);
+    assert.equal((await c.navigator.get(`${path}?${q}`)).status, 200, `navigator (clients:all): ${q}`);
+    assert.equal((await c.clinician.get(`${path}?${q}`)).status, 200, `clinician (clients:all, budget:read): ${q}`);
   }
+  assert.equal((await c.navigator.get(`${path}?${SHORT}`)).data.suppression.purpose, 'internal', 'a navigator\'s run is internal');
   assert.equal((await c.admin.put('/api/admin/settings', { caseload_restriction: '0' })).status, 200);
-  try { assert.equal((await c.navigator.get(`${path}?${SHORT}`)).status, 200); } finally { await c.admin.put('/api/admin/settings', { caseload_restriction: '1' }); }
+  try { assert.equal((await c.navigator_scoped.get(`${path}?${SHORT}`)).status, 200); } finally { await c.admin.put('/api/admin/settings', { caseload_restriction: '1' }); }
 });
 
 test('the settlement report\'s first click per role: the submission for a supervisor, an administrator and finance', async () => {

@@ -144,13 +144,13 @@ export async function openNote(id, { onChange } = {}) {
     n.structured && n.content ? h('details', { class: 'mt' }, h('summary', { class: 'muted small' }, 'Narrative text'), h('pre', { class: 'note' }, n.content)) : null,
     n.addenda.length ? h('div', { class: 'mt' }, h('h3', { class: 'eyebrow' }, 'Addenda'), n.addenda.map(a => h('div', { class: 'list-item' }, h('div', { class: 'small muted' }, `${fmt.dt(a.created_at)} · ${a.author}${a.reason ? ' · ' + a.reason : ''}`), h('div', { style: { whiteSpace: 'pre-wrap' } }, a.content)))) : null,
     h('div', { class: 'btn-row' },
-      writable && n.status === 'draft' && (mine || can('clients:all')) ? h('button', { class: 'btn', onClick: () => { m.close(); openNoteForm(n, { onDone: onChange }); } }, 'Edit draft') : null,
-      writable && n.status === 'draft' && (mine || can('clients:all')) ? h('button', { class: 'btn danger', onClick: async () => { if (await confirmDialog('Delete draft', 'Delete this draft note?', { danger: true, okText: 'Delete' })) { await del(`/api/notes/${n.id}`); m.close(); onChange && onChange(); } } }, 'Delete draft') : null,
-      writable && n.status === 'draft' && (mine || can('clients:all')) ? h('button', { class: 'btn primary', onClick: () => signNote(n, () => { m.close(); onChange && onChange(); }) }, 'Sign & lock') : null,
+      writable && n.status === 'draft' && (mine || can('records:manage-others')) ? h('button', { class: 'btn', onClick: () => { m.close(); openNoteForm(n, { onDone: onChange }); } }, 'Edit draft') : null,
+      writable && n.status === 'draft' && (mine || can('records:manage-others')) ? h('button', { class: 'btn danger', onClick: async () => { if (await confirmDialog('Delete draft', 'Delete this draft note?', { danger: true, okText: 'Delete' })) { await del(`/api/notes/${n.id}`); m.close(); onChange && onChange(); } } }, 'Delete draft') : null,
+      writable && n.status === 'draft' && (mine || can('records:manage-others')) ? h('button', { class: 'btn primary', onClick: () => signNote(n, () => { m.close(); onChange && onChange(); }) }, 'Sign & lock') : null,
       writable && n.status !== 'draft' ? h('button', { class: 'btn', onClick: () => addAddendum(n, () => { m.close(); openNote(n.id, { onChange }); onChange && onChange(); }) }, 'Add addendum') : null,
       // A navigator who wants a supervisor's eyes on a note asks for it here; the note goes into the
       // supervision queue once it is signed (immediately, if it already is).
-      writable && (mine || can('clients:all')) && !n.cosigned_at && !n.cosign_requested ? h('button', { class: 'btn', 'data-send-supervisor': '1', onClick: async () => {
+      writable && (mine || can('records:manage-others')) && !n.cosigned_at && !n.cosign_requested ? h('button', { class: 'btn', 'data-send-supervisor': '1', onClick: async () => {
         try { const r = await post(`/api/notes/${n.id}/request-cosign`, {}); toast(r.awaiting_cosign ? 'Sent to your supervisor for review' : 'Marked for review — it goes to your supervisor once signed', 'ok'); m.close(); openNote(n.id, { onChange }); onChange && onChange(); }
         catch (e) { toast(e.message, 'error'); }
       } }, 'Send to supervisor') : null,

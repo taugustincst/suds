@@ -13,7 +13,7 @@ let admin, nav, navId, supId;
 const clients = [];
 before(async () => {
   await H.start();
-  navId = H.makeUser('pq_nav', 'navigator').id;
+  navId = H.makeCaseloadUser('pq_nav', 'navigator').id;
   supId = H.makeUser('pq_sup', 'supervisor').id;
   const past = (d) => new Date(Date.now() - d * 86400000).toISOString();
   db.transaction(() => {

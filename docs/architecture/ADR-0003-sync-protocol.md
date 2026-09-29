@@ -39,6 +39,16 @@ until `complete` gets the same pages, and a sync cut short resumes the backfill 
 cursor is refused (400), and a forged position fetches nothing a full resync would not (every row still passes
 scope and read rules). A client taken off the caseload is
 listed in `dropped_clients` for the device to purge; assigned again later, it arrives whole again.
+Since 1.16.0 a pull also follows a change to what the person may read (their role, a per-user grant or deny, the
+widened navigator and clinician defaults): every answer carries `scope`, a key of caseload scoping and the
+permissions the tables' scope and read rules depend on, and the device sends back the key it last saw
+(`?scope=`; `legacy` from a device that synced before 1.16.0, compared with the 1.15 role defaults). When the key
+changed, what the person may no longer read is named for removal (`dropped_clients`, and `dropped_rows` as
+`[table, id]` pairs: clinical notes and their addenda, another worker's records with no client or imports, a
+table whose read permission went), and when they may read more the pull starts again from the beginning
+(`scope_widened`) so the device receives the rest whole. Each answer also carries the person's own
+`permission_overrides` and the office's `caseload_restriction`, which the device's kernel applies as the office
+does.
 
 **Push.** Each row is applied in its own savepoint; a failure rejects that row (with a reason the device
 shows) and the rest land. Since 1.14.0 every row passes **its table's rules** (`server/rules/<table>.js`), the

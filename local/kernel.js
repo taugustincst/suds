@@ -90,6 +90,36 @@ function openDatabase(bytes) {
     throw e;
   }
   sync.ensureTables();
+  scopeEarlierSignups();
+}
+
+// A person who signs up on a shared device (the second account and later) sees only the clients they record or
+// are assigned, and no clinical notes, as a navigator always did here: from 1.16.0 a navigator and a clinician
+// hold clients:all, and a navigator notes:clinical:read, by default (server/auth.js PERMS), which on a device
+// several people share would open each person's clients to the others. So a device sign-up is given per-user
+// denies of both (the 1.15.0 overrides, server/auth.js effectivePerms), recorded with this reason. They stay
+// when the device administrator makes the account a navigator or a clinician, and go when it is made a
+// supervisor or an administrator (roles that see every client); an administrator account may also lift them one
+// by one under Settings -> Users & permissions -> Permissions. The device administrator (the first account, who
+// can back up and restore the whole device) keeps the role's defaults.
+const SIGNUP_SCOPE = ['clients:all', 'notes:clinical:read'];
+const SIGNUP_SCOPE_REASON = 'Signed up on a shared device: sees only their own caseload until the device administrator decides otherwise';
+function deviceAdminId() {
+  return db.getSetting('device_admin_user_id', null)
+    || (db.one(`SELECT id FROM users WHERE password_hash NOT LIKE 'scrypt$0$%' ORDER BY created_at, rowid LIMIT 1`) || {}).id || null;
+}
+function scopeSignup(userId, by) {
+  for (const p of SIGNUP_SCOPE) db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by) VALUES(?,?,'deny',?,?) ON CONFLICT(user_id, permission) DO NOTHING`, userId, p, SIGNUP_SCOPE_REASON, by || null);
+}
+// A device upgraded from before 1.16.0 (or a backup made then, restored): the accounts that signed up on it get
+// the same denies, once, so the upgrade does not open anyone's clients to the others on the device.
+function scopeEarlierSignups() {
+  if (!sync.isStaticHost() || db.getSetting('signup_scope_v1_16', null) !== null) return;
+  const admin = deviceAdminId();
+  db.transaction(() => {
+    if (admin) for (const u of db.all(`SELECT id FROM users WHERE role IN ('navigator','clinician') AND password_hash NOT LIKE 'scrypt$0$%' AND id<>?`, admin)) scopeSignup(u.id, admin);
+    db.setSetting('signup_scope_v1_16', '1');
+  });
 }
 
 /** What the locked sign-in page may know without the key: no names, no records. */
@@ -458,8 +488,6 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
   // backup, restore one, and turn further sign-ups off. Recorded at set-up; a device set up before 1.9.5
   // falls back to the earliest account with a usable password (an office account pulled down by a sync
   // carries a blanked hash and can never be it).
-  const deviceAdminId = () => db.getSetting('device_admin_user_id', null)
-    || (db.one(`SELECT id FROM users WHERE password_hash NOT LIKE 'scrypt$0$%' ORDER BY created_at, rowid LIMIT 1`) || {}).id || null;
   const isDeviceAdmin = (u) => !!u && u.id === deviceAdminId();
   const userCount = () => db.one(`SELECT COUNT(*) n FROM users`).n;
   const clientCount = () => db.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n;
@@ -492,7 +520,7 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
   router.post('/api/local/setup', (ctx) => createFirstAccount(ctx.body));
   // "Sign up" on the sign-in page. With no account yet it is the first-run set-up above. After that, on
   // the on-device app and while the device administrator allows it, it creates a navigator account at
-  // once: caseload-scoped like any navigator, so the new person sees only the clients they record (or are
+  // once, caseload-scoped (SIGNUP_SCOPE above), so the new person sees only the clients they record (or are
   // assigned) — never the records of whoever else uses this browser.
   router.post('/api/local/signup', (ctx) => {
     if (userCount() === 0) return createFirstAccount(ctx.body);
@@ -508,10 +536,12 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
     const id = uuid();
     db.transaction(() => {
       db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,'navigator',0,?)`, id, v.username, hashPassword(v.password), v.display_name, db.now());
-      // A second person on the device: from now on each navigator and clinician sees only their own caseload.
+      // A second person on the device: from now on caseload scoping is on, and this person is held to it
+      // (SIGNUP_SCOPE above; a role holding clients:all is not caseload-scoped, server/auth.js caseloadRestricted).
       db.setSetting('caseload_restriction', '1');
+      scopeSignup(id, deviceAdminId());
     });
-    audit.log({ user: { id, username: v.username }, action: 'local.signup', entity: 'user', entityId: id });
+    audit.log({ user: { id, username: v.username }, action: 'local.signup', entity: 'user', entityId: id, details: { denied: SIGNUP_SCOPE } });
     return { ok: true, role: 'navigator' };
   });
   // The accounts made on this device, for its administrator to see and give roles to. Accounts that came
@@ -538,9 +568,12 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
     // manage the device's accounts in the app, so it is not offered.
     if (u.id === ctx.user.id) throw new HttpError(400, 'You cannot change your own role here.');
     db.run(`UPDATE users SET role=?, updated_at=? WHERE id=?`, v.role, db.now(), u.id);
+    // A supervisor or an administrator sees every client: the sign-up's caseload denies go with the promotion.
+    const lifted = v.role === 'supervisor' || v.role === 'admin'
+      ? db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND mode='deny' AND reason=? AND permission IN (${SIGNUP_SCOPE.map(() => '?').join(',')})`, u.id, SIGNUP_SCOPE_REASON, ...SIGNUP_SCOPE).changes : 0;
     // A role change takes effect on the next sign-in, like an office role change: end that person's sessions.
     auth.revokeAllForUser(u.id);
-    audit.log({ user: ctx.user, action: 'local.account.role', entity: 'user', entityId: u.id, details: { from: u.role, to: v.role } });
+    audit.log({ user: ctx.user, action: 'local.account.role', entity: 'user', entityId: u.id, details: { from: u.role, to: v.role, ...(lifted ? { denies_lifted: SIGNUP_SCOPE } : {}) } });
     return { ok: true, role: v.role };
   });
   // What the "This device" page shows: the last backup, whether further sign-ups are allowed, and whether

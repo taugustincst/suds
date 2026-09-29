@@ -20,7 +20,9 @@ async function receive(body) { const r = await sup.post('/api/supplies/receipts'
 before(async () => {
   await H.start();
   require('../server/config').localModeEnabled = true;
-  for (const [u, role] of [['spsup', 'supervisor'], ['spnav', 'navigator'], ['spnav2', 'navigator'], ['spclin', 'clinician'], ['spfin', 'finance'], ['spro', 'readonly']]) H.makeUser(u, role);
+  for (const [u, role] of [['spsup', 'supervisor'], ['spclin', 'clinician'], ['spfin', 'finance'], ['spro', 'readonly']]) H.makeUser(u, role);
+  // Navigators held to their caseload (clients:all denied): another worker's visit is not theirs to add to.
+  for (const u of ['spnav', 'spnav2']) H.makeCaseloadUser(u, 'navigator');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   sup = H.client(); await sup.login('spsup', 'StaffPassw0rd!x');
   nav = H.client(); await nav.login('spnav', 'StaffPassw0rd!x');

@@ -15,8 +15,8 @@ const c = {};
 before(async () => {
   await H.start();
   require('../server/config').localModeEnabled = true;
-  nav1 = H.makeUser('unav1', 'navigator'); nav2 = H.makeUser('unav2', 'navigator');
-  clin = H.makeUser('uclin', 'clinician'); sup = H.makeUser('usup', 'supervisor');
+  nav1 = H.makeCaseloadUser('unav1', 'navigator'); nav2 = H.makeCaseloadUser('unav2', 'navigator');
+  clin = H.makeCaseloadUser('uclin', 'clinician'); sup = H.makeUser('usup', 'supervisor');
   require('../server/demo').seed({ actor: sup.id, workers: [nav1.id, nav2.id], clinician: clin.id, supervisor: sup.id });
   for (const u of [nav1, nav2, clin, sup]) { c[u.username] = H.client(); await c[u.username].login(u.username, u.password); }
 });
@@ -92,6 +92,9 @@ test('sync sends time entries with no client only to their worker (or time:all),
 });
 
 test('a device without budget:read gets no expenditures and no fund or line amounts', async () => {
+  // A clinician holds budget:read from 1.16.0 (was: no budget permission); one the programme denies it to is
+  // the device without it.
+  H.deny(clin, 'budget:read');
   const clinPull = await pullAll(c.uclin);
   assert.equal((clinPull.expenditures || []).length, 0, 'expenditures need budget:read');
   assert.ok((clinPull.funding_sources || []).length > 0, 'funds still travel: visits and time entries point at them');

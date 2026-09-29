@@ -514,7 +514,7 @@ module.exports = (r) => {
     return { ok: true, legal_hold: v.hold ? 1 : 0 };
   });
 
-  r.delete('/api/clients/:id', auth.requireAuth, auth.requirePerm('clients:all'), (ctx) => {
+  r.delete('/api/clients/:id', auth.requireAuth, auth.requirePerm('records:manage-others'), (ctx) => {
     const row = loadClient(ctx, ctx.params.id);
     if (!auth.hasPerm(ctx.user, 'clients:write')) throw forbidden();
     if (row.legal_hold) throw badRequest('This record is on legal hold and cannot be deleted until the hold is cleared');

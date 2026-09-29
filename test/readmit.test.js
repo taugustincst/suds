@@ -17,7 +17,7 @@ let oldId, activeId;
 const REASON = 'Walked in at 7pm asking to restart services';
 before(async () => {
   await H.start();
-  supId = H.makeUser('ra_sup', 'supervisor').id; H.makeUser('ra_navA', 'navigator'); navBId = H.makeUser('ra_navB', 'navigator').id; H.makeUser('ra_fin', 'finance');
+  supId = H.makeUser('ra_sup', 'supervisor').id; H.makeCaseloadUser('ra_navA', 'navigator'); navBId = H.makeCaseloadUser('ra_navB', 'navigator').id; H.makeUser('ra_fin', 'finance');
   sup = H.client(); await sup.login('ra_sup', 'StaffPassw0rd!x');
   navA = H.client(); await navA.login('ra_navA', 'StaffPassw0rd!x');
   navB = H.client(); await navB.login('ra_navB', 'StaffPassw0rd!x');

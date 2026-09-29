@@ -7,7 +7,7 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const H = require('./helpers');
 
-let admin, nav, sup, navId, supId;
+let admin, nav, sup, navId, supId, scoped, scopedId;
 before(async () => {
   await H.start();
   navId = H.makeUser('u13nav', 'navigator').id;
@@ -15,6 +15,9 @@ before(async () => {
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   nav = H.client(); await nav.login('u13nav', 'StaffPassw0rd!x');
   sup = H.client(); await sup.login('u13sup', 'StaffPassw0rd!x');
+  // 1.16.0: a navigator sees every client by default; caseload scoping is a per-user deny of clients:all.
+  scopedId = H.makeCaseloadUser('u13scoped', 'navigator').id;
+  scoped = H.client(); await scoped.login('u13scoped', 'StaffPassw0rd!x');
 });
 after(H.stop);
 
@@ -44,13 +47,16 @@ test('search ranking: exact name first, then this person\'s recent clients, then
 });
 
 test('search ranking keeps caseload scoping and the audit entry exactly as before', async () => {
-  // Not on the navigator's caseload: an exact match they may not see stays out, however well it matches.
-  await admin.post('/api/clients', { first_name: 'Hidden', last_name: 'Quenby', no_episode: true });
-  const mine = (await nav.post('/api/clients', { first_name: 'Mine', last_name: 'Quenbyson' })).data.id;
-  const r = await nav.get('/api/clients?status=all&rank=1&q=quenby');
+  // Not on the caseload of a navigator held to it (clients:all denied, 1.16.0): an exact match they may not see
+  // stays out, however well it matches. (was: any navigator; from 1.16.0 a navigator with the role's defaults
+  // sees every client, so both are found, the exact match first.)
+  const hidden = (await admin.post('/api/clients', { first_name: 'Hidden', last_name: 'Quenby', no_episode: true })).data.id;
+  const mine = (await scoped.post('/api/clients', { first_name: 'Mine', last_name: 'Quenbyson' })).data.id;
+  const r = await scoped.get('/api/clients?status=all&rank=1&q=quenby');
   assert.equal(r.status, 200);
   assert.deepStrictEqual(r.data.clients.map(c => c.id), [mine], 'only the client on their caseload');
-  const a = H.db.one(`SELECT * FROM audit_log WHERE user_id=? AND action='client.list' ORDER BY rowid DESC LIMIT 1`, navId);
+  assert.deepStrictEqual((await nav.get('/api/clients?status=all&rank=1&q=quenby')).data.clients.map(c => c.id), [hidden, mine], 'a navigator with the role\'s defaults finds both');
+  const a = H.db.one(`SELECT * FROM audit_log WHERE user_id=? AND action='client.list' ORDER BY rowid DESC LIMIT 1`, scopedId);
   const d = JSON.parse(a.details);
   assert.equal(d.q, '[redacted]', 'what was searched for is not written to the audit log');
   assert.equal(d.count, 1);

@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const H = require('./helpers');
 const C = require('../server/constants');
 
-let admin, sup, nav, fin, ro, clin, clientId, fund, plainFund, line;
+let admin, sup, nav, navScoped, fin, ro, clin, clinScoped, clientId, fund, plainFund, line;
 before(async () => {
   await H.start();
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
@@ -17,6 +17,9 @@ before(async () => {
   fin = H.client(); await fin.login('hrfin', 'StaffPassw0rd!x');
   ro = H.client(); await ro.login('hrro', 'StaffPassw0rd!x');
   clin = H.client(); await clin.login('hrclin', 'StaffPassw0rd!x');
+  // A navigator and a clinician the programme holds to their caseload (clients:all denied; 1.16.0).
+  H.makeCaseloadUser('hrnav_scoped', 'navigator'); navScoped = H.client(); await navScoped.login('hrnav_scoped', 'StaffPassw0rd!x');
+  H.makeCaseloadUser('hrclin_scoped', 'clinician'); clinScoped = H.client(); await clinScoped.login('hrclin_scoped', 'StaffPassw0rd!x');
   clientId = (await sup.post('/api/clients', { first_name: 'Nadia', last_name: 'Loxone', confirm_duplicate: true })).data.id;
   // Anonymous community distribution at two sites, and one kit to an enrolled client.
   for (const [kits, location, at] of [[10, 'community', '2026-05-02T18:00:00.000Z'], [5, 'community', '2026-05-02T19:00:00.000Z'], [8, 'shelter', '2026-05-09T17:00:00.000Z']]) {
@@ -37,8 +40,12 @@ test('the NDP log: distribution and reversals reported, aggregated, with no name
   // test/small-cell-suppression.test.js).
   const r = await sup.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31&purpose=submission&counts=exact');
   assert.equal(r.status, 200, JSON.stringify(r.data));
-  // A navigator sees community distribution and their own caseload's, as with every other report.
-  assert.equal((await nav.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31')).data.totals.kits, 23, 'the enrolled client is not on this navigator\'s caseload');
+  // A caseload-scoped navigator sees community distribution and their own caseload's, as with every other
+  // report; a navigator with the 1.16.0 defaults (clients:all) sees the whole programme's.
+  assert.equal((await navScoped.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31')).data.totals.kits, 23, 'the enrolled client is not on this navigator\'s caseload');
+  const whole = (await nav.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31')).data;
+  assert.equal(whole.totals.kits, 24, 'clients:all: the whole programme');
+  assert.equal(whole.suppression.purpose, 'internal', 'an internal run, suppressed, as a navigator\'s first run always was');
   assert.equal(r.data.totals.kits, 24);
   assert.equal(r.data.totals.doses, 48, 'two doses per kit by default');
   assert.equal(r.data.totals.reversals, 2);
@@ -145,8 +152,8 @@ test('a fund and an expenditure carry a settlement category', async () => {
 });
 
 test('the opioid settlement report groups settlement spending by allowable use and HIAA', async () => {
-  // The year has not ended, so this is an internal run: a supervisor's (finance and navigators run
-  // publication releases of this report only, test/report-access.test.js).
+  // The year has not ended, so this is an internal run: a supervisor's (finance runs the submission, and a
+  // caseload-scoped navigator publication releases of this report only, test/report-access.test.js).
   const r = await sup.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31');
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const core = r.data.by_use.find(x => x.code === 'core_a');
@@ -157,13 +164,18 @@ test('the opioid settlement report groups settlement spending by allowable use a
   assert.equal(r.data.totals.hiaa_amount, 1200, 'the training line was marked as not HIAA');
   assert.equal(r.data.totals.hiaa_share, 60);
   assert.match(r.data.source_note, /verif/i);
-  assert.equal((await nav.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'a navigator holds budget:read, but an internal run of a whole-programme report needs reports:internal');
+  // An internal run of a whole-programme report needs reports:internal, or clients:read without caseload
+  // scoping (auth.reportRunAllowed): from 1.16.0 a navigator (budget:read, clients:all) and a clinician
+  // (budget:read from 1.16.0) run it; one held to their caseload does not (was: 403 for every navigator).
+  assert.equal((await nav.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 200, 'a navigator with the default role');
+  assert.equal((await navScoped.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'a caseload-scoped navigator');
   // Finance writes the funder report (reports:funder, 1.14.0): its run is the programme's own submission.
   const f = await fin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31');
   assert.equal(f.status, 200, 'finance runs the submission');
   assert.equal(f.data.suppression.purpose, 'submission');
   assert.equal((await fin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31&purpose=internal')).status, 403, 'but never an internal run');
-  assert.equal((await clin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'a clinician holds no budget permission');
+  assert.equal((await clin.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 200, 'a clinician holds budget:read from 1.16.0 (was: 403, no budget permission)');
+  assert.equal((await clinScoped.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403, 'a caseload-scoped clinician');
   assert.equal((await ro.get('/api/reports/opioid-settlement?from=2026-01-01&to=2026-12-31')).status, 403);
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='report.opioid_settlement'`));
 });
@@ -176,5 +188,5 @@ test('the opioid settlement report exports to CSV and Excel', async () => {
   const xl = await sup.get('/api/reports/opioid-settlement/export?from=2026-01-01&to=2026-12-31&format=xlsx');
   assert.equal(xl.status, 200);
   assert.match(xl.headers.get('content-type'), /spreadsheetml/);
-  assert.equal((await clin.get('/api/reports/opioid-settlement/export?from=2026-01-01&to=2026-12-31')).status, 403);
+  assert.equal((await clinScoped.get('/api/reports/opioid-settlement/export?from=2026-01-01&to=2026-12-31')).status, 403, 'a caseload-scoped clinician (a clinician with the 1.16.0 defaults runs it)');
 });

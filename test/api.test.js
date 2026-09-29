@@ -8,7 +8,9 @@ before(async () => {
   await H.start();
   // These tests sync like a device does, which needs local mode on (it is off by default on a server).
   require('../server/config').localModeEnabled = true;
-  H.makeUser('nav1', 'navigator'); H.makeUser('nav2', 'navigator'); H.makeUser('clin1', 'clinician'); H.makeUser('fin1', 'finance'); H.makeUser('sup1', 'supervisor');
+  // nav1 and nav2 are navigators held to their caseload, as every navigator was before 1.16.0: clients:all and
+  // notes:clinical:read denied per user (the role's 1.16.0 defaults: test/role-expansion.test.js).
+  H.makeCaseloadUser('nav1', 'navigator'); H.makeCaseloadUser('nav2', 'navigator'); H.makeUser('clin1', 'clinician'); H.makeUser('fin1', 'finance'); H.makeUser('sup1', 'supervisor');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   nav = H.client(); await nav.login('nav1', 'StaffPassw0rd!x');
   nav2 = H.client(); await nav2.login('nav2', 'StaffPassw0rd!x');
@@ -27,7 +29,7 @@ test('CSRF header required for cookie sessions', async () => {
   assert.equal(r.status, 403);
 });
 test('account lockout after repeated failures', async () => {
-  H.makeUser('locky', 'navigator');
+  H.makeCaseloadUser('locky', 'navigator');
   const c = H.client();
   for (let i = 0; i < 5; i++) await c.post('/api/auth/login', { username: 'locky', password: 'bad' });
   const r = await c.post('/api/auth/login', { username: 'locky', password: 'StaffPassw0rd!x' });
@@ -175,7 +177,7 @@ test('resources and referrals', async () => {
   assert.equal((await nav.post('/api/referrals', { client_id: clientId, resource_id: 'nope', referred_at: '2026-09-03T09:00:00Z' })).status, 400);
 });
 
-test('clinical notes: navigator cannot author or read; clinician can; signing locks; admin break-glass audited', async () => {
+test('clinical notes: a navigator denied them cannot author or read; clinician can; signing locks; admin break-glass audited', async () => {
   const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x');
   const clinId = H.db.one(`SELECT id FROM users WHERE username='clin1'`).id;
   await s.post(`/api/clients/${clientId}/assignments`, { user_id: clinId, role_on_case: 'clinician' });
@@ -715,7 +717,7 @@ test('an administrator can link and unlink a single sign-on identity on an exist
   assert.ok('oidc_subject' in list.data.users[0], 'the full user listing (admin/supervisor) includes the linkage');
 });
 
-test('non-managers cannot record work under another worker', async () => {
+test('a worker without clients:all cannot record work under another worker', async () => {
   const otherId = H.db.one(`SELECT id FROM users WHERE username='nav2'`).id;
   const r = await nav.post('/api/interventions', { client_id: clientId, type: 'outreach', occurred_at: '2026-09-10T10:00:00Z', user_id: otherId });
   assert.equal(r.status, 201);
@@ -923,7 +925,7 @@ test('a pending wipe is not consumed by whoever knows the device id; only creden
 
 test('an administrator password reset wipes synced devices by default, and wipe_devices:false keeps them', async () => {
   const sync = { 'X-Sync-Client': '1', 'X-Device-Id': 'device-test-3' };
-  const u = H.makeUser('devowner', 'navigator');
+  const u = H.makeCaseloadUser('devowner', 'navigator');
   assert.equal((await H.client().post('/api/auth/login', { username: 'devowner', password: 'StaffPassw0rd!x' }, sync)).status, 200);
   const keep = await admin.put(`/api/users/${u.id}`, { password: 'AnotherPassw0rd!x', wipe_devices: false });
   assert.equal(keep.status, 200); assert.equal(keep.data.devices_wiped, 0);
@@ -1020,7 +1022,7 @@ test('sync: bearer login, scoped pull, push with last-write-wins and tombstones'
   const pull2 = await bare.get(`/api/sync/pull?since=${encodeURIComponent(now)}`, B);
   assert.ok(pull2.data.tombstones.some(t => t.id === ivId));
   // caseload enforcement: nav2 cannot push a note for a client not on their caseload
-  H.makeUser('outsider', 'navigator'); const o = H.client(); const ol = await o.post('/api/auth/login', { username: 'outsider', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' });
+  H.makeCaseloadUser('outsider', 'navigator'); const o = H.client(); const ol = await o.post('/api/auth/login', { username: 'outsider', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' });
   const rej = await bare.post('/api/sync/push', { tables: { notes: [{ id: require('node:crypto').randomUUID(), client_id: clientId, author_id: 'x', kind: 'admin', content_enc: 'x', occurred_at: now, created_at: now, updated_at: now }] } }, { Authorization: 'Bearer ' + ol.data.token, Cookie: '' });
   assert.equal(rej.data.rejected.length, 1);
   assert.equal((await bare.get('/api/sync/pull', { Authorization: 'Bearer ' + ol.data.token, Cookie: '' })).data.tables.clients.length, 0, 'outsider pulls no clients');
@@ -1081,7 +1083,7 @@ test('spreadsheet import: template, preview mapping/validation, commit; Excel ex
 test('sync hardening: caseload on existing clients, tombstone limits, ownership, approvals, clinical filtering', async () => {
   const uuid = () => require('node:crypto').randomUUID(); const now = new Date().toISOString(); const later = new Date(Date.now() + 5000).toISOString();
   const bare = H.client();
-  H.makeUser('syncnav', 'navigator'); const l = await bare.post('/api/auth/login', { username: 'syncnav', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' }); const B = { Authorization: 'Bearer ' + l.data.token, Cookie: '' };
+  H.makeCaseloadUser('syncnav', 'navigator'); const l = await bare.post('/api/auth/login', { username: 'syncnav', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' }); const B = { Authorization: 'Bearer ' + l.data.token, Cookie: '' };
   // cannot overwrite a client not on caseload even with a newer timestamp
   const r1 = await bare.post('/api/sync/push', { tables: { clients: [{ id: clientId, client_code: 'C26-0001', first_name_enc: 'Hacked', last_name_enc: 'X', status: 'active', created_at: now, updated_at: later }] } }, B);
   assert.equal(r1.data.rejected.length, 1); assert.notEqual(require('../server/crypto').decrypt(H.db.one(`SELECT first_name_enc FROM clients WHERE id=?`, clientId).first_name_enc), 'Hacked');
@@ -1175,7 +1177,7 @@ test('a role that must use two-step verification cannot work until it is set up'
 test('a half-authenticated session cannot change the account password', async () => {
   // The password route checked only that a user was attached, which let a session still owing its second
   // factor change the password on the account.
-  const u = H.makeUser('mfapw', 'navigator');
+  const u = H.makeCaseloadUser('mfapw', 'navigator');
   const c = H.client();
   await c.login(u.username, u.password);
   const setup = await c.post('/api/auth/mfa/setup', {});
@@ -1190,7 +1192,7 @@ test('a half-authenticated session cannot change the account password', async ()
 
 test('ending an assignment takes the client off that worker\'s caseload and out of their reach', async () => {
   const sup = H.client(); await sup.login('sup1', 'StaffPassw0rd!x');
-  const worker = H.makeUser('navend', 'navigator');
+  const worker = H.makeCaseloadUser('navend', 'navigator');
   const w = H.client(); await w.login(worker.username, worker.password);
   // Their own client, so they can see it to begin with.
   const id = (await w.post('/api/clients', { first_name: 'Ends', last_name: 'Here' })).data.id;
@@ -1211,7 +1213,7 @@ test('ending an assignment takes the client off that worker\'s caseload and out 
 });
 
 test('revoking sessions ends them immediately, on this device and on the others', async () => {
-  const u = H.makeUser('revoker', 'navigator');
+  const u = H.makeCaseloadUser('revoker', 'navigator');
   const phone = H.client(); await phone.login(u.username, u.password);
   const desk = H.client(); await desk.login(u.username, u.password);
   assert.equal((await phone.get('/api/clients')).status, 200);
@@ -1233,7 +1235,7 @@ test('revoking sessions ends them immediately, on this device and on the others'
 });
 
 test('deactivating an account ends its sessions', async () => {
-  const u = H.makeUser('goner', 'navigator');
+  const u = H.makeCaseloadUser('goner', 'navigator');
   const c = H.client(); await c.login(u.username, u.password);
   assert.equal((await c.get('/api/clients')).status, 200);
   assert.equal((await admin.put(`/api/users/${u.id}`, { is_active: false })).status, 200);
@@ -1242,7 +1244,7 @@ test('deactivating an account ends its sessions', async () => {
 
 // ---- Offboarding order: a pending wipe reaches the phone whatever the account's state is ----
 test('a remote wipe is delivered before the credentials are judged, so deactivating the account first cannot defeat it', async () => {
-  const u = H.makeUser('leaver', 'navigator');
+  const u = H.makeCaseloadUser('leaver', 'navigator');
   const sync = { 'X-Sync-Client': '1', 'X-Device-Id': 'device-leaver-1' };
   assert.equal((await H.client().post('/api/auth/login', { username: u.username, password: u.password }, sync)).status, 200);
   // The office does it in the "wrong" order: wipe requested, then the account deactivated.
@@ -1255,7 +1257,7 @@ test('a remote wipe is delivered before the credentials are judged, so deactivat
   assert.ok(row.revoked_at, 'the right password on the deactivated account proves the phone is the one being wiped'); assert.ok(row.wipe_requested_at);
 
   // A wrong password, or a username that does not exist, on a device with a wipe pending still gets the wipe
-  const u2 = H.makeUser('leaver2', 'navigator');
+  const u2 = H.makeCaseloadUser('leaver2', 'navigator');
   const sync2 = { 'X-Sync-Client': '1', 'X-Device-Id': 'device-leaver-2' };
   assert.equal((await H.client().post('/api/auth/login', { username: u2.username, password: u2.password }, sync2)).status, 200);
   await admin.post('/api/admin/devices/device-leaver-2/wipe', {});
@@ -1276,7 +1278,7 @@ test('a remote wipe is delivered before the credentials are judged, so deactivat
 });
 
 test('deactivating an account, or resetting its password, queues a wipe for every device it syncs from', async () => {
-  const u = H.makeUser('offboard', 'navigator');
+  const u = H.makeCaseloadUser('offboard', 'navigator');
   for (const id of ['device-offboard-1', 'device-offboard-2']) assert.equal((await H.client().post('/api/auth/login', { username: u.username, password: u.password }, { 'X-Sync-Client': '1', 'X-Device-Id': id })).status, 200);
   // One of them was already revoked (a delivered wipe leaves a device revoked): it is left alone.
   await admin.post('/api/admin/devices/device-offboard-2/revoke', {});
@@ -1291,7 +1293,7 @@ test('deactivating an account, or resetting its password, queues a wipe for ever
   assert.equal(next.data.deviceWipeRequired, true);
 
   // A password reset by an administrator does the same for a still-active account.
-  const p = H.makeUser('reset-me', 'navigator');
+  const p = H.makeCaseloadUser('reset-me', 'navigator');
   assert.equal((await H.client().post('/api/auth/login', { username: p.username, password: p.password }, { 'X-Sync-Client': '1', 'X-Device-Id': 'device-reset-1' })).status, 200);
   const pr = await admin.put(`/api/users/${p.id}`, { password: 'BrandNewPassw0rd!x' });
   assert.equal(pr.status, 200); assert.equal(pr.data.devices_wiped, 1);

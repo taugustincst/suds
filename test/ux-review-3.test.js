@@ -14,7 +14,7 @@ const today = new Date().toISOString().slice(0, 10);
 const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
 before(async () => {
   await H.start();
-  H.makeUser('uxnav', 'navigator'); H.makeUser('uxnav2', 'navigator'); H.makeUser('uxsup', 'supervisor'); H.makeUser('uxfin', 'finance');
+  H.makeCaseloadUser('uxnav', 'navigator'); H.makeCaseloadUser('uxnav2', 'navigator'); H.makeUser('uxsup', 'supervisor'); H.makeUser('uxfin', 'finance');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   nav = H.client(); await nav.login('uxnav', PW);
   nav2 = H.client(); await nav2.login('uxnav2', PW);

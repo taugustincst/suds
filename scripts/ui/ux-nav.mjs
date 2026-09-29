@@ -101,11 +101,13 @@ try {
     counts.navigator = { main: sb.main.length, more: sb.more.length };
     for (const want of ['Home', 'Clients', 'Waitlist', 'To-dos', 'Visits', 'Calls & texts', 'Notes', 'Supplies', 'Referrals']) ok(sb.main.includes(want), `a navigator's main list has ${want}`, sb.main);
     ok(!sb.main.includes('My clients'), 'the client list is "Clients", not "My clients"', sb.main);
-    ok(sb.more.includes('Funder report'), 'the funder report is under a navigator\'s More (their caseload\'s internal run), not gone', sb.more);
+    ok(sb.more.includes('Funder report'), 'the funder report is under a navigator\'s More (an internal run), not gone', sb.more);
     ok(sb.more.includes('Reports') && !sb.more.includes('Waitlist'), 'Reports stays under More; Waitlist moved up', sb.more);
     await nav.go('funder');
     ok(await nav.page.$('[data-run-kind]'), 'the navigator\'s funder report opens');
-    ok(/caseload/i.test(await nav.page.textContent('#main')), 'and says it counts their caseload');
+    // 1.16.0: a navigator holds clients:all, so the run counts the whole program (was: their caseload); it is
+    // still an internal run, not a publication release (server/funder-report.js countingMode).
+    eq(await nav.page.getAttribute('[data-run-kind]', 'data-run-kind'), 'internal', 'and it is an internal run');
   }
   {
     const sb = await sidebar(sup.page);

@@ -25,7 +25,7 @@ module.exports = define({
     // Only when this expenditure's opioid settlement category differs from its fund's.
     ...SETTLEMENT,
   },
-  owner: { col: 'user_id', all: 'clients:all' },
+  owner: { col: 'user_id', all: 'records:manage-others' },
   editableBy: (user, row) => (row.status === 'pending' && (row.user_id === user.id || auth.hasPerm(user, 'budget:approve')) ? null : notPermitted('You cannot edit this record')),
   // A push that only asks for a ruling (approve, reject, reimburse) reaches normalise, which keeps the office's
   // and flags the ask, whatever the item's status and whoever sent it.

@@ -82,6 +82,35 @@ Under 50 navigators at once the server is bounded by committing: every audited r
 on its own, and a saved visit commits the visit, its draw-down and their audit entries separately (22% of the
 server's time under that load). That is deliberate; see "Decided against".
 
+## A navigator's device syncs the whole programme (1.16.0)
+
+From 1.16.0 navigators and clinicians hold `clients:all` by default (docs/HIPAA.md, *Minimum necessary*), so a
+device's first sync is no longer one caseload but everything the programme holds that the person may read. The
+harness now measures both: the benchmark navigator held to their 2,000-client caseload with per-user denies of
+`clients:all` and `notes:clinical:read` (as every other navigator measurement in this file), and the same
+navigator with the role's defaults. Same 20,000-client programme, `node scripts/bench/run.js --no-load`, 4 CPUs,
+two runs (the second in brackets where it differed):
+
+| First sync | Rows | Pages | JSON / on the wire | Server time; worst page; longest stall |
+|---|---|---|---|---|
+| A navigator held to a 2,000-client caseload (as in 1.15) | 103,751 (104,005) | 31 (30) | 79.6 MB / 5.1 MB | 5.4 s (5.6 s); 271 ms (241 ms); 214 ms (193 ms) |
+| A navigator with the 1.16.0 defaults: the whole programme, clinical notes included | 503,742 | 120 | 460.3 MB / 29.3 MB | 19.3 s (19.3 s); 304 ms (337 ms); 171 ms (193 ms) |
+| That navigator's next pull after the programme denies them `clients:all` and `notes:clinical:read` (what the device must remove) | 18,021 clients and 7,805 other rows named | 1 | 1.1 MB / 0.5 MB | 159 ms; 119 ms stall |
+
+The office copes: each page stays within its limit and the event loop is never held longer than about 0.2 s. The
+device is the concern. A browser in local mode keeps the whole database in memory (sql.js) and seals the whole
+image again after changes, so five times the rows is roughly five times the memory and the sealing work, on a
+phone as much as on a laptop. Removing 18,000 clients after a deny is done on the device client by client (every
+table, as for a client taken off a caseload); that was not measured in a browser here, and on a phone it will take
+a while once. On-screen lists at the office are unaffected (a navigator's client, visit, note and call lists took
+17 to 59 ms). A programme larger than a few thousand clients that uses local mode (off by default,
+`LOCAL_MODE_ENABLED`) should hold the people who sync a device to their caseload before those devices next sync:
+deny them *See every client* (`clients:all`) under Settings → Users & permissions → Permissions, and the device
+carries their caseload again. A device that synced before 1.16.0 downloads the rest of the programme at its first
+sync after the upgrade unless the person was held to their caseload first (`test/role-expansion.test.js`,
+`test/sync-scope-change.test.js`). SUDS on this device (no office) is unaffected: it holds only what was entered on
+it.
+
 ## What changed, and why
 
 **Compressed responses.** JSON answers of 1 kB or more are compressed when the request accepts it: brotli

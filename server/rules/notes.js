@@ -24,8 +24,8 @@ module.exports = define({
     problem_ids: { type: 'array', maxLen: 30, of: 'string', fromColumn: JSON.parse },
   },
   tombstone: 'never',
-  owner: { col: 'author_id', all: 'clients:all' },
-  editableBy: (user, row) => (row.status === 'draft' && row.author_id !== user.id && !auth.hasPerm(user, 'clients:all') ? notPermitted('Only the author can edit a draft') : null),
+  owner: { col: 'author_id', all: 'records:manage-others' },
+  editableBy: (user, row) => (row.status === 'draft' && row.author_id !== user.id && !auth.hasPerm(user, 'records:manage-others') ? notPermitted('Only the author can edit a draft') : null),
   authorise(row, c) {
     const kind = c.existing ? c.existing.kind : row.kind;
     if (kind === 'clinical' && !auth.hasPerm(c.user, 'notes:clinical:write')) return refuse('clinical notes not permitted for this role', { status: 403, message: 'You cannot author clinical notes' });

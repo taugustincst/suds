@@ -9,8 +9,9 @@
 const PRIVILEGED_PERMISSIONS = ['users:manage', 'settings:manage', 'apikeys:manage'];
 
 // assignments:manage decides who is on a client's care team (and so who reaches the record); clients:read opens
-// records; clients:list-deidentified lists every client by code (security review of 1.15.3, M1).
-const SENSITIVE = new Set(['export:identified', 'clients:all', 'disclosures:override', 'notes:clinical:breakglass', 'clients:merge', 'clients:legal-hold',
+// records; clients:list-deidentified lists every client by code (security review of 1.15.3, M1);
+// records:manage-others (1.16.0) changes, deletes and records under the name of other workers' work.
+const SENSITIVE = new Set(['export:identified', 'clients:all', 'records:manage-others', 'disclosures:override', 'notes:clinical:breakglass', 'clients:merge', 'clients:legal-hold',
   'assignments:manage', 'clients:read', 'clients:list-deidentified']);
 
 // What opens a client's identity: a record (clients:write implies clients:read, auth.hasPerm), or a file of them.
@@ -23,7 +24,9 @@ const IDENTIFYING = ['clients:read', 'clients:write', 'export:identified'];
  *   - a privileged permission is an administrator's, never a grant to another role;
  *   - a de-identified role (clients:list-deidentified without clients:read: finance, readonly) knows clients by
  *     code only, and is never granted what would identify them;
- *   - clients:list-deidentified is that role's read path, not something to add to a role that opens records.
+ *   - clients:list-deidentified is that role's read path, not something to add to a role that opens records;
+ *   - records:manage-others (1.16.0) manages other workers' client work, so it presupposes a role that records
+ *     client work at all (clients:write in its defaults: navigator, clinician, supervisor, administrator).
  * Denying is always allowed: it only takes away.
  */
 function grantProblem(role, roleDefaults, permission) {
@@ -31,7 +34,8 @@ function grantProblem(role, roleDefaults, permission) {
   if (PRIVILEGED_PERMISSIONS.includes(permission) && role !== 'admin') return `"${permission}" can only be granted to an administrator — change their role instead`;
   const deidentified = defaults.includes('clients:list-deidentified') && !defaults.some(p => IDENTIFYING.includes(p));
   if (deidentified && IDENTIFYING.includes(permission)) return `A ${role} account knows clients by client code only (de-identified), so it cannot be granted "${permission}", which would let it identify them. If this person needs to open client records, give them a role that does.`;
-  if (permission === 'clients:list-deidentified' && defaults.some(p => IDENTIFYING.includes(p))) return `"clients:list-deidentified" is how a de-identified role (finance, read-only) lists clients by code. A ${role} already opens the records on their caseload; to show them every client, grant clients:all instead.`;
+  if (permission === 'records:manage-others' && !defaults.includes('clients:write')) return `"${permission}" can only be granted to a role that records client work (navigator, clinician, supervisor, administrator)`;
+  if (permission === 'clients:list-deidentified' && defaults.some(p => IDENTIFYING.includes(p))) return `"clients:list-deidentified" is how a de-identified role (finance, read-only) lists clients by code. A ${role} already opens client records; to show them every client (not only their caseload), clients:all is the permission.`;
   return null;
 }
 
@@ -41,9 +45,10 @@ const DEFS = [
   ['settings:manage', 'Manage program settings', 'Program profile, modules, MFA policy, SCIM mapping, caseload restriction.'],
   ['audit:read', 'Read the audit log', 'Tamper-evident audit trail and the break-glass review queue.'],
   ['apikeys:manage', 'Manage API keys', 'Intake API keys and FHIR client registrations.'],
-  ['clients:read', 'Open client records', 'Identified client data for clients on the caseload (or all, with clients:all).'],
+  ['clients:read', 'Open client records', 'Identified client data: every client with clients:all, otherwise only the clients assigned to them.'],
   ['clients:write', 'Edit client records', 'Create and edit identified client records.'],
-  ['clients:all', 'See every client', 'Bypasses caseload scoping; required for whole-program internal reports.'],
+  ['clients:all', 'See every client', 'Every client, not only their caseload (navigators, clinicians, supervisors and administrators by default from 1.16.0), to read and add their own work to, with whole-program reports and synced devices. Deny it to hold a person to their caseload.'],
+  ['records:manage-others', 'Manage other workers\' records', 'Change or delete another worker\'s visits, calls, referrals, overdose reports, to-dos, care-plan goals, assessments and draft notes; record work under another worker\'s name; remove a client record; see other workers\' staged imports. Supervisors and administrators.'],
   ['clients:list-deidentified', 'List de-identified clients', 'Client codes only, never names or identifiers.'],
   ['clients:merge', 'Merge duplicate clients', 'Combine two client records, audited.'],
   ['clients:legal-hold', 'Place a legal hold', 'Prevent deletion/merge of a client record under hold.'],
@@ -63,7 +68,7 @@ const DEFS = [
   ['budget:manage', 'Manage the budget', 'Funding sources, budget lines and allocations.'],
   ['notes:admin:read', 'Read admin notes', 'Non-clinical case notes.'],
   ['notes:admin:write', 'Write admin notes', 'Create and edit non-clinical case notes.'],
-  ['notes:clinical:read', 'Read clinical notes', 'Clinical notes and assessments content.'],
+  ['notes:clinical:read', 'Read clinical notes', 'Clinical notes, including SUD counseling notes (clinicians, supervisors and, read only, navigators by default from 1.16.0). Deny it to keep clinical notes from a person.'],
   ['notes:clinical:write', 'Write clinical notes', 'Create and sign clinical notes.'],
   ['notes:clinical:breakglass', 'Clinical notes via break-glass', 'Open a clinical note only with a written reason; audited and queued for supervisor review.'],
   ['notes:cosign', 'Countersign notes', 'Countersign trainee notes.'],
@@ -75,7 +80,7 @@ const DEFS = [
   ['reports:exact', 'Exact counts', 'Unsuppressed counts for internal runs.'],
   ['reports:funder', 'File the funder submission', 'The program\'s own submission runs of the funder report, NDP log and settlement report: exact aggregates, no client-level data.'],
   ['assignments:manage', 'Manage caseloads', 'Assign workers to clients and move caseloads between workers.'],
-  ['export:read', 'Export data', 'De-identified (Safe Harbor) exports, caseload-scoped.'],
+  ['export:read', 'Export data', 'De-identified (Safe Harbor) exports of the clients they can see (their caseload without clients:all).'],
   ['export:identified', 'Export identified data', 'Exports with names, dates of birth, addresses. Never held with a de-identified role.'],
   ['forms:*', 'Forms (all)', 'Manage the form library and client forms.'],
   ['forms:read', 'Read the form library', 'Blank form templates.'],

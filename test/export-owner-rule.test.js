@@ -23,7 +23,7 @@ const counts = {};
 const countAll = async (who, c) => { counts[who] = {}; for (const k of KINDS) counts[who][k] = rowsIn(await exportOf(c, k)); };
 before(async () => {
   await H.start();
-  H.makeUser('eo_nav1', 'navigator'); H.makeUser('eo_nav2', 'navigator'); H.makeUser('eo_sup', 'supervisor'); H.makeUser('eo_fin', 'finance');
+  H.makeCaseloadUser('eo_nav1', 'navigator'); H.makeCaseloadUser('eo_nav2', 'navigator'); H.makeUser('eo_sup', 'supervisor'); H.makeUser('eo_fin', 'finance');
   nav1 = H.client(); await nav1.login('eo_nav1', 'StaffPassw0rd!x');
   nav2 = H.client(); await nav2.login('eo_nav2', 'StaffPassw0rd!x');
   sup = H.client(); await sup.login('eo_sup', 'StaffPassw0rd!x');

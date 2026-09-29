@@ -191,7 +191,8 @@ module.exports = (r) => {
     if (!isKnownPermission(v.permission)) return fail(`Unknown permission "${v.permission}"`);
     const bad = reasonProblem(v.reason); if (bad) return fail(bad);
     // What the target's role may be granted at all (permissions.js grantProblem): privileged permissions are an
-    // administrator's; a de-identified role is never granted a way to identify clients (M1).
+    // administrator's; a de-identified role is never granted a way to identify clients (M1), nor records:manage-others
+    // (1.16.0), which presupposes a role that records client work.
     if (v.mode === 'grant') { const no = grantProblem(target.role, auth.rolePerms(target.role), v.permission); if (no) return fail(no); }
     db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by)
             VALUES(?, ?, ?, ?, ?) ON CONFLICT(user_id, permission) DO UPDATE SET mode=excluded.mode, reason=excluded.reason, granted_by=excluded.granted_by, granted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,

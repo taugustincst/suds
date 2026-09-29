@@ -84,13 +84,13 @@ module.exports = (r) => {
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='staged') AS staged,
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='committed') AS committed,
       (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='discarded') AS discarded
-      FROM imports i LEFT JOIN users u ON u.id=i.imported_by ${auth.hasPerm(ctx.user, 'clients:all') ? '' : 'WHERE i.imported_by=? OR i.imported_by IS NULL'} ORDER BY i.created_at DESC LIMIT 200`, ...(auth.hasPerm(ctx.user, 'clients:all') ? [] : [ctx.user.id]));
+      FROM imports i LEFT JOIN users u ON u.id=i.imported_by ${auth.hasPerm(ctx.user, 'records:manage-others') ? '' : 'WHERE i.imported_by=? OR i.imported_by IS NULL'} ORDER BY i.created_at DESC LIMIT 200`, ...(auth.hasPerm(ctx.user, 'records:manage-others') ? [] : [ctx.user.id]));
     return { imports: rows.map(importView) };
   });
 
   r.get('/api/imports/:id', auth.requireAuth, auth.requirePerm('imports:read', 'imports:write'), (ctx) => {
     const imp = db.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id); if (!imp) throw notFound();
-    if (imp.imported_by && imp.imported_by !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden();
+    if (imp.imported_by && imp.imported_by !== ctx.user.id && !auth.hasPerm(ctx.user, 'records:manage-others')) throw forbidden();
     const items = db.all(`SELECT x.*, c.client_code AS suggested_client_code FROM import_items x LEFT JOIN clients c ON c.id=x.suggested_client_id WHERE import_id=? ORDER BY captured_at, created_at`, imp.id).map(x => itemView(x));
     // decorate suggested client display names
     for (const it of items) if (it.suggested_client_id) { const c = db.one(`SELECT * FROM clients WHERE id=?`, it.suggested_client_id); it.suggested_client_name = c ? M.summary(c).display_name : null; }
@@ -133,7 +133,7 @@ module.exports = (r) => {
     const it = db.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id); if (!it) throw notFound();
     // The same rule as viewing the batch (GET /api/imports/:id): someone else's import is theirs to sort.
     const imp = db.one(`SELECT imported_by FROM imports WHERE id=?`, it.import_id);
-    if (imp && imp.imported_by && imp.imported_by !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden();
+    if (imp && imp.imported_by && imp.imported_by !== ctx.user.id && !auth.hasPerm(ctx.user, 'records:manage-others')) throw forbidden();
     if (it.status !== 'staged') throw badRequest('Item already processed');
     db.run(`UPDATE import_items SET status='discarded' WHERE id=?`, it.id);
     audit.log({ user: ctx.user, action: 'import.discard', entity: 'import_item', entityId: it.id, ip: ctx.ip });
@@ -142,7 +142,7 @@ module.exports = (r) => {
 
   r.delete('/api/imports/:id', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => {
     const imp = db.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id); if (!imp) throw notFound();
-    if (imp.imported_by !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden();
+    if (imp.imported_by !== ctx.user.id && !auth.hasPerm(ctx.user, 'records:manage-others')) throw forbidden();
     // Purges staged (uncommitted) PHI; committed notes are retained
     db.run(`DELETE FROM import_items WHERE import_id=? AND status<>'committed'`, imp.id);
     db.run(`UPDATE imports SET status='purged' WHERE id=?`, imp.id);

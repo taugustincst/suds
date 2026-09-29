@@ -58,7 +58,7 @@ function build(r, opts) {
     if (!opts.canEdit && R.editableBy) { const no = R.editableBy(ctx.user, row); if (no && no.status !== 403 && no.toHttp) throw no.toHttp(); }
     if (canEdit && !canEdit(ctx, row)) throw forbidden(`You cannot ${what} this record`);
   }
-  const ownerAll = R.owner && R.owner.col === ownerCol ? R.owner.all : 'clients:all';
+  const ownerAll = R.owner && R.owner.col === ownerCol ? R.owner.all : 'records:manage-others';
   const restrictOwner = opts.restrictOwner !== undefined ? opts.restrictOwner : !!(R.owner && R.owner.col === ownerCol);
   const base = opts.base || `/api/${entity}s`;
   const readPerm = `${perm}:read`, writePerm = `${perm}:write`;
@@ -178,7 +178,7 @@ function build(r, opts) {
 
 // owner-or-supervisor edit rule
 function ownerOrManager(col = 'user_id') {
-  return (ctx, row) => row[col] === ctx.user.id || auth.hasPerm(ctx.user, 'clients:all');
+  return (ctx, row) => row[col] === ctx.user.id || auth.hasPerm(ctx.user, 'records:manage-others');
 }
 
 module.exports = { build, ownerOrManager, clientExists, assertFresh, STALE_MESSAGE };

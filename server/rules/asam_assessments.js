@@ -22,8 +22,8 @@ module.exports = define({
     summary: { type: 'string', maxLen: 5000 },
     update_client_level: { type: 'boolean', sync: false },
   },
-  editableBy: ownedBy(['assessed_by'], 'clients:all', 'Only the person who completed this assessment, or a supervisor, can change it'),
-  deletableBy: ownedBy(['assessed_by'], 'clients:all', 'Only the person who completed this assessment, or a supervisor, can delete it'),
+  editableBy: ownedBy(['assessed_by'], 'records:manage-others', 'Only the person who completed this assessment, or a supervisor, can change it'),
+  deletableBy: ownedBy(['assessed_by'], 'records:manage-others', 'Only the person who completed this assessment, or a supervisor, can delete it'),
   check(row, c) {
     const val = (k) => (row[k] !== undefined ? row[k] : c.existing ? c.existing[k] : undefined);
     const rec = val('recommended_loc'); const act = val('actual_loc');

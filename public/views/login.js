@@ -221,7 +221,7 @@ function firstRun() {
     { name: 'role', label: 'Your role', type: 'select', noBlank: true, value: 'navigator', span: true,
       options: [
         { value: 'navigator', label: 'Navigator / peer support — outreach, referrals, case management' },
-        { value: 'clinician', label: 'Clinician — everything a navigator does, plus clinical notes' },
+        { value: 'clinician', label: 'Clinician — everything a navigator does, plus writing clinical notes' },
         { value: 'supervisor', label: 'Supervisor — clinical notes, countersigning, approving time' },
         { value: 'admin', label: 'Administrator — settings and user accounts' },
       ],
