@@ -124,6 +124,22 @@ function revoke({ link, user, ip }) {
 }
 
 /**
+ * A worker's account is deactivated (routes/users.js, SCIM, SSO deprovisioning: scim.cutOff): the links they made
+ * that could still be opened are withdrawn, each audited (r11 finding 3). open() refuses them anyway while the
+ * account is inactive (stillCovered); this makes it final and shows it on the referral. Returns how many.
+ */
+function revokeForUser(userId, actor) {
+  const now = db.now();
+  const open = db.all(`SELECT id, client_id, kind, opened_at FROM referral_links WHERE created_by=? AND revoked_at IS NULL AND expires_at > ?`, userId, now);
+  const by = actor && actor.id && db.one(`SELECT 1 FROM users WHERE id=?`, actor.id) ? actor.id : null;
+  for (const l of open) {
+    db.run(`UPDATE referral_links SET revoked_at=?, revoked_by=?, updated_at=? WHERE id=? AND revoked_at IS NULL`, now, by, now, l.id);
+    audit.log({ user: actor || { username: 'system' }, action: 'referral_link.revoke', entity: 'referral_link', entityId: l.id, clientId: l.client_id, details: { kind: l.kind, opened: !!l.opened_at, cause: 'creator_deactivated' } });
+  }
+  return open.length;
+}
+
+/**
  * Refusals of anonymous callers, in the audit log without letting anyone who can reach the office grow it without
  * limit (security review of 1.17.0, L3): per link (or, for tokens that match no link, for all of them together)
  * the first REFUSALS_LOGGED_PER_HOUR in an hour are written one by one, then one entry saying the rest are being
@@ -140,7 +156,7 @@ function summarise(key, w) {
     details: { reason: key === 'unknown' ? 'unknown_summary' : 'refused_summary', count: w.extra, window_start: new Date(w.start).toISOString(), window_end: new Date(Math.min(Date.now(), w.start + REFUSAL_WINDOW_MS)).toISOString(), addresses } });
 }
 function flushRefusals() { for (const [key, w] of refusals) summarise(key, w); refusals.clear(); }
-function logRefusal({ action, link, ip, reason }) {
+function logRefusal({ action, link, ip, reason, details = {} }) {
   const key = link ? link.id : 'unknown';
   const now = Date.now();
   let w = refusals.get(key);
@@ -148,7 +164,7 @@ function logRefusal({ action, link, ip, reason }) {
   if (!w) { w = { start: now, logged: 0, extra: 0, byIp: new Map(), action, linkId: link ? link.id : null, clientId: link ? link.client_id : null }; refusals.set(key, w); }
   if (w.logged < REFUSALS_LOGGED_PER_HOUR) {
     w.logged++;
-    audit.log({ user: null, action, entity: 'referral_link', entityId: w.linkId, clientId: w.clientId, ip, success: false, details: { reason } });
+    audit.log({ user: null, action, entity: 'referral_link', entityId: w.linkId, clientId: w.clientId, ip, success: false, details: { reason, ...details } });
     if (w.logged === REFUSALS_LOGGED_PER_HOUR) audit.log({ user: null, action, entity: 'referral_link', entityId: w.linkId, clientId: w.clientId, ip, success: false, details: { reason: 'counting', note: 'further refusals this hour are counted and summarised, not written one by one' } });
     return;
   }
@@ -189,6 +205,11 @@ function header(link) {
  * a restriction agreed since, or a consent that no longer names the provider withholds the packet.
  */
 function stillCovered(link, creator) {
+  // The worker the packet is disclosed under is still here and can still reach this client (security review of
+  // 1.17.0, r11 finding 3): an account deactivated since, or one whose caseload no longer includes the client, does
+  // not disclose anything.
+  if (!creator || !creator.is_active) return { ok: false, reason: 'creator_inactive' };
+  if (!require('./auth').canAccessClient(creator, link.client_id)) return { ok: false, reason: 'creator_no_access' };
   // The record is still there and still this person's, and the referral is still open (security review of
   // 1.17.0, L2): a removed or merged record, or a referral since closed or declined, is not disclosed.
   const client = db.one(`SELECT deleted_at, merged_into FROM clients WHERE id=?`, link.client_id);
@@ -224,7 +245,9 @@ function open({ token, code, claim, ip }) {
   // A packet: claimed by the first browser that proves the code; any other is refused (a forwarded link).
   if (link.claim_hash) {
     if (!claim || hashClaim(link.id, claim) !== link.claim_hash) {
-      audit.log({ user: null, action: 'referral_link.open', entity: 'referral_link', entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: 'claimed_elsewhere' } });
+      // Through the throttle like every other refusal of an anonymous caller (r11 finding 4): a forwarded link
+      // opened again and again must not grow the audit log without limit.
+      logRefusal({ action: 'referral_link.open', link, ip, reason: 'claimed_elsewhere' });
       throw new HttpError(409, 'This referral has already been opened on another device or browser. If that was not you, contact the program that sent it: they can withdraw it and send a new one.', { claimed: true });
     }
   } else {
@@ -244,7 +267,7 @@ function open({ token, code, claim, ip }) {
   if (!cover.ok) {
     // The consent no longer covers it: the packet is withheld and the page shows the contact notice instead.
     bump();
-    audit.log({ user: null, action: 'referral_link.open', entity: 'referral_link', entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: cover.reason, withheld: true } });
+    logRefusal({ action: 'referral_link.open', link, ip, reason: cover.reason, details: { withheld: true } });
     return { ...base, withheld: true };
   }
   const packet = stored(link).packet;
@@ -268,7 +291,7 @@ function acknowledge({ token, claim, status, by, note, ip }) {
   const link = usable(token, ip, 'referral_link.ack');
   if (!(link.kind === 'packet' ? ACK_STATUSES : ['received', 'unable_to_reach']).includes(status)) throw badRequest('Choose what happened');
   if (link.kind === 'packet' && (!link.claim_hash || !claim || hashClaim(link.id, claim) !== link.claim_hash)) {
-    audit.log({ user: null, action: 'referral_link.ack', entity: 'referral_link', entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: 'not_claimed' } });
+    logRefusal({ action: 'referral_link.ack', link, ip, reason: 'not_claimed' });
     throw forbidden('Open the referral with its access code first.');
   }
   if (link.kind === 'contact_notice' && !link.opened_at) throw forbidden('Open the link first.');
@@ -293,4 +316,4 @@ function acknowledge({ token, claim, status, by, note, ip }) {
   return { ok: true, ack_status: status };
 }
 
-module.exports = { SETTING, enabled, CLOSED_REFERRAL, REFUSALS_LOGGED_PER_HOUR, flushRefusals, KINDS, TTL_HOURS, DEFAULT_TTL_HOURS, MAX_FAILED, ACK_STATUSES, NOT_VALID, create, revoke, open, acknowledge, listFor, present, invite, hashToken };
+module.exports = { SETTING, enabled, CLOSED_REFERRAL, REFUSALS_LOGGED_PER_HOUR, flushRefusals, KINDS, TTL_HOURS, DEFAULT_TTL_HOURS, MAX_FAILED, ACK_STATUSES, NOT_VALID, create, revoke, revokeForUser, open, acknowledge, listFor, present, invite, hashToken };

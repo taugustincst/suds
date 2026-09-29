@@ -160,6 +160,8 @@ module.exports = (r) => {
     if (v.is_active === 1 && u.access_status !== 'active') sets.push(`access_status='active'`);
     if (ctx.body.reset_mfa) { sets.push('mfa_enabled=0', 'mfa_secret_enc=NULL'); }
     if (v.is_active === 0) auth.revokeAllForUser(u.id);
+    // Their secure referral links that could still be opened are withdrawn (server/referral-links.js).
+    if (v.is_active === 0 && u.is_active) require('../referral-links').revokeForUser(u.id, ctx.user);
     // Deactivating someone, or resetting their password from here, ends their hold on client records on
     // every phone they sync from too: each of their devices is told to erase itself at its next sync. The
     // wipe is answered before the credentials are (server/auth.js login()), so an inactive account or an

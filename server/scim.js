@@ -159,8 +159,10 @@ function guard(u) {
 }
 
 /** Disable an account and everything that keeps it signed in: sessions now, devices on their next sync (wiped). */
-function cutOff(userId) {
+function cutOff(userId, actor) {
   require('./auth').revokeAllForUser(userId);
+  // Their secure referral links that could still be opened are withdrawn (server/referral-links.js).
+  require('./referral-links').revokeForUser(userId, actor);
   return db.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?), wipe_requested_at=COALESCE(wipe_requested_at, ?) WHERE user_id=?`, db.now(), db.now(), userId).changes;
 }
 
@@ -196,7 +198,7 @@ function apply(id, a, actor, base, action) {
   sets.push('updated_at=?'); vals.push(db.now());
   db.transaction(() => {
     db.run(`UPDATE users SET ${sets.join(', ')} WHERE id=?`, ...vals, id);
-    if (deactivated) cutOff(id);
+    if (deactivated) cutOff(id, actor);
   });
   // A group change that makes the person a navigator or a clinician (or takes them out of those roles), as an
   // administrator's role change does (server/caseload-default.js onRoleChange).
@@ -209,7 +211,7 @@ function patch(id, body, actor, base) { return apply(id, attrsFromPatch(body), a
 function deactivate(id, actor) {
   const u = find(id); guard(u);
   if (u.is_active) {
-    db.transaction(() => { db.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=?`, db.now(), id); cutOff(id); });
+    db.transaction(() => { db.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=?`, db.now(), id); cutOff(id, actor); });
     audit.log({ user: actor, action: 'scim.user.deactivate', entity: 'user', entityId: id, details: { username: u.username, via: 'DELETE' } });
   }
 }

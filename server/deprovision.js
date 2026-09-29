@@ -29,7 +29,7 @@ function disable(u, { by = { username: 'system' }, n }) {
   let devices = 0;
   db.transaction(() => {
     db.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=? AND is_active=1`, db.now(), u.id);
-    devices = require('./scim').cutOff(u.id);
+    devices = require('./scim').cutOff(u.id, by);
   });
   audit.log({ user: by, action: 'user.deprovisioned', entity: 'user', entityId: u.id, details: { username: u.username, reason: `not seen at the identity provider for ${n} days`, last_seen_at: u.seen_at, devices_revoked: devices } });
 }
