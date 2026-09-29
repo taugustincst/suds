@@ -169,7 +169,8 @@ test('a year with 60 funds (120 in the thorough run), most of them small: the sm
     assert.ok(!p.refused, `${q}: ${JSON.stringify(p.refused)}`);
     // The headline is published; nothing is withheld but, at most, the fund tables.
     assert.equal(typeof p.funder.unduplicated.served, 'number');
-    assert.ok(p.withheld_tables.every(x => ['by_funding_source', 'settlement.services_by_use'].includes(x)), `${q}: withheld ${p.withheld_tables}`);
+    // (and the overdose events by month, by the published rule when a month has 1 to T-1 events or not reversed: 1.16.1)
+    assert.ok(p.withheld_tables.every(x => ['by_funding_source', 'settlement.services_by_use', 'overdose.by_month.n'].includes(x)), `${q}: withheld ${p.withheld_tables}`);
     // Every small fund is in the combined row, which prints no count of people or services.
     const row = p.funder.by_funding_source.find(f => f.combined);
     assert.ok(smallFunds > 10 && row && row.funds_combined === smallFunds, `${q}: ${smallFunds} small funds, combined ${row && row.funds_combined}`);
@@ -188,4 +189,45 @@ test('a year with 60 funds (120 in the thorough run), most of them small: the sm
     assert.equal(f.data.by_funding_source.find(x => x.combined).funds_combined, smallFunds);
     if (process.env.SUDS_PERF_VERBOSE) console.log(`[perf] ${COUNT + 3} funds (${smallFunds} small, combined), ${q}: audit ${ms.toFixed(0)} ms, ${p.audit.steps} units of work, withheld ${JSON.stringify(p.withheld_tables)}`);
   }
+});
+
+test('a year of a 2,000-client programme publishes, with only the overdose events by month withheld, by rule (1.16.1; 1.16.0 refused it whole)', () => {
+  // The benchmark's small programme (test/fixtures/release-small-programme.json): three months with 1, 2 and 3
+  // overdose events not reversed. 1.16.0's check tried every candidate world for them (about half its budget),
+  // then its degrade step re-ran that check for each world it tried, ran out of budget and refused the year. The
+  // table is now withheld from the start by a published rule, whose decision each world is checked against in a
+  // few operations (server/release-audit.js buildModel, server/sdc.js protect).
+  const RA = require('../server/release-audit');
+  const { T, inputs } = require('./fixtures/release-small-programme.json');
+  const p = RA.protectFigures({ ...inputs, perFund: new Map(inputs.perFund) }, T);
+  assert.ok(!p.refused, JSON.stringify(p.refused));
+  assert.deepEqual(p.withheld_tables, ['overdose.by_month.n']);
+  assert.deepEqual(p.audit.degraded, [], 'withheld by the rule, not by the degrade step');
+  assert.equal(p.audit.rounds, 1);
+  assert.ok(p.audit.steps < SDC.STEP_LIMIT / 4, `the audit took ${p.audit.steps} of ${SDC.STEP_LIMIT} units of work`);
+  assert.equal(p.withheld_reasons[0].reason, 'protect');
+  assert.equal(typeof p.funder.unduplicated.served, 'number', 'the headline is published');
+  assert.deepEqual(p.funder.overdose.by_month.map(x => x.n), inputs.domains.months.map(() => 'withheld'), 'no month\'s events are printed');
+  // The rule reads the figures; the check counts only worlds for which it decides the same.
+  const { model } = RA.buildModel({ ...inputs, perFund: new Map(inputs.perFund), funder: RA.prepare(inputs.funder, inputs.domains) }, T);
+  assert.deepEqual(model.preWithhold.map(r => r.table), ['overdose.by_month.n']);
+  assert.ok(!Object.keys(model).includes('preWithhold'), 'not enumerable: the model is posted back from the audit worker');
+});
+
+test('a refusal for want of budget is logged with the audit\'s work, and a refused year is not told to publish a longer period (1.16.1)', async () => {
+  const PR = require('../server/publication-release');
+  const warn = console.warn; const lines = [];
+  console.warn = (...a) => { lines.push(a.join(' ')); };
+  PR.setAuditOptions({ stepLimit: 1e5 });
+  try {
+    const r = await admin.get(`/api/reports/funder?${YEAR}${PUB}`);
+    assert.equal(r.status, 422);
+    assert.match(r.data.error, /reached its limit/);
+    assert.match(r.data.error, /A year is the longest standard period/);
+    assert.ok(!/Publish a longer standard period/.test(r.data.error));
+  } finally { console.warn = warn; PR.setAuditOptions({}); }
+  assert.ok(lines.some(l => /a publication release \(2025-07 to 2026-06\) was refused: its audit reached its budget \(\{"steps":\d+,"rounds":\d/.test(l)), lines.join('\n'));
+  const RA = require('../server/release-audit');
+  assert.match(RA.refusalMessage({ outOfBudget: true }, 1), /Publish a longer standard period \(a quarter or a year\)/);
+  assert.match(RA.refusalMessage({ outOfBudget: true }, 3), /Publish a longer standard period \(a year\)/);
 });
