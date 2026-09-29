@@ -89,13 +89,23 @@ profile. Scope: `system/Provenance.read`.
 Every arrow that carries identified information out of SUDS passes `server/disclosure.js` and writes the
 accounting of disclosures: FHIR per client per request, secure referral links when first opened.
 
+**SUDS gates and accounts only the disclosures made through SUDS.** A disclosure the EHR makes (a record sent
+from the EHR, a fax, an HIE query, a release-of-information request the EHR's staff answer) is not checked
+against SUDS's consents and is not in SUDS's accounting: SUDS cannot see or stop it. For the accounting of
+disclosures a patient asks for (§2.25 / §164.528) to be complete, record each one in SUDS by hand: the client's
+**Consents** tab → *Accounting of disclosures* → **+ Disclosure** (`POST /api/clients/:id/disclosures`,
+`consents:write`: recipient, purpose, what was disclosed, method, date and basis). Recording one runs the same
+gate as any other disclosure (the consent must name the recipient, an agreed restriction must be confirmed), so a
+disclosure the EHR made without a basis SUDS accepts is refused there — treat that as a finding for the privacy
+officer, not a form to force through.
+
 ## 4. What stays in the EHR, and what lives in SUDS
 
 | Stays in the EHR | Lives in SUDS |
 | --- | --- |
 | The legal medical record: assessments, diagnoses, treatment plans, progress notes other than those the programme chooses to keep as SUD counseling notes in SUDS | Part 2 consents and their revocation; the §2.22 patient notice given to each client |
 | Orders, medications, e-prescribing, labs, MAR | Court orders relied on for a disclosure (§§2.61–2.67), QSOAs and research / audit approvals |
-| Scheduling, billing, claims (837), eligibility | The accounting of disclosures, and every disclosure's basis |
+| Scheduling, billing, claims (837), eligibility | The accounting of disclosures made through SUDS, and each one's basis; disclosures the EHR makes, once staff record them by hand (above) |
 | The EHR's own access log | SUDS's hash-chained audit log of every Part 2 action it takes |
 | | SUD counseling notes, if the programme keeps them here, readable only by their author, their co-signer and staff who write clinical notes, never over FHIR |
 | | The incident and breach register with its notification clock; privacy complaints; patient requests with their 30-day deadlines |
@@ -113,8 +123,12 @@ hold nothing; the EHR must then keep them apart itself.
    consents cover them). Prefer signed JWTs.
 3. Import patients, then encounters, from the EHR's FHIR export.
 4. Record each client's consents in SUDS as they are signed — naming each recipient — and give the §2.22 notice.
-5. Referrals to providers outside: the referral with a consent naming the provider, then *Secure link*.
-6. Review the Part 2 layer tab weekly: expiring consents, patient requests near their deadline, open incidents.
+5. Referrals to providers outside: the referral with a consent naming the provider, then *Secure link* — once an
+   administrator has switched secure referral links on (off by default; counsel reviews the design first, and the
+   server must be reachable from the internet: docs/security/REFERRAL-LINKS.md).
+6. Disclosures made from the EHR: record each on the client's Consents tab (+ Disclosure), so the accounting is
+   complete.
+7. Review the Part 2 layer tab weekly: expiring consents, patient requests near their deadline, open incidents.
 
 ## 6. What this is not
 

@@ -92,20 +92,41 @@ fixed instructions for the feature (below). Nothing is sent from a browser: the 
 a counseling note of anyone's — the copilot drafts only in the author's own note, and a signed note cannot be
 redrafted); the client record itself; the API key to the browser.
 
+**Not used at all for:**
+
+* **SUD counseling notes (42 CFR §2.11).** Until counsel says otherwise, the copilot does not draft one: the draft
+  route refuses a note flagged as a counseling note, or one being written with *SUD counseling note* ticked, and
+  the note form hides the copilot while the box is ticked. The other way round, a note that already has copilot
+  text cannot be flagged as a counseling note (`server/rules/notes.js`, over the web and by sync).
+* **A client with an agreed restriction** (a §164.522 / §2.26 request the programme granted, on the client's
+  Requests tab). A business associate's work needs no consent, but a restriction the programme agreed to may
+  cover it, and SUDS cannot read a restriction's terms; so every draft for that client is refused before anything
+  is sent (`ai_error: 'restriction'`, audited as an `ai.draft` with outcome `restriction`). Write those records
+  by hand, or have counsel decide whether the restriction allows this use.
+
 **Before sending, SUDS replaces what it knows identifies the client**, from the client record:
 
-* first, last and preferred names (as a whole and each part), in any case → `[CLIENT_FULL_NAME]`,
+* first, last and preferred names (as a whole and each part), in any case, with or without accents and
+  apostrophes (José = Jose, O'Brien = OBrien), a hyphen the same as a space → `[CLIENT_FULL_NAME]`,
   `[CLIENT_FIRST_NAME]`, `[CLIENT_LAST_NAME]`, `[CLIENT_PREFERRED_NAME]`;
-* date of birth, in the common ways it is written → `[DOB]`;
+* date of birth, month first or day first, with `/`, `.` or `-`, two- or four-digit year, year first
+  (1988/03/04), or in words with or without an ordinal ("March 4th, 1988", "4th of March 1988") → `[DOB]`;
 * phone and alternate phone, however punctuated → `[PHONE]`; email → `[EMAIL]`;
-* address (and its street line), city and ZIP → `[ADDRESS]`, `[CITY]`, `[ZIP]`;
+* address (and its street line, with or without its number, the suffix written in full or short — Road or Rd —
+  in any case), city and ZIP → `[ADDRESS]`, `[CITY]`, `[ZIP]`;
 * Medi-Cal number → `[ID]`; client code → `[CLIENT_CODE]`;
 * the names and phone number in the emergency contact → `[CONTACT_NAME]`, `[PHONE]`;
-* the author's own name → `[COUNSELOR]`;
+* the author's own name → `[COUNSELOR]`: the whole name in any case; a part of it on its own only written as a
+  name (capitalised, and not straight after another given name, so "Patricia Jones" is left alone when the
+  author is Pat Jones, and "Counselor Jones" is not);
 
 and masks, whoever they belong to: anything that looks like an email address, URL, SSN, US phone number,
-street address, a Medi-Cal CIN, or a run of seven or more digits (`[EMAIL]`, `[URL]`, `[SSN]`, `[PHONE]`,
-`[ADDRESS]`, `[ID]`, `[NUMBER]`).
+street address, a Medi-Cal CIN, a run of seven or more digits, or a date written straight after "DOB", "date of
+birth" or "born" (`[EMAIL]`, `[URL]`, `[SSN]`, `[PHONE]`, `[ADDRESS]`, `[ID]`, `[NUMBER]`, `[DOB]`).
+
+These are the identifiers SUDS knows, and a few patterns: the audit entry's count is of those, not a claim that
+the text is free of identifiers. The matching errs towards masking a word that was not an identifier (the
+author corrects the draft) rather than missing one.
 
 **After the draft comes back**, SUDS puts the client's names and the author's name back in place of their
 placeholders, on the server. The other placeholders are left in the draft for the author to fill in or
@@ -117,8 +138,10 @@ This replacement is **not** de-identification under HIPAA's Safe Harbor or exper
 the text sent is still PHI and, for a Part 2 programme, Part 2 information. What can still identify someone:
 
 * **Free text.** Names SUDS does not hold (a partner, a child, a landlord, another client mentioned in
-  passing), nicknames and misspellings, workplaces, schools, rare events, places smaller than a state, and
-  dates other than the date of birth (service dates are left in because the note needs them).
+  passing), nicknames the record does not hold (only the preferred name is known), spelled-out or misspelled
+  names, workplaces, schools, rare events, places smaller than a state, other people's addresses written without
+  a street number, identifiers in other shapes (a short MRN such as 123-4567, an IP address, a social media
+  handle), and dates other than a date of birth (service dates are left in because the note needs them).
 * **Combinations.** Age, diagnosis, a rare substance, a small town and an event can identify a person
   together even when no identifier is present.
 * **Imperfect matching.** A name that is also a common word ("Will", "Hope") is masked wherever it appears,
@@ -136,12 +159,16 @@ client's information. The legal basis for sending the rest is the BAA/QSOA, not 
   characters were sent. **Never the text**, the prompt or the draft.
 * **Usage** (`ai_usage` table, office server only, never synchronised): time, user, feature, model, outcome,
   token counts, latency. No text and no client. It feeds the monthly cap.
-* **The note** (`notes.ai_assisted`): set when a draft from the copilot is used in the note, never cleared
-  once set, kept as signed. The note shows an **AI-assisted** badge; a draft shows "AI draft — review before
-  signing". Signing such a note requires the author's statement that they reviewed and corrected it
-  (`ai_reviewed`), and the `note.sign` audit entry records `ai_assisted` and `ai_reviewed`. (Assessments and
-  care plan entries made from suggestions are not flagged in the record; the `ai.draft` audit entry shows the
-  copilot was used for that client.)
+* **The note** (`notes.ai_assisted`): set by the server when a draft is asked for in a saved note (the draft
+  request names the note, `note_id`), and by the note form when a draft is applied to a note not yet saved;
+  never cleared once set, kept as signed. The note shows an **AI-assisted** badge; a draft shows "AI draft —
+  review before signing". Signing such a note requires the author's statement that they reviewed and corrected
+  it (`ai_reviewed`) — on the office server and in a sync from a device alike — and the `note.sign` audit entry
+  records `ai_assisted` and `ai_reviewed`. **The `ai.draft` audit entry is the authoritative record that the
+  copilot was used** (with the note's id when the draft was asked for in a saved note): a draft copied into a
+  note that was never saved first carries the mark only because the note form set it. (Assessments and care
+  plan entries made from suggestions are not flagged in the record; the `ai.draft` audit entry shows the copilot
+  was used for that client.)
 * **Settings changes** (`ai.settings.update`: enabled, model, cap) and the agreement (`ai.attestation.record`,
   `ai.attestation.withdraw`).
 * **Server logs**: at most a line naming the feature and the kind of failure (`timeout`, `rate_limited`, …).
@@ -197,5 +224,8 @@ parsing prose.
 
 * Streaming the draft as it is written.
 * An "AI-assisted" flag on assessments and care plan entries themselves (the audit shows the use).
+* Binding a draft to a note not yet saved (a server-issued draft id the note's first save must carry); today the
+  server sets the mark only for a draft asked for in a saved note.
+* Masking names SUDS does not hold (other people in the text) and other date forms near the date of birth.
 * Drafting from an audio recording (only text is accepted).
 * A per-programme model allow-list or per-person caps.

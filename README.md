@@ -19,7 +19,9 @@ exports, disclosures and configuration changes.
 **Optional modules.** Programmes that are treatment-adjacent can switch the *programme profile* from **Harm
 reduction & outreach** (the default) to **Treatment-adjacent** to show the clinical modules: care plan, problem
 list and assessments, structured clinical notes, CalOMS Tx (extract not yet verified against the DHCS data
-dictionary), a FHIR R4 feed and a county EHR encounter hand-off. SUDS is **not** an EHR, does not create Drug
+dictionary), a FHIR R4 feed and a county EHR encounter hand-off. A programme whose EHR stays the clinical record
+can choose **Part 2 compliance module (beside an EHR)** instead: the consent, disclosure and breach work leads,
+with patients and encounters imported from the EHR ([docs/integration/EHR-PART2-LAYER.md](docs/integration/EHR-PART2-LAYER.md)). SUDS is **not** an EHR, does not create Drug
 Medi-Cal claims, and has no eMAR or e-prescribing. It is free, MIT-licensed software that the programme (or its IT
 partner, or its county) runs; it is not a hosted service. Positioning, buyer guides, hosting models, the pilot kit
 and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:

@@ -31,6 +31,15 @@ The optional **AI documentation copilot** (off by default; `docs/AI-COPILOT.md`)
 only after an administrator records the programme's BAA/QSOA with the provider and switches it on. Allow
 outbound HTTPS to that host if you use it.
 
+### Inbound from the internet: secure referral links
+
+**Secure referral links** (off by default; `docs/security/REFERRAL-LINKS.md`) are opened by a provider outside
+the programme, in their own browser, **on this server**. For them to work the server must be reachable from the
+internet over HTTPS — an office server reachable only on the office network cannot serve one. Exposing it
+(a TLS reverse proxy, `TRUST_PROXY=1` so the per-address limits see real addresses) is a decision for the
+programme's IT and its risk register, and counsel reviews the link design before an administrator switches the
+setting on. Nothing else in SUDS needs inbound access from outside the office.
+
 Behind a county web proxy, Node's built-in `fetch` ignores `HTTPS_PROXY` unless told to use it: set **both**
 `HTTPS_PROXY=http://proxy.example.gov:8080` and `NODE_USE_ENV_PROXY=1` in the service's environment (Node 22.21
 or newer; `NO_PROXY` is honoured too). A proxy that inspects HTTPS presents its own certificate, which Node

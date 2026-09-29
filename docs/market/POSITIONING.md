@@ -23,7 +23,7 @@ Three leads, in this order, each stated no further than the software goes:
 
 What comes next, and what is only planned, is in [STRATEGY.md](STRATEGY.md): the AI documentation copilot is
 **built for 1.17.0, not yet released** (office server only, off by default, gated on a BAA and QSOA, identifiers removed before
-sending, drafts only, a person signs). Do not show or promise it before that release is tagged.
+sending, drafts only, a person signs, never for SUD counseling notes). Do not show or promise it until it is released.
 
 ## Category
 
@@ -90,8 +90,8 @@ modules are hidden), **Treatment-adjacent** (they are shown) and, from 1.17.0, *
 > **For a SUD treatment programme that already has an EHR: SUDS as the 42 CFR Part 2 layer beside it — consent,
 > the accounting of disclosures, redisclosure notices and breach tracking — without replacing the EHR.**
 
-Most EHRs a county SUD provider uses (eClinicalWorks, Epic, SmartCare and others) hold the clinical record and the
-billing well. What programmes still keep on paper or in spreadsheets is the Part 2 work around them: a §2.31
+EHRs a county SUD provider uses (eClinicalWorks, Epic, SmartCare and others) hold the clinical record and the
+billing. Many programmes still keep on paper or in spreadsheets the Part 2 work around them: a §2.31
 consent that names each recipient, checked *before* information leaves; an accounting of every disclosure a
 patient can ask for; the §2.32 notice travelling with each one; SUD counseling notes kept apart; the breach
 register with its 60-day clock; patient requests with their deadlines; and referrals to organisations that are
@@ -103,7 +103,12 @@ profile makes it the programme's Part 2 layer:
 - **What SUDS keeps**: consents (with every §2.31 element, recipient-named, revocable), the disclosure gate and
   the accounting of disclosures, the §2.32 notice on every disclosure, the §2.22 patient notice, counseling notes,
   the incident and breach register, complaints, patient requests (access, amendment, restriction, accounting),
-  and secure referral links to providers that do not use SUDS.
+  and secure referral links to providers that do not use SUDS (off by default; counsel reviews them first).
+- **What SUDS gates and accounts**: only the disclosures made **through SUDS** (a referral, an export, the FHIR
+  API, a referral link). A disclosure the EHR or a member of staff makes outside SUDS is neither checked nor
+  accounted by SUDS, which cannot see or stop it; for the accounting a patient receives to be complete, staff
+  record it by hand (the client's Consents tab → *+ Disclosure*, `POST /api/clients/:id/disclosures`, which runs
+  the same gate).
 - **How they connect**: patients and encounters come in from the EHR's own FHIR R4 export (or a spreadsheet);
   the EHR reads consents and their provenance from SUDS's FHIR R4 API, consent-gated and accounted.
   [docs/integration/EHR-PART2-LAYER.md](../integration/EHR-PART2-LAYER.md) is the integration guide.

@@ -204,6 +204,13 @@ each with API tests; no new permission.
   be withdrawn, lock after five wrong codes, and every open is audited. The provider can say what happened, which
   gives the worker a to-do to record the outcome, and is invited to receive referrals through SUDS. Office server
   only. Threat model: docs/security/REFERRAL-LINKS.md.
+- **Secure referral links are a programme setting, off by default** (market review of the 1.17.0 candidate): a new
+  install and an upgrade start with it off; an administrator switches it on under Privacy & Part 2 → *Secure
+  referral links* (`PUT /api/referral-links/settings { enabled }`, audited as `settings.update`; `GET` says whether
+  it is on, and `GET /api/auth/me` tells the browser, which hides *Secure link* while it is off). Off, making a link
+  is refused (`409`) and links already sent stop opening. The documents say counsel reviews the design as built
+  before a programme switches it on, and that the office server must then be reachable from the internet.
+  `test/referral-links.test.js`.
 - Browser suite: `scripts/ui/r10-part2.mjs`.
 
 ### Settlement outcomes and street outreach
@@ -299,6 +306,51 @@ on a SUDS install. The owner has repository settings to make (below).
 - **The browser suite gives `accessibility` 1,800 s** (it now takes about 1,200 s alone); every other script keeps
   the 900 s per-script limit, and `SUDS_SCRIPT_TIMEOUT` still overrides both (`scripts/ui/run-all.sh`).
 
+### Security
+
+Fixes from the security review of the 1.17.0 candidate (r10) and the copilot and referral-link rules from the market
+review. No migration, no new permission, no new route; each with a test that failed first
+(`test/security-1170.test.js`, `test/ai-copilot.test.js`, `test/referral-links.test.js`).
+
+- **M1: the import previews no longer say whether someone is a client here.** The spreadsheet and EHR previews
+  (`POST /api/imports/data/preview`, `/api/imports/ehr/preview`) matched each name against every record and gave
+  back the client code, so a worker held to their caseload could learn that a person they cannot open is a client,
+  and their code. Now they apply the live duplicate check's rule: a match the caller may open is shown; one they
+  may not reads as no match, and a supervisor gets a review task on that record instead (not on the caller's list).
+  At commit, *skip duplicates* skips only a visible match: a hidden one is imported and flagged for a supervisor to
+  compare, as at intake. A preview of clients counts against the duplicate check's per-worker limit (60 per 15
+  minutes), and its audit entry records counts only.
+- **L1: an AI-assisted note is signed only with the review statement, by sync too.** A device's push could sign an
+  `ai_assisted` note without the author's statement that they reviewed the drafted text. The notes rules now refuse
+  it (`server/rules/notes.js`; the device sends the statement its own sign route asked for, and the `note.sign`
+  audit records `ai_assisted`/`ai_reviewed` as over REST). A draft asked for in a saved note (`note_id`) now marks
+  that note AI-assisted on the server; the `ai.draft` audit entry, with the note's id, is the authoritative record
+  (docs/AI-COPILOT.md).
+- **The copilot does not draft SUD counseling notes** (§2.11; market review): the draft route refuses a note flagged
+  as one, or one being written with the box ticked, and the note form hides the copilot while it is ticked; a note
+  with copilot text cannot be flagged as a counseling note (web and sync). As the strategy's risk table says, until
+  counsel says otherwise.
+- **L2: a referral link is not opened for a removed or merged record, or a closed referral**, and the recipient's
+  names are kept with the packet when the link is made: the consent is re-checked against them and the accounting
+  names that recipient, so renaming the directory entry afterwards changes neither.
+- **L3: the public referral-link routes cannot flood a worker's list or the audit log.** A recipient's repeated
+  answers update the link's one to-do rather than adding one each; refused opens are written one by one only for
+  the first 10 an hour per link (and for unknown tokens together), then counted and summarised hourly with the
+  busiest addresses; and all addresses together are limited (600 per 10 minutes) as well as each one.
+- **L4: CalOMS files and a worker held to a caseload.** The submission list, download, log, discard and "uploaded"
+  routes now apply the same rule as prepare and produce: a worker held to a caseload reaches only the files they
+  produced themselves from their own caseload, not the whole programme's.
+- **L5: copilot de-identification catches more of what SUDS knows.** Names match without accents or apostrophes
+  (José/Jose, O'Brien/OBrien) and with a hyphen or a space; the date of birth in more forms (ordinals, year first,
+  dots, day first, words); the street abbreviated or in lower case (Old Mill Rd); and any date written after "DOB"
+  or "born". The author's surname alone is masked only written as a name (not "Patricia Jones", not "the jones
+  family"). Still not de-identification: docs/AI-COPILOT.md lists what it misses.
+- **L6: no copilot for a client with an agreed restriction.** SUDS cannot tell whether a granted §164.522 / §2.26
+  restriction covers sending the client's text to the AI provider, so every draft for that client is refused before
+  anything is sent, and audited.
+- `server/caloms-schedule.js`: a prepared file is described as "checked against SUDS's own edits", not
+  "submission-ready".
+
 ### Documentation
 
 Evidence for county IT and procurement review, and the 1.17.0 go-to-market documents. Documentation only: no
@@ -364,6 +416,21 @@ migration, no new permission, no new route.
   pricing hypothesis and `docs/PLATFORM.md` say what is planned and what is built but not yet released (the copilot, *AI documentation copilot*
   above, is office-server only). The CalOMS extract is described as checked by SUDS's own edits and still to be verified
   against the DHCS data dictionary; SUDS does not submit to DHCS.
+- **Pre-release corrections (market review of the 1.17.0 candidate).**
+  - Secure referral links: `docs/market/DATA-NETWORK.md` says what was built (the client's name and reason behind a
+    six-digit code, no account, a first-browser claim) and why it departs from the sign-in design, and that counsel
+    reviews it before a programme switches it on; REFERRAL-LINKS.md and DEPLOYMENT.md say the office server must
+    then be reachable from the internet; PILOT-KIT and the pack's README no longer call the links "not built".
+  - The Part 2 layer's scope: POSITIONING and `docs/integration/EHR-PART2-LAYER.md` say SUDS gates and accounts only
+    the disclosures made through SUDS, and that disclosures the EHR makes are recorded by hand (Consents tab →
+    *+ Disclosure*, `POST /api/clients/:id/disclosures`); the unsourced claim about what EHRs lack is softened.
+  - `STRATEGY.md` brought up to date: what is built for 1.17.0 under Create 1–3 and Capture 4–6, the refusal band
+    1.17.0 leaves, the sequencing steps, and a risk table that is now true (counseling notes excluded); the pack's
+    README (rules, the Finance row, the counsel rows), EVALUATION-RESPONSE's status line and the top-level README's
+    profiles likewise.
+  - One phrase for an unreleased feature, "built for X.Y.Z, not yet released", and `test/release-wording.test.js`,
+    which fails once the version is stamped while a document still says so (added to docs/RELEASE.md's stamp
+    checklist).
 
 ### Publication
 

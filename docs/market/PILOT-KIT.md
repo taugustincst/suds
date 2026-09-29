@@ -204,7 +204,7 @@ before it is proposed.
 | **Hosting** | County-hosted (one server per CBO, on county infrastructure) or each CBO's IT partner. Vendor hosting is not offered |
 | **Length** | 2–4 weeks of county discovery, then each CBO's 90-day pilot, staggered by 2–4 weeks so the vendor is not deploying three at once |
 | **Paid work (FDE packages)** | Discovery (county and each CBO), deployment, data migration, training, reporting setup against each funder's template, county programme management ([PRICING-OPTIONS.md](PRICING-OPTIONS.md), model D) |
-| **Out of scope** | Everything section 1 excludes; the AI copilot unless it has been released (built for 1.17.0, not yet tagged) and county counsel has reviewed its data flow; the planned county funder view, referral links and pooled benchmarks, which are not built |
+| **Out of scope** | Everything section 1 excludes; the AI copilot unless it has been released (built for 1.17.0, not yet released) and county counsel has reviewed its data flow; secure referral links (built for 1.17.0, not yet released; off by default) unless counsel has reviewed the link design as built and the pilot server is reachable from the internet; the planned county funder view and pooled benchmarks, which are not built |
 
 ### What the county gets
 

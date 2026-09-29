@@ -6,7 +6,8 @@ months of compliance and security work, **C** cut the EHR-adjacent framing and r
 
 **The owner chose B and C together**: commit to the work, and aim it at the workflow SUDS does best —
 outreach, naloxone and supply distribution, and grant reporting for harm-reduction and prevention programmes.
-This page answers each point with its status through 1.16.3 and where the evidence is. "Addressed in software"
+This page answers each point with its status through 1.16.4, the latest release, and where the evidence is (what
+is built for 1.17.0, not yet released, is in [STRATEGY.md](STRATEGY.md), *Built vs planned, exactly*). "Addressed in software"
 means the capability exists and is tested; it does not mean an auditor, a regulator or counsel has confirmed it.
 Organisational items that software cannot close are marked **open**.
 

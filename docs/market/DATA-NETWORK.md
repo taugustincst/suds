@@ -127,12 +127,43 @@ accounting record; the referring worker records the outcome. The recipient organ
 ([docs/USER_GUIDE.md](../USER_GUIDE.md), *Referrals and resources*). An inbound FHIR referral path is a design
 placeholder ([docs/integration/FHIR.md](../integration/FHIR.md)).
 
-### What is proposed: secure referral links with invitations
+### What is built for 1.17.0, not yet released: one-time secure referral links
+
+What was built is narrower than the network below, and it departs from the conservative answers in the table
+([docs/security/REFERRAL-LINKS.md](../security/REFERRAL-LINKS.md) has the design and threat model):
+
+- **The link carries the referral itself**, not a sign-in: with a live Part 2 consent that names the recipient,
+  the recipient opens a *packet* — the client's name, the reason for the referral as the worker wrote it and its
+  urgency (phone and date of birth only if the worker ticks them) — behind a **six-digit access code** given
+  separately, in a browser, with **no account and no MFA**. The first browser that gives the code claims the link;
+  any other is refused. Links expire within 7 days and can be withdrawn. Without a consent, only a notice that
+  names nobody can go.
+- **Why a code and a first-browser claim rather than a sign-in.** Receiving organisations are not on SUDS and have
+  no account on the sending programme's server; an external role with accounts, MFA enrolment and a directory of
+  outside users is the larger build and the larger attack surface (option (a) below). The code, given by phone,
+  means an intercepted or forwarded link alone opens nothing, and the claim limits it to one browser. The cost is
+  that the recipient is identified by holding the link and the code, not by an account: the recipient named on the
+  consent is accounted as the recipient.
+- **The consent gate and the accounting are the ordinary ones**: checked when the link is made and again at each
+  open; accounted when the recipient first opens it, to the recipient named when the link was made.
+- **It is off by default.** "Secure referral links" is a programme setting an administrator switches on
+  (Privacy & Part 2). **Counsel's review of this design as built is required before a programme switches it
+  on** (*What counsel must review*, below), and the pack's rule stands: no referral link is used for real
+  referrals before that review.
+- **The office server must be reachable from the internet.** The recipient's browser opens the link on the
+  sending programme's own server; an office server reachable only on the office network cannot serve one, and
+  exposing it is a decision for the programme's IT and its risk register
+  ([docs/DEPLOYMENT.md](../DEPLOYMENT.md)).
+
+### What is proposed: the network, with invitations
 
 The referring programme sends an invitation to a receiving organisation. The organisation's staff accept it and
 can then receive referrals and report outcomes, so the loop closes from the receiving side.
 
 ### Design questions and the conservative answer to each
+
+The conservative answers for the network. The one-time links above answer the first three differently, as they
+say, and are gated on counsel's review instead.
 
 | Question | Conservative answer |
 | --- | --- |
@@ -156,7 +187,8 @@ can then receive referrals and report outcomes, so the loop closes from the rece
 
 ## What counsel must review
 
-Before any tier or any referral link is built for real use:
+Before any tier is built for real use, and before any programme switches on the one-time referral links
+built for 1.17.0 (not yet released):
 
 1. Whether pooling each type of record (Part 2, HIPAA PHI, other) at the county is a disclosure, and on which basis
    it may be made: consent, §2.53 audit and evaluation, §2.54 public health (de-identified), §2.52 research, or the
@@ -169,8 +201,10 @@ Before any tier or any referral link is built for real use:
 5. The data contribution agreement between each CBO and the county, including the re-identification prohibition
    and California's requirements for de-identified patient information.
 6. The applicability of CMIA and Health and Safety Code §11845.5 to each type of programme.
-7. For referral links: the external role's access, the notice with each disclosure, the consent to report an
-   outcome back, and who is responsible for a receiving organisation's staff.
+7. For referral links: the one-time link design as built (a packet naming the client behind a six-digit code,
+   no account, a first-browser claim, a server reachable from the internet), the notice with each disclosure,
+   the consent to report an outcome back, and who is responsible for a receiving organisation's staff; for the
+   network later, the external role's access.
 8. For the AI copilot's interaction with either: copilot drafts are never pooled, and no free text enters the
    dataset.
 

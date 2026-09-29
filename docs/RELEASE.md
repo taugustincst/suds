@@ -200,6 +200,14 @@ git fetch origin && git tag -a v1.0.1 <sha> -m "SUDS 1.0.1" && git push origin v
 stamped, and the version is released only when the owner pushes its tag (the GitHub Release and the tag carry that
 date); until then the section describes a prepared release, not a published one.
 
+**Stamp checklist: the "not yet released" lines.** Until a feature release is stamped, the buyer documents say
+what it adds with one phrase, **"built for X.Y.Z, not yet released"** (docs/market/STRATEGY.md, POSITIONING.md,
+README.md, PILOT-KIT.md, the buyer guides). When stamping X.Y.Z, rewrite each of them to say what is now true
+(released in X.Y.Z; for a line that also gates a pilot or a demo, say what still gates it, such as counsel's
+review). `test/release-wording.test.js` finds them: it fails once `package.json`'s version has a dated CHANGELOG
+heading while any document still says that version is not yet released, and it refuses other spellings of the
+same thing, so there is one phrase to search for.
+
 #### Handing a release to the owner
 Whoever prepares a release (a maintainer, or the maintaining assistant) stamps it on `main` and then hands it over;
 the owner tags it. **The maintaining assistant cannot push tags at all** (its environment's proxy refuses a tag
