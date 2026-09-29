@@ -254,7 +254,13 @@ a.tel { font-variant-numeric: tabular-nums; } a.sms { font-weight: 600; }
 .compact-row .primary { display: flex; align-items: center; justify-content: space-between; gap: .5rem; font-weight: 600; }
 .compact-row .primary > :first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .compact-row .secondary { margin-top: .15rem; display: flex; gap: .5rem; flex-wrap: wrap; }
+.compact-row .compact-actions { flex-basis: 100%; } .compact-row .compact-actions:empty { display: none; }
+/* filterBar(): the "Filters" button shows on a phone only; elsewhere the bar is open and looks as it always did. */
+.filters-box > summary { display: none; }
 @media (max-width: 640px) {
+  .filters-box > summary { display: inline-flex; margin-bottom: .6rem; min-height: 44px; list-style: none; }
+  .filters-box > summary::-webkit-details-marker { display: none; }
+  .filters-box > summary::after { content: " ▾" / ""; white-space: pre; } .filters-box[open] > summary::after { content: " ▴" / ""; }
   .table-wrap.has-compact table { display: none; }
   .table-wrap.has-compact .compact-list { display: block; }
 }

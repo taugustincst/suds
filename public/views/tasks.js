@@ -46,8 +46,8 @@ export async function openChangeNotice(t, { onDone } = {}) {
   const seen = async () => { await put(`/api/tasks/${t.id}`, { status: 'done' }); toast('Marked as seen', 'ok'); m.close(); onDone && onDone(); };
   const m = modal('A change to your client\'s record', h('div', { 'data-change-notice': t.id },
     h('p', {}, `${n.editor} changed ${who}'s record. They are not on this client's care team, so the primary worker is told.`),
-    kv([['Changed by', n.editor], ['Client', t.client_id ? h('span', {}, who, t.client_name ? h('span', { class: 'small muted mono' }, ` ${n.code}`) : null) : who],
-      ['When', fmt.dt(t.updated_at || t.created_at)], ['Fields changed', h('ul', { 'data-notice-fields': '1', style: { margin: 0, paddingLeft: '1.2rem' } }, n.fields.map(x => h('li', {}, label(x))))], ['Status', open ? 'Not seen yet' : 'Seen']]),
+    kv([['Changed by', n.editor], ['Client', t.client_id ? h('span', {}, who, t.client_name ? h('span', { class: 'small muted mono' }, ` ${t.client_code || n.code}`) : null) : who],
+      ['When', fmt.dt(t.created_at || t.updated_at)], ['Fields changed', h('ul', { 'data-notice-fields': '1', style: { margin: 0, paddingLeft: '1.2rem' } }, n.fields.map(x => h('li', {}, label(x))))], ['Status', open ? 'Not seen yet' : 'Seen']]),
     h('p', { class: 'small muted' }, `The record shows each field as it is now. SUDS keeps which fields were changed, not what they held before, so if something looks wrong, ask ${n.editor}.`),
     h('div', { class: 'btn-row' },
       t.client_id ? h('a', { class: 'btn', href: `#/client/${t.client_id}`, 'data-notice-client': '1', onClick: () => m.close() }, 'View client') : null,

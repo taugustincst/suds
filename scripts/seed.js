@@ -31,5 +31,8 @@ else { const s = demo.seed({ actor: sup, workers: [nav1, nav2], clinician: clin,
 // The sample data has care plans, assessments and CalOMS-ready episodes, and the browser suite drives every
 // module, so the development database is a treatment-adjacent programme (a new install is harm reduction).
 db.setSetting('programme_profile', 'treatment');
+// ...so its name says so: the new-install default ("County Harm Reduction and Outreach Program") beside a treatment
+// profile read as a harm-reduction programme whose visits start at the office (r8 L1). A name someone set is kept.
+if (db.getSetting('org_name') === 'County Harm Reduction and Outreach Program') db.setSetting('org_name', 'County Treatment and Outreach Program');
 console.log(`Demo logins (password "${PW}"): mrivera (navigator), dchen (navigator), kpatel (clinician), jwalker (supervisor), afinance (finance), rreader (read-only). Administrator: ${adminUsername()} (its password was set by SUDS_ADMIN_PASSWORD or printed when the database was created)`);
 db.close();

@@ -2,6 +2,44 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Frontline
+
+Fixes from the frontline-UX review of 1.16.2 (round 8). No migration, no new permission, no new route.
+
+- **A change notice reads as what happened, wherever it shows (M1).** In a client's Recent activity it read as a
+  to-do by the primary worker, with the text written to them ("You are this client's primary worker…") and its
+  reference line, shown to everyone who opened the record. It now reads *"Maria Rivera (not on the care team)
+  changed: Phone, Risk level — David Chen was told"*, attributed to the editor (whom the `client.change_notice`
+  audit entry names), dated by the change, and opens the notice card. The timeline marks it `notice: true`. The
+  Overview's **Open to-dos** tile leaves notices out ("· 1 change to review"), and warns only when a real to-do is
+  overdue (`counts.overdue_tasks`).
+- **The bell keeps notices apart (M2).** They are listed first under *Changes to your clients*, marked **New**
+  (not "today"), and are not in the due count on the badge, which says "new" when a notice is all there is; the
+  button's name says both ("9 to-dos due or overdue, 1 change to your clients"). A notice's title names the client
+  as the lists do (the name where the reader may see names, else the code), and the card shows the name once
+  with the code. On a device the bell asks again right after a sync instead of after its minute's cache.
+- **+ Log on a client's record carries the client (M3).** Note, Log a visit, Call, Text, To-do, Make a referral,
+  Time and Overdose from the floating + Log (and the top bar's) start with the client whose record is open, as the
+  record's own buttons and the `n` shortcut already did; on a phone a note no longer failed "Client is required".
+- **The notice card's When is the change (L2),** not the moment it was marked seen.
+- **Notes name the client and say they open (L3),** as Visits, Calls and To-dos do (`client_name` on
+  `GET /api/notes`, by code alone under break-glass), with an **Open** button on each row.
+- **Notes and Referrals are two-line rows on a phone (L4),** as Visits are; a referral's buttons sit under its
+  row.
+- **Filters fold away on a phone (L5).** Visits, Notes, Referrals and Calls put their filters behind a
+  **Filters** button (saying how many are on), so the first rows are on the first screen.
+- **The floating + Log no longer sits on the first rows (L6).** With the filters folded, the first rows are above
+  it; the page already had room below the last row to scroll it clear (now checked in the browser suite).
+- **SOAP, DAP, BIRP, GIRP and safety plans ask for the text once (L7).** The Narrative box, built from the
+  sections, folds away under them as *Narrative text (built from the sections)* and is not required; a draft whose
+  narrative is still the built one keeps being built from its sections.
+- **A clinician's new note starts as Clinical (L8)** (anyone who may write clinical notes).
+- **Finance and Read-only are not told that what they add shows up elsewhere (L9).**
+- **The development seed's programme is named for its profile (L1):** "County Treatment and Outreach Program"
+  beside the treatment profile, not the harm-reduction default name. Behaviour is unchanged.
+
 ## 1.16.2 — 2026-09-29
 
 ### Security

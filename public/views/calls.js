@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, contactLinks, kv, mayChange, ownedNotice, viewOnly } from '../app.js';
+import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, contactLinks, kv, mayChange, ownedNotice, viewOnly } from '../app.js';
 
 // prefill: starting values for a new record (the number just dialled from a client's page) -- unlike
 // `values`, it does not make this an edit.
@@ -84,7 +84,7 @@ route('calls', async (r) => {
       can('calls:write') ? h('button', { class: 'btn primary', onClick: () => openCallForm(null, { onDone: refresh }) }, '+ Log call') : null,
       can('calls:write') ? h('button', { class: 'btn', onClick: () => openCallForm(null, { method: 'text', onDone: refresh }) }, '+ Log text') : null,
       can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/calls?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
-    h('div', { class: 'filters' },
+    filterBar([crisis, fu, mine, method].filter(Boolean).length,
       h('button', { class: `btn sm ${crisis ? 'primary' : ''}`, onClick: () => nav(link({ crisis: crisis ? '' : '1' })) }, 'Crisis only'),
       h('button', { class: `btn sm ${fu ? 'primary' : ''}`, onClick: () => nav(link({ follow_up: fu ? '' : '1' })) }, 'Needs follow-up'),
       h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(link({ mine: mine ? '' : '1' })) }, 'Mine'),

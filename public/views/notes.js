@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv } from '../app.js';
+import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv } from '../app.js';
 import { problemPicker } from './clinical.js';
 
 export const SECTIONS = { SOAP: [['S', 'Subjective'], ['O', 'Objective'], ['A', 'Assessment'], ['P', 'Plan']], DAP: [['D', 'Data'], ['A', 'Assessment'], ['P', 'Plan']], BIRP: [['B', 'Behavior'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']], GIRP: [['G', 'Goal'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']],
@@ -11,11 +11,14 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   const C = state.constants; const isNew = !values;
   const kinds = ['admin', 'clinical'].filter(k => can(`notes:${k}:write`));
   let fmtSel, structuredBox, contentArea;
+  // Required only for a narrative note: with SOAP, DAP, BIRP, GIRP or a safety plan it is built from the sections, and
+  // folds away under them rather than asking for everything twice (r8 L7).
+  const narrative = { name: 'content', label: 'Narrative', type: 'textarea', span: true, rows: 10, required: true, value: prefill?.content };
   const f = form([
     { name: 'client_id', label: 'Client', type: 'client', required: true, value: clientId || values?.client_id, display: clientDisplay },
-    { name: 'kind', label: 'Note type', type: 'select', options: kinds.map(k => ({ value: k, label: k === 'clinical' ? 'Clinical (not shown to finance or read-only)' : 'Administrative / contact' })), value: kind || values?.kind || kinds[0], noBlank: true, required: true },
+    { name: 'kind', label: 'Note type', type: 'select', options: kinds.map(k => ({ value: k, label: k === 'clinical' ? 'Clinical (not shown to finance or read-only)' : 'Administrative / contact' })), value: kind || values?.kind || (kinds.includes('clinical') ? 'clinical' : kinds[0]), noBlank: true, required: true }, // clinical for those who write it (r8 L8)
     { name: 'format', label: 'Format', type: 'select', list: 'NOTE_FORMATS', value: prefill?.format || 'narrative', noBlank: true }, { name: 'occurred_at', label: 'Date of service', type: 'datetime', required: true, value: values?.occurred_at || new Date().toISOString() },
-    { name: 'title', label: 'Title', span: true, value: prefill?.title }, { name: 'content', label: 'Narrative', type: 'textarea', span: true, rows: 10, required: true, value: prefill?.content },
+    { name: 'title', label: 'Title', span: true, value: prefill?.title }, narrative,
     { name: 'part2_protected', label: 'Contains 42 CFR Part 2 protected SUD information', type: 'checkbox', value: values ? values.part2_protected : true },
     // 42 CFR §2.11: a clinician's own analysis of a counselling session, kept apart from the rest of the record
     // and disclosed only under a consent for counseling notes alone. Only clinical notes can be one.
@@ -89,12 +92,24 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   structuredBox = h('div', { class: 'span' });
   f.querySelector('[data-field="content"]').before(structuredBox);
   let autoText = '';
+  const contentField = f.querySelector('[data-field="content"]');
+  const builtBox = h('details', { class: 'span section', 'data-narrative-built': '1' }, h('summary', {}, 'Narrative text (built from the sections)'));
+  function foldNarrative(built) {
+    narrative.required = !built; contentArea.required = !built;
+    if (built) contentArea.removeAttribute('aria-required'); else contentArea.setAttribute('aria-required', 'true');
+    const lab = contentField.querySelector('label'); if (lab) lab.textContent = built ? 'Narrative' : 'Narrative *';
+    if (built && !builtBox.contains(contentField)) { contentField.replaceWith(builtBox); builtBox.append(contentField); }
+    else if (!built && builtBox.isConnected) builtBox.replaceWith(contentField);
+  }
   function renderStructured() {
     structuredBox.replaceChildren();
-    const secs = SECTIONS[fmtSel.value]; if (!secs) return;
+    const secs = SECTIONS[fmtSel.value]; foldNarrative(!!secs); if (!secs) return;
     const vals = values?.structured || {};
     structuredBox.append(h('fieldset', {}, h('legend', {}, fmtSel.value === 'safety_plan' ? 'Safety plan' : `${fmtSel.value} sections`), secs.map(([k, label]) => h('div', { class: 'field' }, h('label', {}, k.length <= 2 ? `${k} — ${label}` : label), h('textarea', { 'data-sec': k, rows: 3 }, vals[k] || '')))));
-    structuredBox.querySelectorAll('textarea').forEach(t => t.addEventListener('input', () => { const s = readStructured(); autoText = Object.entries(s).filter(([, v]) => v).map(([k, v]) => `${sectionLabel(fmtSel.value, k)}: ${v}`).join('\n\n'); if (!contentArea.value || contentArea.dataset.auto === '1') { contentArea.value = autoText; contentArea.dataset.auto = '1'; } }));
+    // A draft whose narrative is still the one built from its sections goes on being built from them, folded away.
+    const now = readStructured() || {}; const texts = [false, true].map(all => Object.entries(now).filter(([, v]) => all || v).map(([k, v]) => `${sectionLabel(fmtSel.value, k)}: ${v}`).join('\n\n'));
+    if (!contentArea.value || texts.includes(contentArea.value)) contentArea.dataset.auto = '1';
+    structuredBox.querySelectorAll('textarea').forEach(t => t.addEventListener('input', () => { const s = readStructured() || {}; autoText = Object.entries(s).filter(([, v]) => v).map(([k, v]) => `${sectionLabel(fmtSel.value, k)}: ${v}`).join('\n\n'); if (!contentArea.value || contentArea.dataset.auto === '1') { contentArea.value = autoText; contentArea.dataset.auto = '1'; } }));
     contentArea.addEventListener('input', () => { contentArea.dataset.auto = '0'; });
   }
   function readStructured() { const out = {}; let any = false; structuredBox.querySelectorAll('textarea[data-sec]').forEach(t => { out[t.dataset.sec] = t.value; if (t.value.trim()) any = true; }); return any ? out : null; }
@@ -244,10 +259,15 @@ export function noteTable(rows, { showClient = true, onChange } = {}) {
   // inside it. The row already opens the note, and the note itself links to the client without any such
   // nesting, so here the client code is a plain (mouse-only) shortcut rather than its own control.
   return table([
-    { label: 'Date of service', render: n => h('span', { class: 'nowrap' }, fmt.dt(n.occurred_at)) }, showClient ? { label: 'Client', render: n => h('span', { class: 'link-like', onClick: (e) => { e.stopPropagation(); nav(`client/${n.client_id}`); } }, n.client_code) } : null,
+    { label: 'Date of service', render: n => h('span', { class: 'nowrap' }, fmt.dt(n.occurred_at)) }, showClient ? { label: 'Client', render: n => h('span', { class: 'link-like', onClick: (e) => { e.stopPropagation(); nav(`client/${n.client_id}`); } }, n.client_name || n.client_code, n.client_name ? h('div', { class: 'muted small mono' }, n.client_code) : null) } : null,
     { label: 'Type', render: n => badge(n.kind === 'clinical' ? 'Clinical' : 'Admin', n.kind === 'clinical' ? 'purple' : 'info') }, { label: 'Format', render: n => fmt.label(n.format, 'NOTE_FORMATS') }, { label: 'Title', render: n => n.title || h('span', { class: 'muted' }, '(untitled)') },
     { label: 'Status', render: n => [badge(fmt.label(n.status), statusKind(n.status)), n.addenda ? [' ', badge(`${n.addenda} addend.`)] : null, n.cosigned_at ? [' ', badge('Countersigned', 'ok')] : n.awaiting_cosign ? [' ', badge('Awaiting review', 'warn')] : n.cosign_requested ? [' ', badge('Review requested', 'warn')] : null] }, { label: 'Source', render: n => n.source === 'manual' ? '' : badge(fmt.label(n.source), 'warn') }, { label: 'Author', key: 'author' },
-  ].filter(Boolean), rows, { onRow: n => openNote(n.id, { onChange }), empty: 'No notes yet. Notes save as drafts automatically while you type, and you sign them when they are complete.' });
+    // Said on every row, not only known to those who try clicking one (r8 L3).
+    { label: '', render: n => h('button', { type: 'button', class: 'btn sm', 'data-note-open': n.id, onClick: (e) => { e.stopPropagation(); openNote(n.id, { onChange }); } }, 'Open') },
+  ].filter(Boolean), rows, { onRow: n => openNote(n.id, { onChange }), empty: 'No notes yet. Notes save as drafts automatically while you type, and you sign them when they are complete.',
+    // On a phone, two lines a note (as Visits): who and what kind, then when, its title, where it stands and whose (r8 L4).
+    compact: { primary: n => [h('span', {}, showClient ? (n.client_name || n.client_code) : (n.title || fmt.label(n.format, 'NOTE_FORMATS'))), badge(n.kind === 'clinical' ? 'Clinical' : 'Admin', n.kind === 'clinical' ? 'purple' : 'info')],
+      secondary: n => [h('span', {}, fmt.dt(n.occurred_at)), showClient && n.title ? h('span', {}, n.title) : null, badge(fmt.label(n.status), statusKind(n.status)), n.awaiting_cosign ? badge('Awaiting review', 'warn') : null, n.author ? h('span', {}, `by ${n.author}`) : null] } });
 }
 route('notes', async (r) => {
   const status = r.query.get('status') || '', kind = r.query.get('kind') || '', mine = r.query.get('mine') === '1';
@@ -264,7 +284,7 @@ route('notes', async (r) => {
   const kSel = h('select', { onChange: () => nav(`notes?status=${status}&kind=${kSel.value}${mine ? '&mine=1' : ''}`) }, [['', 'All types'], ['admin', 'Administrative'], ['clinical', 'Clinical']].map(([v, l]) => h('option', { value: v, selected: v === kind }, l)));
   return h('div', {},
     pageHead('Notes', (can('notes:admin:write') || can('notes:clinical:write')) ? h('button', { class: 'btn primary', onClick: () => openNoteForm(null, { onDone: refresh }) }, '+ New note') : null, can('imports:write') ? h('a', { class: 'btn', href: '#/imports' }, 'Import from Pocket AI / OneNote') : null),
-    h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sSel), h('div', { class: 'field' }, h('label', {}, 'Type'), kSel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(`notes?status=${status}&kind=${kind}${mine ? '' : '&mine=1'}`) }, 'My notes')),
+    filterBar([status, kind, mine].filter(Boolean).length, h('div', { class: 'field' }, h('label', {}, 'Status'), sSel), h('div', { class: 'field' }, h('label', {}, 'Type'), kSel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(`notes?status=${status}&kind=${kind}${mine ? '' : '&mine=1'}`) }, 'My notes')),
     !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are visible only to clinical roles and supervisors.') : counselingHidden(),
     pagedList({ first: data, url: `/api/notes${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => noteTable(rows, { onChange: refresh }), summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} notes`) }));
 });
