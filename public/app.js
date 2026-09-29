@@ -357,10 +357,28 @@ function scrollRegions(root) {
     if (!scrolls || w.hasAttribute('tabindex') || [...w.querySelectorAll(FOCUSABLE)].some(e => e.getClientRects().length)) continue;
     w.tabIndex = 0; w.setAttribute('role', 'region');
     if (!w.hasAttribute('aria-label')) {
-      const head = w.closest('.card, .modal')?.querySelector('h2,h3') || document.querySelector('.main h1');
-      w.setAttribute('aria-label', `${head ? head.textContent.trim() + ' — ' : ''}${w.matches('pre') ? 'text' : 'table'} (scrolls)`);
+      // Named after the heading nearest above it in its card (a card can hold more than one table: settlement
+      // outcomes' fund card has its outcomes and its months), and never the same name as another region on the
+      // page (axe landmark-unique).
+      const head = headingAbove(w) || w.closest('.card, .modal')?.querySelector('h2,h3') || document.querySelector('.main h1');
+      const base = `${head ? head.textContent.trim() + ' — ' : ''}${w.matches('pre') ? 'text' : 'table'} (scrolls)`;
+      const taken = new Set([...document.querySelectorAll('[role="region"][aria-label]')].filter(r => r !== w).map(r => r.getAttribute('aria-label')));
+      let name = base; for (let n = 2; taken.has(name); n++) name = `${base} ${n}`;
+      w.setAttribute('aria-label', name);
     }
   }
+}
+// The nearest h2–h4 before `el` in document order, without leaving its card or dialog.
+function headingAbove(el) {
+  const stop = el.closest('.card, .modal');
+  for (let n = el; n && n !== stop; n = n.parentElement) {
+    for (let p = n.previousElementSibling; p; p = p.previousElementSibling) {
+      if (p.matches('h2,h3,h4')) return p;
+      const inner = p.querySelectorAll('h2,h3,h4');
+      if (inner.length) return inner[inner.length - 1];
+    }
+  }
+  return null;
 }
 // A table wider than its card said in words above it, not only by a scroll bar some systems hide (r9 L4).
 function sidewaysHint(w, wide) {
