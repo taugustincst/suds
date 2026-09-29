@@ -36,7 +36,8 @@ no new route.
   tables with an encrypted column); `test/migrations.test.js` opens it and checks every value still decrypts and
   every blind index still matches.
 - **The thorough tests are two CI jobs.** The full-size SDC attacker sweeps took most of the `thorough` job's
-  30 minutes; they now run in `thorough-sdc` (60-minute limit), and the performance checks in `thorough`. Both
+  30 minutes; they now run in `thorough-sdc` (60-minute limit: on its own the sweep took 27 minutes on the
+  development container, the rest 17 seconds), and the performance checks in `thorough`. Both
   are required by the release gate (`scripts/test-thorough.js --part sdc|rest`; `npm run test:thorough` still runs
   everything).
 - **The permissions-admin browser script runs in CI.** It was not in `scripts/ui/run-all.sh`'s default list, so
