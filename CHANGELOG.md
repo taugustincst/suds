@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.17.0 — 2026-09-29
 
 ### AI documentation copilot
 
