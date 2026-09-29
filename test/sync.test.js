@@ -738,5 +738,6 @@ test('retention: inactive is due only from its last activity, open work blocks a
   assert.ok(run2.purged.length >= 1);
   assert.ok(!H.db.one(`SELECT 1 FROM clients WHERE id=?`, keeper) && !H.db.one(`SELECT 1 FROM clients WHERE id=?`, dup), 'the duplicate went with the record it was merged into');
   assert.ok(H.db.one(`SELECT 1 FROM tombstones WHERE table_name='clients' AND id=?`, dup));
-  assert.equal(H.db.one(`SELECT suggested_client_id FROM import_items WHERE id='item-purge'`).suggested_client_id, null, 'the import suggestion no longer dangles');
+  assert.equal(H.db.one(`SELECT 1 x FROM import_items WHERE id='item-purge'`), undefined, 'a page suggested for the purged client goes with the record (its text with it)');
+  assert.ok(H.db.one(`SELECT 1 x FROM tombstones WHERE table_name='import_items' AND id='item-purge'`));
 });

@@ -11,4 +11,7 @@ module.exports = define({
   fields: { title: { type: 'string', maxLen: 200 } },
   editableBy: ofImport,
   authorise(row, c) { return c.existing ? null : ofImport(c.user, row); },
+  // A filed page's text lives in its note; the item keeps none of it, whatever a device sends (the REST commit
+  // clears it the same way: routes/imports.js).
+  storeRow(o, row, c) { if ((o.status ?? c.existing?.status) === 'committed') { o.content_enc = ''; o.title_enc = null; o.metadata_enc = null; } },
 });

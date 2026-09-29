@@ -122,7 +122,9 @@ module.exports = (r) => {
       const noteTitle = v.title || itemTitle(it) || null;
       db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,occurred_at,source,source_ref,import_item_id,intervention_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
         noteId, v.client_id, ctx.user.id, v.kind, v.format || 'narrative', noteTitle ? encrypt(noteTitle) : null, encrypt(content), occurred, source, it.external_id || null, it.id, interventionId);
-      db.run(`UPDATE import_items SET status='committed', note_id=? WHERE id=?`, noteId, it.id);
+      // The note is now the record: the item keeps no copy of the page's text, title or the names sniffed
+      // from it, which would otherwise outlive the client's retention purge (evidence-pack review of 1.16.4).
+      db.run(`UPDATE import_items SET status='committed', note_id=?, content_enc='', title_enc=NULL, metadata_enc=NULL, updated_at=? WHERE id=?`, noteId, db.now(), it.id);
       const left = db.one(`SELECT COUNT(*) n FROM import_items WHERE import_id=? AND status='staged'`, it.import_id).n;
       if (left === 0) db.run(`UPDATE imports SET status='completed' WHERE id=?`, it.import_id);
     });
@@ -144,8 +146,10 @@ module.exports = (r) => {
   r.delete('/api/imports/:id', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => {
     const imp = db.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id); if (!imp) throw notFound();
     if (imp.imported_by !== ctx.user.id && !auth.hasPerm(ctx.user, 'records:manage-others')) throw forbidden();
-    // Purges staged (uncommitted) PHI; committed notes are retained
+    // Purges staged (uncommitted) PHI; committed notes are retained, and their items keep no text (one
+    // committed by an earlier version still may until the retention pass clears it, so it is cleared here too).
     db.run(`DELETE FROM import_items WHERE import_id=? AND status<>'committed'`, imp.id);
+    db.run(`UPDATE import_items SET content_enc='', title_enc=NULL, metadata_enc=NULL, updated_at=? WHERE import_id=? AND status='committed' AND (content_enc<>'' OR title_enc IS NOT NULL OR metadata_enc IS NOT NULL)`, db.now(), imp.id);
     db.run(`UPDATE imports SET status='purged' WHERE id=?`, imp.id);
     audit.log({ user: ctx.user, action: 'import.purge', entity: 'import', entityId: imp.id, ip: ctx.ip });
     return { ok: true };

@@ -2,6 +2,24 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Privacy
+
+- **A filed import page no longer outlives its note or its client.** When an imported page (a OneNote export, a
+  Pocket AI transcript) was filed as a note, its `import_items` row kept its own encrypted copy of the text, title and
+  the client-name hints sniffed from it. A client's retention purge only unlinked the row's suggested client, and
+  purging the import deleted only staged and discarded pages, so the text stayed indefinitely after the record it
+  belonged to was gone (evidence-pack review of 1.16.4). Now filing clears the item's text, title and hints (the note
+  is the record; nothing needs the copy, as no import is deduplicated by its text), at both doors: `POST
+  /api/imports/items/:id/commit` and a device's sync push of a committed item (`server/rules/import_items.js`).
+  Purging a client hard-deletes (and tombstones) every import item filed as one of its notes or suggested for it,
+  staged or committed (`counts.import_items` on the `client.purge` audit row, replacing `import_items_unlinked`).
+  The daily retention pass clears the copies earlier versions left on committed items (`import.committed_text_cleared`,
+  audited with a count only), and purging an import batch clears them for its committed items too. No migration: it
+  is a data cleanup in the retention pass, done the next time it runs (within a day of the upgrade).
+  (`docs/security/DATA-INVENTORY.md` does not exist yet; its section on imports should say this when it is written.)
+
 ## 1.16.4 — 2026-09-29
 
 ### Security
