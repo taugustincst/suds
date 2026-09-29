@@ -467,6 +467,8 @@ module.exports = (r) => {
       open_tasks: db.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, row.id).n,
       // Of those, the change notices (open_tasks includes them): never overdue, shown apart (1.16.2).
       notices: db.all(`SELECT description_enc FROM tasks WHERE client_id=? AND status='open' AND due_at IS NULL AND created_by=assigned_to`, row.id).filter(require('../rules/tasks').isNotice).length,
+      // Real to-dos past their due date (a notice has none): the Overview's tile warns only for these (r8 M1).
+      overdue_tasks: db.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END)`, row.id, require('./budget').localDate(), db.now()).n,
       minutes: db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
       spent: db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n,
       episodes: db.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n,
@@ -566,8 +568,21 @@ module.exports = (r) => {
       if ((x.kind === 'admin' || canClinical) && sud.mayReadCounseling(ctx.user, x)) add(x.occurred_at, () => ({ kind: 'note', id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt(x.title_enc) : O.labelOf('NOTE_FORMATS', x.format)}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } }));
     for (const x of db.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=? ${cut('r.referred_at')} ORDER BY r.referred_at DESC LIMIT ?`, id, ...cutP, per))
       add(x.referred_at, () => ({ kind: 'referral', id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes_enc ? decrypt(x.notes_enc) : null, worker: x.worker, meta: { status: x.status, outcome: x.outcome_enc ? decrypt(x.outcome_enc) : null } }));
+    // A change notice (rules/clients.js notifyPrimary) is shown as what happened -- who, off the care team, changed
+    // which fields, and that the primary worker was told -- attributed to the editor (the audit entry that raised it
+    // names them) and dated by the change; never its to-do text, which speaks to the primary worker (r8 M1).
+    const isNotice = require('../rules/tasks').isNotice;
+    const noticeEvent = (x) => {
+      let title = '', desc = '';
+      try { title = decrypt(x.title_enc || ''); desc = x.description_enc ? decrypt(x.description_enc) : ''; } catch { /* named below without them */ }
+      const by = db.one(`SELECT u.display_name FROM audit_log a JOIN users u ON u.id=a.user_id WHERE a.action='client.change_notice' AND a.entity_id=? AND a.details LIKE ? ORDER BY a.id DESC LIMIT 1`, id, `%"task":"${x.id}"%`);
+      const editor = (by && by.display_name) || (/^(.+?) changed /.exec(title) || [])[1] || 'Someone';
+      const fields = (/^Changed: (.*)$/m.exec(desc) || /\((.*)\)\s*$/.exec(title) || [])[1] || 'the record';
+      return { kind: 'notice', notice: true, id: x.id, at: x.created_at, title: `${editor} (not on the care team) changed: ${fields} — ${x.worker || 'the primary worker'} was told`, detail: null, worker: editor, meta: {} };
+    };
     for (const x of db.all(`SELECT t.*, u.display_name AS worker FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE client_id=? ORDER BY COALESCE(t.completed_at, t.due_at, t.created_at) DESC LIMIT ?`, id, per))
-      add(x.completed_at || x.due_at || x.created_at, () => ({ kind: x.is_milestone ? 'milestone' : 'task', id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title_enc ? decrypt(x.title_enc) : '', detail: x.description_enc ? decrypt(x.description_enc) : null, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } }));
+      if (!x.due_at && x.created_by === x.assigned_to && isNotice(x)) add(x.created_at, () => noticeEvent(x));
+      else add(x.completed_at || x.due_at || x.created_at, () => ({ kind: x.is_milestone ? 'milestone' : 'task', id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title_enc ? decrypt(x.title_enc) : '', detail: x.description_enc ? decrypt(x.description_enc) : null, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } }));
     for (const x of db.all(`SELECT * FROM consents WHERE client_id=? ORDER BY signed_at DESC LIMIT ?`, id, per))
       add(x.signed_at, () => ({ kind: 'consent', id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, ' ')}${x.recipient_enc ? ' → ' + decrypt(x.recipient_enc) : ''}`, detail: x.purpose_enc ? decrypt(x.purpose_enc) : null, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } }));
     if (auth.hasPerm(ctx.user, 'budget:read'))

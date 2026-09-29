@@ -1113,6 +1113,13 @@ export function clientPicker(name, value, f = {}) {
   return wrap;
 }
 
+// A list's filter bar. On a phone it folds behind a "Filters" button (a <details>), so the list's first rows are on
+// the first screen rather than below five stacked controls (r8 L5); `on` is how many filters are in use, said on
+// the button so a filtered list never looks like the whole of it. On a wider screen it is the bar as before.
+export function filterBar(on, ...controls) {
+  const phone = typeof matchMedia === 'function' && matchMedia('(max-width: 640px)').matches;
+  return h('details', { class: 'filters-box', open: !phone, 'data-filters': '1' }, h('summary', { class: 'btn sm' }, on ? `Filters (${on} on)` : 'Filters'), h('div', { class: 'filters' }, controls));
+}
 // compact: { primary(r), secondary(r), onTap(r) } -- a two-line row per record on a phone instead of every
 // column stacked as label/value pairs. The full table is still rendered for wider screens; CSS picks one.
 export function table(columns, rows, { onRow, empty = 'No records', wrap = true, rowLabel, compact } = {}) {
@@ -1410,19 +1417,24 @@ export function accessibilityLink() { return h('p', { class: 'small center a11y-
 export function emptyState(title, text, action, { level = 0 } = {}) { return h('div', { class: 'empty-state' }, h(level ? `h${level}` : 'div', { class: 'big' }, title), h('p', { class: 'muted' }, text), action || null); }
 
 // "+ Log" quick action: the one button non-technical users need most
+/** On a client's record, the client every "+ Log" form starts with (as the `n` shortcut and the record's own buttons do: r8 M3). */
+function hereClient() {
+  const r = parseHash(); const pc = state.pageClient;
+  return r.name === 'client' && pc && pc.id === r.id ? { clientId: pc.id, clientDisplay: pc.display, onDone: pc.onDone } : { onDone: render };
+}
 export function quickActions() {
   // One verb per action, the same words as the buttons on the pages ("Log a visit", "Make a referral").
   const items = [
-    can('interventions:write') ? ['✚', 'Log a visit', async () => (await import('./views/interventions.js')).openInterventionForm(null, { onDone: render })] : null,
+    can('interventions:write') ? ['✚', 'Log a visit', async () => (await import('./views/interventions.js')).openInterventionForm(null, hereClient())] : null,
     // An overdose or a naloxone reversal is logged in the field as often as a visit is.
-    can('overdose:write') ? ['⛑', 'Overdose or reversal', async () => (await import('./views/overdose.js')).openOverdoseForm(null, { onDone: render })] : null,
-    can('calls:write') ? ['☎', 'Phone call', async () => (await import('./views/calls.js')).openCallForm(null, { onDone: render })] : null,
-    can('calls:write') ? ['💬', 'Text message', async () => (await import('./views/calls.js')).openCallForm(null, { method: 'text', onDone: render })] : null,
-    (can('notes:admin:write') || can('notes:clinical:write')) ? ['✎', 'Note', async () => (await import('./views/notes.js')).openNoteForm(null, { onDone: render })] : null,
-    can('tasks:write') ? ['☑', 'To-do', async () => (await import('./views/tasks.js')).openTaskForm(null, { onDone: render })] : null,
+    can('overdose:write') ? ['⛑', 'Overdose or reversal', async () => (await import('./views/overdose.js')).openOverdoseForm(null, hereClient())] : null,
+    can('calls:write') ? ['☎', 'Phone call', async () => (await import('./views/calls.js')).openCallForm(null, hereClient())] : null,
+    can('calls:write') ? ['💬', 'Text message', async () => (await import('./views/calls.js')).openCallForm(null, { ...hereClient(), method: 'text' })] : null,
+    (can('notes:admin:write') || can('notes:clinical:write')) ? ['✎', 'Note', async () => (await import('./views/notes.js')).openNoteForm(null, hereClient())] : null,
+    can('tasks:write') ? ['☑', 'To-do', async () => (await import('./views/tasks.js')).openTaskForm(null, hereClient())] : null,
     // A referral is as much a part of a field contact as the visit itself; the form asks for the client.
-    can('referrals:write') ? ['⇢', 'Make a referral', async () => (await import('./views/referrals.js')).openReferralForm(null, { onDone: render })] : null,
-    can('time:write') ? ['◷', 'Time (meeting, travel, paperwork…)', async () => (await import('./views/time.js')).openTimeForm(null, { onDone: render })] : null,
+    can('referrals:write') ? ['⇢', 'Make a referral', async () => (await import('./views/referrals.js')).openReferralForm(null, hereClient())] : null,
+    can('time:write') ? ['◷', 'Time (meeting, travel, paperwork…)', async () => (await import('./views/time.js')).openTimeForm(null, hereClient())] : null,
     can('clients:write') ? ['👤', 'New client', async () => (await import('./views/clients.js')).openClientForm(null)] : null,
   ].filter(Boolean);
   if (!items.length) return null;
@@ -1493,6 +1505,8 @@ const DUE_POLL_MS = 60000;
 let dueSoonTimer = null;
 function dueSoon() { clearTimeout(dueSoonTimer); dueSoonTimer = setTimeout(() => { if (duePoll && state.user) duePoll(true); }, 1500); }
 let dueCache = { at: 0, data: null }; const notifiedDue = new Set(); let dueTimer; let duePoll = null; let dueListening = false;
+/** After a device sync brought down new to-dos and notices: the bell asks again now, not in a minute (r8 M2). */
+export function forgetDue() { dueCache = { at: 0, data: null }; if (duePoll && state.user) duePoll(true); }
 /** The header's reminder that two-step verification is owed, once its banner has been dismissed. */
 export function mfaLink() {
   if (!state.mfaDue || !prefs.get('mfa_banner_collapsed') || (state.user && state.user.mfa_enabled)) return null;
@@ -1511,9 +1525,9 @@ export function dueBell() {
   const updated = h('span', { class: 'small muted', 'data-due-updated': '1' }, '');
   // Not disabled while it asks: a disabled button drops the keyboard focus (and Escape with it) onto the page.
   let refreshing = false;
-  const refreshBtn = h('button', { type: 'button', class: 'btn sm', 'data-due-refresh': '1', onClick: async () => { if (refreshing) return; refreshing = true; refreshBtn.setAttribute('aria-busy', 'true'); try { await poll(true); announce(`To-dos due: ${(dueCache.data && dueCache.data.rows.length) || 0}. Updated just now.`); } finally { refreshing = false; refreshBtn.removeAttribute('aria-busy'); } } }, 'Refresh');
+  const refreshBtn = h('button', { type: 'button', class: 'btn sm', 'data-due-refresh': '1', onClick: async () => { if (refreshing) return; refreshing = true; refreshBtn.setAttribute('aria-busy', 'true'); try { await poll(true); announce(`To-dos due: ${(dueCache.data && dueCache.data.rows.filter(t => t.notice !== true).length) || 0}. Updated just now.`); } finally { refreshing = false; refreshBtn.removeAttribute('aria-busy'); } } }, 'Refresh');
   const panel = h('div', { class: 'card tight bell-panel hidden', id: panelId, role: 'region', 'aria-label': 'To-dos due', 'data-due-panel': '1' },
-    h('h2', { class: 'eyebrow' }, 'Due within the hour, or overdue'), list,
+    list,
     h('div', { class: 'row bell-panel-foot' }, updated, refreshBtn, h('a', { href: '#/tasks?overdue=1', 'data-due-all': '1', onClick: () => setOpen(false) }, 'All to-dos due')));
   const wrap = h('span', { class: 'bell-wrap' }, btn, panel);
   const ago = () => { if (!dueCache.at) return 'Not updated yet'; const m = Math.floor((Date.now() - dueCache.at) / 60000); return `Updated ${m < 1 ? 'just now' : `${m} min ago`}`; };
@@ -1526,16 +1540,24 @@ export function dueBell() {
   btn.addEventListener('click', () => setOpen(panel.classList.contains('hidden')));
   wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.classList.contains('hidden')) { e.stopPropagation(); setOpen(false); btn.focus(); } });
   document.addEventListener('click', (e) => { if (wrap.isConnected && !wrap.contains(e.target) && !panel.classList.contains('hidden')) setOpen(false); });
+  // Change notices (`notice: true`) are not work that is due: they have a group of their own, first, and stay out
+  // of the due count on the badge, which says "new" when they are all there is (r8 M2).
+  const item = (t, when) => h('div', { class: 'today-item', 'data-due-item': t.notice === true ? 'notice' : 'due' },
+    h('a', { href: `#/tasks?id=${t.id}`, onClick: () => setOpen(false) }, t.title, t.client_name && t.notice !== true ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null), when);
+  const group = (heading, rows, attr) => [h('h2', { class: 'eyebrow', [attr]: '1' }, heading), ...rows];
   const paint = (r) => {
-    const n = r ? r.rows.length : 0;
-    count.textContent = String(n); count.classList.toggle('hidden', !n); btn.classList.toggle('has-due', !!n);
-    btn.setAttribute('aria-label', n ? `${n} to-do${n === 1 ? '' : 's'} due or overdue` : 'No to-dos due');
+    const rows = r ? r.rows : []; const notices = rows.filter(t => t.notice === true); const due = rows.filter(t => t.notice !== true);
+    const n = due.length, k = notices.length;
+    count.textContent = n ? String(n) : 'new'; count.classList.toggle('hidden', !n && !k); btn.classList.toggle('has-due', !!(n || k));
+    const changes = k ? `${k} change${k === 1 ? '' : 's'} to your clients` : '';
+    btn.setAttribute('aria-label', [n ? `${n} to-do${n === 1 ? '' : 's'} due or overdue` : 'No to-dos due', changes].filter(Boolean).join(', '));
     updated.textContent = ago();
-    list.replaceChildren(...(n ? r.rows.slice(0, 8).map(t => h('div', { class: 'today-item' },
-      h('a', { href: `#/tasks?id=${t.id}`, onClick: () => setOpen(false) }, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null),
-      t.overdue ? badge('Overdue', 'danger') : h('span', { class: 'small muted' }, fmt.time(t.due_at) || 'today'))) : [h('p', { class: 'small muted' }, 'Nothing due in the next hour, and nothing overdue.')]),
-    // The DOM's own replaceChildren and append write a null as the text "null"; h() skips one, they do not.
-    ...(n > 8 ? [h('p', { class: 'small muted' }, `and ${n - 8} more`)] : []));
+    list.replaceChildren(
+      ...(k ? group(`Changes to your clients · ${k}`, notices.slice(0, 5).map(t => item(t, badge('New', 'info'))), 'data-due-notices') : []),
+      ...group('Due within the hour, or overdue', n ? due.slice(0, 8).map(t => item(t, t.overdue ? badge('Overdue', 'danger') : h('span', { class: 'small muted' }, fmt.time(t.due_at) || 'today')))
+        : [h('p', { class: 'small muted' }, 'Nothing due in the next hour, and nothing overdue.')], 'data-due-heading'),
+      // The DOM's own replaceChildren and append write a null as the text "null"; h() skips one, they do not.
+      ...(n > 8 ? [h('p', { class: 'small muted' }, `and ${n - 8} more`)] : []));
   };
   async function poll(force = false) {
     if (!state.user) return;
@@ -1561,7 +1583,7 @@ function maybeNotify(rows) {
     if (notifiedDue.has(t.id)) continue;
     notifiedDue.add(t.id);
     try {
-      const n = new Notification(t.overdue ? 'Overdue to-do' : 'To-do due now', { body: t.title + (t.client_name ? ` · ${t.client_name}` : ''), tag: `suds-task-${t.id}` });
+      const n = new Notification(t.notice === true ? 'A change to your client\'s record' : t.overdue ? 'Overdue to-do' : 'To-do due now', { body: t.title + (t.client_name ? ` · ${t.client_name}` : ''), tag: `suds-task-${t.id}` });
       n.onclick = () => { window.focus(); nav(`tasks?id=${t.id}`); n.close(); };
     } catch { /* the browser refused; the badge still shows it */ }
   }
@@ -1571,8 +1593,9 @@ function maybeNotify(rows) {
 // their first visit; now it is one card that sits beside everything else, put away with "Got it", and
 // shown again from Help at the foot of the menu (#/dashboard?welcome=1).
 // Only the tips this person can act on (r7 L8): Finance and Read-only open no client record and log nothing with + Log.
+const logsWork = () => ['interventions:write', 'overdose:write', 'calls:write', 'notes:admin:write', 'notes:clinical:write', 'tasks:write', 'referrals:write', 'time:write', 'clients:write'].some(p => can(p));
 export function welcomeSteps() {
-  const logs = ['interventions:write', 'overdose:write', 'calls:write', 'notes:admin:write', 'notes:clinical:write', 'tasks:write', 'referrals:write', 'time:write', 'clients:write'].some(p => can(p));
+  const logs = logsWork();
   return [
     can('clients:read') ? ['Start with Home', 'Home shows what needs attention today: to-dos due, clients you have not contacted in a while, and drafts you started on another device.']
       : ['Start with Home', 'Home shows the program\'s figures at a glance, and links to the pages your role uses.'],
@@ -1587,7 +1610,9 @@ export function welcomeIntro() {
       // away" there sent people looking for their entries on a second device.
       ? 'Everything you record stays in this browser on this device, encrypted. Download a backup regularly from This device so a cleared browser or a lost phone does not take your records with it.'
       : state.local ? 'This copy keeps your work on this device; it reaches the office SUDS when you sync.'
-      : 'It works the same on your phone and your computer. Anything you add on one shows up on the other right away.'}`;
+      // Finance and Read-only add nothing there (r8 L9): what they read is up to date wherever they read it.
+      : logsWork() ? 'It works the same on your phone and your computer. Anything you add on one shows up on the other right away.'
+      : 'It works the same on your phone and your computer, and every page shows the figures as they are now.'}`;
 }
 // "Your first day" (1.15.3): three things to do first, for this person's role, inside the welcome card rather
 // than a second card beside it. Each has the button that does it; using the button, or ticking the box, marks
@@ -2030,9 +2055,7 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 'n' || e.key === 'N') {
     if (!can('interventions:write') || e.key === 'N') return;
     // On a client's record it is a visit for that client (1.16.0), as the record's own + Log a visit is.
-    const r = parseHash(); const pc = state.pageClient;
-    const here = r.name === 'client' && pc && pc.id === r.id ? { clientId: pc.id, clientDisplay: pc.display, onDone: pc.onDone } : { onDone: render };
-    e.preventDefault(); import('./views/interventions.js').then(m => m.openInterventionForm(null, here));
+    e.preventDefault(); import('./views/interventions.js').then(m => m.openInterventionForm(null, hereClient()));
   } else if (e.key === '?') { e.preventDefault(); openShortcutsHelp(); }
 });
 

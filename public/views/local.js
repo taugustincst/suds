@@ -1,4 +1,4 @@
-import { h, route, get, post, put, state, form, toast, nav, navAndRender, render, loadSession, badge, fmt, pageHead, eraseDeviceButton, kv, modal, clear } from '../app.js';
+import { h, route, get, post, put, state, form, toast, nav, navAndRender, render, loadSession, badge, fmt, pageHead, eraseDeviceButton, kv, modal, clear, forgetDue } from '../app.js';
 
 // A column name as the person would say it: `first_name_enc` is "first name" (the suffix is how the
 // database marks an encrypted column, not something a navigator should have to read past).
@@ -361,7 +361,8 @@ route('sync', async () => {
       if (warnings.length) log.append(h('div', { class: 'banner info mt', 'data-sync-warnings': String(warnings.length) }, h('div', {}, warnings.slice(0, 5).map(c => `${name(c)}: ${c.reason}`).join('; '))));
       // The office database was restored from a backup, so this device re-sent everything it holds.
       for (const n of r.notices || []) log.append(h('div', { class: 'banner info mt', 'data-sync-notice': '1' }, h('div', {}, n)));
-      toast('Sync complete', 'ok'); await loadSession();
+      // What the sync brought down (to-dos, change notices) is on the bell now, not after its minute's cache (r8 M2).
+      toast('Sync complete', 'ok'); await loadSession(); forgetDue();
     } catch (e) {
       // The office account uses two-step verification and no code was given: ask for it here, on this
       // form, rather than treating it as an error (and never as this device's own MFA prompt).

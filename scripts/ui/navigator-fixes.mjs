@@ -164,7 +164,9 @@ const nav = await session('mrivera', 'Navigator2026!!');
   const bell = await page.$('[data-due-bell]');
   ok(bell, 'the header has a reminders bell');
   const dueNow = (await api('GET', '/api/tasks/due?within=60')).data;
-  if (bell && dueNow.rows.length) { const cnt = await until(async () => page.$eval('[data-due-bell] .bell-count', c => c.classList.contains('hidden') ? '' : c.textContent)); eq(cnt, String(dueNow.rows.length), 'the bell shows how many are due or overdue'); }
+  // Change notices are not due work: the badge counts the rest (r8 M2).
+  const dueWork = dueNow.rows.filter(t => t.notice !== true).length;
+  if (bell && dueWork) { const cnt = await until(async () => page.$eval('[data-due-bell] .bell-count', c => c.classList.contains('hidden') ? '' : c.textContent)); eq(cnt, String(dueWork), 'the bell shows how many are due or overdue'); }
   const items = await page.$$eval('.today-item[data-overdue]', els => els.map(e => e.dataset.overdue));
   if (items.length) {
     const firstNotOverdue = items.indexOf('0'); const lastOverdue = items.lastIndexOf('1');

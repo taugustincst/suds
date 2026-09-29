@@ -8326,8 +8326,14 @@ var require_crypto = __commonJS({
     function verifyTotp(secretB32, code, window2 = 1, time = Date.now()) {
       return totpStep(secretB32, code, window2, time) !== null;
     }
+    var OTPAUTH_MAX = 200;
     function otpauthUrl(secret, account, issuer = "SUDS") {
-      return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
+      const url = (iss2, acct2) => `otpauth://totp/${encodeURIComponent(iss2)}:${encodeURIComponent(acct2)}?secret=${secret}&issuer=${encodeURIComponent(iss2)}&algorithm=SHA1&digits=6&period=30`;
+      let iss = String(issuer || "SUDS");
+      let acct = String(account);
+      while (import_buffer.Buffer.byteLength(url(iss, acct)) > OTPAUTH_MAX && [...iss].length > 8) iss = [...iss].slice(0, -1).join("").trimEnd();
+      while (import_buffer.Buffer.byteLength(url(iss, acct)) > OTPAUTH_MAX && [...acct].length > 8) acct = [...acct].slice(0, -1).join("");
+      return url(iss, acct);
     }
     function keyFingerprint() {
       return sha2562("suds-key-check:" + config2.encryptionKey.toString("hex")).slice(0, 32);
@@ -13303,6 +13309,8 @@ var require_clients = __commonJS({
           open_tasks: db3.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, row.id).n,
           // Of those, the change notices (open_tasks includes them): never overdue, shown apart (1.16.2).
           notices: db3.all(`SELECT description_enc FROM tasks WHERE client_id=? AND status='open' AND due_at IS NULL AND created_by=assigned_to`, row.id).filter(require_tasks().isNotice).length,
+          // Real to-dos past their due date (a notice has none): the Overview's tile warns only for these (r8 M1).
+          overdue_tasks: db3.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END)`, row.id, require_budget().localDate(), db3.now()).n,
           minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
           spent: db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n,
           episodes: db3.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n,
@@ -13381,8 +13389,22 @@ var require_clients = __commonJS({
           if ((x.kind === "admin" || canClinical) && sud.mayReadCounseling(ctx.user, x)) add(x.occurred_at, () => ({ kind: "note", id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt3(x.title_enc) : O.labelOf("NOTE_FORMATS", x.format)}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } }));
         for (const x of db3.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=? ${cut("r.referred_at")} ORDER BY r.referred_at DESC LIMIT ?`, id, ...cutP, per))
           add(x.referred_at, () => ({ kind: "referral", id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes_enc ? decrypt3(x.notes_enc) : null, worker: x.worker, meta: { status: x.status, outcome: x.outcome_enc ? decrypt3(x.outcome_enc) : null } }));
+        const isNotice = require_tasks().isNotice;
+        const noticeEvent = (x) => {
+          let title = "", desc = "";
+          try {
+            title = decrypt3(x.title_enc || "");
+            desc = x.description_enc ? decrypt3(x.description_enc) : "";
+          } catch {
+          }
+          const by = db3.one(`SELECT u.display_name FROM audit_log a JOIN users u ON u.id=a.user_id WHERE a.action='client.change_notice' AND a.entity_id=? AND a.details LIKE ? ORDER BY a.id DESC LIMIT 1`, id, `%"task":"${x.id}"%`);
+          const editor = by && by.display_name || (/^(.+?) changed /.exec(title) || [])[1] || "Someone";
+          const fields = (/^Changed: (.*)$/m.exec(desc) || /\((.*)\)\s*$/.exec(title) || [])[1] || "the record";
+          return { kind: "notice", notice: true, id: x.id, at: x.created_at, title: `${editor} (not on the care team) changed: ${fields} \u2014 ${x.worker || "the primary worker"} was told`, detail: null, worker: editor, meta: {} };
+        };
         for (const x of db3.all(`SELECT t.*, u.display_name AS worker FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE client_id=? ORDER BY COALESCE(t.completed_at, t.due_at, t.created_at) DESC LIMIT ?`, id, per))
-          add(x.completed_at || x.due_at || x.created_at, () => ({ kind: x.is_milestone ? "milestone" : "task", id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title_enc ? decrypt3(x.title_enc) : "", detail: x.description_enc ? decrypt3(x.description_enc) : null, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } }));
+          if (!x.due_at && x.created_by === x.assigned_to && isNotice(x)) add(x.created_at, () => noticeEvent(x));
+          else add(x.completed_at || x.due_at || x.created_at, () => ({ kind: x.is_milestone ? "milestone" : "task", id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title_enc ? decrypt3(x.title_enc) : "", detail: x.description_enc ? decrypt3(x.description_enc) : null, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } }));
         for (const x of db3.all(`SELECT * FROM consents WHERE client_id=? ORDER BY signed_at DESC LIMIT ?`, id, per))
           add(x.signed_at, () => ({ kind: "consent", id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, " ")}${x.recipient_enc ? " \u2192 " + decrypt3(x.recipient_enc) : ""}`, detail: x.purpose_enc ? decrypt3(x.purpose_enc) : null, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } }));
         if (auth3.hasPerm(ctx.user, "budget:read"))
@@ -32516,11 +32538,12 @@ var require_notes2 = __commonJS({
         const w = "WHERE " + where.join(" AND ");
         const pageIds = db3.all(`SELECT n.rowid AS rid FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset).map((x) => x.rid);
         const byId = new Map(db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
-      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
+      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,${require_client_name().SELECT},
       (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda, n.rowid AS rid
       FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id WHERE n.rowid IN (SELECT value FROM json_each(?))`, JSON.stringify(pageIds)).map(({ rid, ...x }) => [rid, x]));
         const rows = pageIds.map((id) => byId.get(id));
-        const out2 = rows.map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0, ...signatureState(x) }));
+        const named = (x) => glassReason ? { ...require_client_name().withClientName(ctx, x), client_name: null } : require_client_name().withClientName(ctx, x);
+        const out2 = rows.map((x) => ({ ...named(x), title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0, ...signatureState(x) }));
         audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: out2.length, kinds, filter: ctx.query.get("awaiting_cosign") === "1" ? "awaiting_cosign" : void 0 } });
         return { rows: out2, total: db3.one(`SELECT COUNT(*) n FROM notes n ${w}`, ...params).n };
       });
@@ -33112,6 +33135,7 @@ var require_tasks2 = __commonJS({
         o.description_enc = void 0;
       }
       if (o.description && o.description.includes("Reference: client record change")) o.notice = true;
+      if (o.notice && o.client_name && o.client_code) o.title = o.title.replace(`${o.client_code}'s record`, `${o.client_name}'s record`);
       return o;
     }
     module.exports.presentTask = presentTask;

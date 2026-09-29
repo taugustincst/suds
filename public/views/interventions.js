@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, listEntries, prefs, NOT_SAVED, offerResume, render, kv, mayChange, ownedNotice, viewOnly } from '../app.js';
+import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, listEntries, prefs, NOT_SAVED, offerResume, render, kv, mayChange, ownedNotice, viewOnly } from '../app.js';
 import { flattenLines } from './budget.js';
 import { SECTIONS as NOTE_SECTIONS, sectionLabel } from './notes.js';
 
@@ -487,7 +487,7 @@ route('interventions', async (r) => {
     pageHead('Visits', can('interventions:write') ? h('button', { class: 'btn primary', onClick: () => openInterventionForm(null, { onDone: refresh }) }, '+ Log a visit') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/interventions?from=${from || '2000-01-01'}&to=${to || fmt.today()}&format=xlsx`) }, 'Export to Excel') : null),
     noFund ? h('div', { class: 'banner warn small', 'data-no-fund-filter': '1' }, 'Showing only visits with no funding source. Edit each one to choose the fund it was charged to. ', h('a', { href: `#/interventions?type=${type}&from=${from}&to=${to}${mine ? '&mine=1' : ''}` }, 'Show all visits')) : null,
     kits ? h('div', { class: 'banner info small', 'data-naloxone-filter': '1' }, 'Showing only visits that handed out naloxone kits, of any type. ', h('a', { href: `#/interventions?type=${type}&from=${from}&to=${to}${mine ? '&mine=1' : ''}` }, 'Show all visits')) : null,
-    h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Type'), typeSel), h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('label', { class: 'check', style: { marginTop: 0 } }, mineI, 'Mine only'), h('button', { class: 'btn', onClick: apply }, 'Apply')),
+    filterBar([type, from, to, mine].filter(Boolean).length, h('div', { class: 'field' }, h('label', {}, 'Type'), typeSel), h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('label', { class: 'check', style: { marginTop: 0 } }, mineI, 'Mine only'), h('button', { class: 'btn', onClick: apply }, 'Apply')),
     pagedList({ first: data, url: `/api/interventions${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => interventionTable(rows, { onChange: refresh }),
       summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} visit${total === 1 ? '' : 's'} · ${fmt.mins(rows.reduce((s, x) => s + (x.duration_minutes || 0), 0))} shown`) }));
 });

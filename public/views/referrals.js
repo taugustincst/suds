@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, mayChange, viewOnly } from '../app.js';
+import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, mayChange, viewOnly } from '../app.js';
 // A court order is recorded, and disclosed under, on the client's Consents tab (it has to name the order),
 // so it is not one of the bases offered here. A referral may rest only on the client's consent (which must
 // name the provider), a medical emergency, a court order or a supervisor's justified override — never a
@@ -247,6 +247,7 @@ export async function openOutcomeForm(r, onDone) {
 }
 
 export function referralTable(rows, { showClient = true, onChange } = {}) {
+  const actions = (r) => referralActions(r, onChange);
   return table([
     { label: 'Date', render: r => h('span', { class: 'nowrap' }, fmt.date(r.referred_at)) }, showClient ? { label: 'Client', render: r => (can('clients:read') ? h('span', {}, h('a', { href: `#/client/${r.client_id}` }, r.client_name || r.client_code), r.client_name ? h('span', { class: 'small muted nowrap' }, ` ${r.client_code}`) : null) : h('span', { class: 'mono' }, r.client_code)) } : null,
     { label: 'Resource', render: r => h('div', {}, r.resource_name, h('div', { class: 'small muted' }, fmt.label(r.resource_category), r.resource_phone ? ` · ${r.resource_phone}` : '')) },
@@ -260,12 +261,21 @@ export function referralTable(rows, { showClient = true, onChange } = {}) {
     { label: 'Outcome', render: r => (r.outcome_recorded_at ? badge('Recorded', 'ok') : badge('Not yet', 'warn')) },
     // "Edit" as on every other list (it said "Update"). On a colleague's referral anyone may still record the
     // outcome, so the line says that rather than "view only" beside a working button.
-    { label: '', render: r => can('referrals:write') ? h('div', {}, h('div', { class: 'row' },
+    { label: '', render: r => actions(r) },
+  ].filter(Boolean), rows, { empty: 'No referrals.',
+    // On a phone, two lines a referral (as Visits) with its buttons under them, not a 600 px card of label/value
+    // pairs (r8 L4). The row holds buttons, so it is not itself one.
+    compact: { primary: r => [h('span', {}, showClient ? (r.client_name || r.client_code) : r.resource_name), badge(fmt.label(r.status, 'REFERRAL_STATUSES'), statusKind(r.status))],
+      secondary: r => [h('span', {}, fmt.date(r.referred_at)), showClient ? h('span', {}, r.resource_name) : null, r.urgency && r.urgency !== 'routine' ? badge(fmt.label(r.urgency), 'danger') : null,
+        r.appointment_at ? h('span', {}, `Appt ${fmt.dt(r.appointment_at)}`) : null, r.consent_revoked ? badge('Consent revoked', 'danger') : null, r.worker ? h('span', {}, `by ${r.worker}`) : null,
+        h('div', { class: 'compact-actions' }, actions(r))] } });
+}
+function referralActions(r, onChange) {
+  return can('referrals:write') ? h('div', {}, h('div', { class: 'row' },
       !r.outcome_recorded_at ? h('button', { class: 'btn sm primary', onClick: () => openOutcomeForm(r, onChange) }, 'Record outcome') : null,
       mayChange(r.user_id) ? h('button', { class: 'btn sm', onClick: () => openReferralForm(r, { onDone: onChange }) }, 'Edit') : null, mayChange(r.user_id) ? h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this referral', onClick: async () => { if (await confirmDialog('Delete referral', 'Delete this referral?', { danger: true, okText: 'Delete' })) { await del(`/api/referrals/${r.id}`); onChange && onChange(); } } }, '✕') : null),
       mayChange(r.user_id) ? null : r.outcome_recorded_at ? viewOnly(null, { short: true })
-        : h('span', { class: 'small muted', 'data-view-only': '1' }, `You can record the outcome; only ${r.worker || 'the worker who made it'} or a supervisor can change the referral.`)) : null },
-  ].filter(Boolean), rows, { empty: 'No referrals.' });
+        : h('span', { class: 'small muted', 'data-view-only': '1' }, `You can record the outcome; only ${r.worker || 'the worker who made it'} or a supervisor can change the referral.`)) : null;
 }
 route('referrals', async (r) => {
   const status = r.query.get('status') || 'open';
@@ -278,6 +288,6 @@ route('referrals', async (r) => {
     // "Referrals we make": this program sending a client on to another provider (outbound). Who referred a
     // client to this program is on the client's intake ("Who referred them to us").
     pageHead('Referrals we make', can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, { onDone: refresh }) }, '+ Make a referral') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/referrals?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
-    h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel)),
+    filterBar(status === 'open' ? 0 : 1, h('div', { class: 'field' }, h('label', {}, 'Status'), sel)),
     pagedList({ first: data, url: `/api/referrals${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => referralTable(rows, { onChange: refresh }), summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} referrals`) }));
 });
