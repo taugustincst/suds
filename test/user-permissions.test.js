@@ -106,3 +106,24 @@ test('permissions API: guards', async () => {
   const row = H.db.one(`SELECT * FROM audit_log WHERE action='user.permission.denied' AND entity_id=? ORDER BY at DESC LIMIT 1`, nav.id);
   assert.ok(row, 'denied permission change is audited');
 });
+
+test('every permission that widens what a person may read is in READ_SCOPE_PERMS, one list for sync, the device and the benchmark (1.16.1)', () => {
+  // They were listed by hand in the sync scope key, the device sign-up's caseload hold and the benchmark: the next
+  // one had to be added in three or four places, and a miss leaks data or skips a re-sync.
+  const fs = require('node:fs'); const path = require('node:path');
+  const { READ_SCOPE_PERMS, CASELOAD_PERMS, isKnownPermission } = require('../server/permissions');
+  const SYNC = require('../server/sync-tables');
+  const listed = new Set(Object.keys(READ_SCOPE_PERMS));
+  for (const p of listed) assert.ok(isKnownPermission(p), `${p} is a permission`);
+  for (const p of CASELOAD_PERMS) assert.ok(listed.has(p), `${p} (the caseload hold) widens reading`);
+  // The sync route's own checks: each permission it asks about is listed, or comes from a table (readPerm, redaction,
+  // unlinked.all), which the scope key adds by itself.
+  const fromTables = new Set(SYNC.tables.flatMap(t => [t.readPerm, t.redact && t.redact.perm, t.unlinked && t.unlinked.all].filter(Boolean)));
+  const src = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+  // (The pull half of the file: what follows the push rules' require is who may write, not how far reading reaches.)
+  const pull = src('server/routes/sync.js'); const asked = [...pull.slice(0, pull.indexOf("require('../rules/push')")).matchAll(/hasPerm\([^,()]+,\s*'([^']+)'\)/g)].map(m => m[1]);
+  assert.ok(asked.length >= 3);
+  for (const p of asked) assert.ok(listed.has(p) || fromTables.has(p), `server/routes/sync.js asks about ${p}`);
+  assert.match(src('local/kernel.js'), /const SIGNUP_SCOPE = require\('\.\.\/server\/permissions\.js'\)\.CASELOAD_PERMS;/);
+  assert.match(src('scripts/bench/run.js'), /const HELD = require\('\.\.\/\.\.\/server\/permissions'\)\.CASELOAD_PERMS;/);
+});

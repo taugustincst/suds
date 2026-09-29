@@ -112,7 +112,19 @@ const PERMISSION_CATALOG = DEFS.map(([name, label, description]) => ({
   risk: PRIVILEGED_PERMISSIONS.includes(name) ? 'privileged' : SENSITIVE.has(name) ? 'sensitive' : 'standard',
 }));
 
+// The permissions that widen what a person may read (engineering review of 1.16.0, M7: they were listed by hand in
+// the sync scope key, the device sign-up's caseload hold and the benchmark). A new one goes here, and the sync
+// scope key (server/routes/sync.js) re-syncs a device whose holding of it changes; test/user-permissions.test.js
+// checks every permission the read scoping names is here.
+const READ_SCOPE_PERMS = Object.freeze({
+  'clients:all': 'every client, not only the caseload; and every worker\'s records with no client',
+  'records:manage-others': 'other workers\' imports and their items',
+  'notes:clinical:read': 'clinical notes and their addenda',
+});
+// Of those, what holds a person to their own caseload when denied (a device sign-up, local/kernel.js).
+const CASELOAD_PERMS = Object.freeze(['clients:all', 'notes:clinical:read']);
+
 const KNOWN = new Set(PERMISSION_CATALOG.map((p) => p.name));
 function isKnownPermission(name) { return KNOWN.has(name); }
 
-module.exports = { PERMISSION_CATALOG, PRIVILEGED_PERMISSIONS, isKnownPermission, grantProblem };
+module.exports = { PERMISSION_CATALOG, PRIVILEGED_PERMISSIONS, READ_SCOPE_PERMS, CASELOAD_PERMS, isKnownPermission, grantProblem };

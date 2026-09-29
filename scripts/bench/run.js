@@ -119,7 +119,7 @@ const kb = (n) => Math.round(n / 1024);
   // navigator with a 2,000-client caseload, so 'nav' is held to it with per-user denies, as a programme does
   // (Settings -> Users & permissions -> Permissions); the whole-programme first sync of a navigator with the
   // role's defaults is measured on its own below.
-  const HELD = ['clients:all', 'notes:clinical:read'];
+  const HELD = require('../../server/permissions').CASELOAD_PERMS;
   const holdNav = (on) => { for (const p of HELD) { if (on) db.run(`INSERT OR REPLACE INTO user_permission_overrides(user_id,permission,mode,reason) VALUES(?,?,'deny','bench: held to the 2,000-client caseload')`, fx.nav.id, p); else db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, fx.nav.id, p); } };
   holdNav(true);
   const admin = session('admin', 'AdminPassw0rd!x', '10.1.0.1'); await admin.login();

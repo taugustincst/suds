@@ -211,6 +211,13 @@ try {
   // --------------------------------------------------------------------------- 10: resume an unsent visit
   {
     const { page } = nav;
+    // The draft is kept 400 ms after the last keystroke: wait until it has been kept since then (a fixed 700 ms
+    // wait was a guess a slow runner could lose): kept, and since the last input event.
+    const lastInput = () => { const at = () => { window.__uxLastInput = Date.now(); }; document.addEventListener('input', at, true); document.addEventListener('change', at, true); };
+    await page.addInitScript(lastInput); await page.evaluate(lastInput);
+    const draftKept = async (why) => ok(await until(() => page.evaluate(async () => {
+      const t = (await import('./app.js')).draftSavedAt('intervention:new'); return t > 0 && t >= (window.__uxLastInput || 0);
+    }), { timeout: 10000, every: 50 }), why);
     await nav.go('dashboard');
     await openVisit(page);
     await page.selectOption('.modal select[name=type]', 'outreach');
@@ -219,7 +226,7 @@ try {
     if (plus) await plus.click();
     const noteSec = await page.$('.modal details[data-section-key="note"] > summary');
     if (noteSec) { await noteSec.click(); await page.fill('.modal textarea[name=note_content]', 'ux13 unsent note'); }
-    await page.waitForTimeout(700); // the draft is kept 400 ms after the last keystroke
+    await draftKept('the unsent visit is kept as a draft');
     await closeModals(page);
     await openVisit(page);
     ok(await page.$('.modal [data-resume-question]'), 'opening Log a visit again asks about the unsent one');
@@ -230,7 +237,7 @@ try {
     eq(await page.inputValue('.modal select[name=type]'), 'outreach', 'every field');
     if (plus) eq(await page.$eval('.modal [data-supply-picker] input.supply-qty', i => i.value), '1', 'and the supply lines');
     if (noteSec) eq(await page.inputValue('.modal textarea[name=note_content]'), 'ux13 unsent note', 'and the note written with it');
-    await page.waitForTimeout(700);
+    await draftKept('the resumed visit is still kept');
     await closeModals(page);
     ok(await page.evaluate(() => !Object.keys(localStorage).some(k => /draft/i.test(k) || /ux13 unsent/.test(localStorage.getItem(k) || ''))), 'nothing of it is in browser storage (memory only, as every draft)');
     // Signed out for inactivity and back in (an idle sign-out keeps it in memory for a while): offered at the top.
@@ -241,7 +248,7 @@ try {
     await openVisit(page);
     ok(!(await page.$('.modal [data-resume-question]')), 'Discard drops it: the next visit starts fresh');
     await page.fill('.modal textarea[name=summary]', 'ux13 unsent visit, kept a while');
-    await page.waitForTimeout(700);
+    await draftKept('the new visit is kept');
     await closeModals(page);
     // Not for ever (1.15.4, L3): signed out for inactivity for longer than drafts are kept, it is cleared.
     const held = () => page.evaluate(async () => (await import('./app.js')).heldDraftCount());
@@ -255,7 +262,7 @@ try {
     await openVisit(page);
     ok(!(await page.$('.modal [data-resume-question]')), 'nor asked about it in the visit form');
     await page.fill('.modal textarea[name=summary]', 'ux13 someone else must not see this');
-    await page.waitForTimeout(700);
+    await draftKept('what was typed is kept');
     await closeModals(page);
     // Someone else signing in at the same screen gets neither the question nor the draft.
     await page.evaluate(async () => (await import('./app.js')).logout({ idle: true }));
@@ -265,7 +272,7 @@ try {
     ok(!(await page.$('.modal [data-resume-question]')), 'nor asked about it in the visit form');
     eq(await page.inputValue('.modal textarea[name=summary]'), '', 'and it is not filled in');
     await page.fill('.modal textarea[name=summary]', 'ux13 typed by the second person');
-    await page.waitForTimeout(700);
+    await draftKept('what the second person typed is kept as a draft');
     await closeModals(page);
     ok(await held() >= 1, 'what the second person typed is kept while they are signed in');
     // Choosing Sign out clears it at once (1.15.4, L3).

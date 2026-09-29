@@ -81,7 +81,7 @@ function droppedClients(user, since) {
 //    changed either way is re-sent the same way, so the device holds the amounts, or the placeholders, it may.
 const SCOPE_V = 'v1';
 function scopePerms() {
-  const s = new Set(['clients:all', 'records:manage-others', 'notes:clinical:read']);
+  const s = new Set(Object.keys(require('../permissions').READ_SCOPE_PERMS));
   for (const t of SYNC.tables) { if (t.readPerm) s.add(t.readPerm); if (t.redact) s.add(t.redact.perm); if (t.unlinked) s.add(t.unlinked.all); }
   return [...s].sort();
 }

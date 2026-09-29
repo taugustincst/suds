@@ -684,6 +684,8 @@ export function expireSignedOutDrafts(now = Date.now()) {
 }
 /** How many drafts this tab holds in memory, whoever they belong to (a count only: for the sign-out checks). */
 export function heldDraftCount() { return draftMap.size; }
+/** When the draft under `key` was last kept (ms; 0 for none): a time only, for the browser suite to wait on the save. */
+export function draftSavedAt(key) { const d = draftMap.get(key); return d ? d.__at : 0; }
 function claimDrafts() {
   const uid = state.user && state.user.id; if (!uid) return false;
   // Back after too long (a background tab's timers may not have run): nothing kept.

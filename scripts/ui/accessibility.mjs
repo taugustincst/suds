@@ -112,11 +112,20 @@ const OVERFLOW_PROBE = () => {
   // The innermost offenders are the useful ones; their ancestors overflow because of them.
   return { page: document.documentElement.scrollWidth > vw + 1, items: out.slice(-6) };
 };
+// After a resize, a condition rather than a guess (150 ms was one, and the likely cause of an intermittent reflow
+// failure): the page has the new width, and its content's width is the same two frames apart (the tab strip
+// moves tabs under More a frame after it is measured).
+async function resized(page, width) {
+  await page.waitForFunction((w) => window.innerWidth === w, width, { timeout: 5000, polling: 20 });
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(document.documentElement.scrollWidth)))));
+  let last = await frames();
+  ok(await until(async () => { const now = await frames(); const same = now === last; last = now; return same; }, { timeout: 5000, every: 0 }), `the layout settles at ${width} CSS px`);
+}
 async function reflowCheck(page, where, width) {
   const size = page.viewportSize();
-  if (width) { await page.setViewportSize({ width, height: 640 }); await page.waitForTimeout(150); }
+  if (width) { await page.setViewportSize({ width, height: 640 }); await resized(page, width); }
   const r = await page.evaluate(OVERFLOW_PROBE);
-  if (width) { await page.setViewportSize(size); await page.waitForTimeout(80); }
+  if (width) { await page.setViewportSize(size); await resized(page, size.width); }
   const bad = r.page || r.items.length;
   if (bad) record(where, [{ ...own('reflow', `Content reflows without sideways scrolling or clipping${width ? ` at ${width} CSS px` : ''}`), nodes: r.items.map(x => ({ target: [x] })) }]);
   ok(!bad, `${where}: content reflows${width ? ` at ${width} CSS px` : ''} (no sideways scroll or clipped content)`, bad ? r : undefined);
@@ -207,7 +216,14 @@ async function go(page, base, hash) {
   // Nothing left open behind a page (the tour, a stray dialog) is part of what is being audited.
   await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
 }
-const closeDialogs = async (page) => { for (let i = 0; i < 4 && await page.$('.modal-bg'); i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(80); } await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove())); };
+// Escape closes the top dialog; wait for it to go (at most 2 s: one that stays is removed below anyway).
+const closeDialogs = async (page) => {
+  for (let i = 0, n; i < 4 && (n = await page.$$eval('.modal-bg', (m) => m.length)); i++) {
+    await page.keyboard.press('Escape');
+    await page.waitForFunction((k) => document.querySelectorAll('.modal-bg').length < k, n, { timeout: 2000, polling: 20 }).catch(() => {});
+  }
+  await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
+};
 
 // The pages a signed-in person can reach: the navigation (filtered by what the role may open), the
 // profile, and the second views of tabbed pages.
