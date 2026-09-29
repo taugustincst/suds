@@ -80,6 +80,10 @@ Fixes from the engineering review of 1.16.2. No migration, no new permission, no
 
 ### Frontline
 
+- **Two-step verification can be set up whatever the programme is called.** The enrolment link carries the
+  programme's name twice; past about 40 characters it no longer fit the QR code and setup failed ("Data too long for
+  QR generator"). The name in the link is now shortened from the end until it fits (`server/crypto.js`).
+
 Fixes from the frontline-UX review of 1.16.2 (round 8). No migration, no new permission, no new route.
 
 - **A change notice reads as what happened, wherever it shows (M1).** In a client's Recent activity it read as a
