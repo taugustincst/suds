@@ -112,9 +112,11 @@ afford. **So 1.16.2 publishes no rule**: `buildModel` returns no `preWithhold`, 
 1.16.0's, and a year like the benchmark's is refused whole again (refusal is always safe). Measured on scaled
 copies of that year at T = 11 (docs/PERFORMANCE.md, *Which programmes are refused*), 17 of 60 are refused, all
 with 126 to 237 overdose events. A release 1.16.1 published with the events by month withheld by the rule is not
-verified (docs/HIPAA.md). A future rule of this kind must be a function of what the release prints, or come with a
-check whose witnesses are validated by their own releases at a cost the budget allows, and must be run under the
-attacker with its gate lowered before it ships (`test/publication-release.test.js`, "the reviewer's case against
+verified (docs/HIPAA.md). A rule that reads only a printed figure (withhold the months whenever the period has 12T
+events) was tried too, and leaked the same way at 36 events: a world counted for the printout was refused by its
+own check. A future rule of this kind needs a check whose witness worlds are shown to publish the same by their own
+releases, at every level, at a cost the budget allows, and must be run under the attacker with its gate lowered
+before it ships (`test/publication-release.test.js`, "the reviewer's case against
 1.16.1's rule").
 
 **Determinism.** The audit's budget is counted in solver work (tableau cells touched, and since 1.14.0 the
