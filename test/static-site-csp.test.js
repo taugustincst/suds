@@ -56,3 +56,19 @@ test('the build script applies it to every page and writes the guard', () => {
   assert.match(src, /hardenPage\(/);
   assert.match(src, /FRAME_GUARD_FILE/);
 });
+
+// 1.17.0: a secure referral link is opened against the office that made it; on SUDS on this device the page could
+// only ever say the link is not valid, so the build leaves it out (stageShell, which the release site check reuses).
+test('the static build leaves out the office-only referral-link page', () => {
+  const os = require('node:os');
+  const { stageShell, copyDir, OFFICE_ONLY_PAGES } = require('../scripts/build-static-site');
+  assert.deepEqual(OFFICE_ONLY_PAGES, ['referral-link.html', 'referral-link.js']);
+  for (const f of OFFICE_ONLY_PAGES) assert.ok(fs.existsSync(path.join(pub, f)), `public/${f} exists for the office server`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-static-'));
+  try {
+    copyDir(pub, dir);
+    stageShell(dir);
+    for (const f of OFFICE_ONLY_PAGES) assert.ok(!fs.existsSync(path.join(dir, f)), `${f} is not in the static build`);
+    assert.ok(fs.existsSync(path.join(dir, 'index.html')) && fs.existsSync(path.join(dir, 'get-app.html')));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

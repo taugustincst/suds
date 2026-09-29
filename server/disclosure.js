@@ -509,6 +509,8 @@ const CATEGORY_OF_FHIR_TYPE = {
   Observation: 'risk_overdose', DocumentReference: 'documents',
   // The Consent resource is the authorisation itself: listed for any client whose consent covers something.
   Consent: '*',
+  // Provenance (1.17.0) describes a Consent resource, and is listed exactly when that Consent is.
+  Provenance: '*',
 };
 /** The categories stored on a consent (comma-separated text, or an array), as a Set of known codes. */
 function parseCategories(v) {

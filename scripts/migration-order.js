@@ -115,6 +115,14 @@ const DEPENDENCY_CHANGES = [
       + '(addColumn); test/migrations.test.js upgrades the 1.6.1 fixture through them to the same structure as a '
       + 'fresh install.',
   },
+  {
+    dependency: 'schema.sql:table:caloms_submissions', fingerprint: '1fabac7b05ac7074',
+    reason: '1.17.0 (migration 55, CalOMS automation) adds status (default produced), origin (default manual), '
+      + 'provider_id, record_ids, uploaded_at, uploaded_by and dhcs_reference. Additive: migration 35 creates the '
+      + 'table from schema.sql when it is missing, so a database that runs it now gets the new columns on an empty '
+      + 'table, and migration 55 adds each only when missing (addColumn) with the same definitions; '
+      + 'test/migrations.test.js upgrades the 1.6.1 fixture through both to the same structure as a fresh install.',
+  },
 ];
 
 /** Tokens of JavaScript source, enough to tell code from strings, comments, templates and regular expressions. */

@@ -13,7 +13,7 @@
 
 | Does | Does not |
 | --- | --- |
-| Collect admission, discharge (standard and administrative) and annual update records for each episode of care | Submit to DHCS itself — the county uploads the files through its CalOMS channel |
+| Collect admission, discharge (standard and administrative) and annual update records for each episode of care | Submit to DHCS itself — the county uploads the files through its CalOMS channel. SUDS has no DHCS connection, API or credentials; it records the upload a person made |
 | Run the edit checks below and list every problem by client code and field | Guarantee DHCS will accept a file (its own edits are authoritative) |
 | Hold back every record with a fatal error from the extract | Produce the DHCS fixed-width / XML format, if that is what the county's channel needs (unconfirmed; CSV is produced) |
 | Produce the monthly provider activity report, with "no activity" months | Collect the client identifiers not listed below (mother's first name, place of birth, SSN, birth name) — to verify whether the current dictionary requires them |
@@ -25,7 +25,8 @@ CalOMS is a per-episode record set the state defines.
 ## Switching it on
 
 **Reports → State reporting → Settings** (administrators): tick *This program reports CalOMS Tx*, list the
-CalOMS provider ID(s) DHCS assigned (one per line, `ID, name`), and the date from which records are expected.
+CalOMS provider ID(s) DHCS assigned (one per line, `ID, name`, optionally followed by `| legal name | NPI` — the
+NPI's check digit is verified), and the date from which records are expected.
 It is **off by default**: a prevention, outreach or navigation program is never asked these questions. The
 settings are `caloms_enabled`, `caloms_providers` (JSON) and `caloms_start_date`; they are synchronised to
 devices so the offline forms match.
@@ -249,3 +250,48 @@ County process:
    CalOMS Tx process. Submit the provider activity / no-activity report for months with nothing to report.
 4. Correct anything DHCS rejects in SUDS. A discharge removed by re-admission after it was extracted must
    also be corrected with DHCS.
+
+## Monthly automation (1.17.0)
+
+`server/caloms-schedule.js`; tests `test/caloms-automation.test.js`. **SUDS still does not submit anything to
+DHCS**: there is no DHCS API, portal login or credential in SUDS. What it automates is the work around the upload.
+
+**The monthly run** (State reporting → Settings → *Monthly run*: `caloms_schedule` `monthly`, `caloms_schedule_day`
+1–28, administrators). Hourly housekeeping checks it; on or after that day of the month it runs once for the
+previous calendar month: every record in the month is validated against every implemented edit check,
+program-wide, and a **prepared** submission file is built for the records that pass — one file, or one per provider
+ID when *One file per provider ID* is ticked (`caloms_split_by_provider`). *Check and prepare (not sent)* on the
+page does the same for the period shown (`POST /api/caloms/schedule/run`, `export:identified`).
+
+**Prepared is not produced.** A prepared file is built once and kept encrypted with its SHA-256, like a
+submission, but nothing has left: nobody's accounting of disclosures changes and no record's `extracted_at` is
+stamped. It cannot be downloaded. **Produce** (`POST /api/caloms/submissions/:id/produce`, `export:identified`) is
+the disclosure, with exactly the semantics of a submission produced by hand: those bytes are accounted per client
+under the state-reporting basis (`source_ref` `caloms:<id>`, the hash in *what*), the file's records are stamped
+`extracted_at`, the mass-export check runs, and the file downloads. It is refused (409, with the count) when any
+record in the file was changed, deleted, or sent in another file after it was prepared — then **Discard** it
+(`/discard`; the file is deleted, the row stays) and prepare again. Someone held to a caseload cannot prepare or
+produce a program-wide file.
+
+**The worklist** (`GET /api/caloms/worklist`, whoever reads episodes; *To fix before the next submission* on the
+page): every validation problem, each assigned to the record's owner — whoever last saved the record, or for a
+missing record the client's primary worker, else whoever opened the episode. A front-line worker sees *Mine*
+first. Codes, field names and dates only, as the validation report.
+
+**The submission log** (`caloms_submission_events`; *Log* on each submission, `GET /api/caloms/submissions/:id/events`):
+prepared (by the schedule or a person), produced, each download, discarded, and **Record upload** — the date the
+person uploaded it to DHCS and the confirmation or batch number the portal gave (`POST …/uploaded`; letters,
+digits and `._/#-` only). The list of submissions shows status, origin, provider, downloads and the upload.
+
+**County mode.** Each provider ID carries its legal name and NPI; `provider_id` on a submission, or the per-provider
+monthly run, produces one provider's file (its records and its activity rows only; the README names the
+provider). This is for one organisation reporting under several provider numbers. Several unrelated provider
+organisations on one server is **not** supported — run one instance each; the design for more is
+[docs/architecture/COUNTY-MULTI-TENANT.md](../architecture/COUNTY-MULTI-TENANT.md).
+
+County process with the monthly run on:
+1. On the configured day, the run prepares last month's file(s); the fatal errors are on each owner's worklist.
+2. Owners fix their records. If any record in a prepared file changes, discard it and *Check and prepare* again.
+3. Someone with `export:identified` produces each prepared file (the disclosure), and uploads the downloaded file
+   to DHCS unchanged through the county's channel.
+4. They record the upload with the portal's reference. The log then shows the whole chain.

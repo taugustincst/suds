@@ -69,10 +69,18 @@ module.exports = (r) => {
   r.get('/api/caloms/config', auth.requireAuth, () => C.config());
 
   r.put('/api/caloms/settings', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
-    const v = validate(ctx.body, { enabled: { type: 'boolean' }, providers: { type: 'array', maxLen: 20 }, start_date: { type: 'date' } });
-    const provs = v.providers === undefined ? C.providers() : (v.providers || []).map((p) => ({ id: String((p && p.id) || '').trim(), name: String((p && p.name) || '').trim().slice(0, 120) }));
+    const v = validate(ctx.body, { enabled: { type: 'boolean' }, providers: { type: 'array', maxLen: 20 }, start_date: { type: 'date' },
+      // 1.17.0: the monthly run (server/caloms-schedule.js) and county mode's one file per provider.
+      schedule: { type: 'string', enum: ['off', 'monthly'] }, schedule_day: { type: 'number', integer: true, min: 1, max: 28 }, split_by_provider: { type: 'boolean' } });
+    const provs = v.providers === undefined ? C.providers() : (v.providers || []).map((p) => {
+      const o = { id: String((p && p.id) || '').trim(), name: String((p && p.name) || '').trim().slice(0, 120) };
+      const legal = String((p && p.legal_name) || '').trim().slice(0, 200); const npi = String((p && p.npi) || '').replace(/\s/g, '');
+      if (legal) o.legal_name = legal; if (npi) o.npi = npi;
+      return o;
+    });
     const fields = {};
     provs.forEach((p, i) => { if (!C.PROVIDER_ID.test(p.id)) fields[`providers.${i}.id`] = 'must be 4 to 10 letters or digits (the CalOMS provider ID DHCS assigned)'; });
+    provs.forEach((p, i) => { if (p.npi && !C.validNpi(p.npi)) fields[`providers.${i}.npi`] = 'must be a 10-digit National Provider Identifier (its check digit does not match)'; });
     if (new Set(provs.map(p => p.id)).size !== provs.length) fields.providers = 'lists the same provider ID twice';
     const on = v.enabled === undefined ? db.getSetting('caloms_enabled', '0') === '1' : !!v.enabled;
     if (on && !provs.length) fields.providers = 'add at least one CalOMS provider ID before turning CalOMS reporting on';
@@ -83,8 +91,11 @@ module.exports = (r) => {
       // Records are expected from the day reporting starts, not for every episode the programme ever had.
       if (v.start_date !== undefined && v.start_date !== null) db.setSetting('caloms_start_date', v.start_date);
       else if (on && !C.startDate()) db.setSetting('caloms_start_date', require('./budget').localDate());
+      if (v.schedule !== undefined && v.schedule !== null) db.setSetting('caloms_schedule', v.schedule);
+      if (v.schedule_day !== undefined && v.schedule_day !== null) db.setSetting('caloms_schedule_day', String(v.schedule_day));
+      if (v.split_by_provider !== undefined && v.split_by_provider !== null) db.setSetting('caloms_split_by_provider', v.split_by_provider ? '1' : '0');
     });
-    audit.log({ user: ctx.user, action: 'caloms.settings.update', ip: ctx.ip, details: { enabled: on, providers: provs.length } });
+    audit.log({ user: ctx.user, action: 'caloms.settings.update', ip: ctx.ip, details: { enabled: on, providers: provs.length, schedule: C.schedule().frequency, split_by_provider: C.schedule().split_by_provider } });
     return C.config();
   });
 
@@ -173,20 +184,22 @@ module.exports = (r) => {
   });
 
   r.post('/api/caloms/submissions', auth.requireAuth, auth.requirePerm('export:identified'), requireModule('caloms'), (ctx) => {
-    const v = validate(ctx.body || {}, { from: { type: 'date', required: true }, to: { type: 'date', required: true } });
+    const v = validate(ctx.body || {}, { from: { type: 'date', required: true }, to: { type: 'date', required: true }, provider_id: { type: 'string', maxLen: 10 } });
+    if (v.provider_id && !C.providers().some(p => p.id === v.provider_id)) throw badRequest('That is not one of this program\'s CalOMS provider IDs', { fields: { provider_id: 'unknown provider' } });
     ctx.query.set('from', v.from); ctx.query.set('to', v.to);
     const id = require('../crypto').uuid();
-    const { from, to, x } = extractFor(ctx, { submissionId: id });
+    const { from, to, x } = extractFor(ctx, { submissionId: id, providerId: v.provider_id || null });
     if (!x.clientIds.length) throw badRequest('There is nothing to submit for this period: no record passed the edit checks.');
     const disclosure = require('../disclosure');
     const { encrypt } = require('../crypto');
     const body = zipOf(x.files);
     const hash = sha256(body);
-    const fileName = `caloms-tx-SUBMISSION-${from}_${to}-${id.slice(0, 8)}.zip`;
+    const fileName = `caloms-tx-SUBMISSION-${from}_${to}${v.provider_id ? `-${v.provider_id}` : ''}-${id.slice(0, 8)}.zip`;
     const stamp = db.now();
     db.transaction(() => {
-      db.run(`INSERT INTO caloms_submissions(id,period_from,period_to,file_name,sha256,bytes,clients,counts,file_enc,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-        id, from, to, fileName, hash, body.length, x.clientIds.length, JSON.stringify({ ...x.counts, held_back: x.excluded }), encrypt(body.toString('base64')), ctx.user.id, stamp, stamp);
+      db.run(`INSERT INTO caloms_submissions(id,period_from,period_to,file_name,sha256,bytes,clients,counts,file_enc,created_by,created_at,updated_at,status,origin,provider_id,record_ids) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'produced','manual',?,?)`,
+        id, from, to, fileName, hash, body.length, x.clientIds.length, JSON.stringify({ ...x.counts, held_back: x.excluded }), encrypt(body.toString('base64')), ctx.user.id, stamp, stamp, v.provider_id || null, JSON.stringify(x.ready.map(rec => rec.id)));
+      require('../caloms-schedule').logEvent(id, 'produced', ctx.user, hash);
       disclosure.recordStateReport({ clientIds: x.clientIds, what: `CalOMS Tx records (${from} to ${to}): ${x.counts.admission} admission, ${x.counts.discharge} discharge, ${x.counts.annual_update} annual update; submission file ${fileName}, SHA-256 ${hash}`, sourceRef: `caloms:${id}`, user: ctx.user, ip: ctx.ip });
       for (const rec of x.ready) db.run(`UPDATE caloms_records SET extracted_at=?, updated_at=? WHERE id=?`, stamp, stamp, rec.id);
     });
@@ -199,8 +212,10 @@ module.exports = (r) => {
 
   // What was produced, when and by whom: periods, counts and hashes, never who was in it.
   r.get('/api/caloms/submissions', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
-    const rows = db.all(`SELECT s.id, s.period_from, s.period_to, s.file_name, s.sha256, s.bytes, s.clients, s.counts, s.created_at, s.file_cleared_at, s.file_enc IS NOT NULL AS has_file, u.display_name AS created_by_name
-      FROM caloms_submissions s JOIN users u ON u.id=s.created_by ORDER BY s.created_at DESC LIMIT 200`)
+    const rows = db.all(`SELECT s.id, s.period_from, s.period_to, s.file_name, s.sha256, s.bytes, s.clients, s.counts, s.created_at, s.file_cleared_at, s.file_enc IS NOT NULL AS has_file, u.display_name AS created_by_name,
+        s.status, s.origin, s.provider_id, s.uploaded_at, s.dhcs_reference, up.display_name AS uploaded_by_name,
+        (SELECT COUNT(*) FROM caloms_submission_events ev WHERE ev.submission_id=s.id AND ev.action='downloaded') AS downloads
+      FROM caloms_submissions s JOIN users u ON u.id=s.created_by LEFT JOIN users up ON up.id=s.uploaded_by ORDER BY s.created_at DESC LIMIT 200`)
       .map(r => { let counts = {}; try { counts = JSON.parse(r.counts || '{}'); } catch { /* keep {} */ } const o = { ...r, counts, file_available: !!r.has_file }; delete o.has_file; return o; });
     audit.log({ user: ctx.user, action: 'caloms.submission.list', ip: ctx.ip, details: { count: rows.length } });
     return { rows, keep_days: require('../retention').CALOMS_FILE_DAYS };
@@ -210,6 +225,8 @@ module.exports = (r) => {
   r.get('/api/caloms/submissions/:id/file', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
     const sub = db.one(`SELECT * FROM caloms_submissions WHERE id=?`, ctx.params.id);
     if (!sub) throw notFound('Submission not found');
+    // A prepared file has not been accounted: it is produced first (below), which is the disclosure.
+    if (sub.status !== 'produced') throw new HttpError(409, sub.status === 'prepared' ? 'This file was prepared by the monthly run and has not been produced yet. Produce it first: that is when it is written to each client\'s accounting of disclosures.' : 'This file was discarded.', { status: sub.status });
     if (!sub.file_enc) throw new HttpError(410, `This submission's file is no longer kept (files are kept ${require('../retention').CALOMS_FILE_DAYS} days, and removed when a client in it is purged). Its record and hash remain; produce a new submission if the records must be sent again.`);
     const body = Buffer.from(require('../crypto').decrypt(sub.file_enc), 'base64');
     if (sha256(body) !== sub.sha256) {
@@ -219,9 +236,115 @@ module.exports = (r) => {
     // Every download of an identified file naming many clients is reviewed as a mass export.
     require('../incidents').maybeMassExport({ clients: sub.clients, kind: 'caloms', user: ctx.user });
     audit.log({ user: ctx.user, action: 'caloms.submission.download', entity: 'caloms_submission', entityId: sub.id, ip: ctx.ip, details: { from: sub.period_from, to: sub.period_to, clients: sub.clients, sha256: sub.sha256 } });
+    require('../caloms-schedule').logEvent(sub.id, 'downloaded', ctx.user, sub.sha256);
     const disclosure = require('../disclosure');
     ctx.res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${sub.file_name}"`, 'X-SUDS-SHA256': sub.sha256,
       'X-SUDS-Export': headerSafe(`Identified - PHI. CalOMS Tx submission for DHCS (state reporting, required by law), accounted for ${sub.clients} client(s) on ${sub.created_at}. Send this file unchanged.${disclosure.fileNotice({ short: true }) ? ` ${disclosure.fileNotice({ short: true })}` : ''}`) });
     ctx.res.end(body);
+  });
+
+  // ---- 1.17.0: the monthly run, prepared files, the submission log and the worklist (server/caloms-schedule.js) ----
+  const SCHED = require('../caloms-schedule');
+  const subFor = (id) => { const sub = db.one(`SELECT * FROM caloms_submissions WHERE id=?`, id); if (!sub) throw notFound('Submission not found'); return sub; };
+  const wholeProgramme = (ctx, what) => { if (auth.caseloadRestricted(ctx.user)) throw require('../http').forbidden(`A prepared file covers the whole program; someone who is held to a caseload cannot ${what} one`); };
+
+  // Run the monthly job now for a period (the previous month by default): full validation and prepared files.
+  // Preparing is not a disclosure; producing is (below).
+  r.post('/api/caloms/schedule/run', auth.requireAuth, auth.requirePerm('export:identified'), requireModule('caloms'), (ctx) => {
+    const v = validate(ctx.body || {}, { from: { type: 'date' }, to: { type: 'date' } });
+    if (!C.enabled()) throw badRequest('CalOMS Tx reporting is switched off for this program');
+    if (!C.providers().length) throw badRequest('Add this program\'s CalOMS provider ID first');
+    wholeProgramme(ctx, 'prepare');
+    const { from, to } = v.from && v.to ? v : SCHED.previousMonth(require('./budget').localDate());
+    if (from > to) throw badRequest('from must not be after to');
+    return SCHED.run({ from, to, user: ctx.user, ip: ctx.ip, origin: 'manual' });
+  });
+
+  // Produce a prepared file: account exactly its bytes, per client, and mark its records as sent — unless any
+  // of them changed, went, or was sent in another file since it was prepared.
+  r.post('/api/caloms/submissions/:id/produce', auth.requireAuth, auth.requirePerm('export:identified'), requireModule('caloms'), (ctx) => {
+    const sub = subFor(ctx.params.id);
+    if (sub.status !== 'prepared') throw new HttpError(409, sub.status === 'produced' ? 'This file has already been produced.' : 'This file was discarded.');
+    if (!sub.file_enc) throw new HttpError(410, 'This prepared file is no longer kept (a client in it was purged). Prepare a new one.');
+    wholeProgramme(ctx, 'produce');
+    const ids = JSON.parse(sub.record_ids || '[]');
+    const recs = ids.length ? db.all(`SELECT id, client_id, updated_at, extracted_at FROM caloms_records WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids) : [];
+    const stale = ids.length - recs.length + recs.filter(x => x.updated_at > sub.created_at || (x.extracted_at && x.extracted_at > sub.created_at)).length;
+    if (stale) throw new HttpError(409, `${stale} record(s) in this file were changed, removed or sent in another file after it was prepared, so it no longer matches the records. Discard it and prepare a new one.`, { stale });
+    const clientIds = [...new Set(recs.map(x => x.client_id))];
+    const counts = JSON.parse(sub.counts || '{}');
+    const stamp = db.now();
+    const disclosure = require('../disclosure');
+    db.transaction(() => {
+      db.run(`UPDATE caloms_submissions SET status='produced', created_by=?, updated_at=? WHERE id=?`, ctx.user.id, stamp, sub.id);
+      disclosure.recordStateReport({ clientIds, what: `CalOMS Tx records (${sub.period_from} to ${sub.period_to}): ${counts.admission || 0} admission, ${counts.discharge || 0} discharge, ${counts.annual_update || 0} annual update; submission file ${sub.file_name}, SHA-256 ${sub.sha256}`, sourceRef: `caloms:${sub.id}`, user: ctx.user, ip: ctx.ip });
+      for (const rec of recs) db.run(`UPDATE caloms_records SET extracted_at=?, updated_at=? WHERE id=?`, stamp, stamp, rec.id);
+      SCHED.logEvent(sub.id, 'produced', ctx.user, sub.sha256);
+    });
+    require('../incidents').maybeMassExport({ clients: clientIds.length, kind: 'caloms', user: ctx.user });
+    audit.log({ user: ctx.user, action: 'caloms.submitted', entity: 'caloms_submission', entityId: sub.id, ip: ctx.ip, details: { from: sub.period_from, to: sub.period_to, prepared: true, provider_id: sub.provider_id || undefined, clients_disclosed: clientIds.length, sha256: sub.sha256 } });
+    return { ok: true, id: sub.id, submitted_at: stamp, file_name: sub.file_name, sha256: sub.sha256, clients_disclosed: clientIds.length, counts };
+  });
+
+  r.post('/api/caloms/submissions/:id/discard', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
+    const sub = subFor(ctx.params.id);
+    if (sub.status !== 'prepared') throw new HttpError(409, 'Only a prepared file that has not been produced can be discarded; a produced one is a disclosure on record.');
+    db.transaction(() => {
+      db.run(`UPDATE caloms_submissions SET status='discarded', file_enc=NULL, file_cleared_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), sub.id);
+      SCHED.logEvent(sub.id, 'discarded', ctx.user);
+    });
+    audit.log({ user: ctx.user, action: 'caloms.submission.discard', entity: 'caloms_submission', entityId: sub.id, ip: ctx.ip, details: { from: sub.period_from, to: sub.period_to } });
+    return { ok: true };
+  });
+
+  // SUDS does not upload to DHCS; the person who did records it here, with the reference the portal gave.
+  r.post('/api/caloms/submissions/:id/uploaded', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
+    const sub = subFor(ctx.params.id);
+    const v = validate(ctx.body || {}, { uploaded_on: { type: 'date', required: true }, dhcs_reference: { type: 'string', maxLen: 60, pattern: /^[A-Za-z0-9 ._/#-]*$/ } });
+    if (sub.status !== 'produced') throw new HttpError(409, 'Produce the file first: a prepared file has not been accounted, so it cannot have been sent.');
+    if (v.uploaded_on > require('./budget').localDate()) throw badRequest('The upload date cannot be in the future', { fields: { uploaded_on: 'in the future' } });
+    if (v.uploaded_on < sub.created_at.slice(0, 10)) throw badRequest('The upload date is before the file was produced', { fields: { uploaded_on: 'before the file existed' } });
+    db.transaction(() => {
+      db.run(`UPDATE caloms_submissions SET uploaded_at=?, uploaded_by=?, dhcs_reference=?, updated_at=? WHERE id=?`, v.uploaded_on, ctx.user.id, v.dhcs_reference || null, db.now(), sub.id);
+      SCHED.logEvent(sub.id, 'uploaded', ctx.user, [v.uploaded_on, v.dhcs_reference].filter(Boolean).join(' '));
+    });
+    audit.log({ user: ctx.user, action: 'caloms.submission.uploaded', entity: 'caloms_submission', entityId: sub.id, ip: ctx.ip, details: { uploaded_on: v.uploaded_on, reference: !!v.dhcs_reference } });
+    return { ok: true, uploaded_at: v.uploaded_on, dhcs_reference: v.dhcs_reference || null };
+  });
+
+  r.get('/api/caloms/submissions/:id/events', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
+    const sub = subFor(ctx.params.id);
+    const rows = db.all(`SELECT e.action, e.detail, e.created_at, COALESCE(u.display_name, 'Scheduled run') AS who FROM caloms_submission_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.submission_id=? ORDER BY e.created_at, e.rowid`, sub.id);
+    audit.log({ user: ctx.user, action: 'caloms.submission.log', entity: 'caloms_submission', entityId: sub.id, ip: ctx.ip, details: { count: rows.length } });
+    return { id: sub.id, file_name: sub.file_name, sha256: sub.sha256, status: sub.status, rows };
+  });
+
+  // The errors to fix, each assigned to the record's owner: whoever last saved the record, or — for a record
+  // that is missing — the client's primary worker, else whoever opened the episode. Codes, fields and dates
+  // only, as the validation report. mine=1: only the caller's.
+  r.get('/api/caloms/worklist', auth.requireAuth, auth.requirePerm('episodes:read', 'episodes:write'), (ctx) => {
+    const today = require('./budget').localDate();
+    const from = ctx.query.get('from') || C.startDate() || C.addDays(today, -365);
+    const to = ctx.query.get('to') || today;
+    for (const d of [from, to]) if (!DAY.test(d) || !Number.isFinite(Date.parse(d))) throw badRequest('from and to must be dates (YYYY-MM-DD)');
+    const rep = C.report({ from, to, scope: scopeFor(ctx.user) });
+    const ownerCache = new Map(); const names = new Map();
+    const nameOf = (id) => { if (!id) return null; if (!names.has(id)) names.set(id, (db.one(`SELECT display_name FROM users WHERE id=?`, id) || {}).display_name || null); return names.get(id); };
+    const ownerOf = (row) => {
+      const key = row.record_id ? `r:${row.record_id}` : `e:${row.episode_id}`;
+      if (ownerCache.has(key)) return ownerCache.get(key);
+      let owner = null;
+      if (row.record_id) { const rec = db.one(`SELECT updated_by, created_by FROM caloms_records WHERE id=?`, row.record_id); owner = rec && (rec.updated_by || rec.created_by); }
+      if (!owner) owner = (db.one(`SELECT user_id FROM assignments WHERE client_id=? AND role_on_case='primary' AND ended_at IS NULL AND (end_date IS NULL OR end_date >= ?) ORDER BY start_date DESC LIMIT 1`, row.client_id, today) || {}).user_id || null;
+      if (!owner) owner = (db.one(`SELECT opened_by FROM episodes WHERE id=?`, row.episode_id) || {}).opened_by || null;
+      ownerCache.set(key, owner); return owner;
+    };
+    let rows = rep.rows.map(x => { const o = ownerOf(x); return { ...x, owner_id: o, owner_name: nameOf(o), mine: o === ctx.user.id }; });
+    const mineOnly = ctx.query.get('mine') === '1';
+    if (mineOnly) rows = rows.filter(x => x.mine);
+    const byOwner = {};
+    for (const x of rows) { const k = x.owner_name || 'Unassigned'; byOwner[k] = byOwner[k] || { fatal: 0, warnings: 0 }; byOwner[k][x.severity === 'fatal' ? 'fatal' : 'warnings']++; }
+    audit.log({ user: ctx.user, action: 'caloms.worklist', ip: ctx.ip, details: { from, to, rows: rows.length, mine: mineOnly || undefined } });
+    return { from, to, rows, by_owner: byOwner, mine: rows.filter(x => x.mine).length, schedule: C.schedule() };
   });
 };

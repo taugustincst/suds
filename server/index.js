@@ -83,6 +83,9 @@ function housekeeping() {
     require('./scheduled-backup').runIfDue().catch((e) => console.error('[suds] scheduled backup', e && e.message || e));
     // Seal the audit chain's head into write-once storage outside the database every AUDIT_ANCHOR_HOURS.
     require('./audit-anchor').runIfDue();
+    // Monthly CalOMS Tx run, if an administrator turned it on (off by default): validates the month before and
+    // prepares its submission file (not a disclosure until someone produces it; server/caloms-schedule.js).
+    try { require('./caloms-schedule').runIfDue(); } catch (e) { console.error('[suds] CalOMS scheduled run', e && e.message || e); }
     // Monthly recovery drill, if an administrator turned it on (off by default). Runs in the background.
     require('./dr-drill').runIfDue();
     // A plaintext copy of the database a restore set aside, or a pre-migration snapshot, whose sealing failed:

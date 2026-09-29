@@ -30,6 +30,7 @@ function copyDir(src, dest) {
 // Everything the build adds to or changes in the copy of public/ (1.16.4: a function, so that web-app.yml's publish
 // job can rebuild exactly these files from the tag with scripts/release-site-check.js, which needs no npm package:
 // this, static-site-security.js and server/csp.js load only Node's own modules).
+const OFFICE_ONLY_PAGES = ['referral-link.html', 'referral-link.js'];
 const LOCAL_BOOT_JS = ['window.SUDS_FORCE_LOCAL = true;', 'window.SUDS_STATIC_HOST = true;', ''].join('\n');
 function stageShell(outDir) {
   // One flag, set before main.js is even requested, so the very first render already knows: nothing here
@@ -40,6 +41,10 @@ function stageShell(outDir) {
   // device, and the first-run set-up asks the person to confirm where their records are kept. Nothing is
   // drawn on screen because of it.
   fs.writeFileSync(path.join(outDir, 'local-boot.js'), LOCAL_BOOT_JS);
+  // Pages only an office server can answer are left out: a secure referral link (1.17.0) is opened against the
+  // office that made it, and on this build could only ever say that the link is not valid. Done here, not in
+  // copyDir, so scripts/release-site-check.js, which rebuilds with stageShell, leaves them out the same way.
+  for (const f of OFFICE_ONLY_PAGES) fs.rmSync(path.join(outDir, f), { force: true });
   const indexPath = path.join(outDir, 'index.html');
   const before = fs.readFileSync(indexPath, 'utf8');
   const marker = '<script type="module" src="main.js"></script>';
@@ -76,7 +81,7 @@ function stageShell(outDir) {
   if (!/'get-app\.html'/.test(sw)) throw new Error('build-static-site: sw.js must list get-app.html in its shell');
   fs.writeFileSync(swPath, sw.replace(shellMarker, `const SHELL = ['./', 'index.html', 'local-boot.js', '${FRAME_GUARD_FILE}',`));
 }
-module.exports = { stageShell, copyDir, LOCAL_BOOT_JS };
+module.exports = { stageShell, copyDir, LOCAL_BOOT_JS, OFFICE_ONLY_PAGES };
 if (require.main !== module) return;
 
 // The kernel this ships has to be current, or the static site would carry a stale build of server logic.

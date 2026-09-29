@@ -7710,9 +7710,33 @@ CREATE TABLE IF NOT EXISTS caloms_submissions (
   file_cleared_at TEXT,
   created_by TEXT NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- 1.17.0 (migration 55): a scheduled run prepares a file before anyone has sent anything. 'prepared' is
+  -- built and kept (encrypted) but not yet a disclosure: nobody's accounting changes and no record is stamped
+  -- until someone with export:identified produces it ('produced'), which accounts exactly these bytes.
+  status TEXT NOT NULL DEFAULT 'produced' CHECK (status IN ('prepared','produced','discarded')),
+  origin TEXT NOT NULL DEFAULT 'manual' CHECK (origin IN ('manual','scheduled')),
+  provider_id TEXT,                    -- one provider's file (county mode), or NULL for every provider
+  record_ids TEXT,                     -- JSON: the caloms_records ids in the file (ids, not PHI)
+  uploaded_at TEXT,                    -- when someone recorded uploading it to DHCS (SUDS never uploads)
+  uploaded_by TEXT REFERENCES users(id),
+  dhcs_reference TEXT                  -- the confirmation or batch number the DHCS portal gave, if any
 );
 CREATE INDEX IF NOT EXISTS idx_caloms_submissions_created ON caloms_submissions(created_at);
+
+-- The CalOMS Tx submission log (migration 55): who prepared, produced, downloaded, recorded as uploaded or
+-- discarded each file, and when. Periods, counts and hashes live on the submission; nothing here names a
+-- client. Office server only, never synchronised.
+CREATE TABLE IF NOT EXISTS caloms_submission_events (
+  id TEXT PRIMARY KEY,
+  submission_id TEXT NOT NULL REFERENCES caloms_submissions(id) ON DELETE CASCADE,
+  action TEXT NOT NULL CHECK (action IN ('prepared','produced','downloaded','uploaded','discarded')),
+  user_id TEXT REFERENCES users(id),   -- NULL for the scheduled run
+  detail TEXT,                         -- not PHI: a DHCS reference, a reason code, a SHA-256
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_caloms_submission_events_sub ON caloms_submission_events(submission_id, created_at);
 
 -- Overdose and reversal events. Every SUD funder asks for these counts; they were previously only
 -- inferable from two boolean columns on the client record, which cannot answer "how many this quarter".
@@ -8227,6 +8251,43 @@ CREATE TABLE IF NOT EXISTS ai_usage (
   latency_ms INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_ai_usage_at ON ai_usage(at);
+
+-- Secure referral links (1.17.0, migration 55; server/referral-links.js, docs/security/REFERRAL-LINKS.md). A
+-- referral to an organisation that does not use SUDS can be sent as a one-time link the recipient opens
+-- without an account. The token and the access code are stored only as hashes; the packet the recipient reads
+-- is a snapshot taken when the link was made, encrypted. kind 'packet' names the client and needs a live Part 2
+-- consent naming the recipient (server/disclosure.js, checked when it is made and again when it is opened; the
+-- disclosure is accounted when it is first opened); kind 'contact_notice' names nobody ("please contact us").
+-- Office server only, never synchronised.
+CREATE TABLE IF NOT EXISTS referral_links (
+  id TEXT PRIMARY KEY,
+  referral_id TEXT NOT NULL REFERENCES referrals(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  resource_id TEXT NOT NULL REFERENCES resources(id),
+  kind TEXT NOT NULL CHECK (kind IN ('packet','contact_notice')),
+  token_hash TEXT NOT NULL UNIQUE,
+  code_hash TEXT,                      -- packet only: the access code given to the recipient separately
+  consent_id TEXT REFERENCES consents(id) ON DELETE SET NULL,
+  packet_enc TEXT,                     -- encrypted JSON: exactly what the recipient is shown
+  reference TEXT NOT NULL,             -- a short random reference both sides quote; not PHI
+  expires_at TEXT NOT NULL,
+  failed_attempts INTEGER NOT NULL DEFAULT 0,
+  claim_hash TEXT,                     -- the browser that opened it first (hash of a secret it holds)
+  opened_at TEXT,
+  open_count INTEGER NOT NULL DEFAULT 0,
+  disclosure_id TEXT REFERENCES disclosures(id) ON DELETE SET NULL,
+  ack_status TEXT CHECK (ack_status IS NULL OR ack_status IN ('received','accepted','scheduled','declined','unable_to_reach')),
+  ack_at TEXT,
+  ack_by_enc TEXT,                     -- who at the recipient acknowledged (as they typed it)
+  ack_note_enc TEXT,
+  revoked_at TEXT,
+  revoked_by TEXT REFERENCES users(id),
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_referral_links_referral ON referral_links(referral_id);
+CREATE INDEX IF NOT EXISTS idx_referral_links_client ON referral_links(client_id);
 `;
   }
 });
@@ -11121,7 +11182,12 @@ var require_programme = __commonJS({
     var { HttpError: HttpError3 } = require_http();
     var PROFILES = {
       harm_reduction: { label: "Harm reduction & outreach", help: "Outreach, visits, supplies, calls, referrals and grant reporting. The clinical modules are hidden until you switch one on." },
-      treatment: { label: "Treatment-adjacent", help: "Everything above plus the clinical modules: care plan and problem list, assessments, CalOMS Tx, the FHIR API and the county EHR hand-off." }
+      treatment: { label: "Treatment-adjacent", help: "Everything above plus the clinical modules: care plan and problem list, assessments, CalOMS Tx, the FHIR API and the county EHR hand-off." },
+      // 1.17.0: SUDS beside an EHR that stays the clinical record (docs/integration/EHR-PART2-LAYER.md). The EHR-like
+      // modules are off; the FHIR API is on, for the EHR to read consents and their provenance; the harm-reduction
+      // pages (supplies, overdose events, staff time, the budget) are hidden from the sidebar (public/app.js NAV
+      // hideIn) and Privacy & Part 2 leads it. Every Part 2 control is the same in every profile.
+      part2_layer: { label: "Part 2 compliance module (beside an EHR)", help: "For a program whose EHR (eClinicalWorks, Epic, SmartCare\u2026) stays the clinical record: consent management, the accounting of disclosures, redisclosure notices, SUD counseling notes kept apart, the breach register, patient requests and secure referrals, with patients and encounters imported from the EHR and consents readable by it over FHIR. The care plan, assessments, CalOMS and the hand-off are off until you switch one on." }
     };
     var DEFAULT_PROFILE = "harm_reduction";
     var MODULES = [
@@ -11161,7 +11227,9 @@ var require_programme = __commonJS({
           return false;
         }
       }
-      return profile() === "treatment";
+      const p = profile();
+      if (p === "part2_layer") return key === "fhir";
+      return p === "treatment";
     }
     function moduleOn(key) {
       const v = db3.getSetting(`module_${key}`, null);
@@ -11414,13 +11482,15 @@ var require_sync_tables = __commonJS({
       // emergency access, and a device has no supervisor to review it.
       // complaints and the privacy incident register are the privacy officer's, kept at the office likewise.
       // fhir_jwt_assertions is the FHIR token endpoint's replay guard for client assertions (office server only).
-      // caloms_submissions holds each CalOMS Tx file as produced for DHCS, which only the office sends.
+      // caloms_submissions holds each CalOMS Tx file as produced for DHCS, which only the office sends, and
+      // caloms_submission_events its log. referral_links are served to outside organisations by the office only
+      // (a device has no address a recipient could reach, and the tokens must live in one place to be single-use).
       // client_revisions (1.17.0) holds every earlier value of a client's record (changes_enc): minimum necessary, it
       // stays at the office. A device's own edits are recorded there when its push lands (server/rules/clients.js
       // afterApply, via 'sync'); a device that syncs with an office keeps none and says the history is at the office
       // (server/client-revisions.js keptHere). SUDS on this device, with no office, keeps its own.
       // ai_usage counts the AI copilot's calls for the programme's monthly cap (server/ai-copilot.js); a device has no copilot.
-      server_only: ["breakglass_events", "complaints", "privacy_incidents", "privacy_incident_clients", "fhir_jwt_assertions", "caloms_submissions", "client_revisions", "ai_usage"],
+      server_only: ["breakglass_events", "complaints", "privacy_incidents", "privacy_incident_clients", "fhir_jwt_assertions", "caloms_submissions", "client_revisions", "ai_usage", "caloms_submission_events", "referral_links"],
       // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
       // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
       // list against the schema, so a table with PHI is always either synchronised or deliberately kept apart.
@@ -11433,6 +11503,8 @@ var require_sync_tables = __commonJS({
         caloms_submissions: ["file_enc"],
         client_revisions: ["changes_enc"],
         ai_usage: [],
+        caloms_submission_events: [],
+        referral_links: ["packet_enc", "ack_by_enc", "ack_note_enc"],
         idempotency_keys: ["response_enc"]
       },
       // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
@@ -11515,7 +11587,11 @@ var require_sync_tables = __commonJS({
         ["user_permission_overrides", "user_id"],
         ["user_permission_overrides", "granted_by"],
         ["client_revisions", "changed_by"],
-        ["prevention_events", "user_id"]
+        ["prevention_events", "user_id"],
+        ["caloms_submissions", "uploaded_by"],
+        ["caloms_submission_events", "user_id"],
+        ["referral_links", "created_by"],
+        ["referral_links", "revoked_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -13258,6 +13334,52 @@ Confirm the determination with counsel. If it was a mistake, switch the program 
           counseling_notes: n(`SELECT COUNT(*) n FROM notes WHERE counseling_note=1 AND deleted_at IS NULL`)
         };
         audit3.log({ user: ctx.user, action: "part2.summary", ip: ctx.ip });
+        return out2;
+      });
+      r.get("/api/part2/layer", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write", "settings:manage"), (ctx) => {
+        const n = (sql, ...p) => db3.one(sql, ...p).n;
+        const scope = auth3.caseloadFilter(ctx.user, "c.id");
+        const inScope = (alias) => `${alias}.client_id IN (SELECT c.id FROM clients c WHERE c.deleted_at IS NULL AND ${scope.sql})`;
+        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const in30 = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+        const since90 = new Date(Date.now() - 90 * 864e5).toISOString();
+        const T = C.PART2_CONSENT_TYPES;
+        const q = T.map(() => "?").join(",");
+        const live = `k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= ?)`;
+        const has = (p) => auth3.hasPerm(ctx.user, p);
+        const P2 = require_programme();
+        const out2 = {
+          profile: P2.profile(),
+          part2_program: disclosure.part2Program(),
+          consents: {
+            active: n(`SELECT COUNT(*) n FROM consents k WHERE k.type IN (${q}) AND ${live} AND ${inScope("k")}`, ...T, today, ...scope.params),
+            expiring_30d: n(`SELECT COUNT(*) n FROM consents k WHERE k.type IN (${q}) AND k.revoked_at IS NULL AND k.expires_at BETWEEN ? AND ? AND ${inScope("k")}`, ...T, today, in30, ...scope.params),
+            pre_2024_form: n(`SELECT COUNT(*) n FROM consents k WHERE k.type IN (${q}) AND (k.rule_version IS NULL OR k.rule_version<>'2024') AND ${live} AND ${inScope("k")}`, ...T, today, ...scope.params),
+            active_clients_without: n(`SELECT COUNT(*) n FROM clients c WHERE c.deleted_at IS NULL AND c.merged_into IS NULL AND c.status='active' AND ${scope.sql} AND NOT EXISTS (SELECT 1 FROM consents k WHERE k.client_id=c.id AND k.type IN (${q}) AND ${live})`, ...scope.params, ...T, today),
+            revoked_90d: n(`SELECT COUNT(*) n FROM consents k WHERE k.revoked_at >= ? AND ${inScope("k")}`, since90, ...scope.params)
+          },
+          disclosures_90d: Object.fromEntries(db3.all(`SELECT COALESCE(d.source, 'manual') AS source, COUNT(*) n FROM disclosures d WHERE d.disclosed_at >= ? AND ${inScope("d")} GROUP BY COALESCE(d.source, 'manual')`, since90, ...scope.params).map((x) => [x.source, x.n])),
+          notice: { version: disclosure.notice().version, short: disclosure.notice().short },
+          patient_notice_missing: n(`SELECT COUNT(*) n FROM clients c WHERE ${MISSING_NOTICE} AND ${scope.sql}`, ...scope.params),
+          counseling_notes: n(`SELECT COUNT(*) n FROM notes x WHERE x.counseling_note=1 AND x.deleted_at IS NULL AND ${inScope("x")}`, ...scope.params),
+          patient_requests: has("patient-requests:read") || has("patient-requests:write") ? {
+            open: Object.fromEntries(db3.all(`SELECT x.kind, COUNT(*) n FROM patient_requests x WHERE x.status='open' AND ${inScope("x")} GROUP BY x.kind`, ...scope.params).map((x) => [x.kind, x.n])),
+            overdue: n(`SELECT COUNT(*) n FROM patient_requests x WHERE x.status='open' AND x.due_at < ? AND ${inScope("x")}`, today, ...scope.params)
+          } : null,
+          incidents_open: has("incidents:read") ? n(`SELECT COUNT(*) n FROM privacy_incidents WHERE status='open'`) : null,
+          complaints_open: has("complaints:read") ? n(`SELECT COUNT(*) n FROM complaints WHERE status IN ('open','investigating')`) : null,
+          referral_links_90d: {
+            sent: n(`SELECT COUNT(*) n FROM referral_links x WHERE x.created_at >= ? AND ${inScope("x")}`, since90, ...scope.params),
+            opened: n(`SELECT COUNT(*) n FROM referral_links x WHERE x.created_at >= ? AND x.opened_at IS NOT NULL AND ${inScope("x")}`, since90, ...scope.params),
+            acknowledged: n(`SELECT COUNT(*) n FROM referral_links x WHERE x.created_at >= ? AND x.ack_status IS NOT NULL AND ${inScope("x")}`, since90, ...scope.params)
+          },
+          integration: {
+            fhir_module: P2.moduleOn("fhir"),
+            fhir_clients: n(`SELECT COUNT(*) n FROM settings WHERE key LIKE 'fhir_client:%'`),
+            last_ehr_import: (db3.one(`SELECT at FROM audit_log WHERE action='import.data.commit' AND details LIKE '%"source":"ehr_fhir"%' ORDER BY id DESC LIMIT 1`) || {}).at || null
+          }
+        };
+        audit3.log({ user: ctx.user, action: "part2.layer", ip: ctx.ip });
         return out2;
       });
     };
@@ -24807,6 +24929,34 @@ var require_caloms = __commonJS({
         return [];
       }
     }
+    function validNpi(v) {
+      if (!/^\d{10}$/.test(String(v || ""))) return false;
+      const digits = `80840${String(v).slice(0, 9)}`.split("").map(Number);
+      let sum = 0;
+      for (let i = digits.length - 1, dbl = true; i >= 0; i--, dbl = !dbl) {
+        let d = digits[i];
+        if (dbl) {
+          d *= 2;
+          if (d > 9) d -= 9;
+        }
+        sum += d;
+      }
+      return (10 - sum % 10) % 10 === Number(String(v)[9]);
+    }
+    function schedule() {
+      let last = null;
+      try {
+        last = JSON.parse(db3.getSetting("caloms_schedule_last", "null"));
+      } catch {
+        last = null;
+      }
+      return {
+        frequency: db3.getSetting("caloms_schedule", "off") === "monthly" ? "monthly" : "off",
+        day: Number(db3.getSetting("caloms_schedule_day", "5")) || 5,
+        split_by_provider: db3.getSetting("caloms_split_by_provider", "0") === "1",
+        last
+      };
+    }
     function startDate() {
       return db3.getSetting("caloms_start_date", null) || null;
     }
@@ -24816,6 +24966,7 @@ var require_caloms = __commonJS({
         enabled: enabled(),
         providers: providers(),
         start_date: startDate(),
+        schedule: schedule(),
         spec: {
           version: S.SPEC_VERSION,
           source: S.SPEC_SOURCE,
@@ -25144,9 +25295,10 @@ var require_caloms = __commonJS({
       return cols2;
     }
     var PREVIEW_NAME = { last_name: "PREVIEW", first_name: "NOT FOR SUBMISSION", dob: "" };
-    function buildExtract({ from, to, scope, generatedBy, preview = false, submissionId = null }) {
+    function buildExtract({ from, to, scope, generatedBy, preview = false, submissionId = null, providerId = null }) {
       const rep = report({ from, to, scope });
-      const ready = rep.checked.filter((x) => !fatal(x.issues).length).map((x) => x.record);
+      const mine = (r) => !providerId || r.provider_id === providerId;
+      const ready = rep.checked.filter((x) => mine(x.record) && !fatal(x.issues).length).map((x) => x.record);
       const names = /* @__PURE__ */ new Map();
       const nameOf = (clientId) => {
         if (names.has(clientId)) return names.get(clientId);
@@ -25184,18 +25336,18 @@ var require_caloms = __commonJS({
         files.push([FILE[type], T.toCsv(rows, cols2.map((c) => ({ key: c.key, label: c.name })))]);
       }
       const activity = [];
-      for (const p of providers()) for (const month of monthsBetween(from, to)) {
+      for (const p of providers().filter((x) => !providerId || x.id === providerId)) for (const month of monthsBetween(from, to)) {
         const inMonth = ready.filter((r) => r.provider_id === p.id && r.record_date.slice(0, 7) === month);
         const n = (t) => inMonth.filter((r) => r.record_type === t).length;
         activity.push({ provider_id: p.id, report_month: month.replace("-", ""), admissions: n("admission"), discharges: n("discharge"), annual_updates: n("annual_update"), no_activity: inMonth.length ? "N" : "Y" });
       }
       files.push(["provider_activity.csv", T.toCsv(activity, [{ key: "provider_id", label: "ProviderID" }, { key: "report_month", label: "ReportMonth" }, { key: "admissions", label: "Admissions" }, { key: "discharges", label: "Discharges" }, { key: "annual_updates", label: "AnnualUpdates" }, { key: "no_activity", label: "NoActivity" }])]);
-      const excluded = rep.summary.blocked;
-      files.push(["README.txt", readme({ from, to, counts, excluded, activity, generatedBy, missing: rep.summary.missing, preview, submissionId })]);
+      const excluded = providerId ? rep.checked.filter((x) => mine(x.record) && fatal(x.issues).length).length : rep.summary.blocked;
+      files.push(["README.txt", readme({ from, to, counts, excluded, activity, generatedBy, missing: rep.summary.missing, preview, submissionId, providerId })]);
       if (preview) for (const f of files) f[0] = `PREVIEW-${f[0]}`;
       return { files, ready, clientIds: [...new Set(ready.map((r) => r.client_id))], counts, excluded, activity_rows: activity.length, no_activity_months: activity.filter((a) => a.no_activity === "Y").length };
     }
-    function readme({ from, to, counts, excluded, activity, generatedBy, missing, preview = false, submissionId = null }) {
+    function readme({ from, to, counts, excluded, activity, generatedBy, missing, preview = false, submissionId = null, providerId = null }) {
       return [
         ...preview ? [
           "PREVIEW - NOT FOR SUBMISSION",
@@ -25214,11 +25366,16 @@ var require_caloms = __commonJS({
         ] : [
           "CONTAINS PHI. Identified client records for the California Department of Health Care Services (DHCS),",
           "disclosed as required by law for state treatment outcome reporting. The disclosure is recorded in each",
-          "client's accounting of disclosures in SUDS. Transmit only through the county's approved DHCS channel."
+          "client's accounting of disclosures in SUDS. Transmit only through the county's approved DHCS channel.",
+          "SUDS does not send this file to DHCS itself (it has no DHCS connection or credentials): a person uploads it."
         ],
         "",
         ...submissionId ? [`Submission: ${submissionId} (its SHA-256 is recorded in SUDS; send this file unchanged)`] : [],
         `Period: ${from} to ${to}`,
+        ...providerId ? [`Provider: ${providerId}${(() => {
+          const p = providers().find((x) => x.id === providerId) || {};
+          return [p.legal_name || p.name, p.npi ? `NPI ${p.npi}` : ""].filter(Boolean).map((x) => ` - ${x}`).join("");
+        })()}`] : [],
         `Generated: ${db3.now()}${generatedBy ? ` by ${generatedBy}` : ""}`,
         `Layout: ${S.SPEC_VERSION}`,
         `Source: ${S.SPEC_SOURCE}`,
@@ -25251,7 +25408,91 @@ var require_caloms = __commonJS({
         ...require_disclosure().part2Program() ? ["42 CFR Part 2", "-------------", require_disclosure().fileNotice(), ""] : []
       ].join("\r\n");
     }
-    module.exports = { enabled, providers, startDate, config: config2, PROVIDER_ID, normalize, check, fatal, blocking, CROSS_RECORD, present, recordsForEpisode, contextFor, save, report, buildExtract, monthsBetween, columnsFor, ANNUAL_EARLY, ANNUAL_LATE, addYears, addDays };
+    module.exports = { enabled, providers, validNpi, schedule, startDate, config: config2, PROVIDER_ID, normalize, check, fatal, blocking, CROSS_RECORD, present, recordsForEpisode, contextFor, save, report, buildExtract, monthsBetween, columnsFor, ANNUAL_EARLY, ANNUAL_LATE, addYears, addDays };
+  }
+});
+
+// server/caloms-schedule.js
+var require_caloms_schedule = __commonJS({
+  "server/caloms-schedule.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var C = require_caloms();
+    var { uuid: uuid2, encrypt: encrypt3 } = require_crypto();
+    var ALL = () => ({ sql: "1=1", params: [] });
+    var zipOf = (files) => require_spreadsheet().zip(files);
+    var sha2562 = (buf) => (init_crypto2(), __toCommonJS(crypto_exports)).createHash("sha256").update(buf).digest("hex");
+    function logEvent(submissionId, action, user, detail = null) {
+      db3.run(`INSERT INTO caloms_submission_events(id,submission_id,action,user_id,detail) VALUES(?,?,?,?,?)`, uuid2(), submissionId, action, user ? user.id : null, detail ? String(detail).slice(0, 200) : null);
+    }
+    function previousMonth(day) {
+      const [y, m] = day.split("-").map(Number);
+      const first = new Date(Date.UTC(y, m - 2, 1));
+      const last = new Date(Date.UTC(y, m - 1, 0));
+      return { from: first.toISOString().slice(0, 10), to: last.toISOString().slice(0, 10) };
+    }
+    function prepare({ from, to, providerId = null, origin = "scheduled", user = null, ip = null }) {
+      const id = uuid2();
+      const x = C.buildExtract({ from, to, scope: ALL, generatedBy: user ? user.display_name || user.username : "SUDS scheduled run", submissionId: id, providerId });
+      if (!x.ready.length) return { empty: true, provider_id: providerId, held_back: x.excluded };
+      const body = zipOf(x.files);
+      const hash2 = sha2562(body);
+      const fileName = `caloms-tx-SUBMISSION-${from}_${to}${providerId ? `-${providerId}` : ""}-${id.slice(0, 8)}.zip`;
+      const stamp2 = db3.now();
+      const keeper = user || db3.one(`SELECT id FROM users WHERE role='admin' AND is_active=1 ORDER BY created_at LIMIT 1`) || db3.one(`SELECT id FROM users ORDER BY created_at LIMIT 1`);
+      db3.transaction(() => {
+        db3.run(
+          `INSERT INTO caloms_submissions(id,period_from,period_to,file_name,sha256,bytes,clients,counts,file_enc,created_by,created_at,updated_at,status,origin,provider_id,record_ids) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'prepared',?,?,?)`,
+          id,
+          from,
+          to,
+          fileName,
+          hash2,
+          body.length,
+          x.clientIds.length,
+          JSON.stringify({ ...x.counts, held_back: x.excluded }),
+          encrypt3(body.toString("base64")),
+          keeper.id,
+          stamp2,
+          stamp2,
+          origin,
+          providerId,
+          JSON.stringify(x.ready.map((r) => r.id))
+        );
+        logEvent(id, "prepared", user, hash2);
+      });
+      audit3.log({ user, action: "caloms.submission.prepare", entity: "caloms_submission", entityId: id, ip, details: { from, to, provider_id: providerId || void 0, origin, ...x.counts, held_back: x.excluded, clients: x.clientIds.length, sha256: hash2 } });
+      return { id, from, to, provider_id: providerId, clients: x.clientIds.length, counts: x.counts, held_back: x.excluded, sha256: hash2, file_name: fileName };
+    }
+    function run2({ from, to, user = null, ip = null, origin = "scheduled" }) {
+      const S = C.schedule();
+      const rep = C.report({ from, to, scope: ALL });
+      const targets = S.split_by_provider ? C.providers().map((p) => p.id) : [null];
+      const prepared = [];
+      const empty = [];
+      for (const p of targets) {
+        const r = prepare({ from, to, providerId: p, origin, user, ip });
+        if (r.empty) empty.push(p || "all");
+        else prepared.push(r.id);
+      }
+      const summary = { period: `${from}..${to}`, from, to, ran_at: db3.now(), prepared, empty, records: rep.summary.records, ready: rep.summary.ready, fatal: rep.summary.fatal, warnings: rep.summary.warnings, missing: rep.summary.missing };
+      db3.setSetting("caloms_schedule_last", JSON.stringify(summary));
+      audit3.log({ user, action: "caloms.schedule.run", ip, details: { from, to, origin, prepared: prepared.length, fatal: rep.summary.fatal, warnings: rep.summary.warnings } });
+      return summary;
+    }
+    function runIfDue(today = null) {
+      if (!C.enabled() || !C.providers().length) return null;
+      const S = C.schedule();
+      if (S.frequency !== "monthly") return null;
+      const day = today || require_budget().localDate();
+      if (Number(day.slice(8, 10)) < Math.min(28, Math.max(1, S.day))) return null;
+      const { from, to } = previousMonth(day);
+      if (S.last && S.last.from === from && S.last.to === to) return null;
+      return run2({ from, to });
+    }
+    module.exports = { prepare, run: run2, runIfDue, previousMonth, logEvent };
   }
 });
 
@@ -25263,9 +25504,9 @@ var require_retention = __commonJS({
     var db3 = require_db();
     var config2 = require_config();
     var audit3 = require_audit();
-    var DELETE_TABLES = ["care_plan_steps", "care_plan_goals", "problem_history", "problems", "asam_assessments", "outcome_measures", "client_form_files", "client_forms", "disclosures", "court_orders", "part2_notices", "consents", "patient_requests", "referrals", "tasks", "calls", "overdose_events", "intervention_supplies", "interventions", "caloms_records", "suprt_assessments", "episodes", "assignments", "breakglass_events", "client_revisions"];
+    var DELETE_TABLES = ["care_plan_steps", "care_plan_goals", "problem_history", "problems", "asam_assessments", "outcome_measures", "client_form_files", "client_forms", "disclosures", "court_orders", "part2_notices", "consents", "patient_requests", "referral_links", "referrals", "tasks", "calls", "overdose_events", "intervention_supplies", "interventions", "caloms_records", "suprt_assessments", "episodes", "assignments", "breakglass_events", "client_revisions"];
     var UNLINK_TABLES = ["time_entries", "expenditures", "complaints"];
-    var NO_TOMBSTONE = ["breakglass_events", "client_revisions"];
+    var NO_TOMBSTONE = ["breakglass_events", "client_revisions", "referral_links"];
     function retentionYears() {
       const v = Number(db3.getSetting("client_retention_years", ""));
       return Number.isFinite(v) && v > 0 ? v : config2.clientRetentionYears;
@@ -25295,6 +25536,8 @@ var require_retention = __commonJS({
       outcome_measures: ["administered_at"],
       court_orders: ["issued_at"],
       part2_notices: ["given_at"],
+      // A secure referral link the recipient opened or answered is work on the record like the referral itself.
+      referral_links: ["created_at", "opened_at", "ack_at"],
       time_entries: ["work_date"],
       expenditures: ["spent_at"]
     };
@@ -25343,6 +25586,7 @@ var require_retention = __commonJS({
         for (const id of noteIds) db3.tombstone("notes", id);
         const inFiles = db3.all(`SELECT DISTINCT source_ref FROM disclosures WHERE client_id=? AND source='caloms' AND source_ref LIKE 'caloms:%'`, client.id).map((r) => r.source_ref.slice("caloms:".length));
         counts.caloms_files_cleared = inFiles.reduce((n, id) => n + db3.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE id=? AND file_enc IS NOT NULL`, db3.now(), db3.now(), id).changes, 0);
+        counts.caloms_files_cleared += db3.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE status='prepared' AND file_enc IS NOT NULL`, db3.now(), db3.now()).changes;
         for (const t of DELETE_TABLES) {
           const ids = db3.all(`SELECT id FROM ${t} WHERE client_id=?`, client.id).map((r) => r.id);
           counts[t] = ids.length;
@@ -25490,11 +25734,29 @@ var require_caloms2 = __commonJS({
     module.exports = (r) => {
       r.get("/api/caloms/config", auth3.requireAuth, () => C.config());
       r.put("/api/caloms/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
-        const v = validate(ctx.body, { enabled: { type: "boolean" }, providers: { type: "array", maxLen: 20 }, start_date: { type: "date" } });
-        const provs = v.providers === void 0 ? C.providers() : (v.providers || []).map((p) => ({ id: String(p && p.id || "").trim(), name: String(p && p.name || "").trim().slice(0, 120) }));
+        const v = validate(ctx.body, {
+          enabled: { type: "boolean" },
+          providers: { type: "array", maxLen: 20 },
+          start_date: { type: "date" },
+          // 1.17.0: the monthly run (server/caloms-schedule.js) and county mode's one file per provider.
+          schedule: { type: "string", enum: ["off", "monthly"] },
+          schedule_day: { type: "number", integer: true, min: 1, max: 28 },
+          split_by_provider: { type: "boolean" }
+        });
+        const provs = v.providers === void 0 ? C.providers() : (v.providers || []).map((p) => {
+          const o = { id: String(p && p.id || "").trim(), name: String(p && p.name || "").trim().slice(0, 120) };
+          const legal = String(p && p.legal_name || "").trim().slice(0, 200);
+          const npi = String(p && p.npi || "").replace(/\s/g, "");
+          if (legal) o.legal_name = legal;
+          if (npi) o.npi = npi;
+          return o;
+        });
         const fields = {};
         provs.forEach((p, i) => {
           if (!C.PROVIDER_ID.test(p.id)) fields[`providers.${i}.id`] = "must be 4 to 10 letters or digits (the CalOMS provider ID DHCS assigned)";
+        });
+        provs.forEach((p, i) => {
+          if (p.npi && !C.validNpi(p.npi)) fields[`providers.${i}.npi`] = "must be a 10-digit National Provider Identifier (its check digit does not match)";
         });
         if (new Set(provs.map((p) => p.id)).size !== provs.length) fields.providers = "lists the same provider ID twice";
         const on = v.enabled === void 0 ? db3.getSetting("caloms_enabled", "0") === "1" : !!v.enabled;
@@ -25505,8 +25767,11 @@ var require_caloms2 = __commonJS({
           db3.setSetting("caloms_providers", JSON.stringify(provs));
           if (v.start_date !== void 0 && v.start_date !== null) db3.setSetting("caloms_start_date", v.start_date);
           else if (on && !C.startDate()) db3.setSetting("caloms_start_date", require_budget().localDate());
+          if (v.schedule !== void 0 && v.schedule !== null) db3.setSetting("caloms_schedule", v.schedule);
+          if (v.schedule_day !== void 0 && v.schedule_day !== null) db3.setSetting("caloms_schedule_day", String(v.schedule_day));
+          if (v.split_by_provider !== void 0 && v.split_by_provider !== null) db3.setSetting("caloms_split_by_provider", v.split_by_provider ? "1" : "0");
         });
-        audit3.log({ user: ctx.user, action: "caloms.settings.update", ip: ctx.ip, details: { enabled: on, providers: provs.length } });
+        audit3.log({ user: ctx.user, action: "caloms.settings.update", ip: ctx.ip, details: { enabled: on, providers: provs.length, schedule: C.schedule().frequency, split_by_provider: C.schedule().split_by_provider } });
         return C.config();
       });
       r.get("/api/episodes/:id/caloms", auth3.requireAuth, auth3.requirePerm("episodes:read", "episodes:write"), (ctx) => {
@@ -25580,21 +25845,22 @@ var require_caloms2 = __commonJS({
         ctx.res.end(body);
       });
       r.post("/api/caloms/submissions", auth3.requireAuth, auth3.requirePerm("export:identified"), requireModule("caloms"), (ctx) => {
-        const v = validate(ctx.body || {}, { from: { type: "date", required: true }, to: { type: "date", required: true } });
+        const v = validate(ctx.body || {}, { from: { type: "date", required: true }, to: { type: "date", required: true }, provider_id: { type: "string", maxLen: 10 } });
+        if (v.provider_id && !C.providers().some((p) => p.id === v.provider_id)) throw badRequest("That is not one of this program's CalOMS provider IDs", { fields: { provider_id: "unknown provider" } });
         ctx.query.set("from", v.from);
         ctx.query.set("to", v.to);
         const id = require_crypto().uuid();
-        const { from, to, x } = extractFor(ctx, { submissionId: id });
+        const { from, to, x } = extractFor(ctx, { submissionId: id, providerId: v.provider_id || null });
         if (!x.clientIds.length) throw badRequest("There is nothing to submit for this period: no record passed the edit checks.");
         const disclosure = require_disclosure();
         const { encrypt: encrypt3 } = require_crypto();
         const body = zipOf(x.files);
         const hash2 = sha2562(body);
-        const fileName = `caloms-tx-SUBMISSION-${from}_${to}-${id.slice(0, 8)}.zip`;
+        const fileName = `caloms-tx-SUBMISSION-${from}_${to}${v.provider_id ? `-${v.provider_id}` : ""}-${id.slice(0, 8)}.zip`;
         const stamp2 = db3.now();
         db3.transaction(() => {
           db3.run(
-            `INSERT INTO caloms_submissions(id,period_from,period_to,file_name,sha256,bytes,clients,counts,file_enc,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+            `INSERT INTO caloms_submissions(id,period_from,period_to,file_name,sha256,bytes,clients,counts,file_enc,created_by,created_at,updated_at,status,origin,provider_id,record_ids) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'produced','manual',?,?)`,
             id,
             from,
             to,
@@ -25606,8 +25872,11 @@ var require_caloms2 = __commonJS({
             encrypt3(body.toString("base64")),
             ctx.user.id,
             stamp2,
-            stamp2
+            stamp2,
+            v.provider_id || null,
+            JSON.stringify(x.ready.map((rec) => rec.id))
           );
+          require_caloms_schedule().logEvent(id, "produced", ctx.user, hash2);
           disclosure.recordStateReport({ clientIds: x.clientIds, what: `CalOMS Tx records (${from} to ${to}): ${x.counts.admission} admission, ${x.counts.discharge} discharge, ${x.counts.annual_update} annual update; submission file ${fileName}, SHA-256 ${hash2}`, sourceRef: `caloms:${id}`, user: ctx.user, ip: ctx.ip });
           for (const rec of x.ready) db3.run(`UPDATE caloms_records SET extracted_at=?, updated_at=? WHERE id=?`, stamp2, stamp2, rec.id);
         });
@@ -25616,8 +25885,10 @@ var require_caloms2 = __commonJS({
         return { ok: true, id, from, to, submitted_at: stamp2, file_name: fileName, sha256: hash2, bytes: body.length, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded };
       });
       r.get("/api/caloms/submissions", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
-        const rows = db3.all(`SELECT s.id, s.period_from, s.period_to, s.file_name, s.sha256, s.bytes, s.clients, s.counts, s.created_at, s.file_cleared_at, s.file_enc IS NOT NULL AS has_file, u.display_name AS created_by_name
-      FROM caloms_submissions s JOIN users u ON u.id=s.created_by ORDER BY s.created_at DESC LIMIT 200`).map((r2) => {
+        const rows = db3.all(`SELECT s.id, s.period_from, s.period_to, s.file_name, s.sha256, s.bytes, s.clients, s.counts, s.created_at, s.file_cleared_at, s.file_enc IS NOT NULL AS has_file, u.display_name AS created_by_name,
+        s.status, s.origin, s.provider_id, s.uploaded_at, s.dhcs_reference, up.display_name AS uploaded_by_name,
+        (SELECT COUNT(*) FROM caloms_submission_events ev WHERE ev.submission_id=s.id AND ev.action='downloaded') AS downloads
+      FROM caloms_submissions s JOIN users u ON u.id=s.created_by LEFT JOIN users up ON up.id=s.uploaded_by ORDER BY s.created_at DESC LIMIT 200`).map((r2) => {
           let counts = {};
           try {
             counts = JSON.parse(r2.counts || "{}");
@@ -25633,6 +25904,7 @@ var require_caloms2 = __commonJS({
       r.get("/api/caloms/submissions/:id/file", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
         const sub = db3.one(`SELECT * FROM caloms_submissions WHERE id=?`, ctx.params.id);
         if (!sub) throw notFound("Submission not found");
+        if (sub.status !== "produced") throw new HttpError3(409, sub.status === "prepared" ? "This file was prepared by the monthly run and has not been produced yet. Produce it first: that is when it is written to each client's accounting of disclosures." : "This file was discarded.", { status: sub.status });
         if (!sub.file_enc) throw new HttpError3(410, `This submission's file is no longer kept (files are kept ${require_retention().CALOMS_FILE_DAYS} days, and removed when a client in it is purged). Its record and hash remain; produce a new submission if the records must be sent again.`);
         const body = import_buffer.Buffer.from(require_crypto().decrypt(sub.file_enc), "base64");
         if (sha2562(body) !== sub.sha256) {
@@ -25641,6 +25913,7 @@ var require_caloms2 = __commonJS({
         }
         require_incidents().maybeMassExport({ clients: sub.clients, kind: "caloms", user: ctx.user });
         audit3.log({ user: ctx.user, action: "caloms.submission.download", entity: "caloms_submission", entityId: sub.id, ip: ctx.ip, details: { from: sub.period_from, to: sub.period_to, clients: sub.clients, sha256: sub.sha256 } });
+        require_caloms_schedule().logEvent(sub.id, "downloaded", ctx.user, sub.sha256);
         const disclosure = require_disclosure();
         ctx.res.writeHead(200, {
           "Content-Type": "application/zip",
@@ -25649,6 +25922,117 @@ var require_caloms2 = __commonJS({
           "X-SUDS-Export": headerSafe(`Identified - PHI. CalOMS Tx submission for DHCS (state reporting, required by law), accounted for ${sub.clients} client(s) on ${sub.created_at}. Send this file unchanged.${disclosure.fileNotice({ short: true }) ? ` ${disclosure.fileNotice({ short: true })}` : ""}`)
         });
         ctx.res.end(body);
+      });
+      const SCHED = require_caloms_schedule();
+      const subFor = (id) => {
+        const sub = db3.one(`SELECT * FROM caloms_submissions WHERE id=?`, id);
+        if (!sub) throw notFound("Submission not found");
+        return sub;
+      };
+      const wholeProgramme = (ctx, what) => {
+        if (auth3.caseloadRestricted(ctx.user)) throw require_http().forbidden(`A prepared file covers the whole program; someone who is held to a caseload cannot ${what} one`);
+      };
+      r.post("/api/caloms/schedule/run", auth3.requireAuth, auth3.requirePerm("export:identified"), requireModule("caloms"), (ctx) => {
+        const v = validate(ctx.body || {}, { from: { type: "date" }, to: { type: "date" } });
+        if (!C.enabled()) throw badRequest("CalOMS Tx reporting is switched off for this program");
+        if (!C.providers().length) throw badRequest("Add this program's CalOMS provider ID first");
+        wholeProgramme(ctx, "prepare");
+        const { from, to } = v.from && v.to ? v : SCHED.previousMonth(require_budget().localDate());
+        if (from > to) throw badRequest("from must not be after to");
+        return SCHED.run({ from, to, user: ctx.user, ip: ctx.ip, origin: "manual" });
+      });
+      r.post("/api/caloms/submissions/:id/produce", auth3.requireAuth, auth3.requirePerm("export:identified"), requireModule("caloms"), (ctx) => {
+        const sub = subFor(ctx.params.id);
+        if (sub.status !== "prepared") throw new HttpError3(409, sub.status === "produced" ? "This file has already been produced." : "This file was discarded.");
+        if (!sub.file_enc) throw new HttpError3(410, "This prepared file is no longer kept (a client in it was purged). Prepare a new one.");
+        wholeProgramme(ctx, "produce");
+        const ids = JSON.parse(sub.record_ids || "[]");
+        const recs = ids.length ? db3.all(`SELECT id, client_id, updated_at, extracted_at FROM caloms_records WHERE id IN (${ids.map(() => "?").join(",")})`, ...ids) : [];
+        const stale = ids.length - recs.length + recs.filter((x) => x.updated_at > sub.created_at || x.extracted_at && x.extracted_at > sub.created_at).length;
+        if (stale) throw new HttpError3(409, `${stale} record(s) in this file were changed, removed or sent in another file after it was prepared, so it no longer matches the records. Discard it and prepare a new one.`, { stale });
+        const clientIds = [...new Set(recs.map((x) => x.client_id))];
+        const counts = JSON.parse(sub.counts || "{}");
+        const stamp2 = db3.now();
+        const disclosure = require_disclosure();
+        db3.transaction(() => {
+          db3.run(`UPDATE caloms_submissions SET status='produced', created_by=?, updated_at=? WHERE id=?`, ctx.user.id, stamp2, sub.id);
+          disclosure.recordStateReport({ clientIds, what: `CalOMS Tx records (${sub.period_from} to ${sub.period_to}): ${counts.admission || 0} admission, ${counts.discharge || 0} discharge, ${counts.annual_update || 0} annual update; submission file ${sub.file_name}, SHA-256 ${sub.sha256}`, sourceRef: `caloms:${sub.id}`, user: ctx.user, ip: ctx.ip });
+          for (const rec of recs) db3.run(`UPDATE caloms_records SET extracted_at=?, updated_at=? WHERE id=?`, stamp2, stamp2, rec.id);
+          SCHED.logEvent(sub.id, "produced", ctx.user, sub.sha256);
+        });
+        require_incidents().maybeMassExport({ clients: clientIds.length, kind: "caloms", user: ctx.user });
+        audit3.log({ user: ctx.user, action: "caloms.submitted", entity: "caloms_submission", entityId: sub.id, ip: ctx.ip, details: { from: sub.period_from, to: sub.period_to, prepared: true, provider_id: sub.provider_id || void 0, clients_disclosed: clientIds.length, sha256: sub.sha256 } });
+        return { ok: true, id: sub.id, submitted_at: stamp2, file_name: sub.file_name, sha256: sub.sha256, clients_disclosed: clientIds.length, counts };
+      });
+      r.post("/api/caloms/submissions/:id/discard", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+        const sub = subFor(ctx.params.id);
+        if (sub.status !== "prepared") throw new HttpError3(409, "Only a prepared file that has not been produced can be discarded; a produced one is a disclosure on record.");
+        db3.transaction(() => {
+          db3.run(`UPDATE caloms_submissions SET status='discarded', file_enc=NULL, file_cleared_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), sub.id);
+          SCHED.logEvent(sub.id, "discarded", ctx.user);
+        });
+        audit3.log({ user: ctx.user, action: "caloms.submission.discard", entity: "caloms_submission", entityId: sub.id, ip: ctx.ip, details: { from: sub.period_from, to: sub.period_to } });
+        return { ok: true };
+      });
+      r.post("/api/caloms/submissions/:id/uploaded", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+        const sub = subFor(ctx.params.id);
+        const v = validate(ctx.body || {}, { uploaded_on: { type: "date", required: true }, dhcs_reference: { type: "string", maxLen: 60, pattern: /^[A-Za-z0-9 ._/#-]*$/ } });
+        if (sub.status !== "produced") throw new HttpError3(409, "Produce the file first: a prepared file has not been accounted, so it cannot have been sent.");
+        if (v.uploaded_on > require_budget().localDate()) throw badRequest("The upload date cannot be in the future", { fields: { uploaded_on: "in the future" } });
+        if (v.uploaded_on < sub.created_at.slice(0, 10)) throw badRequest("The upload date is before the file was produced", { fields: { uploaded_on: "before the file existed" } });
+        db3.transaction(() => {
+          db3.run(`UPDATE caloms_submissions SET uploaded_at=?, uploaded_by=?, dhcs_reference=?, updated_at=? WHERE id=?`, v.uploaded_on, ctx.user.id, v.dhcs_reference || null, db3.now(), sub.id);
+          SCHED.logEvent(sub.id, "uploaded", ctx.user, [v.uploaded_on, v.dhcs_reference].filter(Boolean).join(" "));
+        });
+        audit3.log({ user: ctx.user, action: "caloms.submission.uploaded", entity: "caloms_submission", entityId: sub.id, ip: ctx.ip, details: { uploaded_on: v.uploaded_on, reference: !!v.dhcs_reference } });
+        return { ok: true, uploaded_at: v.uploaded_on, dhcs_reference: v.dhcs_reference || null };
+      });
+      r.get("/api/caloms/submissions/:id/events", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+        const sub = subFor(ctx.params.id);
+        const rows = db3.all(`SELECT e.action, e.detail, e.created_at, COALESCE(u.display_name, 'Scheduled run') AS who FROM caloms_submission_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.submission_id=? ORDER BY e.created_at, e.rowid`, sub.id);
+        audit3.log({ user: ctx.user, action: "caloms.submission.log", entity: "caloms_submission", entityId: sub.id, ip: ctx.ip, details: { count: rows.length } });
+        return { id: sub.id, file_name: sub.file_name, sha256: sub.sha256, status: sub.status, rows };
+      });
+      r.get("/api/caloms/worklist", auth3.requireAuth, auth3.requirePerm("episodes:read", "episodes:write"), (ctx) => {
+        const today = require_budget().localDate();
+        const from = ctx.query.get("from") || C.startDate() || C.addDays(today, -365);
+        const to = ctx.query.get("to") || today;
+        for (const d of [from, to]) if (!DAY.test(d) || !Number.isFinite(Date.parse(d))) throw badRequest("from and to must be dates (YYYY-MM-DD)");
+        const rep = C.report({ from, to, scope: scopeFor(ctx.user) });
+        const ownerCache = /* @__PURE__ */ new Map();
+        const names = /* @__PURE__ */ new Map();
+        const nameOf = (id) => {
+          if (!id) return null;
+          if (!names.has(id)) names.set(id, (db3.one(`SELECT display_name FROM users WHERE id=?`, id) || {}).display_name || null);
+          return names.get(id);
+        };
+        const ownerOf = (row) => {
+          const key = row.record_id ? `r:${row.record_id}` : `e:${row.episode_id}`;
+          if (ownerCache.has(key)) return ownerCache.get(key);
+          let owner = null;
+          if (row.record_id) {
+            const rec = db3.one(`SELECT updated_by, created_by FROM caloms_records WHERE id=?`, row.record_id);
+            owner = rec && (rec.updated_by || rec.created_by);
+          }
+          if (!owner) owner = (db3.one(`SELECT user_id FROM assignments WHERE client_id=? AND role_on_case='primary' AND ended_at IS NULL AND (end_date IS NULL OR end_date >= ?) ORDER BY start_date DESC LIMIT 1`, row.client_id, today) || {}).user_id || null;
+          if (!owner) owner = (db3.one(`SELECT opened_by FROM episodes WHERE id=?`, row.episode_id) || {}).opened_by || null;
+          ownerCache.set(key, owner);
+          return owner;
+        };
+        let rows = rep.rows.map((x) => {
+          const o = ownerOf(x);
+          return { ...x, owner_id: o, owner_name: nameOf(o), mine: o === ctx.user.id };
+        });
+        const mineOnly = ctx.query.get("mine") === "1";
+        if (mineOnly) rows = rows.filter((x) => x.mine);
+        const byOwner = {};
+        for (const x of rows) {
+          const k = x.owner_name || "Unassigned";
+          byOwner[k] = byOwner[k] || { fatal: 0, warnings: 0 };
+          byOwner[k][x.severity === "fatal" ? "fatal" : "warnings"]++;
+        }
+        audit3.log({ user: ctx.user, action: "caloms.worklist", ip: ctx.ip, details: { from, to, rows: rows.length, mine: mineOnly || void 0 } });
+        return { from, to, rows, by_owner: byOwner, mine: rows.filter((x) => x.mine).length, schedule: C.schedule() };
       });
     };
   }
@@ -26560,6 +26944,150 @@ var require_dataimport = __commonJS({
   }
 });
 
+// server/importers/fhir-ehr.js
+var require_fhir_ehr = __commonJS({
+  "server/importers/fhir-ehr.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var C = require_constants();
+    var MAX_RESOURCES = 5e3;
+    function resourcesOf(input) {
+      let v = input;
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (!t) return [];
+        if (t.startsWith("{") && !t.includes("\n{")) {
+          try {
+            v = JSON.parse(t);
+          } catch {
+            throw new Error("The file is not valid JSON");
+          }
+        } else if (t.startsWith("[")) {
+          try {
+            v = JSON.parse(t);
+          } catch {
+            throw new Error("The file is not valid JSON");
+          }
+        } else v = t.split(/\r?\n/).filter((l) => l.trim()).map((l, i) => {
+          try {
+            return JSON.parse(l);
+          } catch {
+            throw new Error(`Line ${i + 1} is not valid JSON (NDJSON has one resource per line)`);
+          }
+        });
+      }
+      const out2 = [];
+      const walk = (x) => {
+        if (!x || typeof x !== "object") return;
+        if (Array.isArray(x)) {
+          x.forEach(walk);
+          return;
+        }
+        if (x.resourceType === "Bundle") {
+          (x.entry || []).forEach((e) => walk(e && e.resource));
+          return;
+        }
+        if (x.resourceType) out2.push(x);
+      };
+      walk(v);
+      if (out2.length > MAX_RESOURCES) throw new Error(`At most ${MAX_RESOURCES} resources at a time; split the export`);
+      return out2;
+    }
+    var first = (a) => Array.isArray(a) && a.length ? a[0] : null;
+    function officialName(p) {
+      const names = Array.isArray(p.name) ? p.name : [];
+      return names.find((n) => n.use === "official") || names.find((n) => !n.use || n.use === "usual") || names[0] || {};
+    }
+    function preferredName(p) {
+      const n = (Array.isArray(p.name) ? p.name : []).find((x) => x.use === "nickname" || x.use === "usual");
+      const o = officialName(p);
+      const g = n && first(n.given);
+      return g && g !== first(o.given) ? g : "";
+    }
+    function telecom(p, system) {
+      const t = (Array.isArray(p.telecom) ? p.telecom : []).filter((x) => x.system === system && x.value);
+      const pick = t.find((x) => x.use === "mobile") || t.find((x) => x.use === "home") || t[0];
+      return pick ? String(pick.value) : "";
+    }
+    var GENDER = { female: "female", male: "male", other: "other", unknown: "" };
+    function patientRow(p) {
+      const n = officialName(p);
+      const a = first(p.address) || {};
+      const lang = first(p.communication);
+      return {
+        "First name": first(n.given) || "",
+        "Last name": n.family || "",
+        "Preferred name": preferredName(p),
+        "Date of birth": p.birthDate || "",
+        Phone: telecom(p, "phone"),
+        Email: telecom(p, "email"),
+        Address: (a.line || []).join(", "),
+        City: a.city || "",
+        ZIP: a.postalCode || "",
+        Gender: GENDER[p.gender] ?? "",
+        Language: lang && lang.language ? lang.language.text || (first(lang.language.coding) || {}).display || "" : "",
+        Status: p.active === false ? "inactive" : "active"
+      };
+    }
+    function visitType(e) {
+      const text = [...(e.type || []).map((t) => t.text || (first(t.coding) || {}).display || ""), (e.serviceType || {}).text || ""].join(" ").toLowerCase();
+      const cls = e.class && e.class.code || "";
+      if (cls === "EMER" || /emergency/.test(text)) return "hospital_or_ed_visit";
+      const rules = [[/intake/, "intake"], [/assess/, "assessment"], [/screen|sbirt/, "screening_sbirt"], [/case manag/, "case_management"], [/care coord/, "care_coordination"], [/peer/, "peer_support"], [/crisis/, "crisis_response"], [/discharge/, "discharge_planning"]];
+      for (const [re, code] of rules) if (re.test(text) && C.INTERVENTION_TYPES.includes(code)) return code;
+      return "other";
+    }
+    function modality(e) {
+      const cls = e.class && e.class.code || "";
+      if (cls === "VR") return "video";
+      const text = (e.type || []).map((t) => t.text || "").join(" ").toLowerCase();
+      if (/phone|telephone/.test(text)) return "phone";
+      return "in_person";
+    }
+    function minutes(e) {
+      if (e.length && Number.isFinite(Number(e.length.value))) {
+        const v = Number(e.length.value);
+        return String(Math.round(/^h/.test(e.length.unit || e.length.code || "") ? v * 60 : v));
+      }
+      const s = Date.parse((e.period || {}).start || "");
+      const f = Date.parse((e.period || {}).end || "");
+      return Number.isFinite(s) && Number.isFinite(f) && f > s ? String(Math.round((f - s) / 6e4)) : "";
+    }
+    function encounterRow(e, patients) {
+      const ref = String((e.subject || e.patient || {}).reference || "");
+      const pid = ref.replace(/^.*Patient\//, "");
+      const p = patients.get(pid);
+      const typeText = (e.type || []).map((t) => t.text || (first(t.coding) || {}).display || "").filter(Boolean).join(", ");
+      return {
+        Client: p && p["Last name"] && p["First name"] ? `${p["Last name"]}, ${p["First name"]}` : "",
+        Date: (e.period || {}).start || "",
+        Type: visitType(e),
+        Minutes: minutes(e),
+        Modality: modality(e),
+        Summary: `Imported from the EHR${typeText ? `: ${typeText}` : ""}${e.status ? ` (${e.status})` : ""}`,
+        _missing_patient: !p
+      };
+    }
+    function toSheet(input, entity) {
+      const all = resourcesOf(input);
+      const patients = new Map(all.filter((r) => r.resourceType === "Patient").map((p) => [String(p.id || ""), patientRow(p)]));
+      if (entity === "clients") {
+        const rows = [...patients.values()];
+        return { name: "EHR patients", headers: Object.keys(rows[0] || patientRow({})), rows, skipped: all.length - rows.length };
+      }
+      if (entity === "interventions") {
+        const enc2 = all.filter((r) => r.resourceType === "Encounter" && !["planned", "cancelled", "entered-in-error"].includes(r.status));
+        const rows = enc2.map((e) => encounterRow(e, patients));
+        const missing = rows.filter((r) => r._missing_patient).length;
+        for (const r of rows) delete r._missing_patient;
+        return { name: "EHR encounters", headers: ["Client", "Date", "Type", "Minutes", "Modality", "Summary"], rows, skipped: all.length - enc2.length, missing_patient: missing };
+      }
+      throw new Error("entity must be clients or interventions");
+    }
+    module.exports = { resourcesOf, toSheet, patientRow, encounterRow, MAX_RESOURCES };
+  }
+});
+
 // server/routes/dataimport.js
 var require_dataimport2 = __commonJS({
   "server/routes/dataimport.js"(exports, module) {
@@ -26629,6 +27157,26 @@ var require_dataimport2 = __commonJS({
         } catch {
           mapping = null;
         }
+        return previewSheet(ctx, entity, sheet, mapping, { sheets: parsed.sheets.map((s) => ({ name: s.name, rows: s.rows.length })), sheetIdx });
+      });
+      r.post("/api/imports/ehr/preview", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
+        const entity = ctx.query.get("entity") || ctx.body && ctx.body.entity;
+        if (!["clients", "interventions"].includes(entity)) throw badRequest("entity must be clients (from Patient resources) or interventions (from Encounter resources)");
+        if (!auth3.hasPerm(ctx.user, permFor(entity))) throw forbidden();
+        const input = ctx.rawBody && ctx.rawBody.length ? ctx.rawBody.toString("utf8") : ctx.body && (ctx.body.bundle || ctx.body.text);
+        if (!input) throw badRequest("Upload the FHIR export: a Bundle (.json) or NDJSON (.ndjson) of Patient and Encounter resources");
+        let sheet;
+        try {
+          sheet = require_fhir_ehr().toSheet(input, entity);
+        } catch (e) {
+          throw badRequest("Could not read the FHIR file: " + e.message);
+        }
+        if (!sheet.rows.length) throw badRequest(entity === "clients" ? "The file has no Patient resources" : "The file has no Encounter resources that took place");
+        const out2 = previewSheet(ctx, entity, sheet, null, { sheets: [{ name: sheet.name, rows: sheet.rows.length }], sheetIdx: 0, source: "ehr_fhir" });
+        return { ...out2, source: "ehr_fhir", skipped_resources: sheet.skipped, missing_patient: sheet.missing_patient || 0 };
+      });
+      function previewSheet(ctx, entity, sheet, mapping, { sheets, sheetIdx, source } = {}) {
+        const def = DI.ENTITIES[entity];
         if (!mapping) mapping = DI.suggestMapping(entity, sheet.headers.map((h) => h.replace(/\s*\*$/, "")));
         const normalizedMapping = {};
         for (const h of sheet.headers) {
@@ -26655,9 +27203,9 @@ var require_dataimport2 = __commonJS({
           }
           return { n: i + 2, record, errors };
         });
-        audit3.log({ user: ctx.user, action: "import.data.preview", ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name } });
-        return { entity, sheets: parsed.sheets.map((s) => ({ name: s.name, rows: s.rows.length })), sheet: sheetIdx, headers: sheet.headers, mapping: normalizedMapping, fields: def.fields.map((f) => ({ key: f.key, label: f.label, required: !!f.required })), rows, valid: rows.filter((x) => !x.errors.length).length, invalid: rows.filter((x) => x.errors.length).length, truncated: sheet.rows.length > 2e3 };
-      });
+        audit3.log({ user: ctx.user, action: "import.data.preview", ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name, source: source || void 0 } });
+        return { entity, sheets, sheet: sheetIdx, headers: sheet.headers, mapping: normalizedMapping, fields: def.fields.map((f) => ({ key: f.key, label: f.label, required: !!f.required })), rows, valid: rows.filter((x) => !x.errors.length).length, invalid: rows.filter((x) => x.errors.length).length, truncated: sheet.rows.length > 2e3 };
+      }
       r.post("/api/imports/data/commit", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
         const { entity, records, skip_duplicates } = ctx.body || {};
         const def = DI.ENTITIES[entity];
@@ -26745,7 +27293,7 @@ var require_dataimport2 = __commonJS({
           if (errors.length && !ctx.body.partial) throw badRequest(`${errors.length} row(s) could not be imported; nothing was saved`, { rows: errors });
           for (const [hash2, id] of imported) db3.run(`INSERT OR IGNORE INTO import_rows(row_hash,entity,record_id,imported_by) VALUES(?,?,?,?)`, hash2, entity, id, ctx.user.id);
         });
-        audit3.log({ user: ctx.user, action: "import.data.commit", ip: ctx.ip, details: { entity, created, skipped, skipped_duplicates: skippedDuplicates, errors: errors.length } });
+        audit3.log({ user: ctx.user, action: "import.data.commit", ip: ctx.ip, details: { entity, created, skipped, skipped_duplicates: skippedDuplicates, errors: errors.length, source: ctx.body.source === "ehr_fhir" ? "ehr_fhir" : void 0 } });
         return { created, skipped, skipped_duplicates: skippedDuplicates, errors };
       });
     };
@@ -27851,6 +28399,7 @@ var require_clients3 = __commonJS({
       EpisodeOfCare: true,
       Encounter: true,
       Consent: true,
+      Provenance: true,
       ServiceRequest: true,
       Task: true,
       Observation: true,
@@ -28409,6 +28958,22 @@ var require_resources2 = __commonJS({
         }
       });
     }
+    var PART2_POLICY = ["https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2/subpart-C/section-2.31", "https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2/subpart-C/section-2.32"];
+    function mapProvenance(k) {
+      const part2 = k.type.startsWith("part2_");
+      return prune({
+        resourceType: "Provenance",
+        id: `consent-${k.id}`,
+        meta: meta(k.updated_at),
+        target: [{ reference: `Consent/${k.id}` }],
+        occurredDateTime: dt(k.signed_at),
+        recorded: instant(k.created_at || k.updated_at),
+        policy: part2 ? PART2_POLICY : void 0,
+        activity: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v3-DataOperation", code: k.revoked_at ? "UPDATE" : "CREATE", display: k.revoked_at ? "revise" : "create" }] },
+        agent: [{ type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/provenance-participant-type", code: "custodian", display: "Custodian" }] }, who: programRef() }],
+        entity: k.document_ref_enc ? [{ role: "source", what: { display: "The signed consent form held by the program" } }] : void 0
+      });
+    }
     var SR_STATUS = { pending: "active", contacted: "active", accepted: "active", waitlisted: "on-hold", scheduled: "active", admitted: "completed", completed: "completed", declined_by_client: "revoked", declined_by_provider: "revoked", no_show: "revoked", closed: "completed" };
     var SR_PRIORITY = { routine: "routine", urgent: "urgent", emergent: "stat" };
     function mapReferral(r) {
@@ -28631,6 +29196,16 @@ var require_resources2 = __commonJS({
         // general release is listed only outside a Part 2 programme): which other organisations a client has
         // agreed to share with is none of this recipient's business.
         keep: (row, client) => disclosure.consentCovers({ type: row.type, recipient: dec2(row.recipient_enc), purpose: dec2(row.purpose_enc), categories: row.info_categories }, { recipients: client.recipients, purposeOfUse: client.purpose, category: "*" })
+      },
+      Provenance: {
+        src: `SELECT 'consent-' || k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.created_at _date
+      FROM consents k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT} AND k.type IN (${disclosure.FHIR_CONSENT_TYPES.map((t) => `'${t}'`).join(",")})`,
+        load: (kind, id) => db3.one(`SELECT * FROM consents WHERE id=?`, id),
+        map: mapProvenance,
+        date: "recorded",
+        params: {},
+        // Exactly the consents the Consent search would list for this recipient.
+        keep: (row, client) => DEFS.Consent.keep(row, client)
       },
       ServiceRequest: {
         src: `SELECT r.id _fid, 'referral' _kind, r.id _rid, r.client_id _cid, r.updated_at _upd, r.referred_at _date, r.status _st FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${LIVE_CLIENT}`,
@@ -35625,6 +36200,359 @@ var require_prevention2 = __commonJS({
   }
 });
 
+// server/referral-links.js
+var require_referral_links = __commonJS({
+  "server/referral-links.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var disclosure = require_disclosure();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2, randomToken, sha256: sha2562 } = require_crypto();
+    var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
+    var KINDS = ["packet", "contact_notice"];
+    var TTL_HOURS = [24, 72, 168];
+    var DEFAULT_TTL_HOURS = 72;
+    var MAX_FAILED = 5;
+    var ACK_STATUSES = ["received", "accepted", "scheduled", "declined", "unable_to_reach"];
+    var NOT_VALID = "This link is not valid. It may have expired or been withdrawn. Contact the program that sent it.";
+    var hashToken = (t) => sha2562(`referral-link:${t}`);
+    var hashCode = (id, code) => sha2562(`referral-link-code:${id}:${String(code || "").replace(/\D/g, "")}`);
+    var hashClaim = (id, claim) => sha2562(`referral-link-claim:${id}:${claim}`);
+    function newCode() {
+      const n = (init_crypto2(), __toCommonJS(crypto_exports)).randomInt(0, 1e6);
+      return String(n).padStart(6, "0");
+    }
+    function newReference() {
+      const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const b = (init_crypto2(), __toCommonJS(crypto_exports)).randomBytes(6);
+      return "R-" + [...b].map((x) => A[x % A.length]).join("");
+    }
+    var dec2 = (v) => {
+      if (!v) return null;
+      try {
+        return decrypt3(v);
+      } catch {
+        return null;
+      }
+    };
+    function resourceOf(resourceId) {
+      return db3.one(`SELECT id, name, organization FROM resources WHERE id=?`, resourceId);
+    }
+    function resourceNames(r) {
+      return r ? [r.name, r.organization].filter(Boolean) : [];
+    }
+    function invite() {
+      const url = db3.getSetting("referral_invite_url", null);
+      return { url: url && /^https:\/\//i.test(url) ? url : null, contact: db3.getSetting("program_contact", null) || null, programme: db3.getSetting("org_name", null) || "The referring program" };
+    }
+    function present(l) {
+      const now2 = (/* @__PURE__ */ new Date()).toISOString();
+      const status = l.revoked_at ? "revoked" : l.failed_attempts >= MAX_FAILED ? "locked" : l.expires_at < now2 && !l.opened_at ? "expired" : l.ack_status ? "acknowledged" : l.opened_at ? "opened" : l.expires_at < now2 ? "expired" : "sent";
+      return {
+        id: l.id,
+        referral_id: l.referral_id,
+        client_id: l.client_id,
+        resource_id: l.resource_id,
+        kind: l.kind,
+        reference: l.reference,
+        expires_at: l.expires_at,
+        status,
+        opened_at: l.opened_at,
+        open_count: l.open_count,
+        failed_attempts: l.failed_attempts,
+        ack_status: l.ack_status,
+        ack_at: l.ack_at,
+        ack_by: dec2(l.ack_by_enc),
+        ack_note: dec2(l.ack_note_enc),
+        revoked_at: l.revoked_at,
+        created_at: l.created_at,
+        created_by_name: l.created_by_name || null,
+        accounted: !!l.disclosure_id
+      };
+    }
+    function listFor(referralId) {
+      return db3.all(`SELECT l.*, u.display_name AS created_by_name FROM referral_links l JOIN users u ON u.id=l.created_by WHERE l.referral_id=? ORDER BY l.created_at DESC`, referralId).map(present);
+    }
+    function create3({ referral, user, ip, v }) {
+      const kind = v.kind;
+      if (!KINDS.includes(kind)) throw badRequest(`kind must be one of ${KINDS.join(", ")}`);
+      const hours = v.expires_hours === void 0 || v.expires_hours === null ? DEFAULT_TTL_HOURS : Number(v.expires_hours);
+      if (!TTL_HOURS.includes(hours)) throw badRequest(`A link lasts ${TTL_HOURS.join(", ")} hours (7 days at most)`);
+      const res = resourceOf(referral.resource_id);
+      if (!res) throw badRequest("The referral's provider is not in the directory");
+      const id = uuid2();
+      const token2 = randomToken(32);
+      const reference = newReference();
+      const expires = new Date(Date.now() + hours * 36e5).toISOString();
+      let code = null;
+      let packet = null;
+      let consentId = null;
+      if (kind === "packet") {
+        const basis = disclosure.requireBasis(referral.client_id, {
+          basis: "consent",
+          consent_id: v.consent_id || referral.consent_id,
+          recipient: resourceNames(res),
+          allowed: ["consent"],
+          restriction_reviewed: v.restriction_reviewed,
+          user
+        });
+        consentId = basis.consent.id;
+        const c = db3.one(`SELECT first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients WHERE id=?`, referral.client_id);
+        const message = String(v.message || "").trim().slice(0, 1e3);
+        packet = {
+          client: {
+            name: [dec2(c.first_name_enc), dec2(c.last_name_enc)].filter(Boolean).join(" "),
+            preferred_name: dec2(c.preferred_name_enc) || void 0,
+            dob: v.include_dob ? dec2(c.dob_enc) || void 0 : void 0,
+            phone: v.include_phone ? dec2(c.phone_enc) || void 0 : void 0
+          },
+          reason: message || null,
+          urgency: referral.urgency || "routine",
+          referred_at: referral.referred_at,
+          referred_by: user.display_name || user.username,
+          recipient: res.name
+        };
+        code = newCode();
+      }
+      db3.run(
+        `INSERT INTO referral_links(id,referral_id,client_id,resource_id,kind,token_hash,code_hash,consent_id,packet_enc,reference,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+        id,
+        referral.id,
+        referral.client_id,
+        referral.resource_id,
+        kind,
+        hashToken(token2),
+        code ? hashCode(id, code) : null,
+        consentId,
+        packet ? encrypt3(JSON.stringify(packet)) : null,
+        reference,
+        expires,
+        user.id
+      );
+      audit3.log({
+        user,
+        action: "referral_link.create",
+        entity: "referral_link",
+        entityId: id,
+        clientId: referral.client_id,
+        ip,
+        details: { kind, referral_id: referral.id, consent_id: consentId || void 0, expires_hours: hours, phone: kind === "packet" ? !!v.include_phone : void 0, dob: kind === "packet" ? !!v.include_dob : void 0 }
+      });
+      return { id, kind, reference, expires_at: expires, token: token2, code, path: `/referral-link.html#${token2}` };
+    }
+    function revoke({ link, user, ip }) {
+      if (link.revoked_at) return present(link);
+      db3.run(`UPDATE referral_links SET revoked_at=?, revoked_by=?, updated_at=? WHERE id=?`, db3.now(), user.id, db3.now(), link.id);
+      audit3.log({ user, action: "referral_link.revoke", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { kind: link.kind, opened: !!link.opened_at } });
+      return present(db3.one(`SELECT * FROM referral_links WHERE id=?`, link.id));
+    }
+    function usable(token2, ip, action) {
+      const t = String(token2 || "");
+      const link = /^[A-Za-z0-9_-]{40,64}$/.test(t) ? db3.one(`SELECT * FROM referral_links WHERE token_hash=?`, hashToken(t)) : null;
+      const refuse = (reason) => {
+        audit3.log({ user: null, action, entity: "referral_link", entityId: link ? link.id : null, clientId: link ? link.client_id : null, ip, success: false, details: { reason } });
+        throw notFound(NOT_VALID);
+      };
+      if (!link) refuse("unknown");
+      if (link.revoked_at) refuse("revoked");
+      if (link.failed_attempts >= MAX_FAILED) refuse("locked");
+      if (link.expires_at < (/* @__PURE__ */ new Date()).toISOString()) refuse("expired");
+      return link;
+    }
+    function header(link) {
+      const res = resourceOf(link.resource_id) || {};
+      return {
+        kind: link.kind,
+        reference: link.reference,
+        expires_at: link.expires_at,
+        recipient: res.name || null,
+        programme: invite().programme,
+        contact: invite().contact,
+        invite: invite(),
+        ack_status: link.ack_status,
+        ack_statuses: link.kind === "packet" ? ACK_STATUSES : ["received", "unable_to_reach"]
+      };
+    }
+    function stillCovered(link, creator) {
+      const res = resourceOf(link.resource_id);
+      const restrictedSince = db3.one(`SELECT 1 FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled' AND updated_at > ?`, link.client_id, link.created_at);
+      if (restrictedSince) return { ok: false, reason: "restriction" };
+      try {
+        const basis = disclosure.requireBasis(link.client_id, { basis: "consent", consent_id: link.consent_id, recipient: resourceNames(res), allowed: ["consent"], restriction_reviewed: true, user: creator });
+        return { ok: true, basis, res };
+      } catch (e) {
+        return { ok: false, reason: e && e.extra && e.extra.recipientNotCovered ? "recipient_not_covered" : "consent_not_valid" };
+      }
+    }
+    function open3({ token: token2, code, claim, ip }) {
+      const link = usable(token2, ip, "referral_link.open");
+      const base = header(link);
+      const bump = (extra = {}) => db3.run(`UPDATE referral_links SET open_count=open_count+1, opened_at=COALESCE(opened_at, ?), updated_at=? ${extra.sql || ""} WHERE id=?`, db3.now(), db3.now(), ...extra.params || [], link.id);
+      if (link.kind === "contact_notice") {
+        bump();
+        audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { kind: link.kind, first: !link.opened_at } });
+        return { ...base };
+      }
+      if (link.claim_hash) {
+        if (!claim || hashClaim(link.id, claim) !== link.claim_hash) {
+          audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: "claimed_elsewhere" } });
+          throw new HttpError3(409, "This referral has already been opened on another device or browser. If that was not you, contact the program that sent it: they can withdraw it and send a new one.", { claimed: true });
+        }
+      } else {
+        if (!code) return { ...base, code_required: true };
+        if (hashCode(link.id, code) !== link.code_hash) {
+          db3.run(`UPDATE referral_links SET failed_attempts=failed_attempts+1, updated_at=? WHERE id=?`, db3.now(), link.id);
+          const left = MAX_FAILED - (link.failed_attempts + 1);
+          audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: "wrong_code", attempts: link.failed_attempts + 1 } });
+          if (left <= 0) throw notFound(NOT_VALID);
+          throw new HttpError3(401, `That access code is not right. ${left} ${left === 1 ? "try" : "tries"} left before the link is locked.`, { code_required: true, tries_left: left });
+        }
+      }
+      const creator = db3.one(`SELECT * FROM users WHERE id=?`, link.created_by);
+      const cover = stillCovered(link, creator);
+      if (!cover.ok) {
+        bump();
+        audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: cover.reason, withheld: true } });
+        return { ...base, withheld: true };
+      }
+      const packet = JSON.parse(decrypt3(link.packet_enc));
+      let newClaim = null;
+      db3.transaction(() => {
+        if (!link.claim_hash) {
+          newClaim = randomToken(32);
+          const parts = ["name", packet.client.preferred_name ? "preferred name" : null, packet.client.dob ? "date of birth" : null, packet.client.phone ? "phone" : null, packet.reason ? "reason for referral" : null, "urgency"].filter(Boolean);
+          const did = disclosure.record({
+            clientId: link.client_id,
+            consentId: cover.basis.consent.id,
+            recipient: cover.res.name,
+            purpose: "Referral for services",
+            what: `Secure referral link ${link.reference}: ${parts.join(", ")}`,
+            method: "secure referral link",
+            basis: "consent",
+            source: "referral_link",
+            sourceRef: link.id,
+            user: creator,
+            ip
+          });
+          bump({ sql: ", claim_hash=?, disclosure_id=?", params: [hashClaim(link.id, newClaim), did] });
+        } else bump();
+      });
+      audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { kind: link.kind, first: !link.claim_hash } });
+      return { ...base, packet, notice: disclosure.notice().text, claim: newClaim || void 0 };
+    }
+    function acknowledge({ token: token2, claim, status, by, note, ip }) {
+      const link = usable(token2, ip, "referral_link.ack");
+      if (!(link.kind === "packet" ? ACK_STATUSES : ["received", "unable_to_reach"]).includes(status)) throw badRequest("Choose what happened");
+      if (link.kind === "packet" && (!link.claim_hash || !claim || hashClaim(link.id, claim) !== link.claim_hash)) {
+        audit3.log({ user: null, action: "referral_link.ack", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: "not_claimed" } });
+        throw forbidden("Open the referral with its access code first.");
+      }
+      if (link.kind === "contact_notice" && !link.opened_at) throw forbidden("Open the link first.");
+      const who = String(by || "").trim().slice(0, 120);
+      const text = link.kind === "packet" ? String(note || "").trim().slice(0, 1e3) : "";
+      if (!who) throw badRequest("Say who is acknowledging (your name and organisation)", { fields: { by: "required" } });
+      const res = resourceOf(link.resource_id) || { name: "the provider" };
+      db3.transaction(() => {
+        db3.run(`UPDATE referral_links SET ack_status=?, ack_at=?, ack_by_enc=?, ack_note_enc=?, updated_at=? WHERE id=?`, status, db3.now(), encrypt3(who), text ? encrypt3(text) : null, db3.now(), link.id);
+        const label = { received: "received it", accepted: "accepted the client", scheduled: "scheduled the client", declined: "declined", unable_to_reach: "could not reach the client" }[status];
+        db3.run(
+          `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`,
+          uuid2(),
+          link.client_id,
+          link.created_by,
+          link.created_by,
+          encrypt3(`${res.name} ${label} (secure referral link ${link.reference}) \u2014 confirm and record the outcome`),
+          (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+          status === "declined" || status === "unable_to_reach" ? "high" : "normal",
+          link.referral_id
+        );
+      });
+      audit3.log({ user: null, action: "referral_link.ack", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { status, kind: link.kind } });
+      return { ok: true, ack_status: status };
+    }
+    module.exports = { KINDS, TTL_HOURS, DEFAULT_TTL_HOURS, MAX_FAILED, ACK_STATUSES, NOT_VALID, create: create3, revoke, open: open3, acknowledge, listFor, present, invite, hashToken };
+  }
+});
+
+// server/routes/referral-links.js
+var require_referral_links2 = __commonJS({
+  "server/routes/referral-links.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var RL = require_referral_links();
+    var { validate } = require_validate();
+    var { notFound, HttpError: HttpError3, badRequest } = require_http();
+    var PUBLIC_PER_10_MIN = 30;
+    function limit2(ctx) {
+      const { rateLimit } = require_app2();
+      if (!rateLimit(`referral-link:${ctx.ip}`, PUBLIC_PER_10_MIN, 10 * 6e4)) throw new HttpError3(429, "Too many attempts from this address. Wait a few minutes and try again.");
+    }
+    function referralFor(ctx, id) {
+      const r = db3.one(`SELECT * FROM referrals WHERE id=?`, id);
+      if (!r) throw notFound("Referral not found");
+      auth3.assertClientAccess(ctx, r.client_id);
+      return r;
+    }
+    module.exports = (r) => {
+      r.get("/api/referral-links/settings", auth3.requireAuth, () => ({ invite_url: require_referral_links().invite().url, ttl_hours: RL.TTL_HOURS, default_ttl_hours: RL.DEFAULT_TTL_HOURS, max_failed: RL.MAX_FAILED }));
+      r.put("/api/referral-links/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const v = validate(ctx.body, { invite_url: { type: "string", maxLen: 300 } });
+        if (v.invite_url && !/^https:\/\/[^\s<>"']+$/i.test(v.invite_url)) throw badRequest("The invitation link must be an https:// address", { fields: { invite_url: "must start with https://" } });
+        if (v.invite_url) db3.setSetting("referral_invite_url", v.invite_url);
+        else db3.run(`DELETE FROM settings WHERE key='referral_invite_url'`);
+        audit3.log({ user: ctx.user, action: "settings.update", ip: ctx.ip, details: { changed: ["referral_invite_url"] } });
+        return { invite_url: RL.invite().url };
+      });
+      r.get("/api/referrals/:id/links", auth3.requireAuth, auth3.requirePerm("referrals:read", "referrals:write"), (ctx) => {
+        const ref = referralFor(ctx, ctx.params.id);
+        const rows = RL.listFor(ref.id);
+        audit3.log({ user: ctx.user, action: "referral_link.list", entity: "referral", entityId: ref.id, clientId: ref.client_id, ip: ctx.ip, details: { count: rows.length } });
+        return { rows, ttl_hours: RL.TTL_HOURS, default_ttl_hours: RL.DEFAULT_TTL_HOURS };
+      });
+      r.post("/api/referrals/:id/links", auth3.requireAuth, auth3.requirePerm("referrals:write"), (ctx) => {
+        const ref = referralFor(ctx, ctx.params.id);
+        const v = validate(ctx.body || {}, {
+          kind: { type: "string", required: true, enum: RL.KINDS },
+          consent_id: { type: "string", maxLen: 64 },
+          message: { type: "string", maxLen: 1e3 },
+          include_phone: { type: "boolean" },
+          include_dob: { type: "boolean" },
+          expires_hours: { type: "number", integer: true },
+          _restriction_reviewed: { type: "boolean" }
+        });
+        ctx.status = 201;
+        return db3.transaction(() => RL.create({ referral: ref, user: ctx.user, ip: ctx.ip, v: { ...v, restriction_reviewed: v._restriction_reviewed } }));
+      });
+      r.post("/api/referral-links/:id/revoke", auth3.requireAuth, auth3.requirePerm("referrals:write"), (ctx) => {
+        const link = db3.one(`SELECT * FROM referral_links WHERE id=?`, ctx.params.id);
+        if (!link) throw notFound("Link not found");
+        auth3.assertClientAccess(ctx, link.client_id);
+        return RL.revoke({ link, user: ctx.user, ip: ctx.ip });
+      });
+      r.post("/api/referral-links/open", (ctx) => {
+        limit2(ctx);
+        const v = validate(ctx.body || {}, { token: { type: "string", required: true, maxLen: 100 }, code: { type: "string", maxLen: 20 }, claim: { type: "string", maxLen: 100 } });
+        return RL.open({ token: v.token, code: v.code, claim: v.claim, ip: ctx.ip });
+      });
+      r.post("/api/referral-links/ack", (ctx) => {
+        limit2(ctx);
+        const v = validate(ctx.body || {}, {
+          token: { type: "string", required: true, maxLen: 100 },
+          claim: { type: "string", maxLen: 100 },
+          status: { type: "string", required: true, enum: RL.ACK_STATUSES },
+          by: { type: "string", required: true, maxLen: 120 },
+          note: { type: "string", maxLen: 1e3 }
+        });
+        return RL.acknowledge({ ...v, ip: ctx.ip });
+      });
+    };
+  }
+});
+
 // server/regions/sacramento-metro.js
 var require_sacramento_metro = __commonJS({
   "server/regions/sacramento-metro.js"(exports, module) {
@@ -41514,6 +42442,7 @@ var init_ = __esm({
       "./routes/part2.js": () => require_part2(),
       "./routes/patient-requests.js": () => require_patient_requests2(),
       "./routes/prevention.js": () => require_prevention2(),
+      "./routes/referral-links.js": () => require_referral_links2(),
       "./routes/referrals.js": () => require_referrals(),
       "./routes/regions.js": () => require_regions2(),
       "./routes/reports.js": () => require_reports(),
@@ -41680,6 +42609,7 @@ var require_app2 = __commonJS({
       "supervision",
       "resources",
       "referrals",
+      "referral-links",
       "tasks",
       "budget",
       "notes",
@@ -41706,7 +42636,7 @@ var require_app2 = __commonJS({
       "scim",
       "ai"
     ];
-    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "fhir", "security", "scim", "ai"].includes(m));
+    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "fhir", "security", "scim", "ai", "referral-links"].includes(m));
     var LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS \u2014 local mode is off</title>
 <style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.5}h1{font-size:1.4rem}a{color:#0b5}</style></head>
 <body><h1>Local mode is turned off on this server</h1>
@@ -42949,7 +43879,9 @@ var require_disclosure = __commonJS({
       Observation: "risk_overdose",
       DocumentReference: "documents",
       // The Consent resource is the authorisation itself: listed for any client whose consent covers something.
-      Consent: "*"
+      Consent: "*",
+      // Provenance (1.17.0) describes a Consent resource, and is listed exactly when that Consent is.
+      Provenance: "*"
     };
     function parseCategories(v) {
       const list = Array.isArray(v) ? v : String(v || "").split(",");
@@ -43810,6 +44742,31 @@ var require_db = __commonJS({
         if (!m) throw new Error("migration 53: no definition for ai_usage in schema");
         d.exec(m[0]);
         createIndexesFromSchema(d, schemaText, ["idx_ai_usage_at"]);
+      },
+      // 54: reserved for the 1.17.0 settlement-outcomes and street-outreach change, which needed no schema change; a
+      //     documented no-op, kept so that the Part 2 / CalOMS / referral-links migration below keeps number 55.
+      (d) => {
+      },
+      // 55: CalOMS Tx automation and secure referral links (1.17.0). caloms_submissions learns prepared (scheduled,
+      //     not yet a disclosure) and produced files, which provider a file is for, the records in it, and who
+      //     recorded uploading it to DHCS; caloms_submission_events is the submission log; referral_links holds
+      //     the one-time links a referral to an organisation not on SUDS is sent as (hashed tokens). Every existing
+      //     submission was produced by hand. Self-contained and idempotent, so it can be renumbered.
+      (d) => {
+        addColumn(d, "caloms_submissions", "status", "TEXT NOT NULL DEFAULT 'produced' CHECK (status IN ('prepared','produced','discarded'))");
+        addColumn(d, "caloms_submissions", "origin", "TEXT NOT NULL DEFAULT 'manual' CHECK (origin IN ('manual','scheduled'))");
+        addColumn(d, "caloms_submissions", "provider_id", "TEXT");
+        addColumn(d, "caloms_submissions", "record_ids", "TEXT");
+        addColumn(d, "caloms_submissions", "uploaded_at", "TEXT");
+        addColumn(d, "caloms_submissions", "uploaded_by", "TEXT REFERENCES users(id)");
+        addColumn(d, "caloms_submissions", "dhcs_reference", "TEXT");
+        const schemaText = safeSchema();
+        for (const t of ["caloms_submission_events", "referral_links"]) {
+          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+          if (!m) throw new Error(`migration 55: no definition for ${t} in schema`);
+          d.exec(m[0]);
+          for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
+        }
       }
     ];
     var PERF_INDEXES_47 = [

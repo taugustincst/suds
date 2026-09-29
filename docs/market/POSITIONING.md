@@ -81,8 +81,42 @@ The pitch is the three jobs above. Everything else is there for programmes that 
 | Consents, accounting of disclosures, audit, MFA, SSO | |
 
 A **programme profile** setting chooses between **Harm reduction & outreach** (the default: the clinical
-modules are hidden) and **Treatment-adjacent** (they are shown). Changing it hides or shows screens; it does
-not delete records.
+modules are hidden), **Treatment-adjacent** (they are shown) and, from 1.17.0, **Part 2 compliance module
+(beside an EHR)** (below). Changing it hides or shows screens; it does not delete records.
+
+## A second use: the disclosure-compliance module your EHR doesn't have
+
+> **For a SUD treatment programme that already has an EHR: SUDS as the 42 CFR Part 2 layer beside it — consent,
+> the accounting of disclosures, redisclosure notices and breach tracking — without replacing the EHR.**
+
+Most EHRs a county SUD provider uses (eClinicalWorks, Epic, SmartCare and others) hold the clinical record and the
+billing well. What programmes still keep on paper or in spreadsheets is the Part 2 work around them: a §2.31
+consent that names each recipient, checked *before* information leaves; an accounting of every disclosure a
+patient can ask for; the §2.32 notice travelling with each one; SUD counseling notes kept apart; the breach
+register with its 60-day clock; patient requests with their deadlines; and referrals to organisations that are
+not on any shared system. SUDS already does all of that for its own records. The **Part 2 compliance module**
+profile makes it the programme's Part 2 layer:
+
+- **What the EHR keeps**: the clinical record, orders, medications, billing and claims. SUDS does not replace
+  any of it and is not certified EHR technology.
+- **What SUDS keeps**: consents (with every §2.31 element, recipient-named, revocable), the disclosure gate and
+  the accounting of disclosures, the §2.32 notice on every disclosure, the §2.22 patient notice, counseling notes,
+  the incident and breach register, complaints, patient requests (access, amendment, restriction, accounting),
+  and secure referral links to providers that do not use SUDS.
+- **How they connect**: patients and encounters come in from the EHR's own FHIR R4 export (or a spreadsheet);
+  the EHR reads consents and their provenance from SUDS's FHIR R4 API, consent-gated and accounted.
+  [docs/integration/EHR-PART2-LAYER.md](../integration/EHR-PART2-LAYER.md) is the integration guide.
+
+Say plainly what this is and is not: **software support for Part 2 controls**, not a certification, an
+attestation or legal advice. SUDS is not ONC-certified and has not been reviewed by counsel or an auditor as a
+Part 2 compliance product; the control matrix ([docs/compliance/PART2.md](../compliance/PART2.md)) says what
+each control does and what remains the programme's policy and counsel's judgement. No EHR vendor has certified
+or endorsed the integration; the import reads standard FHIR R4 Patient and Encounter resources, and has been
+tested against SUDS's own fixtures, not against a named vendor's export.
+
+Who it is for: a treatment programme (or a county on behalf of its providers) that has an EHR, handles Part 2
+records, and wants the consent-and-disclosure controls in software rather than in a binder. It is the same
+product and the same install as the harm-reduction use; only the profile differs.
 
 ## The boundary: what SUDS is not
 
@@ -97,9 +131,10 @@ not delete records.
 ## Where it sits next to an EHR
 
 Where a CBO or county programme also has an EHR, SUDS holds the work around it: anonymous outreach, supplies
-and stock, the resource directory, grant budgets and funder reports. If some services must also be in the EHR,
-SUDS produces a consent-gated hand-off file or FHIR feed instead of double entry. Most harm-reduction CBOs have
-no EHR at all; for them SUDS is the programme record.
+and stock, the resource directory, grant budgets and funder reports — or, for a treatment programme, the Part 2
+consent-and-disclosure layer above. If some services must also be in the EHR, SUDS produces a consent-gated
+hand-off file or FHIR feed instead of double entry; patients and encounters can come the other way from the
+EHR's FHIR export. Most harm-reduction CBOs have no EHR at all; for them SUDS is the programme record.
 
 ## Key messages
 
@@ -136,9 +171,17 @@ no EHR at all; for them SUDS is the programme record.
 
 **"We already have an EHR / the county has SmartCare."**
 Keep it for billable treatment and the clinical record; SUDS does not compete with it. SUDS is the Part 2-controlled
-layer for the outreach, supply, referral and grant work that lives in spreadsheets today. Where a service must also
-appear in the EHR, SUDS hands it over (encounter hand-off file, FHIR R4 feed with Part 2 consent enforcement) rather
-than asking staff to double-enter. No live EHR connection has been made yet; the first is a pilot task.
+layer for the outreach, supply, referral and grant work that lives in spreadsheets today — or, run as the Part 2
+compliance module, for the consent, disclosure-accounting, notice and breach work your EHR does not do. Where a
+service must also appear in the EHR, SUDS hands it over (encounter hand-off file, FHIR R4 feed with Part 2 consent
+enforcement) rather than asking staff to double-enter. No live EHR connection has been made yet; the first is a
+pilot task.
+
+**"Does this make us Part 2 compliant?"**
+No software does that on its own. SUDS enforces what software can (a consent without its §2.31 elements or
+naming a different recipient authorises nothing; every disclosure is accounted; the notice travels with it) and
+records the rest. Your policies, training, forms and counsel's review are the other half, and SUDS holds no
+certification or third-party attestation for Part 2.
 
 **"Who sees which clients? Can a navigator read everything?"**
 By default (since 1.16.0), yes to seeing: navigators and clinicians can open every client, for coverage and

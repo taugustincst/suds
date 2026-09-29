@@ -4,7 +4,7 @@
 // client's Episodes tab carry the CalOMS questions, each episode shows which CalOMS records it has and
 // needs, and this page lists every edit-check problem by client code and field, previews the file, and
 // produces the submission for DHCS (the disclosure; the file downloaded is the one accounted). The county EHR hand-off is the billing boundary: SUDS does not bill, it hands encounters over.
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, downloadCsv, stat, kv, moduleOn, loadingFor } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, navAndRender, emptyState, confirmDialog, downloadCsv, stat, kv, moduleOn, loadingFor } from '../app.js';
 import { withRestrictionCheck } from './part2.js';
 import { fetchDownload, downloadedMessage } from './reports.js';
 
@@ -124,18 +124,33 @@ route('caloms', async (r) => {
   const seesEpisodes = can('episodes:read') || can('episodes:write');
   const v = seesEpisodes ? await get(`/api/caloms/validation?from=${from}&to=${to}`) : null;
   const subs = can('export:identified') ? await get('/api/caloms/submissions', { quiet: true }).catch(() => null) : null;
+  // The errors to fix, each assigned to the record's owner (1.17.0): a front-line worker sees their own first.
+  const mineFirst = !can('export:identified');
+  const showAll = r.query.get('work') === 'all' || (!mineFirst && r.query.get('work') !== 'mine');
+  const work = seesEpisodes && cfg && cfg.enabled ? await get(`/api/caloms/worklist?from=${from}&to=${to}${showAll ? '' : '&mine=1'}`, { quiet: true }).catch(() => null) : null;
   const fromI = h('input', { type: 'date', value: from, 'aria-label': 'From' }), toI = h('input', { type: 'date', value: to, 'aria-label': 'To' });
-  const go = (f, t) => nav(`caloms?from=${f}&to=${t}`);
+  // navAndRender: after producing or preparing a file the address is unchanged, and the page must still be redrawn.
+  const go = (f, t) => navAndRender(`caloms?from=${f}&to=${t}`);
 
   const settingsCard = () => {
     if (!can('settings:manage')) return null;
     const f = form([
       { name: 'enabled', label: 'This program reports CalOMS Tx (adds the CalOMS questions to admission and discharge)', type: 'checkbox', span: true, value: cfg.enabled },
-      { name: 'providers', label: 'CalOMS provider IDs, one per line: ID, name', type: 'textarea', rows: 3, span: true, value: cfg.providers.map(p => p.name ? `${p.id}, ${p.name}` : p.id).join('\n'), help: 'The provider ID DHCS assigned to each reporting site or program (4 to 10 letters or digits).' },
+      { name: 'providers', label: 'CalOMS provider IDs, one per line: ID, name | legal name | NPI', type: 'textarea', rows: 3, span: true,
+        value: cfg.providers.map(p => [p.name ? `${p.id}, ${p.name}` : p.id, ...(p.legal_name || p.npi ? [p.legal_name || '', p.npi || ''] : [])].join(' | ').replace(/( \| )+$/, '')).join('\n'),
+        help: 'The provider ID DHCS assigned to each reporting site or program (4 to 10 letters or digits). A county server reporting for several provider organizations can add each one\'s legal name and NPI after a "|".' },
       { name: 'start_date', label: 'CalOMS records expected for episodes opened on or after', type: 'date', value: cfg.start_date || '' },
+      { type: 'section', label: 'Monthly run' },
+      { name: 'schedule', label: 'Check the month before and prepare its file', type: 'select', noBlank: true, value: (cfg.schedule && cfg.schedule.frequency) || 'off', options: [{ value: 'off', label: 'Off — produce files by hand' }, { value: 'monthly', label: 'Every month' }],
+        help: 'Prepares the file; it is not sent or accounted until someone produces it here. SUDS never sends anything to DHCS: a person uploads the file.' },
+      { name: 'schedule_day', label: 'On this day of the month', type: 'number', min: 1, max: 28, step: 1, value: (cfg.schedule && cfg.schedule.day) || 5 },
+      { name: 'split_by_provider', label: 'One file per provider ID (a county server reporting for several providers)', type: 'checkbox', span: true, value: !!(cfg.schedule && cfg.schedule.split_by_provider) },
     ], { submitText: 'Save CalOMS settings', onSubmit: async (d) => {
-      const providers = String(d.providers || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => { const [id, ...rest] = l.split(','); return { id: id.trim(), name: rest.join(',').trim() }; });
-      await put('/api/caloms/settings', { enabled: !!d.enabled, providers, start_date: d.start_date || null });
+      const providers = String(d.providers || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => {
+        const [head, legal, npi] = l.split('|').map(x => x.trim()); const [id, ...rest] = head.split(',');
+        return { id: id.trim(), name: rest.join(',').trim(), ...(legal ? { legal_name: legal } : {}), ...(npi ? { npi } : {}) };
+      });
+      await put('/api/caloms/settings', { enabled: !!d.enabled, providers, start_date: d.start_date || null, schedule: d.schedule, schedule_day: d.schedule_day ? Number(d.schedule_day) : undefined, split_by_provider: !!d.split_by_provider });
       toast('CalOMS settings saved', 'ok'); cached = null; go(from, to);
     } });
     return h('div', { class: 'card', 'data-caloms-settings': '1' }, h('h2', {}, 'Settings'), h('p', { class: 'small muted' }, 'Off by default: a prevention, outreach or navigation program that does not report CalOMS is never asked these questions.'), f);
@@ -159,15 +174,52 @@ route('caloms', async (r) => {
       ], v.rows, { rowLabel: x => `${x.severity} ${x.client_code} ${x.field_label}` }) : emptyState('No problems found', 'Every CalOMS record in this period passes the edit checks, and every episode has the records it needs.'));
   };
 
+  const worklistCard = () => {
+    if (!work) return null;
+    const clientCell = (x) => (can('clients:read') ? h('a', { href: `#/client/${x.client_id}/episodes` }, x.client_code) : h('span', { class: 'mono' }, x.client_code));
+    const toggle = h('div', { class: 'row' }, h('a', { class: `btn sm${showAll ? '' : ' primary'}`, href: `#/caloms?from=${from}&to=${to}&work=mine`, 'aria-current': showAll ? null : 'true' }, 'Mine'), h('a', { class: `btn sm${showAll ? ' primary' : ''}`, href: `#/caloms?from=${from}&to=${to}&work=all`, 'aria-current': showAll ? 'true' : null }, 'Everyone\'s'));
+    return h('div', { class: 'card mb', 'data-caloms-worklist': showAll ? 'all' : 'mine' },
+      h('div', { class: 'card-head' }, h('h2', {}, 'To fix before the next submission'), toggle),
+      h('p', { class: 'small muted' }, 'Each problem goes to whoever last saved the record — or, for a record still missing, the client\'s primary worker. Fix it on the client\'s Episodes tab; it drops off this list when the record passes.'),
+      work.rows.length ? table([
+        { label: 'Severity', render: x => sevBadge(x.severity) }, { label: 'Client', render: clientCell },
+        { label: 'Record', render: x => RECORD_LABEL[x.record_type] || x.record_type }, { label: 'Date', render: x => fmt.date(x.record_date) },
+        { label: 'Field', key: 'field_label' }, { label: 'Problem', key: 'message' },
+        showAll ? { label: 'For', render: x => x.owner_name || h('span', { class: 'muted' }, 'Unassigned') } : null,
+      ].filter(Boolean), work.rows, { rowLabel: x => `${x.severity} ${x.client_code} ${x.field_label}` }) : emptyState(showAll ? 'Nothing to fix' : 'Nothing for you to fix', 'Every CalOMS record in this period you are responsible for passes the edit checks.'));
+  };
+
   // The preview checks the file; producing the submission is the disclosure, and the file downloaded is the
   // one that was accounted (server/routes/caloms.js). Earlier submissions can be downloaded again while kept.
   const downloadSubmission = async (sub) => {
     try { await fetchDownload(`/api/caloms/submissions/${sub.id}/file`); toast(`Submission file downloaded (SHA-256 ${sub.sha256.slice(0, 12)}…). Send it to DHCS unchanged.`, 'ok'); }
     catch (e) { toast(e.message, 'error'); }
   };
+  const STATUS = { prepared: ['Prepared — not sent', 'warn'], produced: ['Produced', 'ok'], discarded: ['Discarded', 'info'] };
+  const produce = async (x) => {
+    if (!await confirmDialog('Produce this file for DHCS', `Produce the prepared CalOMS Tx file for ${fmt.date(x.period_from)} – ${fmt.date(x.period_to)}${x.provider_id ? ` (provider ${x.provider_id})` : ''}. Each of its ${x.clients} client(s) gets an entry in their accounting of disclosures and its records are marked as sent. Then upload the file that downloads to DHCS unchanged.`, { okText: 'Produce file' })) return;
+    try { const res = await post(`/api/caloms/submissions/${x.id}/produce`, {}); toast(`Produced: ${res.clients_disclosed} client(s) accounted for.`, 'ok'); await downloadSubmission({ ...x, sha256: res.sha256 }); go(from, to); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const discard = async (x) => { if (!await confirmDialog('Discard this prepared file', 'It was never sent. The records stay as they are; prepare a new file when they are ready.', { danger: true, okText: 'Discard' })) return; await post(`/api/caloms/submissions/${x.id}/discard`, {}); toast('Discarded', 'ok'); go(from, to); };
+  const recordUpload = (x) => {
+    const f = form([
+      { name: 'uploaded_on', label: 'Uploaded to DHCS on', type: 'date', required: true, value: fmt.today() },
+      { name: 'dhcs_reference', label: 'Confirmation or batch number from the DHCS portal (optional)', maxLen: 60 },
+    ], { submitText: 'Record upload', onCancel: () => m.close(), onSubmit: async (d) => { await post(`/api/caloms/submissions/${x.id}/uploaded`, d); toast('Upload recorded', 'ok'); m.close(); go(from, to); } });
+    const m = modal('Record the upload to DHCS', h('div', {}, h('p', { class: 'small muted' }, 'SUDS does not upload anything to DHCS. Record here that you uploaded this file, so the submission log shows it.'), f));
+  };
+  const showLog = async (x) => {
+    const d = await get(`/api/caloms/submissions/${x.id}/events`);
+    const ACTION = { prepared: 'Prepared', produced: 'Produced (accounted)', downloaded: 'Downloaded', uploaded: 'Recorded as uploaded to DHCS', discarded: 'Discarded' };
+    modal(`Submission log — ${x.file_name}`, h('div', { 'data-caloms-log': x.id }, h('p', { class: 'small mono' }, `SHA-256 ${d.sha256}`),
+      table([{ label: 'When', render: e => fmt.dt(e.created_at) }, { label: 'What', render: e => ACTION[e.action] || e.action }, { label: 'Who', key: 'who' }, { label: 'Detail', render: e => (e.action === 'uploaded' ? e.detail : '') }], d.rows, { rowLabel: e => `${e.action} ${e.created_at}` })), { wide: true });
+  };
+  const provs = (cfg && cfg.providers) || [];
   const extractCard = () => {
     if (!can('export:identified')) return null;
     const rows = (subs && subs.rows) || [];
+    const provSel = provs.length > 1 ? h('select', { 'aria-label': 'Provider for the submission file', 'data-caloms-provider': '1' }, [h('option', { value: '' }, 'Every provider, one file'), ...provs.map(p => h('option', { value: p.id }, `${p.id}${p.name ? ` — ${p.name}` : ''}`))]) : null;
     return h('div', { class: 'card mb', 'data-caloms-extract': '1' }, h('h2', {}, 'Submission to DHCS'),
       h('p', { class: 'small' }, 'A zip of CSV files — admissions, discharges, annual updates and the monthly provider activity report (with "no activity" months) — for the period above. Records with fatal errors are held back.'),
       h('ol', { class: 'small' },
@@ -180,19 +232,33 @@ route('caloms', async (r) => {
         h('button', { class: 'btn primary', disabled: !cfg.enabled, 'data-caloms-submitted': '1', onClick: async () => {
           if (!await confirmDialog('Produce the submission file for DHCS', `Produce the CalOMS Tx submission for ${fmt.date(from)} – ${fmt.date(to)}. It includes client names and dates of birth. Each client in it gets an entry in their accounting of disclosures (a disclosure required by law) and its records are marked as sent. ${v && v.summary.blocked ? `${v.summary.blocked} record(s) with fatal errors will be held back. ` : ''}Send the file that downloads to DHCS unchanged.`, { okText: 'Produce submission file' })) return;
           try {
-            const r = await post('/api/caloms/submissions', { from, to });
+            const r = await post('/api/caloms/submissions', { from, to, provider_id: provSel && provSel.value ? provSel.value : undefined });
             toast(`Submission produced: ${r.clients_disclosed} client(s) accounted for as disclosed to DHCS.`, 'ok');
             await downloadSubmission(r);
             go(from, to);
           } catch (e) { toast(e.message, 'error'); }
-        } }, 'Produce submission file')),
+        } }, 'Produce submission file'),
+        provSel,
+        h('button', { class: 'btn ghost', disabled: !cfg.enabled, 'data-caloms-run': '1', onClick: async () => {
+          try { const res = await post('/api/caloms/schedule/run', { from, to }); toast(res.prepared.length ? `Checked: ${res.fatal} fatal error(s). ${res.prepared.length} file(s) prepared — produce each below to send it.` : `Checked: ${res.fatal} fatal error(s). Nothing ready to prepare.`, res.prepared.length ? 'ok' : 'error'); go(from, to); }
+          catch (e) { toast(e.message, 'error'); }
+        } }, 'Check and prepare (not sent)')),
       cfg.enabled ? null : h('p', { class: 'small muted' }, 'CalOMS reporting is off for this program.'),
-      rows.length ? h('div', { 'data-caloms-submissions': '1' }, h('h3', {}, 'Submissions produced'), table([
-        { label: 'Period', render: x => `${fmt.date(x.period_from)} – ${fmt.date(x.period_to)}` },
-        { label: 'Produced', render: x => `${fmt.date(x.created_at)} by ${x.created_by_name}` },
+      h('p', { class: 'small muted', 'data-caloms-no-dhcs': '1' }, 'SUDS does not send anything to DHCS and holds no DHCS credentials: a person uploads the produced file through the county\'s DHCS channel and records the upload here.'),
+      cfg.schedule && cfg.schedule.frequency === 'monthly' ? h('p', { class: 'small', 'data-caloms-schedule': '1' }, `Monthly run: on day ${cfg.schedule.day}, for the month before${cfg.schedule.split_by_provider ? ', one file per provider' : ''}.${cfg.schedule.last ? ` Last run ${fmt.dt(cfg.schedule.last.ran_at)} for ${fmt.date(cfg.schedule.last.from)} – ${fmt.date(cfg.schedule.last.to)}: ${cfg.schedule.last.fatal} fatal error(s), ${cfg.schedule.last.prepared.length} file(s) prepared.` : ''}`) : null,
+      rows.length ? h('div', { 'data-caloms-submissions': '1' }, h('h3', {}, 'Submissions'), table([
+        { label: 'Period', render: x => h('div', {}, `${fmt.date(x.period_from)} – ${fmt.date(x.period_to)}`, x.provider_id ? h('div', { class: 'small muted' }, `Provider ${x.provider_id}`) : null) },
+        { label: 'Status', render: x => h('div', { 'data-caloms-status-of': x.id }, badge(...(STATUS[x.status] || [x.status, 'info'])), x.origin === 'scheduled' ? h('div', { class: 'small muted' }, 'Monthly run') : null,
+          x.uploaded_at ? h('div', { class: 'small' }, `Uploaded ${fmt.date(x.uploaded_at)}${x.uploaded_by_name ? ` by ${x.uploaded_by_name}` : ''}${x.dhcs_reference ? ` · ${x.dhcs_reference}` : ''}`) : null) },
+        { label: 'Made', render: x => `${fmt.date(x.created_at)}${x.status === 'produced' ? ` by ${x.created_by_name}` : ''}` },
         { label: 'Clients', key: 'clients' },
         { label: 'SHA-256', render: x => h('span', { class: 'mono', title: x.sha256 }, `${x.sha256.slice(0, 12)}…`) },
-        { label: 'File', render: x => x.file_available ? h('button', { class: 'btn sm', 'data-caloms-submission-download': x.id, 'aria-label': `Download the submission for ${fmt.date(x.period_from)} – ${fmt.date(x.period_to)}`, onClick: () => downloadSubmission(x) }, 'Download') : h('span', { class: 'muted small' }, 'No longer kept') },
+        { label: '', render: x => { const when = `${fmt.date(x.period_from)} – ${fmt.date(x.period_to)}`; return h('div', { class: 'row' },
+          x.status === 'prepared' && x.file_available ? h('button', { class: 'btn sm primary', 'data-caloms-produce': x.id, 'aria-label': `Produce the prepared file for ${when}`, onClick: () => produce(x) }, 'Produce') : null,
+          x.status === 'prepared' ? h('button', { class: 'btn sm ghost', 'data-caloms-discard': x.id, 'aria-label': `Discard the prepared file for ${when}`, onClick: () => discard(x) }, 'Discard') : null,
+          x.status === 'produced' ? (x.file_available ? h('button', { class: 'btn sm', 'data-caloms-submission-download': x.id, 'aria-label': `Download the submission for ${when}`, onClick: () => downloadSubmission(x) }, 'Download') : h('span', { class: 'muted small' }, 'No longer kept')) : null,
+          x.status === 'produced' && !x.uploaded_at ? h('button', { class: 'btn sm', 'data-caloms-uploaded': x.id, 'aria-label': `Record the upload of the submission for ${when}`, onClick: () => recordUpload(x) }, 'Record upload') : null,
+          h('button', { class: 'btn sm ghost', 'data-caloms-log-open': x.id, 'aria-label': `Submission log for ${when}`, onClick: () => showLog(x) }, 'Log')); } },
       ], rows, { rowLabel: x => `Submission ${x.period_from} to ${x.period_to}` })) : null);
   };
 
@@ -235,6 +301,6 @@ route('caloms', async (r) => {
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('button', { class: 'btn', onClick: () => go(fromI.value, toI.value) }, 'Apply'),
       h('button', { class: 'btn ghost sm', onClick: () => { const d = new Date(); d.setDate(0); const last = fmt.isoLocal(d).slice(0, 10); go(`${last.slice(0, 7)}-01`, last); } }, 'Last month')),
     h('h2', {}, `CalOMS Tx · ${fmt.date(from)} – ${fmt.date(to)}`),
-    validationCard(), extractCard(), hoOn ? handoffCard() : offNote('handoff'), settingsCard(),
+    worklistCard(), validationCard(), extractCard(), hoOn ? handoffCard() : offNote('handoff'), settingsCard(),
     cfg ? h('p', { class: 'small muted' }, `Layout: ${cfg.spec.version}.`) : null);
 });

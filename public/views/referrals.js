@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, mayChange, viewOnly } from '../app.js';
+import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, mayChange, viewOnly, isLocalMode } from '../app.js';
 // A court order is recorded, and disclosed under, on the client's Consents tab (it has to name the order),
 // so it is not one of the bases offered here. A referral may rest only on the client's consent (which must
 // name the provider), a medical emergency, a court order or a supervisor's justified override — never a
@@ -270,9 +270,70 @@ export function referralTable(rows, { showClient = true, onChange } = {}) {
         r.appointment_at ? h('span', {}, `Appt ${fmt.dt(r.appointment_at)}`) : null, r.consent_revoked ? badge('Consent revoked', 'danger') : null, r.worker ? h('span', {}, `by ${r.worker}`) : null,
         h('div', { class: 'compact-actions' }, actions(r))] } });
 }
+// ---- secure referral links (1.17.0; server/referral-links.js, docs/security/REFERRAL-LINKS.md) ----
+const LINK_STATUS = { sent: ['Sent, not opened', 'info'], opened: ['Opened', 'ok'], acknowledged: ['Answered', 'ok'], expired: ['Expired', 'warn'], revoked: ['Withdrawn', 'warn'], locked: ['Locked (wrong codes)', 'danger'] };
+const ACK_LABEL = { received: 'received it', accepted: 'accepted the client', scheduled: 'scheduled the client', declined: 'declined', unable_to_reach: 'could not reach the client' };
+/**
+ * For a provider that does not use SUDS: a one-time link the provider opens in a browser, no account. With a
+ * live Part 2 consent that names the provider, it carries a minimal referral (checked again when it is opened,
+ * and accounted then); without one, only a "please contact us" notice that names nobody.
+ */
+export async function openSecureLinkDialog(r, onChange) {
+  const [links, consentsRes] = await Promise.all([get(`/api/referrals/${r.id}/links`), get(consentsUrl(r.client_id, r.resource_id))]);
+  const today = fmt.today();
+  const naming = (consentsRes.consents || []).filter(c => c.names_resource && !c.revoked_at && (!c.expires_at || c.expires_at >= today) && !(c.incomplete && c.incomplete.length));
+  const body = h('div', { 'data-secure-link': r.id });
+  const refresh = () => { m.close(); openSecureLinkDialog(r, onChange); };
+  const revoke = async (l) => { if (!await confirmDialog('Withdraw this link', `Withdraw link ${l.reference}? It stops working at once.`, { danger: true, okText: 'Withdraw' })) return; await post(`/api/referral-links/${l.id}/revoke`, {}); toast('Link withdrawn', 'ok'); refresh(); };
+  const shown = (res) => {
+    const url = `${location.origin}${res.path}`;
+    const urlBox = h('input', { type: 'text', readonly: true, value: url, 'aria-label': 'Secure link', 'data-secure-link-url': '1', class: 'mono', onFocus: (e) => e.target.select() });
+    return h('div', { class: 'card tight mt', 'data-secure-link-made': res.kind },
+      h('h3', {}, res.kind === 'packet' ? 'Send the link and the code separately' : 'Send this link'),
+      h('p', { class: 'small' }, res.kind === 'packet'
+        ? 'Email or text the link to the provider. Give them the access code another way — by phone is best — so a forwarded email alone does not open it. This is the only time the link and code are shown.'
+        : 'Email or text it to the provider. It names nobody: it asks them to contact you and quote the reference. This is the only time the link is shown.'),
+      h('div', { class: 'field' }, h('label', {}, 'Link'), urlBox),
+      res.code ? h('p', {}, 'Access code: ', h('b', { class: 'mono', 'data-secure-link-code': '1' }, res.code)) : null,
+      h('p', { class: 'small muted' }, `Reference ${res.reference} · expires ${fmt.dt(res.expires_at)}.`),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: () => { m.close(); onChange && onChange(); } }, 'Done')));
+  };
+  const hours = (links.ttl_hours || [24, 72, 168]).map(x => ({ value: String(x), label: x === 24 ? '1 day' : x === 168 ? '7 days' : `${x / 24} days` }));
+  const f = form([
+    { name: 'kind', label: 'What to send', type: 'select', noBlank: true, required: true, value: naming.length ? 'packet' : 'contact_notice', span: true,
+      options: [...(naming.length ? [{ value: 'packet', label: 'The referral, with the client\'s details (their consent names this provider)' }] : []), { value: 'contact_notice', label: '"Please contact us" — no client information' }],
+      help: naming.length ? null : `No live Part 2 consent on file names ${r.resource_name || 'this provider'}, so only a notice that names nobody can go. Record a consent that names them on the client's Consents tab to send the referral itself.` },
+    ...(naming.length ? [
+      { name: 'consent_id', label: 'Consent relied on', type: 'select', noBlank: true, value: naming[0].id, span: true, options: naming.map(c => ({ value: c.id, label: `${consentTypeLabel(c.type)} → ${c.recipient} (signed ${fmt.date(c.signed_at)})` })) },
+      { name: 'message', label: 'Reason for the referral (sent to the provider)', type: 'textarea', rows: 3, span: true, maxLen: 1000, help: 'Only what the provider needs to act on it. The client\'s name is always included.' },
+      { name: 'include_phone', label: 'Include the client\'s phone number', type: 'checkbox' },
+      { name: 'include_dob', label: 'Include the client\'s date of birth', type: 'checkbox' },
+    ] : []),
+    { name: 'expires_hours', label: 'Link works for', type: 'select', noBlank: true, value: String(links.default_ttl_hours || 72), options: hours },
+  ], { submitText: 'Make the link', onCancel: () => m.close(), onSubmit: async (v) => {
+    const payload = { kind: v.kind, expires_hours: Number(v.expires_hours) };
+    if (v.kind === 'packet') Object.assign(payload, { consent_id: v.consent_id, message: v.message || undefined, include_phone: !!v.include_phone, include_dob: !!v.include_dob });
+    const res = await withRestrictionCheck((extra) => post(`/api/referrals/${r.id}/links`, { ...payload, ...extra }), '_restriction_reviewed');
+    f.replaceWith(shown(res));
+  } });
+  body.append(
+    h('p', { class: 'small muted' }, `For a provider that does not use SUDS. ${r.resource_name || 'The provider'} opens the link in a browser without an account and can tell you what happened. With the client's details it needs an access code, works in one browser only, and is written to the client's accounting of disclosures when it is opened.`),
+    links.rows.length ? table([
+      { label: 'Sent', render: l => fmt.dt(l.created_at) }, { label: 'What', render: l => (l.kind === 'packet' ? 'Referral' : 'Contact notice') },
+      { label: 'Reference', render: l => h('span', { class: 'mono' }, l.reference) },
+      { label: 'Status', render: l => h('div', {}, badge(...(LINK_STATUS[l.status] || [l.status, 'info'])), l.ack_status ? h('div', { class: 'small' }, `${l.ack_by || 'They'} ${ACK_LABEL[l.ack_status] || l.ack_status}${l.ack_note ? `: ${l.ack_note}` : ''}`) : null) },
+      { label: '', render: l => (['sent', 'opened', 'acknowledged'].includes(l.status) ? h('button', { class: 'btn sm ghost', 'data-revoke-link': l.id, 'aria-label': `Withdraw link ${l.reference}`, onClick: () => revoke(l) }, 'Withdraw') : null) },
+    ], links.rows, { rowLabel: l => `Link ${l.reference}` }) : null,
+    f);
+  const m = modal(`Secure link to ${r.resource_name || 'the provider'}`, body, { wide: true });
+  return m;
+}
+
 function referralActions(r, onChange) {
   return can('referrals:write') ? h('div', {}, h('div', { class: 'row' },
       !r.outcome_recorded_at ? h('button', { class: 'btn sm primary', onClick: () => openOutcomeForm(r, onChange) }, 'Record outcome') : null,
+      // Office server only: a device has no address an outside provider could open.
+      !isLocalMode() ? h('button', { class: 'btn sm', 'data-secure-link-open': r.id, 'aria-label': `Secure link to ${r.resource_name || 'the provider'}`, onClick: () => openSecureLinkDialog(r, onChange) }, 'Secure link') : null,
       mayChange(r.user_id) ? h('button', { class: 'btn sm', onClick: () => openReferralForm(r, { onDone: onChange }) }, 'Edit') : null, mayChange(r.user_id) ? h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this referral', onClick: async () => { if (await confirmDialog('Delete referral', 'Delete this referral?', { danger: true, okText: 'Delete' })) { await del(`/api/referrals/${r.id}`); onChange && onChange(); } } }, '✕') : null),
       mayChange(r.user_id) ? null : r.outcome_recorded_at ? viewOnly(null, { short: true })
         : h('span', { class: 'small muted', 'data-view-only': '1' }, `You can record the outcome; only ${r.worker || 'the worker who made it'} or a supervisor can change the referral.`)) : null;
