@@ -13,6 +13,10 @@ function kernelBuildOptions(outfile) {
     entryPoints: [path.join(root, 'local', 'kernel.js')],
     inject: [shim('globals-inject.js')],
     bundle: true, format: 'esm', platform: 'browser', target: ['es2022'], outfile, sourcemap: false, minify: false, logLevel: 'warning',
+    // The same bytes wherever and however it is built (1.16.1): esbuild writes each module's path, relative to
+    // the working directory, as a comment. Relative to the repository, whatever the shell's directory, and through
+    // a symlinked node_modules (a worktree's) as if it were real: 1.16.0's release commit had to be rebuilt.
+    absWorkingDir: root, preserveSymlinks: true,
     define: { __dirname: '"/"', SUDS_VERSION: JSON.stringify(require(path.join(root, 'package.json')).version) },
     alias: { fs: shim('fs.js'), path: shim('path.js'), crypto: shim('crypto.js'), 'node:crypto': shim('crypto.js'), 'node:sqlite': shim('sqlite.js'), 'node:zlib': shim('zlib.js'), 'node:fs': shim('fs.js'), 'node:path': shim('path.js'), 'node:os': shim('os.js'), 'node:url': shim('url.js'), 'node:http': shim('empty.js'), 'node:https': shim('empty.js'), 'node:dgram': shim('empty.js'), 'node:child_process': shim('empty.js'), 'node:worker_threads': shim('empty.js'), 'node:async_hooks': shim('empty.js') },
     plugins: [{

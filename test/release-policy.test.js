@@ -120,9 +120,53 @@ test('a minor release 30 days after the previous feature release passes (and may
   const at28 = Date.parse(V1120.date) + 28 * 24 * HOUR;
   assert.equal(P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.13.0', diff: P.diffSurfaces(base, clone(base)), feature: V1120, now: at28 }).decision, 'pass');
   assert.equal(P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.13.0', diff: P.diffSurfaces(base, clone(base)), feature: V1120, now: at28 - 60e3 }).decision, 'fail');
-  // With no earlier feature release, or its date unknown, there is nothing to compare with.
+  // With no earlier feature release there is nothing to compare with.
   assert.equal(P.decide({ prevVersion: 'v1.9.4', nextVersion: '1.10.0', diff: P.diffSurfaces(base, clone(base)), feature: null }).decision, 'pass');
-  assert.equal(P.decide({ prevVersion: 'v1.9.4', nextVersion: '1.10.0', diff: P.diffSurfaces(base, clone(base)), feature: { tag: 'v1.9.0', date: null } }).decision, 'pass');
+});
+test('a feature release whose previous feature release cannot be dated fails closed, unless there is a policy exception (1.16.1)', () => {
+  // It warned and skipped the interval, so a failed tag fetch in the gate turned the monthly limit off.
+  const args = { prevVersion: 'v1.9.4', nextVersion: '1.10.0', diff: P.diffSurfaces(base, clone(base)), feature: { tag: 'v1.9.0', date: null } };
+  const out = P.decide(args);
+  assert.equal(out.decision, 'fail');
+  assert.match(out.reason, /date of the previous feature release v1\.9\.0 could not be read/);
+  assert.match(out.reason, /Fetch the tags/);
+  assert.ok(!/NaN|Invalid/.test(out.reason));
+  const ok = P.decide({ ...args, override: 'tags unavailable; approved by the owner' });
+  assert.equal(ok.decision, 'override');
+  assert.match(ok.notes, /could not be read/);
+  // The refusal names the exact moment the interval ends, not only the day (the freeze after 1.16.0 ends at 03:16Z).
+  const early = P.decide({ prevVersion: 'v1.16.0', nextVersion: '1.17.0', diff: P.diffSurfaces(base, clone(base)), feature: { tag: 'v1.16.0', date: '2026-09-29T03:16:16Z' }, now: Date.parse('2026-10-26T12:00Z') });
+  assert.match(early.reason, /Wait until 2026-10-27T03:16Z/);
+});
+test('a commit is released only from main, and a version already tagged at another commit is never released again (1.16.1)', () => {
+  const sha = 'a'.repeat(40); const other = 'b'.repeat(40);
+  assert.deepEqual(P.commitProblems({ version: '1.16.1', sha }), [], 'no tag yet, on main');
+  assert.deepEqual(P.commitProblems({ version: '1.16.1', sha, tagSha: sha }), [], 'a re-run of the same commit\'s release');
+  const again = P.commitProblems({ version: '1.16.1', sha, tagSha: other });
+  assert.equal(again.length, 1); assert.match(again[0], /v1\.16\.1 is already released at b{40}, not a{40}/);
+  const branch = P.commitProblems({ version: '1.16.1', sha, onMain: false, mainRef: 'origin/main' });
+  assert.equal(branch.length, 1); assert.match(branch[0], /not on origin\/main/);
+  assert.equal(P.commitProblems({ version: '1.16.1', sha, tagSha: other, onMain: false }).length, 2);
+});
+test('release.yml runs main\'s copy of the gate and policy scripts, with --sha and --main, and never replaces a published file (1.16.1)', () => {
+  const rel = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8');
+  const gate = rel.slice(rel.indexOf('\n  gate:'), rel.indexOf('\n  release:'));
+  assert.match(gate, /git archive origin\/main scripts\/release-gate\.js scripts\/release-policy\.js \| tar -x -C "\$RUNNER_TEMP\/main"/);
+  assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-gate\.js" "\$\{GITHUB_SHA\}"/);
+  assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-policy\.js" --root src --sha "\$\{GITHUB_SHA\}" --main origin\/main/);
+  assert.ok(!/\n\s+run: node scripts\/release-(gate|policy)/.test(gate), 'not the released commit\'s copy');
+  assert.ok(!/--clobber/.test(rel), 'a published zip or checksum is never overwritten');
+  assert.match(rel, /git show origin\/main:scripts\/release-policy\.js/, 'the notes come from main\'s copy too');
+});
+test('the web app is published only by a dispatch on a released tag, after the owner\'s approval (1.16.1)', () => {
+  const wa = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'web-app.yml'), 'utf8');
+  const on = wa.slice(wa.indexOf('\non:\n') + 1, wa.indexOf('\nconcurrency:'));
+  assert.deepEqual(on.split('\n').filter((l) => /^\s*[a-z_]+:/.test(l)).map((l) => l.trim()), ['on:', 'workflow_dispatch: {}'], 'no tag push, release event or push trigger');
+  assert.match(wa, /\n {4}if: startsWith\(github\.ref, 'refs\/tags\/v'\)\n/);
+  assert.match(wa, /\n {4}environment: release\n/);
+  const steps = wa.slice(wa.indexOf('steps:'));
+  assert.ok(steps.indexOf('gh release view "${GITHUB_REF_NAME}"') > 0 && steps.indexOf('gh release view') < steps.indexOf('Check out'), 'the release is checked before anything is built');
+  assert.match(steps, /\[ "\$at" = "\$\{GITHUB_SHA\}" \]/, 'at this commit');
 });
 test('a policy exception lets the early feature release through, with its reason at the top of the release notes', () => {
   const out = P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.13.0', diff: P.diffSurfaces(base, clone(base)), feature: V1120, now: Date.parse(V1120.date) + 22 * HOUR, override: 'Encrypts document references (migration 43)\nbefore the county pilot' });
@@ -169,7 +213,7 @@ test('reading the current tree finds the real migration count, permissions and r
 test('release.yml runs the policy in the gate and takes the exception only as an explicit input', () => {
   const rel = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8');
   const gate = rel.slice(rel.indexOf('\n  gate:'), rel.indexOf('\n  release:'));
-  assert.match(gate, /node scripts\/release-policy\.js/, 'the gate job runs the policy check before anything is built');
+  assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-policy\.js"/, 'the gate job runs the policy check (main\'s copy) before anything is built');
   assert.match(gate, /refs\/tags\/v\*/, 'and fetches the tags it compares with');
   assert.match(rel, /allow_patch_changes:\n\s+description:/);
   assert.match(rel, /default: ''/);

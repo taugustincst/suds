@@ -177,19 +177,24 @@ own.
 ### When it is published
 
 **Only on a release.** The site is a public URL that people keep records in, so it serves released code and
-nothing else — a push to `main` never republishes it. The workflow runs when:
+nothing else — a push to `main` never republishes it. The workflow has one trigger, a dispatch on a release
+tag, and it is started in two ways:
 
-- a `v*` tag is pushed;
-- a GitHub Release is published by a person (`release: published`);
-- `release.yml` finishes a release: it runs `gh workflow run web-app.yml --ref v<version>` as its last
-  step, because a release or tag that a workflow creates with `GITHUB_TOKEN` does not start other
-  workflows (hence `actions: write` in `release.yml`);
+- `release.yml` finishes a release: after the gate, the owner's approval and the GitHub Release, it runs
+  `gh workflow run web-app.yml --ref v<version>` as its last step, because a release or tag that a workflow
+  creates with `GITHUB_TOKEN` does not start other workflows (hence `actions: write` in `release.yml`);
 - someone starts it by hand (Actions → *Web app* → *Run workflow*, choosing the release tag as the ref) —
   for example the product owner republishing the current release for QA.
 
-The runs share a concurrency group, so a tag push and the release workflow's dispatch for the same version
-publish one after the other, never racing. Each run prints the version it publishes (and fails if a `v*`
-tag disagrees with `package.json`) and puts it in the run summary. **When QA'ing a release on the site,
+Either way the job runs only on a `v*` tag ref, first checks that a GitHub Release (not a draft) exists for
+that tag and that the tag points at the very commit being built, and runs in the **`release` environment**,
+so it waits for the owner's approval like the release itself (docs/RELEASE.md, *Owner control over
+releases*). Until 1.16.1 a bare `v*` tag push and a `release: published` event started it too, beside
+`release.yml` rather than after it: a tag whose gate failed, or that the owner never approved, was still
+published, and a dispatch on a branch published unreleased code.
+
+The runs share a concurrency group, so two dispatches for the same version publish one after the other,
+never racing. Each run prints the version it publishes (and fails if the tag disagrees with `package.json`) and puts it in the run summary. **When QA'ing a release on the site,
 check that the version shown on screen matches the release** before signing off; a browser still showing
 the previous version needs a reload (the service worker picks up the new build on the next load).
 Republishing never touches anyone's records: they live in each visitor's browser, not on the site, and a

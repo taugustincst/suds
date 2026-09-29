@@ -5,18 +5,16 @@ name: Web app
 # is enabled with `gh api`, both already on the hosted runner.
 #
 # Published on releases only, never on a push to main: the web app is a public URL, and unreleased code does
-# not belong on one (docs/WEB_APP.md, "When it is published"). It runs when a v* tag is pushed, when a
-# release is published by a person, and when release.yml starts it with `gh workflow run` — a release that
-# workflow creates with GITHUB_TOKEN fires no `release` event for other workflows, so it has to be asked.
-# workflow_dispatch also lets the product owner republish a given tag by hand (Run workflow → pick the tag).
+# not belong on one (docs/WEB_APP.md, "When it is published"). Its only trigger is a dispatch on a release
+# tag: release.yml starts it (`gh workflow run web-app.yml --ref v<version>`) after the gate, the owner's
+# approval and the GitHub Release, and the product owner can republish a released tag by hand (Run workflow
+# → pick the tag). Until 1.16.1 a bare v* tag push and a `release` event started it too, beside release.yml
+# rather than after it, so a tag whose gate failed or that nobody approved still reached the public URL, and a
+# dispatch on a branch published unreleased code. Now the job runs only on a v* tag whose GitHub Release
+# exists at this very commit, and waits in the `release` environment for the owner's approval.
 on:
-  push:
-    tags: ['v*']
-  release:
-    types: [published]
   workflow_dispatch: {}
-# A tag push, a release and release.yml's dispatch can all arrive for the same version; publish them one
-# at a time rather than racing two force-pushes to gh-pages.
+# Two dispatches for the same version publish one at a time rather than racing two force-pushes to gh-pages.
 concurrency:
   group: web-app-pages
   cancel-in-progress: false
@@ -29,9 +27,19 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    # The owner's approval, as for the release itself (docs/RELEASE.md, "Owner control over releases").
+    environment: release
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Only a released tag, at the commit its GitHub Release names
+        run: |
+          case "${GITHUB_REF}" in refs/tags/v*) ;; *) echo "::error::The web app is published from a release tag only, not ${GITHUB_REF}"; exit 1;; esac
+          draft="$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)" || { echo "::error::There is no GitHub Release ${GITHUB_REF_NAME}; release.yml makes it"; exit 1; }
+          [ "$draft" = "false" ] || { echo "::error::The GitHub Release ${GITHUB_REF_NAME} is a draft"; exit 1; }
+          at="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}" --jq .sha)"
+          [ "$at" = "${GITHUB_SHA}" ] || { echo "::error::${GITHUB_REF_NAME} is at ${at}, not ${GITHUB_SHA}"; exit 1; }
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
       # The build also downloads each starter-directory provider's picture into _site/region-pictures/ (the
@@ -51,7 +59,7 @@ jobs:
         run: |
           ver="$(node -p "require('./package.json').version")"
           echo "Publishing SUDS $ver (ref ${GITHUB_REF_NAME}, commit ${GITHUB_SHA})"
-          case "${GITHUB_REF_NAME}" in v*) [ "${GITHUB_REF_NAME}" = "v$ver" ] || { echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json $ver"; exit 1; };; esac
+          [ "${GITHUB_REF_NAME}" = "v$ver" ] || { echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json $ver"; exit 1; }
           if [ -f _site/version.json ]; then
             grep -q "\"$ver\"" _site/version.json || { echo "::error::_site/version.json does not carry $ver"; cat _site/version.json; exit 1; }
           fi

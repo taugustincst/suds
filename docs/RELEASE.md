@@ -81,7 +81,7 @@ What the recent patch releases would have scored (`node scripts/release-policy.j
 | Release | Counted lines added | Size rule | Whole check |
 | --- | --- | --- | --- |
 | 1.14.1 | 24 | pass | pass |
-| 1.15.1 | 488 | pass | **fail**: three new device routes (`POST /api/local/recover`, `/api/local/recovery`, `/api/local/recovery/saved`), which the check did not see before 1.16.0 |
+| 1.15.1 | 488 | pass | **fail** today: three new device routes (`POST /api/local/recover`, `/api/local/recovery`, `/api/local/recovery/saved`). The check of the time did not read device routes (they count since 1.16.0), so it would have passed; the routes were known, and HANDOFF.md records that 1.15.1 was dispatched with a `policy_exception` naming them. The notes of its GitHub Release are the record of what the run carried |
 | 1.15.2 | 176 | pass | pass |
 | 1.15.3 | 649 | pass | pass |
 
@@ -100,7 +100,9 @@ commit's date for a lightweight one, read after the gate fetches the tags). The 
 which the release may go out. A patch release is not held to the interval, only to its own rule, so fixes
 still ship as soon as they are ready. An early feature release needs a `policy_exception` like any other
 exception, and its reason is printed at the top of the release notes. If the previous tag's date cannot be
-read, the gate warns and does not check the interval.
+read, the check fails (since 1.16.1; until then it warned and skipped the interval, so a failed tag fetch in the
+gate switched the rule off): fetch the tags and run it again, or give a `policy_exception`. The refusal names the
+exact moment the interval ends (after 1.16.0: `2026-10-27T03:16Z`, the 28 days counted from the tag's commit).
 
 **Record: 1.12.0–1.12.4 broke this policy.** 1.12.0 came fourteen hours after the 1.11.0 feature release
 (not a month), and 1.12.1–1.12.4 followed within twelve hours; 1.12.1 carried migration 41 and the route
@@ -124,6 +126,12 @@ previous one (v1.13.0)"). The owner approved it as a recorded exception, for the
 settlement layouts, supplies by item, site and lot with syringe services): it is dispatched with
 `policy_exception` set to that reason, which the release notes print at the top.
 
+**Record: 1.15.0 shipped under a policy exception.** It is a feature release (migration 48, the per-user
+permission overrides and their five routes) about 34 hours after 1.14.0, which the check above refuses on its
+own. The owner approved the exception because the overrides were finished, reviewed and regression-tested and a
+patch release cannot carry a migration or new routes; the reason is at the top of its GitHub Release notes and of
+its CHANGELOG section. Until 1.16.1 this page did not record it.
+
 **Record: 1.16.0 ships under a policy exception.** It is a feature release (the `records:manage-others`
 permission, and navigators and clinicians gaining `clients:all`, `notes:clinical:read` and `budget:read` by
 default) the day after 1.15.0, which the check above refuses on its own (`node scripts/release-policy.js
@@ -132,7 +140,18 @@ recorded exception and asked for the pending work to ship as one release rather 
 expansion, the engineering review fixes (release gate, CI, tooling), and the frontline-UX, market and retest
 fixes from the reviews of 1.15.3. The 1.15.4 security fixes shipped first, as a patch, on their own. It is
 dispatched with `policy_exception` set to that reason. A feature freeze follows: the next feature release waits
-for the 28 days the check asks for.
+for the 28 days the check asks for, until 2026-10-27 03:16 UTC.
+
+The exceptions in one place (each also at the top of its GitHub Release notes, where a county reads it):
+
+| Release | Rule broken | Reason, in short | Approved by |
+| --- | --- | --- | --- |
+| 1.12.0–1.12.4 | cadence; migration, route and permission in patches | security and privacy fixes shipped as each was ready (no check existed) | not recorded at the time |
+| 1.13.0 | monthly limit (made a minor release to avoid the patch check) | no check of the limit existed | not recorded at the time |
+| 1.14.0 | monthly limit | round-3 review fixes and market gaps | owner (`policy_exception`) |
+| 1.15.0 | monthly limit | per-user permission overrides (migration 48, five routes) | owner (`policy_exception`) |
+| 1.15.1 | new device routes in a patch (not checked then) | owner recovery code for SUDS on this device | owner (`policy_exception`, per HANDOFF.md) |
+| 1.16.0 | monthly limit | role-permission expansion and the pending review fixes as one release | owner (`policy_exception`) |
 
 ## Cutting a release
 ```bash
@@ -141,7 +160,7 @@ npm version 1.0.1 --no-git-tag-version   # bump, then add the CHANGELOG entry
 git commit -am "Release 1.0.1" && git push
 git tag v1.0.1 && git push origin v1.0.1
 ```
-Pushing the tag runs `.github/workflows/release.yml` (or start it from the Actions tab with *Run workflow* → type `release`; it then creates the tag itself), which first passes the release gate (below), then re-runs the tests, packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release with the zip attached. As its last step it starts the web-app (GitHub Pages) workflow for the new tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses marketplace actions, so they run under restrictive Actions policies.
+Pushing the tag runs `.github/workflows/release.yml` (or start it from the Actions tab with *Run workflow* → type `release`; it then creates the tag itself), which first passes the release gate (below), then re-runs the tests, packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release with the zip attached. As its last step it starts the web-app (GitHub Pages) workflow for the new tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. That dispatch is the web-app workflow's only trigger (since 1.16.1 a tag push or a `release` event no longer starts it): it runs only on a `v*` tag whose GitHub Release exists at that commit, and in the `release` environment, so the owner approves it too. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses marketplace actions, so they run under restrictive Actions policies.
 
 ### Release gate
 QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` runs `scripts/release-gate.js` for the commit being released (`GITHUB_SHA`) before anything is built. It asks the GitHub API (with the workflow's own token — no marketplace action) for the runs of `ci.yml` on that exact commit, counts only `push` runs (a `pull_request` run tests a merge commit, not this one), and passes only when one of them **concluded success with the `test`, `thorough`, `thorough-sdc`, `browser`, `node24` and `dr-drill` jobs all successful** (with `SUDS_THOROUGH=1`, `thorough-sdc` runs the publication-release disclosure sweeps at full size — `npm test` runs a sample — and `thorough` the performance checks in `test/thorough/` and the other timing budgets, which `npm test` leaves out so a busy runner cannot flake it; `npm run test:thorough` runs both, `node scripts/test-thorough.js --part sdc|rest` either. Until 1.16.0 they were one job that took about 25 of its 30 minutes; the sweeps now have their own, with a 60-minute limit — measured alone on the development container they take about 27 minutes, everything else 17 seconds):
@@ -159,6 +178,23 @@ QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` r
 
 1.11.0 itself was published while its `browser` job had failed — the case this gate now refuses.
 
+**The gate does not trust the commit it judges** (1.16.1). It checks out the commit being released, but runs
+`scripts/release-gate.js` and `scripts/release-policy.js` from **`main`'s copy** (`git archive origin/main …`
+into a temporary directory; `release-policy.js --root src` then reads the released tree): a commit that trimmed
+`REQUIRED_JOBS` or lifted a policy limit, together with the tests that pin them, could otherwise release itself.
+The release notes' exception text comes from `main`'s copy too. A change to the gate therefore takes effect for
+the releases after it is merged. Whatever the `policy_exception`, the gate also refuses:
+
+* a commit that is not on `main` (`git merge-base --is-ancestor <commit> origin/main`; a tag on a feature-branch
+  commit with green CI used to release), and
+* a version already tagged at another commit (`v<version>` exists and is not this commit): dispatching *Run
+  workflow* on `main` after a release, with `package.json` not yet bumped, used to rebuild the zip and checksum
+  from the new commit and upload them over the published ones (`--clobber`).
+
+The release job never replaces a published file: when the GitHub Release already exists (a re-run of the same
+commit's release) it uploads the zip and checksum only if neither is there, and stops with an error if only one
+is. Tested in `test/release-policy.test.js` (`commitProblems`, and the workflow's shape).
+
 ### Owner control over releases
 The gate proves CI passed; it does not prove the owner agreed. Anyone with write access can push a `v*` tag or
 dispatch the workflow, and the checks above run with whatever the pushed commit says. Three things, prepared in
@@ -167,7 +203,8 @@ on the GitHub settings below** (an assistant or a workflow cannot change reposit
 
 * **`environment: release`** on the `release` job in `release.yml`. The job then waits for a reviewer's
   approval, after the gate and before anything is tested, packaged or published, however it was started (a
-  tag push or *Run workflow*).
+  tag push or *Run workflow*). Since 1.16.1 the web app's `deploy` job (`web-app.yml`) runs in the same
+  environment, so publishing SUDS on this device waits for the same approval (a second one, after the release).
 * **`.github/CODEOWNERS`** names `@taugustincst` for the release machinery (`.github/`, `scripts/release-gate.js`,
   `scripts/release-policy.js`, `scripts/test-thorough.js`, `scripts/package.js`, their tests, this file) and for
   the modules that decide who may do what and what may leave the programme: `server/auth.js`,

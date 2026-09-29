@@ -38,7 +38,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const ROOT = path.join(__dirname, '..');
+// The tree being released: this checkout, or --root (release.yml runs main's copy of this script against it).
+let ROOT = path.join(__dirname, '..');
 
 function parseVersion(v) {
   const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(v || '').trim());
@@ -174,14 +175,30 @@ function decide({ prevVersion, nextVersion, diff, override, feature = null, now 
   } else {
     const at = feature && feature.date ? new Date(feature.date).getTime() : NaN;
     const age = Number(now instanceof Date ? now.getTime() : now) - at;
-    found = Number.isFinite(age) && age < FEATURE_INTERVAL_DAYS * 86400e3 ? [`feature release ${nextVersion} ${ageText(age)} after the previous one (${feature.tag}); feature releases come at most once every ${FEATURE_INTERVAL_DAYS} days`] : [];
+    // A previous feature release whose date cannot be read fails closed (until 1.16.1 it only warned, so a failed
+    // tag fetch switched the interval off).
+    const unread = !!(feature && feature.tag) && !Number.isFinite(at);
+    found = unread ? [`the date of the previous feature release ${feature.tag} could not be read (fetch the tags), so the ${FEATURE_INTERVAL_DAYS}-day interval could not be checked`]
+      : Number.isFinite(age) && age < FEATURE_INTERVAL_DAYS * 86400e3 ? [`feature release ${nextVersion} ${ageText(age)} after the previous one (${feature.tag}); feature releases come at most once every ${FEATURE_INTERVAL_DAYS} days`] : [];
     if (!found.length) return { decision: 'pass', kind, violations: found, notes: '', reason: `${kind} release ${prevVersion} -> ${nextVersion}${feature && feature.tag ? `, ${ageText(age)} after ${feature.tag}` : ''}: migrations, permissions and routes allowed` };
-    what = `${found[0]}. Wait until ${new Date(at + FEATURE_INTERVAL_DAYS * 86400e3).toISOString().slice(0, 10)}, make it a patch release (defect and security fixes only)`;
+    what = unread ? `${found[0]}. Fetch the tags and run it again` : `${found[0]}. Wait until ${new Date(at + FEATURE_INTERVAL_DAYS * 86400e3).toISOString().replace(/:\d\d\.\d+Z$/, 'Z')}, make it a patch release (defect and security fixes only)`;
   }
   if (!why) return { decision: 'fail', kind, violations: found, notes: '', reason: `${what}, or re-run the release with policy_exception (allow_patch_changes, its earlier name, still works) set to the reason (it is printed in the release notes).` };
   const rule = kind === 'patch' ? 'This is a patch release, but it contains changes the release policy (docs/RELEASE.md) keeps for feature releases.' : `This is a ${kind} release less than ${FEATURE_INTERVAL_DAYS} days after the previous feature release, sooner than the release policy (docs/RELEASE.md) allows.`;
   const notes = `> **Release policy override: a policy exception.** ${rule} Reason given (\`policy_exception\`): ${why.replace(/\s+/g, ' ')}\n>\n${found.map((f) => `> * ${f}`).join('\n')}\n`;
   return { decision: 'override', kind, violations: found, notes, reason: `${kind} release with ${found.length} policy exception(s), allowed by policy_exception: ${why}` };
+}
+/**
+ * What forbids releasing commit `sha` as `version`, whatever the exception (1.16.1): the version already tagged
+ * at another commit (`tagSha`: what refs/tags/v<version> points at, null when there is no such tag; a re-run
+ * would publish a different commit's zip under a released version), or a commit not on the default branch
+ * (`onMain` false: a tag on a feature branch with green CI).
+ */
+function commitProblems({ version, sha, tagSha = null, onMain = true, mainRef = 'origin/main' }) {
+  const out = [];
+  if (tagSha && tagSha !== sha) out.push(`v${version} is already released at ${tagSha}, not ${sha}: bump the version`);
+  if (!onMain) out.push(`${sha} is not on ${mainRef}: only a commit merged to it is released`);
+  return out;
 }
 /** The date a tag was made (an annotated tag's own date; a lightweight tag's commit date), or null. */
 function tagDate(tag) {
@@ -242,7 +259,18 @@ function measureSize(from, to) {
 function arg(name) { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; }
 
 function main() {
-  const version = arg('--version') || require(path.join(ROOT, 'package.json')).version;
+  if (arg('--root')) ROOT = path.resolve(arg('--root'));
+  const version = arg('--version') || JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+  // --sha <commit> [--main <ref>]: the commit being released must be on main, and its version not tagged elsewhere.
+  if (arg('--sha')) {
+    const git = (...a) => execFileSync('git', a, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    let tagSha = null; try { tagSha = git('rev-parse', '-q', '--verify', `refs/tags/v${version}^{commit}`) || null; } catch { tagSha = null; }
+    let onMain = true;
+    if (arg('--main')) { try { git('merge-base', '--is-ancestor', arg('--sha'), arg('--main')); } catch { onMain = false; } }
+    const bad = commitProblems({ version, sha: arg('--sha'), tagSha, onMain, mainRef: arg('--main') });
+    for (const b of bad) console.log(`::error::Release refused: ${b}.`);
+    if (bad.length) return 1;
+  }
   const tags = execFileSync('git', ['tag', '-l', 'v*'], { cwd: ROOT, encoding: 'utf8' }).split('\n').map((s) => s.trim()).filter(Boolean);
   const prev = arg('--previous') || previousTag(tags, version);
   if (!prev) { console.log(`[release-policy] no release tag below ${version}; nothing to compare with`); return 0; }
@@ -260,7 +288,6 @@ function main() {
   const size = kind === 'patch' ? measureSize(arg('--previous-ref') || prev, arg('--next-ref')) : null;
   const featureTag = kind === 'minor' || kind === 'major' ? previousFeatureTag(tags, version) : null;
   const feature = featureTag ? { tag: featureTag, date: tagDate(featureTag) } : null;
-  if (featureTag && !feature.date) console.log(`::warning::The date of ${featureTag} could not be read (fetch the tags); the feature-release interval was not checked.`);
   const now = arg('--now') ? Date.parse(arg('--now')) : Date.now();
   const out = decide({ prevVersion: prev, nextVersion: version, diff, override: process.env.RELEASE_POLICY_EXCEPTION || process.env.ALLOW_PATCH_CHANGES, feature, now, size, maxAdded });
   if (size) console.log(`[release-policy] patch size: ${size.added} lines added outside docs, tests and generated files (limit ${maxAdded})`);
@@ -277,4 +304,4 @@ function main() {
 if (require.main === module) {
   try { process.exitCode = main(); } catch (e) { console.log(`::error::The release policy check could not run: ${e.message}`); process.exitCode = 1; }
 }
-module.exports = { parseVersion, compareVersions, bumpKind, previousTag, previousFeatureTag, FEATURE_INTERVAL_DAYS, PATCH_MAX_ADDED_LINES, SIZE_EXEMPT, patchSize, sizeViolation, localRoutes, LOCAL_ROUTE_FILES, diffSurfaces, violations, decide, tagDate, surface, extractRef, measureSize };
+module.exports = { parseVersion, compareVersions, bumpKind, previousTag, previousFeatureTag, FEATURE_INTERVAL_DAYS, PATCH_MAX_ADDED_LINES, SIZE_EXEMPT, patchSize, sizeViolation, localRoutes, LOCAL_ROUTE_FILES, diffSurfaces, violations, decide, commitProblems, tagDate, surface, extractRef, measureSize };
