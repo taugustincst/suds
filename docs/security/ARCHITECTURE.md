@@ -53,16 +53,16 @@
 | Server → metrics / health | No | Aggregate counts; token-gated detail | `server/metrics.js`, `server/routes/app.js` |
 | Server ⇄ identity provider | No | Authorization Code + PKCE; ID token RS256 verified against JWKS; issuer/audience/expiry/nonce checked | `server/oidc.js` |
 | Identified export / referral | Yes (a disclosure) | Consent / lawful basis checked; accounting-of-disclosure row written | `server/disclosure.js`, `server/exports.js` |
-| Server ⇄ local-mode device | Yes | HTTPS; caseload-scoped; audited; revocable/wipeable device registry; off by default | `server/routes/sync.js`, `server/devices.js` |
+| Server ⇄ local-mode device | Yes | HTTPS; scoped to what the user may see (the whole programme under the 1.16.0 role defaults, a caseload after a deny of `clients:all`); audited; revocable/wipeable device registry; off by default | `server/routes/sync.js`, `server/devices.js` |
 | Optional outbound: OneNote (Graph), update check, provider pictures | Graph: note text the user imports; others: no | Admin-configured only | `server/importers/`, `server/update.js`, `server/region-pictures.js` |
 
 ## Trust boundaries
 
 1. **Network edge → SUDS.** Everything from the network is untrusted: body size caps decided before reading (64 KB unauthenticated, 1 MB JSON, 60 MB file routes behind a session), rate limits (API 600/min per address, sign-in 20 failures/15 min per address, account lockout after 5 failures), CSRF header, strict CSP (`server/app.js`, `server/http.js`).
-2. **Session → data.** Every route requires a session that has passed the MFA gate, then a permission from the role matrix (`server/auth.js` `PERMS`), then caseload scoping for client data. Denials are audited (`authz.denied`).
+2. **Session → data.** Every route requires a session that has passed the MFA gate, then a permission from the role matrix (`server/auth.js` `PERMS`), then caseload scoping for client data for anyone without `clients:all` (since 1.16.0 only a person an administrator has denied it; finance and read-only never open client records). Denials are audited (`authz.denied`).
 3. **Application → database file.** The database holds ciphertext for PHI; the keys are outside it. A copy of `suds.db` without the keys reveals no names, but does reveal equality between blind-indexed values (documented in `../HIPAA.md`, risk register).
 4. **Database administrator → audit evidence.** Someone with the database and the index key could rebuild the audit chain. Anchors on write-once storage outside the host (`AUDIT_ANCHOR_DIR`) and the log collector are the boundary that person cannot cross ([LOGGING-AND-AUDIT.md](LOGGING-AND-AUDIT.md)).
-5. **Office server → device (local mode).** A device holds a caseload and its keys in the browser profile; the county decides whether local mode is allowed (off by default) and on which devices ([../PLATFORM.md](../PLATFORM.md)).
+5. **Office server → device (local mode).** A device holds what its user may see — the whole programme under the 1.16.0 role defaults, or a caseload for a person denied `clients:all` — and its keys in the browser profile; the county decides whether local mode is allowed (off by default) and on which devices ([../PLATFORM.md](../PLATFORM.md)).
 6. **Recovery drill.** The drill's child process gets a temporary directory and the keys over IPC; it is never given the live database's path (`server/dr-drill.js` `runChild`).
 
 ## Deployment shapes

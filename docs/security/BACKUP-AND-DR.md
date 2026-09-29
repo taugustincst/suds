@@ -96,4 +96,4 @@ Not provided: automatic failover, synchronous replication, zero data loss.
 
 ## Continuity without the server
 
-Staff can keep working on paper; the programme's downtime procedure is a county document. Local mode (off by default) can let named staff keep a caseload on a managed device and sync later (`../PLATFORM.md`), which a county may choose for continuity at the cost of PHI on devices.
+Staff can keep working on paper; the programme's downtime procedure is a county document. Local mode (off by default) can let named staff keep the records they may see (the whole programme under the 1.16.0 role defaults, a caseload after a deny of `clients:all`) on a managed device and sync later (`../PLATFORM.md`), which a county may choose for continuity at the cost of PHI on devices.

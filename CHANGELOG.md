@@ -2,6 +2,69 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Frontline
+
+Fixes from the frontline review of 1.16.0: the "see every client, change your own work" rule is now explained
+wherever it applies. Screens and wording only: no migration, permission or route, and nobody can do more or less
+than before.
+
+- **Overdose & reversals.** Another worker's event opens read-only (it opened as a form that could be filled in and
+  then refused the save), with *Reported by … Only they or a supervisor or administrator can change it*. On a phone,
+  **Delete event** no longer covers **Save**: it now sits on the left of the form's own button row.
+- **A colleague's visit or call can be read in full.** A row on Visits (and a client's Visits tab) opens the whole
+  visit: summary, supplies, outcome, follow-up and funding. Only 120 characters of the summary showed before, and
+  there was nothing to open. A desktop call opens the same way. Edit and Delete are in that dialog for the person
+  who recorded it, or a supervisor or administrator.
+- **Why Edit is missing.** Where Edit and Delete are hidden, the row says *Recorded by … — view only* (Visits, Calls &
+  texts, Referrals), and a to-do says *Assigned to … — view only; you can mark it done*. A colleague's draft note says
+  that only its author or a supervisor can finish, sign or delete it. A care-plan goal someone else added says who
+  can delete it. On a phone, someone else's to-do opens to read, not as a form. The server's refusal of a change to
+  someone else's record now says who can make it and what to do instead.
+- **Roles described once.** New user, Edit user, approving an access request, a device's first account and the
+  Permissions dialog use the same role summaries: what the role sees, what it records, and whether it changes other
+  workers' records (only supervisors and administrators do). They follow the owner's decisions for this release: a
+  client record is shared (anyone who sees a client may update it, and the primary worker is notified), and SUD
+  counseling notes are read only by their author, the co-signer and staff who write clinical notes. Notes (and a
+  client's Notes tab) say so to a navigator, where counseling notes are no longer listed. The device sign-up no longer says a clinician does
+  "everything a navigator does": a navigator records spending and a clinician does not. The Permissions dialog no
+  longer starts with "Since 1.16.0". Permission names say what they cover: *Visits & services (read, log, change
+  own)* rather than *(all)*, and the same for calls, referrals, to-dos and overdose events.
+- **Visits fit a 1280 px window.** Where-and-how and the start of the summary sit under the visit type, so the Edit
+  column is no longer past the right edge.
+- **Home** titles its tiles *The whole program at a glance* (or *Your caseload at a glance* for a person held to
+  their caseload), and the check-in list is *Your clients who need a check-in*.
+- **Smaller fixes.** The to-do list's two checkbox columns are headed *Done* and *Select* (both were read out as
+  "Actions"). Referrals say **Edit**, not **Update**. The Supplies tabs wrap onto rows on a phone instead of
+  scrolling past the edge. The client header says whose client it is (for example *David Chen's client (primary worker)*).
+- **Setup wizard.** The offline-copy question now says what a copy holds: with the default roles, the whole
+  program's records, clinical notes included, unless the person is denied *See every client* before their device
+  first syncs.
+- Tests: the browser script `scripts/ui/r6.mjs` (48 checks, including WCAG 2.1 AA on each changed dialog); the
+  accessibility audit now opens a visit, a call and an overdose event from their rows.
+
+### Documentation
+
+- **The market and security pack now describes the 1.16.0 defaults.** The IT and programme buyer guides, the RFI
+  boilerplate, the readiness scorecard, security questionnaire items 22 and 45, SOC 2 readiness CC6.3, the
+  security architecture, CalAIM and the README said "caseload scoping" and "clinical notes restricted to clinical
+  roles" as if they were the defaults. They now say that navigators and clinicians see every client,
+  navigators read clinical notes but not SUD counseling notes, client records are shared with changes reported to
+  the primary worker, and least privilege is a per-user deny, not the default.
+- **"Who sees which clients?"** is a new objection answer in POSITIONING.md. The pilot kit's week −1 now decides
+  per-user denies before any import or device sync.
+- **Offline copies, said the same way everywhere.** The IT guide and questionnaire now match the setup wizard and
+  INSTALL.md: local mode is off unless the wizard or IT turns it on, the wizard recommends it for outreach, and a
+  device then holds the whole program's records under the default roles.
+- **"Prevention", precisely.** SUDS supports prevention-funded outreach and distribution, not SABG
+  primary-prevention (PPSDS) reporting. This is now stated in the positioning, scope, buyer guide, scorecard (as
+  a known gap) and the pilot kit's eligibility check (new Q0). The scorecard also lists "least privilege by
+  default" as a gap.
+- **Supported versions** (RELEASE.md, VULNERABILITY-MANAGEMENT.md): the latest minor gets every fix; the previous
+  minor gets security fixes for 30 days after the next minor; best effort, one maintainer.
+- POSITIONING.md no longer calls supplies a "cupboard" (items, sites and lots), nor does the permission catalog.
+
 ## 1.16.0 — 2026-09-29
 
 ### Roles and permissions

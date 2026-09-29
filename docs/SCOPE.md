@@ -4,7 +4,9 @@ SUDS is the operations system for **harm-reduction and prevention programmes**: 
 anonymous), naloxone and supply distribution, and grant/funder reporting, with privacy controls built to the
 42 CFR Part 2 standard. Its users are community-based organisations and county programmes doing outreach, harm
 reduction, naloxone and test-strip distribution, prevention and navigation, funded by opioid-settlement money,
-SOR / the Naloxone Distribution Project, SABG prevention funds and similar grants.
+SOR / the Naloxone Distribution Project, SABG prevention funds and similar grants. "Prevention" here means
+prevention-funded outreach and distribution: SABG primary-prevention reporting (group and community events with
+attendance, CSAP strategy, IOM category; DHCS's primary-prevention data system) is not supported.
 
 ## Core and optional modules
 

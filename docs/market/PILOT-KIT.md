@@ -11,7 +11,7 @@ extends it to 90 days so a full reporting cycle — a month-end and most of a qu
 
 | | |
 | --- | --- |
-| **Programme** | One non-billing programme: outreach, harm reduction, naloxone / supply distribution, prevention or navigation. Programme profile *Harm reduction & outreach* unless the programme needs the clinical modules. |
+| **Programme** | One non-billing programme: outreach, harm reduction, naloxone / supply distribution, prevention-funded outreach or navigation. Not a SABG primary-prevention provider whose main activity is group or community events: SUDS has no primary-prevention (PPSDS) reporting. Programme profile *Harm reduction & outreach* unless the programme needs the clinical modules. |
 | **Users** | N = 5–15: navigators / outreach workers, their supervisor, a programme lead (super-user), one finance user if budgets are in scope, one administrator. |
 | **Deployment** | Self-hosted by the programme's IT partner, or hosted by a sponsoring county ([HOSTING.md](HOSTING.md)). Vendor hosting is not offered. Local mode off unless a documented field need is agreed. |
 | **Data** | The pilot group's real caseload, supplies, resources, grants and budget. Parallel run with the existing spreadsheets for the first 30 days, then SUDS as the working record if the day-30 check-in agrees. |
@@ -23,6 +23,12 @@ extends it to 90 days so a full reporting cycle — a month-end and most of a qu
 Answer before signing. The outcome decides whether the pilot proceeds, and how.
 
 ```
+Q0. Is the programme's main reportable work SABG primary prevention (group or community events with
+    attendance, CSAP strategy, IOM category)?
+    ├─ Yes ──> NOT ELIGIBLE for that work. SUDS has no primary-prevention model or PPSDS-shaped export;
+    │          keep reporting it the way you do now. Outreach and distribution alongside it can still pilot.
+    └─ No ───> go to Q1.
+
 Q1. Does the programme bill Drug Medi-Cal (DMC / DMC-ODS) or any insurer for the services it would record?
     ├─ Yes, for most services ──> NOT ELIGIBLE. Billing stays in the EHR. Consider SUDS only for a
     │                              separate non-billing arm (outreach, supplies) of the same programme.
@@ -78,7 +84,7 @@ audit report — see the [readiness scorecard](README.md#readiness-scorecard)).
 | --- | --- | --- |
 | **−3** | Kick-off. Eligibility check signed off. Collect spreadsheets, funder requirements, forms, baseline numbers. IT: hosting decision; BAA/QSOA and DPA in review. | Baselines recorded; hosting agreed |
 | **−2** | **Install and setup wizard** ([docs/INSTALL.md](../INSTALL.md)): name the programme, create the administrator, network access, local mode *No*. IT: TLS/proxy, SSO (optional), scheduled backups, hardening checklist ([docs/DEPLOYMENT.md](../DEPLOYMENT.md)). | Server reachable over HTTPS; backup scheduled |
-| **−1** | **Configure**: Settings (time zone, programme contact, retention), Settings → Lists (visit types, outcomes, supplies), funding sources and budget lines, users and roles, MFA. **Import** from spreadsheets with Import → *Import from Excel or CSV* (clients, resources, visits, time, expenditures), templates and row checks ([docs/USER_GUIDE.md](../USER_GUIDE.md)). Load the starter resource directory if in region. Restore drill on a separate machine. | Imported data spot-checked by the super-user; restore drill timed |
+| **−1** | **Configure**: Settings (time zone, programme contact, retention), Settings → Lists (visit types, outcomes, supplies), funding sources and budget lines, users and roles, MFA. **Decide who sees which clients before any import or device sync:** with the role defaults navigators and clinicians see every client and navigators read clinical notes (SUD counseling notes are readable only by their author, the co-signer and staff who write clinical notes (clinicians, supervisors)). For each person who should see only their own caseload, deny *See every client* (`clients:all`); for each navigator who should not read clinical notes, deny *Read clinical notes* (`notes:clinical:read`) — Settings → Users & permissions → Permissions, with a reason. Assign each person's clients (care team) so the scoped ones still see theirs. If local mode is on, set these denies before anyone's device first syncs: a device holds whatever its user may see. **Import** from spreadsheets with Import → *Import from Excel or CSV* (clients, resources, visits, time, expenditures), templates and row checks ([docs/USER_GUIDE.md](../USER_GUIDE.md)). Load the starter resource directory if in region. Restore drill on a separate machine. | Denies recorded (or "everyone sees every client" agreed with the privacy lead); imported data spot-checked by the super-user; restore drill timed |
 | **0 (go-live)** | **Training**: navigators 90 min (+ Log, clients, referrals and consent, supplies, phone home-screen), supervisors 2 h (approvals, countersign, reports, audit), finance 1 h. Go-live. | All pilot users signed in with MFA |
 | **1–2** | Daily 10-minute stand-up for the first week; vendor available in business hours. Parallel run with spreadsheets. | No blocking defects |
 | **2 (day 14)** | Check-in 1: usability issues, list tweaks, first data-completeness check. | Issues logged with owners |
