@@ -19,6 +19,7 @@ const owned = ownedBy(['user_id'], 'time:all');
 
 module.exports = define({
   table: 'time_entries',
+  deviceColumns: ['status', 'submitted_at', 'approved_by', 'approved_at', 'approval_note_enc'],
   fields: {
     client_id: { type: 'string' }, user_id: { type: 'string' }, work_date: { type: 'date', required: true }, minutes: { type: 'number', required: true, integer: true, min: 1, max: 1440 },
     category: { type: 'string', list: 'TIME_CATEGORIES' }, billable: { type: 'boolean' }, funding_source_id: { type: 'string' }, description: { type: 'string', maxLen: 500 },
@@ -45,4 +46,5 @@ module.exports = define({
     initial: (s) => (s === 'submitted' ? 'submitted' : 'draft'),
     mayMove: (from, to, row, e) => to === 'submitted' && (from === 'draft' || (from === 'rejected' && String(row.approved_at ?? '') === String(e.approved_at ?? ''))),
   }),
+  afterApply: (row, o, c) => require('./shared').logRecordedFor('time_entries', row, c), // separation of duties
 });

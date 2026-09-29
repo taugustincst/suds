@@ -9,6 +9,7 @@ const fieldError = (field, message, reason) => refuse(`has a value the office do
 
 module.exports = define({
   table: 'problems',
+  createdBy: ['added_by'], updatedBy: ['updated_by'],
   module: 'careplan',
   tombstone: 'never', // a problem is resolved or made inactive, never deleted (its history is kept with it)
   fields: {
@@ -29,5 +30,18 @@ module.exports = define({
       }
     }
     return null;
+  },
+  // A change that arrives by sync is kept in the problem's history, as PUT /api/problems/:id keeps it (security
+  // review of 1.16.0, L1), unless the device sends that entry itself: its own kernel writes one with each change.
+  afterApply(row, o, c) {
+    if ((c.session.tables.problem_history || []).some(h => h && h.problem_id === row.id)) return;
+    const changes = {};
+    for (const [k, col] of Object.entries(module.exports.columns)) {
+      const from = c.was(col) ?? null; const to = c.plain(col) ?? null;
+      if (String(from ?? '') !== String(to ?? '')) changes[k] = { from, to };
+    }
+    if (!Object.keys(changes).length) return;
+    const { uuid, encrypt } = require('../crypto');
+    require('../db').run(`INSERT INTO problem_history(id,problem_id,client_id,action,changes_enc,changed_by) VALUES(?,?,?,?,?,?)`, uuid(), row.id, o.client_id || c.existing.client_id, c.existing ? 'updated' : 'created', encrypt(JSON.stringify(changes)), c.user.id);
   },
 });

@@ -11,6 +11,7 @@ const rating = { type: 'number', integer: true, min: 0, max: 4 };
 
 module.exports = define({
   table: 'asam_assessments',
+  createdBy: ['assessed_by'],
   module: 'assessments',
   fields: {
     assessed_at: { type: 'date', required: true },

@@ -6,5 +6,6 @@ const { define } = require('./core');
 
 module.exports = define({
   table: 'policy_documents',
+  deviceColumns: ['content_type', 'bytes', 'search_text', 'is_active'], createdBy: ['uploaded_by'],
   fields: { title: { type: 'string', required: true, maxLen: 200 }, category: { type: 'string', required: true, enum: C.DOCUMENT_CATEGORIES }, description: { type: 'string', maxLen: 2000 }, effective_date: { type: 'date' }, expires_at: { type: 'date' }, filename: { type: 'string', maxLen: 200 } },
 });

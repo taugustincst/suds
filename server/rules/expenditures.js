@@ -15,6 +15,7 @@ const APPROVAL = ['status', 'approved_by', 'approved_at', 'approval_note_enc'];
 
 module.exports = define({
   table: 'expenditures',
+  deviceColumns: ['intervention_id', 'status', 'approved_by', 'approved_at', 'approval_note_enc'],
   // intervention_id is deliberately not writable over REST: it only ever means "auto-posted from that service
   // record" (routes/interventions.js syncExpenditure). Accepting it from a request would let anyone attach a
   // second expenditure to an already-linked intervention, double-counting its cost.
@@ -46,5 +47,6 @@ module.exports = define({
   },
   // The status is the office's from the start (pending) to the end (reimbursed): shared.js officeRuling.
   normalise: (row, c) => officeRuling(row, c, { what: 'spending', rulings: ['approved', 'rejected', 'reimbursed'], cols: ['approved_by', 'approved_at'], enc: ['approval_note_enc'], initial: () => 'pending' }),
+  afterApply: (row, o, c) => require('./shared').logRecordedFor('expenditures', row, c), // separation of duties
 });
 module.exports.SETTLEMENT = SETTLEMENT;

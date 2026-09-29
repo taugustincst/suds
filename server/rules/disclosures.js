@@ -9,6 +9,7 @@ const { define, flag } = require('./core');
 
 module.exports = define({
   table: 'disclosures',
+  deviceColumns: ['source', 'source_ref', 'notice_version'], createdBy: ['disclosed_by'],
   fields: {
     consent_id: { type: 'string' }, disclosed_to: { type: 'string', required: true, maxLen: 200, column: 'recipient_enc' }, purpose: { type: 'string', required: true, maxLen: 500 },
     info_disclosed: { type: 'string', required: true, maxLen: 1000, column: 'what_enc' }, method: { type: 'string', maxLen: 60 }, disclosed_at: { type: 'datetime', required: true },

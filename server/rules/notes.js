@@ -30,6 +30,7 @@ function closeSignReminders(authorId, noteId, clientId) {
 
 module.exports = define({
   table: 'notes',
+  deviceColumns: ['status', 'signed_at', 'signed_by', 'signature_hash', 'cosign_required', 'cosigned_by', 'cosigned_at', 'cosignature_hash', 'cosign_note_enc', 'import_item_id', 'deleted_at'],
   fields: {
     client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: ['clinical', 'admin'] }, format: { type: 'string', list: 'NOTE_FORMATS' },
     title: { type: 'string', maxLen: 200 }, content: { type: 'string', required: true, maxLen: 50000 }, structured: { type: 'object', fromColumn: JSON.parse }, occurred_at: { type: 'datetime', required: true },
@@ -76,6 +77,9 @@ module.exports = define({
     if (e) {
       row.kind = e.kind; // a note's kind is decided when it is written (no route changes it)
       if (e.status !== 'draft') for (const col of SIGNED_KEEPS) row[col] = col.endsWith('_enc') ? undefined : e[col];
+      // Asking for a review is the author's (POST /api/notes/:id/request-cosign), or records:manage-others'
+      // (security review of 1.16.0, L2); nor is it asked again of a note already countersigned.
+      if ((e.author_id !== c.user.id && !auth.hasPerm(c.user, 'records:manage-others')) || e.cosigned_at) row.cosign_requested = e.cosign_requested;
       for (const k of COSIGN) row[k] = e[k];
       row.cosign_note_enc = undefined;
       // Whether it needs a countersignature comes from its author's account when it was written, as over REST.

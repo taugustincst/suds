@@ -8,6 +8,7 @@ const { define, notPermitted } = require('./core');
 
 module.exports = define({
   table: 'tasks',
+  deviceColumns: ['referral_id'], createdBy: ['created_by'],
   fields: {
     client_id: { type: 'string' }, assigned_to: { type: 'string' }, title: { type: 'string', required: true, maxLen: 200 }, description: { type: 'string', maxLen: 2000 },
     due_at: { type: 'datetime' }, priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'] }, status: { type: 'string', enum: ['open', 'in_progress', 'done', 'cancelled'] },

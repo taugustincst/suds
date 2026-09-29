@@ -12,6 +12,7 @@ const fieldFlag = (reason, field, message, code) => flag(reason, { message: 'Val
 
 module.exports = define({
   table: 'suprt_assessments',
+  deviceColumns: ['exported_at'], createdBy: ['created_by'], updatedBy: ['updated_by'],
   module: 'suprt',
   fields: {
     assessment_type: { type: 'string', enum: require('../suprt').TYPES, required: true },
@@ -20,7 +21,9 @@ module.exports = define({
     answers: { type: 'object', fromColumn: JSON.parse },
   },
   // Deleting one already in a SPARS entry file would leave the accounting of disclosures pointing at nothing.
-  deletableBy: (user, row) => (row.exported_at ? refuse('not permitted: it was put in a SPARS entry file; correct it instead', { status: 409, message: 'This assessment was put in a SPARS entry file and cannot be deleted; correct it instead.' }) : null),
+  // Otherwise it is the person's who recorded it, or records:manage-others' (security review of 1.16.0, M5).
+  deletableBy: (user, row) => (row.exported_at ? refuse('not permitted: it was put in a SPARS entry file; correct it instead', { status: 409, message: 'This assessment was put in a SPARS entry file and cannot be deleted; correct it instead.' })
+    : require('./shared').ownedBy(['created_by'], 'records:manage-others', 'Only the person who recorded this assessment, or a supervisor, can delete it')(user, row)),
   check(row, c) {
     const e = c.existing || {};
     const type = c.existing ? e.assessment_type : row.assessment_type;

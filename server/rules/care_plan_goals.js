@@ -9,12 +9,16 @@ const { ownedBy } = require('./shared');
 
 module.exports = define({
   table: 'care_plan_goals',
+  deviceColumns: ['reviewed_at'], createdBy: ['created_by'], updatedBy: ['updated_by'],
   module: 'careplan',
   fields: {
     goal: { type: 'string', required: true, maxLen: 1000 }, problem_id: { type: 'string', maxLen: 60 }, status: { type: 'string', enum: CL.GOAL_STATUSES },
     start_date: { type: 'date' }, target_date: { type: 'date' }, review_date: { type: 'date' },
   },
   deletableBy: ownedBy(['created_by'], 'records:manage-others', 'Only the person who added this goal, or a supervisor, can delete it. Mark it discontinued instead.'),
+  // Its wording likewise: a goal keeps no history, so rewriting someone else's is deleting it (security review of
+  // 1.16.0, L4). Its status and dates are anyone's on the plan.
+  authorise: (row, c) => (c.existing && c.changed().includes('goal_enc') ? ownedBy(['created_by'], 'records:manage-others', 'Only the person who added this goal, or a supervisor, can change its wording')(c.user, c.existing) : null),
   check(row, c) {
     const pid = row.problem_id;
     if (!pid || (c.existing && pid === c.existing.problem_id)) return null;

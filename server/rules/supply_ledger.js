@@ -12,6 +12,7 @@ const { define, refuse, flag } = require('./core');
 
 module.exports = define({
   table: 'supply_ledger',
+  deviceColumns: ['item_id', 'site_id', 'kind', 'quantity', 'occurred_on', 'source', 'funding_source_id', 'reason', 'transfer_id', 'intervention_id'], createdBy: ['user_id'],
   fields: { lot_number: { type: 'string', maxLen: 60 }, expires_on: { type: 'date' }, reference: { type: 'string', maxLen: 120 } },
   immutable: true, tombstone: 'never',
   check(row, c) {

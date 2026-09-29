@@ -10,6 +10,7 @@ const VACATE = ['status', 'vacated_at', 'vacated_reason_enc'];
 
 module.exports = define({
   table: 'court_orders',
+  deviceColumns: ['status', 'vacated_at', 'vacated_reason_enc'], createdBy: ['recorded_by'],
   fields: {
     order_type: { type: 'string', required: true, enum: C.COURT_ORDER_TYPES }, court: { type: 'string', required: true, maxLen: 200 }, case_ref: { type: 'string', maxLen: 120 },
     issued_at: { type: 'date', required: true }, expires_at: { type: 'date' }, recipient: { type: 'string', maxLen: 300 }, purpose: { type: 'string', required: true, maxLen: 500 },

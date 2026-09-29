@@ -36,11 +36,14 @@ function endedByEpisode(raw, s) {
   const episodes = (s.tables.episodes || []).filter(x => x && x.client_id === raw.client_id);
   const dates = new Set(episodes.map(x => (x.status === 'closed' ? x.closed_at : null)));
   const same = (k) => raw[k] === undefined || String(raw[k] ?? '') === String(e[k] ?? '');
-  return episodes.length > 0 && dates.has(raw.end_date ?? null) && ['user_id', 'role_on_case', 'start_date', 'ended_at'].every(same);
+  // Only by someone who may discharge or re-admit that episode (server/rules/episodes.js, security review of 1.16.0 M6).
+  const mayEnd = episodes.some(x => { const o = db.one(`SELECT * FROM episodes WHERE id=?`, x.id); return !o || !require('./episodes').editableBy(s.user, o); });
+  return mayEnd && dates.has(raw.end_date ?? null) && ['user_id', 'role_on_case', 'start_date', 'ended_at'].every(same);
 }
 
 module.exports = define({
   table: 'assignments',
+  deviceColumns: ['end_date', 'ended_at'], createdBy: ['created_by'],
   fields: { user_id: { type: 'string', required: true }, role_on_case: { type: 'string', enum: ROLES }, start_date: { type: 'date' }, notes: { type: 'string', maxLen: 500 } },
   // A client is put on a worker the office knows and has not deactivated. (A device-minted account id the office
   // has never seen is the syncing user's own offline account, remapped to them when the row lands.)

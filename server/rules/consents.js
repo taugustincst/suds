@@ -29,6 +29,7 @@ function consentProblem(row) {
 
 module.exports = define({
   table: 'consents',
+  deviceColumns: ['revoked_at', 'revoked_reason_enc', 'rule_version', 'info_categories'], createdBy: ['created_by'],
   fields: {
     type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: RECIPIENT_MAX }, purpose: { type: 'string', maxLen: 500 }, scope: { type: 'string', maxLen: 1000 },
     signed_at: { type: 'date', required: true }, expires_at: { type: 'date' }, expires_event: { type: 'string', maxLen: 200 }, document_ref: { type: 'string', maxLen: 300 }, witness: { type: 'string', maxLen: 120 },

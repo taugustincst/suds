@@ -11,6 +11,7 @@ const OTHERS = ['status', 'outcome_enc', 'barrier_enc', 'admitted_at', 'closed_a
 
 module.exports = define({
   table: 'referrals',
+  deviceColumns: ['consent_revoked', 'outcome_recorded_at'],
   fields: {
     client_id: { type: 'string', required: true }, resource_id: { type: 'string', required: true }, user_id: { type: 'string' }, referred_at: { type: 'datetime', required: true },
     status: { type: 'string', list: 'REFERRAL_STATUSES' }, urgency: { type: 'string', enum: ['routine', 'urgent', 'emergent'] }, appointment_at: { type: 'datetime' }, admitted_at: { type: 'datetime' },

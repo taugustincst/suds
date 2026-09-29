@@ -363,7 +363,10 @@ function linePushProblem(user, raw, existing) {
   const visit = db.one(`SELECT id, client_id, user_id FROM interventions WHERE id=?`, raw.intervention_id);
   if (!visit) return 'refers to a record the office server does not have (the visit)';
   if (existing && existing.intervention_id !== raw.intervention_id) return 'has a value the office does not accept (a supply line cannot move to another visit)';
-  if (visit.client_id ? !auth.canAccessClient(user, visit.client_id) : (visit.user_id !== user.id && !auth.hasPerm(user, 'records:manage-others'))) return visit.client_id ? 'not on caseload' : 'not permitted';
+  if (visit.client_id && !auth.canAccessClient(user, visit.client_id)) return 'not on caseload';
+  // Whoever may edit the visit (PUT /api/interventions/:id: its worker, or records:manage-others), linked to a
+  // client or not (security review of 1.16.0, M3: a client-linked visit was left to caseload scoping alone).
+  if (require('./rules').forTable('interventions').editableBy(user, visit)) return 'not permitted';
   const it = item(raw.item_id);
   if (!it) return 'refers to a record the office server does not have (the supply item)';
   const q = Number(raw.quantity); const u = Number(raw.untracked || 0);

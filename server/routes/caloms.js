@@ -115,12 +115,13 @@ module.exports = (r) => {
   });
 
   r.delete('/api/caloms/records/:id', auth.requireAuth, auth.requirePerm('episodes:write'), requireModule('caloms'), (ctx) => {
-    const rec = db.one(`SELECT id, client_id, episode_id, record_type, extracted_at FROM caloms_records WHERE id=?`, ctx.params.id);
+    const rec = db.one(`SELECT * FROM caloms_records WHERE id=?`, ctx.params.id);
     if (!rec) throw notFound('CalOMS record not found');
     episodeFor(ctx, rec.episode_id);
+    require('../rules').assertEditable('caloms_records', ctx, rec, { deleting: true }); // its recorder's; never once extracted
     db.transaction(() => { db.run(`DELETE FROM caloms_records WHERE id=?`, rec.id); db.tombstone('caloms_records', rec.id); });
-    audit.log({ user: ctx.user, action: 'caloms.record.delete', entity: 'caloms_record', entityId: rec.id, clientId: rec.client_id, ip: ctx.ip, details: { record_type: rec.record_type, was_extracted: rec.extracted_at ? true : undefined } });
-    return { ok: true, warning: rec.extracted_at ? 'This record was already sent to DHCS in an extract; the state copy must be corrected through the county\'s CalOMS process.' : null };
+    audit.log({ user: ctx.user, action: 'caloms.record.delete', entity: 'caloms_record', entityId: rec.id, clientId: rec.client_id, ip: ctx.ip, details: { record_type: rec.record_type } });
+    return { ok: true };
   });
 
   // The validation report: every fatal error and warning in the period, by client code and field. Codes,

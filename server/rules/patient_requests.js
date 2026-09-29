@@ -9,6 +9,7 @@ const STATUSES = ['open', 'fulfilled', 'denied'];
 
 module.exports = define({
   table: 'patient_requests',
+  createdBy: ['created_by'],
   fields: {
     client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: KINDS },
     received_at: { type: 'date', required: true }, due_at: { type: 'date' }, status: { type: 'string', enum: STATUSES },

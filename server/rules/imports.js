@@ -9,6 +9,7 @@ const importersOnly = (user, row) => (!row.imported_by || row.imported_by === us
 
 module.exports = define({
   table: 'imports',
+  deviceColumns: ['source', 'item_count', 'status', 'metadata'], createdBy: ['imported_by'],
   fields: { filename: { type: 'string', maxLen: 200 } },
   editableBy: importersOnly,
 });

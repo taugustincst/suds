@@ -6,5 +6,6 @@ const { define } = require('./core');
 
 module.exports = define({
   table: 'form_templates',
+  deviceColumns: ['content_type', 'bytes', 'fields_json'], createdBy: ['uploaded_by'],
   fields: { name: { type: 'string', required: true, maxLen: 200 }, description: { type: 'string', maxLen: 1000 }, category: { type: 'string', enum: C.FORM_CATEGORIES }, version: { type: 'string', maxLen: 40 }, filename: { type: 'string', maxLen: 200 }, instructions: { type: 'string', maxLen: 3000 }, is_active: { type: 'boolean' } },
 });

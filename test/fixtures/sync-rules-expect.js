@@ -87,7 +87,8 @@ module.exports = {
     "invalid: closed before it opened": { push: "rejected: has a value the office does not accept (it closes before it was opened)", rest: 400 },
     // was: push "rejected: not on caseload", rest 403 -- 1.16.0: a navigator holds clients:all, so nav2's client is not off their caseload and push applies; REST's 400 is the second open episode that push has just opened. A navigator denied clients:all is refused as before (test/role-expansion.test.js)
     "client off the caseload": { push: "applied", rest: 400 },
-    "another worker's record on a shared client": { push: "applied", rest: null },
+    // was: push "applied" -- 1.16.1 (security review of 1.16.0, M6): a device changes an episode only as a discharge or re-admission; the admission itself is kept as the office has it, and the device is told
+    "another worker's record on a shared client": { push: "flagged: was accepted, but only as a discharge or re-admission: the rest of an episode is kept as the office has it (no route edits an admission)", rest: null },
     // was: push "deleted", rest null -- no REST route deletes this record; a device tombstone is ignored like the legal record's
     "another worker's record on a shared client: tombstone": { push: "kept", rest: null },
     "role without permission (fin)": { push: "http 403", rest: 403 },
@@ -412,7 +413,8 @@ module.exports = {
     // was: push "rejected: not on caseload", rest 403 -- 1.16.0: a navigator holds clients:all, so nav2's client is not off their caseload; a navigator denied clients:all is refused as before (test/role-expansion.test.js)
     "client off the caseload": { push: "applied", rest: 201 },
     "another worker's record on a shared client": { push: "applied", rest: 200 },
-    "another worker's record on a shared client: tombstone": { push: "deleted", rest: 200 },
+    // was: push "deleted", rest 200 -- 1.16.1 (security review of 1.16.0, M2/M5): removing another worker's record is its owner's or records:manage-others', at both doors
+    "another worker's record on a shared client: tombstone": { push: "rejected: not permitted", rest: 403 },
     "role without permission (fin)": { push: "http 403", rest: 403 },
     "tombstone": { push: "deleted", rest: 200 },
     "device clock two hours fast": { push: "applied (office time)", rest: null },
@@ -428,7 +430,8 @@ module.exports = {
     // was: push "rejected: not on caseload", rest 403 -- 1.16.0: a navigator holds clients:all, so nav2's client is not off their caseload; a navigator denied clients:all is refused as before (test/role-expansion.test.js)
     "client off the caseload": { push: "applied", rest: 201 },
     "another worker's record on a shared client": { push: "applied", rest: 200 },
-    "another worker's record on a shared client: tombstone": { push: "deleted", rest: 200 },
+    // was: push "deleted", rest 200 -- 1.16.1 (security review of 1.16.0, M2/M5): removing another worker's record is its owner's or records:manage-others', at both doors
+    "another worker's record on a shared client: tombstone": { push: "rejected: not permitted", rest: 403 },
     "role without permission (fin)": { push: "http 403", rest: 403 },
     "module switched off": { push: "flagged: was accepted, but SUPRT-A (SOR client-level reporting) is switched off at the office; an administrator can switch it on in Settings › Program › Modules", rest: 403 },
     "tombstone": { push: "deleted", rest: 200 },

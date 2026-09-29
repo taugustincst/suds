@@ -8,6 +8,7 @@ const { define, refuse } = require('./core');
 
 module.exports = define({
   table: 'note_addenda',
+  createdBy: ['author_id'],
   fields: { content: { type: 'string', required: true, maxLen: 20000 }, reason: { type: 'string', maxLen: 300 } },
   immutable: true, tombstone: 'never',
   // An addendum to a signed note makes it "amended", as POST /api/notes/:id/addenda does (the note's own row

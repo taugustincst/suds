@@ -6,7 +6,7 @@ const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
 const C = require('../constants');
-const { badRequest, notFound, contentDisposition } = require('../http');
+const { badRequest, notFound, contentDisposition, fileHeaders } = require('../http');
 const { validate, paging } = require('../validate');
 const { uuid, encrypt, decrypt } = require('../crypto');
 const M = require('../clients-model');
@@ -179,7 +179,7 @@ module.exports = (r) => {
   });
   r.get('/api/forms/templates/:id/file', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write', 'forms:manage'), (ctx) => {
     const t = db.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id); if (!t || !t.file_b64) throw notFound('No file for this form');
-    ctx.res.writeHead(200, { 'Content-Type': safeContentType(t.content_type), 'Content-Disposition': contentDisposition(ctx.query.get('inline') === '1' ? 'inline' : 'attachment', t.filename, 'form') });
+    ctx.res.writeHead(200, fileHeaders(safeContentType(t.content_type), contentDisposition(ctx.query.get('inline') === '1' ? 'inline' : 'attachment', t.filename, 'form')));
     ctx.res.end(Buffer.from(t.file_b64, 'base64')); return null;
   });
   // A blank, printable version drawn from the field definitions (for forms uploaded without a file, or to hand-fill)
@@ -222,6 +222,7 @@ module.exports = (r) => {
     require('../crud').assertFresh(ctx, f, 'client_form');
     const fields = parseJson(f.fields_json, []);
     const v = validate(ctx.body, require('../rules').forTable('client_forms').shape(), { partial: true });
+    if (v.status === 'void' && f.status !== 'void') require('../rules').assertEditable('client_forms', ctx, f, { deleting: true }); // voiding is removing
     let values = parseJson(decrypt(f.values_enc), {});
     if (ctx.body.values !== undefined) values = { ...values, ...cleanValues(fields, ctx.body.values) };
     const stamp = db.now();
@@ -267,10 +268,11 @@ module.exports = (r) => {
   r.get('/api/forms/:id/files/:fid', auth.requireAuth, clientRecords, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();
     audit.log({ user: ctx.user, action: 'client_form.file.view', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
-    ctx.res.writeHead(200, { 'Content-Type': safeContentType(x.content_type), 'Content-Disposition': contentDisposition(ctx.query.get('download') === '1' ? 'attachment' : 'inline', fileName(x), 'attachment'), 'X-Content-Type-Options': 'nosniff' }); ctx.res.end(Buffer.from(decrypt(x.data_enc), 'base64')); return null;
+    ctx.res.writeHead(200, fileHeaders(safeContentType(x.content_type), contentDisposition(ctx.query.get('download') === '1' ? 'attachment' : 'inline', fileName(x), 'attachment'))); ctx.res.end(Buffer.from(decrypt(x.data_enc), 'base64')); return null;
   });
   r.delete('/api/forms/:id/files/:fid', auth.requireAuth, clientRecords, auth.requirePerm('forms:write'), (ctx) => {
-    const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT id FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();
+    const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();
+    require('../rules').assertEditable('client_form_files', ctx, x, { deleting: true }); // the form's lock, and whose it is
     const stamp = db.now();
     db.run(`DELETE FROM client_form_files WHERE id=?`, x.id); db.tombstone('client_form_files', x.id); db.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, stamp, f.id);
     audit.log({ user: ctx.user, action: 'client_form.file.remove', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });

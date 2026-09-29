@@ -3,6 +3,7 @@
 // in the stages every table shares —
 //
 //   prepare    legacy columns, a parent that was refused, clock skew, the office copy
+//   confine    only the columns the table's rules declare; who created the row is the office's to say
 //   authorise  purged, merged, caseload, another worker's record, the legal record, then the table's own
 //   validate   the REST shape's fields, the programme module, then the table's check
 //   resolve    last write wins: an older device edit loses and is reported as a conflict
@@ -19,7 +20,7 @@ const audit = require('../audit');
 const { decrypt } = require('../crypto');
 const SYNC = require('../sync-tables');
 const rules = require('./index');
-const { refusals, checkFields } = require('./core');
+const { refusals, checkFields, flag } = require('./core');
 
 const NEVER = '1970-01-01T00:00:00.000Z';
 function cols(table) {
@@ -242,6 +243,7 @@ class PushSession {
     delete raw.updated_at;
     const c = new RowContext(this, t, raw, existing, existingCols, incomingAt);
     const refused = (list) => this.settle(list, t, raw, c);
+    this.confine(R, raw, c);
 
     // ---- authorise ----
     if (refused(this.authorise(R, t, raw, c))) return false;
@@ -312,6 +314,26 @@ class PushSession {
       return true;
     }
     return false;
+  }
+
+  /**
+   * What a device may write (security review of 1.16.0, H2): the columns its table's rules declare (core.js
+   * `writable`), nothing else -- a column no rule speaks for is the office's, so a device cannot set who created a
+   * record (and so who may delete it), who made a disclosure, or an attachment's type. Who created a row is the
+   * account that syncs it (createdBy): a device that names someone else is told, and the row is recorded as its
+   * user's. updatedBy is the syncing user on every write.
+   */
+  confine(R, raw, c) {
+    const { user, existing } = c; let named = false;
+    const sentBy = R.createdBy.map(col => raw[col]);
+    for (const k of Object.keys(raw)) if (!R.writable.has(k)) delete raw[k];
+    for (const [i, col] of R.createdBy.entries()) {
+      const sent = sentBy[i];
+      raw[col] = existing ? existing[col] : user.id;
+      if (sent && sent !== raw[col] && this.knownUsers.has(sent)) named = true;
+    }
+    for (const col of R.updatedBy) raw[col] = user.id;
+    if (named) c.flags.push(flag('was accepted, but recorded as the work of the account that synced it: who created a record is the office\'s to record, never a name a device sends', { code: 'attribution' }));
   }
 
   /** What every table shares before its own rules: purged, merged, caseload, whose record, the legal record. */
@@ -408,7 +430,8 @@ class PushSession {
     if (R.tombstone === 'never') return; // never hard-deleted through sync (the legal record)
     const clientId = t.clientCol ? existing[t.clientCol] : null;
     if (clientId && !auth.canAccessClient(user, clientId)) { this.reject(t.name, ts.id, 'not on caseload'); return; }
-    if (t.scope === 'all' && !auth.hasPerm(user, 'records:manage-others')) return; // shared reference data is not deleted from devices
+    // Shared reference data is not deleted from devices, unless the table's rules say whose a row is (a photo).
+    if (t.scope === 'all' && !R.deletableBy && !auth.hasPerm(user, 'records:manage-others')) return;
     // Whose record it is: the REST DELETE route's rule, and a record with no client is its owners'.
     if (!SYNC.mayReachUnlinked(t.name, user, existing, auth.hasPerm)) { this.reject(t.name, ts.id, 'not permitted'); return; }
     const no = R.deletableBy ? R.deletableBy(user, existing, { deleting }) : R.editableBy ? R.editableBy(user, existing) : null;

@@ -13,6 +13,12 @@
 //   deletableBy(user, row)  the same for deleting it (defaults to editableBy); return 'skip' to keep it quietly.
 //   othersMayChange(existing, row, changed)  true for an edit another worker's device makes as a side effect of
 //               its own work (a discharge cancelling the client's to-dos) that editableBy would otherwise refuse.
+//   deviceColumns  the columns besides `fields` a device may send (a status the table's rules move, a parent's
+//               id); with the fields, the table's client, parent, self-parent and owner columns they are all a
+//               push may write. Anything else a device sends is dropped: a column is the office's unless declared.
+//   createdBy   the columns saying who created a row (created_by, disclosed_by...): on push, the syncing user
+//               for a new row and the office's value after, whoever the device named. updatedBy: the syncing
+//               user on every write.
 //   module      the programme module (server/programme.js) whose switch gates new work in this table.
 //   immutable   true: a device may add rows, never change them; allowChange(existing, row, changed, c) names the
 //               one change that is allowed (a consent's revocation) by returning the columns it may write.
@@ -67,11 +73,14 @@ function define(spec) {
   // Worked out once, not per pushed row: [field, column, rule] for every stored field, and their shape.
   const stored = Object.entries(columns).map(([k, col]) => [k, col, fields[k]]);
   const storedShape = Object.fromEntries(stored.map(([k, , rule]) => [k, rule]));
+  // What a push may write (push.js confine): the columns above, and the row's own id and bookkeeping times.
+  const writable = new Set(['id', 'created_at', 'updated_at', ...Object.values(columns), ...(spec.deviceColumns || []),
+    ...(t ? [t.clientCol, t.parent && t.parent[1], t.selfParent] : []), spec.owner && spec.owner.col].filter(Boolean));
   return ({
-    fields, owner: null, module: null, immutable: false, tombstone: null,
+    fields, owner: null, module: null, immutable: false, tombstone: null, createdBy: [], updatedBy: [],
     ...spec,
     sync: t || null,
-    columns, stored, storedShape,
+    columns, stored, storedShape, writable,
     /** The REST shape: every field, request-only ones included. */
     shape(overrides = {}) { return { ...fields, ...overrides }; },
     /** The same shape with nothing required, for a partial update. */

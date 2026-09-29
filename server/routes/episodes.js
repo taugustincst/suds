@@ -92,8 +92,9 @@ module.exports = (r) => {
     });
     const cal = calomsPart(v.caloms, 'discharge');
     const when = v.closed_at || new Date().toISOString().slice(0, 10);
-    // An episode cannot end before it began (the table's rules). Discharging is anyone's on the care team.
-    rules.assertWrite('episodes', { id: e.id, status: 'closed', closed_at: when, discharge_reason: v.discharge_reason }, ctx, { existing: e, editable: false });
+    // An episode cannot end before it began, and discharging is the care team's, the opener's or a supervisor's
+    // (the table's rules: server/rules/episodes.js).
+    rules.assertWrite('episodes', { id: e.id, status: 'closed', closed_at: when, discharge_reason: v.discharge_reason }, ctx, { existing: e });
     const openNotes = db.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND status='draft' AND deleted_at IS NULL`, e.client_id).n;
     let endedAssignments = 0; let cancelledTasks = 0; let openReferrals = 0; let calRec = null;
     db.transaction(() => {
@@ -128,6 +129,7 @@ module.exports = (r) => {
     if (!e) throw notFound('Episode not found');
     auth.assertClientAccess(ctx, e.client_id);
     if (e.status !== 'closed') throw badRequest('This episode is still open');
+    rules.assertEditable('episodes', ctx, e); // the care team's, the opener's or a supervisor's, as a discharge
     if (db.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, e.client_id)) throw badRequest('This client already has an open episode. Discharge it first, or record this as that episode.');
     const { reason } = validate(ctx.body || {}, { reason: { type: 'string', maxLen: 300 } });
     // A discharge made in error takes its CalOMS discharge record with it. One already sent to DHCS has to

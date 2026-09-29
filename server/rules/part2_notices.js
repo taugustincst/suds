@@ -8,6 +8,7 @@ const { define, refuse, flag } = require('./core');
 
 module.exports = define({
   table: 'part2_notices',
+  deviceColumns: ['notice_version'], createdBy: ['given_by'],
   fields: { given_at: { type: 'date', required: true }, method: { type: 'string', required: true, enum: C.PART2_NOTICE_METHODS }, acknowledged: { type: 'boolean' }, ack_refused: { type: 'boolean' }, notes: { type: 'string', maxLen: 2000 } },
   immutable: true,
   tombstone: 'never', // the record that the §2.22 notice was given is kept

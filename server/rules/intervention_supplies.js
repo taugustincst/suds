@@ -9,10 +9,16 @@ const { define, refuse } = require('./core');
 
 module.exports = define({
   table: 'intervention_supplies',
+  deviceColumns: ['item_id', 'quantity', 'untracked', 'user_id'],
   owner: null,
   authorise(row, c) {
     const problem = require('../supplies').linePushProblem(c.user, row, c.existing);
     return problem ? refuse(problem) : null;
+  },
+  // Removing a line changes the visit: the visit's rule (its worker, or records:manage-others).
+  deletableBy(user, row) {
+    const visit = require('../db').one(`SELECT id, client_id, user_id FROM interventions WHERE id=?`, row.intervention_id);
+    return visit ? require('./interventions').editableBy(user, visit) : null;
   },
   afterApply(row, o, c) { require('./interventions').touchVisit(c.session, o.intervention_id || (c.existing && c.existing.intervention_id), { linesPushed: true }); },
   // An item removed from a visit puts back what it drew.

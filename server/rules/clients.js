@@ -84,6 +84,7 @@ function flagPossibleDuplicate(user, raw, clientCode, warnings) {
 
 module.exports = define({
   table: 'clients',
+  deviceColumns: ['client_code', 'legal_hold', 'legal_hold_reason_enc', 'legal_hold_cleared_reason_enc', 'removed_reason_enc', 'deleted_at'], createdBy: ['created_by'],
   fields: FIELDS,
   tombstone: 'never', // clients are never hard-deleted through sync
   check(row, c) {

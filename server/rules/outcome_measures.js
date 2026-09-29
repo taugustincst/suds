@@ -15,6 +15,7 @@ function instrumentName(code) { return (require('../clinical').INSTRUMENTS[code]
 
 module.exports = define({
   table: 'outcome_measures',
+  createdBy: ['administered_by'],
   module: 'assessments',
   fields: {
     instrument: { type: 'string', required: true, enum: require('../clinical').INSTRUMENT_CODES },

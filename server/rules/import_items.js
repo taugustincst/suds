@@ -7,6 +7,7 @@ const ofImport = (user, row) => { const imp = db.one(`SELECT imported_by FROM im
 
 module.exports = define({
   table: 'import_items',
+  deviceColumns: ['external_id', 'content_enc', 'captured_at', 'metadata_enc', 'suggested_client_id', 'status', 'note_id'],
   fields: { title: { type: 'string', maxLen: 200 } },
   editableBy: ofImport,
   authorise(row, c) { return c.existing ? null : ofImport(c.user, row); },

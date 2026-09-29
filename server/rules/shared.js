@@ -72,4 +72,21 @@ function assertRulingHere(what) {
   if (config.local && !staticHost) throw new (require('../http').HttpError)(403, `${what} is done on the office SUDS, not on this device: sync does not carry it there.`, { rulingAtOffice: true });
 }
 
-module.exports = { periodProblem, ownedBy, officeRuling, officeMarks, assertRulingHere };
+/**
+ * Separation of duties (security review of 1.16.0, M7): did `userId` record this entry, or change it? The row
+ * names only whose work it is (user_id), and an approver who may name someone else could record an entry under
+ * a colleague's name, or raise a colleague's pending amount, and then approve it. Who did is in the audit trail:
+ * the REST create and update (`<entity>.create`, `.update`, a spreadsheet import's per-record entry too), and a
+ * device's (sync.overwrite; sync.record, logged by the table's afterApply for an entry it records for someone
+ * else). No migration: the audit trail is the record, and the retention purge keeps it far past an approval.
+ */
+function recordedOrChanged(entity, table, id, userId) {
+  return !!require('../db').one(`SELECT 1 FROM audit_log WHERE user_id=? AND entity_id=? AND ((entity=? AND action IN (?,?)) OR (entity=? AND action IN ('sync.overwrite','sync.record'))) LIMIT 1`,
+    userId, id, entity, `${entity}.create`, `${entity}.update`, table);
+}
+/** The push side of recordedOrChanged: an entry a device records under someone else's name is logged as its user's. */
+function logRecordedFor(table, row, c) {
+  if (!c.existing && row.user_id && row.user_id !== c.user.id) require('../audit').log({ user: c.user, action: 'sync.record', entity: table, entityId: row.id, clientId: row.client_id || null, ip: 'device', details: { for: row.user_id } });
+}
+
+module.exports = { periodProblem, ownedBy, officeRuling, officeMarks, assertRulingHere, recordedOrChanged, logRecordedFor };
