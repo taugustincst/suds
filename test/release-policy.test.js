@@ -170,7 +170,7 @@ test('release.yml runs main\'s copy of the gate and policy scripts, with --sha a
   const rel = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8');
   const gate = rel.slice(rel.indexOf('\n  gate:'), rel.indexOf('\n  release:'));
   assert.match(gate, /main_sha="\$\(git rev-parse origin\/main\)"; echo "main_sha=\$\{main_sha\}" >> "\$GITHUB_OUTPUT"/);
-  assert.match(gate, /git archive "\$\{main_sha\}" scripts\/release-gate\.js scripts\/release-policy\.js \| tar -x -C "\$RUNNER_TEMP\/main"/);
+  assert.match(gate, /git archive "\$\{main_sha\}" scripts\/release-gate\.js scripts\/release-policy\.js scripts\/release-existing\.js \| tar -x -C "\$RUNNER_TEMP\/main"/);
   assert.match(gate, /\n {6}main_sha: \$\{\{ steps\.src\.outputs\.main_sha \}\}\n/);
   assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-gate\.js" "\$\{GITHUB_SHA\}"/);
   assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-policy\.js" --root src --sha "\$\{GITHUB_SHA\}" --main origin\/main --tag "\$RELEASE_TAG"/);
@@ -178,7 +178,11 @@ test('release.yml runs main\'s copy of the gate and policy scripts, with --sha a
   assert.ok(!/\n\s+run: node scripts\/release-(gate|policy)/.test(gate), 'not the released commit\'s copy');
   assert.ok(!/--clobber/.test(rel), 'a published zip or checksum is never overwritten');
   assert.match(rel, /MAIN_SHA: \$\{\{ needs\.gate\.outputs\.main_sha \}\}/);
-  assert.match(rel, /git show "\$\{MAIN_SHA\}:scripts\/release-policy\.js"/, 'the notes come from the main commit the gate ran (1.16.2), not main\'s tip at publish time');
+  // The notes come from the main commit the gate ran (1.16.2), not main's tip at publish time: since 1.16.4 the gate
+  // writes them and hands them over, and the release job takes main's check of an existing release from that commit.
+  assert.match(gate, /\n {6}policy_notes: \$\{\{ steps\.policy\.outputs\.policy_notes \}\}\n/);
+  assert.match(rel, /POLICY_NOTES: \$\{\{ needs\.gate\.outputs\.policy_notes \}\}/);
+  assert.match(rel, /git show "\$\{MAIN_SHA\}:scripts\/release-existing\.js"/);
   assert.ok(!/origin\/main:scripts/.test(rel));
 });
 test('a release is always of an existing v* tag: a branch is refused before anything waits, and the workflow never creates a tag (1.16.3)', () => {
@@ -217,7 +221,7 @@ test('the web app is published only by a dispatch on a released tag, after the o
   assert.ok(steps.indexOf('gh release view "${GITHUB_REF_NAME}"') > 0 && steps.indexOf('gh release view') < steps.indexOf('Check out'), 'the release is checked before anything is built');
   assert.match(steps, /\[ "\$at" = "\$\{GITHUB_SHA\}" \]/, 'at this commit');
   // 1.16.2: pushes with the release environment's deploy key when there is one (the gh-pages ruleset admits only it).
-  assert.match(publish, /PAGES_DEPLOY_KEY: \$\{\{ secrets\.PAGES_DEPLOY_KEY \}\}/);
+  assert.match(publish, /PAGES_PUBLISH_KEY: \$\{\{ secrets\.PAGES_PUBLISH_KEY \}\}/);
   assert.match(publish, /StrictHostKeyChecking=yes/, 'github.com\'s host keys pinned from the API, not trusted on first use');
   assert.match(publish, /git push -q --force "\$\{remote\}" gh-pages:gh-pages/);
 });
@@ -230,10 +234,18 @@ test('the deploy key is read only by a publish job that runs no third-party code
   const publish = wa.slice(wa.indexOf('\n  publish:'));
   assert.ok(!/environment:|secrets\./.test(build), 'the build job has no environment and no secret');
   assert.match(build, /\n {4}permissions:\n {6}contents: read\n {4}[a-z]/, 'and a read-only token');
-  assert.ok(!/PAGES_DEPLOY_KEY/.test(wa.slice(0, wa.indexOf('\n  publish:')).replace(/^#.*$/gm, '')), 'the key is named in no other job');
+  assert.ok(!/PAGES_PUBLISH_KEY/.test(wa.slice(0, wa.indexOf('\n  publish:')).replace(/^#.*$/gm, '')), 'the key is named in no other job');
   assert.match(publish, /\n {4}needs: build\n/);
-  for (const bad of [/\bnpm\b/, /\bnpx\b/, /\bnode\b/, /apt-get|\bapt\b/, /playwright/i, /git clone|git fetch/, /actions\/checkout/, /GITHUB_ENV|GITHUB_PATH/]) {
-    assert.ok(!bad.test(publish.replace(/^\s*#.*$/gm, '')), `the publish job runs no ${bad}`);
+  // 1.16.4 (engineering review of 1.16.3, M2): the one Node run is the tag's own site check, and the one fetch is a
+  // bare fetch of this commit for it (no checkout, no working tree).
+  const allowed = [
+    '          git --git-dir=tag.git fetch -q --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${GITHUB_SHA}"\n',
+    '          node tag/scripts/release-site-check.js tag site\n',
+  ];
+  let rest = publish.replace(/^\s*#.*$/gm, '');
+  for (const a of allowed) { assert.ok(rest.includes(a), `the publish job has ${a.trim()}`); rest = rest.replace(a, ''); }
+  for (const bad of [/\bnpm\b/, /\bnpx\b/, /\bnode\b/, /apt-get|\bapt\b/, /playwright/i, /git clone|git fetch|git checkout [^-]|\bfetch\b/, /actions\/checkout/, /GITHUB_ENV|GITHUB_PATH/]) {
+    assert.ok(!bad.test(rest), `the publish job runs no ${bad}`);
   }
   // The only actions are GitHub's artifact pair, pinned to a commit.
   const uses = [...wa.matchAll(/\n\s+uses: (\S+)/g)].map((m) => m[1]);
@@ -251,11 +263,11 @@ test('the deploy key is read only by a publish job that runs no third-party code
   assert.match(publish, /git config core\.hooksPath \/dev\/null/);
   assert.match(publish, /rm -f "\$RUNNER_TEMP\/pages_key"/);
   // Which credential pushed goes to the summary; no key and a guarded gh-pages is a clear failure, not an opaque GH013.
-  assert.match(publish, /who="the deploy key PAGES_DEPLOY_KEY \(\$\{fp\}/);
+  assert.match(publish, /who="the deploy key PAGES_PUBLISH_KEY \(\$\{fp\}/);
   assert.match(publish, /who="the workflow token \(GITHUB_TOKEN\)/);
   assert.match(publish, /with \$\{who\}\." \| tee -a "\$GITHUB_STEP_SUMMARY"/);
   assert.match(publish, /rules\/branches\/gh-pages" --jq 'length'/);
-  assert.match(publish, /\[ "\$rules" = "0" \] \|\| \{ echo "::error::PAGES_DEPLOY_KEY is not a secret of the release environment/);
+  assert.match(publish, /\[ "\$rules" = "0" \] \|\| \{ echo "::error::PAGES_PUBLISH_KEY is not a secret of the release environment/);
   assert.ok(!/id-token/.test(wa), 'no OIDC token is asked for');
 });
 test('a policy exception lets the early feature release through, with its reason at the top of the release notes', () => {
@@ -312,7 +324,9 @@ test('release.yml runs the policy in the gate and takes the exception only as an
   assert.match(rel, /--notes-out/, 'the release job writes the override into the release notes');
   // 1.14.0: the exception's own name, for both rules; the earlier name still works.
   assert.match(rel, /policy_exception:\n\s+description:/);
-  assert.equal((rel.match(/RELEASE_POLICY_EXCEPTION: \$\{\{ github\.event\.inputs\.policy_exception \}\}/g) || []).length, 2, 'passed through the environment to the gate and to the notes');
+  // 1.16.4: once, to the gate, which also writes the exception's paragraph for the notes (the release job runs no policy).
+  assert.equal((rel.match(/RELEASE_POLICY_EXCEPTION: \$\{\{ github\.event\.inputs\.policy_exception \}\}/g) || []).length, 1, 'passed through the environment to the gate');
+  assert.match(gate, /--tag "\$RELEASE_TAG" --notes-out "\$RUNNER_TEMP\/policy-notes\.md"/, 'the gate writes the notes paragraph');
   assert.ok(!/run:.*\$\{\{ github\.event\.inputs\.policy_exception/.test(rel), 'no script injection through the reason');
   assert.match(gate, /RELEASE_POLICY_EXCEPTION/, 'the gate sees the exception');
   const policy = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'release-policy.js'), 'utf8');

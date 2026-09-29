@@ -17,18 +17,25 @@ name: Web app
 #
 # Two jobs since 1.16.3 (engineering review of 1.16.2, M2). `build` runs everything third-party (npm ci,
 # Playwright and its apt packages, the provider pictures) with a read-only token, no environment and no secret,
-# and hands over the site as an artifact. `publish` runs on a fresh runner in the `release` environment: it checks
-# out nothing, installs nothing and builds nothing; it unpacks the artifact (plain files and directories only,
-# no .git), commits it with git's own configuration and hooks switched off, and pushes it to gh-pages with the
-# deploy key PAGES_DEPLOY_KEY, a secret of that environment that only this job reads (docs/RELEASE.md, "Owner:
-# repository settings", step 6). With the owner's gh-pages ruleset only a deploy key may update gh-pages, so an
-# older ref's copy of this workflow (no environment, no key) is refused. The run summary says which credential
+# and hands over the site as an artifact. Since 1.16.4 it packs and uploads the site straight after building it,
+# before Playwright or apt runs, and fails if the kernel it rebuilt differs from the committed one. `publish` runs
+# on a fresh runner in the `release` environment: it checks out nothing and installs nothing; it unpacks the
+# artifact (plain files and directories only, no .git), checks it byte for byte against what the tag's own
+# public/ builds to (scripts/release-site-check.js, which needs no npm package; only the provider pictures cannot
+# be rebuilt, and are checked for what they are), commits it with git's own configuration and hooks switched off,
+# and pushes it to gh-pages with the deploy key PAGES_PUBLISH_KEY, a secret of that environment that only this
+# job reads (docs/RELEASE.md, "Owner: repository settings", step 6). Until 1.16.3 the secret was called
+# PAGES_DEPLOY_KEY: the v1.16.2 copy of this workflow reads that name in a job that runs npm and Playwright, so
+# the key has a name no older copy knows. With the owner's gh-pages ruleset only a deploy key may update
+# gh-pages, so an older ref's copy of this workflow (no key) is refused. The run summary says which credential
 # pushed.
 on:
   workflow_dispatch: {}
-# Two dispatches for the same version publish one at a time rather than racing two force-pushes to gh-pages.
+# Two dispatches for the same tag publish one at a time rather than racing two force-pushes to gh-pages. One
+# group per tag (1.16.4): with a single group, a newer pending run on another tag (an old one, say) displaced the
+# real publish waiting in the queue, and the owner saw one run waiting for approval, on the wrong tag.
 concurrency:
-  group: web-app-pages
+  group: web-app-pages-${{ github.ref_name }}
   cancel-in-progress: false
 # Each job asks for its own scopes.
 permissions:
@@ -64,6 +71,31 @@ jobs:
         run: |
           npm ci --no-audit --no-fund && node scripts/build-static-site.js _site | tee /tmp/build.log
           grep '^\[suds\] region pictures' /tmp/build.log >> "$GITHUB_STEP_SUMMARY" || echo "No provider pictures were bundled." >> "$GITHUB_STEP_SUMMARY"
+      # One archive (hidden files and all), with its checksum as a job output the publish job checks. Packed and
+      # uploaded straight after the build (1.16.4; engineering review of 1.16.3, M2): Playwright, its browsers and
+      # apt packages run below, after the site is out of their reach. The artifact is immutable once uploaded; the
+      # checksum shows it arrived as packed. That it is the tag's site is checked by the publish job itself.
+      - name: Pack the site for the publish job
+        id: pack
+        run: |
+          tar -C src/_site -cf "$RUNNER_TEMP/site.tar" .
+          echo "sha256=$(sha256sum "$RUNNER_TEMP/site.tar" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Hand the site to the publish job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: site
+          path: ${{ runner.temp }}/site.tar
+          if-no-files-found: error
+          retention-days: 1
+      # The build rebuilt the kernel from its sources with the npm packages just installed (scripts/build-local.js,
+      # which build-static-site.js runs); as in CI, that must be the committed kernel, byte for byte.
+      - name: The kernel the build made is the committed one
+        working-directory: src
+        run: |
+          git diff --exit-code -- public/local server/schema-text.js public/sw.js || {
+            echo "::error::Building the site rebuilt a kernel or generated schema that differs from the committed one (public/local, server/schema-text.js, public/sw.js)."
+            exit 1
+          }
       # The web app is QA'd by the version it shows on screen (docs/RELEASE.md), so say which one this is and
       # refuse to publish a tag whose package.json disagrees with it.
       - name: Version being published
@@ -77,27 +109,16 @@ jobs:
           fi
           echo "### Web app: SUDS $ver" >> "$GITHUB_STEP_SUMMARY"
           echo "Check that the on-screen version reads $ver before signing off the release QA." >> "$GITHUB_STEP_SUMMARY"
+      # On a copy unpacked from the archive handed over: what boots is what is published.
       - name: Verify it actually boots with no backend
         working-directory: src
         run: |
+          mkdir -p "$RUNNER_TEMP/boot" && tar -xf "$RUNNER_TEMP/site.tar" -C "$RUNNER_TEMP/boot"
           npm i --no-save --no-audit --no-fund playwright@1.56.1 && npx playwright install --with-deps chromium
-          node scripts/serve-static.js _site 8877 & echo $! > /tmp/static.pid
+          node scripts/serve-static.js "$RUNNER_TEMP/boot" 8877 & echo $! > /tmp/static.pid
           for i in $(seq 1 40); do curl -sf http://127.0.0.1:8877/ >/dev/null && break; sleep 0.5; done
           SUDS_STATIC_URL=http://127.0.0.1:8877 node scripts/ui/static-site.mjs
           kill "$(cat /tmp/static.pid)" 2>/dev/null || true
-      # One archive (hidden files and all), with its checksum as a job output the publish job checks.
-      - name: Pack the site for the publish job
-        id: pack
-        run: |
-          tar -C src/_site -cf "$RUNNER_TEMP/site.tar" .
-          echo "sha256=$(sha256sum "$RUNNER_TEMP/site.tar" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - name: Hand the site to the publish job
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: site
-          path: ${{ runner.temp }}/site.tar
-          if-no-files-found: error
-          retention-days: 1
   publish:
     needs: build
     runs-on: ubuntu-latest
@@ -119,7 +140,7 @@ jobs:
           gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft | grep -qx false || { echo "::error::There is no published GitHub Release ${GITHUB_REF_NAME}"; exit 1; }
           at="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}" --jq .sha)"
           [ "$at" = "${GITHUB_SHA}" ] || { echo "::error::${GITHUB_REF_NAME} is at ${at}, not ${GITHUB_SHA}"; exit 1; }
-      - name: Take the site the build job checked
+      - name: Take the site the build job packed
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: site
@@ -136,27 +157,43 @@ jobs:
           [ -z "$odd" ] || { echo "::error::The site archive holds something other than files and directories:"; echo "$odd"; exit 1; }
           if tar -tf in/site.tar | grep -Eq '(^|/)\.git(/|$)|(^|/)\.\.(/|$)|^/'; then echo "::error::The site archive holds a .git, parent or absolute path"; exit 1; fi
           mkdir site && tar -xf in/site.tar -C site --no-same-owner --no-same-permissions
-      # Only a job that waited for the owner's approval in the `release` environment can read PAGES_DEPLOY_KEY. The
+      # The site must be what the tag's own public/ builds to (1.16.4; engineering review of 1.16.3, M2). The tag's
+      # tree comes by a bare fetch of this commit and `git archive` (no checkout, no hooks, no configuration); the
+      # check is the tag's scripts/release-site-check.js, on the runner's Node, loading only Node's own modules:
+      # the tag's own code, as this workflow file is, and no npm package. Every file copied from public/ or
+      # generated from it (the .html pages, sw.js, local-boot.js, frame-guard.js) must match byte for byte; the
+      # provider pictures, which only a download can make, must be JPEG, PNG or WebP files and a manifest.
+      - name: The site is what the tag builds to
+        run: |
+          export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+          cd "$RUNNER_TEMP"
+          git init -q --bare tag.git
+          git --git-dir=tag.git fetch -q --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${GITHUB_SHA}"
+          mkdir tag && git --git-dir=tag.git archive "${GITHUB_SHA}" public server/csp.js scripts/build-static-site.js scripts/static-site-security.js scripts/release-site-check.js | tar -x -C tag
+          node tag/scripts/release-site-check.js tag site
+      # Only a job that waited for the owner's approval in the `release` environment can read PAGES_PUBLISH_KEY. The
       # summary names the credential that pushed. Without the secret the workflow token pushes, but only while
       # gh-pages has no ruleset: once it has one the token is refused (GH013), so the run stops here and says why.
       - name: Publish to the gh-pages branch
         env:
-          PAGES_DEPLOY_KEY: ${{ secrets.PAGES_DEPLOY_KEY }}
+          PAGES_PUBLISH_KEY: ${{ secrets.PAGES_PUBLISH_KEY }}
         run: |
           export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-          if [ -n "${PAGES_DEPLOY_KEY}" ]; then
-            install -m 700 -d "$HOME/.ssh" && printf '%s\n' "${PAGES_DEPLOY_KEY}" > "$RUNNER_TEMP/pages_key" && chmod 600 "$RUNNER_TEMP/pages_key"
+          # The key file is removed however the step ends (1.16.4), not only after a successful push.
+          trap 'rm -f "$RUNNER_TEMP/pages_key"' EXIT
+          if [ -n "${PAGES_PUBLISH_KEY}" ]; then
+            install -m 700 -d "$HOME/.ssh" && printf '%s\n' "${PAGES_PUBLISH_KEY}" > "$RUNNER_TEMP/pages_key" && chmod 600 "$RUNNER_TEMP/pages_key"
             # github.com's host keys from the API (over TLS), not trusted on first use.
             gh api meta --jq '.ssh_keys[]' | sed 's/^/github.com /' > "$HOME/.ssh/known_hosts"
             export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/pages_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
             remote="git@github.com:${GITHUB_REPOSITORY}.git"
             fp="$(ssh-keygen -y -f "$RUNNER_TEMP/pages_key" | ssh-keygen -lf - | awk '{ print $2 }')"
-            who="the deploy key PAGES_DEPLOY_KEY (${fp}; Settings > Deploy keys shows the same fingerprint)"
+            who="the deploy key PAGES_PUBLISH_KEY (${fp}; Settings > Deploy keys shows the same fingerprint)"
           else
             rules="$(gh api "repos/${GITHUB_REPOSITORY}/rules/branches/gh-pages" --jq 'length' 2>/dev/null || echo unknown)"
-            [ "$rules" = "0" ] || { echo "::error::PAGES_DEPLOY_KEY is not a secret of the release environment, and gh-pages is guarded by a ruleset (rules: ${rules}) that refuses the workflow token. Add the secret (docs/RELEASE.md, Owner: repository settings, step 6)."; exit 1; }
+            [ "$rules" = "0" ] || { echo "::error::PAGES_PUBLISH_KEY is not a secret of the release environment, and gh-pages is guarded by a ruleset (rules: ${rules}) that refuses the workflow token. Add the secret (docs/RELEASE.md, Owner: repository settings, step 6; until 1.16.3 it was called PAGES_DEPLOY_KEY)."; exit 1; }
             remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-            who="the workflow token (GITHUB_TOKEN): there is no PAGES_DEPLOY_KEY and no gh-pages ruleset, so older refs can publish too (docs/RELEASE.md, step 6)"
+            who="the workflow token (GITHUB_TOKEN): there is no PAGES_PUBLISH_KEY and no gh-pages ruleset, so older refs can publish too (docs/RELEASE.md, step 6)"
             echo "::warning::Publishing with ${who}."
           fi
           cd "$RUNNER_TEMP/site"
@@ -169,7 +206,6 @@ jobs:
           git add -A
           git commit -q -m "Deploy ${GITHUB_SHA}"
           git push -q --force "${remote}" gh-pages:gh-pages
-          rm -f "$RUNNER_TEMP/pages_key"
           echo "### gh-pages" >> "$GITHUB_STEP_SUMMARY"
           echo "Pushed ${GITHUB_REF_NAME} (${GITHUB_SHA}) with ${who}." | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Enable GitHub Pages, if it is not already
