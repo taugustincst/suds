@@ -147,6 +147,25 @@ consent-and-disclosure layer above. If some services must also be in the EHR, SU
 hand-off file or FHIR feed instead of double entry; patients and encounters can come the other way from the
 EHR's FHIR export. Most harm-reduction CBOs have no EHR at all; for them SUDS is the programme record.
 
+## What a buyer will compare it with
+
+Five categories come up. The examples are names a buyer is likely to mention, not a market survey. What each
+product does changes often: describe a competitor only from its current public material or the buyer's own
+experience of it, never from this page, and never quote a feature or a price from memory. No figure below is a
+price; where one would go it says so.
+
+| Category | Examples a buyer may name | What they are for | How SUDS differs | Price |
+| --- | --- | --- | --- | --- |
+| **AI documentation tools for behavioural health** | Eleos, Nabla, and similar ambient-listening or note-drafting products | Drafting clinical notes, some from a recorded session, inside or beside a clinician's EHR | SUDS is not an AI product. Its copilot (released in 1.17.0) is one optional module of a programme record: office server only, off until the programme records its own BAA and Part 2 QSOA with the provider, drafts from text the worker gives (session notes or a transcript; SUDS records no audio), never for SUD counseling notes, every call audited without its text, and a person signs. A programme that wants ambient scribing for therapists should compare those products on their own terms; SUDS does not compete there | `[owner to verify public pricing]` |
+| **EHR vendors' AI add-ons** | The drafting and summarising features EHR vendors add to their own products | Documentation help inside the EHR the programme already bills from | Where the clinical note lives in the EHR, its own add-on is usually the natural choice for that note. SUDS's copilot is for the records SUDS holds (outreach, navigation, care-coordination notes, CalOMS answers) and is never offered on SUDS on this device | `[owner to verify public pricing]` |
+| **County EHRs** | SmartCare (through CalMHSA), Netsmart (myAvatar), and the EHRs county SUD providers use | The clinical record, DMC-ODS billing and, often, CalOMS submission for the providers on them | Not a replacement, and never proposed as one (*The boundary*). SUDS holds the non-billing work beside them, or acts as the Part 2 consent-and-disclosure layer; it can import patients and encounters from a FHIR file the EHR exports and hand encounters back, and it never connects to the EHR or bills | `[owner to verify public pricing]` |
+| **CBO case management platforms** | Apricot (Bonterra) and similar configurable case-management and outcomes tools | General case management, intake forms and outcomes reporting for many kinds of nonprofit programme | SUDS is narrower and built for this work: anonymous contacts that still count, supplies by item, site and lot, naloxone and SSP reporting, settlement spending by Exhibit E category, and Part 2 controls (consent that names the recipient, one disclosure gate, an accounting of disclosures) that a general platform leaves to configuration. It is open source, runs on the programme's or county's own server, and the programme pays, if it chooses, for services rather than licences | `[owner to verify public pricing]` |
+| **Harm-reduction trackers** | Spreadsheets and paper logs, SSP data tools, and the forms a funder or clearinghouse supplies | Counting distribution and participants for one funder's report | SUDS keeps the same counts as part of one record: an anonymous contact on a phone, offline where allowed, with an encrypted participant code, draws down stock and reaches the funder report, NDP log, SSP summary and settlement report. Each layout is still to be checked against the funder's current template | `[owner to verify public pricing]` |
+
+The honest line for every row: SUDS is one maintainer's open-source software with no independent audit yet, and
+the incumbents in the first four rows are established companies. Where the buyer's need is inside one of those
+categories, say so and point them there.
+
 ## Key messages
 
 **For programme directors (value)**

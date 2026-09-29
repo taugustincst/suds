@@ -38,6 +38,36 @@ SUDS saves. No pilot has measured SUDS yet; do not show the example numbers to a
 | 8. Year-one net | 6 − 7 | **$25,080** |
 | 9. Payback (months) | 7 ÷ (6 ÷ 12) | **3.7 months** |
 
+## AI documentation copilot (optional, office server only)
+
+Only for a programme that has turned the copilot on after recording its BAA and Part 2 QSOA with the AI
+provider ([../../AI-COPILOT.md](../../AI-COPILOT.md)); it is never used for SUD counseling notes. **There is no
+example column here:** no pilot has measured the copilot, and neither the minutes saved nor the provider's price
+should be guessed. Fill in P from the pilot's copilot arm ([PILOT-KIT.md](../PILOT-KIT.md), section 5), and T and
+U from the provider's current published price list or your contract.
+
+| # | Input | Your programme | Where it comes from |
+| --- | --- | --- | --- |
+| O | Notes drafted with the copilot per year | ______ | Signed notes with `ai_assisted` in the pilot, scaled to a year |
+| P | Documentation minutes saved per drafted note (median without the copilot minus median with) | ______ | Pilot copilot arm. Time from contact to signed note is elapsed time, not effort: use the timed sample of writing time where the pilot has one |
+| Q | Loaded hourly cost of the staff who write the notes ($) | ______ | Finance |
+| R | Input tokens per draft (average) | ______ | `ai_usage.input_tokens` for the pilot ÷ drafts |
+| S | Output tokens per draft (average) | ______ | `ai_usage.output_tokens` for the pilot ÷ drafts |
+| T | Provider price per million input tokens ($) | ______ | Provider price list or contract, for the model in Settings → AI copilot |
+| U | Provider price per million output tokens ($) | ______ | As T |
+| V | Drafts asked for per year, kept or not | ______ | `ai_usage` rows (or `ai.draft` audit entries) for the pilot, scaled to a year; every returned draft costs tokens, kept or discarded |
+
+| Line | Formula | Your programme |
+| --- | --- | --- |
+| 10. Documentation hours saved / year | O × P ÷ 60 | ______ h |
+| 11. Value of line 10 | line 10 × Q | $______ |
+| 12. Model cost / year | V × (R × T + S × U) ÷ 1,000,000 | $______ |
+| 13. Copilot net / year | 11 − 12 | $______ |
+
+Line 12 is the provider's charge only. Count separately the counsel review of the agreements, staff training
+(the signer owns the note), and the supervisor time to review drafts during the pilot. A copilot that saves no
+measured time is a cost, however cheap the tokens.
+
 ## Read it carefully
 
 - **Time saved is capacity, not cash**, unless it changes staffing. Say what the hours go to: more outreach
