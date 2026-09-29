@@ -2,6 +2,25 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Security (review of 1.17.0, r11; all Low)
+
+- **AI copilot monthly cap under concurrency.** A draft on its way to the provider is reserved before anything
+  is sent and counted until its outcome is recorded, so concurrent requests at the last draft of the month can no
+  longer overshoot the cap (`server/ai-copilot.js`).
+- **AI-assisted mark for a note not saved yet.** A copilot note draft asked for without a saved note is remembered
+  (in memory, for 120 minutes) for its author and client; the next note that author writes text into for that
+  client, over REST or sync push, is marked AI-assisted by the office whatever the browser sends, so signing it
+  needs the review statement and it cannot be a SUD counseling note (`server/rules/notes.js`).
+- **Referral links and their creator.** A packet is withheld at open when the worker who made the link has been
+  deactivated or can no longer reach the client; deactivating a worker (Users, SCIM, SSO deprovisioning) withdraws
+  the links they made that could still be opened, each audited (`server/referral-links.js`).
+- **Referral link refusals throttled.** A forwarded link opened again and again, a withheld packet and an
+  acknowledgement from an unclaimed browser are audited through the per-link refusal throttle.
+- **No redirects to the AI provider.** The provider request never follows a redirect; one is refused (not retried)
+  and the draft fails closed.
+
 ## 1.17.0 — 2026-09-29
 
 ### AI documentation copilot

@@ -12312,6 +12312,28 @@ var require_notes = __commonJS({
     function reissueAddenda(noteId, was, now2) {
       if (Number(was) && !Number(now2)) db3.run(`UPDATE note_addenda SET updated_at=? WHERE note_id=?`, db3.now(), noteId);
     }
+    var AI_DRAFT_MINUTES = 120;
+    var pendingDrafts = /* @__PURE__ */ new Map();
+    var draftKey = (userId, clientId) => `${userId}|${clientId}`;
+    function copilotDrafted(userId, clientId) {
+      const now2 = Date.now();
+      if (pendingDrafts.size > 5e3) {
+        for (const [k, exp] of pendingDrafts) if (exp <= now2) pendingDrafts.delete(k);
+      }
+      pendingDrafts.set(draftKey(userId, clientId), now2 + AI_DRAFT_MINUTES * 6e4);
+    }
+    function draftPending(userId, clientId) {
+      const k = draftKey(userId, clientId);
+      const exp = pendingDrafts.get(k);
+      if (exp === void 0) return false;
+      if (exp <= Date.now()) {
+        pendingDrafts.delete(k);
+        return false;
+      }
+      return true;
+    }
+    var useDraft = (userId, clientId) => pendingDrafts.delete(draftKey(userId, clientId));
+    var writesText = (c) => !c.existing || c.existing.status === "draft" && c.changed().some((k) => ["title_enc", "content_enc", "structured_enc"].includes(k));
     var signs = (row, c) => !!row.status && row.status !== "draft" && (!c.existing || c.existing.status === "draft");
     module.exports = define2({
       table: "notes",
@@ -12351,6 +12373,11 @@ var require_notes = __commonJS({
         const e = c.existing || {};
         const kind = c.existing ? e.kind : row.kind;
         const out2 = [];
+        const fromDraft = !!c.user && writesText(c) && draftPending(c.user.id, c.existing ? e.client_id : row.client_id);
+        if (fromDraft) {
+          row.ai_assisted = 1;
+          c.copilotDraft = true;
+        }
         if (row.counseling_note && Number(row.counseling_note) && kind !== "clinical") out2.push(refuse("has a value the office does not accept (only a clinical note can be a SUD counseling note)", { message: "Only a clinical note can be a SUD counseling note" }));
         if (row.problem_ids !== void 0 && row.problem_ids !== null && (!c.existing || String(row.problem_ids) !== String(e.problem_ids))) {
           let ids = [];
@@ -12371,7 +12398,8 @@ var require_notes = __commonJS({
         const counseling = Number(row.counseling_note ?? e.counseling_note) === 1;
         const ai = Number(row.ai_assisted) === 1 || Number(e.ai_assisted) === 1;
         if (counseling && ai && (!c.existing || ["counseling_note", "ai_assisted"].some((k) => row[k] !== void 0 && row[k] !== null && Number(row[k]) !== Number(e[k] || 0)))) {
-          out2.push(refuse("has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot)", { message: "A SUD counseling note cannot include text drafted by the AI copilot", fields: { counseling_note: "this note has AI-drafted text; a SUD counseling note is written without the copilot" } }));
+          if (fromDraft && Number(e.ai_assisted) !== 1) out2.push(refuse("has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot: a copilot draft for this client is not in a note yet)", { message: `You asked the AI copilot for a note draft for this client in the last ${AI_DRAFT_MINUTES / 60} hours that has not been saved in a note, so this note is treated as including it, and a SUD counseling note cannot include text drafted by the AI copilot. Save the drafted note first, or write the counseling note later.`, fields: { counseling_note: "a copilot draft for this client is not in a note yet" } }));
+          else out2.push(refuse("has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot)", { message: "A SUD counseling note cannot include text drafted by the AI copilot", fields: { counseling_note: "this note has AI-drafted text; a SUD counseling note is written without the copilot" } }));
         }
         if (c.via === "sync" && signs(row, c) && ai && !isYes(c.statements && c.statements.ai_reviewed)) {
           out2.push(refuse("needs the author's review statement: this note includes text drafted by the AI copilot", { message: "This note includes text drafted by the AI copilot. Confirm you have reviewed and corrected it before signing.", fields: { ai_reviewed: "confirm you reviewed the AI-drafted text" } }));
@@ -12379,6 +12407,7 @@ var require_notes = __commonJS({
         if (c.via === "sync" && signs(row, c) && (c.user.id !== (c.existing ? e.author_id : row.author_id) || row.signed_by && row.signed_by !== c.user.id)) {
           out2.push(refuse("not permitted: only the author can sign a note", { status: 403, message: "Only the author can sign a note. Supervisors countersign instead." }));
         }
+        if (fromDraft && !out2.length && c.via !== "sync") useDraft(c.user.id, c.existing ? e.client_id : row.client_id);
         return out2;
       },
       normalise(row, c) {
@@ -12426,6 +12455,10 @@ var require_notes = __commonJS({
       // A note signed on a device closes its reminder at the office too, as signing here does (routes/notes.js).
       // The signature is recomputed as POST /api/notes/:id/sign computes it, and audited as that route audits it.
       afterApply(row, o, c) {
+        if (c.copilotDraft) {
+          useDraft(c.user.id, c.existing ? c.existing.client_id : row.client_id);
+          require_audit().log({ user: c.user, action: "note.ai_assisted", entity: "note", entityId: row.id, clientId: c.existing ? c.existing.client_id : row.client_id, ip: "device", details: { via: "sync", cause: "copilot_draft" } });
+        }
         if (c.existing) reissueAddenda(row.id, c.existing.counseling_note, o.counseling_note ?? c.existing.counseling_note);
         if (c.existing && c.existing.status !== "draft") return;
         const n = db3.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required, ai_assisted FROM notes WHERE id=?`, row.id);
@@ -12438,6 +12471,7 @@ var require_notes = __commonJS({
     });
     module.exports.closeSignReminders = closeSignReminders;
     module.exports.reissueAddenda = reissueAddenda;
+    Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts });
     var readsCounseling = (user) => auth3.hasPerm(user, "notes:clinical:write");
     var mayReadCounseling = (user, n) => !Number(n.counseling_note) || readsCounseling(user) || n.author_id === user.id || !!n.cosigned_by && n.cosigned_by === user.id;
     function counselingFilter(user, alias = "n") {
@@ -18902,6 +18936,362 @@ var require_budget = __commonJS({
   }
 });
 
+// server/referral-links.js
+var require_referral_links = __commonJS({
+  "server/referral-links.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var disclosure = require_disclosure();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2, randomToken, sha256: sha2562 } = require_crypto();
+    var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
+    var KINDS = ["packet", "contact_notice"];
+    var TTL_HOURS = [24, 72, 168];
+    var DEFAULT_TTL_HOURS = 72;
+    var MAX_FAILED = 5;
+    var ACK_STATUSES = ["received", "accepted", "scheduled", "declined", "unable_to_reach"];
+    var NOT_VALID = "This link is not valid. It may have expired or been withdrawn. Contact the program that sent it.";
+    var CLOSED_REFERRAL = ["declined_by_client", "declined_by_provider", "no_show", "completed", "closed"];
+    var SETTING = "referral_links_enabled";
+    var enabled = () => db3.getSetting(SETTING, "0") === "1";
+    var hashToken = (t) => sha2562(`referral-link:${t}`);
+    var hashCode = (id, code) => sha2562(`referral-link-code:${id}:${String(code || "").replace(/\D/g, "")}`);
+    var hashClaim = (id, claim) => sha2562(`referral-link-claim:${id}:${claim}`);
+    function newCode() {
+      const n = (init_crypto2(), __toCommonJS(crypto_exports)).randomInt(0, 1e6);
+      return String(n).padStart(6, "0");
+    }
+    function newReference() {
+      const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const b = (init_crypto2(), __toCommonJS(crypto_exports)).randomBytes(6);
+      return "R-" + [...b].map((x) => A[x % A.length]).join("");
+    }
+    var dec2 = (v) => {
+      if (!v) return null;
+      try {
+        return decrypt3(v);
+      } catch {
+        return null;
+      }
+    };
+    function resourceOf(resourceId) {
+      return db3.one(`SELECT id, name, organization FROM resources WHERE id=?`, resourceId);
+    }
+    function resourceNames(r) {
+      return r ? [r.name, r.organization].filter(Boolean) : [];
+    }
+    function invite() {
+      const url = db3.getSetting("referral_invite_url", null);
+      return { url: url && /^https:\/\//i.test(url) ? url : null, contact: db3.getSetting("program_contact", null) || null, programme: db3.getSetting("org_name", null) || "The referring program" };
+    }
+    function present(l) {
+      const now2 = (/* @__PURE__ */ new Date()).toISOString();
+      const status = l.revoked_at ? "revoked" : l.failed_attempts >= MAX_FAILED ? "locked" : l.expires_at < now2 && !l.opened_at ? "expired" : l.ack_status ? "acknowledged" : l.opened_at ? "opened" : l.expires_at < now2 ? "expired" : "sent";
+      return {
+        id: l.id,
+        referral_id: l.referral_id,
+        client_id: l.client_id,
+        resource_id: l.resource_id,
+        kind: l.kind,
+        reference: l.reference,
+        expires_at: l.expires_at,
+        status,
+        opened_at: l.opened_at,
+        open_count: l.open_count,
+        failed_attempts: l.failed_attempts,
+        ack_status: l.ack_status,
+        ack_at: l.ack_at,
+        ack_by: dec2(l.ack_by_enc),
+        ack_note: dec2(l.ack_note_enc),
+        revoked_at: l.revoked_at,
+        created_at: l.created_at,
+        created_by_name: l.created_by_name || null,
+        accounted: !!l.disclosure_id
+      };
+    }
+    function listFor(referralId) {
+      return db3.all(`SELECT l.*, u.display_name AS created_by_name FROM referral_links l JOIN users u ON u.id=l.created_by WHERE l.referral_id=? ORDER BY l.created_at DESC`, referralId).map(present);
+    }
+    function create3({ referral, user, ip, v }) {
+      const kind = v.kind;
+      if (!enabled()) throw new HttpError3(409, "Secure referral links are switched off for this program. An administrator can switch them on in Privacy & Part 2 once counsel has reviewed them.", { referral_links_off: true });
+      if (!KINDS.includes(kind)) throw badRequest(`kind must be one of ${KINDS.join(", ")}`);
+      const hours = v.expires_hours === void 0 || v.expires_hours === null ? DEFAULT_TTL_HOURS : Number(v.expires_hours);
+      if (!TTL_HOURS.includes(hours)) throw badRequest(`A link lasts ${TTL_HOURS.join(", ")} hours (7 days at most)`);
+      const res = resourceOf(referral.resource_id);
+      if (!res) throw badRequest("The referral's provider is not in the directory");
+      const id = uuid2();
+      const token2 = randomToken(32);
+      const reference = newReference();
+      const expires = new Date(Date.now() + hours * 36e5).toISOString();
+      let code = null;
+      let packet = null;
+      let consentId = null;
+      if (kind === "packet") {
+        const basis = disclosure.requireBasis(referral.client_id, {
+          basis: "consent",
+          consent_id: v.consent_id || referral.consent_id,
+          recipient: resourceNames(res),
+          allowed: ["consent"],
+          restriction_reviewed: v.restriction_reviewed,
+          user
+        });
+        consentId = basis.consent.id;
+        const c = db3.one(`SELECT first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients WHERE id=?`, referral.client_id);
+        const message = String(v.message || "").trim().slice(0, 1e3);
+        packet = {
+          client: {
+            name: [dec2(c.first_name_enc), dec2(c.last_name_enc)].filter(Boolean).join(" "),
+            preferred_name: dec2(c.preferred_name_enc) || void 0,
+            dob: v.include_dob ? dec2(c.dob_enc) || void 0 : void 0,
+            phone: v.include_phone ? dec2(c.phone_enc) || void 0 : void 0
+          },
+          reason: message || null,
+          urgency: referral.urgency || "routine",
+          referred_at: referral.referred_at,
+          referred_by: user.display_name || user.username,
+          recipient: res.name
+        };
+        code = newCode();
+        packet = { packet, recipient_names: resourceNames(res) };
+      }
+      db3.run(
+        `INSERT INTO referral_links(id,referral_id,client_id,resource_id,kind,token_hash,code_hash,consent_id,packet_enc,reference,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+        id,
+        referral.id,
+        referral.client_id,
+        referral.resource_id,
+        kind,
+        hashToken(token2),
+        code ? hashCode(id, code) : null,
+        consentId,
+        packet ? encrypt3(JSON.stringify(packet)) : null,
+        reference,
+        expires,
+        user.id
+      );
+      audit3.log({
+        user,
+        action: "referral_link.create",
+        entity: "referral_link",
+        entityId: id,
+        clientId: referral.client_id,
+        ip,
+        details: { kind, referral_id: referral.id, consent_id: consentId || void 0, expires_hours: hours, phone: kind === "packet" ? !!v.include_phone : void 0, dob: kind === "packet" ? !!v.include_dob : void 0 }
+      });
+      return { id, kind, reference, expires_at: expires, token: token2, code, path: `/referral-link.html#${token2}` };
+    }
+    function revoke({ link, user, ip }) {
+      if (link.revoked_at) return present(link);
+      db3.run(`UPDATE referral_links SET revoked_at=?, revoked_by=?, updated_at=? WHERE id=?`, db3.now(), user.id, db3.now(), link.id);
+      audit3.log({ user, action: "referral_link.revoke", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { kind: link.kind, opened: !!link.opened_at } });
+      return present(db3.one(`SELECT * FROM referral_links WHERE id=?`, link.id));
+    }
+    function revokeForUser(userId, actor) {
+      const now2 = db3.now();
+      const open4 = db3.all(`SELECT id, client_id, kind, opened_at FROM referral_links WHERE created_by=? AND revoked_at IS NULL AND expires_at > ?`, userId, now2);
+      const by = actor && actor.id && db3.one(`SELECT 1 FROM users WHERE id=?`, actor.id) ? actor.id : null;
+      for (const l of open4) {
+        db3.run(`UPDATE referral_links SET revoked_at=?, revoked_by=?, updated_at=? WHERE id=? AND revoked_at IS NULL`, now2, by, now2, l.id);
+        audit3.log({ user: actor || { username: "system" }, action: "referral_link.revoke", entity: "referral_link", entityId: l.id, clientId: l.client_id, details: { kind: l.kind, opened: !!l.opened_at, cause: "creator_deactivated" } });
+      }
+      return open4.length;
+    }
+    var REFUSALS_LOGGED_PER_HOUR = 10;
+    var REFUSAL_WINDOW_MS = 36e5;
+    var refusals = /* @__PURE__ */ new Map();
+    function summarise(key, w) {
+      if (!w.extra) return;
+      const addresses = [...w.byIp.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([ip, n]) => ({ ip, n }));
+      audit3.log({
+        user: null,
+        action: w.action,
+        entity: "referral_link",
+        entityId: w.linkId,
+        clientId: w.clientId,
+        ip: null,
+        success: false,
+        details: { reason: key === "unknown" ? "unknown_summary" : "refused_summary", count: w.extra, window_start: new Date(w.start).toISOString(), window_end: new Date(Math.min(Date.now(), w.start + REFUSAL_WINDOW_MS)).toISOString(), addresses }
+      });
+    }
+    function flushRefusals() {
+      for (const [key, w] of refusals) summarise(key, w);
+      refusals.clear();
+    }
+    function logRefusal({ action, link, ip, reason, details = {} }) {
+      const key = link ? link.id : "unknown";
+      const now2 = Date.now();
+      let w = refusals.get(key);
+      if (w && now2 - w.start >= REFUSAL_WINDOW_MS) {
+        summarise(key, w);
+        refusals.delete(key);
+        w = null;
+      }
+      if (!w) {
+        w = { start: now2, logged: 0, extra: 0, byIp: /* @__PURE__ */ new Map(), action, linkId: link ? link.id : null, clientId: link ? link.client_id : null };
+        refusals.set(key, w);
+      }
+      if (w.logged < REFUSALS_LOGGED_PER_HOUR) {
+        w.logged++;
+        audit3.log({ user: null, action, entity: "referral_link", entityId: w.linkId, clientId: w.clientId, ip, success: false, details: { reason, ...details } });
+        if (w.logged === REFUSALS_LOGGED_PER_HOUR) audit3.log({ user: null, action, entity: "referral_link", entityId: w.linkId, clientId: w.clientId, ip, success: false, details: { reason: "counting", note: "further refusals this hour are counted and summarised, not written one by one" } });
+        return;
+      }
+      w.extra++;
+      w.byIp.set(ip || "?", (w.byIp.get(ip || "?") || 0) + 1);
+      if (refusals.size > 5e3) flushRefusals();
+    }
+    function usable(token2, ip, action) {
+      const t = String(token2 || "");
+      const link = /^[A-Za-z0-9_-]{40,64}$/.test(t) ? db3.one(`SELECT * FROM referral_links WHERE token_hash=?`, hashToken(t)) : null;
+      const refuse = (reason) => {
+        logRefusal({ action, link, ip, reason });
+        throw notFound(NOT_VALID);
+      };
+      if (!enabled()) refuse(link ? "switched_off" : "unknown");
+      if (!link) refuse("unknown");
+      if (link.revoked_at) refuse("revoked");
+      if (link.failed_attempts >= MAX_FAILED) refuse("locked");
+      if (link.expires_at < (/* @__PURE__ */ new Date()).toISOString()) refuse("expired");
+      return link;
+    }
+    function stored(link) {
+      if (!link.packet_enc) return { packet: null, names: null };
+      const s = JSON.parse(decrypt3(link.packet_enc));
+      return s && s.packet ? { packet: s.packet, names: Array.isArray(s.recipient_names) ? s.recipient_names : null } : { packet: s, names: null };
+    }
+    function header(link) {
+      const res = resourceOf(link.resource_id) || {};
+      const snap = link.kind === "packet" ? stored(link).names : null;
+      return {
+        kind: link.kind,
+        reference: link.reference,
+        expires_at: link.expires_at,
+        recipient: snap && snap[0] || res.name || null,
+        programme: invite().programme,
+        contact: invite().contact,
+        invite: invite(),
+        ack_status: link.ack_status,
+        ack_statuses: link.kind === "packet" ? ACK_STATUSES : ["received", "unable_to_reach"]
+      };
+    }
+    function stillCovered(link, creator) {
+      if (!creator || !creator.is_active) return { ok: false, reason: "creator_inactive" };
+      if (!require_auth2().canAccessClient(creator, link.client_id)) return { ok: false, reason: "creator_no_access" };
+      const client = db3.one(`SELECT deleted_at, merged_into FROM clients WHERE id=?`, link.client_id);
+      if (!client || client.deleted_at || client.merged_into) return { ok: false, reason: "client_removed" };
+      const referral = db3.one(`SELECT status FROM referrals WHERE id=?`, link.referral_id);
+      if (!referral || CLOSED_REFERRAL.includes(referral.status)) return { ok: false, reason: "referral_closed" };
+      const snap = stored(link).names;
+      const live = resourceOf(link.resource_id);
+      const res = snap && snap.length ? { name: snap[0], names: snap } : live && { name: live.name, names: resourceNames(live) };
+      if (!res) return { ok: false, reason: "recipient_not_covered" };
+      const restrictedSince = db3.one(`SELECT 1 FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled' AND updated_at > ?`, link.client_id, link.created_at);
+      if (restrictedSince) return { ok: false, reason: "restriction" };
+      try {
+        const basis = disclosure.requireBasis(link.client_id, { basis: "consent", consent_id: link.consent_id, recipient: res.names, allowed: ["consent"], restriction_reviewed: true, user: creator });
+        return { ok: true, basis, res };
+      } catch (e) {
+        return { ok: false, reason: e && e.extra && e.extra.recipientNotCovered ? "recipient_not_covered" : "consent_not_valid" };
+      }
+    }
+    function open3({ token: token2, code, claim, ip }) {
+      const link = usable(token2, ip, "referral_link.open");
+      const base = header(link);
+      const bump = (extra = {}) => db3.run(`UPDATE referral_links SET open_count=open_count+1, opened_at=COALESCE(opened_at, ?), updated_at=? ${extra.sql || ""} WHERE id=?`, db3.now(), db3.now(), ...extra.params || [], link.id);
+      if (link.kind === "contact_notice") {
+        bump();
+        audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { kind: link.kind, first: !link.opened_at } });
+        return { ...base };
+      }
+      if (link.claim_hash) {
+        if (!claim || hashClaim(link.id, claim) !== link.claim_hash) {
+          logRefusal({ action: "referral_link.open", link, ip, reason: "claimed_elsewhere" });
+          throw new HttpError3(409, "This referral has already been opened on another device or browser. If that was not you, contact the program that sent it: they can withdraw it and send a new one.", { claimed: true });
+        }
+      } else {
+        if (!code) return { ...base, code_required: true };
+        if (String(code).replace(/[\s-]/g, "").length !== 6 || /\D/.test(String(code).replace(/[\s-]/g, ""))) throw new HttpError3(400, "An access code is 6 digits. Check the code and enter it again.", { code_required: true, malformed: true });
+        if (hashCode(link.id, code) !== link.code_hash) {
+          db3.run(`UPDATE referral_links SET failed_attempts=failed_attempts+1, updated_at=? WHERE id=?`, db3.now(), link.id);
+          const left = MAX_FAILED - (link.failed_attempts + 1);
+          audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: "wrong_code", attempts: link.failed_attempts + 1 } });
+          if (left <= 0) throw notFound(NOT_VALID);
+          throw new HttpError3(401, `That access code is not right. ${left} ${left === 1 ? "try" : "tries"} left before the link is locked.`, { code_required: true, tries_left: left });
+        }
+      }
+      const creator = db3.one(`SELECT * FROM users WHERE id=?`, link.created_by);
+      const cover = stillCovered(link, creator);
+      if (!cover.ok) {
+        bump();
+        logRefusal({ action: "referral_link.open", link, ip, reason: cover.reason, details: { withheld: true } });
+        return { ...base, withheld: true };
+      }
+      const packet = stored(link).packet;
+      let newClaim = null;
+      db3.transaction(() => {
+        if (!link.claim_hash) {
+          newClaim = randomToken(32);
+          const parts = ["name", packet.client.preferred_name ? "preferred name" : null, packet.client.dob ? "date of birth" : null, packet.client.phone ? "phone" : null, packet.reason ? "reason for referral" : null, "urgency"].filter(Boolean);
+          const did = disclosure.record({
+            clientId: link.client_id,
+            consentId: cover.basis.consent.id,
+            recipient: cover.res.name,
+            purpose: "Referral for services",
+            what: `Secure referral link ${link.reference}: ${parts.join(", ")}`,
+            method: "secure referral link",
+            basis: "consent",
+            source: "referral_link",
+            sourceRef: link.id,
+            user: creator,
+            ip
+          });
+          bump({ sql: ", claim_hash=?, disclosure_id=?", params: [hashClaim(link.id, newClaim), did] });
+        } else bump();
+      });
+      audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { kind: link.kind, first: !link.claim_hash } });
+      return { ...base, packet, notice: disclosure.notice().text, claim: newClaim || void 0 };
+    }
+    function acknowledge({ token: token2, claim, status, by, note, ip }) {
+      const link = usable(token2, ip, "referral_link.ack");
+      if (!(link.kind === "packet" ? ACK_STATUSES : ["received", "unable_to_reach"]).includes(status)) throw badRequest("Choose what happened");
+      if (link.kind === "packet" && (!link.claim_hash || !claim || hashClaim(link.id, claim) !== link.claim_hash)) {
+        logRefusal({ action: "referral_link.ack", link, ip, reason: "not_claimed" });
+        throw forbidden("Open the referral with its access code first.");
+      }
+      if (link.kind === "contact_notice" && !link.opened_at) throw forbidden("Open the link first.");
+      const who = String(by || "").trim().slice(0, 120);
+      const text = link.kind === "packet" ? String(note || "").trim().slice(0, 1e3) : "";
+      if (!who) throw badRequest("Say who is acknowledging (your name and organisation)", { fields: { by: "required" } });
+      const res = resourceOf(link.resource_id) || { name: "the provider" };
+      db3.transaction(() => {
+        db3.run(`UPDATE referral_links SET ack_status=?, ack_at=?, ack_by_enc=?, ack_note_enc=?, updated_at=? WHERE id=?`, status, db3.now(), encrypt3(who), text ? encrypt3(text) : null, db3.now(), link.id);
+        const label = { received: "received it", accepted: "accepted the client", scheduled: "scheduled the client", declined: "declined", unable_to_reach: "could not reach the client" }[status];
+        const title = encrypt3(`${res.name} ${label} (secure referral link ${link.reference}) \u2014 confirm and record the outcome`);
+        const priority = status === "declined" || status === "unable_to_reach" ? "high" : "normal";
+        const mark = `(secure referral link ${link.reference})`;
+        const open4 = db3.all(`SELECT id, title_enc FROM tasks WHERE referral_id=? AND assigned_to=? AND created_by=? AND status IN ('open','in_progress')`, link.referral_id, link.created_by, link.created_by).find((t) => (dec2(t.title_enc) || "").includes(mark));
+        if (open4) db3.run(`UPDATE tasks SET title_enc=?, priority=?, due_at=?, updated_at=? WHERE id=?`, title, priority, (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), db3.now(), open4.id);
+        else db3.run(
+          `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`,
+          uuid2(),
+          link.client_id,
+          link.created_by,
+          link.created_by,
+          title,
+          (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+          priority,
+          link.referral_id
+        );
+      });
+      audit3.log({ user: null, action: "referral_link.ack", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { status, kind: link.kind } });
+      return { ok: true, ack_status: status };
+    }
+    module.exports = { SETTING, enabled, CLOSED_REFERRAL, REFUSALS_LOGGED_PER_HOUR, flushRefusals, KINDS, TTL_HOURS, DEFAULT_TTL_HOURS, MAX_FAILED, ACK_STATUSES, NOT_VALID, create: create3, revoke, revokeForUser, open: open3, acknowledge, listFor, present, invite, hashToken };
+  }
+});
+
 // server/caseload-default.js
 var require_caseload_default = __commonJS({
   "server/caseload-default.js"(exports, module) {
@@ -19142,8 +19532,9 @@ var require_scim = __commonJS({
     function guard(u) {
       if (emergencyAccounts().includes(String(u.username).toLowerCase())) throw new ScimError(403, `${u.username} is an emergency (break-glass) account and is managed in SUDS, not by provisioning`, "mutability");
     }
-    function cutOff(userId) {
+    function cutOff(userId, actor) {
       require_auth2().revokeAllForUser(userId);
+      require_referral_links().revokeForUser(userId, actor);
       return db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?), wipe_requested_at=COALESCE(wipe_requested_at, ?) WHERE user_id=?`, db3.now(), db3.now(), userId).changes;
     }
     function create3(body, actor, base) {
@@ -19215,7 +19606,7 @@ var require_scim = __commonJS({
       vals.push(db3.now());
       db3.transaction(() => {
         db3.run(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, ...vals, id);
-        if (deactivated) cutOff(id);
+        if (deactivated) cutOff(id, actor);
       });
       if (a.role && a.role !== u.role) require_caseload_default().onRoleChange(id, u.role, a.role, { actor });
       if (changed.length) audit3.log({ user: actor, action: deactivated ? "scim.user.deactivate" : action, entity: "user", entityId: id, details: { username: a.username || u.username, changed, ...a.role && a.role !== u.role ? { role: { from: u.role, to: a.role } } : {}, ...reactivated ? { reactivated: true } : {} } });
@@ -19233,7 +19624,7 @@ var require_scim = __commonJS({
       if (u.is_active) {
         db3.transaction(() => {
           db3.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=?`, db3.now(), id);
-          cutOff(id);
+          cutOff(id, actor);
         });
         audit3.log({ user: actor, action: "scim.user.deactivate", entity: "user", entityId: id, details: { username: u.username, via: "DELETE" } });
       }
@@ -19282,7 +19673,7 @@ var require_deprovision = __commonJS({
       let devices = 0;
       db3.transaction(() => {
         db3.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=? AND is_active=1`, db3.now(), u.id);
-        devices = require_scim().cutOff(u.id);
+        devices = require_scim().cutOff(u.id, by);
       });
       audit3.log({ user: by, action: "user.deprovisioned", entity: "user", entityId: u.id, details: { username: u.username, reason: `not seen at the identity provider for ${n} days`, last_seen_at: u.seen_at, devices_revoked: devices } });
     }
@@ -22889,9 +23280,12 @@ var require_ai_copilot = __commonJS({
       const failed = db3.one(`SELECT COUNT(*) n FROM ai_usage WHERE at >= ? AND NOT ${COUNTED_SQL}`, since).n;
       return { since, calls: drafts, attempts: t.attempts, input_tokens: t.input_tokens, output_tokens: t.output_tokens, errors, failed, by_feature: byFeature };
     }
+    var inFlight = 0;
+    var pending = () => inFlight;
     function status() {
       const s = settings();
       const used = usage().calls;
+      const reserved = used + inFlight;
       let reason = null;
       let code = null;
       const no = (c, r) => {
@@ -22904,7 +23298,7 @@ var require_ai_copilot = __commonJS({
       else if (!keyConfigured()) no("no_key", "The AI copilot is not configured on this server (no provider API key). Tell your administrator.");
       else if (endpointProblem()) no("endpoint", `The AI copilot is misconfigured on this server: ${endpointProblem()}.`);
       else if (!s.monthly_cap) no("cap", "The AI copilot is paused for this program. Write the documentation yourself as usual.");
-      else if (used >= s.monthly_cap) no("cap", `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? "" : "s"} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
+      else if (reserved >= s.monthly_cap) no("cap", `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? "" : "s"} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
       return { available: !reason, reason, code, enabled: s.enabled, attested: !!s.attestation, key_configured: keyConfigured(), model: s.model, monthly_cap: s.monthly_cap, used_this_month: used };
     }
     var esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -23283,9 +23677,10 @@ var require_ai_copilot = __commonJS({
         let wait = null;
         let failure = null;
         try {
-          res = await fetch(`${config2.ai.baseUrl}/v1/messages`, { method: "POST", headers, body: payload, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
+          res = await fetch(`${config2.ai.baseUrl}/v1/messages`, { method: "POST", headers, body: payload, redirect: "error", signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
         } catch (e) {
           if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new AiError("timeout", 504, "The AI provider did not answer in time. Your form is unchanged: try again, or write it yourself.");
+          if (e && e.cause && /redirect/i.test(String(e.cause.message || ""))) throw new AiError("redirect", 502, "The AI provider's address answered with a redirect, which SUDS does not follow. Your form is unchanged: write it yourself, and tell your administrator.");
           failure = new AiError("unreachable", 503, "The server could not reach the AI provider. Your form is unchanged: try again later, or write it yourself.");
           wait = retryWait(null);
         }
@@ -23334,6 +23729,14 @@ var require_ai_copilot = __commonJS({
     async function draft({ user, clientId, feature, pieces, build }) {
       const st = status();
       if (!st.available) throw new AiError(st.code === "cap" ? "cap" : "off", st.code === "cap" ? 429 : 409, st.reason, { ai_unavailable: st.code });
+      inFlight++;
+      try {
+        return await sendDraft({ user, clientId, feature, pieces, build });
+      } finally {
+        inFlight--;
+      }
+    }
+    async function sendDraft({ user, clientId, feature, pieces, build }) {
       const author = db3.one(`SELECT display_name FROM users WHERE id=?`, user.id);
       const ids = identifiersFor(clientId, author);
       const counts = {};
@@ -23371,6 +23774,7 @@ var require_ai_copilot = __commonJS({
       settings,
       attestation,
       status,
+      pending,
       usage,
       monthStart,
       keyConfigured,
@@ -23553,6 +23957,7 @@ var require_ai = __commonJS({
           details: { format, kind: v.kind, note_id: v.note_id || void 0 }
         });
         if (v.note_id) db3.run(`UPDATE notes SET ai_assisted=1, updated_at=? WHERE id=? AND ai_assisted=0`, db3.now(), v.note_id);
+        else require_notes().copilotDrafted(ctx.user.id, v.client_id);
         const secs = P2.NOTE_SECTIONS[format];
         const d = out2.data || {};
         const draft = secs ? { sections: Object.fromEntries(secs.map(([k]) => [k, s(d.sections && d.sections[k], 2e4)])) } : { narrative: s(d.narrative, 5e4) };
@@ -35463,7 +35868,12 @@ var require_notes2 = __commonJS({
       if (!auth3.hasPerm(ctx.user, kindPerm(v.kind, "write"))) throw forbidden(`You cannot author ${v.kind} notes`);
       if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
       auth3.assertClientAccess(ctx, v.client_id);
-      rules.assertWrite("notes", rules.toColumns("notes", v), ctx);
+      const cols2 = rules.toColumns("notes", v);
+      rules.assertWrite("notes", cols2, ctx);
+      if (Number(cols2.ai_assisted) && !v.ai_assisted) {
+        v.ai_assisted = 1;
+        v._ai_from_draft = true;
+      }
     }
     function insertNote(ctx, v) {
       const id = uuid2();
@@ -35491,7 +35901,7 @@ var require_notes2 = __commonJS({
         v.counseling_note ? 1 : 0,
         v.ai_assisted ? 1 : 0
       );
-      audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0, counseling_note: v.counseling_note ? true : void 0, with_visit: v._with_visit ? true : void 0, ai_assisted: v.ai_assisted ? true : void 0 } });
+      audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0, counseling_note: v.counseling_note ? true : void 0, with_visit: v._with_visit ? true : void 0, ai_assisted: v.ai_assisted ? true : void 0, ai_from_draft: v._ai_from_draft || void 0 } });
       return id;
     }
     module.exports = (r) => {
@@ -35580,7 +35990,10 @@ var require_notes2 = __commonJS({
         require_crud().assertFresh(ctx, n, "note");
         const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids, ai_assisted: shape.ai_assisted }, { partial: true, existing: n });
         if (v.ai_assisted !== void 0) v.ai_assisted = v.ai_assisted || Number(n.ai_assisted) ? 1 : 0;
-        rules.assertWrite("notes", { id: n.id, ...rules.toColumns("notes", v) }, ctx, { existing: n });
+        const cols2 = { id: n.id, ...rules.toColumns("notes", v) };
+        rules.assertWrite("notes", cols2, ctx, { existing: n });
+        const fromDraft = Number(cols2.ai_assisted) === 1 && !Number(n.ai_assisted) && !v.ai_assisted;
+        if (fromDraft) v.ai_assisted = 1;
         const sets = [];
         const params = [];
         for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected", "counseling_note", "cosign_requested", "ai_assisted"]) if (v[k] !== void 0) {
@@ -35608,7 +36021,7 @@ var require_notes2 = __commonJS({
         if (sets.length) db3.run(`UPDATE notes SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, n.id);
         if (v.counseling_note !== void 0) require_notes().reissueAddenda(n.id, n.counseling_note, v.counseling_note ? 1 : 0);
         const flagged = v.counseling_note !== void 0 && !Number(n.counseling_note) && !!v.counseling_note;
-        audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v), counseling_note_set: flagged || void 0 } });
+        audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v), counseling_note_set: flagged || void 0, ai_from_draft: fromDraft || void 0 } });
         return { ok: true, updated_at: stamp2 };
       });
       r.post("/api/notes/:id/request-cosign", auth3.requireAuth, (ctx) => {
@@ -37059,350 +37472,6 @@ var require_prevention2 = __commonJS({
         afterLoad: (ctx, row) => decodeNotes(row)
       });
     };
-  }
-});
-
-// server/referral-links.js
-var require_referral_links = __commonJS({
-  "server/referral-links.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var disclosure = require_disclosure();
-    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2, randomToken, sha256: sha2562 } = require_crypto();
-    var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
-    var KINDS = ["packet", "contact_notice"];
-    var TTL_HOURS = [24, 72, 168];
-    var DEFAULT_TTL_HOURS = 72;
-    var MAX_FAILED = 5;
-    var ACK_STATUSES = ["received", "accepted", "scheduled", "declined", "unable_to_reach"];
-    var NOT_VALID = "This link is not valid. It may have expired or been withdrawn. Contact the program that sent it.";
-    var CLOSED_REFERRAL = ["declined_by_client", "declined_by_provider", "no_show", "completed", "closed"];
-    var SETTING = "referral_links_enabled";
-    var enabled = () => db3.getSetting(SETTING, "0") === "1";
-    var hashToken = (t) => sha2562(`referral-link:${t}`);
-    var hashCode = (id, code) => sha2562(`referral-link-code:${id}:${String(code || "").replace(/\D/g, "")}`);
-    var hashClaim = (id, claim) => sha2562(`referral-link-claim:${id}:${claim}`);
-    function newCode() {
-      const n = (init_crypto2(), __toCommonJS(crypto_exports)).randomInt(0, 1e6);
-      return String(n).padStart(6, "0");
-    }
-    function newReference() {
-      const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-      const b = (init_crypto2(), __toCommonJS(crypto_exports)).randomBytes(6);
-      return "R-" + [...b].map((x) => A[x % A.length]).join("");
-    }
-    var dec2 = (v) => {
-      if (!v) return null;
-      try {
-        return decrypt3(v);
-      } catch {
-        return null;
-      }
-    };
-    function resourceOf(resourceId) {
-      return db3.one(`SELECT id, name, organization FROM resources WHERE id=?`, resourceId);
-    }
-    function resourceNames(r) {
-      return r ? [r.name, r.organization].filter(Boolean) : [];
-    }
-    function invite() {
-      const url = db3.getSetting("referral_invite_url", null);
-      return { url: url && /^https:\/\//i.test(url) ? url : null, contact: db3.getSetting("program_contact", null) || null, programme: db3.getSetting("org_name", null) || "The referring program" };
-    }
-    function present(l) {
-      const now2 = (/* @__PURE__ */ new Date()).toISOString();
-      const status = l.revoked_at ? "revoked" : l.failed_attempts >= MAX_FAILED ? "locked" : l.expires_at < now2 && !l.opened_at ? "expired" : l.ack_status ? "acknowledged" : l.opened_at ? "opened" : l.expires_at < now2 ? "expired" : "sent";
-      return {
-        id: l.id,
-        referral_id: l.referral_id,
-        client_id: l.client_id,
-        resource_id: l.resource_id,
-        kind: l.kind,
-        reference: l.reference,
-        expires_at: l.expires_at,
-        status,
-        opened_at: l.opened_at,
-        open_count: l.open_count,
-        failed_attempts: l.failed_attempts,
-        ack_status: l.ack_status,
-        ack_at: l.ack_at,
-        ack_by: dec2(l.ack_by_enc),
-        ack_note: dec2(l.ack_note_enc),
-        revoked_at: l.revoked_at,
-        created_at: l.created_at,
-        created_by_name: l.created_by_name || null,
-        accounted: !!l.disclosure_id
-      };
-    }
-    function listFor(referralId) {
-      return db3.all(`SELECT l.*, u.display_name AS created_by_name FROM referral_links l JOIN users u ON u.id=l.created_by WHERE l.referral_id=? ORDER BY l.created_at DESC`, referralId).map(present);
-    }
-    function create3({ referral, user, ip, v }) {
-      const kind = v.kind;
-      if (!enabled()) throw new HttpError3(409, "Secure referral links are switched off for this program. An administrator can switch them on in Privacy & Part 2 once counsel has reviewed them.", { referral_links_off: true });
-      if (!KINDS.includes(kind)) throw badRequest(`kind must be one of ${KINDS.join(", ")}`);
-      const hours = v.expires_hours === void 0 || v.expires_hours === null ? DEFAULT_TTL_HOURS : Number(v.expires_hours);
-      if (!TTL_HOURS.includes(hours)) throw badRequest(`A link lasts ${TTL_HOURS.join(", ")} hours (7 days at most)`);
-      const res = resourceOf(referral.resource_id);
-      if (!res) throw badRequest("The referral's provider is not in the directory");
-      const id = uuid2();
-      const token2 = randomToken(32);
-      const reference = newReference();
-      const expires = new Date(Date.now() + hours * 36e5).toISOString();
-      let code = null;
-      let packet = null;
-      let consentId = null;
-      if (kind === "packet") {
-        const basis = disclosure.requireBasis(referral.client_id, {
-          basis: "consent",
-          consent_id: v.consent_id || referral.consent_id,
-          recipient: resourceNames(res),
-          allowed: ["consent"],
-          restriction_reviewed: v.restriction_reviewed,
-          user
-        });
-        consentId = basis.consent.id;
-        const c = db3.one(`SELECT first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients WHERE id=?`, referral.client_id);
-        const message = String(v.message || "").trim().slice(0, 1e3);
-        packet = {
-          client: {
-            name: [dec2(c.first_name_enc), dec2(c.last_name_enc)].filter(Boolean).join(" "),
-            preferred_name: dec2(c.preferred_name_enc) || void 0,
-            dob: v.include_dob ? dec2(c.dob_enc) || void 0 : void 0,
-            phone: v.include_phone ? dec2(c.phone_enc) || void 0 : void 0
-          },
-          reason: message || null,
-          urgency: referral.urgency || "routine",
-          referred_at: referral.referred_at,
-          referred_by: user.display_name || user.username,
-          recipient: res.name
-        };
-        code = newCode();
-        packet = { packet, recipient_names: resourceNames(res) };
-      }
-      db3.run(
-        `INSERT INTO referral_links(id,referral_id,client_id,resource_id,kind,token_hash,code_hash,consent_id,packet_enc,reference,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-        id,
-        referral.id,
-        referral.client_id,
-        referral.resource_id,
-        kind,
-        hashToken(token2),
-        code ? hashCode(id, code) : null,
-        consentId,
-        packet ? encrypt3(JSON.stringify(packet)) : null,
-        reference,
-        expires,
-        user.id
-      );
-      audit3.log({
-        user,
-        action: "referral_link.create",
-        entity: "referral_link",
-        entityId: id,
-        clientId: referral.client_id,
-        ip,
-        details: { kind, referral_id: referral.id, consent_id: consentId || void 0, expires_hours: hours, phone: kind === "packet" ? !!v.include_phone : void 0, dob: kind === "packet" ? !!v.include_dob : void 0 }
-      });
-      return { id, kind, reference, expires_at: expires, token: token2, code, path: `/referral-link.html#${token2}` };
-    }
-    function revoke({ link, user, ip }) {
-      if (link.revoked_at) return present(link);
-      db3.run(`UPDATE referral_links SET revoked_at=?, revoked_by=?, updated_at=? WHERE id=?`, db3.now(), user.id, db3.now(), link.id);
-      audit3.log({ user, action: "referral_link.revoke", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { kind: link.kind, opened: !!link.opened_at } });
-      return present(db3.one(`SELECT * FROM referral_links WHERE id=?`, link.id));
-    }
-    var REFUSALS_LOGGED_PER_HOUR = 10;
-    var REFUSAL_WINDOW_MS = 36e5;
-    var refusals = /* @__PURE__ */ new Map();
-    function summarise(key, w) {
-      if (!w.extra) return;
-      const addresses = [...w.byIp.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([ip, n]) => ({ ip, n }));
-      audit3.log({
-        user: null,
-        action: w.action,
-        entity: "referral_link",
-        entityId: w.linkId,
-        clientId: w.clientId,
-        ip: null,
-        success: false,
-        details: { reason: key === "unknown" ? "unknown_summary" : "refused_summary", count: w.extra, window_start: new Date(w.start).toISOString(), window_end: new Date(Math.min(Date.now(), w.start + REFUSAL_WINDOW_MS)).toISOString(), addresses }
-      });
-    }
-    function flushRefusals() {
-      for (const [key, w] of refusals) summarise(key, w);
-      refusals.clear();
-    }
-    function logRefusal({ action, link, ip, reason }) {
-      const key = link ? link.id : "unknown";
-      const now2 = Date.now();
-      let w = refusals.get(key);
-      if (w && now2 - w.start >= REFUSAL_WINDOW_MS) {
-        summarise(key, w);
-        refusals.delete(key);
-        w = null;
-      }
-      if (!w) {
-        w = { start: now2, logged: 0, extra: 0, byIp: /* @__PURE__ */ new Map(), action, linkId: link ? link.id : null, clientId: link ? link.client_id : null };
-        refusals.set(key, w);
-      }
-      if (w.logged < REFUSALS_LOGGED_PER_HOUR) {
-        w.logged++;
-        audit3.log({ user: null, action, entity: "referral_link", entityId: w.linkId, clientId: w.clientId, ip, success: false, details: { reason } });
-        if (w.logged === REFUSALS_LOGGED_PER_HOUR) audit3.log({ user: null, action, entity: "referral_link", entityId: w.linkId, clientId: w.clientId, ip, success: false, details: { reason: "counting", note: "further refusals this hour are counted and summarised, not written one by one" } });
-        return;
-      }
-      w.extra++;
-      w.byIp.set(ip || "?", (w.byIp.get(ip || "?") || 0) + 1);
-      if (refusals.size > 5e3) flushRefusals();
-    }
-    function usable(token2, ip, action) {
-      const t = String(token2 || "");
-      const link = /^[A-Za-z0-9_-]{40,64}$/.test(t) ? db3.one(`SELECT * FROM referral_links WHERE token_hash=?`, hashToken(t)) : null;
-      const refuse = (reason) => {
-        logRefusal({ action, link, ip, reason });
-        throw notFound(NOT_VALID);
-      };
-      if (!enabled()) refuse(link ? "switched_off" : "unknown");
-      if (!link) refuse("unknown");
-      if (link.revoked_at) refuse("revoked");
-      if (link.failed_attempts >= MAX_FAILED) refuse("locked");
-      if (link.expires_at < (/* @__PURE__ */ new Date()).toISOString()) refuse("expired");
-      return link;
-    }
-    function stored(link) {
-      if (!link.packet_enc) return { packet: null, names: null };
-      const s = JSON.parse(decrypt3(link.packet_enc));
-      return s && s.packet ? { packet: s.packet, names: Array.isArray(s.recipient_names) ? s.recipient_names : null } : { packet: s, names: null };
-    }
-    function header(link) {
-      const res = resourceOf(link.resource_id) || {};
-      const snap = link.kind === "packet" ? stored(link).names : null;
-      return {
-        kind: link.kind,
-        reference: link.reference,
-        expires_at: link.expires_at,
-        recipient: snap && snap[0] || res.name || null,
-        programme: invite().programme,
-        contact: invite().contact,
-        invite: invite(),
-        ack_status: link.ack_status,
-        ack_statuses: link.kind === "packet" ? ACK_STATUSES : ["received", "unable_to_reach"]
-      };
-    }
-    function stillCovered(link, creator) {
-      const client = db3.one(`SELECT deleted_at, merged_into FROM clients WHERE id=?`, link.client_id);
-      if (!client || client.deleted_at || client.merged_into) return { ok: false, reason: "client_removed" };
-      const referral = db3.one(`SELECT status FROM referrals WHERE id=?`, link.referral_id);
-      if (!referral || CLOSED_REFERRAL.includes(referral.status)) return { ok: false, reason: "referral_closed" };
-      const snap = stored(link).names;
-      const live = resourceOf(link.resource_id);
-      const res = snap && snap.length ? { name: snap[0], names: snap } : live && { name: live.name, names: resourceNames(live) };
-      if (!res) return { ok: false, reason: "recipient_not_covered" };
-      const restrictedSince = db3.one(`SELECT 1 FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled' AND updated_at > ?`, link.client_id, link.created_at);
-      if (restrictedSince) return { ok: false, reason: "restriction" };
-      try {
-        const basis = disclosure.requireBasis(link.client_id, { basis: "consent", consent_id: link.consent_id, recipient: res.names, allowed: ["consent"], restriction_reviewed: true, user: creator });
-        return { ok: true, basis, res };
-      } catch (e) {
-        return { ok: false, reason: e && e.extra && e.extra.recipientNotCovered ? "recipient_not_covered" : "consent_not_valid" };
-      }
-    }
-    function open3({ token: token2, code, claim, ip }) {
-      const link = usable(token2, ip, "referral_link.open");
-      const base = header(link);
-      const bump = (extra = {}) => db3.run(`UPDATE referral_links SET open_count=open_count+1, opened_at=COALESCE(opened_at, ?), updated_at=? ${extra.sql || ""} WHERE id=?`, db3.now(), db3.now(), ...extra.params || [], link.id);
-      if (link.kind === "contact_notice") {
-        bump();
-        audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { kind: link.kind, first: !link.opened_at } });
-        return { ...base };
-      }
-      if (link.claim_hash) {
-        if (!claim || hashClaim(link.id, claim) !== link.claim_hash) {
-          audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: "claimed_elsewhere" } });
-          throw new HttpError3(409, "This referral has already been opened on another device or browser. If that was not you, contact the program that sent it: they can withdraw it and send a new one.", { claimed: true });
-        }
-      } else {
-        if (!code) return { ...base, code_required: true };
-        if (String(code).replace(/[\s-]/g, "").length !== 6 || /\D/.test(String(code).replace(/[\s-]/g, ""))) throw new HttpError3(400, "An access code is 6 digits. Check the code and enter it again.", { code_required: true, malformed: true });
-        if (hashCode(link.id, code) !== link.code_hash) {
-          db3.run(`UPDATE referral_links SET failed_attempts=failed_attempts+1, updated_at=? WHERE id=?`, db3.now(), link.id);
-          const left = MAX_FAILED - (link.failed_attempts + 1);
-          audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: "wrong_code", attempts: link.failed_attempts + 1 } });
-          if (left <= 0) throw notFound(NOT_VALID);
-          throw new HttpError3(401, `That access code is not right. ${left} ${left === 1 ? "try" : "tries"} left before the link is locked.`, { code_required: true, tries_left: left });
-        }
-      }
-      const creator = db3.one(`SELECT * FROM users WHERE id=?`, link.created_by);
-      const cover = stillCovered(link, creator);
-      if (!cover.ok) {
-        bump();
-        audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: cover.reason, withheld: true } });
-        return { ...base, withheld: true };
-      }
-      const packet = stored(link).packet;
-      let newClaim = null;
-      db3.transaction(() => {
-        if (!link.claim_hash) {
-          newClaim = randomToken(32);
-          const parts = ["name", packet.client.preferred_name ? "preferred name" : null, packet.client.dob ? "date of birth" : null, packet.client.phone ? "phone" : null, packet.reason ? "reason for referral" : null, "urgency"].filter(Boolean);
-          const did = disclosure.record({
-            clientId: link.client_id,
-            consentId: cover.basis.consent.id,
-            recipient: cover.res.name,
-            purpose: "Referral for services",
-            what: `Secure referral link ${link.reference}: ${parts.join(", ")}`,
-            method: "secure referral link",
-            basis: "consent",
-            source: "referral_link",
-            sourceRef: link.id,
-            user: creator,
-            ip
-          });
-          bump({ sql: ", claim_hash=?, disclosure_id=?", params: [hashClaim(link.id, newClaim), did] });
-        } else bump();
-      });
-      audit3.log({ user: null, action: "referral_link.open", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { kind: link.kind, first: !link.claim_hash } });
-      return { ...base, packet, notice: disclosure.notice().text, claim: newClaim || void 0 };
-    }
-    function acknowledge({ token: token2, claim, status, by, note, ip }) {
-      const link = usable(token2, ip, "referral_link.ack");
-      if (!(link.kind === "packet" ? ACK_STATUSES : ["received", "unable_to_reach"]).includes(status)) throw badRequest("Choose what happened");
-      if (link.kind === "packet" && (!link.claim_hash || !claim || hashClaim(link.id, claim) !== link.claim_hash)) {
-        audit3.log({ user: null, action: "referral_link.ack", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, success: false, details: { reason: "not_claimed" } });
-        throw forbidden("Open the referral with its access code first.");
-      }
-      if (link.kind === "contact_notice" && !link.opened_at) throw forbidden("Open the link first.");
-      const who = String(by || "").trim().slice(0, 120);
-      const text = link.kind === "packet" ? String(note || "").trim().slice(0, 1e3) : "";
-      if (!who) throw badRequest("Say who is acknowledging (your name and organisation)", { fields: { by: "required" } });
-      const res = resourceOf(link.resource_id) || { name: "the provider" };
-      db3.transaction(() => {
-        db3.run(`UPDATE referral_links SET ack_status=?, ack_at=?, ack_by_enc=?, ack_note_enc=?, updated_at=? WHERE id=?`, status, db3.now(), encrypt3(who), text ? encrypt3(text) : null, db3.now(), link.id);
-        const label = { received: "received it", accepted: "accepted the client", scheduled: "scheduled the client", declined: "declined", unable_to_reach: "could not reach the client" }[status];
-        const title = encrypt3(`${res.name} ${label} (secure referral link ${link.reference}) \u2014 confirm and record the outcome`);
-        const priority = status === "declined" || status === "unable_to_reach" ? "high" : "normal";
-        const mark = `(secure referral link ${link.reference})`;
-        const open4 = db3.all(`SELECT id, title_enc FROM tasks WHERE referral_id=? AND assigned_to=? AND created_by=? AND status IN ('open','in_progress')`, link.referral_id, link.created_by, link.created_by).find((t) => (dec2(t.title_enc) || "").includes(mark));
-        if (open4) db3.run(`UPDATE tasks SET title_enc=?, priority=?, due_at=?, updated_at=? WHERE id=?`, title, priority, (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), db3.now(), open4.id);
-        else db3.run(
-          `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`,
-          uuid2(),
-          link.client_id,
-          link.created_by,
-          link.created_by,
-          title,
-          (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
-          priority,
-          link.referral_id
-        );
-      });
-      audit3.log({ user: null, action: "referral_link.ack", entity: "referral_link", entityId: link.id, clientId: link.client_id, ip, details: { status, kind: link.kind } });
-      return { ok: true, ack_status: status };
-    }
-    module.exports = { SETTING, enabled, CLOSED_REFERRAL, REFUSALS_LOGGED_PER_HOUR, flushRefusals, KINDS, TTL_HOURS, DEFAULT_TTL_HOURS, MAX_FAILED, ACK_STATUSES, NOT_VALID, create: create3, revoke, open: open3, acknowledge, listFor, present, invite, hashToken };
   }
 });
 
@@ -43217,6 +43286,7 @@ var require_users2 = __commonJS({
           sets.push("mfa_enabled=0", "mfa_secret_enc=NULL");
         }
         if (v.is_active === 0) auth3.revokeAllForUser(u.id);
+        if (v.is_active === 0 && u.is_active) require_referral_links().revokeForUser(u.id, ctx.user);
         let wiped2 = [];
         const wipeDevices = v.wipe_devices === void 0 ? true : !!v.wipe_devices;
         if ((v.is_active === 0 || v.password) && wipeDevices) wiped2 = devices.requestWipeForUser(u.id, { actor: ctx.user, ip: ctx.ip, reason: v.is_active === 0 ? "deactivated" : "password_reset" });
