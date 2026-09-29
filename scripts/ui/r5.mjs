@@ -285,12 +285,19 @@ try {
   // ------------------------------------------ retest: an unsent visit left by navigating away is offered back
   {
     const { page, go } = nav;
+    // The draft is kept 400 ms after the last keystroke: wait until it has been kept since the last input (as
+    // ux13 does), not a fixed 700 ms a slow runner could lose.
+    const lastInput = () => { const at = () => { window.__r5LastInput = Date.now(); }; document.addEventListener('input', at, true); document.addEventListener('change', at, true); };
+    await page.addInitScript(lastInput); await page.evaluate(lastInput);
+    const draftKept = async (why) => ok(await until(() => page.evaluate(async () => {
+      const t = (await import('./app.js')).draftSavedAt('intervention:new'); return t > 0 && t >= (window.__r5LastInput || 0);
+    }), { timeout: 10000, every: 50 }), why);
     await go('dashboard');
     const logVisit = async () => { await page.locator('button.quick:visible').first().click(); await page.click(`${top} .quick-list button:has-text("Log a visit")`); await page.waitForSelector('.modal select[name=type]'); await settle(page); };
     await logVisit();
     await page.selectOption('.modal select[name=type]', 'outreach');
     await page.fill('.modal textarea[name=summary]', `r5 left unsent ${tag}`);
-    await page.waitForTimeout(700); // the draft is kept 400 ms after the last keystroke
+    await draftKept('the unsent visit is kept as a draft');
     await page.evaluate(() => { location.hash = '#/clients'; }); await settle(page);
     await page.waitForSelector('.main h1'); await closeModals(page);
     ok((await page.textContent('.main h1')).includes('Clients'), 'navigated away without saving');
@@ -301,7 +308,7 @@ try {
     await page.click('.modal [data-resume-answer="resume"]'); await settle(page);
     eq(await page.inputValue('.modal textarea[name=summary]'), `r5 left unsent ${tag}`, 'Resume restores the summary');
     eq(await page.inputValue('.modal select[name=type]'), 'outreach', 'and what was done');
-    await page.waitForTimeout(700); await closeModals(page);
+    await draftKept('the resumed visit is still kept'); await closeModals(page);
     await logVisit();
     ok(await page.$('.modal [data-resume-answer="discard"]'), 'still offered until it is saved or discarded');
     await page.click('.modal [data-resume-answer="discard"]'); await settle(page);
