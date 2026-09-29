@@ -17,7 +17,7 @@ function assertNoPatternLeak(name, worlds, T) {
   assert.deepEqual(leaks, [], `${name}, T=${T}: ${JSON.stringify(leaks.slice(0, 6), null, 1)}`);
 }
 
-test('algorithm-aware attacker: since 1.17.0 the events by month are printed nowhere - each month\'s events and events not reversed range as the rule asks, over every world (T = 3, and 11 in the thorough run; T = 5 in publication-release.test.js's two-month family)', () => {
+test('algorithm-aware attacker: since 1.17.0 the events by month are printed nowhere - each month\'s events and events not reversed range as the rule asks, over every world (T = 3, and 11 in the thorough run; T = 5 in the two-month family of publication-release.test.js)', () => {
   // docs/architecture/ADR-0009, "Events by month: not published". The model has no cell for them, and states what the
   // months said instead: the reversals are at most the events.
   const RA = require('../server/release-audit');
