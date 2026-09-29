@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.17.1 — 2026-09-29
 
 ### Security (review of 1.17.0, r11; all Low)
 
