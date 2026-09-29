@@ -575,8 +575,8 @@ module.exports = (r) => {
     const noticeEvent = (x) => {
       let title = '', desc = '';
       try { title = decrypt(x.title_enc || ''); desc = x.description_enc ? decrypt(x.description_enc) : ''; } catch { /* named below without them */ }
-      const by = db.one(`SELECT u.display_name FROM audit_log a JOIN users u ON u.id=a.user_id WHERE a.action='client.change_notice' AND a.entity_id=? AND a.details LIKE ? ORDER BY a.id DESC LIMIT 1`, id, `%"task":"${x.id}"%`);
-      const editor = (by && by.display_name) || (/^(.+?) changed /.exec(title) || [])[1] || 'Someone';
+      const by = db.one(`SELECT display_name FROM users WHERE id=?`, require('../rules/tasks').noticeBy(x));
+      const editor = (by && by.display_name) || 'Someone off the care team';
       const fields = (/^Changed: (.*)$/m.exec(desc) || /\((.*)\)\s*$/.exec(title) || [])[1] || 'the record';
       return { kind: 'notice', notice: true, id: x.id, at: x.created_at, title: `${editor} (not on the care team) changed: ${fields} — ${x.worker || 'the primary worker'} was told`, detail: null, worker: editor, meta: {} };
     };

@@ -170,8 +170,8 @@ flagged. Each is an entry in the expectations file.
 | interventions, calls, overdose, time, tasks, expenditures | another worker's record with no client could be deleted by a tombstone | refused, as over REST |
 | care plan, assessments, CalOMS | a module switched off at the office took pushes silently | flagged (REST refuses new work) |
 | clients | an edit winning last-write-wins could lift a legal hold, set `deleted_at` or `merged_into` | those columns are the office's unless the user holds clients:legal-hold / clients:all / clients:merge; impossible contact details and closing a client with an episode open are flagged |
-| assignments | a deactivated worker could be assigned; a discharge's end of the care team was refused without assignments:manage | the first refuses; the second lands, as POST /api/episodes/:id/close does it: from 1.16.3 only for a discharge of an episode the office holds open, and another worker's assignment only for the care team or a manager |
-| episodes | a second open episode, a discharge before admission, deleting an episode | flagged (refused from someone off the care team, 1.16.3); refused; ignored (no route deletes one) |
+| assignments | a deactivated worker could be assigned; a discharge's end of the care team was refused without assignments:manage | the first refuses; the second lands, as POST /api/episodes/:id/close does it: from 1.16.3 only for a discharge of an episode the office holds open, and another worker's assignment only for the care team or a manager; from 1.16.4 only for a discharge or re-admission that landed in the same push (these rows wait for it: the rules' `later` hook), a worker's own assignment without assignments:manage only on a client the same push creates, and every assignment a push creates, ends or restores is audited (`via: sync`) |
+| episodes | a second open episode, a discharge before admission, deleting an episode | flagged (refused from someone off the care team, 1.16.3; from 1.16.4 a re-admission is refused, as POST /reopen refuses it, and a close counts only if it landed); refused; ignored (no route deletes one). From 1.16.4 a new episode pushed already closed with past dates is the care team's or a manager's |
 | interventions | a clientless case-management visit, a cost with no line or a line of another fund | refused (a cost outside its fund's period is flagged) |
 | overdose events | `reported_by` could name anyone | attribution rule as for visits |
 | expenditures | an approved item's amount could be changed by its submitter; an inactive fund or a line of another fund | refused; flagged; refused |
@@ -214,8 +214,18 @@ changed in a pull's window that its reader may not read (a draft flagged as a SU
 pulled it) is named in `dropped_rows` with its addenda, not left out in silence (`server/routes/sync.js`
 `exportInto`; M3, `test/counseling-drop-device.test.js`): from 1.16.3 only a note flagged in that window and written
 before it, and a shared device keeps a named row another account on it may read, or one with unsent changes
-(security review of 1.16.2, M2; `test/shared-device-drop.test.js`). A change notice is a to-do the audit entry of
-the edit it reports names (`client.change_notice`), never one recognised by its text (L3). A tombstone for shared reference data (resources, templates) still needs `records:manage-others`
+(security review of 1.16.2, M2; `test/shared-device-drop.test.js`). From 1.16.4 the office sends what makes the note
+unreadable with its drop (`counseling_note`, `author_id`, `cosigned_by`); the device marks its copy so first and
+judges the other accounts against that, so a device only navigators use drops it and one a clinician shares keeps it
+hidden from the navigators (security review of 1.16.3, N1; `test/shared-device-navigators.test.js`). Another account's
+permissions there are those the device holds for it: its role and active state as of the last sync by anyone, its own
+grants and denies as of its own last sync on that device. A pull of several pages carries where its first page started
+(`~from.` in the cursor), so a flag is named on whichever page carries the note (N6). A change notice is a to-do the
+audit entry of the edit it reports names (`client.change_notice`), never one recognised by its text (L3; the 1.16.1
+rule is gone in 1.16.4, N5); a pull names the notices among its to-dos (`notices`, with whose edit each reports), and a
+device takes the office's word for those rows only. Only the worker a notice was sent to changes it (marks it seen); a
+manager may delete one. A push closes another worker's to-do only as part of a discharge of its client that landed in
+the same push, by the care team or a manager (N3). A tombstone for shared reference data (resources, templates) still needs `records:manage-others`
 unless the table's rules say whose a row is (a resource photo: anyone who keeps the directory, as over REST);
 CalOMS answers are validated by `server/caloms.js` over REST only.
 

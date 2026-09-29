@@ -26,6 +26,8 @@ const DISCHARGE = ['closed_at', 'discharge_reason', 'discharge_disposition', 'di
 /** On the client's care team, or a manager: who may end the team with a discharge. */
 const standing = (user, clientId) => auth.hasPerm(user, 'records:manage-others')
   || !!db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${auth.activeAssignment()}`, clientId, user.id);
+/** Does this pushed row discharge an episode the office holds open? */
+const closes = (x) => !!x && x.status === 'closed' && typeof x.id === 'string' && !!db.one(`SELECT 1 FROM episodes WHERE id=? AND status='open'`, x.id);
 const mayDischarge = (user, row) => (row.opened_by === user.id || standing(user, row.client_id)
   ? null : notPermitted('Only the client\'s care team, the person who opened this episode, or a supervisor can discharge or re-admit it'));
 
@@ -40,6 +42,16 @@ module.exports = define({
     closed_at: { type: 'date' },
   },
   editableBy: mayDischarge,
+  // A discharge is applied before an admission in the same push, so the one-open-episode check sees what landed.
+  order: (rows) => { const first = new Set(rows.filter(closes)); return [...first, ...rows.filter(r => !first.has(r))]; },
+  // The discharges and re-admissions that landed, for the care team they end or restore (assignments.js endedByEpisode).
+  afterApply(row, o, c) {
+    const e = c.existing; const st = c.session.state.assignments; if (!e || !st) return;
+    const now = row.status !== undefined ? row.status : e.status;
+    const k = st.episodes.get(e.client_id) || { closed: new Set(), reopened: new Set() }; st.episodes.set(e.client_id, k);
+    if (e.status === 'open' && now === 'closed' && (row.closed_at || e.closed_at)) k.closed.add(row.closed_at || e.closed_at);
+    else if (e.status === 'closed' && now === 'open' && e.closed_at) k.reopened.add(e.closed_at);
+  },
   check(row, c) {
     const e = c.existing || {};
     const val = (k) => (row[k] !== undefined ? row[k] : e[k]);
@@ -49,14 +61,23 @@ module.exports = define({
       out.push(refuse('has a value the office does not accept (it closes before it was opened)', { message: `The discharge date cannot be before the episode was opened (${String(opened).slice(0, 10)})` }));
     }
     // One open episode per client. A device that opened one offline while the office opened another has two
-    // records of one admission: the device's lands (the work happened) and the office is told to reconcile them.
+    // records of one admission: the care team's device's lands (the work happened) and the office is told to
+    // reconcile them. A close earlier in the same push counts only if it landed (the closes go first: `order`), and
+    // a re-admission while another episode is open is refused, as POST /reopen refuses it (security review of
+    // 1.16.3, N2 and N4).
     const opening = (val('status') || 'open') === 'open' && (!c.existing || e.status !== 'open');
     if (opening) {
       const clientId = c.existing ? e.client_id : row.client_id;
-      const closing = new Set(((c.session && c.session.tables.episodes) || []).filter(x => x && x.status === 'closed').map(x => x.id));
-      const other = db.all(`SELECT id FROM episodes WHERE client_id=? AND status='open' AND id<>?`, clientId, row.id || '').filter(x => !closing.has(x.id));
-      if (other.length && !standing(c.user, clientId)) out.push(refuse('not permitted: the client already has an open episode at the office, and only their care team or a supervisor can open another', { message: 'This client already has an open episode. Close it before opening another.' }));
+      const other = db.all(`SELECT id FROM episodes WHERE client_id=? AND status='open' AND id<>?`, clientId, row.id || '');
+      if (other.length && c.existing) out.push(refuse('not permitted: the client already has another open episode at the office; discharge it before re-admitting this one', { message: 'This client already has an open episode. Discharge it first, or record this as that episode.' }));
+      else if (other.length && !standing(c.user, clientId)) out.push(refuse('not permitted: the client already has an open episode at the office, and only their care team or a supervisor can open another', { message: 'This client already has an open episode. Close it before opening another.' }));
       else if (other.length) out.push(flag('was accepted, but the client already had an open episode at the office; a supervisor should close one of the two', { code: 'second_open_episode', message: 'This client already has an open episode. Close it before opening another.' }));
+    }
+    // An admission and discharge recorded together, already over, are the care team's to record: from anyone else,
+    // only one of today's (a contact opened and closed offline), never a past one reports would count (N4).
+    const recent = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    if (!c.existing && val('status') === 'closed' && [opened, closed].some(d => d && String(d).slice(0, 10) < recent) && !standing(c.user, row.client_id)) {
+      out.push(refuse('not permitted: only the client\'s care team or a supervisor can record a past admission and discharge', { status: 403, message: 'Only the client\'s care team or a supervisor can record a past admission and discharge' }));
     }
     return out;
   },

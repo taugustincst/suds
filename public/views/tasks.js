@@ -33,7 +33,8 @@ export function changeNotice(t) {
   if (!t || t.notice !== true) return null;
   const m = /^(.+?) changed (.+?)'s record\b/.exec(t.title || '') || [];
   const listed = (/^Changed: (.*)$/m.exec(t.description || '') || /\((.*)\)\s*$/.exec(t.title || '') || [])[1] || '';
-  return { editor: m[1] || 'Someone off the care team', code: m[2] || t.client_code || 'the client', fields: listed.split(', ').map(x => x.trim()).filter(Boolean) };
+  // Who made the change is the audit entry's (`notice_by`), never the title's words, which its holder can edit (r9 N5).
+  return { editor: t.notice_by || 'Someone off the care team', code: m[2] || t.client_code || 'the client', fields: listed.split(', ').map(x => x.trim()).filter(Boolean) };
 }
 /** A change notice, read-only: who changed which fields, the client, and Mark as seen for the person told. */
 export async function openChangeNotice(t, { onDone } = {}) {

@@ -545,7 +545,8 @@ test('a client created in the field syncs with the assignment the device made, a
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM assignments WHERE client_id=?`, c3).n, 1, 'the office auto-assigned when no assignment was sent');
   const r3 = await push(nav, { tables: { assignments: [{ id: dupAsg, client_id: c3, user_id: navId, role_on_case: 'primary', start_date: '2026-09-01', created_by: navId, created_at: iso(Date.now()), updated_at: iso(Date.now()) }] } });
   assert.equal(r3.data.rejected.length, 1, JSON.stringify(r3.data));
-  assert.ok(/conflicts with an existing record/.test(r3.data.rejected[0].reason) && r3.data.rejected[0].permanent, JSON.stringify(r3.data.rejected));
+  // 1.16.4: a worker's own assignment is taken without assignments:manage only on a client the same push creates.
+  assert.ok(/role cannot write assignments/.test(r3.data.rejected[0].reason) && r3.data.rejected[0].permanent, JSON.stringify(r3.data.rejected));
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM assignments WHERE client_id=?`, c3).n, 1, JSON.stringify(H.db.all(`SELECT * FROM assignments WHERE client_id=?`, c3)));
 });
 

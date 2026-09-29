@@ -177,6 +177,8 @@ function otpauthUrl(secret, account, issuer = 'SUDS') {
   const url = (iss, acct) => `otpauth://totp/${encodeURIComponent(iss)}:${encodeURIComponent(acct)}?secret=${secret}&issuer=${encodeURIComponent(iss)}&algorithm=SHA1&digits=6&period=30`;
   let iss = String(issuer || 'SUDS'); let acct = String(account);
   while (Buffer.byteLength(url(iss, acct)) > OTPAUTH_MAX && [...iss].length > 8) iss = [...iss].slice(0, -1).join('').trimEnd();
+  // Eight characters of a name in a non-Latin script are still 72 bytes each time they appear: the product's name then.
+  if (Buffer.byteLength(url(iss, acct)) > OTPAUTH_MAX) iss = 'SUDS';
   while (Buffer.byteLength(url(iss, acct)) > OTPAUTH_MAX && [...acct].length > 8) acct = [...acct].slice(0, -1).join('');
   return url(iss, acct);
 }

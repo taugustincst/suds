@@ -70,3 +70,25 @@ test('a note flagged at the office stays on a device another account there may r
   await sync(clin);
   assert.equal(officeContent(N), 'edited on the device after the flag');
 });
+
+// Security review of 1.16.3, N1: whether another account on the device may read a note the office has just named is
+// judged against the note as it now is (a SUD counseling note), not the device's pre-flag copy, which any navigator
+// may read. The office sends what makes it one (counseling_note, author_id, cosigned_by) with the drop. A device only
+// navigators use drops it: test/shared-device-navigators.test.js.
+const flagAtOffice = async (id) => {
+  const u = H.db.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at;
+  ok(await clinC.put(`/api/notes/${id}`, { counseling_note: true, if_updated_at: u }), 200, 'flagged at the office');
+};
+test('an idle clinician on the device keeps the note, but it is a counseling note there: the navigator cannot read it', async () => {
+  const idle = H.makeUser('sdidle', 'clinician', PW); const navC = H.makeUser('sdnavc', 'navigator', PW);
+  const N = await officeNote('SECRET idle draft', false);
+  await sync(idle); await sync(navC);
+  await flagAtOffice(N);
+  await sync(navC);
+  await signIn(navC);
+  assert.equal((await device('GET', `/api/notes/${N}`)).status, 403, 'the navigator cannot read it (the clinician keeps it)');
+  const list = ok(await device('GET', `/api/notes?client_id=${client}`), 200, 'the navigator lists the notes');
+  assert.ok(!JSON.stringify(list).includes(N), 'nor list it');
+  await signIn(idle);
+  ok(await device('GET', `/api/notes/${N}`), 200, 'the clinician still reads it on the device');
+});

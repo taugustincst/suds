@@ -81,6 +81,7 @@ function droppedClients(user, since) {
 //    changed either way is re-sent the same way, so the device holds the amounts, or the placeholders, it may.
 const SCOPE_V = 'v1';
 const COUNSEL = require('../rules/notes');
+const TASKS = require('../rules/tasks');
 function scopePerms() {
   const s = new Set(Object.keys(require('../permissions').READ_SCOPE_PERMS));
   for (const t of SYNC.tables) { if (t.readPerm) s.add(t.readPerm); if (t.redact) s.add(t.redact.perm); if (t.unlinked) s.add(t.unlinked.all); }
@@ -148,9 +149,9 @@ function scopeDrops(user, change) {
   }
   if (lost.has('counseling') && !COUNSEL.readsCounseling(user)) {
     const cf = auth.caseloadFilter(user, 'n.client_id'); const sud = COUNSEL.counselingFilter(user, 'n');
-    const notes = db.all(`SELECT n.id FROM notes n WHERE n.kind='clinical' AND NOT ${sud.sql} AND ${cf.sql}`, ...sud.params, ...cf.params).map(r => r.id);
-    for (const id of notes) for (const a of db.all(`SELECT id FROM note_addenda WHERE note_id=?`, id)) rows.push(['note_addenda', a.id]);
-    for (const id of notes) rows.push(['notes', id]);
+    const notes = db.all(`SELECT n.id, n.author_id, n.cosigned_by FROM notes n WHERE n.kind='clinical' AND NOT ${sud.sql} AND ${cf.sql}`, ...sud.params, ...cf.params);
+    for (const n of notes) for (const a of db.all(`SELECT id FROM note_addenda WHERE note_id=?`, n.id)) rows.push(['note_addenda', a.id]);
+    for (const n of notes) rows.push(['notes', n.id, gate(n)]);
   }
   // Children before parents, in the tables' foreign-key order reversed (as sync-tables.js purgeClient).
   const order = new Map(SYNC.tables.map((t, i) => [t.name, i]));
@@ -204,7 +205,19 @@ function backfillKey(t) {
 }
 const bfTables = () => SYNC.tables.filter(backfillKey);
 function encodeCursor(ts, bf) { return ts + BF_MARK + Buffer.from(JSON.stringify({ v: 1, ...bf })).toString('base64url'); }
-function parseCursor(raw) {
+// A pull of several pages carries where its first page started (`~from.<timestamp>`, after the rest), so a note
+// flagged as a SUD counseling note after the device last pulled is named on whichever page carries it (flaggedSince;
+// security review of 1.16.3, N6). A device that finishes the pull gets a plain cursor again.
+const FROM_MARK = '~from.';
+const withFrom = (cursor, from) => (from ? cursor + FROM_MARK + from : cursor);
+function parseCursor(whole) {
+  const f = whole.indexOf(FROM_MARK);
+  const raw = f < 0 ? whole : whole.slice(0, f);
+  const cut = f < 0 ? null : whole.slice(f + FROM_MARK.length);
+  const from = cut && cut.length <= 40 && !Number.isNaN(Date.parse(cut)) && cut <= raw.split(BF_MARK)[0] ? cut : null;
+  return { ...parseBackfill(raw), from };
+}
+function parseBackfill(raw) {
   const at = raw.indexOf(BF_MARK);
   if (at < 0) return { since: raw, bf: null };
   const since = raw.slice(0, at);
@@ -252,13 +265,15 @@ function backfillPage(user, until, bf, limit) {
 // timestamp is itself bigger than a page, that timestamp is sent whole rather than split.
 function pull(user, sinceRaw, { limit = PULL_LIMIT, scope = null } = {}) {
   const serverNow = db.now();
-  let { since, bf } = parseCursor(String(sinceRaw || NEVER));
-  // A device that has pulled before may hold a note that has since become one it may not read (dropHidden, exportInto).
-  const dropHidden = since !== NEVER;
+  let { since, bf, from } = parseCursor(String(sinceRaw || NEVER));
+  // A device that has pulled before may hold a note that has since become one it may not read (exportInto dropSince):
+  // one flagged since the pull began, on its first page (`from`) or this one.
+  const dropFrom = since === NEVER ? null : from || since;
   // What the person may read changed since this device last pulled (see syncScopeKey above).
   const change = since !== NEVER ? scopeChange(user, scope) : null;
   const drops = change ? scopeDrops(user, change) : null;
   if (change && (change.widened || change.redacted)) { since = NEVER; bf = null; }
+  const carry = (out) => { if (!out.complete && dropFrom && since !== NEVER) out.cursor = withFrom(out.cursor, dropFrom); return out; };
   const withScope = (out) => {
     out.scope = syncScopeKey(user);
     if (drops) {
@@ -269,10 +284,10 @@ function pull(user, sinceRaw, { limit = PULL_LIMIT, scope = null } = {}) {
     }
     return out;
   };
-  if (bf) return withScope(pullBackfill(user, since, bf, limit, serverNow));
-  return withScope(pullPage(user, since, limit, serverNow, dropHidden));
+  if (bf) return withScope(carry(pullBackfill(user, since, bf, limit, serverNow)));
+  return withScope(carry(pullPage(user, since, limit, serverNow, since === NEVER ? null : dropFrom)));
 }
-function pullPage(user, since, limit, serverNow, dropHidden = false) {
+function pullPage(user, since, limit, serverNow, dropFrom = null) {
   const raw = {}; const capped = []; const scopes = new Map();
 
   // Where the page ends, in two passes. Up to 1.13 each table's first `limit` rows were read whole, and most of
@@ -308,7 +323,7 @@ function pullPage(user, since, limit, serverNow, dropHidden = false) {
   // rows before its boundary (or every row of a single-timestamp page); for the rest, everything they had.
   for (const [name, sc] of scopes) raw[name] = db.all(`SELECT x.* FROM ${name} x WHERE x.updated_at > ? AND x.updated_at <= ? AND ${sc.sql} ORDER BY x.updated_at`, since, cursor, ...sc.params);
   const out = baseAnswer(cursor, serverNow, capped.length === 0);
-  exportInto(out, user, raw, cursor, dropHidden ? since : null);
+  exportInto(out, user, raw, cursor, dropFrom);
   // Newly assigned clients arrive whole: everything recorded about them before `since` as well, in the
   // backfill pages that follow this one (backfillPage). The cursor carries where they start.
   if (newlyInScope(user, since, cursor).length) {
@@ -349,17 +364,21 @@ function pullBackfill(user, since, bf, limit, serverNow) {
   resyncCheck(out, bf.from);
   return out;
 }
-// dropHidden: a note changed in this window that the person may not read is named in `dropped_rows` (with its
+// dropSince: a note changed in this window that the person may not read is named in `dropped_rows` (with its
 // addenda, first) rather than left out in silence, for a device that may hold an earlier copy: a clinical draft
 // flagged as a SUD counseling note after a navigator's device pulled it (security review of 1.16.1, M3). Only a note
 // flagged in this window, and written before it: an edit to a counseling note, or a new one, is nothing the device
 // was ever sent, and naming it both told the device that one was written and removed it from a shared device where
 // a clinician was working on it (security review of 1.16.2, M2 and L4).
+// The flag is found by the note's id, whichever client its audit entry names (N7: a push need not send client_id).
 function flaggedSince(n, since) {
   if (!n.created_at || n.created_at > since) return false;
-  return !!db.one(`SELECT 1 FROM audit_log WHERE client_id=? AND entity_id=? AND at > ? AND ((action='note.update' AND details LIKE '%"counseling_note_set":true%')
-    OR (action='sync.overwrite' AND entity='notes' AND details LIKE '%"counseling_note"%'))`, n.client_id, n.id, since);
+  const flagged = `AND entity_id=? AND at > ? AND ((action='note.update' AND details LIKE '%"counseling_note_set":true%')
+    OR (action='sync.overwrite' AND entity='notes' AND details LIKE '%"counseling_note"%'))`;
+  return !!(db.one(`SELECT 1 FROM audit_log WHERE client_id=? ${flagged}`, n.client_id, n.id, since) || db.one(`SELECT 1 FROM audit_log WHERE client_id IS NULL ${flagged}`, n.id, since));
 }
+/** What makes a note a SUD counseling note, sent with its drop: a shared device judges its other accounts by it (local/sync.js). */
+const gate = (n) => ({ counseling_note: 1, author_id: n.author_id, cosigned_by: n.cosigned_by || null });
 function exportInto(out, user, raw, cursor, dropSince = null) {
   for (const t of SYNC.tables) {
     let rows = raw[t.name] || [];
@@ -369,12 +388,15 @@ function exportInto(out, user, raw, cursor, dropSince = null) {
     if (t.name === 'notes') { // SUD counseling notes (1.16.1)
       const hidden = rows.filter(r => !COUNSEL.mayReadCounseling(user, r));
       if (hidden.length) rows = rows.filter(r => COUNSEL.mayReadCounseling(user, r));
-      if (dropSince) for (const n of hidden.filter(x => flaggedSince(x, dropSince))) out.dropped_rows.push(...db.all(`SELECT id FROM note_addenda WHERE note_id=?`, n.id).map(a => ['note_addenda', a.id]), ['notes', n.id]);
+      if (dropSince) for (const n of hidden.filter(x => flaggedSince(x, dropSince))) out.dropped_rows.push(...db.all(`SELECT id FROM note_addenda WHERE note_id=?`, n.id).map(a => ['note_addenda', a.id]), ['notes', n.id, gate(n)]);
     }
     if (t.readPerm && !auth.hasPerm(user, t.readPerm)) rows = []; // minimum necessary (clinical assessments, the care plan, spending)
     if (t.redact && !auth.hasPerm(user, t.redact.perm)) rows = rows.map(r => ({ ...r, ...t.redact.cols })); // fund names without their money
     if (t.name === 'note_addenda' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => db.one(`SELECT kind FROM notes WHERE id=?`, r.note_id)?.kind !== 'clinical');
     if (t.name === 'note_addenda' && !COUNSEL.readsCounseling(user)) rows = rows.filter(r => { const n = db.one(`SELECT counseling_note, author_id, cosigned_by FROM notes WHERE id=?`, r.note_id); return !n || COUNSEL.mayReadCounseling(user, n); });
+    // Which of these to-dos are change notices, and whose edit each reports: a device's audit trail cannot say
+    // (UX review of 1.16.3, M1), so it takes the office's word for the rows it is sent (local/sync.js keepNotices).
+    if (t.name === 'tasks') out.notices = rows.map(r => [r.id, TASKS.noticeEntry(r)]).filter(([, a]) => a).map(([id, a]) => [id, a.user_id]);
     const exported = [];
     for (const r of rows) {
       const e = exportRow(t, r);
@@ -408,7 +430,7 @@ module.exports = (r) => {
     // as the office (server/auth.js effectivePerms), so a navigator held to their caseload at the office is
     // held to it on a device other people also sign in to (local/sync.js applyPull).
     out.permission_overrides = db.all(`SELECT permission, mode, reason, granted_at FROM user_permission_overrides WHERE user_id=? ORDER BY permission`, ctx.user.id);
-    audit.log({ user: ctx.user, action: 'sync.pull', ip: ctx.ip, details: { since: since.split(BF_MARK)[0], backfill: since.includes(BF_MARK) || undefined, complete: out.complete, scope_changed: out.scope_changed || undefined, dropped: out.scope_changed ? { clients: out.dropped_clients.length, rows: out.dropped_rows.length } : undefined, rows: Object.fromEntries(Object.entries(out.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
+    audit.log({ user: ctx.user, action: 'sync.pull', ip: ctx.ip, details: { since: since.split('~')[0], backfill: since.includes(BF_MARK) || undefined, complete: out.complete, scope_changed: out.scope_changed || undefined, dropped: out.scope_changed ? { clients: out.dropped_clients.length, rows: out.dropped_rows.length } : undefined, rows: Object.fromEntries(Object.entries(out.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
     return out;
   });
 

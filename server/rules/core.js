@@ -29,7 +29,8 @@
 //               of its columns in plain text, c.plain(col) a column's value after this write, c.changed() the
 //               columns this write changes, c.via 'rest' or 'sync' (c.session is the push, for push-only hooks).
 //   normalise(row, c)   push only: columns the office keeps for itself (approvals, signatures), or derives.
-//   Push-only hooks, in the order push.js calls them: prepare(session, rows) once per push, order(rows, session),
+//   Push-only hooks, in the order push.js calls them: prepare(session, rows) once per push, later(row, session)
+//   true to hold a row back until every other table's rows have landed, order(rows, session),
 //   permitsWithoutWritePerm(row, session), outsideCaseload(row, c), beforeWrite(row, c), beforeStore(row, c),
 //   storeRow(stored, row, c), afterApply(row, stored, c), afterDelete(storedRow, session) after a tombstone lands,
 //   finish(session) once every row and tombstone of the push has landed; pushable: false for a table a device never

@@ -16,6 +16,7 @@ import { encrypt, decrypt, blindIndex, uuid } from '../server/crypto.js';
 import SYNC from '../server/sync-tables.js';
 import SUPPLIES from '../server/supplies.js';
 import NOTE_RULES from '../server/rules/notes.js';
+import TASK_RULES from '../server/rules/tasks.js';
 import { wipe as wipeLocalDb } from './shims/sqlite.js';
 
 // A stable identity for this physical device, generated once and kept in its own local settings — separate
@@ -47,6 +48,23 @@ export function ensureTables() {
   // Tombstones the office sent us. They are recorded in the local tombstones table like any other delete so
   // the cascade works, but they are the office's deletions, not ours, and must never be echoed back.
   db.get().exec(`CREATE TABLE IF NOT EXISTS sync_server_tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
+  loadNotices();
+}
+// The change notices the office named in its pulls (server/routes/sync.js exportInto `notices`), with whose edit each
+// reports: the device shows them as the office does, a read-only card only the worker told may mark seen (UX review
+// of 1.16.3, M1). Kept in this device's settings; only the office's word makes one, never a to-do's text.
+const NOTICES = 'office_notices';
+function loadNotices() {
+  TASK_RULES.noticeIds.clear();
+  let m = {}; try { m = JSON.parse(db.getSetting(NOTICES, '{}')) || {}; } catch { m = {}; }
+  for (const [id, by] of Object.entries(m)) TASK_RULES.noticeIds.set(id, typeof by === 'string' ? by : null);
+}
+function keepNotices(list) {
+  if (!Array.isArray(list)) return;
+  const ids = TASK_RULES.noticeIds;
+  for (const x of list) { const [id, by] = Array.isArray(x) ? x : []; if (typeof id === 'string') ids.set(id, typeof by === 'string' ? by : null); }
+  for (const id of [...ids.keys()]) if (!db.one(`SELECT 1 FROM tasks WHERE id=?`, id)) ids.delete(id);
+  db.setSetting(NOTICES, JSON.stringify(Object.fromEntries(ids)));
 }
 /** The pull cursor is per office account: on a shared phone the second person to sync must get their own
  *  caseload from the beginning, not only what changed since a colleague's last sync. */
@@ -179,6 +197,19 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
     // Kept, as a dropped client is, while another account on this shared device may still read it; and never with
     // changes made here that the office has not had (security review of 1.16.2, M2: a navigator's sync deleted a
     // clinician's unsynced edit to a counseling note).
+    // A note the office names with what now makes it a SUD counseling note (security review of 1.16.3, N1) is marked
+    // so here first, without counting as an edit made here (updated_at and sync_seen untouched): whether another
+    // account on this device may still read it is judged against the note as it now is, never the pre-flag copy any
+    // navigator may read, and a note kept for one who may (a clinician, its author or co-signer) is hidden from
+    // everyone else here by the same rule. Another account's permissions are those this device holds for it: its
+    // role and active state as the last sync by anyone brought them, and its own grants and denies as of its own
+    // last sync here (so a counseling permission taken from it at the office counts here only once it syncs again).
+    const onDevice = (u) => (typeof u === 'string' && db.one(`SELECT 1 FROM users WHERE id=?`, u) ? u : null);
+    for (const pair of payload.dropped_rows || []) {
+      const [table, id, g] = Array.isArray(pair) ? pair : [];
+      if (table !== 'notes' || typeof id !== 'string' || !g || typeof g !== 'object' || Number(g.counseling_note) !== 1) continue;
+      db.run(`UPDATE notes SET counseling_note=1, author_id=COALESCE(?, author_id), cosigned_by=COALESCE(?, cosigned_by) WHERE id=?`, onDevice(g.author_id), onDevice(g.cosigned_by), id);
+    }
     for (const pair of payload.dropped_rows || []) {
       const [table, id] = Array.isArray(pair) ? pair : [];
       const t = SYNC.tables.find(x => x.name === table); if (!t || typeof id !== 'string') continue;
@@ -188,6 +219,7 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
       db.savepoint(() => { db.run(`DELETE FROM ${t.name} WHERE id=?`, id); db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, id); },
         (err) => skipped.push({ table: t.name, id, reason: String(err && err.message || 'could not be removed').slice(0, 200) }));
     }
+    keepNotices(payload.notices);
     if ((payload.dropped_rows || []).length) audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.scope_removed', details: { rows: payload.dropped_rows.length } });
     // This person's own per-user grants and denies (1.15.0), so the kernel applies the permissions the office
     // does (server/auth.js effectivePerms): a navigator the office holds to their caseload is held to it here

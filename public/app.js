@@ -1583,7 +1583,10 @@ function maybeNotify(rows) {
     if (notifiedDue.has(t.id)) continue;
     notifiedDue.add(t.id);
     try {
-      const n = new Notification(t.notice === true ? 'A change to your client\'s record' : t.overdue ? 'Overdue to-do' : 'To-do due now', { body: t.title + (t.client_name ? ` · ${t.client_name}` : ''), tag: `suds-task-${t.id}` });
+      // A notice's title names the client and whoever changed the record; a desktop or lock-screen notification is
+      // seen by whoever is near the screen, so it says only that a record changed, by the client's code (r9 N7).
+      const body = t.notice === true ? (t.client_code ? `Client ${t.client_code}: open SUDS to see what changed.` : 'Open SUDS to see what changed.') : t.title + (t.client_name ? ` · ${t.client_name}` : '');
+      const n = new Notification(t.notice === true ? 'A client\'s record changed' : t.overdue ? 'Overdue to-do' : 'To-do due now', { body, tag: `suds-task-${t.id}` });
       n.onclick = () => { window.focus(); nav(`tasks?id=${t.id}`); n.close(); };
     } catch { /* the browser refused; the badge still shows it */ }
   }

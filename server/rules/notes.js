@@ -84,6 +84,9 @@ module.exports = define({
   },
   normalise(row, c) {
     const e = c.existing;
+    // When a new note was written is the device's to say (offline work), but never after now: it bounds the signature's
+    // time below, and a future one hid the note from a later flag's drop (security review of 1.16.3, N7).
+    if (!e) { const ms = Date.parse(row.created_at); const now = db.now(); row.created_at = Number.isFinite(ms) && new Date(ms).toISOString() < now ? new Date(ms).toISOString() : now; }
     // A countersignature is the supervisor's act on the office server (POST /api/notes/:id/cosign); a device can
     // never assert one, and one it asks for is flagged rather than dropped unseen (security review of 1.15.3, H1).
     const COSIGN = ['cosigned_by', 'cosigned_at', 'cosignature_hash'];

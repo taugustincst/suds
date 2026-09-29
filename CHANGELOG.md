@@ -2,6 +2,60 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Security
+
+Fixes from the security review of 1.16.3 (r9), and two findings of its UX review that are access rules. No migration,
+no new permission, no new route.
+
+- **A flagged SUD counseling note leaves a shared device (N1).** When the office tells a device to remove a note that
+  became a SUD counseling note after the device pulled it, the device kept it whenever another account signed in
+  there "may read it", judged against the device's own pre-flag copy, which every navigator may read: on a device two
+  navigators share it stayed, unflagged, for good. The office now sends what makes the note unreadable
+  (`counseling_note`, `author_id`, `cosigned_by`) with the instruction; the device marks its copy first and judges
+  the other accounts against that. A device only navigators use removes it; one a clinician, the author or the
+  co-signer also signs in to keeps it, hidden from everyone else there. Another account's permissions on the device
+  are those the device last received for it: its role and active state as of anyone's last sync, its own grants and
+  denies as of its own last sync there (so a counseling permission taken away at the office counts on that device
+  once that person syncs again there, or their account is deactivated).
+- **Standing on a case cannot be regained by sync (N2).** A worker without `assignments:manage` could push their own
+  primary assignment on any client they had ever created, at any time: a worker a supervisor had taken off the case
+  put themselves back on it (and, held to their caseload, regained the record), then discharged the client. The
+  exception is now only for a client the same push creates (offline intake). A push's re-admission restored every
+  assignment its discharge had ended even when the re-admission itself was refused or only flagged: the care team a
+  discharge ends or a re-admission restores is now judged by the episode change that landed (those assignment rows
+  wait for it), a re-admission while another episode is open is refused, as `POST /api/episodes/:id/reopen` refuses
+  it, and a re-admission that leaves nobody on the team gives the worker who made it the case, as that route does.
+  Every assignment a push creates, ends or restores is audited (`assignment.create`, `.end`, `.restore`,
+  `via: sync`), and restoring an ended assignment needs the same reach as adding one.
+- **Another worker's to-dos are closed by push only by a discharge (N3).** Any worker's device could mark any other
+  worker's to-do done or cancelled (REST refused it): now only as part of a discharge of that to-do's client that
+  landed in the same push, by the client's care team or a manager; a to-do with no client, never.
+- **One open episode, counting only closes that land (N4).** A push that "closed" the open episode (refused) and
+  opened a second one (accepted, because the close was counted) left two open, the second from someone off the
+  team. Closes are applied first and only those that landed count. A new episode pushed already closed with past
+  dates (an admission and discharge reports would count) is the care team's or a manager's.
+- **The 1.16.1 notice rule is gone (N5).** A to-do reading "Reference: client record change by <user id>", followed by
+  an edit of the client by that user within a minute (or, by push, backdated to one), was taken for a 1.16.1 change
+  notice, a card naming whoever its title named. Without a migration to link the 1.16.1 notices to their audit
+  entries, such a to-do is now an ordinary to-do (its assignee and its creator may change it). A notice's card names
+  who made the change from the audit entry that raised it (`notice_by`), never from its title.
+- **A paged pull names a flagged note on the page that carries it (N6).** Only a note flagged after the page's own
+  start was named, so one flagged early in a pull of several pages and edited later stayed on the device. The pull
+  cursor now carries where the pull started (`~from.`), until the pull completes.
+- **Change notices (UX review of 1.16.3, M1 and M2).** Only the worker a notice was sent to marks it seen, at both
+  doors; a supervisor may delete one (for a worker who has left) but no longer mark it seen for them. A notice pulled
+  to a device is a notice there too: each pull names the notices among its to-dos, with whose edit each reports
+  (`notices`), and the device takes the office's word for those rows only (never a to-do's text).
+- **Smaller fixes (N7).** A flag found by the note's id whatever client its audit entry names. A device to-do that
+  merely contains the notice line is stored as an ordinary to-do instead of being dropped without a word (only a
+  device's own copy of a notice, which the office raises itself, is not taken). A new note's creation time from a
+  device is never after the office's now (a future one hid the note from a later flag's removal). A desktop or
+  lock-screen notification of a change notice names the client by code, never by name. The two-step enrolment link
+  falls back to "SUDS" as its issuer when a programme name in a non-Latin script cannot be shortened to fit the QR
+  code.
+
 ## 1.16.3 — 2026-09-29
 
 ### Engineering

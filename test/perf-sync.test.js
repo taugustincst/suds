@@ -71,11 +71,13 @@ for (const [who, user] of [['a navigator (caseload and own anonymous visits)', (
       let since = start; let pages = 0; let sent = 0;
       for (;;) {
         const got = pull(user(), since, { limit: 5 });
-        const ref = onePass(user(), since, 5, got.server_now);
+        // 1.16.4: a pull of several pages carries where it started (`~from.`, server/routes/sync.js); the page is the same.
+        const at = (c) => c.split('~from.')[0];
+        const ref = onePass(user(), at(since), 5, got.server_now);
         const gotIds = Object.fromEntries(Object.entries(got.tables).map(([k, rows]) => [k, rows.map(r => r.id).sort()]));
         for (const name of new Set([...Object.keys(ref.ids), ...Object.keys(gotIds)])) assert.deepEqual(gotIds[name] || [], ref.ids[name] || [], `${name}, page ${pages + 1} from ${start}`);
         assert.equal(got.complete, ref.complete, `complete, page ${pages + 1} from ${start}`);
-        assert.equal(got.cursor, ref.cursor, `cursor, page ${pages + 1} from ${start}`);
+        assert.equal(at(got.cursor), ref.cursor, `cursor, page ${pages + 1} from ${start}`);
         for (const rows of Object.values(got.tables)) sent += rows.length;
         pages++;
         if (got.complete) break;

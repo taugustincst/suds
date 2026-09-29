@@ -166,10 +166,17 @@ class PushSession {
     for (const t of SYNC.tables) { const R = rules.forTable(t.name); if (R.prepare) R.prepare(this, this.tables[t.name] || []); }
     // One read of each Settings → Lists list for the whole push (options.js cached), not one per row.
     require('../options').cached(() => db.transaction(() => {
+      // A table's rules may hold rows back until every other table's rows have landed (`later`): a care team a
+      // discharge ends or a re-admission restores is judged by the episode change that landed, not the one asked for.
+      const held = [];
       for (const t of SYNC.tables) {
-        const rows = this.tables[t.name];
-        if (Array.isArray(rows) && rows.length) this.table(t, rows);
+        let rows = this.tables[t.name];
+        if (!Array.isArray(rows) || !rows.length) continue;
+        const R = rules.forTable(t.name);
+        if (R.later) { const wait = new Set(rows.filter(r => R.later(r, this))); if (wait.size) { held.push([t, [...wait]]); rows = rows.filter(r => !wait.has(r)); } }
+        if (rows.length) this.table(t, rows);
       }
+      for (const [t, rows] of held) this.table(t, rows);
       const deleting = new Set((this.payload.tombstones || []).map(ts => ts && `${ts.table_name}:${ts.id}`));
       for (const ts of this.payload.tombstones || []) this.tombstone(ts, deleting);
       // What a table does once the whole batch (rows and deletions) has landed: the office's supply draw-down
@@ -184,11 +191,12 @@ class PushSession {
     const R = rules.forTable(t.name);
     if (t.selfParent) rows = selfParentOrder(rows, t.selfParent);
     if (R.pushable === false) return; // users: never overwritten from devices
+    this.applied[t.name] = this.applied[t.name] || 0;
     if (R.order) rows = R.order(rows, this);
     // Shared program state the office alone keeps (supply counts): a device's copy is never the truth.
     if (t.serverOwned) {
       for (const raw of rows) if (raw && typeof raw.id === 'string') this.reject(t.name, raw.id, 'server-owned');
-      this.applied[t.name] = 0; return;
+      return;
     }
     // Syncing is not a way around a role's limits: the permission the REST route requires applies here too,
     // unless the table's rules say this row is one the REST door would take anyway (a worker's own
@@ -200,7 +208,7 @@ class PushSession {
         if (R.permitsWithoutWritePerm && R.permitsWithoutWritePerm(raw, this)) { kept.push(raw); continue; }
         this.reject(t.name, raw.id, `your role cannot write ${t.name}`);
       }
-      if (!kept.length) { this.applied[t.name] = 0; return; }
+      if (!kept.length) return;
       rows = kept;
     }
     const existingCols = this.cols(t.name); let n = 0;
@@ -208,7 +216,7 @@ class PushSession {
       if (!raw || typeof raw.id !== 'string') continue;
       if (this.row(R, t, raw, existingCols) === true) n++;
     }
-    this.applied[t.name] = n;
+    this.applied[t.name] += n;
   }
 
   /** One row through the stages. Returns true when it was written. */

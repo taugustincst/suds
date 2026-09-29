@@ -22,3 +22,18 @@ test('a long programme name still gives an enrolment link the QR encoder takes',
   }
   assert.equal(new URL(otpauthUrl(secret, 'mrivera', 'Harbor Outreach')).searchParams.get('issuer'), 'Harbor Outreach', 'a short name is left whole');
 });
+
+test('a programme name in a non-Latin script still gives a link the QR encoder takes (security review of 1.16.3, N7)', async () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'qr.js'), 'utf8');
+  const { qrMatrix: encode } = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
+  const secret = generateTotpSecret();
+  for (const org of ['河滨县行为健康服务部物质使用障碍与康复服务减害项目', '加州河滨县行为健康服务部']) {
+    const url = otpauthUrl(secret, 'maria.rivera@example.org', org);
+    assert.ok(Buffer.byteLength(url) <= 200, `${Buffer.byteLength(url)} bytes`);
+    assert.doesNotThrow(() => encode(url));
+    const u = new URL(url);
+    assert.equal(u.searchParams.get('secret'), secret);
+    const iss = u.searchParams.get('issuer');
+    assert.ok(iss === 'SUDS' || org.startsWith(iss), `issuer ${iss}`);
+  }
+});
