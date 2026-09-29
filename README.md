@@ -27,6 +27,21 @@ partner, or its county) runs; it is not a hosted service. Positioning, buyer gui
 and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
 [docs/architecture/README.md](docs/architecture/README.md).
 
+## What's new in 1.17.0
+
+* **AI documentation copilot** (optional): drafts notes, assessments, care plan and CalOMS suggestions for a
+  person to review and sign. Office server only, off by default, and it cannot be switched on until an
+  administrator records the programme's BAA and Part 2 QSOA with the AI provider; never for SUD counseling notes
+  ([docs/AI-COPILOT.md](docs/AI-COPILOT.md)).
+* **Street outreach** screen and **My shift** for one-handed anonymous contacts, with an optional, encrypted
+  **SSP participant code**; **Prevention** events (SABG primary prevention) and their summary.
+* **Settlement outcomes**: what each opioid-settlement fund spent beside the work charged to it, suppressed by default.
+* **Part 2 layer beside an EHR**: patients and encounters imported from a FHIR file the EHR exports; **secure
+  referral links** to organisations not on SUDS (off by default); **CalOMS Tx** files prepared on a schedule.
+* **Least privilege by default** for new installs, and a client record **History** with revert.
+
+Everything in it: [CHANGELOG.md](CHANGELOG.md).
+
 ## Two ways to run it
 
 | | **On an office server** | **On this device** (no server) |
@@ -47,6 +62,13 @@ The sign-in page has two options, **Log in** and **Sign up** (link straight to e
 * **Platform:** the web application — served by an office SUDS server (the system of record for its programme), or published as SUDS on this device. It also imports field notes from **Pocket AI** and **Microsoft OneNote**. The native phone apps and the desktop launchers were removed in 1.9.3 (their source remains in git history) — see [docs/PLATFORM.md](docs/PLATFORM.md).
 * **Runtime:** Node.js ≥ 22.13 only (built-in SQLite, crypto, HTTP). No npm packages to install or audit on the office server. (The browser's local-mode kernel is a separate, committed bundle that does vendor a few pinned libraries in place of Node's built-ins — see [docs/WEB_APP.md](docs/WEB_APP.md#what-the-browser-kernel-is-built-from).)
 * **Data protection:** AES-256-GCM field-level encryption of client identifiers and free text (coded reporting fields rely on disk encryption — [docs/HIPAA.md](docs/HIPAA.md), *Data classification*), blind-index search, scrypt password hashing, TOTP MFA, role-based access (caseload scoping by per-user deny), 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
+* **AI documentation copilot (1.17.0, optional):** drafts for a person to review and sign (notes, six-dimension assessments, care plan and CalOMS suggestions). Office server only, never on SUDS on this device or an offline copy; off until an administrator records the programme's BAA with Part 2 QSOA terms and counsel's review, then switches it on; identifiers SUDS holds are replaced before sending (not de-identification); never for SUD counseling notes or a client with an agreed restriction; a monthly cap, each call audited without its text ([docs/AI-COPILOT.md](docs/AI-COPILOT.md)).
+* **Settlement outcomes (1.17.0):** per opioid-settlement fund, spending by Exhibit E category beside the outcomes recorded for it, with cost per outcome; counts of people suppressed by default, never a publication release.
+* **Street outreach (1.17.0):** a one-handed phone screen for anonymous contacts that draws supplies from stock, works offline where offline copies are allowed, and counts the worker's shift.
+* **SSP participant code (1.17.0, optional):** an anonymous contact can carry the participant's self-built code, stored encrypted and counted by blind index, so the syringe services summary counts anonymous participants; no file prints a code ([docs/SUPPLIES.md](docs/SUPPLIES.md)).
+* **Secure referral links (1.17.0):** a one-time link, with a separate access code, to an organisation not on SUDS, carrying a minimal referral only under a Part 2 consent naming it. Office server only, **off by default**; counsel reviews the design before a programme switches it on ([docs/security/REFERRAL-LINKS.md](docs/security/REFERRAL-LINKS.md)).
+* **FHIR EHR import (1.17.0):** patients and encounters from a FHIR R4 Bundle or Bulk Data NDJSON file the EHR exports, through the spreadsheet import's preview and duplicate check. SUDS never connects to the EHR ([docs/integration/EHR-PART2-LAYER.md](docs/integration/EHR-PART2-LAYER.md)).
+* **CalOMS scheduling (1.17.0):** SUDS can check last month on a set day and prepare the submission file, with a worklist of errors by owner and a submission log. A prepared file is disclosed only when someone produces it; SUDS does not submit to DHCS, and the layout is not yet verified against the DHCS data dictionary ([docs/compliance/CALOMS.md](docs/compliance/CALOMS.md)).
 * **Documentation:** [Platform policy](docs/PLATFORM.md) · [Adopting SUDS (for a county CIO)](docs/ADOPTION.md) · [Deployment](docs/DEPLOYMENT.md) · [SUDS on this device (GitHub Pages)](docs/WEB_APP.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md) · [Market & procurement pack](docs/market/README.md) · [Security evidence package for county IT](docs/security/README.md)
 
 ## Get SUDS
