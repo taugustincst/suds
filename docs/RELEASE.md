@@ -40,7 +40,7 @@ Rules for every release:
 | Line | Gets | For how long |
 | --- | --- | --- |
 | **The latest minor** (today 1.16.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
-| **The previous minor** (today 1.15.x) | **Security fixes only**, as a patch on that line, where the fix applies to it | **30 days** after the next minor's release date, then none |
+| **The previous minor** (today 1.15.x) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below) | **30 days** after the next minor's release date, then none |
 | Anything older | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
@@ -266,7 +266,8 @@ job's notes step runs the policy script from that same commit, not from `origin/
 while the release waits for approval). Whatever the `policy_exception`, the gate also refuses:
 
 * a commit that is not on `main` (`git merge-base --is-ancestor <commit> origin/main`; a tag on a feature-branch
-  commit with green CI used to release),
+  commit with green CI used to release) or, since 1.17.0 and only for a patch of an older minor than `main`'s, on
+  that minor's `maint/X.Y` branch (*Backports*, below),
 * a version already tagged at another commit (`v<version>` exists and is not this commit): dispatching *Run
   workflow* on `main` after a release, with `package.json` not yet bumped, used to rebuild the zip and checksum
   from the new commit and upload them over the published ones (`--clobber`), and
@@ -300,27 +301,8 @@ released commit's own edit of them, and the commit released is on that `main`. I
 * **Changes to the gate fail closed, not open.** If `main`'s `release-policy.js` ever `require`s a helper file,
   the two-file `git archive` leaves it out and every release fails until `release.yml` lists the helper; re-running
   an old tag's release after `main` changed the scripts' flags fails too. Neither releases anything unchecked.
-* Proposed, not done: a scheduled job that fails when `gh api repos/:owner/:repo/environments/release` has no
-  required reviewer or `…/branches/main/protection` is missing, so the settings above are checked, not assumed.
-
-**Backports: there is no maintenance line today** (engineering review of 1.16.1, M3). A release must be on `main`,
-and a patch release is measured against the tag below it: once 1.17.0 is on `main`, a 1.16.3 cut from `main` would
-carry 1.17's features and be refused as a patch, and a commit on a branch off `v1.16.2` is refused as "not on
-main". So *Supported versions* above cannot be met by a release on the previous minor's line: until the path below
-exists, a security fix for 1.16.x ships as a patch of the latest minor, and the previous minor's 30 days of security
-fixes are a promise the release machinery cannot yet keep. Proposed (not implemented; a change to the gate, so it
-lands through code-owner review and takes effect as described above):
-
-1. A maintenance branch per minor, `maint/1.16` (not `release/v*`, which names one release each), created from the
-   minor's last tag when the next minor ships, protected like `main` (a ruleset: pull request, code-owner review,
-   the same required CI jobs, no force push or deletion), and listed in the `release` environment's deployment
-   branches.
-2. `release-policy.js --sha` accepts a commit on `origin/maint/X.Y` in place of `main` **only** when the version
-   being released is `X.Y.z` and `X.Y` is older than `main`'s minor; the patch rules and the size limit apply
-   unchanged against the previous `vX.Y.*` tag (`previousTag` already picks it).
-3. The gate job fetches `refs/heads/maint/*` beside `main`, and still runs `main`'s copy of the scripts.
-4. Fixes are made on `main` first and cherry-picked to `maint/X.Y`, each cherry-pick's pull request naming the
-   commit on `main`.
+* **The settings are checked, not assumed** (1.17.0): a weekly workflow reads them and fails when one is off or
+  cannot be read (*Owner: repository settings*, step 9).
 
 The release job never replaces a published file: when the GitHub Release already exists (a re-run of the same
 commit's release) it uploads the zip and checksum only if neither is there, and stops with an error if only one
@@ -348,6 +330,77 @@ without `--cleanup-tag`), and run the release again (*Run workflow* on the tag);
 files replaced (an immutable release), **release the next patch version** instead. What it does not check: the
 text of the notes of a Release made by the bot account (a branch's workflow could write them); the release page's
 "Released by" line, at the foot, names who pushed the tag.
+
+### Backports: a patch of the previous minor from `maint/X.Y`
+
+Until 1.17.0 there was no maintenance line (engineering review of 1.16.1, M3): a release had to be on `main`, so once
+1.17.0 was on `main` a 1.16.x security fix could only ship as a 1.17.x, and *Supported versions*' 30 days of fixes for
+the previous minor was a promise the machinery could not keep. Since 1.17.0:
+
+* **A maintenance branch per minor**, `maint/1.16` (not `release/v*`, which named one release each), made by the
+  owner from the minor's last tag when the next minor is released, and protected like `main` (*Owner: repository
+  settings*, step 2).
+* **The gate accepts it only for an older line.** `release-policy.js --sha … --main origin/main --maint
+  origin/maint` accepts a commit on `origin/maint/X.Y` in place of `main` **only** when the version is a patch
+  `X.Y.z` (`z` above 0) and `X.Y` is older than the minor of `package.json` on `main` (`maintBranch`). A `1.17.1`, a
+  `1.16.0`, or a commit on any other branch is refused as before ("is not on origin/main or origin/maint/1.16"). The
+  gate fetches `refs/heads/maint/*` beside `main` and still runs `main`'s copy of the scripts.
+* **The policy compares it with its own line.** The previous tag is the highest one below the version, so 1.16.5 is
+  measured against `v1.16.4`, not `v1.17.0`: no migration, permission or route, and at most 1,500 counted lines,
+  exactly as for any patch.
+* **It is not the newest release.** The gate says so (`--latest-out`, `isLatest`: a `vX.Y.Z` tag above it exists),
+  and the release job then publishes the GitHub Release with `--latest=false` (GitHub would otherwise mark the newest
+  *made* release Latest, and "latest" downloads would go back to 1.16) and does **not** start the web-app publish:
+  SUDS on this device stays on the newest minor. `web-app.yml` refuses on its own any tag that is not the newest
+  release tag, before it builds and again after the approval, so a *Run workflow* on an older tag cannot roll the
+  public URL back either.
+* **The workflow at the tag decides** (*What running main's copy guarantees*, above): a tag on `maint/1.16` runs
+  `maint/1.16`'s `release.yml`. A branch made from `v1.16.4` carries 1.16.4's, which does not pass `--maint` and is
+  refused as "not on main"; so the first pull request into a new maintenance branch brings the release workflows up
+  to `main`'s (step B below). Tested in `test/release-policy.test.js` (`maintBranch`, `commitProblems`, `isLatest`,
+  the workflows' shape, and the script end to end in a scratch repository: a backport on `maint/1.16` releases, the
+  same version on a stray branch, or a 1.17.1 on a `maint/1.17`, does not).
+
+**The owner's procedure.** Steps A and B once per minor, C for each backport:
+
+A. *Settings, once* (step 2 of *Owner: repository settings* covers them): `maint/*` is a target of the `main`
+   ruleset, and a second ruleset lets only an administrator create a `maint/*` branch. The scheduled settings check
+   (below) reports both.
+
+B. *When a new minor is released* (1.17.0's tag pushed and its release published), make the previous minor's branch
+   from its last tag, then bring its release workflows up to `main`'s:
+   ```bash
+   git fetch origin --tags
+   git push origin "$(git rev-parse 'v1.16.4^{commit}'):refs/heads/maint/1.16"
+   git switch -c maint-1.16-workflows origin/maint/1.16
+   git cherry-pick -x <the commit "Release gate: backports from maint/X.Y" on main>   # CHANGELOG conflict: keep maint's
+   git push origin HEAD        # a pull request into maint/1.16; merged once its CI is green
+   ```
+   If GitHub refuses the branch push (`GH013`) because of the `main` ruleset's pull-request or status-check rules,
+   take `maint/*` out of that ruleset's targets, push, and put it back. Later changes to the release machinery on
+   `main` reach `maint/1.16` the same way, as a cherry-pick, if a backport release needs them.
+
+C. *Each backport.* The fix is merged to `main` first. Then (a maintainer or the assistant, up to the pull request):
+   ```bash
+   git fetch origin
+   git switch -c backport/1.16-<topic> origin/maint/1.16
+   git cherry-pick -x <the fix's commit on main>                   # -x records the main commit in the message
+   git push origin HEAD        # a pull request into maint/1.16 that names the main commit; merged once CI is green
+   ```
+   then a stamp on `maint/1.16` (a pull request: `npm version 1.16.5 --no-git-tag-version` and a `## 1.16.5`
+   section in its CHANGELOG, with the *Advisory* note of a security release), and, once CI on the stamp commit is
+   green, the owner tags it exactly as on `main`, checking the branch instead:
+   ```bash
+   git fetch origin
+   git merge-base --is-ancestor <sha> origin/maint/1.16 && echo "on maint/1.16"
+   gh run list --workflow ci.yml --commit <sha> --event push            # completed, success
+   git show -s --format='%H %s' <sha>                                   # "Release 1.16.5"
+   git tag -a v1.16.5 <sha> -m "SUDS 1.16.5" && git push origin v1.16.5
+   ```
+   The release waits for the owner's approval in the `release` environment as usual; its summary says it is a
+   maintenance release (not Latest, no web app). Finally, copy the `## 1.16.5` section into `main`'s CHANGELOG (a
+   pull request), so `main`'s history names every release. Nothing checks the 30-day support window: after it, simply
+   stop releasing from the branch (the ruleset keeps it from being deleted).
 
 ### Owner control over releases
 The gate proves CI passed; it does not prove the owner agreed. Anyone with write access can dispatch the release
@@ -413,6 +466,12 @@ classic branch protection rule*): name `main`, Enforcement status **Active**, **
   pushes skip review; add *Repository admin* only if the owner accepts that. Never add *Deploy keys* here.
 * Check: `git push origin HEAD:main` from a local commit is refused (`GH013`). The version stamp then reaches
   `main` through a pull request like any other change.
+* **The maintenance branches too** (1.17.0; *Backports*): in the same ruleset, **Target branches** → *Add target* →
+  *Include by pattern* `maint/*`, so every `maint/X.Y` has `main`'s rules. Then a second branch ruleset: name
+  `maint branches: owner creates`, **Active**, *Include by pattern* `maint/*`, tick **Restrict creations** and
+  **Restrict deletions**, **Bypass list** → *Repository admin* (Always allow), so only the owner makes a maintenance
+  branch. (A classic protection rule cannot restrict who creates a branch; use rulesets for `maint/*`.)
+  Check: a collaborator's `git push origin HEAD:refs/heads/maint/9.9` is refused.
 
 **3. A tag ruleset for `v*`: only the owner makes release tags.**
 Rulesets → **New ruleset** → **New tag ruleset**: name `release tags`, **Active**, *Add target* → *Include by
@@ -524,6 +583,42 @@ branches' workflows could publish; deleting them removes the rest.
 **8. Code scanning (optional).** Settings → **Code security** → *Code scanning* → **Set up** → **Default** →
 languages *JavaScript/TypeScript* and *GitHub Actions* → **Enable CodeQL**; on the same page turn on **Secret
 scanning** and **Push protection**. None of these changes what SUDS ships; they report.
+
+**9. The weekly settings check, and the token that lets it read everything (1.17.0).**
+`.github/workflows/settings-check.yml` runs every Monday (and on *Run workflow*) and runs
+`scripts/repo-settings-check.js`, which reads steps 1 to 7 through the REST API, only with GET requests, and fails
+the run when a setting is **off** or **cannot be verified**; the run summary has one row per setting (step, setting,
+state, detail). What it reads:
+
+| Step | Setting | Read from | The workflow's own token |
+| --- | --- | --- | --- |
+| 1 | `release` environment: exists, the owner a required reviewer, *Prevent self-review* off with one reviewer, deployment refs `v*` (Tag) only | `environments/release`, `…/deployment-branch-policies` | reads it |
+| 2 | `main` and `maint/*`: deletion, force pushes, pull request with code-owner review and stale approvals dismissed, the six required checks with *up to date*; only an admin creates `maint/*` | `rules/branches/main`, `rulesets`, `rulesets/<id>` (a classic rule: `branches/main/protection`) | reads it (a classic rule's details: cannot verify) |
+| 3 | `v*` tag ruleset: creation, update and deletion restricted | `rulesets/<id>` | reads it |
+| 4 | default token read-only, Actions cannot approve pull requests, only GitHub's actions, SHA pinning where offered | `actions/permissions`, `…/selected-actions`, `…/workflow` | **cannot verify** |
+| 5 | immutable releases | `immutable-releases`; else the newest release's `immutable` | cannot verify, unless the newest release is marked immutable |
+| 6 | `gh-pages` ruleset; one deploy key with write access; `PAGES_PUBLISH_KEY` in `release`, no `PAGES_DEPLOY_KEY`, neither as a repository secret | `rules/branches/gh-pages`, `keys`, `environments/release/secrets`, `actions/secrets` | the ruleset; the rest **cannot verify** |
+| 7 | no `release/v*` branch left; *Automatically delete head branches* | `git/matching-refs/heads/release/v`, the repository | the branches; the setting **cannot verify** |
+
+**Cannot verify is not a pass**: with only the workflow's token the run stays red on the rows marked above. To let
+it read them, make a token that can read and nothing more:
+1. GitHub → your profile → **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained
+   tokens** → **Generate new token**: name `suds settings check`, an expiry (at most a year; the check reports an
+   expired token as "refused (401)"), **Repository access** → *Only select repositories* → `taugustincst/suds`;
+   **Repository permissions**, each **Read-only**: *Administration*, *Secrets*, *Environments*, *Actions*
+   (*Metadata* is added by itself). Nothing with write. **Generate token** and copy it.
+2. Settings → **Environments** → **New environment** → `settings-check` (a run has already made it if the workflow
+   ran): **Deployment branches and tags** → *Selected branches and tags* → add `main` (Ref type: Branch), so only
+   the default branch's copy of the workflow receives the token, not a branch's edited copy; no reviewers (it runs on
+   a schedule). **Environment secrets** → **Add environment secret**: `SETTINGS_READ_TOKEN`, the token → Add.
+3. Check: Actions → *Repository settings* → **Run workflow** on `main`; the summary says "with the
+   SETTINGS_READ_TOKEN token", and only settings that are really off are red.
+
+What no read-only token can see: a ruleset's **bypass list**, which GitHub shows only to a token that may edit the
+ruleset. Those rows read "check by hand" and do not fail the run; look at them in Settings → Rules → Rulesets (step
+2: empty; step 3 and `maint/*` creation: *Repository admin* only; step 6: *Deploy keys*). The check does not look at
+code scanning (step 8), the collaborators with write access, or who can edit Releases (*A GitHub Release made by
+someone else*). Tested with saved API responses in `test/repo-settings-check.test.js`.
 
 ### Migration numbering across branches
 A migration's position in `server/db.js`'s `migrations` array is the schema version a database records, so
