@@ -161,22 +161,35 @@ for (const freezeSave of [true, false]) {
 // "your work here was saved first" although that save went to a key nobody reads. Here another window's claim
 // is made directly in the store, then the tab does the unload save, then receives the takeover message.
 {
-  const ctx = await newCtx();
-  const A = watch(await ctx.newPage(), 'A'); await setup(A, base + '/?local=1#/');
   // One step, so the regular 250 ms save timer cannot run in between and hide the race: a write leaves the
   // page with unsaved work, another window's claim moves the epoch, the unload save writes the page's own
-  // (now dead) key, and only then does the takeover message arrive.
-  const status = await A.evaluate(async () => {
-    const r = await window.SUDS_LOCAL.handle('POST', '/api/clients', { first_name: 'Tab', last_name: 'Racer' }, {});
-    await new Promise((res, rej) => { const o = indexedDB.open('suds-local', 1); o.onsuccess = () => { const d = o.result; const t = d.transaction('kv', 'readwrite'); const st = t.objectStore('kv'); const g = st.get('epoch'); g.onsuccess = () => st.put((g.result || 0) + 1000, 'epoch'); t.oncomplete = () => { d.close(); res(); }; t.onerror = () => rej(t.error); }; o.onerror = () => rej(o.error); });
-    window.dispatchEvent(new Event('pagehide'));
-    new BroadcastChannel('suds-local-lock').postMessage({ type: 'takeover', from: 'another-window' });
-    return r.status;
-  });
-  eq(status, 201, 'tab A records a client (queued-work order case)');
-  await until(() => isPaused(A), { timeout: 10000 });
-  eq(await A.getAttribute('[data-paused]', 'data-paused').catch(() => null), 'unsaved', 'a tab whose last write was refused by the fence (another window claimed first) does not claim it was saved');
-  await ctx.close();
+  // (now dead) key, and only then does the takeover message arrive. On a loaded machine the timer's ordinary
+  // save can still reach the store before the claim (the POST itself yields); then the work WAS saved first
+  // (a real claim carries that copy into the new owner's) and "saved" is the truthful answer, but the race
+  // this case exists for was not set up. Readwrite transactions on the store run in the order they were made,
+  // and a save made after the claim is fenced (it leaves the page dirty), so the page being clean once the claim
+  // has committed means exactly that its work reached the store first; the case is retried until it did not.
+  let exercised = false;
+  for (let attempt = 1; attempt <= 4 && !exercised; attempt++) {
+    const ctx = await newCtx();
+    const A = watch(await ctx.newPage(), 'A'); await setup(A, base + '/?local=1#/');
+    const { status, landed } = await A.evaluate(async () => {
+      const d = await new Promise((res, rej) => { const o = indexedDB.open('suds-local', 1); o.onsuccess = () => res(o.result); o.onerror = () => rej(o.error); });
+      const r = await window.SUDS_LOCAL.handle('POST', '/api/clients', { first_name: 'Tab', last_name: 'Racer' }, {});
+      await new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); const st = t.objectStore('kv'); const g = st.get('epoch'); g.onsuccess = () => st.put((g.result || 0) + 1000, 'epoch'); t.oncomplete = () => { d.close(); res(); }; t.onerror = () => rej(t.error); });
+      const landed = !window.SUDS_LOCAL.isDirty();
+      window.dispatchEvent(new Event('pagehide'));
+      new BroadcastChannel('suds-local-lock').postMessage({ type: 'takeover', from: 'another-window' });
+      return { status: r.status, landed };
+    });
+    eq(status, 201, `tab A records a client (queued-work order case, attempt ${attempt})`);
+    await until(() => isPaused(A), { timeout: 10000 });
+    const said = await A.getAttribute('[data-paused]', 'data-paused').catch(() => null);
+    if (landed) eq(said, 'saved', `a tab whose save reached the store before another window claimed it says so (attempt ${attempt})`);
+    else { exercised = true; eq(said, 'unsaved', 'a tab whose last write was refused by the fence (another window claimed first) does not claim it was saved'); }
+    await ctx.close();
+  }
+  ok(exercised, 'the queued-work order race was set up (unsaved work when another window claimed) within four attempts');
 }
 
 // ---- 4. a tab still running 1.9.0 (no takeover handling, no fencing) and a new tab ----
