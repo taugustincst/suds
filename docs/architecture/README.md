@@ -170,13 +170,13 @@ flagged. Each is an entry in the expectations file.
 | interventions, calls, overdose, time, tasks, expenditures | another worker's record with no client could be deleted by a tombstone | refused, as over REST |
 | care plan, assessments, CalOMS | a module switched off at the office took pushes silently | flagged (REST refuses new work) |
 | clients | an edit winning last-write-wins could lift a legal hold, set `deleted_at` or `merged_into` | those columns are the office's unless the user holds clients:legal-hold / clients:all / clients:merge; impossible contact details and closing a client with an episode open are flagged |
-| assignments | a deactivated worker could be assigned; a discharge's end of the care team was refused without assignments:manage | the first refuses; the second lands, as POST /api/episodes/:id/close does it |
-| episodes | a second open episode, a discharge before admission, deleting an episode | flagged; refused; ignored (no route deletes one) |
+| assignments | a deactivated worker could be assigned; a discharge's end of the care team was refused without assignments:manage | the first refuses; the second lands, as POST /api/episodes/:id/close does it: from 1.16.3 only for a discharge of an episode the office holds open, and another worker's assignment only for the care team or a manager |
+| episodes | a second open episode, a discharge before admission, deleting an episode | flagged (refused from someone off the care team, 1.16.3); refused; ignored (no route deletes one) |
 | interventions | a clientless case-management visit, a cost with no line or a line of another fund | refused (a cost outside its fund's period is flagged) |
 | overdose events | `reported_by` could name anyone | attribution rule as for visits |
 | expenditures | an approved item's amount could be changed by its submitter; an inactive fund or a line of another fund | refused; flagged; refused |
 | referrals | could cite another client's consent | refused |
-| notes | a signed note's title, format, date and links, and a clinical note's kind, could be changed; a note could arrive signed by someone else | kept as signed; kind fixed; refused |
+| notes | a signed note's title, format, date and links, and a clinical note's kind, could be changed; a note could arrive signed by someone else | kept as signed; kind fixed; refused (1.16.3: signing time bounded by the note's creation and the office's now; a draft's signature columns cleared) |
 | note addenda | an addendum made offline left the signed note "signed" | the note is marked amended, as over REST |
 | disclosures | a manual disclosure recorded on a device was never checked | checked against the same gate; kept and flagged when unconfirmed (it records something that happened) |
 | court orders, §2.22 notices | could be rewritten by sync (no REST route edits them) | immutable; an order can still be vacated |
@@ -212,7 +212,10 @@ over what it stores and audits it as `note.sign` with `via: sync`, as the sign r
 H1; `test/security-1162.test.js`). A supply line's worker is its visit's and is not a device's to send. A note
 changed in a pull's window that its reader may not read (a draft flagged as a SUD counseling note after their device
 pulled it) is named in `dropped_rows` with its addenda, not left out in silence (`server/routes/sync.js`
-`exportInto`; M3, `test/counseling-drop-device.test.js`). A tombstone for shared reference data (resources, templates) still needs `records:manage-others`
+`exportInto`; M3, `test/counseling-drop-device.test.js`): from 1.16.3 only a note flagged in that window and written
+before it, and a shared device keeps a named row another account on it may read, or one with unsent changes
+(security review of 1.16.2, M2; `test/shared-device-drop.test.js`). A change notice is a to-do the audit entry of
+the edit it reports names (`client.change_notice`), never one recognised by its text (L3). A tombstone for shared reference data (resources, templates) still needs `records:manage-others`
 unless the table's rules say whose a row is (a resource photo: anyone who keeps the directory, as over REST);
 CalOMS answers are validated by `server/caloms.js` over REST only.
 

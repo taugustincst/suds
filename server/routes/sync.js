@@ -308,7 +308,7 @@ function pullPage(user, since, limit, serverNow, dropHidden = false) {
   // rows before its boundary (or every row of a single-timestamp page); for the rest, everything they had.
   for (const [name, sc] of scopes) raw[name] = db.all(`SELECT x.* FROM ${name} x WHERE x.updated_at > ? AND x.updated_at <= ? AND ${sc.sql} ORDER BY x.updated_at`, since, cursor, ...sc.params);
   const out = baseAnswer(cursor, serverNow, capped.length === 0);
-  exportInto(out, user, raw, cursor, dropHidden);
+  exportInto(out, user, raw, cursor, dropHidden ? since : null);
   // Newly assigned clients arrive whole: everything recorded about them before `since` as well, in the
   // backfill pages that follow this one (backfillPage). The cursor carries where they start.
   if (newlyInScope(user, since, cursor).length) {
@@ -351,8 +351,16 @@ function pullBackfill(user, since, bf, limit, serverNow) {
 }
 // dropHidden: a note changed in this window that the person may not read is named in `dropped_rows` (with its
 // addenda, first) rather than left out in silence, for a device that may hold an earlier copy: a clinical draft
-// flagged as a SUD counseling note after a navigator's device pulled it (security review of 1.16.1, M3).
-function exportInto(out, user, raw, cursor, dropHidden = false) {
+// flagged as a SUD counseling note after a navigator's device pulled it (security review of 1.16.1, M3). Only a note
+// flagged in this window, and written before it: an edit to a counseling note, or a new one, is nothing the device
+// was ever sent, and naming it both told the device that one was written and removed it from a shared device where
+// a clinician was working on it (security review of 1.16.2, M2 and L4).
+function flaggedSince(n, since) {
+  if (!n.created_at || n.created_at > since) return false;
+  return !!db.one(`SELECT 1 FROM audit_log WHERE client_id=? AND entity_id=? AND at > ? AND ((action='note.update' AND details LIKE '%"counseling_note_set":true%')
+    OR (action='sync.overwrite' AND entity='notes' AND details LIKE '%"counseling_note"%'))`, n.client_id, n.id, since);
+}
+function exportInto(out, user, raw, cursor, dropSince = null) {
   for (const t of SYNC.tables) {
     let rows = raw[t.name] || [];
     if (cursor) rows = rows.filter(r => r.updated_at <= cursor);
@@ -361,7 +369,7 @@ function exportInto(out, user, raw, cursor, dropHidden = false) {
     if (t.name === 'notes') { // SUD counseling notes (1.16.1)
       const hidden = rows.filter(r => !COUNSEL.mayReadCounseling(user, r));
       if (hidden.length) rows = rows.filter(r => COUNSEL.mayReadCounseling(user, r));
-      if (dropHidden) for (const n of hidden) out.dropped_rows.push(...db.all(`SELECT id FROM note_addenda WHERE note_id=?`, n.id).map(a => ['note_addenda', a.id]), ['notes', n.id]);
+      if (dropSince) for (const n of hidden.filter(x => flaggedSince(x, dropSince))) out.dropped_rows.push(...db.all(`SELECT id FROM note_addenda WHERE note_id=?`, n.id).map(a => ['note_addenda', a.id]), ['notes', n.id]);
     }
     if (t.readPerm && !auth.hasPerm(user, t.readPerm)) rows = []; // minimum necessary (clinical assessments, the care plan, spending)
     if (t.redact && !auth.hasPerm(user, t.redact.perm)) rows = rows.map(r => ({ ...r, ...t.redact.cols })); // fund names without their money

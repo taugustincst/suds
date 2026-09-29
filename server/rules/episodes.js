@@ -11,14 +11,22 @@
 // (server/rules/assignments.js endedByEpisode). And a device changes an episode only as the REST routes do: it
 // opens one, discharges it or re-admits it; the admission itself (when, how funded, referred and presenting) is
 // kept as the office has it, since no route edits it and reports count admissions by it.
+//
+// Security review of 1.16.2, M1. Opening an episode is not standing on the case: the opener off the care team may
+// close their own episode, but its discharge ends only their own part (routes/episodes.js /close,
+// assignments.js endedByEpisode). Ending the rest of the team, cancelling their to-dos and discharging the client
+// are for the care team (an active assignment) or records:manage-others (`standing`), and a second open episode
+// from a device is refused, as over REST, unless it is theirs.
 const db = require('../db');
 const auth = require('../auth');
 const { define, refuse, flag, notPermitted } = require('./core');
 
 const ADMISSION = ['opened_at', 'funding_source_id', 'referral_source', 'presenting_problem_enc'];
 const DISCHARGE = ['closed_at', 'discharge_reason', 'discharge_disposition', 'discharge_summary_enc', 'reopen_reason_enc'];
-const mayDischarge = (user, row) => (row.opened_by === user.id || auth.hasPerm(user, 'records:manage-others')
-  || db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${auth.activeAssignment()}`, row.client_id, user.id)
+/** On the client's care team, or a manager: who may end the team with a discharge. */
+const standing = (user, clientId) => auth.hasPerm(user, 'records:manage-others')
+  || !!db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${auth.activeAssignment()}`, clientId, user.id);
+const mayDischarge = (user, row) => (row.opened_by === user.id || standing(user, row.client_id)
   ? null : notPermitted('Only the client\'s care team, the person who opened this episode, or a supervisor can discharge or re-admit it'));
 
 module.exports = define({
@@ -47,7 +55,8 @@ module.exports = define({
       const clientId = c.existing ? e.client_id : row.client_id;
       const closing = new Set(((c.session && c.session.tables.episodes) || []).filter(x => x && x.status === 'closed').map(x => x.id));
       const other = db.all(`SELECT id FROM episodes WHERE client_id=? AND status='open' AND id<>?`, clientId, row.id || '').filter(x => !closing.has(x.id));
-      if (other.length) out.push(flag('was accepted, but the client already had an open episode at the office; a supervisor should close one of the two', { code: 'second_open_episode', message: 'This client already has an open episode. Close it before opening another.' }));
+      if (other.length && !standing(c.user, clientId)) out.push(refuse('not permitted: the client already has an open episode at the office, and only their care team or a supervisor can open another', { message: 'This client already has an open episode. Close it before opening another.' }));
+      else if (other.length) out.push(flag('was accepted, but the client already had an open episode at the office; a supervisor should close one of the two', { code: 'second_open_episode', message: 'This client already has an open episode. Close it before opening another.' }));
     }
     return out;
   },
@@ -64,4 +73,4 @@ module.exports = define({
     return kept ? flag('was accepted, but only as a discharge or re-admission: the rest of an episode is kept as the office has it (no route edits an admission)', { code: 'episode_kept' }) : null;
   },
 });
-module.exports.mayDischarge = mayDischarge;
+Object.assign(module.exports, { mayDischarge, standing });

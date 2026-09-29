@@ -28,17 +28,39 @@ function isSelfAssignment(raw, user, knownUsers, batchClients) {
 
 const ROLES = ['primary', 'secondary', 'clinician', 'peer', 'supervisor'];
 
-/** An existing assignment whose only change is the end date a discharge (or re-admission) in this push sets. */
+/**
+ * The discharges and re-admissions a push makes, read before any of it is applied (prepare): an episode the office
+ * holds open that the push closes, or holds closed that it re-opens, by someone who may (server/rules/episodes.js).
+ * A new episode, even one pushed already closed, discharges nobody (security review of 1.16.2, M1: open one, close
+ * it, and the primary worker's assignment went with it).
+ */
+function episodeChanges(s) {
+  const out = new Map(); // client_id -> { closed: discharge dates, reopened: the discharge dates undone }
+  for (const x of s.tables.episodes || []) {
+    if (!x || typeof x.id !== 'string') continue;
+    const o = db.one(`SELECT * FROM episodes WHERE id=?`, x.id);
+    if (!o || require('./episodes').editableBy(s.user, o)) continue;
+    const k = out.get(o.client_id) || { closed: new Set(), reopened: new Set() }; out.set(o.client_id, k);
+    if (o.status === 'open' && x.status === 'closed' && x.closed_at) k.closed.add(x.closed_at);
+    else if (o.status === 'closed' && x.status === 'open' && o.closed_at) k.reopened.add(o.closed_at);
+  }
+  return out;
+}
+
+/**
+ * An existing assignment whose only change is the end date a discharge (or re-admission) in this push sets. Another
+ * worker's is ended only by the client's care team or a manager (episodes.js standing); an opener off the team ends
+ * their own, as POST /api/episodes/:id/close does.
+ */
 function endedByEpisode(raw, s) {
-  if (!raw || typeof raw.client_id !== 'string' || !require('../auth').hasPerm(s.user, 'episodes:write')) return false;
+  if (!raw || typeof raw.client_id !== 'string' || !auth.hasPerm(s.user, 'episodes:write')) return false;
   const e = db.one(`SELECT * FROM assignments WHERE id=?`, raw.id);
   if (!e || e.client_id !== raw.client_id) return false;
-  const episodes = (s.tables.episodes || []).filter(x => x && x.client_id === raw.client_id);
-  const dates = new Set(episodes.map(x => (x.status === 'closed' ? x.closed_at : null)));
   const same = (k) => raw[k] === undefined || String(raw[k] ?? '') === String(e[k] ?? '');
-  // Only by someone who may discharge or re-admit that episode (server/rules/episodes.js, security review of 1.16.0 M6).
-  const mayEnd = episodes.some(x => { const o = db.one(`SELECT * FROM episodes WHERE id=?`, x.id); return !o || !require('./episodes').editableBy(s.user, o); });
-  return mayEnd && dates.has(raw.end_date ?? null) && ['user_id', 'role_on_case', 'start_date', 'ended_at'].every(same);
+  const k = s.state.assignments.episodes.get(e.client_id);
+  if (!k || !['user_id', 'role_on_case', 'start_date', 'ended_at'].every(same)) return false;
+  if (raw.end_date === null) return !!e.end_date && k.reopened.has(e.end_date); // a re-admission restores the team
+  return k.closed.has(raw.end_date) && (e.user_id === s.user.id || s.state.assignments.standing(e.client_id));
 }
 
 module.exports = define({
@@ -58,7 +80,9 @@ module.exports = define({
     const batchClients = new Map((s.tables.clients || []).filter(r => r && typeof r.id === 'string').map(r => [r.id, r]));
     const selfForClient = new Map(); const selfIds = new Set();
     for (const raw of rows) if (raw && typeof raw.id === 'string' && isSelfAssignment(raw, s.user, s.knownUsers, batchClients)) { selfForClient.set(raw.client_id, raw); selfIds.add(raw.id); }
-    s.state.assignments = { selfForClient, selfIds };
+    const standing = new Map();
+    s.state.assignments = { selfForClient, selfIds, episodes: episodeChanges(s),
+      standing: (id) => { if (!standing.has(id)) standing.set(id, require('./episodes').standing(s.user, id)); return standing.get(id); } };
   },
   // Also the care team a discharge ends (or a re-admission restores) along with the episode, which the same push
   // carries: POST /api/episodes/:id/close and /reopen do that with episodes:write alone.

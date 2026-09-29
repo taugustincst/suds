@@ -112,7 +112,8 @@ test('a skewed device clock never rewrites a clinical timestamp', async () => {
   const skew = 40 * 60 * 1000;
   const r = await nav.post('/api/sync/push', {
     device_now: iso(Date.now() + skew),
-    tables: { notes: [{ id: noteId, client_id: clientId, author_id: navId, kind: 'admin', content_enc: 'body', occurred_at: signedAt, status: 'signed', signed_at: signedAt, signed_by: navId, created_at: iso(Date.now() + skew), updated_at: iso(Date.now() + skew) }] },
+    // Written before it was signed (1.16.3: a signature is never before the note, security review of 1.16.2 L1).
+    tables: { notes: [{ id: noteId, client_id: clientId, author_id: navId, kind: 'admin', content_enc: 'body', occurred_at: signedAt, status: 'signed', signed_at: signedAt, signed_by: navId, created_at: '2026-03-04T15:00:00.000Z', updated_at: iso(Date.now() + skew) }] },
   });
   assert.equal(r.status, 200);
   assert.ok(Math.abs(r.data.clock_offset_ms + skew) < 5000, 'the offset was measured');

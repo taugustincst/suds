@@ -102,7 +102,17 @@ module.exports = define({
     }
     // A signature arriving now (checked above to be the syncing author's own): theirs, a signed note, with the hash
     // the office works out in afterApply over what it stores, whatever the device sent.
-    if (signs(row, c)) { row.status = 'signed'; row.signed_by = c.user.id; row.signed_at = row.signed_at || db.now(); row.signature_hash = null; }
+    // When it was signed is the device's to say (a legal fact, never shifted by its clock offset), but never before
+    // the note was written nor after now (security review of 1.16.2, L1). A draft carries no signature columns at
+    // all, whatever a device sent (L2).
+    if (signs(row, c)) {
+      const now = db.now(); const ms = row.signed_at ? Date.parse(row.signed_at) : NaN;
+      const at = Number.isFinite(ms) ? new Date(ms).toISOString() : now;
+      const from = (e ? e.created_at : row.created_at) || now;
+      row.status = 'signed'; row.signed_by = c.user.id; row.signature_hash = null;
+      const notBefore = at < from ? from : at;
+      row.signed_at = notBefore > now ? now : notBefore;
+    } else if ((row.status ?? (e ? e.status : 'draft')) === 'draft') { row.signed_by = null; row.signed_at = null; row.signature_hash = null; }
     if (!e) {
       for (const k of COSIGN) row[k] = null;
       row.cosign_note_enc = undefined;

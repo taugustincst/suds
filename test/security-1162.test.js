@@ -226,6 +226,8 @@ test('M2: a notice raised by 1.16.1 (recorded as the editor\'s) is protected the
   const id = randomUUID();
   H.db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, cid, U.navB, U.navA,
     enc('s162_navA changed a record (phone)'), enc(`Changed: phone\nYou are this client's primary worker; open their record to see what changed.\nReference: client record change by ${U.navA}`), iso(), 'normal');
+  // ... with the audit entry 1.16.1 wrote for the edit it reports (1.16.3: a notice is known by it, not by its text).
+  require('../server/audit').log({ user: { id: U.navA, username: 's162_navA' }, action: 'client.change_notice', entity: 'client', entityId: cid, clientId: cid, details: { notified: U.navB, fields: ['phone'] } });
   assert.equal((await C.navA.put(`/api/tasks/${id}`, { status: 'cancelled' })).status, 403);
   assert.equal((await C.navA.del(`/api/tasks/${id}`)).status, 403);
   assert.equal((await C.sup.put(`/api/tasks/${id}`, { status: 'done' })).status, 200, 'records:manage-others may');
