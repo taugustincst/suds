@@ -119,6 +119,10 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
   enabled until the programme records a BAA and a Part 2 QSOA with the provider; the remaining free text may still
   identify someone, so treat the provider as receiving PHI; the result is a draft a person edits and signs. Review
   it in your risk register before enabling it ([STRATEGY.md](STRATEGY.md), *Create 1*).
+- **Settlement outcomes and street outreach (1.17.0) add no data flow.** The settlement outcomes page and its
+  Excel/CSV file are aggregate figures made in the browser session of the person who asks for them (audited);
+  nothing is sent to the state or anyone else. A street outreach contact is an ordinary anonymous visit, saved on
+  the server or, offline, on the device and pushed by the existing sync.
 
 ## Security controls and evidence
 

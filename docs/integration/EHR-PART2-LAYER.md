@@ -19,7 +19,7 @@ in the first-run setup wizard). What changes (`server/programme.js`, `public/app
 | --- | --- |
 | **Off by default** (EHR-like modules) | Care plan and problem list, assessments (ASAM, PHQ-9…), CalOMS Tx, the county EHR hand-off. Each can still be switched on under Settings › Program › Modules (a programme that reports CalOMS from SUDS rather than the EHR switches it on). |
 | **On by default** | The FHIR R4 API (for the EHR to read consents and their provenance). |
-| **Hidden from the sidebar** | Supplies, Overdose & reversals, My time, Funding & spending, Funder report — harm-reduction pages a treatment programme's layer does not need. Their addresses still work for roles that may open them. |
+| **Hidden from the sidebar** | Supplies, Street outreach, Overdose & reversals, My time, Funding & spending, Settlement outcomes, Funder report — harm-reduction pages a treatment programme's layer does not need. Their addresses still work for roles that may open them. |
 | **Leads the sidebar** | Privacy & Part 2, opening on the **Part 2 layer** tab: consents, disclosures by source, the §2.32 notice, counseling notes, patient requests, breaches and complaints, secure referrals and the integration status, as counts (`GET /api/part2/layer`). |
 | **Unchanged** | Every Part 2 control, permission and audit rule. The profile is presentation; nothing is deleted when it changes. |
 

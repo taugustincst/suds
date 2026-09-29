@@ -49,7 +49,7 @@ An optional module, **off by default** and **office server only**, that drafts d
 - Tests: `test/ai-copilot.test.js` (permission, gating, attestation, the request body, de-identification, audit,
   usage and cap, provider failures against a local fake provider, a draft never saved or signed). Browser script
   `scripts/ui/r10-ai.mjs` against a fake provider, with axe on the panels, dialogs and the Settings tab (the suite
-  is now 48 scripts). Docs: `docs/AI-COPILOT.md`; HIPAA, Part 2, architecture, data lifecycle, deployment, user
+  is now 50 scripts). Docs: `docs/AI-COPILOT.md`; HIPAA, Part 2, architecture, data lifecycle, deployment, user
   guide and buyer guides updated.
 
 ### Access
@@ -153,7 +153,7 @@ A feature release item (1.17.0): migration 51, one new table, two new columns, n
   `report.prevention.export`).
 - Docs: the buyer guides, POSITIONING, SCOPE, the market scorecard (the SABG primary-prevention row now says
   exactly what exists and what does not), PILOT-KIT Q0, PROCUREMENT, HIPAA data classification and the USER_GUIDE.
-  Browser script `scripts/ui/r10-prev.mjs` (the suite is 48 scripts); API tests in `test/prevention.test.js`.
+  Browser script `scripts/ui/r10-prev.mjs` (the suite is 50 scripts); API tests in `test/prevention.test.js`.
 
 **Not in this change:** a PPSDS-shaped export (needs the DHCS PPSDS data dictionary); an evidence-based programme
 field and attendance by demographic group (only if the dictionary asks for them); anonymous participants in a
@@ -167,7 +167,8 @@ each with API tests; no new permission.
 - **SUDS as the Part 2 layer beside an EHR.** A third programme profile, **Part 2 compliance module (beside an
   EHR)** (`part2_layer`; Settings › Program, and the setup wizard), for a treatment programme whose EHR
   (eClinicalWorks, Epic, SmartCare…) stays the clinical record: the care plan, assessments, CalOMS and the hand-off
-  are off by default, the FHIR API on; Supplies, Overdose, My time, Funding and the funder report leave the sidebar;
+  are off by default, the FHIR API on; Supplies, Street outreach, Overdose, My time, Funding, Settlement outcomes and the
+  funder report leave the sidebar;
   Privacy & Part 2 leads it and opens on a new **Part 2 layer** tab — consents (live, expiring, pre-2024 form, active
   clients without one), disclosures by source, the §2.32 notice, counseling notes, patient requests and their
   deadlines, breaches and complaints, secure referrals and the EHR integration, as counts (`GET /api/part2/layer`,
@@ -204,6 +205,46 @@ each with API tests; no new permission.
   gives the worker a to-do to record the outcome, and is invited to receive referrals through SUDS. Office server
   only. Threat model: docs/security/REFERRAL-LINKS.md.
 - Browser suite: `scripts/ui/r10-part2.mjs`.
+
+### Settlement outcomes and street outreach
+
+Two features for 1.17.0. No migration and no new permission; three new routes (`GET /api/reports/settlement-outcomes`,
+`GET /api/reports/settlement-outcomes/export`, `GET /api/outreach/shift`).
+
+- **Settlement outcomes** (sidebar → *Settlement outcomes*, for finance, supervisors and administrators:
+  `reports:funder` or `reports:internal`, with `budget:read`). For each opioid settlement fund, each on its own (a
+  county's, a city's and the state's share), what it spent beside what the programme recorded of the work charged to
+  it: naloxone kits distributed and reversals reported for overdose-reversal spending; contacts, test strips and
+  syringes for harm reduction; people served, admissions, referrals and people linked to care and to medication for
+  OUD for treatment and recovery; education sessions, people trained and staff training hours for prevention and
+  training. By Exhibit E category, by fund and by month, with the cost per outcome (spending under the fund's own
+  category divided by it) where that means something. Which outcomes each category shows is one module,
+  `server/settlement-outcome-map.js`, with its own tests. Every count of people goes through the funder report's
+  small-cell rules and counting modes, protected across the settlement total, each category, each fund and each
+  fund's months; the page and its files are **suppressed by default, for finance too** (`<11`, `suppressed`), exact
+  on request for the roles the funder report allows, never a publication release, and **no cost per outcome is
+  shown beside a hidden count**. Excel, CSV and a printed page, made when the signed-in person asks and audited
+  (`report.settlement_outcomes`, `.export`); SUDS sends nothing anywhere. It says what it is: the programme's own
+  figures, not an official state reporting system (docs/compliance/HARM-REDUCTION-REPORTING.md, section 5).
+- **Street outreach** (**+ Log → Street outreach contact**, or the sidebar). One phone screen for anonymous field
+  contacts, one-handed at 390 px with targets of 48 px: the kind of contact (the services that need no client), −
+  count + for naloxone kits, test strips, syringes, wound care and the programme's other usual items (any other item
+  from the supplies catalog one choice away), a coarse place and the supply site, and a line of notes without
+  identifiers. A contact is an anonymous visit through `POST /api/interventions`: its supplies come off the stock by
+  the supply rules, it syncs like any visit, and the funder report, the NDP log and the syringe services summary
+  count it. It works with no connection on SUDS on this device and on a device that syncs with an office (the
+  office draws its own stock down once, at the next sync). **My shift** (`GET /api/outreach/shift`) counts the
+  worker's own contacts since the start of the day or of the shift they started, without notes. A worker can make it
+  their start page (on the screen, or **My profile → Start page**; the `start_page` preference), used after
+  sign-in and when SUDS is opened with no page in the address. The screen takes the anonymous SSP participant code
+  (*Prevention and syringe services* above) as the visit form does, and **My shift** counts the different codes
+  among the worker's contacts (`participants`, by blind index; never a code). Under the Part 2 compliance module
+  profile both pages leave the sidebar, as Supplies and Funding & spending do.
+- **Tests:** `test/settlement-outcome-map.test.js` (the mapping, the cost per outcome and the small-cell protection
+  as pure functions), `test/settlement-outcomes.test.js` (the routes, roles, counting and files),
+  `test/outreach.test.js` (contacts, stock, the shift summary, reports), `test/outreach-device.test.js` and
+  `test/outreach-kernel-sync.test.js` (the browser kernel with no office, and a device that syncs with one), and the
+  browser script `scripts/ui/r10-outreach.mjs` (in the suite, now 50 scripts).
 
 ### Privacy
 

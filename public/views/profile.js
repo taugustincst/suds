@@ -40,6 +40,12 @@ route('profile', async (r) => {
       'Use single-key shortcuts: / to find a client, n to log a visit, ? to list them'),
     h('p', { class: 'small muted mt' }, 'They work only when you are not typing in a field. Switch them off if they get in your way, for example with speech recognition. Ctrl + Enter (⌘ + Enter on a Mac) saves the open form either way. ',
       h('button', { class: 'btn sm', type: 'button', 'data-shortcuts-list': '1', onClick: () => openShortcutsHelp() }, 'Show the shortcuts')));
+  // Start page (1.17.0): where SUDS opens after signing in. Street outreach suits a worker who spends the day in the field.
+  const startSel = can('interventions:write') ? h('select', { id: 'start-page', 'data-start-page': '1', onChange: (e) => { prefs.set('start_page', e.target.value === 'outreach' ? 'outreach' : null); toast(e.target.value === 'outreach' ? 'SUDS will open on Street outreach when you sign in' : 'SUDS will open on Home when you sign in', 'ok'); } },
+    h('option', { value: 'dashboard', selected: prefs.get('start_page', null) !== 'outreach' }, 'Home'), h('option', { value: 'outreach', selected: prefs.get('start_page', null) === 'outreach' }, 'Street outreach')) : null;
+  const startCard = startSel ? h('div', { class: 'card', 'data-start-page-card': '1' }, h('h2', {}, 'Start page'),
+    h('div', { class: 'field' }, h('label', { for: 'start-page' }, 'Open SUDS on'), startSel),
+    h('p', { class: 'small muted mt' }, 'Street outreach is the one-screen logger for anonymous field contacts. The choice follows you to every device you sign in on.')) : null;
   return h('div', {}, pageHead('My profile'),
     force ? h('div', { class: 'banner warn' }, 'You must change your password before continuing.') : null,
     h('div', { class: 'grid cols-2' },
@@ -50,6 +56,7 @@ route('profile', async (r) => {
       h('div', { class: 'card' }, h('h2', {}, 'Change password'), pw),
       reminders,
       shortcuts,
+      startCard,
       state.local ? null : h('div', { class: 'card' }, h('h2', {}, 'Use SUDS on your phone'), h('p', { class: 'small' }, 'On the office Wi-Fi open ', h('b', {}, location.origin.replace(/^https?:\/\//, '')), ' or scan this code, then add it to the home screen: ', h('b', {}, 'iPhone:'), ' Share → Add to Home Screen. ', h('b', {}, 'Android:'), ' ⋮ → Install app. Your clients, notes and reminders are the same on every device — nothing to set up.'), h('div', { class: 'center' }, qrSvg(location.origin + '/', { size: 160 }))),
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Active sessions'), sessions.sessions.length > 1 ? h('button', { class: 'btn sm', onClick: async () => { await post('/api/auth/sessions/revoke-others', {}); toast('Other sessions signed out', 'ok'); nav('profile?_=' + Date.now()); } }, 'Sign out other sessions') : null),
         table([{ label: 'Started', render: s => fmt.dt(s.created_at) }, { label: 'Last active', render: s => fmt.dt(s.last_seen_at) }, { label: 'IP', key: 'ip' }, { label: 'Device', render: s => h('span', { class: 'small muted' }, (s.user_agent || '').slice(0, 60)) }, { label: '', srLabel: 'Current session', render: s => s.current ? badge('This session', 'ok') : '' }], sessions.sessions))));

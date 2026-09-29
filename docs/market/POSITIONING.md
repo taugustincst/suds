@@ -14,7 +14,8 @@ Three leads, in this order, each stated no further than the software goes:
    been made yet; the first is to be tested in a pilot.
 2. **Field-ready outreach.** One **+ Log** button on a phone, anonymous contacts that still count, supplies drawn
    from the van or site they left, and an offline copy that syncs with the office where the programme turns it on.
-   A dedicated street-outreach mode (participant codes, minimal personal information) is planned, not built.
+   The Street outreach screen and the SSP participant code are built for 1.17.0; a field device scope and
+   minimal-personal-information defaults beyond that are planned, not built.
 3. **Funder outcomes.** Funder report, NDP log, settlement expenditure report by allowable use and the layouts for
    DHCS and county settlement reporting, as exact submissions or screened publication releases. Each layout is to
    be checked against the funder's current template. A funder-facing view across the CBOs a county funds is
@@ -125,6 +126,10 @@ product and the same install as the harm-reduction use; only the profile differs
   keep billing in their EHR; SUDS can hand encounters to it ([docs/SCOPE.md](../SCOPE.md)).
 - **Not a prescribing or medication system.** No eMAR, e-prescribing, medication administration or labs.
 - **Not a replacement for SmartCare, Netsmart or any county EHR.** Do not propose it as one.
+- **Not an official state reporting system.** The funder, NDP, settlement and settlement-outcome reports are
+  built from what the programme records in SUDS, laid out as SUDS understands the forms. None is a verified state
+  template until someone has checked it against the current one ([docs/compliance/HARM-REDUCTION-REPORTING.md](../compliance/HARM-REDUCTION-REPORTING.md)),
+  and SUDS submits nothing to the state or a county: people download the files and submit them.
 - **Not a multi-tenant, high-availability platform.** One single-server instance per programme
   ([docs/architecture/ADR-0001](../architecture/ADR-0001-single-process-sqlite.md)).
 
@@ -141,7 +146,8 @@ EHR's FHIR export. Most harm-reduction CBOs have no EHR at all; for them SUDS is
 **For programme directors (value)**
 
 1. *Outreach you can count.* Log a contact in the field — named or anonymous — on a phone, even offline where the
-   programme allows it; it counts in the funder report.
+   programme allows it; it counts in the funder report. Street outreach (1.17.0) is one screen for it, one-handed:
+   what kind of contact, what was handed out, roughly where.
 2. *Supplies you can account for.* Every kit handed out comes off the stock of the site it left from; stock-outs and reversals are
    visible before the funder asks.
 3. *Funder reports from the records you already keep.* Unduplicated people served by funding source and period,
@@ -151,6 +157,10 @@ EHR's FHIR export. Most harm-reduction CBOs have no EHR at all; for them SUDS is
    separation of duties: nobody approves their own.
 5. *Privacy participants can trust.* Consent that names who may receive information, an accounting of every
    disclosure, identifiers and notes encrypted field by field.
+6. *Settlement money you can show the results of* (1.17.0). Each settlement fund's spending beside what the
+   programme recorded of the work it paid for — kits and reversals, people served and linked to treatment, people
+   trained — with small counts hidden as in the funder report. Say it plainly: SUDS reports what the programme
+   records; it is not the state's outcome measure and not a state report.
 
 **For the IT partner or county IT (the gate)**
 

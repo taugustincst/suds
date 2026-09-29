@@ -15,6 +15,7 @@ const views = {
   imports: ['imports'], reports: ['reports'], admin: ['admin'], profile: ['profile'], setup: ['setup'], local: ['sync', 'recovery-code'],
   forms: ['forms'], documents: ['documents'], supervision: ['supervision'], episodes: ['waitlist'],
   overdose: ['overdose'], prevention: ['prevention'], funder: ['funder'], caloms: ['caloms'], supplies: ['supplies', 'ssp'], compliance: ['compliance'], suprt: ['suprt'],
+  outreach: ['outreach'], settlement: ['settlement'],
 };
 for (const [file, names] of Object.entries(views)) lazyRoute(names, () => import(`./views/${file}.js`));
 // What the slower pages say while they work, from the first opening (before their module has arrived; the
@@ -23,5 +24,6 @@ loadingFor('reports', () => 'Counting visits, clients, calls and referrals for t
 loadingFor('budget', () => 'Adding up funds, budget lines and spending…');
 loadingFor('funder', (r) => (r.query.get('purpose') === 'publication' ? 'Checking small counts before the release is shown…' : 'Working out the funder report for the period…'));
 loadingFor('caloms', () => 'Checking the CalOMS records for the period…');
+loadingFor('settlement', () => 'Adding up settlement spending and what it paid for…');
 loadingFor('suprt', () => 'Counting SUPRT-A records due and done…');
 boot();

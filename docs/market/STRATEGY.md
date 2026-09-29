@@ -194,9 +194,14 @@ county-contracted treatment provider reports CalOMS, and many do so by hand), bu
 name the recipient, warm hand-off, loop closure and an accounting of each disclosure. The recipient organisation
 does not see anything in SUDS: loop closure is recorded by the referring worker.
 
-**What is planned.** Secure referral links with invitations: the referring programme sends a link to an invited
-organisation; the recipient accepts the referral and reports its outcome, so the loop closes from the receiving
-side. Each organisation that joins to receive referrals is a potential customer.
+**What is built for 1.17.0 (not yet released).** One-time secure referral links: the referring programme sends a
+link to an organisation not on SUDS; with a consent naming it, the recipient reads a minimal referral behind an
+access code, says what happened (which gives the worker a to-do to close the loop), and is invited to receive
+referrals through SUDS ([docs/security/REFERRAL-LINKS.md](../security/REFERRAL-LINKS.md)).
+
+**What is planned.** The network: invited organisations that join, accept referrals and report outcomes inside
+SUDS, so the loop closes from the receiving side. Each organisation that joins to receive referrals is a
+potential customer.
 
 **Assessment.** This is the only part of the strategy with a true network effect, and the hardest to build safely:
 every referral link that names a client is a Part 2 disclosure, the recipient is bound by the redisclosure rule,
@@ -281,8 +286,10 @@ until counsel and one pilot have looked at it.
 | Least-privilege default; client revision history | **Built for 1.17.0**, not yet released |
 | SABG primary-prevention events and their summary; anonymous SSP participant code | **Built for 1.17.0**, not yet released; no PPSDS file (the mapping awaits the DHCS data dictionary) |
 | Funder-facing outcome view across CBOs | **Planned**, not scheduled |
-| Street-outreach mode (participant code, minimal PII, field device scope) | **Planned**, not scheduled |
-| Cross-organisation referral links with invitations | **Planned**, not scheduled |
+| Street-outreach screen (one-handed anonymous contacts, offline, *My shift*) with the SSP participant code; settlement outcomes by fund | **Built for 1.17.0**, not yet released |
+| Minimal-PII defaults and a field device scope for street outreach | **Planned**, not scheduled |
+| One-time secure referral links to organisations not on SUDS, with an invitation | **Built for 1.17.0**, not yet released |
+| A cross-organisation referral network (organisations that join and accept referrals in SUDS) | **Planned**, not scheduled |
 | Inbound FHIR referrals | **Design placeholder** ([docs/integration/FHIR.md](../integration/FHIR.md)) |
 | De-identified outcomes and benchmarking dataset | **Design only** ([DATA-NETWORK.md](DATA-NETWORK.md)) |
 | Vendor-hosted tier | **Planned — not offered** ([HOSTING.md](HOSTING.md)) |
