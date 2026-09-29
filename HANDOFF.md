@@ -43,23 +43,40 @@ _(Append replies here, newest first.)_
 
 ### Release waiting
 
-- **1.16.3 is prepared, not released: the stamp `fc5e9d7` ("Release 1.16.3") on `main` waits for the owner's tag.**
-  The assistant cannot push tags (its environment's proxy refuses them), so only the owner can release it
-  (docs/RELEASE.md, *Handing a release to the owner*). Once `fc5e9d7`'s CI push run is green in full:
+- **1.16.3 and 1.16.4 are on `main`, and 1.16.4 is live, but neither is tagged: the owner tags both.** The
+  assistant cannot push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the
+  owner*). Until the tags exist, every "previous release" computation still starts at `v1.16.2`: the release
+  policy for 1.17.0 and for any 1.16.x backport, the migration-order baseline, and *Backports* step B's
+  `git rev-parse 'v1.16.4^{commit}'`, which fails outright. The commands (the owner, from any clone):
 
   ```bash
   git fetch origin
-  git merge-base --is-ancestor fc5e9d7 origin/main && echo "on main"
-  gh run list --workflow ci.yml --commit fc5e9d7 --event push    # completed, success
-  git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3" && git push origin v1.16.3
+  git merge-base --is-ancestor fc5e9d7 origin/main && git merge-base --is-ancestor 6491308 origin/main && echo "both on main"
+  git show -s --format='%H %s' fc5e9d7 6491308          # "Release 1.16.3", "Release 1.16.4"
+  gh run list --workflow ci.yml --commit 6491308 --event push   # completed, success (run 36591664382)
+  git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3"
+  git tag -a v1.16.4 6491308 -m "SUDS 1.16.4"
+  git push origin v1.16.3 v1.16.4
   ```
 
-  Its `web-app.yml` still reads the deploy key as `PAGES_DEPLOY_KEY`; since 1.16.4 the key is `PAGES_PUBLISH_KEY`
-  (RELEASE.md, step 6). Released before step 6, 1.16.3's web app publishes with the workflow token; after it, it
-  cannot, and 1.16.4 is the first to publish with the key. An assistant's clone had a local `v1.16.3` tag (tagger
-  Claude): never push tags from an assistant's clone.
+  Pushing `v1.16.4` starts `release.yml` (gate, `verify`, then the owner's approval for the GitHub Release with
+  its zip); its web-app publish would republish what `gh-pages` already serves. `v1.16.3` is older than `v1.16.4`,
+  so its release is not Latest and it publishes no web app. Never push tags from an assistant's clone.
 - The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
   once its tag is pushed.
+
+### 2026-09-29 — Claude: 1.16.3 and 1.16.4, what was released and how
+
+- **1.16.4 is `6491308`** ("Release 1.16.4", on `main`, CI green: run 36591664382). It is what SUDS on this device
+  serves: at the owner's request it was published to GitHub Pages by a **direct push to `gh-pages`** ("Deploy
+  6491308", `gh-pages` at `8e7d79e`), not by the release workflow: no tag, no GitHub Release, no approval record in
+  the `release` environment. docs/RELEASE.md records it (*Record: 1.16.4 published without a tag*).
+- An earlier "Release 1.16.4" commit, **`d95b69a`, was not released**: it is not on `main`, its CI failed (`ux13` hit
+  the API rate limit), and the second stamp `6491308` differs from it by the suite's rate-limit fix in
+  `scripts/ui/run-all.sh`. The evidence pack, the SBOM, the questionnaire and the CHANGELOG named `d95b69a` until the
+  engineering review of the 1.17.0 candidate (H2); they name `6491308` now, and the SBOM was regenerated from it.
+- **1.16.3 is `fc5e9d7`** ("Release 1.16.3", on `main`, an ancestor of `6491308`). It was never published on its own:
+  1.16.4 carries it. It still gets its tag, so that the version history and the "previous tag" are right.
 
 ### 2026-09-29 — Claude: 1.15.4 and 1.16.0 released; feature freeze until 2026-10-27 03:16 UTC
 

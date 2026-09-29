@@ -173,6 +173,30 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.15.0 | monthly limit | per-user permission overrides (migration 48, five routes) | owner (`policy_exception`) |
 | 1.15.1 | new device routes in a patch (not checked then) | owner recovery code for SUDS on this device | owner (`policy_exception`, per HANDOFF.md) |
 | 1.16.0 | monthly limit | role-permission expansion and the pending review fixes as one release | owner (`policy_exception`) |
+| 1.16.4 | released without a tag, a GitHub Release or the `release` environment's approval: published to GitHub Pages by a direct push to `gh-pages` | the owner asked for it to be live at once; the commit (`6491308`) had passed CI in full | owner (a request, no workflow record; *Record: 1.16.4 published without a tag*, below) |
+
+**Record: 1.16.4 published without a tag.** The released 1.16.4 is `6491308` ("Release 1.16.4", on `main`, CI green
+in full: run 36591664382). At the owner's request it was published to GitHub Pages by pushing its build straight to
+`gh-pages` ("Deploy 6491308"), not by `release.yml` and `web-app.yml`: there is no `v1.16.4` tag, no GitHub Release
+and zip, and no approval in the `release` environment, and the push shows that no ruleset guarded `gh-pages` then
+(step 6). An earlier stamp, `d95b69a`, is not the release (not on `main`, its CI failed; the evidence named it until
+the engineering review of the 1.17.0 candidate, H2). 1.16.3 (`fc5e9d7`, on `main`, an ancestor of `6491308`) was
+stamped and never published on its own. **Neither is tagged, and until both are, everything that measures from "the
+previous release" measures from `v1.16.2`:** the release policy for 1.17.0 (the feature interval, which does not
+change: 1.16.0 is the previous feature release) and for any 1.16.x patch (whose size and surface would be counted from
+`v1.16.2`: 1.16.3 and 1.16.4 alone count 1,137 of the 1,500 lines), `scripts/migration-order.js`'s baseline, and
+*Backports* step B, whose `git rev-parse 'v1.16.4^{commit}'` fails without the tag. The owner's commands, from any
+clone (never an assistant's):
+```bash
+git fetch origin
+git merge-base --is-ancestor fc5e9d7 origin/main && git merge-base --is-ancestor 6491308 origin/main && echo "both on main"
+git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3"
+git tag -a v1.16.4 6491308 -m "SUDS 1.16.4"
+git push origin v1.16.3 v1.16.4
+```
+Each tag starts `release.yml` for its version, which makes the GitHub Release with its zip after the owner's approval
+(1.16.3's is not Latest and publishes no web app; 1.16.4's web-app publish republishes what `gh-pages` already
+serves). Tag both **before** 1.17.0 is tagged.
 
 **Owner decisions inside a patch (not policy exceptions).** The policy checks a patch's surface (migrations,
 permissions, routes, size), not what its code does, so a patch can change behaviour without breaking a rule. That
@@ -196,6 +220,12 @@ git commit -am "Release 1.0.1" && git push   # (or a pull request); wait for CI 
 # the owner (the v* tag ruleset lets only the owner make release tags), with <sha> the stamp commit on origin/main:
 git fetch origin && git tag -a v1.0.1 <sha> -m "SUDS 1.0.1" && git push origin v1.0.1
 ```
+**Several streams merged: the whole browser suite, green, on the final merge commit, before the stamp.** Each stream's
+own scripts passing is not enough: in the 1.17.0 candidate two streams broke older scripts (`spreadsheets`, `ux13`)
+that nobody re-ran after the merges, and the commit went up with its `browser` job still running and a red one behind
+it (engineering review of the 1.17.0 candidate, H1). Run `scripts/ui/run-all.sh` in full on the commit the merges end
+at, or wait for its CI `browser` job, and stamp only once it is green.
+
 **The CHANGELOG date is the stamp's date; the release date is the tag's.** A section is dated when its version is
 stamped, and the version is released only when the owner pushes its tag (the GitHub Release and the tag carry that
 date); until then the section describes a prepared release, not a published one.
@@ -368,7 +398,10 @@ A. *Settings, once* (step 2 of *Owner: repository settings* covers them): `maint
    (below) reports both.
 
 B. *When a new minor is released* (1.17.0's tag pushed and its release published), make the previous minor's branch
-   from its last tag, then bring its release workflows up to `main`'s:
+   from its last tag, then bring its release workflows up to `main`'s. **This needs the `v1.16.4` tag**, which does
+   not exist yet (*Record: 1.16.4 published without a tag*, above: `git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3" &&
+   git tag -a v1.16.4 6491308 -m "SUDS 1.16.4" && git push origin v1.16.3 v1.16.4`); until it does, the first line
+   below fails, and a 1.16.5 would be measured against `v1.16.2`:
    ```bash
    git fetch origin --tags
    git push origin "$(git rev-parse 'v1.16.4^{commit}'):refs/heads/maint/1.16"

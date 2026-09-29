@@ -316,7 +316,8 @@ migration, no new permission, no new route.
   - separately, scoped *excluded*, the build tooling, the test-only tools CI installs and the pinned GitHub
     Actions.
 
-  `docs/evidence/sbom-1.16.4.cdx.json` is generated from the 1.16.4 stamp commit (`d95b69a`).
+  `docs/evidence/sbom-1.16.4.cdx.json` is generated from the released 1.16.4 commit (`6491308`; until the review of
+  the 1.17.0 candidate it named `d95b69a`, an earlier 1.16.4 stamp that is not on `main` and was not released).
   `test/sbom.test.js` regenerates it and requires the same bytes wherever that commit is in the clone (in CI,
   once the tag exists), and runs the script on the current tree.
 - **A threat model** (`docs/security/THREAT-MODEL.md`) covers:

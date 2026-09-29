@@ -9,7 +9,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.16.4, prepared at the stamp commit `d95b69a` and not yet tagged by the owner.
+**Version.** It describes 1.16.4, the released commit `6491308` ("Release 1.16.4", on `main`, CI green, and published to GitHub Pages by a direct `gh-pages` push at the owner's request); not yet tagged by the owner. (Until the review of the 1.17.0 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed, and that was never published.)
 
 **Other ways in.** The same ground is covered question by question in [../security/QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md), and for buyers in [../market/BUYER-GUIDE-IT.md](../market/BUYER-GUIDE-IT.md).
 
@@ -17,7 +17,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 | File | What it is | How to check it |
 | --- | --- | --- |
-| [sbom-1.16.4.cdx.json](sbom-1.16.4.cdx.json) | CycloneDX 1.5 software bill of materials for 1.16.4. See *The SBOM*, below | `node scripts/sbom.js --ref d95b69a` prints the same bytes, and `test/sbom.test.js` checks it |
+| [sbom-1.16.4.cdx.json](sbom-1.16.4.cdx.json) | CycloneDX 1.5 software bill of materials for 1.16.4. See *The SBOM*, below | `node scripts/sbom.js --ref 6491308` prints the same bytes, and `test/sbom.test.js` checks it |
 | [dr-drill-2026-09-29.md](dr-drill-2026-09-29.md) and [its folder](dr-drill-2026-09-29/) | Recovery drill on the released 1.16.2 at 20,000 fictional clients: 11 of 11 checks, drill RTO 3.8 s. A signed JSON report, the text report and the public key | `npm run verify-dr-report -- dr-drill-2026-09-29/<report>.json --public-key dr-drill-2026-09-29/suds-signing-key.pem` |
 | [dr-drill-2026-09-25.md](dr-drill-2026-09-25.md) and [its folder](dr-drill-2026-09-25/) | The earlier drill (1.11.0 branch, schema 37) | As above |
 
@@ -169,7 +169,7 @@ These close review questions that software cannot. The status of each is on the 
    - immutable releases, with older releases' checksums recorded;
    - stale branches deleted;
    - CodeQL, secret scanning and push protection.
-2. **Tag the prepared releases.** 1.16.3 (`fc5e9d7`) and 1.16.4 (`d95b69a`) are stamped but not tagged (HANDOFF.md, *Release waiting*). After tagging 1.16.4, regenerate its SBOM against the tag (below) if the tagged commit differs.
+2. **Tag the released versions.** 1.16.3 (`fc5e9d7`) and 1.16.4 (`6491308`, live on GitHub Pages) are released but not tagged (HANDOFF.md, *Release waiting*; docs/RELEASE.md, *Record: 1.16.4 published without a tag*): `git fetch origin && git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3" && git tag -a v1.16.4 6491308 -m "SUDS 1.16.4" && git push origin v1.16.3 v1.16.4`. The SBOM already describes `6491308`.
 3. **Vulnerability disclosure.** Turn on private vulnerability reporting, add a `SECURITY.md`, and name a security contact `[owner to complete]`.
 4. **Licence file.** `package.json` says MIT; add the `LICENSE` file `[owner to complete]`.
 5. **Organisation** `[owner to complete]`:
