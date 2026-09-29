@@ -8,10 +8,15 @@
 /.github/                        @taugustincst
 /scripts/release-gate.js         @taugustincst
 /scripts/release-policy.js       @taugustincst
+/scripts/release-existing.js     @taugustincst
+/scripts/release-site-check.js   @taugustincst
+/scripts/build-static-site.js    @taugustincst
 /scripts/test-thorough.js        @taugustincst
 /scripts/package.js              @taugustincst
 /test/release-gate.test.js       @taugustincst
 /test/release-policy.test.js     @taugustincst
+/test/release-existing.test.js   @taugustincst
+/test/release-site-check.test.js @taugustincst
 /test/migration-order.test.js    @taugustincst
 /docs/RELEASE.md                 @taugustincst
 

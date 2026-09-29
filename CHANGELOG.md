@@ -56,6 +56,43 @@ no new permission, no new route.
   falls back to "SUDS" as its issuer when a programme name in a non-Latin script cannot be shortened to fit the QR
   code.
 
+### Engineering
+
+Fixes to the release process from the engineering review of 1.16.3. No migration, no new permission, no new route.
+
+- **A GitHub Release someone else made for the owner's tag is refused (H1).** Anyone with write access can create
+  a GitHub Release for an existing tag (no ruleset covers Releases), and until now the release job, finding a zip
+  and checksum already attached, replaced nothing and went green, so a collaborator's zip could have been the
+  release, for good once releases are immutable. `scripts/release-existing.js` (main's copy) now checks any Release
+  that exists for the tag in the gate, before the owner is asked to approve, again in the release job, and once
+  more after publishing: it must be made by `github-actions[bot]`, carry only the zip and its checksum, and each file
+  it carries must be byte for byte the one built from the tag (`git archive` is reproducible). A draft the workflow
+  itself left behind is published once checked (L1); any other is refused. A refusal says how to recover: delete
+  that Release, keeping the tag, and run the release again, or release the next patch if it is immutable.
+- **npm runs where there is nothing to steal (M5).** `release.yml` is three jobs: the gate; `verify`, which runs
+  `npm ci`, the tests and the kernel drift check with a read-only token and no environment; and `release`, after
+  the owner's approval, the only job with a write token, which runs no npm and none of the released commit's code.
+  It builds the zip with `git archive` itself, and the policy exception's paragraph for the notes now comes from the
+  gate. `ci.yml` runs with a read-only token (L4).
+- **The published web app is checked against the tag (M2).** `web-app.yml`'s build job packs and uploads the site
+  straight after building it, before Playwright and its apt packages run, fails if the kernel it rebuilt differs
+  from the committed one, and runs its boot test on a copy unpacked from the archive. The publish job checks the site
+  byte for byte against what the tag's own `public/` builds to (`scripts/release-site-check.js`, which loads no npm
+  package: `build-static-site.js`'s page, service-worker and boot-script steps are now `stageShell()`, which it
+  reuses); only the provider pictures, which only a download can make, are allowed besides, as JPEG, PNG or WebP
+  files and a manifest.
+- **The deploy key has a new name (M1).** It is `PAGES_PUBLISH_KEY`: the `v1.16.2` copy of `web-app.yml` read
+  `PAGES_DEPLOY_KEY` in a job that also runs npm and Playwright, so approving a run on that tag would have handed
+  it over. Each tag's web-app runs now queue on their own, so a run on another tag can no longer displace the real
+  publish waiting for approval. The key file is removed however the step ends (L3).
+- **Owner settings and hand-over (M4, L2).** docs/RELEASE.md: *Prevent self-review* stays off while the owner is the
+  only reviewer (it made every release impossible to approve), with the trade-off explained; step 6 uses the new
+  secret name and checks `v1.16.2` as well as `v1.16.0`; step 5's check includes the release's author; *Owner control*
+  says what write access can still do. *Handing a release to the owner* gives the exact commands, tagging an
+  explicit SHA after checking its CI, and says plainly that the maintaining assistant cannot push tags, so security
+  releases wait for the owner until a backup releaser is named. A CHANGELOG date is the stamp's date; the release
+  date is the tag's. HANDOFF.md has a *Release waiting* note: 1.16.3 at `fc5e9d7` awaits the owner's tag.
+
 ## 1.16.3 — 2026-09-29
 
 ### Engineering

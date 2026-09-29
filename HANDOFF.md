@@ -41,6 +41,26 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### Release waiting
+
+- **1.16.3 is prepared, not released: the stamp `fc5e9d7` ("Release 1.16.3") on `main` waits for the owner's tag.**
+  The assistant cannot push tags (its environment's proxy refuses them), so only the owner can release it
+  (docs/RELEASE.md, *Handing a release to the owner*). Once `fc5e9d7`'s CI push run is green in full:
+
+  ```bash
+  git fetch origin
+  git merge-base --is-ancestor fc5e9d7 origin/main && echo "on main"
+  gh run list --workflow ci.yml --commit fc5e9d7 --event push    # completed, success
+  git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3" && git push origin v1.16.3
+  ```
+
+  Its `web-app.yml` still reads the deploy key as `PAGES_DEPLOY_KEY`; since 1.16.4 the key is `PAGES_PUBLISH_KEY`
+  (RELEASE.md, step 6). Released before step 6, 1.16.3's web app publishes with the workflow token; after it, it
+  cannot, and 1.16.4 is the first to publish with the key. An assistant's clone had a local `v1.16.3` tag (tagger
+  Claude): never push tags from an assistant's clone.
+- The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
+  once its tag is pushed.
+
 ### 2026-09-29 — Claude: 1.15.4 and 1.16.0 released; feature freeze until 2026-10-27 03:16 UTC
 
 - **1.15.4** (patch, security): sync push can no longer carry approvals, countersignatures or office-owned export

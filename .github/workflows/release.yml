@@ -7,6 +7,13 @@ name: Release
 # and "Owner: repository settings"). It creates the GitHub Release with the source zip, then asks web-app.yml to
 # publish the web app for that tag. The native apps and desktop launchers were removed in 1.9.3
 # (docs/PLATFORM.md): nothing else is built or attached.
+#
+# Three jobs since 1.16.4 (engineering review of 1.16.3, M5 and H1). `gate` checks CI, the release policy and any
+# GitHub Release already made for the tag, with a read-only token. `verify` runs npm ci, the tests and the kernel
+# drift check, with a read-only token and no environment. `release` waits for the owner's approval in the
+# `release` environment and is the only job with a write token: it runs no npm and none of the released commit's
+# code; it builds the zip with `git archive`, checks any existing GitHub Release against it byte for byte (main's
+# scripts/release-existing.js), and publishes.
 on:
   push:
     tags: ['v*']
@@ -33,11 +40,9 @@ on:
 env:
   NODE22_VERSION: v22.23.3
   NODE22_SHA256: df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de
+# Read-only unless a job asks for more; only the `release` job does.
 permissions:
-  contents: write
-  # `gh workflow run web-app.yml` below: a release this workflow creates with GITHUB_TOKEN does not fire the
-  # `release` event for other workflows, so the web app publish is started explicitly.
-  actions: write
+  contents: read
 jobs:
   # The release gate. Nothing is built or published unless CI (ci.yml) concluded success for this exact
   # commit, with the test, browser (the whole browser suite: accessibility, a11y-round4 and the rest), node24
@@ -55,6 +60,9 @@ jobs:
     # publish time, which may have moved during the approval).
     outputs:
       main_sha: ${{ steps.src.outputs.main_sha }}
+      # The policy exception's paragraph for the top of the release notes (1.16.4: written here, by main's policy
+      # script, so the release job runs none of the released commit's code).
+      policy_notes: ${{ steps.policy.outputs.policy_notes }}
     steps:
       # 1.16.3: a release is always of a v* tag. Until then *Run workflow* on a release/v* branch created the tag
       # itself, which the owner's settings (the `release` environment limited to v* tags, the v* tag ruleset) refuse
@@ -75,7 +83,7 @@ jobs:
           git checkout --quiet "${GITHUB_SHA}"
           mkdir -p "$RUNNER_TEMP/main"
           main_sha="$(git rev-parse origin/main)"; echo "main_sha=${main_sha}" >> "$GITHUB_OUTPUT"
-          git archive "${main_sha}" scripts/release-gate.js scripts/release-policy.js | tar -x -C "$RUNNER_TEMP/main"
+          git archive "${main_sha}" scripts/release-gate.js scripts/release-policy.js scripts/release-existing.js | tar -x -C "$RUNNER_TEMP/main"
       - name: CI passed for this exact commit
         run: node "$RUNNER_TEMP/main/scripts/release-gate.js" "${GITHUB_SHA}"
       # A patch bump may not add a migration, permission or route, and a minor or major bump may not come within
@@ -84,35 +92,44 @@ jobs:
       # at another commit is refused (--sha, --main). The exception arrives through the environment, never
       # pasted into the script.
       - name: Release policy (patch releases add no migration, permission or route, device routes included, and at most 1,500 lines; feature releases at most every 28 days; the commit is on main and its version not released at another commit)
+        id: policy
         env:
           RELEASE_POLICY_EXCEPTION: ${{ github.event.inputs.policy_exception }}
           ALLOW_PATCH_CHANGES: ${{ github.event.inputs.allow_patch_changes }}
           # The tag must name package.json's version (1.16.2 for a pushed tag; since 1.16.3 every run is on a tag).
           RELEASE_TAG: ${{ github.ref_name }}
-        run: node "$RUNNER_TEMP/main/scripts/release-policy.js" --root src --sha "${GITHUB_SHA}" --main origin/main --tag "$RELEASE_TAG"
-  # The `release` environment: once the owner adds a required reviewer to it (GitHub -> Settings ->
-  # Environments -> release; docs/RELEASE.md, "Owner control over releases"), this job waits for that person's
-  # approval before anything is tested, packaged or published, however the workflow was started. Without the
-  # setting the environment is created on first use and does not wait.
-  release:
-    needs: gate
-    runs-on: ubuntu-latest
-    environment: release
-    if: github.event_name == 'push' || github.event.inputs.confirm == 'release'
-    env:
-      GH_TOKEN: ${{ github.token }}
-      # Who started the release, recorded in the release notes. Through the environment, never pasted into a script.
-      RELEASE_ACTOR: ${{ github.actor }}
-      RELEASE_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-      MAIN_SHA: ${{ needs.gate.outputs.main_sha }}
-    steps:
-      - name: Check out
-        run: git clone --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
-      # The gate checked GITHUB_SHA. A branch that moved since (workflow_dispatch) would release a commit CI
-      # never passed, so release exactly the gated commit or nothing.
-      - name: Release exactly the commit the gate checked
+        run: |
+          node "$RUNNER_TEMP/main/scripts/release-policy.js" --root src --sha "${GITHUB_SHA}" --main origin/main --tag "$RELEASE_TAG" --notes-out "$RUNNER_TEMP/policy-notes.md"
+          d="NOTES_$(openssl rand -hex 16)"
+          { echo "policy_notes<<${d}"; cat "$RUNNER_TEMP/policy-notes.md"; echo; echo "${d}"; } >> "$GITHUB_OUTPUT"
+      # A GitHub Release someone else made for the tag stops the release here, before the owner is asked to approve
+      # it (engineering review of 1.16.3, H1; docs/RELEASE.md, "A GitHub Release made by someone else"). The zip is
+      # built exactly as the release job builds it. This read-only token does not see a draft; the release job,
+      # with its write token, checks again.
+      - name: Any GitHub Release for this tag is this workflow's, with the files built from the tag
         working-directory: src
         run: |
+          ver="${GITHUB_REF_NAME}"
+          mkdir -p "$RUNNER_TEMP/pkg"
+          git archive --format=zip --prefix="suds-$ver/" -o "$RUNNER_TEMP/pkg/suds-$ver.zip" "${GITHUB_SHA}"
+          (cd "$RUNNER_TEMP/pkg" && sha256sum "suds-$ver.zip" > "suds-$ver.zip.sha256")
+          node "$RUNNER_TEMP/main/scripts/release-existing.js" --tag "$ver" --dir "$RUNNER_TEMP/pkg" --repo "${GITHUB_REPOSITORY}"
+  # npm and the tests run here, before the approval, with a read-only token, no environment and no secret (1.16.4;
+  # engineering review of 1.16.3, M5: they ran in the release job, where a dependency could reach the packaging
+  # step through $GITHUB_ENV, $GITHUB_PATH or a replaced git, sha256sum or gh, with a write token). Nothing this
+  # job makes is used by another: the release job builds the zip itself.
+  verify:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # The gate checked GITHUB_SHA. A tag that moved since would test a commit CI never passed, so test exactly
+      # the gated commit or nothing. The token is dropped from the remote once it has fetched.
+      - name: Check out exactly the commit the gate checked
+        run: |
+          git clone --quiet --branch "${GITHUB_REF_NAME}" "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src
+          cd src && git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
           git checkout --quiet "${GITHUB_SHA}" || { echo "::error::${GITHUB_SHA} is not on ${GITHUB_REF_NAME}"; exit 1; }
           [ "$(git rev-parse HEAD)" = "${GITHUB_SHA}" ] || { echo "::error::Checked out $(git rev-parse HEAD), gated ${GITHUB_SHA}"; exit 1; }
       # These were one `&&`/`||` chain. Both operators bind at the same precedence and associate left, so a
@@ -146,55 +163,100 @@ jobs:
             echo "::error::The committed kernel is stale; the release zip would ship it. Run 'npm run build:local' and commit."
             exit 1
           }
-      - name: Package and publish
+  # The `release` environment: once the owner adds a required reviewer to it (GitHub -> Settings ->
+  # Environments -> release; docs/RELEASE.md, "Owner control over releases"), this job waits for that person's
+  # approval after the gate and the tests, before anything is packaged or published, however the workflow was
+  # started. Without the setting the environment is created on first use and does not wait. It is the only job
+  # with a write token, and it runs no npm and none of the released commit's code: git, sha256sum, jq, gh, and
+  # main's scripts/release-existing.js (from the gate's main commit) on the runner's own Node.
+  release:
+    needs: [gate, verify]
+    runs-on: ubuntu-latest
+    environment: release
+    if: github.event_name == 'push' || github.event.inputs.confirm == 'release'
+    permissions:
+      contents: write
+      # `gh workflow run web-app.yml` below: a release this workflow creates with GITHUB_TOKEN does not fire the
+      # `release` event for other workflows, so the web app publish is started explicitly.
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # gh runs outside the clone below (in the folder holding the zip), so it is told the repository.
+      GH_REPO: ${{ github.repository }}
+      # Who started the release, recorded in the release notes. Through the environment, never pasted into a script.
+      RELEASE_ACTOR: ${{ github.actor }}
+      RELEASE_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+      MAIN_SHA: ${{ needs.gate.outputs.main_sha }}
+    steps:
+      - name: Check out
+        run: git clone --quiet --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
+      - name: Release exactly the commit the gate checked
         working-directory: src
-        env:
-          RELEASE_POLICY_EXCEPTION: ${{ github.event.inputs.policy_exception }}
-          ALLOW_PATCH_CHANGES: ${{ github.event.inputs.allow_patch_changes }}
         run: |
-          ver="v$(node -p "require('./package.json').version")"
+          git checkout --quiet "${GITHUB_SHA}" || { echo "::error::${GITHUB_SHA} is not on ${GITHUB_REF_NAME}"; exit 1; }
+          [ "$(git rev-parse HEAD)" = "${GITHUB_SHA}" ] || { echo "::error::Checked out $(git rev-parse HEAD), gated ${GITHUB_SHA}"; exit 1; }
+      # The zip is `git archive` of the tag (what scripts/package.js does, without running it): the same bytes the
+      # gate built and compared, and the same on a re-run.
+      - name: Package
+        working-directory: src
+        run: |
+          ver="v$(jq -r .version package.json)"
           if [ "${GITHUB_REF_NAME}" != "$ver" ]; then echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json $ver"; exit 1; fi
-          node scripts/package.js "suds-$ver.zip"
-          # A checksum beside the zip: docs/DEPLOYMENT.md tells an installer to compare it before unpacking.
-          sha256sum "suds-$ver.zip" > "suds-$ver.zip.sha256"
-          notes=$(awk -v v="${ver#v}" '/^## /{p = index($0, v) > 0} p' CHANGELOG.md)
-          # A policy exception (already checked in the gate) is stated at the top of the notes, with its reason.
-          # The tags and their dates are needed for the feature-release interval, as in the gate.
-          git fetch --quiet --depth 1 origin '+refs/tags/v*:refs/tags/v*' || true
           # A version already tagged at another commit is never released again (the gate refused it too).
+          git fetch --quiet --depth 1 origin '+refs/tags/v*:refs/tags/v*' || true
           at="$(git rev-parse -q --verify "refs/tags/$ver^{commit}" || true)"
           if [ -n "$at" ] && [ "$at" != "$(git rev-parse HEAD)" ]; then echo "::error::$ver is already tagged at $at, not this commit"; exit 1; fi
-          # main's copy of the policy script, the very commit the gate ran (not main's tip now).
+          mkdir -p "$RUNNER_TEMP/pkg"
+          git archive --format=zip --prefix="suds-$ver/" -o "$RUNNER_TEMP/pkg/suds-$ver.zip" "${GITHUB_SHA}"
+          # A checksum beside the zip: docs/DEPLOYMENT.md tells an installer to compare it before unpacking.
+          (cd "$RUNNER_TEMP/pkg" && sha256sum "suds-$ver.zip" > "suds-$ver.zip.sha256")
+          # main's copy of the check, from the very commit the gate ran (not main's tip now).
           git fetch --quiet origin "${MAIN_SHA}"
-          git show "${MAIN_SHA}:scripts/release-policy.js" > "$RUNNER_TEMP/release-policy.js"
-          node "$RUNNER_TEMP/release-policy.js" --root . --notes-out "$RUNNER_TEMP/policy-notes.md"
-          if [ -s "$RUNNER_TEMP/policy-notes.md" ]; then notes="$(cat "$RUNNER_TEMP/policy-notes.md")"$'\n\n'"${notes}"; fi
+          git show "${MAIN_SHA}:scripts/release-existing.js" > "$RUNNER_TEMP/release-existing.js"
+      # Again after the approval, which may have come much later, and with this job's token, which sees drafts.
+      - name: Any GitHub Release for this tag is this workflow's, with the files built from the tag
+        id: existing
+        run: node "$RUNNER_TEMP/release-existing.js" --tag "${GITHUB_REF_NAME}" --dir "$RUNNER_TEMP/pkg" --repo "${GITHUB_REPOSITORY}"
+      - name: Publish
+        working-directory: src
+        env:
+          ACTION: ${{ steps.existing.outputs.action }}
+          PUBLISH_DRAFT: ${{ steps.existing.outputs.publish_draft }}
+          POLICY_NOTES: ${{ needs.gate.outputs.policy_notes }}
+        run: |
+          ver="${GITHUB_REF_NAME}"
+          notes=$(awk -v v="${ver#v}" '/^## /{p = index($0, v) > 0} p' CHANGELOG.md)
+          # A policy exception (checked in the gate, which wrote this paragraph) is stated at the top of the notes.
+          if [ -n "$(printf '%s' "${POLICY_NOTES}" | tr -d '[:space:]')" ]; then notes="${POLICY_NOTES}"$'\n\n'"${notes}"; fi
           # Who released it: the account that pushed the tag or dispatched the workflow (and, on a re-run, who re-ran it).
           by="Released by @${RELEASE_ACTOR} (${GITHUB_EVENT_NAME}, run ${GITHUB_RUN_ID})"
           if [ -n "${RELEASE_TRIGGERING_ACTOR}" ] && [ "${RELEASE_TRIGGERING_ACTOR}" != "${RELEASE_ACTOR}" ]; then by="${by}, re-run by @${RELEASE_TRIGGERING_ACTOR}"; fi
           notes="${notes:-See CHANGELOG.md}"$'\n\n'"---"$'\n'"${by}."
-          # A published file is never replaced (until 1.16.1 a re-run uploaded over them, so a later commit's
-          # zip and checksum could overwrite a release's): a re-run of this commit's release adds only what is missing.
-          if gh release view "$ver" >/dev/null 2>&1; then
-            have="$(gh release view "$ver" --json assets --jq '.assets[].name')"
-            n=0; for f in "suds-$ver.zip" "suds-$ver.zip.sha256"; do printf '%s\n' "$have" | grep -qxF "$f" && n=$((n + 1)); done
-            if [ "$n" = 2 ]; then echo "The release $ver already has its zip and checksum; nothing is replaced."
-            elif [ "$n" = 0 ]; then gh release upload "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256"
-            else echo "::error::The release $ver has only one of its zip and checksum; fix it by hand rather than pair a new file with a published one"; exit 1; fi
-          else
-            # --verify-tag: the tag exists already (the owner pushed it); this workflow never creates one.
-            gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --verify-tag --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}"; fi
+          cd "$RUNNER_TEMP/pkg"
+          # A published file is never replaced (until 1.16.1 a re-run uploaded over them): the check above said what
+          # is missing, and refused a release that is not this workflow's or whose files are not the tag's.
+          case "${ACTION}" in
+            create)
+              # --verify-tag: the tag exists already (the owner pushed it); this workflow never creates one.
+              gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --verify-tag --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}" ;;
+            upload) gh release upload "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" ;;
+            none) echo "The release $ver already has its zip and checksum, the ones built from the tag; nothing is replaced." ;;
+            *) echo "::error::Unknown action '${ACTION}'"; exit 1 ;;
+          esac
+          # A draft this workflow left behind (a create interrupted before it published) is published now that its
+          # files are checked (engineering review of 1.16.3, L1); a draft anyone else made was refused above.
+          if [ "${PUBLISH_DRAFT}" = "true" ]; then gh release edit "$ver" --draft=false; fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$ver"
+      - name: What is published is this workflow's release, with the files built from the tag
+        run: node "$RUNNER_TEMP/release-existing.js" --tag "${GITHUB_REF_NAME}" --dir "$RUNNER_TEMP/pkg" --repo "${GITHUB_REPOSITORY}" --after-publish
       # Only after the tests passed and the release exists. A release (or tag) this workflow creates with
       # GITHUB_TOKEN starts no other workflow, so the web app publish is asked for explicitly: this dispatch, on
       # the release tag, is the only way web-app.yml runs besides a person republishing a released tag (since
       # 1.16.1 a tag push no longer starts it), and it checks the GitHub Release exists at the tag's commit.
       - name: Publish the web app for this release
-        working-directory: src
         run: |
-          ver="v$(node -p "require('./package.json').version")"
-          gh workflow run web-app.yml --ref "$ver"
-          echo "Started the web app publish for $ver. QA: open it and check the on-screen version reads ${ver#v}."
+          gh workflow run web-app.yml --repo "${GITHUB_REPOSITORY}" --ref "${GITHUB_REF_NAME}"
+          echo "Started the web app publish for ${GITHUB_REF_NAME}. QA: open it and check the on-screen version reads ${GITHUB_REF_NAME#v}."
       - name: Release QA reminder
         run: |
           echo "### Release QA" >> "$GITHUB_STEP_SUMMARY"
