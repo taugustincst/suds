@@ -102,6 +102,11 @@ function status() {
     drill ? `${drill.ok ? 'passed' : 'FAILED'} ${drill.at.slice(0, 10)} — RTO ${drill.rto_seconds ?? '?'} s (target ${drill.rto_target_minutes} min), RPO ${drill.rpo_seconds != null ? Math.round(drill.rpo_seconds / 360) / 10 + ' h' : '?'} (target ${drill.rpo_target_hours} h)` : 'never run',
     drill ? (drill.ok ? `${drill.checks_passed}/${drill.checks_total} checks; restored the ${drill.backup_copy || 'local'} copy with keys from ${drill.keys_source || 'server memory'}; report ${drill.report_file || '(not written)'}.${drill.keys_source && drill.keys_source !== 'server memory' ? '' : ' Run one with the escrowed key file to prove it opens the backups.'}` : (drill.failures || []).join('; ')) : 'Run one from System & backups, or npm run dr-drill.', 'server/dr-drill.js; report in <data>/backups/dr-drill-*.json');
   add('Backups and recovery', 'Monthly recovery drill', db.getSetting('dr_drill_monthly', '0') === '1' ? 'ok' : 'info', db.getSetting('dr_drill_monthly', '0') === '1' ? 'on' : 'off', 'Settings → Scheduled backups.', 'server/dr-drill.js runIfDue');
+  {
+    const plain = db.plaintextCopies();
+    add('Backups and recovery', 'Unencrypted database copies', plain.length ? 'bad' : 'ok', plain.length ? `${plain.length} not encrypted: ${plain.map((p) => p.file).join(', ')}` : 'none: restore undo copies and pre-migration snapshots are sealed',
+      plain.length ? plainCopiesAdvice(plain) : 'A restore\'s undo copy and an upgrade\'s snapshot are encrypted with the backup key as soon as they are no longer needed in plaintext; a failure is retried every hour.', 'server/db.js plaintextCopies, sealPlaintextCopies');
+  }
   add('Backups and recovery', 'Backup encryption key', config.backupKey ? 'ok' : 'info', config.backupKey ? 'separate SUDS_BACKUP_KEY' : 'derived from the PHI encryption key', config.backupKey ? '' : 'Setting SUDS_BACKUP_KEY lets the PHI key rotate without re-keying the backup set.', 'server/backup.js');
 
   // ---- Audit ----
@@ -160,4 +165,10 @@ function status() {
   return { generated_at: db.now(), version: config.version, counts, items, mfa, attestation: 'SUDS holds no SOC 2, ISO 27001, HITRUST, StateRAMP or FedRAMP attestation. This page reports the technical controls in this installation; independent attestation requires an auditor (docs/security/SOC2-READINESS.md).' };
 }
 
-module.exports = { status, mfaReport, validateSettings };
+/** What to do about database copies still in plaintext (server/db.js plaintextCopies): one sentence per file. */
+function plainCopiesAdvice(plain) {
+  return plain.map((p) => `${p.path} (${p.kind === 'restore' ? 'the database as it was before a restore, kept to undo it' : 'a snapshot taken before a schema upgrade'}; since ${p.since}) holds every record unencrypted${p.error ? `; sealing it failed: ${p.error.error}` : ''}.`).join(' ')
+    + ' SUDS tries again every hour. Make room on the disk and check that SUDS can write to that folder; the next hourly try (or a restart) then seals it. If it is not needed, delete it securely instead (shred -u, or your platform\'s secure delete).';
+}
+
+module.exports = { status, mfaReport, validateSettings, plainCopiesAdvice };

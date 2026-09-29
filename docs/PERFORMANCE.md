@@ -78,6 +78,48 @@ A phone's first load (`scripts/bench/frontend.mjs`: 390 px, slow 4G, CPU slowed 
 | Opening Supplies the first time | 3.0 s; 555 kB | 0.4 s; 26 kB |
 | Opening Clients the first time | 1.1 s; 115 kB | 0.8 s; 23 kB |
 
+### Re-measured at 1.15.3 + the 1.16.0 engineering stream (2026-09-28)
+
+The machine was busier than for the figures above (load average 8–12 on 4 CPUs, other work running), so
+compare the shape, not the last digit; the independent review of 1.15.3 measured the sign-in page at 99 kB and
+1.8 s on its own machine.
+
+A phone's first load (`scripts/bench/frontend.mjs`, same profile; two runs):
+
+| What | 1.15.3 |
+|---|---|
+| Sign-in page, first visit: Largest Contentful Paint; usable; downloaded | 2.1–2.5 s; 2.1–2.5 s; 99 kB in 13 requests |
+| Sign-in page, return visit | 1.4 s; 1.4 s; 8 kB |
+| Signing in to Home (administrator), first visit, until it shows | 2.6 s; 82 kB in 27 requests |
+| Signing in to Home, return visit | 2.0–2.3 s; 65 kB |
+| Opening Clients the first time | 0.9 s; 25 kB |
+| Opening Supplies the first time | 0.4 s; 25 kB |
+
+The download grew from 85 kB to 99 kB since 1.14.0 (the pages and help added in 1.15.x); the times are longer
+mostly because of the load on the machine (the return visit, 8 kB, went from 1.1 s to 1.4 s with no more to fetch).
+
+**A publication release at 20,000 clients** (`scripts/bench/run.js`, added in 1.16.0): the funder report, the NDP
+log and the settlement report for the fiscal year, for the whole programme, asked for together as the Reports page
+does (`purpose=publication`; the disclosure audit runs in a worker thread, server/publication-release.js):
+
+| What | Wall time | Longest main-thread hold |
+|---|---|---|
+| Publication release, fiscal year, first run (published; 39 kB of JSON, 8 kB on the wire) | 1,053 ms | 210 ms |
+| The same again (answered from the release just made) | 84 ms | 74 ms |
+| A navigator's client list asked for while another year (calendar 2025) is released | list answered in 462 ms (the run: 902 ms) | 322 ms |
+
+The longest hold, 210–322 ms, is the reading of the year's figures on the main thread (the report queries),
+not the audit; for comparison the fiscal-year Home dashboard held it 157–194 ms in the same run. On the small
+programme (`--small`: 2,000 clients, the same seed's shape) the fiscal-year release was refused with a 422 after
+7.7 s: its disclosure check reached its work limit (server/sdc.js `STEP_LIMIT`) before it finished, and the
+release refused rather than publishing unchecked figures (its message asks for a longer standard period). That
+is the check's designed failure mode, not a crash, but it means the benchmark's small programme cannot publish a
+year at all; recorded here so a change to the limit, or to the audit's cost, shows up.
+
+Server, same run (for the record; the load makes these slower than the table above): Home dashboard, fiscal
+year, administrator 385–500 / 157–194 ms; start-up 365 ms, 81 MB; 50 navigators for 20 s: 100 requests/s, p50/p95
+ms list 715/1,262, client 432/620, timeline 345/799, save 310/892; 163 MB.
+
 Under 50 navigators at once the server is bounded by committing: every audited request commits its audit entry
 on its own, and a saved visit commits the visit, its draw-down and their audit entries separately (22% of the
 server's time under that load). That is deliberate; see "Decided against".

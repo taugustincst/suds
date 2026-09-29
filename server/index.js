@@ -85,6 +85,9 @@ function housekeeping() {
     require('./audit-anchor').runIfDue();
     // Monthly recovery drill, if an administrator turned it on (off by default). Runs in the background.
     require('./dr-drill').runIfDue();
+    // A plaintext copy of the database a restore set aside, or a pre-migration snapshot, whose sealing failed:
+    // tried again every hour rather than only at the next start; still plain, it is on Security status and /api/health.
+    try { db.sealPlaintextCopies(); } catch (e) { console.error('[suds] sealing plaintext database copies', e && e.message || e); }
   } catch (e) { console.error('[suds] housekeeping', e && e.message || e); }
 }
 setInterval(housekeeping, 3600_000).unref();

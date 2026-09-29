@@ -19109,6 +19109,7 @@ try {
         secureUnlink(aside);
         kept = sealed;
       } catch (e) {
+        db3.noteSealError(aside, e);
         console.warn(`[suds] ${JSON.stringify({ event: "restore.aside_seal_failed", error: String(e && e.message || e).slice(0, 200) })}`);
       }
       return { ...info, previous_database_kept_at: kept };
@@ -20014,6 +20015,17 @@ var require_security_status = __commonJS({
         "server/dr-drill.js; report in <data>/backups/dr-drill-*.json"
       );
       add("Backups and recovery", "Monthly recovery drill", db3.getSetting("dr_drill_monthly", "0") === "1" ? "ok" : "info", db3.getSetting("dr_drill_monthly", "0") === "1" ? "on" : "off", "Settings \u2192 Scheduled backups.", "server/dr-drill.js runIfDue");
+      {
+        const plain = db3.plaintextCopies();
+        add(
+          "Backups and recovery",
+          "Unencrypted database copies",
+          plain.length ? "bad" : "ok",
+          plain.length ? `${plain.length} not encrypted: ${plain.map((p) => p.file).join(", ")}` : "none: restore undo copies and pre-migration snapshots are sealed",
+          plain.length ? plainCopiesAdvice(plain) : "A restore's undo copy and an upgrade's snapshot are encrypted with the backup key as soon as they are no longer needed in plaintext; a failure is retried every hour.",
+          "server/db.js plaintextCopies, sealPlaintextCopies"
+        );
+      }
       add("Backups and recovery", "Backup encryption key", config2.backupKey ? "ok" : "info", config2.backupKey ? "separate SUDS_BACKUP_KEY" : "derived from the PHI encryption key", config2.backupKey ? "" : "Setting SUDS_BACKUP_KEY lets the PHI key rotate without re-keying the backup set.", "server/backup.js");
       const verifiedAt = db3.getSetting("audit_verified_at", null);
       const fullAt = db3.getSetting("audit_full_verified_at", null);
@@ -20113,7 +20125,10 @@ var require_security_status = __commonJS({
       for (const i of items) counts[i.level]++;
       return { generated_at: db3.now(), version: config2.version, counts, items, mfa, attestation: "SUDS holds no SOC 2, ISO 27001, HITRUST, StateRAMP or FedRAMP attestation. This page reports the technical controls in this installation; independent attestation requires an auditor (docs/security/SOC2-READINESS.md)." };
     }
-    module.exports = { status, mfaReport, validateSettings };
+    function plainCopiesAdvice(plain) {
+      return plain.map((p) => `${p.path} (${p.kind === "restore" ? "the database as it was before a restore, kept to undo it" : "a snapshot taken before a schema upgrade"}; since ${p.since}) holds every record unencrypted${p.error ? `; sealing it failed: ${p.error.error}` : ""}.`).join(" ") + " SUDS tries again every hour. Make room on the disk and check that SUDS can write to that folder; the next hourly try (or a restart) then seals it. If it is not needed, delete it securely instead (shred -u, or your platform's secure delete).";
+    }
+    module.exports = { status, mfaReport, validateSettings, plainCopiesAdvice };
   }
 });
 
@@ -21648,6 +21663,7 @@ var require_app = __commonJS({
           const snap = db3.getSetting("last_snapshot_status", "") || "";
           if (minutes && lastSnap && Date.now() - Date.parse(lastSnap) > 3 * minutes * 6e4) warnings.push(`Snapshots are set for every ${minutes} minutes but the last one ran ${lastSnap}.`);
           if (minutes && /^failed/.test(snap)) warnings.push(`The last snapshot reported: ${snap}`);
+          for (const p of db3.plaintextCopies()) warnings.push(`The database copy ${p.file} (${p.kind === "restore" ? "set aside by a restore" : "taken before an upgrade"}) is not encrypted: sealing it failed. SUDS retries every hour; free disk space and check the data directory's permissions, or delete it securely if it is not needed. See Security status.`);
           for (const x of db3.indexProblems()) warnings.push(`The database index ${x.index} is missing and could not be created (${x.error}). See Security status.`);
           const crt = path.join(config2.dataDir, "certs", "suds.crt");
           if (fs.existsSync(crt)) {
@@ -41589,8 +41605,10 @@ var require_db = __commonJS({
           }
           backup.encryptFileSync(plain, sealed);
           backup.secureUnlink(plain);
+          sealErrors.delete(plain);
           console.log(`[suds] ${JSON.stringify({ event: "db.snapshot_sealed", file: path.basename(sealed) })}`);
         } catch (e) {
+          noteSealError(plain, e);
           console.warn(`[suds] ${JSON.stringify({ event: "db.snapshot_seal_failed", file: f, error: String(e && e.message || e).slice(0, 200) })}`);
         }
       }
@@ -41634,11 +41652,48 @@ var require_db = __commonJS({
           }
           backup.encryptFileSync(p, sealed);
           backup.secureUnlink(p);
+          sealErrors.delete(p);
           console.log(`[suds] ${JSON.stringify({ event: "db.restore_aside_sealed", file: path.basename(sealed) })}`);
         } catch (e) {
+          noteSealError(p, e);
           console.warn(`[suds] ${JSON.stringify({ event: "db.restore_aside_seal_failed", file: f, error: String(e && e.message || e).slice(0, 200) })}`);
         }
       }
+    }
+    var sealErrors = /* @__PURE__ */ new Map();
+    function noteSealError(file, e) {
+      sealErrors.set(file, { at: (/* @__PURE__ */ new Date()).toISOString(), error: String(e && e.message || e).slice(0, 200) });
+    }
+    function plaintextCopies(dbPath = openedPath) {
+      if (!dbPath || dbPath === ":memory:") return [];
+      if (require_backup_lock().current()?.name === "restore") return [];
+      const out2 = [];
+      const add = (dir2, f, kind) => {
+        const p = path.join(dir2, f);
+        let since = null;
+        try {
+          since = fs.statSync(p).mtime.toISOString();
+        } catch {
+          return;
+        }
+        out2.push({ file: f, path: p, kind, since, error: sealErrors.get(p) || null });
+      };
+      const dir = path.dirname(dbPath);
+      try {
+        for (const f of fs.readdirSync(dir)) if (f.startsWith(path.basename(dbPath) + ".before-restore-") && !f.endsWith(".enc")) add(dir, f, "restore");
+      } catch {
+      }
+      const snaps = path.join(dir, "pre-migration");
+      try {
+        for (const f of fs.readdirSync(snaps)) if (f.startsWith(path.basename(dbPath) + ".v") && f.endsWith(".db")) add(snaps, f, "snapshot");
+      } catch {
+      }
+      return out2.sort((a, b) => a.file.localeCompare(b.file));
+    }
+    function sealPlaintextCopies(dbPath = openedPath) {
+      if (!dbPath || dbPath === ":memory:") return [];
+      if (plaintextCopies(dbPath).length) sealSnapshots(dbPath);
+      return plaintextCopies(dbPath);
     }
     function fkViolationKeys(d) {
       return new Set(d.prepare("PRAGMA foreign_key_check").all().map((r) => `${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
@@ -41833,7 +41888,7 @@ var require_db = __commonJS({
     function tombstone(table, id) {
       run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now2());
     }
-    module.exports = { open: open3, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
+    module.exports = { open: open3, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, plaintextCopies, sealPlaintextCopies, noteSealError, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
   }
 });
 

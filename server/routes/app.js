@@ -101,6 +101,9 @@ module.exports = (r) => {
       const lastSnap = db.getSetting('last_snapshot_at', null); const snap = db.getSetting('last_snapshot_status', '') || '';
       if (minutes && lastSnap && Date.now() - Date.parse(lastSnap) > 3 * minutes * 60_000) warnings.push(`Snapshots are set for every ${minutes} minutes but the last one ran ${lastSnap}.`);
       if (minutes && /^failed/.test(snap)) warnings.push(`The last snapshot reported: ${snap}`);
+      // A restore's undo copy or an upgrade's snapshot that could not be encrypted: the whole database in plaintext
+      // in the data directory (server/db.js plaintextCopies). The file name only; Security status has the path.
+      for (const p of db.plaintextCopies()) warnings.push(`The database copy ${p.file} (${p.kind === 'restore' ? 'set aside by a restore' : 'taken before an upgrade'}) is not encrypted: sealing it failed. SUDS retries every hour; free disk space and check the data directory's permissions, or delete it securely if it is not needed. See Security status.`);
       for (const x of db.indexProblems()) warnings.push(`The database index ${x.index} is missing and could not be created (${x.error}). See Security status.`);
       const crt = path.join(config.dataDir, 'certs', 'suds.crt');
       // Sixty days, not fourteen: renewing the self-signed certificate means re-enrolling every phone that

@@ -1,8 +1,9 @@
 'use strict';
 // Upgrading a real county database is the one operation that cannot be retried, so it gets its own test.
-// test/fixtures/schema-v4.sql is the schema exactly as SUDS 1.6.1 left it; release-v1.9.4.sql, release-v1.11.0.sql and
-// release-v1.13.0.sql are databases those releases wrote themselves (test/fixtures/make-release-fixture.js; the
-// last two with rows in every table that has an encrypted column), upgraded at the end of this file.
+// test/fixtures/schema-v4.sql is the schema exactly as SUDS 1.6.1 left it; release-v1.9.4.sql, release-v1.11.0.sql,
+// release-v1.13.0.sql and release-v1.15.3.sql are databases those releases wrote themselves
+// (test/fixtures/make-release-fixture.js; the last three with rows in every table that has an encrypted column),
+// upgraded at the end of this file.
 process.env.SUDS_ENV = 'test';
 process.env.SUDS_ENCRYPTION_KEY = '0'.repeat(64);
 process.env.SUDS_INDEX_KEY = '1'.repeat(64);
@@ -288,8 +289,10 @@ test('migration 46: a preferred name with no search index gets one; a written in
 // The --rich fixtures (1.11.0, and 1.13.0: schema 43, the last release before 1.14.0's migrations 44 to 46, so
 // it is the starting point they are tested from) hold several rows in every table with an encrypted
 // column, NULLs and text in other scripts among them: every value must still decrypt, to what it was, and every
-// blind index must still match, after the upgrade.
-for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql']) {
+// blind index must still match, after the upgrade. 1.15.3 (schema 48, --rich) is the newest starting point: every
+// migration after it is tested from a database a 1.15.x release wrote, and until one is added it pins that such a
+// database opens as the current schema, structurally identical to a fresh install, with every value readable.
+for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql', 'release-v1.15.3.sql']) {
   const sql = fs.readFileSync(path.join(__dirname, 'fixtures', fixture), 'utf8');
   const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
   test(`a SUDS ${expect.version} database (schema ${expect.schema_version}) upgrades to the current schema with its records intact`, () => {

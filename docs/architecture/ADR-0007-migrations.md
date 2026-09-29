@@ -16,6 +16,13 @@ migrations on devices.
   fails on drift.
 - **Every schema change also gets a migration** appended to the `migrations` array in `server/db.js`. The
   schema version is the array length; migrations are never edited or reordered once released.
+- **Numbering across branches (1.16.0).** Each entry is headed `// N: what it does`, N its position from 1, and
+  a new one is appended with the next number. Branches developed in parallel can each write "migration 49"; the
+  one merged second renumbers its own, which is why a migration is written self-contained and idempotent.
+  `scripts/migration-order.js` (run by `test/migration-order.test.js` in `npm test`; CI's `test` job fetches
+  the release tags so it cannot skip) compares the array with the previous release tag's and fails when a
+  released migration moved, changed (comments and whitespace aside) or was removed, or a header does not carry
+  its position (docs/RELEASE.md, "Migration numbering across branches").
 - Each migration runs in **one transaction with its version stamp**, foreign keys off (SQLite's table-rebuild
   recipe), followed by `PRAGMA foreign_key_check`: a migration that introduces a new orphan fails and rolls back;
   orphans that were already there are tolerated and reported, never silently dropped.
@@ -31,7 +38,8 @@ migrations on devices.
 ## Consequences
 
 - Fresh install and upgraded install must end up structurally identical; this is tested from real 1.6.1,
-  1.9.4 and 1.11.0 databases (the last two written by those releases themselves, with records whose ciphertext
+  1.9.4, 1.11.0, 1.13.0 and 1.15.3 databases (the last four written by those releases themselves; 1.15.3's is
+  schema 48, the starting point for every migration after it, with records whose ciphertext
   must still decrypt afterwards), so a migration that forgets a column, an index or a trigger, or loses a row,
   fails CI. A feature release that adds migrations should add a fixture of the release before it:
   `git archive v<x> server package.json | tar -x -C <dir>`, then `node test/fixtures/make-release-fixture.js <dir> test/fixtures/release-v<x>.sql`.
@@ -48,6 +56,7 @@ migrations on devices.
 
 ## Tests that pin it
 
-`test/migrations.test.js` (upgrade real 1.6.1, 1.9.4 and 1.11.0 databases and compare with a fresh install),
+`test/migrations.test.js` (upgrade real 1.6.1, 1.9.4, 1.11.0, 1.13.0 and 1.15.3 databases and compare with a fresh install),
+`test/migration-order.test.js` (released migrations keep their position and code),
 `test/name-index-migration.test.js` (a data migration re-deriving indexes), CI step *Local kernel and generated schema
 match their sources*.

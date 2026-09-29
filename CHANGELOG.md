@@ -4,6 +4,8 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Roles and permissions
+
 A feature release: the owner widened two roles' defaults. Expansion only: nobody loses a permission, and
 supervisor, administrator, finance and read-only keep exactly what they could do (finance still never holds
 `clients:read` or `export:identified`). One new permission string, `records:manage-others`, splits "manage other
@@ -106,6 +108,55 @@ to their caseload (`test/ux13.test.js`), as do the 1.15.4 caseload tests that re
 defaults (`test/security-1154.test.js`). Caseload scoping still follows `clients:all` alone (1.15.4, M1), so a
 per-user deny of it is what holds a navigator or clinician to their caseload, and a supervisor held to a caseload
 cannot assign themselves past it, over REST or from a device (`test/role-expansion.test.js`).
+
+### Engineering
+
+Engineering and governance findings from the independent review of 1.15.3. These add no migration, permission or
+route.
+
+- **The release gate sees the device routes.** `scripts/release-policy.js` read only the server's route modules,
+  so a patch release could add a route to the browser kernel unnoticed: 1.15.1 added three
+  (`POST /api/local/recover`, `/api/local/recovery`, `/api/local/recovery/saved`), which the check now refuses
+  as it refuses any new route in a patch release. The routes `local/kernel.js` and `local/sync.js` register are
+  read from their source and added to the inventory it compares.
+- **Patch releases stay small.** A patch release that adds more than 1,500 lines outside docs, tests and
+  generated files (`git diff --numstat` against the previous tag) is refused like one that adds a migration,
+  permission or route, naming its largest files; `policy_exception` remains the recorded override
+  (docs/RELEASE.md, "Patch releases stay small"). 1.14.1, 1.15.1, 1.15.2 and 1.15.3 scored 24, 488, 176 and 649.
+- **The owner is in the release path.** The release job runs in a `release` environment, so a required reviewer
+  can hold it for the owner's approval; `.github/CODEOWNERS` names the owner for the release and CI files and for
+  `server/auth.js`, `server/permissions.js`, `server/disclosure.js`, `server/crypto.js` and `local/vault.js`; and
+  the release notes end with who released it (`github.actor`, and who re-ran it). The GitHub settings that make
+  these binding (branch protection on `main` with pull requests, CI and code-owner review; the environment's
+  required reviewer; a tag rule) are the owner's to turn on and are listed in docs/RELEASE.md, "Owner control over
+  releases".
+- **Migration numbering is checked.** A released migration keeps its position in `server/db.js` for good (the
+  position is the schema version a database records). `scripts/migration-order.js`, run by
+  `test/migration-order.test.js`, fails when a released migration moved, changed or was removed against the
+  previous release tag, or a `// N:` header does not carry its position, so two branches that each add
+  "migration 49" cannot both land unnoticed. CI's `test` job fetches the release tags for it. The convention is
+  written above the array and in ADR-0007.
+- **An upgrade test from a 1.15.x database.** `test/fixtures/release-v1.15.3.sql` was written by 1.15.3's own code
+  (schema 48; its sample data, clients with names in other scripts, and at least three rows in each of the 36
+  tables with an encrypted column); `test/migrations.test.js` opens it and checks every value still decrypts and
+  every blind index still matches.
+- **The thorough tests are two CI jobs.** The full-size SDC attacker sweeps took most of the `thorough` job's
+  30 minutes; they now run in `thorough-sdc` (60-minute limit: on its own the sweep took 27 minutes on the
+  development container, the rest 17 seconds), and the performance checks in `thorough`. Both
+  are required by the release gate (`scripts/test-thorough.js --part sdc|rest`; `npm run test:thorough` still runs
+  everything).
+- **The permissions-admin browser script runs in CI.** It was not in `scripts/ui/run-all.sh`'s default list, so
+  it never ran; the suite is now 39 scripts, and a test fails if a script in `scripts/ui/` is left out again.
+- **Benchmarks.** `scripts/bench/run.js` measures a publication release for a fiscal year at 20,000 clients (wall
+  time, and the longest the server's main thread was held), and a navigator's client list while one is audited;
+  docs/PERFORMANCE.md records the numbers and re-measured first-load figures.
+- **README** listed the Node 24 job as advisory; it has been required since 1.11.0. It now names the required
+  jobs as the release gate does.
+- **A restore's undo copy that cannot be encrypted is reported, and sealed later.** When a restore could not seal
+  the copy of the database it set aside, the only sign was a warning in the log, and the whole database stayed
+  beside the live one in plaintext until the next start. Now Settings → Security status shows *Unencrypted database
+  copies* (bad) with the file, why the seal failed and what to do, `/api/health` answers 503 naming the file, and
+  housekeeping tries to seal it (and any plaintext pre-migration snapshot) every hour.
 
 ## 1.15.4 — 2026-09-29
 

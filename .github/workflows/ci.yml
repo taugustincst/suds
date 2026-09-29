@@ -38,8 +38,16 @@ jobs:
       - name: Install
         working-directory: src
         run: npm ci --no-audit --no-fund
+      # test/migration-order.test.js compares server/db.js's migrations with the previous release tag's (a
+      # released migration keeps its position; ADR-0007), so the tags are fetched (each at depth 1) and the
+      # test is told it may not skip for want of them.
+      - name: Fetch the release tags
+        working-directory: src
+        run: git fetch --quiet --depth 1 origin '+refs/tags/v*:refs/tags/v*'
       - name: Test
         working-directory: src
+        env:
+          SUDS_REQUIRE_RELEASE_TAGS: '1'
         run: npm test
       # The release zip is built with `git archive`, so it ships the *committed* kernel, not the one built
       # during the release. A stale commit therefore reaches local-mode devices silently. Fail the build instead.
@@ -57,9 +65,8 @@ jobs:
       - name: Syntax-check browser modules
         working-directory: src
         run: for f in public/*.js public/views/*.js; do node --input-type=module --check < "$f" || exit 1; done
-  # Everything with SUDS_THOROUGH=1 (scripts/test-thorough.js finds it by convention): the publication-release
-  # disclosure sweeps at full size (the random-programme property test, the algorithm-aware attacker at
-  # thresholds 3 and 5, the refusal sweep; npm test runs a sample), every other test/*.test.js that reads
+  # Everything with SUDS_THOROUGH=1 (scripts/test-thorough.js finds it by convention) except the SDC attacker
+  # sweeps, which run in `thorough-sdc` below (npm test runs a sample of them): every test/*.test.js that reads
   # SUDS_THOROUGH (timing budgets), and the pure performance checks in test/thorough/, which npm test does
   # not run so that a busy runner cannot flake the required `test` job.
   thorough:
@@ -85,11 +92,44 @@ jobs:
       - name: Install
         working-directory: src
         run: npm ci --no-audit --no-fund
-      - name: Thorough tests (full-size disclosure sweeps, performance checks)
+      - name: Thorough tests (performance checks, timing budgets; the SDC sweeps run in thorough-sdc)
         working-directory: src
         env:
           SUDS_THOROUGH: '1'
-        run: node scripts/test-thorough.js
+        run: node scripts/test-thorough.js --part rest
+  # The statistical-disclosure-control attacker sweeps at full size (scripts/test-thorough.js SDC_SWEEPS: the
+  # random-programme property test, the algorithm-aware attacker at thresholds 3 and 5, the refusal sweep, the
+  # combined-funds families). At 1.15.3 they made the single thorough job take about 25 of its 30 minutes, so a
+  # slower runner would have failed the release on a timeout, not a finding. Their own job, with room to spare;
+  # required by the release gate like `thorough`.
+  thorough-sdc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out
+        run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Install Node 22 (pinned version, pinned checksum)
+        run: |
+          file="node-${NODE22_VERSION}-linux-x64.tar.xz"
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://nodejs.org/dist/${NODE22_VERSION}/${file}"
+          echo "${NODE22_SHA256}  ${file}" | sha256sum -c - || { echo "::error::${file} does not match the SHA-256 pinned in the workflow"; exit 1; }
+          mkdir -p node22 && tar -xJf "$file" -C node22 --strip-components=1
+          echo "$RUNNER_TEMP/node22/bin" >> "$GITHUB_PATH"
+      - name: Node is the pinned release, of the major .nvmrc names
+        working-directory: src
+        run: |
+          want="$(tr -d '[:space:]' < .nvmrc)"; have="$(node -p 'process.versions.node.split(".")[0]')"
+          node --version; [ "$have" = "$want" ] || { echo "::error::Node $have is running but .nvmrc pins major $want"; exit 1; }
+          [ "$(node --version)" = "$NODE22_VERSION" ] || { echo "::error::$(node --version) is running, not the pinned $NODE22_VERSION"; exit 1; }
+      - name: Install
+        working-directory: src
+        run: npm ci --no-audit --no-fund
+      - name: SDC attacker sweeps at full size
+        working-directory: src
+        env:
+          SUDS_THOROUGH: '1'
+        run: node scripts/test-thorough.js --part sdc
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 45

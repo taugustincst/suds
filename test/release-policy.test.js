@@ -184,3 +184,73 @@ test('release.yml runs the policy in the gate and takes the exception only as an
   const policy = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'release-policy.js'), 'utf8');
   assert.match(policy, /process\.env\.RELEASE_POLICY_EXCEPTION \|\| process\.env\.ALLOW_PATCH_CHANGES/);
 });
+
+// ---- 1.15.4: the browser kernel's own routes count, and a patch release stays small ----
+test('the browser kernel\'s own routes (/api/local/*) are in the route inventory', () => {
+  const src = `router.get('/api/local/status', () => 1);\n  router.post("/api/local/recover", async (ctx) => {});\n  router.put(\`/api/local/accounts/:id\`, f);\n  other.get('/nope');`;
+  assert.deepEqual(P.localRoutes([src]), ['GET /api/local/status', 'POST /api/local/recover', 'PUT /api/local/accounts/:']);
+  const s = P.surface(path.join(__dirname, '..'));
+  for (const r of ['GET /api/local/status', 'POST /api/local/signup', 'POST /api/local/recover', 'POST /api/local/sync', 'GET /api/local/sync/status', 'PUT /api/local/accounts/:']) assert.ok(s.routes.includes(r), `${r} is seen`);
+  // Every router.<verb>('/api/local/...') in local/ is found: a device route cannot hide in another file.
+  const dir = path.join(__dirname, '..', 'local');
+  const all = fs.readdirSync(dir).filter((f) => f.endsWith('.js')).map((f) => fs.readFileSync(path.join(dir, f), 'utf8'));
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.js'))) assert.ok(P.LOCAL_ROUTE_FILES.includes(`local/${f}`), `local/${f} is read for routes`);
+  for (const r of P.localRoutes(all)) assert.ok(s.routes.includes(r), r);
+});
+
+test('a patch release that adds a device route fails like any other new route (1.15.1 added three)', () => {
+  const next = clone(base); next.routes.push('POST /api/local/recovery');
+  const out = P.decide({ prevVersion: 'v1.15.0', nextVersion: '1.15.1', diff: P.diffSurfaces(base, next) });
+  assert.equal(out.decision, 'fail');
+  assert.match(out.reason, /new route POST \/api\/local\/recovery/);
+});
+
+// `git diff --numstat` output, injected: added, deleted, path.
+const NUMSTAT = [
+  '900\t10\tserver/routes/new-feature.js',
+  '700\t0\tpublic/views/new-feature.js',
+  '4000\t0\ttest/new-feature.test.js', // tests do not count
+  '600\t0\tscripts/ui/new-feature.mjs',
+  '300\t20\tdocs/USER_GUIDE.md',
+  '120\t0\tCHANGELOG.md',
+  '5000\t4000\tpublic/local/kernel.js', // generated
+  '40\t3\tserver/schema-text.js',
+  '12\t12\tpublic/sw.js',
+  '800\t100\tpackage-lock.json',
+  '-\t-\tpublic/icons/new.png', // binary
+  '5\t0\tserver/{old.js => renamed.js}',
+  '3\t1\tdocs/{a.md => b.md}',
+].join('\n');
+
+test('the patch size counts added lines outside docs, tests and generated files', () => {
+  const s = P.patchSize(NUMSTAT);
+  assert.equal(s.added, 900 + 700 + 5);
+  assert.deepEqual(s.files.map((f) => f.path), ['server/routes/new-feature.js', 'public/views/new-feature.js', 'server/renamed.js']);
+  assert.equal(P.patchSize('').added, 0);
+  assert.equal(P.PATCH_MAX_ADDED_LINES, 1500);
+});
+
+test('a patch release over the size limit fails, names its largest files, and passes with a policy exception', () => {
+  const same = P.diffSurfaces(base, clone(base));
+  const size = P.patchSize(NUMSTAT);
+  const out = P.decide({ prevVersion: 'v1.15.3', nextVersion: '1.15.4', diff: same, size });
+  assert.equal(out.decision, 'fail');
+  assert.match(out.reason, /1605 lines added outside docs, tests and generated files, over the patch limit of 1500/);
+  assert.match(out.reason, /largest: server\/routes\/new-feature\.js \+900, public\/views\/new-feature\.js \+700/);
+  assert.match(out.reason, /policy_exception/);
+  const ok = P.decide({ prevVersion: 'v1.15.3', nextVersion: '1.15.4', diff: same, size, override: 'Security fix: the review\'s finding 7 needs a new worker' });
+  assert.equal(ok.decision, 'override');
+  assert.match(ok.notes, /> \* 1605 lines added/);
+  // The limit is configurable (PATCH_MAX_ADDED_LINES in the environment, passed in as maxAdded).
+  assert.equal(P.decide({ prevVersion: 'v1.15.3', nextVersion: '1.15.4', diff: same, size, maxAdded: 2000 }).decision, 'pass');
+  assert.equal(P.decide({ prevVersion: 'v1.15.3', nextVersion: '1.15.4', diff: same, size: P.patchSize('1500\t0\tserver/x.js') }).decision, 'pass', 'exactly the limit is allowed');
+  assert.equal(P.decide({ prevVersion: 'v1.15.3', nextVersion: '1.15.4', diff: same, size: P.patchSize('1501\t0\tserver/x.js') }).decision, 'fail');
+  // A feature release is not held to it.
+  assert.equal(P.decide({ prevVersion: 'v1.15.3', nextVersion: '1.16.0', diff: same, size }).decision, 'pass');
+});
+
+test('the size is measured against the previous tag with git diff --numstat', () => {
+  // 1.14.1 was a 24-line fix; skip in a checkout without the tags (a shallow CI clone).
+  let s; try { s = P.measureSize('v1.14.0', 'v1.14.1'); } catch { return; }
+  assert.ok(s.added > 0 && s.added < 100, `1.14.1 added ${s.added} counted lines`);
+});

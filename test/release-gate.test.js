@@ -13,7 +13,7 @@ const jobs = (overrides = {}) => [...REQUIRED_JOBS, 'webkit'].map((name) => ({ n
 
 test('passes only when a push run for the exact commit succeeded with every required job green', () => {
   assert.equal(evaluate(SHA, [run(1)], { 1: jobs() }).decision, 'pass');
-  assert.deepEqual(REQUIRED_JOBS.slice().sort(), ['browser', 'dr-drill', 'node24', 'test', 'thorough'], 'the browser suite, Node 24, the recovery drill and the thorough disclosure sweeps are required');
+  assert.deepEqual(REQUIRED_JOBS.slice().sort(), ['browser', 'dr-drill', 'node24', 'test', 'thorough', 'thorough-sdc'], 'the browser suite, Node 24, the recovery drill, the thorough checks and the SDC disclosure sweeps are required');
 });
 
 test('refuses when the browser suite failed, even if the run as a whole is marked success', () => {
@@ -65,6 +65,16 @@ test('RELEASE.md gives the browser suite\'s real size, wherever it gives one', (
   assert.deepEqual([...new Set(said)], [String(n)], `RELEASE.md says ${said.join(', ')} scripts; run-all.sh runs ${n}`);
 });
 
+test('every browser script is in run-all.sh\'s default list (permissions-admin was left out until 1.16.0)', () => {
+  const dir = path.join(__dirname, '..', 'scripts', 'ui');
+  const list = /\$\{SCRIPTS:-([^}]+)\}; do/.exec(fs.readFileSync(path.join(dir, 'run-all.sh'), 'utf8'))[1].trim().split(/\s+/);
+  const helpers = new Set(['assert']); // imported by the scripts, not a script
+  const scripts = fs.readdirSync(dir).filter((f) => f.endsWith('.mjs')).map((f) => f.slice(0, -4)).filter((s) => !helpers.has(s));
+  assert.deepEqual(scripts.filter((s) => !list.includes(s)), [], 'a script CI never runs asserts nothing');
+  assert.ok(list.includes('permissions-admin'));
+  assert.equal(list[list.length - 1], 'accessibility', 'the accessibility audit runs last, over what the others left');
+});
+
 test('the Node 24 job installs an exact, pinned version and checks it against a pinned SHA-256', () => {
   // It used to download whatever latest-v24.x was that day and check it against a checksum file fetched from
   // the same place: an unannounced Node change between two pushes, verified only against itself.
@@ -89,7 +99,7 @@ test('every Node 22 job, and the release, runs an exact pinned Node 22 checked a
   const nvmrc = fs.readFileSync(path.join(__dirname, '..', '.nvmrc'), 'utf8').trim();
   assert.equal(a.v.split('.')[0], `v${nvmrc}`, 'of the major .nvmrc names');
   const job = (y, name, next) => y.slice(y.indexOf(`\n  ${name}:`), next ? y.indexOf(`\n  ${next}:`) : undefined);
-  const jobs = [['test', job(ci, 'test', 'thorough')], ['thorough', job(ci, 'thorough', 'browser')], ['browser', job(ci, 'browser', 'node24')], ['dr-drill', job(ci, 'dr-drill', 'webkit')], ['release', job(rel, 'release')]];
+  const jobs = [['test', job(ci, 'test', 'thorough')], ['thorough', job(ci, 'thorough', 'thorough-sdc')], ['thorough-sdc', job(ci, 'thorough-sdc', 'browser')], ['browser', job(ci, 'browser', 'node24')], ['dr-drill', job(ci, 'dr-drill', 'webkit')], ['release', job(rel, 'release')]];
   for (const [name, text] of jobs) {
     assert.match(text, /curl -fsSLO "https:\/\/nodejs\.org\/dist\/\$\{NODE22_VERSION\}\/\$\{file\}"/, `${name}: downloads the pinned release`);
     assert.match(text, /echo "\$\{NODE22_SHA256\}  \$\{file\}" \| sha256sum -c -/, `${name}: checks it against the pinned checksum`);
@@ -99,4 +109,39 @@ test('every Node 22 job, and the release, runs an exact pinned Node 22 checked a
     assert.ok(!/SHASUMS256\.txt"/.test(text.split('steps:')[1] || ''), `${name}: the checksum is not fetched at run time`);
   }
   assert.ok(!/latest-v22/.test(ci + rel), 'never the moving latest-v22.x directory');
+});
+
+test('README and RELEASE.md name the same required jobs; only webkit is advisory', () => {
+  // README called the Node 24 job advisory long after it became required (1.11.0).
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const release = fs.readFileSync(path.join(__dirname, '..', 'docs', 'RELEASE.md'), 'utf8');
+  const para = readme.slice(readme.indexOf('required jobs'), readme.indexOf('real-device checklist'));
+  for (const j of REQUIRED_JOBS) {
+    assert.ok(para.includes(`\`${j}\``), `README lists ${j} among the required jobs`);
+    assert.ok(release.includes(`\`${j}\``), `RELEASE.md names ${j}`);
+  }
+  assert.ok(!/advisory[^.]*Node 24|Node 24[^.]*advisory/i.test(readme), 'README does not call Node 24 advisory');
+});
+
+// ---- Owner control over releases (1.16.0; docs/RELEASE.md, "Owner control over releases") ----
+test('the release job runs in the `release` environment and records who started it in the release notes', () => {
+  const rel = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8');
+  const job = rel.slice(rel.indexOf('\n  release:'));
+  assert.match(job, /\n {4}environment: release\n/, 'a required reviewer on the environment holds the job for the owner');
+  assert.ok(!/\n {4}environment:/.test(rel.slice(rel.indexOf('\n  gate:'), rel.indexOf('\n  release:'))), 'the gate itself does not wait for approval');
+  assert.match(job, /\n {6}RELEASE_ACTOR: \$\{\{ github\.actor \}\}\n/);
+  assert.match(job, /\n {6}RELEASE_TRIGGERING_ACTOR: \$\{\{ github\.triggering_actor \}\}\n/);
+  assert.ok(!/\$\{\{ github\.(triggering_)?actor/.test(job.replace(/^ {6}RELEASE_(TRIGGERING_)?ACTOR: .*$/gm, '')), 'through the environment, never pasted into a script');
+  assert.match(job, /Released by @\$\{RELEASE_ACTOR\}/, 'and written into the notes');
+  assert.match(job, /--notes "\$\{notes:-See CHANGELOG\.md\}"/);
+});
+
+test('CODEOWNERS names the owner for the release machinery and the security-critical modules', () => {
+  const root = path.join(__dirname, '..');
+  const lines = fs.readFileSync(path.join(root, '.github', 'CODEOWNERS'), 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  const owners = Object.fromEntries(lines.map((l) => { const [p, ...o] = l.split(/\s+/); return [p, o]; }));
+  for (const p of ['/.github/', '/scripts/release-gate.js', '/scripts/release-policy.js', '/docs/RELEASE.md', '/server/auth.js', '/server/permissions.js', '/server/disclosure.js', '/server/crypto.js', '/local/vault.js']) {
+    assert.deepEqual(owners[p], ['@taugustincst'], `${p} is owned by @taugustincst`);
+  }
+  for (const p of Object.keys(owners)) assert.ok(fs.existsSync(path.join(root, p)), `${p} exists (a renamed file would silently lose its owner)`);
 });
