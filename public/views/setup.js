@@ -79,12 +79,12 @@ route('setup', async () => {
     const byIp = L.urls.find(u => /\/\/\d{1,3}(\.\d{1,3}){3}/.test(u));
     const primary = byIp || L.urls.find(u => !/localhost/.test(u)) || L.urls[0];
     const lan = d.network === 'lan';
-    done.append(h('div', { class: 'banner' }, h('b', {}, 'Setup complete. '), 'SUDS is now running at the address below. This page will take you there in a moment.'),
+    done.append(...[h('div', { class: 'banner' }, h('b', {}, 'Setup complete. '), 'SUDS is now running at the address below. This page will take you there in a moment.'),
       h('div', { class: 'grid cols-2' },
         h('div', {}, h('h2', {}, 'Open SUDS at'), h('p', {}, h('a', { href: primary, style: { fontSize: '1.2rem', fontWeight: 700 } }, primary), h('div', { class: 'small muted' }, lan ? 'on any phone or computer on the office Wi-Fi' : 'on this computer')), L.friendly && lan ? h('p', { class: 'small' }, 'Also ', h('a', { href: L.friendly }, L.friendly), ' on computers and iPhones that understand that name (not Android browsers).') : null, h('details', {}, h('summary', { class: 'small muted' }, 'Other addresses'), h('ul', {}, L.urls.map(u => h('li', {}, h('a', { href: u }, u))))), L.tls ? h('p', { class: 'small muted' }, 'The first time, browsers warn that the certificate is self-signed. Tap "Advanced → Proceed" once per device.') : null),
         lan ? h('div', { class: 'center' }, h('h2', {}, 'Scan with a phone'), qrSvg(primary, { size: 180 }), h('div', { class: 'small muted' }, primary)) : h('div', { class: 'small muted' }, 'Only this computer can reach SUDS. To let phones in later, change that under Settings → Network & devices.')),
-      r.keys_file ? h('div', { class: 'banner danger mt' }, h('b', {}, 'Back up your encryption keys now. '), `They were generated for you and saved to ${r.keys_file}. Sign in, open Administration → System → "Download key backup" and store the file somewhere separate from this computer (e.g. the county password manager). Without the keys, database backups cannot be read.`) : null,
-      h('div', { class: 'btn-row' }, h('a', { class: 'btn primary', href: primary + '#/login' }, 'Go to sign-in')));
+      r.keys_file ? h('div', { class: 'banner danger mt' }, h('b', {}, 'Back up your encryption keys now. '), `They were generated for you and saved to ${r.keys_file}. Sign in, open Settings → System & backups → "Download key backup (keep secret)" and store the file somewhere separate from this computer (e.g. the county password manager). Without the keys, database backups cannot be read.`) : null,
+      h('div', { class: 'btn-row' }, h('a', { class: 'btn primary', href: primary + '#/login' }, 'Go to sign-in'))].filter(Boolean));
     setTimeout(() => { location.href = primary + '#/login'; }, 8000);
   } });
   // The offline-copy advice follows the programme profile until someone answers the question themselves.
@@ -104,6 +104,9 @@ route('setup', async () => {
     });
   }
   if (offlineSel) offlineSel.dataset.recommended = OFFLINE.harm_reduction.value;
+  // The username's help explains the "guest" default; once another name is typed it has nothing left to say.
+  const userIn = f.querySelector('input[name=admin_username]'); const userHelp = userIn && userIn.closest('.field')?.querySelector(':scope > .help');
+  if (userIn && userHelp) { const sync = () => { userHelp.hidden = userIn.value.trim().toLowerCase() !== 'guest'; }; userIn.addEventListener('input', sync); sync(); }
   // The settlement questions show only for opioid settlement money. A fund named as settlement money
   // ("County opioid settlement allocation") is taken to be that, until someone chooses the type themselves.
   const fundName = f.querySelector('input[name=main_fund_name]'); const fundType = f.querySelector('select[name=main_fund_type]');

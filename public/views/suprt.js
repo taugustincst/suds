@@ -45,7 +45,13 @@ async function openAssessment(clientId, { row = null, type = 'baseline', clientD
   }
   fields.push({ type: 'section', label: 'Finish', heading: false });
   fields.push({ name: 'status', label: 'Status', type: 'select', noBlank: true, value: row ? row.status : 'complete', options: [{ value: 'complete', label: 'Complete — every required answer given' }, { value: 'draft', label: 'Draft — finish later' }] });
-  const fixed = [['Assessment', typeLabel(t)], ['Client ID', answers.A_client_id || '—'], ['Grant ID', answers.A_grant_id || def.grant_id || 'Not set (Settings on the SUPRT-A page)'], ['Site ID', answers.A_site_id || def.site_id || 'Not set']];
+  const fixed = [['Assessment', typeLabel(t)], ['Client ID', answers.A_client_id || '—'], ['Grant ID', answers.A_grant_id || def.grant_id || 'Not set'], ['Site ID', answers.A_site_id || def.site_id || 'Not set']];
+  // No grant ID: every record is carried with it into SPARS, so say so plainly and where it is set (1.16.0).
+  const noGrant = !(answers.A_grant_id || def.grant_id);
+  const grantPrompt = noGrant ? h('div', { class: 'banner warn small', role: 'note', 'data-suprt-no-grant': '1' },
+    h('b', {}, 'The SOR grant ID is not set. '), 'SPARS takes no record without it. ',
+    can('settings:manage') ? h('a', { href: '#/suprt?focus=settings', 'data-suprt-grant-link': '1', onClick: () => m.close() }, 'Set the grant ID on the SUPRT-A page') : 'Ask an administrator to set it under Settings on the SUPRT-A page.',
+    ' You can still record this assessment: the ID is added to it when the file for SPARS is made.') : null;
   const f = form(fields, { submitText: row ? 'Save changes' : `Save ${typeLabel(t).toLowerCase()}`, onCancel: () => m.close(), onSubmit: async (v) => {
     const a = {};
     for (const [k, val] of Object.entries(v)) if (k.startsWith('answers.') && val !== '' && val !== null && val !== undefined) a[k.slice(8)] = val;
@@ -55,7 +61,7 @@ async function openAssessment(clientId, { row = null, type = 'baseline', clientD
   } });
   const m = modal(`SUPRT-A ${typeLabel(t).toLowerCase()}${clientDisplay ? ` — ${clientDisplay}` : ''}`, h('div', { 'data-suprt-form': t },
     h('p', { class: 'small muted' }, 'SUPRT-A is completed by staff from the client\'s record. Answers SUDS already holds are filled in for you; the rest are asked. SAMHSA\'s client questionnaire (SUPRT-C) is completed on SAMHSA\'s own form: record here whether it was.'),
-    kv(fixed), f), { wide: true });
+    grantPrompt, kv(fixed), f), { wide: true });
 }
 
 /** The client record's SUPRT-A tab. */
@@ -68,7 +74,10 @@ export async function suprtTab(clientId, { refresh, clientDisplay } = {}) {
   const dueRows = cy.due.filter(e => e.status !== 'done');
   return h('div', { class: 'grid cols-2', 'data-suprt-tab': '1' },
     h('section', { class: 'card', 'data-suprt-due': String(dueRows.length) }, h('div', { class: 'card-head' }, h('h2', {}, 'What is due'), add),
-      cy.baseline ? h('p', { class: 'small muted' }, `Baseline ${fmt.date(cy.baseline)}${cy.closeout ? `; closed out ${fmt.date(cy.closeout)}` : ''}. Reassessment and annual assessments are due in a window from 30 days before to 30 days after each anniversary.`) : h('p', { class: 'small muted' }, 'No baseline yet. A baseline is due once the client receives a service charged to a SOR grant.'),
+      cy.baseline ? h('p', { class: 'small muted' }, `Baseline ${fmt.date(cy.baseline)}${cy.closeout ? `; closed out ${fmt.date(cy.closeout)}` : ''}. Reassessment and annual assessments are due in a window from 30 days before to 30 days after each anniversary.`)
+        // A baseline already owed (the client has had a SOR-funded service) is said to be due now, as the table says.
+        : cy.due.some(e => e.type === 'baseline' && e.status !== 'done') ? h('p', { class: 'small muted', 'data-suprt-baseline-owed': '1' }, 'No baseline yet, and one is due now: the client has received a service charged to a SOR grant.')
+          : h('p', { class: 'small muted' }, 'No baseline yet. A baseline becomes due once the client receives a service charged to a SOR grant.'),
       dueRows.length ? table([
         { label: 'Assessment', render: e => typeLabel(e.type) + (e.type === 'annual' ? ` ${e.occurrence}` : '') },
         { label: 'Due', render: e => fmt.date(e.due) },
@@ -123,7 +132,9 @@ route('suprt', async (r) => {
   if (!moduleOn('suprt')) return h('div', {}, pageHead('SUPRT-A'), emptyState('SUPRT-A is switched off', `SUPRT-A records are for programs with State Opioid Response (SOR) funding. ${can('settings:manage') ? 'Switch the module on in Settings › Program › Modules.' : 'An administrator can switch the module on in Settings › Program › Modules.'}`, can('settings:manage') ? h('a', { class: 'btn primary', 'data-empty-action': 'modules', href: '#/admin?tab=settings' }, 'Open Program settings') : null, { level: 2 }));
   const to = r.query.get('to') || fmt.today(); const from = r.query.get('from') || new Date(Date.parse(to) - 89 * 86400000).toISOString().slice(0, 10);
   const def = await items();
-  const [c, due] = await Promise.all([can('clients:read') ? get(`/api/suprt/completion?from=${from}&to=${to}`) : null, suprtDueCard()]);
+  // Arrived from an assessment's "Set the grant ID" link: the Settings card is where it is set.
+  if (r.query.get('focus') === 'settings') setTimeout(() => { const card = document.getElementById('suprt-settings'); if (card) { card.scrollIntoView({ block: 'start' }); card.querySelector('input')?.focus(); } }, 0);
+  const [c, due] = await Promise.all([can('clients:read') || can('reports:funder') ? get(`/api/suprt/completion?from=${from}&to=${to}`) : null, suprtDueCard()]);
   const fromI = h('input', { type: 'date', value: from, id: 'suprt-from' }); const toI = h('input', { type: 'date', value: to, id: 'suprt-to' });
   const pct = (v) => (v === null || v === undefined ? '—' : `${v}%`);
   const settings = can('settings:manage') ? form([
@@ -146,5 +157,5 @@ route('suprt', async (r) => {
     can('export:identified') ? h('section', { class: 'card mb', 'data-suprt-export': '1' }, h('h2', {}, 'File for entry into SPARS'),
       h('p', { class: 'small muted' }, `Completed assessments dated ${fmt.date(from)} – ${fmt.date(to)}, one row each, in SUPRT-A section order. `, def.export_note),
       h('button', { class: 'btn danger', 'data-suprt-export-button': '1', onClick: () => openExport(from, to, def) }, 'Make the SPARS entry file (names clients, audited)')) : null,
-    settings ? h('section', { class: 'card', 'data-suprt-settings': '1' }, h('h2', {}, 'Settings'), settings) : null);
+    settings ? h('section', { class: 'card', id: 'suprt-settings', 'data-suprt-settings': '1' }, h('h2', {}, 'Settings'), settings) : null);
 });

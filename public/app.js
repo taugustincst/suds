@@ -871,7 +871,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       if (!err || typeof err !== 'object') err = new Error(String(err || 'Something went wrong'));
       if (!err.message) err.message = 'Something went wrong. Try again.';
       const fieldsErr = err.data && err.data.fields;
-      let firstBad = null;
+      let firstBad = null; const inline = new Set();
       const labelOf = (k) => (fields.find(f => f.name === k) || {}).label || k;
       if (fieldsErr) for (const [k, msg] of Object.entries(fieldsErr)) {
         const w = el.querySelector(`[data-field="${k}"]`);
@@ -881,13 +881,17 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
         for (let d = w.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
         // Under the field, say which field: "Client is required", not a bare "is required" (a server
         // message in that shape gets the label put in front of it too).
-        const slot = w.querySelector('.err'); if (slot) slot.textContent = fieldProblem(labelOf(k), msg);
+        const slot = w.querySelector('.err'); if (slot) { slot.textContent = fieldProblem(labelOf(k), msg); inline.add(k); }
         const control = w.querySelector('input,select,textarea');
         if (control) { control.setAttribute('aria-invalid', 'true'); if (!firstBad) firstBad = control; }
       }
       // Field errors are already shown inline under each field; the banner names them the way the form
       // does ("Client"), never by column ("client_id").
-      const text = err.labelled ? err.message : fieldsErr ? `${err.message === VALIDATION_FAILED || err.message.startsWith(`${CHECK_ANSWERS}:`) ? CHECK_ANSWERS : err.message}: ${Object.entries(fieldsErr).map(([k, m]) => fieldProblem(labelOf(k), m)).join('; ')}` : err.message;
+      // A message of its own ("Password must contain…", "Answer … before marking it complete") is said once:
+      // the fields it is about carry their own line underneath, so the banner does not repeat them (1.16.0).
+      const generic = err.message === VALIDATION_FAILED || err.message.startsWith(`${CHECK_ANSWERS}:`);
+      const rest = fieldsErr ? Object.entries(fieldsErr).filter(([k]) => generic || !inline.has(k)) : [];
+      const text = err.labelled ? err.message : fieldsErr && rest.length ? `${generic ? CHECK_ANSWERS : err.message}: ${rest.map(([k, m]) => fieldProblem(labelOf(k), m)).join('; ')}` : err.message;
       errBox.textContent = text; errBox.classList.remove('hidden');
       // Someone else saved this record after it was opened (409 from if_updated_at). Saving again would
       // overwrite their changes, so the way forward is to reload and see them. The draft goes too: restoring
@@ -1375,13 +1379,30 @@ export function quickActions() {
 }
 // Global client search (top bar / mobile bar)
 export function globalSearch() {
+  // It finds programs in the resource directory too (1.15.3), so it says so where the reader may see them.
+  const what = can('resources:read') ? 'Find a client or resource' : 'Find a client';
+  const listId = `gsearch-results-${Math.random().toString(36).slice(2, 7)}`;
   // A de-identified role finds clients by code only (the server matches nothing else for it: 1.15.4).
-  const input = h('input', { type: 'search', placeholder: can('clients:read') ? 'Find a client: name, code or exact phone…' : 'Find a client by code…', 'aria-label': 'Find a client' });
-  const list = h('div', { class: 'card tight hidden search-results' });
-  const wrap = h('div', { class: 'gsearch' }, input, list);
+  const input = h('input', { type: 'search', placeholder: can('clients:read') ? `${what}: name, code or exact phone…` : 'Find a client by code…', 'aria-label': what, 'aria-controls': listId, 'data-global-search': '1' });
+  const list = h('div', { class: 'card tight hidden search-results', id: listId, role: 'region', 'aria-label': 'Search results' });
+  // What was found is said out loud (WCAG 4.1.3, 1.16.0): "3 clients and 1 resource found" or "No match", in a
+  // polite live region, and Down arrow moves into the results (Up and Down move through them, Escape returns).
+  const status = h('div', { class: 'sr-only', role: 'status', 'aria-live': 'polite', 'data-search-status': '1' });
+  const wrap = h('div', { class: 'gsearch' }, input, list, status);
   let t;
+  const hits = () => [...list.querySelectorAll('a.search-hit')];
   input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 400); });
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { nav(`clients?status=all&q=${encodeURIComponent(input.value.trim())}`); list.classList.add('hidden'); } if (e.key === 'Escape') list.classList.add('hidden'); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { nav(`clients?status=all&q=${encodeURIComponent(input.value.trim())}`); list.classList.add('hidden'); }
+    if (e.key === 'Escape') list.classList.add('hidden');
+    if (e.key === 'ArrowDown' && !list.classList.contains('hidden') && hits().length) { e.preventDefault(); hits()[0].focus(); }
+  });
+  list.addEventListener('keydown', (e) => {
+    const all = hits(); const i = all.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' && i >= 0) { e.preventDefault(); (all[i + 1] || all[i]).focus(); }
+    else if (e.key === 'ArrowUp' && i >= 0) { e.preventDefault(); (i ? all[i - 1] : input).focus(); }
+    else if (e.key === 'Escape') { e.preventDefault(); list.classList.add('hidden'); input.focus(); }
+  });
   document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) list.classList.add('hidden'); });
   // Ranked (1.15.3, server ?rank=1): exact name matches first, then clients this person worked with lately,
   // then partial and sound-alike matches, and a sound-alike is left out when anything matched better. Each
@@ -1391,7 +1412,7 @@ export function globalSearch() {
   async function run() {
     // Every search is a PHI read that is audited, so do not issue one for a single letter.
     const q = input.value.trim(); const mine = ++seq;
-    if (q.length < 2) { list.classList.add('hidden'); return; }
+    if (q.length < 2) { list.classList.add('hidden'); status.textContent = ''; return; }
     const nameLike = q.length >= 3 && !/^[\d\-() .+]+$/.test(q) && !/^[A-Z]+\d*-\d+(-D)?$/i.test(q);
     try {
       const [r, res] = await Promise.all([get(`/api/clients?limit=8&status=all&rank=1&q=${encodeURIComponent(q)}`, { quiet: true }),
@@ -1403,6 +1424,9 @@ export function globalSearch() {
       for (const c of r.clients) list.append(h('a', { class: 'list-item search-hit', href: `#/client/${c.id}`, 'data-search-kind': 'client', onClick: () => list.classList.add('hidden') }, kindLabel('client'), ' ', h('b', {}, c.display_name), ' ', h('span', { class: 'muted small' }, c.client_code, ' · ', fmt.label(c.status))));
       for (const x of programs) list.append(h('a', { class: 'list-item search-hit', href: `#/resource/${x.id}`, 'data-search-kind': 'resource', onClick: () => list.classList.add('hidden') }, kindLabel('resource'), ' ', h('b', {}, x.name), x.organization && x.organization !== x.name ? h('span', { class: 'muted small' }, ` · ${x.organization}`) : null));
       list.classList.remove('hidden');
+      const n = (k, one, many) => (k ? `${k} ${k === 1 ? one : many}` : null);
+      const found = [n(r.clients.length, 'client', 'clients'), n(programs.length, 'resource', 'resources')].filter(Boolean).join(' and ');
+      status.textContent = found ? `${found} found. Press the down arrow to go through them.` : 'No match.';
     } catch {}
   }
   return wrap;
@@ -1459,7 +1483,8 @@ export function dueBell() {
     list.replaceChildren(...(n ? r.rows.slice(0, 8).map(t => h('div', { class: 'today-item' },
       h('a', { href: `#/tasks?id=${t.id}`, onClick: () => setOpen(false) }, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null),
       t.overdue ? badge('Overdue', 'danger') : h('span', { class: 'small muted' }, fmt.time(t.due_at) || 'today'))) : [h('p', { class: 'small muted' }, 'Nothing due in the next hour, and nothing overdue.')]),
-    n > 8 ? h('p', { class: 'small muted' }, `and ${n - 8} more`) : null);
+    // The DOM's own replaceChildren and append write a null as the text "null"; h() skips one, they do not.
+    ...(n > 8 ? [h('p', { class: 'small muted' }, `and ${n - 8} more`)] : []));
   };
   async function poll(force = false) {
     if (!state.user) return;
@@ -1701,7 +1726,7 @@ export const NAV = [
   // The two state and federal reporting modules, for a programme that uses them (Settings › Program › Modules):
   // the same test the Reports page's cards use, so the entry and the card come and go together.
   { name: 'caloms', label: 'State reporting', ico: '⚑', perm: ['episodes:read', 'episodes:write', 'export:identified'], more: true, show: () => ((can('episodes:read') || can('episodes:write')) && moduleOn('caloms')) || (can('export:identified') && (moduleOn('caloms') || moduleOn('handoff'))), help: 'CalOMS Tx admission, discharge and annual update records for DHCS, their validation report and the extract, and the county EHR hand-off.' },
-  { name: 'suprt', label: 'SUPRT-A', ico: '◎', perm: 'clients:read', more: true, show: () => moduleOn('suprt'), help: 'SAMHSA SUPRT-A records for clients served with State Opioid Response money: completion, the follow-ups due, and the file for SPARS.' },
+  { name: 'suprt', label: 'SUPRT-A', ico: '◎', perm: ['clients:read', 'reports:funder'], more: true, show: () => moduleOn('suprt'), help: 'SAMHSA SUPRT-A records for clients served with State Opioid Response money: completion, the follow-ups due, and the file for SPARS.' },
   { name: 'budget', label: 'Funding & spending', ico: '$', perm: 'budget:read', programme: true, help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
   { name: 'documents', label: 'Policies & contracts', ico: '📋', perm: 'documents:read', programme: true, help: 'County policies, procedures and signed contracts, searchable by title and category.' },
   { name: 'compliance', label: 'Privacy & Part 2', ico: '⚖', perm: ['consents:read', 'complaints:read', 'incidents:read', 'settings:manage'], more: true, help: '42 CFR Part 2: the patient notice and who has not been given it, the privacy complaint log, and the incident and breach register with its 60-day notification clock.' },
@@ -1950,7 +1975,10 @@ document.addEventListener('keydown', (e) => {
     if (box) { e.preventDefault(); box.focus(); box.select(); }
   } else if (e.key === 'n' || e.key === 'N') {
     if (!can('interventions:write') || e.key === 'N') return;
-    e.preventDefault(); import('./views/interventions.js').then(m => m.openInterventionForm(null, { onDone: render }));
+    // On a client's record it is a visit for that client (1.16.0), as the record's own + Log a visit is.
+    const r = parseHash(); const pc = state.pageClient;
+    const here = r.name === 'client' && pc && pc.id === r.id ? { clientId: pc.id, clientDisplay: pc.display, onDone: pc.onDone } : { onDone: render };
+    e.preventDefault(); import('./views/interventions.js').then(m => m.openInterventionForm(null, here));
   } else if (e.key === '?') { e.preventDefault(); openShortcutsHelp(); }
 });
 

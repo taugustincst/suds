@@ -102,7 +102,7 @@ export function consentFormPanel(clientId, { onDone, onCancel, close, discloser,
     // A live consent of the same type to the same recipient already covering these dates is most often the
     // same signed form recorded twice: say so and offer it, but let a genuine renewal be recorded.
     if (!(await confirmNotDuplicate(clientId, body, () => close(), inline ? dupHost : null))) return;
-    const res = await post(`/api/clients/${clientId}/consents`, body); toast('Consent recorded', 'ok'); close(); onDone && onDone(res && res.id);
+    const res = await post(`/api/clients/${clientId}/consents`, body); if (!inline) toast('Consent recorded', 'ok'); close(); onDone && onDone(res && res.id);
   } });
   // The TPO wording is only a default for a TPO consent: switching type clears it, switching back restores it.
   const typeSel = f.querySelector('select[name=type]');

@@ -19,7 +19,7 @@ grey cases (Part 2 records, CalOMS, DMC).
 | --- | --- |
 | **Outreach encounters** | **+ Log** (one button, bottom-right on a phone): visit, call, text, note, to-do or time. Outreach, naloxone distribution, post-overdose follow-up, warm hand-off and the other navigation service types. A follow-up date creates a reminder; time is logged automatically. |
 | **Anonymous and community work** | Outreach and naloxone distribution can be recorded with no client named, and still count in the funder report. Overdose and reversal events, including community ones. |
-| **Naloxone and supplies** | A supply cupboard (naloxone kits, fentanyl test strips and the other items you list) that each encounter draws down; stock counts on the office server. |
+| **Naloxone and supplies** | Supplies kept by **item, site and lot** (1.14.0): naloxone by product, fentanyl test strips, syringes, sharps containers and whatever else you list; sites for the office, a van, a drop-in or a partner; lot numbers and expiry dates. Deliveries, moves between sites, counts and disposal are recorded in a stock ledger. Each visit or anonymous outreach contact draws the items it hands out from its site, earliest expiry first; expiring lots, low stock and shortfalls show on Home. A repeated visit copies what kind of visit it was, never the quantities. Syringes and sharps brought back are recorded too, counted or estimated from the container ([docs/SUPPLIES.md](../SUPPLIES.md)). |
 | **Grants and budget** | Funding sources (opioid settlement, SOR, SABG, county…), budget lines, burn rate against time elapsed, client assistance (bus passes, IDs, motel nights) charged to the right line, staff time by funding source. |
 | **Approvals** | Expenditure approval (pending → approved/rejected → reimbursed) and time approval, with separation of duties: nobody approves their own. |
 | **Caseload** | For people you do follow: each worker sees their own clients, sorted by risk and last contact; Home shows overdue follow-ups, no contact in 30 days, consents expiring. Caseload transfer when someone leaves. |
@@ -52,9 +52,20 @@ CalOMS Tx, and the county EHR hand-off. Most harm-reduction programmes will not 
   (Only the funder report, the naloxone log and the settlement report suppress small cells; the other reports
   show exact counts.)
 - **Naloxone distribution log** in the style of the DHCS Naloxone Distribution Project reporting, and an
-  **opioid-settlement expenditure report** by allowable-use category. Both are built from the records above;
-  **check each against the funder's current template** before you submit — templates change, and SUDS has not
-  been certified by DHCS or any funder.
+  **opioid-settlement expenditure report** by allowable-use category, also in the DHCS settlement expenditure
+  layout (one row per activity, people served on the activity their services fall under) or your county's own
+  template, matched without code: its columns can take kits, test strips and reversals as well, and its rows can
+  be one per fund of another type, such as a block-grant (SABG) report. A **syringe services program summary**
+  (participants, contacts, syringes out and back, sharps containers, naloxone by product, test strips, referrals).
+  All are built from the records above; **check each against the funder's current template** before you submit
+  — templates change, and SUDS has not been certified by DHCS or any funder.
+- **SUPRT-A**, for State Opioid Response (SOR) programmes: SAMHSA's client-level record (baseline, reassessment,
+  annual assessment and closeout) on each client's SUPRT-A tab, with what the record already holds filled in, the
+  follow-ups due and their windows, completion rates, and a file for entry into SPARS. **SUDS's items and codes
+  are its reading of SAMHSA's public descriptions: verify them against the current SUPRT-A handbook and
+  codebook before anything is entered in SPARS** ([docs/compliance/SUPRT.md](../compliance/SUPRT.md)).
+- **Finance** runs the programme's own submissions without seeing a client: the funder report, the NDP log, the
+  settlement report and its layouts, the syringe services summary and SUPRT-A completion rates, all aggregate.
 - **Programme summary and monthly trends** for any date range, by calendar day in your time zone.
 - **Referral outcomes**: how many warm hand-offs led to an admission, and what got in the way.
 - **Excel / CSV** of every table or one workbook, de-identified (HIPAA Safe Harbor) by default: dates to the
@@ -72,7 +83,7 @@ CalOMS Tx, and the county EHR hand-off. Most harm-reduction programmes will not 
 in 30 days, a reminder that a consent expires Friday.
 
 **10:15, outreach at the encampment.** Hands out four naloxone kits and ten test strips; two people give no
-name. She logs one outreach visit with no client — the kits come off the cupboard count and will appear in the
+name. She logs one outreach visit with no client — the kits come off the van's stock, oldest lot first, and will appear in the
 funder report's community distribution. One person she knows asks about detox.
 
 **10:40, referral.** On his record she checks the resource directory (the detox programme was verified last

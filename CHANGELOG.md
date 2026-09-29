@@ -158,6 +158,95 @@ route.
   copies* (bad) with the file, why the seal failed and what to do, `/api/health` answers 503 naming the file, and
   housekeeping tries to seal it (and any plaintext pre-migration snapshot) every hour.
 
+The Frontline and Reporting and market sections are fixes from the independent frontline-UX and market reviews of
+1.15.3. They add no migration or permission and change no role's permissions: finance's new reach (below) goes
+through the existing `reports:funder` check. No new API route; the browser has one new page address (`#/ssp`, the
+syringe services summary on its own page) over the existing `GET /api/reports/ssp`. One new setting:
+`API_RATE_LIMIT`.
+
+### Frontline
+
+- **Repeat last visit copies what kind of visit it was, never how much.** It copied the last visit's supply lines
+  and quantities (another worker's included), so a repeated visit nobody changed drew stock and counted kits a
+  second time; the only warning was a tooltip. The same items are now on the form with every quantity empty, the
+  kits and strips counts and any direct cost start at nothing, and a note at the top says whose visit it was
+  copied from and when (*Copied from Jordan Walker's visit on 26 Sep 2026 … Supplies start at zero … This visit is
+  recorded as yours*).
+- **The bell's panel no longer says "null".** With eight or fewer to-dos due it showed the word *null* under the
+  list. Four other places wrote a missing element into the page the same way and now do not: the profile's
+  two-step card when two-step verification is required, the SCIM card without a token list or deprovisioning
+  report, and the setup wizard's finished page without a key file.
+- **A yes/no question nobody asked is "Not asked", not "No".** Veteran, history of overdose, justice involved,
+  pregnant or parenting and co-occurring mental health were stored as *No* whenever they were left out, and
+  SUPRT-A then pre-filled *no*. Like risk's *Not assessed* in 1.15.3: a client created by the intake form, Quick
+  add, an import (a blank cell) or a device's sync without an answer stores none, the record shows **Not asked**,
+  and the form asks **Yes / No / Not asked** instead of a checkbox. SUPRT-A pre-fills only what was recorded:
+  *ever had an overdose* is *no* only when the record says so. Clients recorded before this keep their answers.
+  An import whose yes/no column said "no" failed its row (*cannot be bound*); it now imports.
+- **SUPRT-A is complete only when it is.** A baseline could be saved *complete* with its screenings, diagnoses and
+  crisis questions blank. Every question of each section the assessment point asks is now needed (sections B-D at
+  a baseline, reassessment or annual assessment, E at the follow-ups, F at a baseline without SUPRT-C; not the free
+  text, nor the date of birth; the medication when MOUD is *yes*), each has a *Don't know / not recorded* or *Not
+  screened* answer, and saving names every question still to answer, once, with each marked where it is. Gender,
+  housing, insurance and route of use are lists with labels, not text boxes holding codes. With no grant ID set,
+  the form says so and links to where it is set. The tab no longer says a baseline "is due once…" beside *Due
+  now*. SUDS's reading of the handbook: verify it against the current SUPRT-A handbook.
+- **Returned or reopened time is a to-do for the worker.** A supervisor returning (or reopening) time now puts a
+  to-do on the worker's list, due at once so the bell shows it: which day and how long, who returned it and why
+  (encrypted; one to-do per worker for a batch). The approval queue has **Select all**, and every row's buttons
+  say which entry they act on (*Approve 2h 30m on 28 Sep 2026 for Maria Rivera*), on Supervision and the time page.
+- **The note viewer names the client.** Its link read *view*; `GET /api/notes/:id` now carries the client code,
+  and the name for a reader who may open the record, and the link says *Rivera, Maria (C26-0012)*.
+- **Search says what it found.** A polite live region announces *3 clients and 1 resource found* or *No match*,
+  the Down arrow moves into the results (Up, Down, Escape back to the box), and the box says *Find a client or
+  resource* where the reader may see the directory.
+- **Home's Calls tile counts what the worker may see**, as the visits tile does: their caseload's calls and their
+  own calls with no client (it counted the whole programme's). A role that sees every client sees every call.
+- **Signing a note closes its "Finish and sign your note" reminder**, at the office and when the signature arrives
+  from a device; the author's other reminders stay.
+- **Wording.** An error is said once: a message of its own (*Password must contain…*, *That recovery code is not
+  right*, SUPRT-A's) no longer repeats the field messages shown under each field. The setup wizard's username help
+  (the *guest* default stays) goes away once another name is typed, and its finished page points to *Settings →
+  System & backups*. A production Home no longer suggests loading sample data. Read-only is described as
+  *reports and de-identified lists; cannot open client records*. *Continue where you left off* does not promise
+  "from any device" on SUDS on this device. The overdose form's help names the reversal choice as the list shows
+  it. A supervisor's time page is **Staff time**. The consent recorded from a referral says so once. New time is
+  charged to the worker's default fund, as a new visit is. On a client's record the `n` shortcut logs a visit for
+  that client. The audit-anchor notice keeps its place (a security finding) and now says plainly that nothing in
+  SUDS fixes it and what to ask IT, with **Copy the request for IT**.
+- **From the live retest of 1.15.3.** The expiring-consent alert on a client's Overview read *the Part 2 consent
+  consent to …*: "consent" is now said once (and still added for a type whose name lacks it). An empty
+  **Waitlist** offers **Add someone to the waitlist** (the intake form, opened on the status Waitlist) to a role
+  that may add clients, and tells anyone else who does. An inactive resource's profile was checked in the browser at
+  1280 and 390 px: its badge is an item of the badge list, read as *Status: Inactive*, and the browser suite now
+  asserts it. So is the unsent-visit offer after navigating away: *Resume your unsent visit?* restores the fields,
+  and Discard clears them.
+- **A publication release does not offer "Export everything to Excel"**, the program's own record-level workbook
+  for internal checking; the submission run still does.
+
+### Reporting and market
+
+- **Settlement people served per activity.** The DHCS layout and county templates repeated a fund's whole count
+  of services and people on every one of its activity rows. Services and people are now on the row of the
+  activity they fall under, the fund's own Exhibit E category and HIAA; a fund's other rows carry its spending.
+- **County templates map more.** A column can take the naloxone kits and test strips distributed and the
+  reversals charged to the activity's fund (10 or fewer written "10 or fewer"). A template's rows can be one per
+  fund of another type (a block grant (SABG), SOR or county general fund report), with the settlement-only columns
+  left blank and every active fund of that type listed.
+- **Finance runs the syringe services summary and SUPRT-A completion rates**, aggregate only, through the existing
+  `reports:funder` check: the summary as the programme's own submission of the whole programme (an internal run is
+  refused), from a link on the funder report (`#/ssp`); the completion rates of the whole programme, not the
+  follow-ups due, which name clients.
+- **`API_RATE_LIMIT`** (default 600 requests a minute per address) joins `LOGIN_RATE_LIMIT` as a setting, and
+  DEPLOYMENT.md says how an office behind one NAT address raises both for a day of bulk imports.
+- The market pack: the scorecard has SUPRT-A, supplies and syringe services, and finance reporting rows (SUPRT-A
+  with its "verify against the handbook" caveat), EVALUATION-RESPONSE.md runs through 1.16.0, the programme
+  buyer guide describes supplies by item, site and lot, and what is deferred is listed with why.
+- **Deferred:** publication for programmes serving 20-40 people (a change to the disclosure method needs the
+  independent statistical review first); SSP participants from anonymous contacts (no field holds a participant
+  code; adding one is a schema change); the SUPRT-A codebook and SPARS batch file, and the official NDP and SSP
+  templates (not available to check against); people trained (SUDS does not record training).
+
 ## 1.15.4 — 2026-09-29
 
 ### Security

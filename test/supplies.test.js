@@ -346,8 +346,11 @@ test('the SSP summary: contacts, participants, syringes out and back, the ratio,
   const s = (await nav.get('/api/reports/ssp?from=2026-07-01&to=2026-07-31')).data;
   assert.equal(s.totals.participants, '<11'); assert.equal(s.totals.syringes_distributed, 100);
   assert.equal(s.suppression.purpose, 'internal');
-  // Who may run it: not finance or read-only (it counts participants and is never a publication release).
-  assert.equal((await fin.get('/api/reports/ssp?from=2026-07-01&to=2026-07-31')).status, 403);
+  // Who may run it: finance as the programme's own submission of the whole programme (1.16.0, reports:funder:
+  // aggregate only, as its funder report), never an internal run; not read-only.
+  const fr = await fin.get('/api/reports/ssp?from=2026-07-01&to=2026-07-31');
+  assert.equal(fr.status, 200, JSON.stringify(fr.data)); assert.equal(fr.data.suppression.purpose, 'submission'); assert.equal(fr.data.totals.syringes_distributed, 100);
+  assert.equal((await fin.get('/api/reports/ssp?from=2026-07-01&to=2026-07-31&purpose=internal')).status, 403);
   assert.equal((await ro.get('/api/reports/ssp?from=2026-07-01&to=2026-07-31')).status, 403);
   assert.equal((await nav.get('/api/reports/ssp?from=2026-07-01&to=2026-07-31&counts=exact')).status, 403, 'exact counts are for supervisors and administrators');
   assert.equal((await sup.get('/api/reports/ssp?from=2026-07-01&to=2026-07-31&purpose=publication')).status, 400);

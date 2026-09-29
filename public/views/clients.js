@@ -5,6 +5,11 @@ import { h, route, get, post, put, state, form, modal, toast, nav, table, pagedL
 /** A client's risk level as shown: a blank one has not been assessed (there is no default level). */
 export const riskText = (level) => (level ? fmt.label(level) : 'Not assessed');
 
+/** A yes/no question somebody has to ask (1.16.0): blank is "Not asked", never a silent "No". */
+const asked = (name, label) => ({ name, label, type: 'select', options: [{ value: '1', label: 'Yes' }, { value: '0', label: 'No' }], placeholder: 'Not asked' });
+/** How such an answer reads on the record: NULL was never asked. */
+export const yesNoAsked = (v) => (v === null || v === undefined ? 'Not asked' : v ? 'Yes' : 'No');
+
 export function clientFields(C, { isNew = true, hasEpisodes = false, openEpisode = false } = {}) {
   // While an episode is open, closing the record (or recording a death) is a discharge, and the discharge
   // is what closes the episode, ends the care team and clears the to-dos — so those two are taken off the
@@ -14,7 +19,7 @@ export function clientFields(C, { isNew = true, hasEpisodes = false, openEpisode
     { type: 'section', label: 'Who they are', collapsible: true, open: true, hint: 'only first and last name are required' },
     { name: 'first_name', label: 'First name', required: true }, { name: 'last_name', label: 'Last name', required: true }, { name: 'preferred_name', label: 'Preferred name' },
     { name: 'dob', label: 'Date of birth', type: 'date', max: fmt.today(), min: '1900-01-01' }, { name: 'gender', label: 'Gender', type: 'select', options: ['female', 'male', 'non_binary', 'transgender_female', 'transgender_male', 'other', 'declined'] }, { name: 'pronouns', label: 'Pronouns' },
-    { name: 'race_ethnicity', label: 'Race / ethnicity' }, { name: 'preferred_language', label: 'Preferred language', value: 'English' }, { name: 'veteran', label: 'Veteran', type: 'checkbox' },
+    { name: 'race_ethnicity', label: 'Race / ethnicity' }, { name: 'preferred_language', label: 'Preferred language', value: 'English' }, asked('veteran', 'Veteran'),
     { type: 'section', label: 'How to reach them', collapsible: true, open: true },
     { name: 'phone', label: 'Phone', type: 'tel' }, { name: 'alt_phone', label: 'Alternate phone', type: 'tel' }, { name: 'email', label: 'Email', type: 'email' },
     { name: 'address', label: 'Address', span: true }, { name: 'city', label: 'City' }, { name: 'zip', label: 'ZIP' },
@@ -37,9 +42,9 @@ export function clientFields(C, { isNew = true, hasEpisodes = false, openEpisode
     { type: 'section', label: 'Substance use & health details', collapsible: true, hint: 'fill in what you know; you can come back later' },
     { name: 'primary_substance', label: 'Primary substance', type: 'select', list: 'SUBSTANCES' }, { name: 'secondary_substances', label: 'Secondary substances' }, { name: 'route_of_use', label: 'Route of use', type: 'select', options: ['oral', 'smoked', 'snorted', 'injected', 'multiple', 'unknown'] },
     { name: 'asam_level', label: 'ASAM level of care', type: 'select', options: C.ASAM }, { name: 'mat_status', label: 'MAT status', type: 'select', options: ['none', 'interested', 'referred', 'active', 'discontinued', 'unknown'] }, { name: 'mat_medication', label: 'MAT medication', type: 'select', options: ['buprenorphine', 'buprenorphine_xr', 'methadone', 'naltrexone_xr', 'naltrexone_oral', 'other'] },
-    { name: 'overdose_history', label: 'History of overdose', type: 'checkbox' }, { name: 'last_overdose_date', label: 'Last overdose date', type: 'date' },
+    asked('overdose_history', 'History of overdose'), { name: 'last_overdose_date', label: 'Last overdose date', type: 'date' },
     { name: 'naloxone_provided', label: 'Naloxone provided', type: 'checkbox' }, { name: 'naloxone_last_date', label: 'Naloxone last given', type: 'date' },
-    { name: 'co_occurring_mh', label: 'Co-occurring mental health', type: 'checkbox' }, { name: 'justice_involved', label: 'Justice involved', type: 'checkbox' }, { name: 'pregnant_or_parenting', label: 'Pregnant or parenting', type: 'checkbox' },
+    asked('co_occurring_mh', 'Co-occurring mental health'), asked('justice_involved', 'Justice involved'), asked('pregnant_or_parenting', 'Pregnant or parenting'),
     { name: 'goals', label: 'Client goals', type: 'textarea', span: true }, { name: 'flags', label: 'Safety flags (comma separated)', span: true, help: 'e.g. no home visits alone, allergy: naltrexone, do not contact via family' },
   ];
 }

@@ -6,6 +6,8 @@ const { excelDate } = require('./spreadsheet');
 const { blindIndex } = require('./crypto');
 
 const yes = (v) => v === true || /^(1|y|yes|true|x)$/i.test(String(v ?? '').trim());
+// A question somebody has to ask: a blank cell is not an answer (NULL, "Not asked"), anything else yes or no.
+const yesNo = (v) => (v === null || v === undefined || String(v).trim() === '' ? null : yes(v));
 const dateOf = (v) => { if (v === null || v === undefined || v === '') return null; if (typeof v === 'number') return excelDate(v); const s = String(v).trim(); const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s); if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`; const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s); if (us) return `${us[3].length === 2 ? '20' + us[3] : us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`; const d = new Date(s); return isNaN(d) ? undefined : d.toISOString().slice(0, 10); };
 const datetimeOf = (v) => { if (v === null || v === undefined || v === '') return null; if (typeof v === 'number') { if (!Number.isFinite(v) || v < 1) return undefined; if (v % 1) return new Date(Math.round((v - 25569) * 86400000)).toISOString(); const d = excelDate(v); return d ? new Date(d + 'T12:00:00').toISOString() : undefined; } const d = new Date(String(v).trim()); if (!isNaN(d)) return d.toISOString(); const day = dateOf(v); return day ? new Date(day + 'T12:00:00').toISOString() : undefined; };
 // enumOf takes a fixed list of codes, or the key of a documentation list (Settings → Lists): then the
@@ -27,7 +29,7 @@ const ENTITIES = {
     F('status', 'Status', ['program status'], enumOf(['waitlist', 'active', 'inactive', 'closed', 'deceased'])), F('intake_date', 'Intake date', ['intake', 'enrolled', 'enrollment date', 'start date'], dateOf), F('referral_source', 'Referral source', ['referred by', 'source'], str(120)),
     F('primary_substance', 'Primary substance', ['substance', 'drug of choice', 'doc'], enumOf('SUBSTANCES')), F('asam_level', 'ASAM level', ['asam', 'level of care'], str(20)), F('mat_status', 'MAT status', ['mat', 'moud'], enumOf(['none', 'interested', 'referred', 'active', 'discontinued', 'unknown'])),
     F('risk_level', 'Risk level', ['risk'], enumOf(['low', 'moderate', 'high', 'critical'])), F('housing_status', 'Housing', ['housing status', 'living situation'], str(60)), F('insurance', 'Insurance', ['payer', 'coverage'], str(100)),
-    F('overdose_history', 'Overdose history', ['overdose', 'od history', 'prior overdose'], yes), F('naloxone_provided', 'Naloxone provided', ['naloxone', 'narcan'], yes), F('goals', 'Goals', ['client goals'], str(2000)), F('flags', 'Safety flags', ['flags', 'alerts'], str(300)),
+    F('overdose_history', 'Overdose history', ['overdose', 'od history', 'prior overdose'], yesNo), F('naloxone_provided', 'Naloxone provided', ['naloxone', 'narcan'], yes), F('goals', 'Goals', ['client goals'], str(2000)), F('flags', 'Safety flags', ['flags', 'alerts'], str(300)),
   ] },
   resources: { label: 'Resource directory', table: 'resources', fields: [
     F('name', 'Name', ['program', 'resource', 'provider', 'service name'], str(200), { required: true }), F('category', 'Category', ['type', 'service type'], enumOf(C.RESOURCE_CATEGORIES), { required: true, help: C.RESOURCE_CATEGORIES.join(', ') }), F('organization', 'Organization', ['agency', 'org'], str(200)),

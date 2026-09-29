@@ -8400,6 +8400,11 @@ var require_clients_model = __commonJS({
       "ok_to_text",
       "ok_to_voicemail"
     ];
+    var UNASKED_FIELDS = ["veteran", "overdose_history", "justice_involved", "pregnant_or_parenting", "co_occurring_mh"];
+    function unaskedAsNull(cols2) {
+      for (const f of UNASKED_FIELDS) if (cols2[f] === void 0) cols2[f] = null;
+      return cols2;
+    }
     function daysToEngagement(d) {
       if (!d || !d.referral_date || !d.engagement_date) return null;
       return Math.round((Date.parse(d.engagement_date) - Date.parse(d.referral_date)) / 864e5);
@@ -8531,7 +8536,7 @@ var require_clients_model = __commonJS({
       o.days_to_engagement = daysToEngagement(d);
       return o;
     }
-    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes, nameParts, searchPartTokens };
+    module.exports = { ENC_FIELDS, PLAIN_FIELDS, UNASKED_FIELDS, unaskedAsNull, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes, nameParts, searchPartTokens };
   }
 });
 
@@ -12894,6 +12899,7 @@ var require_clients = __commonJS({
         for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
         if (!cols2.intake_date) cols2.intake_date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         if (cols2.risk_level === void 0) cols2.risk_level = null;
+        M.unaskedAsNull(cols2);
         const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
         let episodeId = null;
         db3.transaction(() => {
@@ -13251,6 +13257,7 @@ var require_clients2 = __commonJS({
       },
       normalise(row, c) {
         for (const [cols2, may] of GUARDED) if (!may(c.user)) for (const col of cols2) row[col] = c.existing ? void 0 : DEFAULTS[col];
+        if (!c.existing) require_clients_model().unaskedAsNull(row);
         return null;
       },
       // A client that arrives with no creator was created by whoever is sending it (POST /api/clients records the
@@ -14917,6 +14924,20 @@ var require_notes = __commonJS({
       "import_item_id",
       "deleted_at"
     ];
+    function closeSignReminders(authorId, noteId, clientId) {
+      const { decrypt: decrypt3 } = require_crypto();
+      const ref = `Reference: supervision reminder for note ${noteId}`;
+      const done = db3.all(`SELECT id, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS ? AND description_enc IS NOT NULL`, authorId, clientId).filter((t) => {
+        try {
+          return decrypt3(t.description_enc).includes(ref);
+        } catch {
+          return false;
+        }
+      });
+      const now2 = db3.now();
+      for (const t of done) db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now2, now2, t.id);
+      return done.map((t) => t.id);
+    }
     module.exports = define2({
       table: "notes",
       fields: {
@@ -14989,8 +15010,15 @@ var require_notes = __commonJS({
           row.cosign_required = author && author.requires_cosign ? 1 : 0;
         }
         return asserted ? flag("was accepted, but not the countersignature on it: a supervisor countersigns at the office, never by sync", { code: "ruling" }) : null;
+      },
+      // A note signed on a device closes its reminder at the office too, as signing here does (routes/notes.js).
+      afterApply(row, o, c) {
+        if (c.existing && c.existing.status !== "draft") return;
+        const n = db3.one(`SELECT id, author_id, client_id, status FROM notes WHERE id=?`, row.id);
+        if (n && n.status !== "draft") closeSignReminders(n.author_id, n.id, n.client_id);
       }
     });
+    module.exports.closeSignReminders = closeSignReminders;
   }
 });
 
@@ -16063,6 +16091,11 @@ var require_suprt = __commonJS({
       { value: "deceased", label: "Deceased" },
       { value: "other", label: "Other" }
     ];
+    var coded = (pairs) => pairs.map(([value, label]) => ({ value, label }));
+    var GENDER = coded([["female", "Female"], ["male", "Male"], ["non_binary", "Non-binary"], ["transgender_female", "Transgender female"], ["transgender_male", "Transgender male"], ["other", "Another gender"], ["declined", "Declined to answer"], ["unknown", "Don't know / not recorded"]]);
+    var HOUSING = coded([["stable", "Stable housing"], ["doubled_up", "Staying with others (doubled up)"], ["shelter", "Shelter"], ["unsheltered", "Unsheltered (street, car, encampment)"], ["transitional", "Transitional housing"], ["sober_living", "Sober living / recovery residence"], ["incarcerated", "Incarcerated"], ["treatment_facility", "Treatment facility"], ["unknown", "Don't know / not recorded"]]);
+    var INSURANCE = coded([["medicaid", "Medicaid (Medi-Cal)"], ["medicare", "Medicare"], ["private", "Private insurance"], ["uninsured", "Uninsured"], ["va", "VA / military"], ["pending", "Application pending"], ["unknown", "Don't know / not recorded"]]);
+    var ROUTE = coded([["oral", "Oral"], ["smoked", "Smoked"], ["snorted", "Snorted"], ["injected", "Injected"], ["multiple", "More than one route"], ["unknown", "Don't know / not recorded"]]);
     var SUPRT_C = [{ value: "completed", label: "Completed" }, { value: "declined", label: "Offered and declined" }, { value: "not_offered", label: "Not offered or not able to complete" }];
     var ITEMS = [
       { key: "A_client_id", section: "A", label: "Client ID (the SUDS client code, not a name)", type: "text", at: ALL, source: "record", readonly: true, required: true },
@@ -16074,31 +16107,31 @@ var require_suprt = __commonJS({
       { key: "A_suprt_c", section: "A", label: "Client questionnaire (SUPRT-C) at this assessment", type: "choice", options: SUPRT_C, at: NOT_CLOSEOUT, source: "asked", required: true, help: "SUDS does not hold the questionnaire itself: it is completed with SAMHSA's own form. Demographics are asked here only when it was not completed." },
       { key: "A_closeout_reason", section: "A", label: "Reason for closeout", type: "choice", options: CLOSEOUT_REASONS, at: ["closeout"], source: "record", required: true, help: "Pre-filled from the discharge reason, where one is recorded." },
       { key: "A_last_service_date", section: "A", label: "Date of last service", type: "date", at: ["closeout"], source: "record", required: true },
-      { key: "B_primary_substance", section: "B", label: "Primary substance", type: "choice", options: C.SUBSTANCES.map((v) => ({ value: v, label: v })), at: NOT_CLOSEOUT, source: "record" },
-      { key: "B_route_of_use", section: "B", label: "Usual route of use", type: "text", at: NOT_CLOSEOUT, source: "record" },
-      { key: "B_overdose_ever", section: "B", label: "Ever had an overdose", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "record" },
-      { key: "B_overdose_since_last", section: "B", label: "Overdose since the last assessment (at baseline: in the 30 days before it)", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "record" },
-      { key: "B_moud", section: "B", label: "Receiving medication for opioid use disorder (MOUD)", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "record" },
+      { key: "B_primary_substance", section: "B", label: "Primary substance", type: "choice", options: C.SUBSTANCES.map((v) => ({ value: v, label: v })), at: NOT_CLOSEOUT, source: "record", required: true },
+      { key: "B_route_of_use", section: "B", label: "Usual route of use", type: "choice", options: ROUTE, at: NOT_CLOSEOUT, source: "record", required: true },
+      { key: "B_overdose_ever", section: "B", label: "Ever had an overdose", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "record", required: true },
+      { key: "B_overdose_since_last", section: "B", label: "Overdose since the last assessment (at baseline: in the 30 days before it)", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "record", required: true },
+      { key: "B_moud", section: "B", label: "Receiving medication for opioid use disorder (MOUD)", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "record", required: true },
       { key: "B_moud_medication", section: "B", label: "Which medication", type: "text", at: NOT_CLOSEOUT, source: "record" },
-      { key: "B_co_occurring_mh", section: "B", label: "Co-occurring mental health condition", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "record" },
-      { key: "B_crisis_since_last", section: "B", label: "Behavioral health crisis, or a crisis response requested, since the last assessment (at baseline: in the 30 days before it)", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "asked" },
-      { key: "B_residential_tx_since_last", section: "B", label: "Residential substance use disorder treatment since the last assessment (at baseline: in the 30 days before it)", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "asked" },
-      { key: "C_substance_use_screen", section: "C", label: "Substance use screening result", type: "choice", options: SCREEN, at: NOT_CLOSEOUT, source: "record", help: "From the latest DAST-10 or AUDIT-C in SUDS, where one was given." },
-      { key: "C_mental_health_screen", section: "C", label: "Mental health screening result", type: "choice", options: SCREEN, at: NOT_CLOSEOUT, source: "record", help: "From the latest PHQ-9 or GAD-7 in SUDS, where one was given." },
-      { key: "C_suicide_risk_screen", section: "C", label: "Suicide risk screening result", type: "choice", options: SCREEN, at: NOT_CLOSEOUT, source: "record", help: "From PHQ-9 item 9, where a PHQ-9 was given; otherwise ask." },
-      { key: "C_trauma_screen", section: "C", label: "Trauma screening result", type: "choice", options: SCREEN, at: NOT_CLOSEOUT, source: "asked" },
+      { key: "B_co_occurring_mh", section: "B", label: "Co-occurring mental health condition", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "record", required: true },
+      { key: "B_crisis_since_last", section: "B", label: "Behavioral health crisis, or a crisis response requested, since the last assessment (at baseline: in the 30 days before it)", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "asked", required: true },
+      { key: "B_residential_tx_since_last", section: "B", label: "Residential substance use disorder treatment since the last assessment (at baseline: in the 30 days before it)", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "asked", required: true },
+      { key: "C_substance_use_screen", section: "C", label: "Substance use screening result", type: "choice", options: SCREEN, at: NOT_CLOSEOUT, source: "record", help: "From the latest DAST-10 or AUDIT-C in SUDS, where one was given.", required: true },
+      { key: "C_mental_health_screen", section: "C", label: "Mental health screening result", type: "choice", options: SCREEN, at: NOT_CLOSEOUT, source: "record", help: "From the latest PHQ-9 or GAD-7 in SUDS, where one was given.", required: true },
+      { key: "C_suicide_risk_screen", section: "C", label: "Suicide risk screening result", type: "choice", options: SCREEN, at: NOT_CLOSEOUT, source: "record", help: "From PHQ-9 item 9, where a PHQ-9 was given; otherwise ask.", required: true },
+      { key: "C_trauma_screen", section: "C", label: "Trauma screening result", type: "choice", options: SCREEN, at: NOT_CLOSEOUT, source: "asked", required: true },
       { key: "D_icd10_codes", section: "D", label: "Current diagnoses (ICD-10-CM codes, as made by a clinician)", type: "text", at: NOT_CLOSEOUT, source: "record", help: "The ICD-10 codes on the client's active problem list." },
-      { key: "D_oud", section: "D", label: "Opioid use disorder diagnosis (F11)", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "record" },
-      { key: "D_stimulant_use_disorder", section: "D", label: "Stimulant use disorder diagnosis (F14, F15)", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "record" },
-      ...SERVICE_CATEGORIES.map(([k, label]) => ({ key: `E_${k}`, section: "E", label, type: "choice", options: YES_NO, at: FOLLOW, source: "record" })),
+      { key: "D_oud", section: "D", label: "Opioid use disorder diagnosis (F11)", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "record", required: true },
+      { key: "D_stimulant_use_disorder", section: "D", label: "Stimulant use disorder diagnosis (F14, F15)", type: "choice", options: YES_NO, at: NOT_CLOSEOUT, source: "record", required: true },
+      ...SERVICE_CATEGORIES.map(([k, label]) => ({ key: `E_${k}`, section: "E", label, type: "choice", options: YES_NO, at: FOLLOW, source: "record", required: true })),
       { key: "F_date_of_birth", section: "F", label: "Date of birth", type: "date", at: ["baseline"], source: "record", demographics: true },
-      { key: "F_gender", section: "F", label: "Gender", type: "text", at: ["baseline"], source: "record", demographics: true },
+      { key: "F_gender", section: "F", label: "Gender", type: "choice", options: GENDER, at: ["baseline"], source: "record", demographics: true, required: true },
       { key: "F_race", section: "F", label: "Race (codes)", type: "text", at: ["baseline"], source: "record", demographics: true },
       { key: "F_ethnicity", section: "F", label: "Ethnicity", type: "text", at: ["baseline"], source: "record", demographics: true },
       { key: "F_language", section: "F", label: "Preferred language", type: "text", at: ["baseline"], source: "record", demographics: true },
-      { key: "F_veteran", section: "F", label: "Veteran", type: "choice", options: YES_NO, at: ["baseline"], source: "record", demographics: true },
-      { key: "F_housing", section: "F", label: "Housing status", type: "text", at: ["baseline"], source: "record", demographics: true },
-      { key: "F_insurance", section: "F", label: "Health insurance", type: "text", at: ["baseline"], source: "record", demographics: true }
+      { key: "F_veteran", section: "F", label: "Veteran", type: "choice", options: YES_NO, at: ["baseline"], source: "record", demographics: true, required: true },
+      { key: "F_housing", section: "F", label: "Housing status", type: "choice", options: HOUSING, at: ["baseline"], source: "record", demographics: true, required: true },
+      { key: "F_insurance", section: "F", label: "Health insurance", type: "choice", options: INSURANCE, at: ["baseline"], source: "record", demographics: true, required: true }
     ];
     var ITEM = Object.fromEntries(ITEMS.map((i) => [i.key, i]));
     function itemsFor(type, answers = {}) {
@@ -16182,12 +16215,13 @@ var require_suprt = __commonJS({
       }
       if (type !== "closeout") {
         a.B_primary_substance = c.primary_substance || null;
-        a.B_route_of_use = c.route_of_use || null;
+        a.B_route_of_use = c.route_of_use && ITEM.B_route_of_use.options.some((o) => o.value === c.route_of_use) ? c.route_of_use : null;
         const odEver = db3.one(`SELECT COUNT(*) n FROM overdose_events WHERE client_id=? AND substr(occurred_at,1,10) <= ?`, clientId, date).n;
-        a.B_overdose_ever = c.overdose_history || odEver ? "yes" : "no";
+        const neverOd = c.overdose_history === 0 && !c.last_overdose_date;
+        a.B_overdose_ever = c.overdose_history || odEver ? "yes" : neverOd ? "no" : null;
         const odSince = db3.one(`SELECT COUNT(*) n FROM overdose_events WHERE client_id=? AND substr(occurred_at,1,10) > ? AND substr(occurred_at,1,10) <= ?`, clientId, from, date).n;
         const lastOd = c.last_overdose_date && c.last_overdose_date > from && c.last_overdose_date <= date;
-        a.B_overdose_since_last = odSince || lastOd ? "yes" : "no";
+        a.B_overdose_since_last = odSince || lastOd ? "yes" : neverOd && !odEver ? "no" : null;
         a.B_moud = c.mat_status ? c.mat_status === "active" ? "yes" : "no" : null;
         a.B_moud_medication = c.mat_status === "active" ? c.mat_medication || null : null;
         a.B_co_occurring_mh = yn(c.co_occurring_mh);
@@ -16213,13 +16247,14 @@ var require_suprt = __commonJS({
       }
       if (type === "baseline") {
         a.F_date_of_birth = dec2(c.dob_enc);
-        a.F_gender = c.gender || null;
+        const inList = (key, v) => v && ITEM[key].options.some((o) => o.value === v) ? v : null;
+        a.F_gender = inList("F_gender", c.gender);
         a.F_race = c.race_codes || null;
         a.F_ethnicity = c.race_ethnicity || null;
         a.F_language = c.preferred_language || null;
         a.F_veteran = yn(c.veteran);
-        a.F_housing = c.housing_status || null;
-        a.F_insurance = c.insurance || null;
+        a.F_housing = inList("F_housing", c.housing_status);
+        a.F_insurance = inList("F_insurance", c.insurance);
       }
       const answers = {};
       const derived = [];
@@ -16255,7 +16290,7 @@ var require_suprt = __commonJS({
         }
         out2[k] = s;
       }
-      const missing = itemsFor(type, out2).filter((i) => i.required && !out2[i.key]).map((i) => i.key);
+      const missing = itemsFor(type, out2).filter((i) => (i.required || i.key === "B_moud_medication" && out2.B_moud === "yes") && !out2[i.key]).map((i) => i.key);
       return { answers: out2, errors, missing };
     }
     var EXPORT_COLUMNS = ITEMS.map((i) => ({ key: i.key, label: i.key }));
@@ -16773,8 +16808,8 @@ var require_suprt2 = __commonJS({
       const d = S.derive(clientId, { type, date, since: previousDate(clientId, date, exceptId) });
       return d.derived.filter((k) => answers[k] !== void 0 && answers[k] === d.answers[k]).join(",") || null;
     }
-    function scopedClients(ctx, { mine = false } = {}) {
-      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+    function scopedClients(ctx, { mine = false, whole = false } = {}) {
+      const cf = whole ? { sql: "1=1", params: [] } : auth3.caseloadFilter(ctx.user, "c.id");
       const mineSql = mine ? ` AND c.id IN (SELECT client_id FROM assignments WHERE user_id=? AND ${auth3.activeAssignment()})` : "";
       return db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND c.merged_into IS NULL AND ${cf.sql}${mineSql}
       AND (c.id IN (SELECT client_id FROM suprt_assessments) OR c.id IN (SELECT i.client_id FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id WHERE f.source_type='sor_grant'))
@@ -16893,7 +16928,13 @@ var require_suprt2 = __commonJS({
         audit3.log({ user: ctx.user, action: "suprt.due.view", ip: ctx.ip, details: { rows: rows.length, mine: mine || void 0 } });
         return { today: on, rows, overdue: rows.filter((x) => x.overdue || x.status === "missed").length };
       });
-      r.get("/api/suprt/completion", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
+      r.get("/api/suprt/completion", auth3.requireAuth, (ctx) => {
+        const clientLevel = auth3.hasPerm(ctx.user, "clients:read");
+        if (!clientLevel && !auth3.submissionRunAllowed(ctx.user)) {
+          audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms: ["clients:read|reports:funder"], path: ctx.path } });
+          throw require_http().forbidden();
+        }
+        const whole = !clientLevel;
         const on = S.today();
         const to = ctx.query.get("to") || on;
         const from = ctx.query.get("from") || S.addDays(to, -89);
@@ -16902,7 +16943,7 @@ var require_suprt2 = __commonJS({
         const by = Object.fromEntries(["reassessment", "annual", "closeout"].map((t) => [t, blank()]));
         let baselines = 0;
         let baselinesOwed = 0;
-        for (const c of scopedClients(ctx)) {
+        for (const c of scopedClients(ctx, { whole })) {
           const rows = assessmentsOf(c.id);
           baselines += rows.filter((x) => x.status === "complete" && x.assessment_type === "baseline" && x.assessment_date >= from && x.assessment_date <= to).length;
           const cy = cycleOf(c, rows, on);
@@ -16929,7 +16970,7 @@ var require_suprt2 = __commonJS({
           for (const k of Object.keys(t)) t[k] += b[k];
           return t;
         }, blank());
-        audit3.log({ user: ctx.user, action: "suprt.completion", ip: ctx.ip, details: { from, to } });
+        audit3.log({ user: ctx.user, action: "suprt.completion", ip: ctx.ip, details: { from, to, whole_programme: whole || void 0 } });
         return {
           from,
           to,
@@ -24503,6 +24544,7 @@ var require_dataimport = __commonJS({
     var { excelDate } = require_spreadsheet();
     var { blindIndex: blindIndex2 } = require_crypto();
     var yes = (v) => v === true || /^(1|y|yes|true|x)$/i.test(String(v ?? "").trim());
+    var yesNo = (v) => v === null || v === void 0 || String(v).trim() === "" ? null : yes(v);
     var dateOf = (v) => {
       if (v === null || v === void 0 || v === "") return null;
       if (typeof v === "number") return excelDate(v);
@@ -24575,7 +24617,7 @@ var require_dataimport = __commonJS({
         F("risk_level", "Risk level", ["risk"], enumOf(["low", "moderate", "high", "critical"])),
         F("housing_status", "Housing", ["housing status", "living situation"], str(60)),
         F("insurance", "Insurance", ["payer", "coverage"], str(100)),
-        F("overdose_history", "Overdose history", ["overdose", "od history", "prior overdose"], yes),
+        F("overdose_history", "Overdose history", ["overdose", "od history", "prior overdose"], yesNo),
         F("naloxone_provided", "Naloxone provided", ["naloxone", "narcan"], yes),
         F("goals", "Goals", ["client goals"], str(2e3)),
         F("flags", "Safety flags", ["flags", "alerts"], str(300))
@@ -24827,8 +24869,9 @@ var require_dataimport2 = __commonJS({
                   const enc2 = M.encryptFields(rec);
                   enc2.full_name_idx = blindIndex2((rec.last_name || "") + (rec.first_name || ""));
                   const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id, intake_date: rec.intake_date || now2.slice(0, 10) };
-                  for (const f of M.PLAIN_FIELDS) if (rec[f] !== void 0 && rec[f] !== null) cols2[f] = rec[f];
+                  for (const f of M.PLAIN_FIELDS) if (rec[f] !== void 0 && rec[f] !== null) cols2[f] = typeof rec[f] === "boolean" ? rec[f] ? 1 : 0 : rec[f];
                   if (cols2.risk_level === void 0) cols2.risk_level = null;
+                  M.unaskedAsNull(cols2);
                   const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
                   db3.run(`INSERT INTO clients(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
                   if (auth3.caseloadRestricted(ctx.user) || ["navigator", "clinician"].includes(ctx.user.role)) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid2(), id, ctx.user.id, "primary", cols2.intake_date, ctx.user.id);
@@ -29236,26 +29279,41 @@ var require_harm_reduction_reports = __commonJS({
       { key: "approved_amount", label: "Amount expended ($, approved or reimbursed)", filled: true },
       { key: "pending_amount", label: "Amount pending approval ($)", filled: true },
       { key: "expenditures", label: "Expenditures (count)", filled: true },
-      { key: "services", label: "Services charged to the fund (count, whole fund)", filled: true },
-      { key: "people_served", label: "People served by the fund's services (whole fund; 10 or fewer not reported)", filled: true },
+      // Per activity (1.16.0): a visit is charged to a fund, and a fund's services belong to the activity of its own
+      // category and HIAA (Funding: the fund's settlement use), so that row carries them and a row the fund's
+      // spending alone reaches (an expenditure given another category) carries none. The fund's whole count used
+      // to be repeated on every one of its rows, so adding the column up counted people several times.
+      { key: "services", label: "Services under this activity (count: visits charged to the fund, on the row of the fund's own category)", filled: true },
+      { key: "people_served", label: "People served under this activity (counted once; 10 or fewer not reported)", filled: true },
       { key: "outcomes", label: "Outcomes and narrative (to complete)", filled: false }
     ];
+    var EXTRA_FIELDS = [
+      { key: "naloxone_kits", label: "Naloxone kits distributed under this activity", filled: true },
+      { key: "fentanyl_strips", label: "Fentanyl test strips distributed under this activity", filled: true },
+      { key: "reversals", label: "Naloxone reversals reported under this activity (10 or fewer not reported)", filled: true }
+    ];
     var DHCS_KEYS = DHCS_FIELDS.map((f) => f.key);
-    var DHCS_NOTE = `Laid out after the fields of the DHCS California Opioid Settlement Expenditure Reporting Form as SUDS understands them from DHCS's published guide (one row per activity: a settlement fund and the Exhibit E category and HIAA its spending went to). It is not the DHCS form, which is completed online: copy each row into it, and write the columns marked "to complete". Check the categories against the agreement governing each fund.`;
+    var SOURCE_FIELDS = [...DHCS_FIELDS, ...EXTRA_FIELDS];
+    var SOURCE_KEYS = SOURCE_FIELDS.map((f) => f.key);
+    var DHCS_NOTE = `Laid out after the fields of the DHCS California Opioid Settlement Expenditure Reporting Form as SUDS understands them from DHCS's published guide (one row per activity: a settlement fund and the Exhibit E category and HIAA its spending went to). Services and people served are on the row of the activity they fall under: the fund's own category and HIAA (the category set on the funding source), since a visit is charged to a fund, not to one of its expenditures. It is not the DHCS form, which is completed online: copy each row into it, and write the columns marked "to complete". Check the categories against the agreement governing each fund.`;
     var dhcsPeople = (v) => typeof v === "number" && v > 0 && v <= 10 ? "10 or fewer" : v;
-    function dhcsRows(ctx, { from, to, ts, tsP }, sc) {
-      const isFund = `(f.source_type='opioid_settlement' OR f.settlement_use IS NOT NULL OR f.settlement_hiaa IS NOT NULL)`;
-      const funds = db3.all(`SELECT f.id, f.name, f.grant_number, f.settlement_use, f.settlement_hiaa FROM funding_sources f WHERE ${isFund} ORDER BY f.name`);
+    function dhcsRows(ctx, { from, to, ts, tsP }, sc, { fundType = null } = {}) {
+      const other = !!fundType && fundType !== "opioid_settlement";
+      const isFund = other ? `f.source_type=?` : `(f.source_type='opioid_settlement' OR f.settlement_use IS NOT NULL OR f.settlement_hiaa IS NOT NULL)`;
+      const fp = other ? [fundType] : [];
+      const funds = db3.all(`SELECT f.id, f.name, f.grant_number, f.settlement_use, f.settlement_hiaa, f.is_active FROM funding_sources f WHERE ${isFund} ORDER BY f.name`, ...fp);
       const exps = db3.all(`SELECT e.amount, e.status, COALESCE(e.settlement_use, f.settlement_use) AS use_code, COALESCE(e.settlement_hiaa, f.settlement_hiaa) AS hiaa_code, f.id AS fund_id
-    FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE ${isFund} AND e.spent_at BETWEEN ? AND ? AND e.status IN ('pending','approved','reimbursed')`, from, to);
-      const svc = new Map(db3.all(`SELECT i.funding_source_id fid, COUNT(*) services, COUNT(DISTINCT CASE WHEN c.deleted_at IS NULL THEN i.client_id END) people
-    FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts("i.occurred_at")} GROUP BY i.funding_source_id`, ...tsP).map((x) => [x.fid, x]));
+    FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE ${isFund} AND e.spent_at BETWEEN ? AND ? AND e.status IN ('pending','approved','reimbursed')`, ...fp, from, to);
+      const svc = new Map(db3.all(`SELECT i.funding_source_id fid, COUNT(*) services, COUNT(DISTINCT CASE WHEN c.deleted_at IS NULL THEN i.client_id END) people, COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips
+    FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${isFund} AND ${ts("i.occurred_at")} GROUP BY i.funding_source_id`, ...fp, ...tsP).map((x) => [x.fid, x]));
+      const rev2 = new Map(db3.all(`SELECT o.funding_source_id fid, COUNT(*) n FROM overdose_events o JOIN funding_sources f ON f.id=o.funding_source_id WHERE ${isFund} AND ${ts("o.occurred_at")} AND (o.naloxone_used=1 OR o.kind='reversal') AND o.survived=1 GROUP BY o.funding_source_id`, ...fp, ...tsP).map((x) => [x.fid, x.n]));
       let people = funds.map((f) => (svc.get(f.id) || { people: 0 }).people);
       if (!sc.exact) {
         const served = FR.servedCount(ts, tsP);
         people = SC.noLonely(SC.star({ total: served, subsets: people.map((n) => Math.min(n, served)) }, { ...sc, fixedTotal: true }).subsets);
       }
       const peopleOf = new Map(funds.map((f, i) => [f.id, dhcsPeople(people[i])]));
+      const reversalsOf = (id) => dhcsPeople(SC.cell(rev2.get(id) || 0, sc));
       const org = db3.getSetting("org_name", "") || "";
       const rows = /* @__PURE__ */ new Map();
       const key = (fid, use, hiaa) => `${fid}|${use}|${hiaa}`;
@@ -29270,16 +29328,19 @@ var require_harm_reduction_reports = __commonJS({
             grant_number: f.grant_number || "",
             activity_name: TO_COMPLETE,
             activity_description: TO_COMPLETE,
-            exhibit_e_schedule: USE_LABEL[use]?.schedule || "Uncategorised: choose the Exhibit E category in SUDS (Funding)",
-            exhibit_e_category: USE_LABEL[use]?.label || "No settlement category recorded",
-            hiaa: HIAA_LABEL[hiaa] || "No High Impact Abatement Activity recorded",
+            exhibit_e_schedule: other ? "" : USE_LABEL[use]?.schedule || "Uncategorised: choose the Exhibit E category in SUDS (Funding)",
+            exhibit_e_category: other ? "" : USE_LABEL[use]?.label || "No settlement category recorded",
+            hiaa: other ? "" : HIAA_LABEL[hiaa] || "No High Impact Abatement Activity recorded",
             hiaa_rationale: TO_COMPLETE,
             funded_organization: org,
             approved_amount: 0,
             pending_amount: 0,
             expenditures: 0,
-            services: (svc.get(f.id) || { services: 0 }).services,
-            people_served: peopleOf.get(f.id),
+            services: 0,
+            people_served: 0,
+            naloxone_kits: 0,
+            fentanyl_strips: 0,
+            reversals: 0,
             outcomes: TO_COMPLETE,
             _fund: f.id,
             _use: use,
@@ -29288,16 +29349,29 @@ var require_harm_reduction_reports = __commonJS({
         }
         return rows.get(k);
       };
+      const ownUse = (f) => other ? "fund" : f.settlement_use && USE_LABEL[f.settlement_use] ? f.settlement_use : "uncategorised";
+      const ownHiaa = (f) => other ? "fund" : f.settlement_hiaa && HIAA_LABEL[f.settlement_hiaa] ? f.settlement_hiaa : "uncategorised";
       const byId = new Map(funds.map((f) => [f.id, f]));
       for (const e of exps) {
-        const use = e.use_code && USE_LABEL[e.use_code] ? e.use_code : "uncategorised";
-        const hiaa = e.hiaa_code && HIAA_LABEL[e.hiaa_code] ? e.hiaa_code : "uncategorised";
-        const r = rowFor(byId.get(e.fund_id), use, hiaa);
+        const f = byId.get(e.fund_id);
+        const use = other ? "fund" : e.use_code && USE_LABEL[e.use_code] ? e.use_code : "uncategorised";
+        const hiaa = other ? "fund" : e.hiaa_code && HIAA_LABEL[e.hiaa_code] ? e.hiaa_code : "uncategorised";
+        const r = rowFor(f, use, hiaa);
         if (e.status === "pending") r.pending_amount += e.amount;
         else r.approved_amount += e.amount;
         r.expenditures += 1;
       }
-      for (const f of funds) if (svc.has(f.id) && ![...rows.values()].some((r) => r._fund === f.id)) rowFor(f, f.settlement_use && USE_LABEL[f.settlement_use] ? f.settlement_use : "uncategorised", f.settlement_hiaa && HIAA_LABEL[f.settlement_hiaa] ? f.settlement_hiaa : "uncategorised");
+      for (const f of funds) {
+        const v = svc.get(f.id);
+        const n = rev2.get(f.id) || 0;
+        if (!v && !n) continue;
+        const r = rowFor(f, ownUse(f), ownHiaa(f));
+        if (v) Object.assign(r, { services: v.services, people_served: peopleOf.get(f.id), naloxone_kits: v.kits, fentanyl_strips: v.strips });
+        if (n) r.reversals = reversalsOf(f.id);
+      }
+      if (other) {
+        for (const f of funds) if (f.is_active) rowFor(f, "fund", "fund");
+      }
       return [...rows.values()].map((r) => ({ ...r, approved_amount: money(r.approved_amount), pending_amount: money(r.pending_amount) })).sort((a, b) => a.fund_name.localeCompare(b.fund_name) || a._use.localeCompare(b._use) || a._hiaa.localeCompare(b._hiaa)).map(({ _fund, _use, _hiaa, ...r }) => r);
     }
     function countyLayout() {
@@ -29321,11 +29395,13 @@ var require_harm_reduction_reports = __commonJS({
         if (!label || label.length > 100) throw badRequest(`Column ${i + 1} needs a heading of at most 100 characters`, { fields: { [`columns.${i}.label`]: "is required" } });
         if (seen2.has(label.toLowerCase())) throw badRequest(`Two columns are headed "${label}"`, { fields: { [`columns.${i}.label`]: "must be unique" } });
         seen2.add(label.toLowerCase());
-        if (![...DHCS_KEYS, "blank", "text"].includes(source)) throw badRequest(`Column "${label}": its source must be one of ${[...DHCS_KEYS, "blank", "text"].join(", ")}`, { fields: { [`columns.${i}.source`]: "is not a field SUDS fills" } });
+        if (![...SOURCE_KEYS, "blank", "text"].includes(source)) throw badRequest(`Column "${label}": its source must be one of ${[...SOURCE_KEYS, "blank", "text"].join(", ")}`, { fields: { [`columns.${i}.source`]: "is not a field SUDS fills" } });
         const text = source === "text" ? String(c && c.text || "").slice(0, 200) : void 0;
         return { label, source, ...source === "text" ? { text } : {} };
       });
-      return { name, columns };
+      const fundType = v.fund_type === void 0 || v.fund_type === null || v.fund_type === "" || v.fund_type === "opioid_settlement" ? null : String(v.fund_type);
+      if (fundType && !C.FUNDING_TYPES.includes(fundType)) throw badRequest(`Rows must be settlement activities or the funds of one type: ${C.FUNDING_TYPES.join(", ")}`, { fields: { fund_type: "is not a funding type" } });
+      return { name, columns, ...fundType ? { fund_type: fundType } : {} };
     }
     function countyRows(layout, rows) {
       const columns = layout.columns.map((c, i) => ({ key: `c${i}`, label: c.label }));
@@ -29334,8 +29410,9 @@ var require_harm_reduction_reports = __commonJS({
     }
     function layoutRoutes(r) {
       r.get("/api/reports/settlement-layout", auth3.requireAuth, auth3.requirePerm("budget:read"), () => ({
+        fund_types: [{ value: "", label: "One row per settlement activity (fund, Exhibit E category and HIAA)" }, ...C.FUNDING_TYPES.filter((t) => t !== "opioid_settlement").map((t) => ({ value: t, label: `One row per ${C.CODE_LABELS && C.CODE_LABELS[t] || t.replace(/_/g, " ")} fund` }))],
         dhcs_fields: DHCS_FIELDS,
-        sources: [...DHCS_FIELDS.map((f) => ({ value: f.key, label: f.label })), { value: "blank", label: "Blank (the program writes it)" }, { value: "text", label: "Fixed text (the same on every row)" }],
+        sources: [...SOURCE_FIELDS.map((f) => ({ value: f.key, label: f.label })), { value: "blank", label: "Blank (the program writes it)" }, { value: "text", label: "Fixed text (the same on every row)" }],
         county: countyLayout(),
         dhcs_note: DHCS_NOTE
       }));
@@ -29405,19 +29482,19 @@ var require_harm_reduction_reports = __commonJS({
         if (layout) {
           if (d.suppression.purpose === "publication") throw require_http().badRequest("The DHCS and county layouts are the program's own report, not a publication release: your role can run only publication releases of this report.");
           const sc = { threshold: d.suppression.threshold, exact: d.suppression.mode === "exact" };
-          const rows = dhcsRows(ctx, rg, sc);
           const county = layout === "county" ? countyLayout() : null;
+          const rows = dhcsRows(ctx, rg, sc, { fundType: county && county.fund_type });
           const t = county ? countyRows(county, rows) : { columns: DHCS_FIELDS.map((f) => ({ key: f.key, label: f.label })), rows };
           audit3.log({ user: ctx.user, action: "report.opioid_settlement.export", ip: ctx.ip, details: { from: d.from, to: d.to, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv", layout, rows: rows.length } });
           const title = county ? `County template: ${county.name}` : "DHCS settlement expenditure layout";
           const toComplete = county ? county.columns.filter((c) => c.source === "blank" || (DHCS_FIELDS.find((f) => f.key === c.source) || {}).filled === false).map((c) => c.label) : DHCS_FIELDS.filter((f) => !f.filled).map((f) => f.label);
           const body2 = xlsx ? S.writeWorkbook([{ name: county ? "County template" : "DHCS layout", columns: t.columns, rows: t.rows }, aboutSheet(ctx, [
-            { k: "Report", v: `Opioid settlement expenditures: ${title}` },
+            { k: "Report", v: county && county.fund_type ? `${title}: one row per ${county.fund_type.replace(/_/g, " ")} fund` : `Opioid settlement expenditures: ${title}` },
             { k: "Period", v: `${d.from} to ${d.to}` },
             { k: "Layout", v: county ? `${county.name}, as mapped in SUDS (Reports \u203A County template) from the DHCS layout's fields. Check it against the county's current template.` : DHCS_NOTE },
             { k: "Filled by SUDS", v: "Period, funding source, grant number, Exhibit E schedule and category, HIAA, the receiving organization (this program), amounts, expenditures, services and people served." },
             { k: "For the program to write", v: toComplete.join("; ") || "Nothing" },
-            { k: "People served", v: "People served by the fund's services, counted once each; a number of 10 or fewer is not reported (DHCS asks that none be)." },
+            { k: "People served", v: "People served under each activity (the visits charged to the fund, on the row of the fund's own category), counted once each; a number of 10 or fewer is not reported (DHCS asks that none be). A fund's other rows carry its spending only." },
             { k: "Sources and verification", v: d.source_note },
             ...purposeRows(d),
             { k: "Counts", v: d.counting_statement }
@@ -29453,7 +29530,7 @@ var require_harm_reduction_reports = __commonJS({
         send(ctx, { body, xlsx, suppression: d.suppression, filename: `suds-opioid-settlement-${d.from}_${d.to}-${countsSuffix(d)}.${xlsx ? "xlsx" : "csv"}`, classification: "Opioid settlement expenditures by category (categories need verification against the governing agreement). No client information." });
       });
     }
-    module.exports = { ndp, settlement, settlementFigures, distributionRows, ndpPublished, ndpSettings, header, routes, layoutRoutes, dhcsRows, countyRows, checkCountyLayout, countyLayout, DHCS_FIELDS, DHCS_NOTE, dhcsPeople, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
+    module.exports = { ndp, settlement, settlementFigures, distributionRows, ndpPublished, ndpSettings, header, routes, layoutRoutes, dhcsRows, countyRows, checkCountyLayout, countyLayout, DHCS_FIELDS, EXTRA_FIELDS, DHCS_NOTE, dhcsPeople, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
   }
 });
 
@@ -30194,10 +30271,12 @@ var require_ssp_report = __commonJS({
     var { badRequest, forbidden } = require_http();
     var TEMPLATE_NOTE = "The layout follows what a CDPH-authorized syringe services program reports, as SUDS understands it (contacts, participants, syringes distributed and returned, sharps containers, naloxone and test strips, referrals). It is not an official template: check it against your current reporting requirements before submitting it.";
     var RETURNS_NOTE = "Syringes returned are counted, or estimated from the volume of the sharps container brought back (Supplies settings: syringes per litre). The estimated part is shown separately.";
+    var funderOnly = (user) => !auth3.reportRunAllowed(user, { caseloadScoped: true }) && auth3.submissionRunAllowed(user);
     function counting(ctx, period) {
       if (ctx.query.get("purpose") === "publication") throw badRequest("The syringe services summary is the program's own submission (or internal), not a publication release. Run it without purpose=publication.");
+      if (funderOnly(ctx.user) && ctx.query.get("purpose") && ctx.query.get("purpose") !== "submission") throw forbidden("Your role runs the syringe services summary as the program's own submission to its funder (purpose=submission). Internal runs are for staff who work with clients, supervisors and administrators.");
       const q = new URLSearchParams(ctx.query);
-      if (!q.get("purpose")) q.set("purpose", auth3.hasPerm(ctx.user, "reports:internal") ? "submission" : "internal");
+      if (!q.get("purpose")) q.set("purpose", auth3.hasPerm(ctx.user, "reports:internal") || funderOnly(ctx.user) ? "submission" : "internal");
       const c = FR.countingMode({ ...ctx, query: q }, period);
       return { counting: c, sc: { threshold: c.threshold, exact: c.mode === "exact" } };
     }
@@ -30218,7 +30297,7 @@ var require_ssp_report = __commonJS({
       };
     }
     function figures(ctx, { ts, tsP }) {
-      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+      const cf = funderOnly(ctx.user) ? { sql: "1=1", params: [] } : auth3.caseloadFilter(ctx.user, "c.id");
       const scope = `(i.client_id IS NULL OR ${cf.sql})`;
       const activity = `(EXISTS (SELECT 1 FROM intervention_supplies l WHERE l.intervention_id=i.id) OR i.syringes_returned > 0 OR i.naloxone_kits > 0 OR i.fentanyl_strips > 0)`;
       const visits = db3.all(`SELECT i.id, i.client_id, i.occurred_at, i.supply_site_id, i.naloxone_kits, i.fentanyl_strips, i.syringes_returned, i.returns_estimated, c.deleted_at
@@ -30294,7 +30373,7 @@ var require_ssp_report = __commonJS({
       const f = figures(ctx, range);
       const t = f.totals;
       const s = SC.star({ total: t.participants, subsets: [t.people_referred] }, sc);
-      const scoped = auth3.caseloadRestricted(ctx.user);
+      const scoped = auth3.caseloadRestricted(ctx.user) && !funderOnly(ctx.user);
       return {
         from,
         to,
@@ -30366,9 +30445,9 @@ var require_ssp_report = __commonJS({
       };
     }
     function allowed(ctx) {
-      if (auth3.reportRunAllowed(ctx.user, { caseloadScoped: true })) return;
-      audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms: ["reports:internal"], path: ctx.path } });
-      throw forbidden("The syringe services summary counts participants and is the program's own submission, so it is run by staff who work with clients, supervisors and administrators.");
+      if (auth3.reportRunAllowed(ctx.user, { caseloadScoped: true }) || auth3.submissionRunAllowed(ctx.user)) return;
+      audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms: ["reports:internal|reports:funder"], path: ctx.path } });
+      throw forbidden("The syringe services summary counts participants and is the program's own submission, so it is run by staff who work with clients, supervisors, administrators and whoever writes the funder report.");
     }
     function routes(r, range) {
       r.get("/api/reports/ssp", auth3.requireAuth, auth3.requirePerm("reports:read"), allowed, async (ctx) => {
@@ -30550,7 +30629,8 @@ var require_reports = __commonJS({
         const active = clientGroups.filter((g) => g.status === "active");
         const visitGroups = await q(() => db3.all(`SELECT i.type, i.user_id, strftime('%Y-%W', i.occurred_at) AS wk, COUNT(*) n, SUM(i.duration_minutes) minutes, SUM(i.naloxone_kits) kits, SUM(i.fentanyl_strips) strips
       FROM interventions i WHERE ${ts("i.occurred_at")} AND ${vs.sql} GROUP BY i.type, i.user_id, wk`, ...tsP, ...vs.params));
-        const callGroups = await q(() => db3.all(`SELECT outcome, direction, crisis, method, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE ${ts("started_at")} GROUP BY outcome, direction, crisis, method`, ...tsP));
+        const cs = visitScope(ctx.user, "calls");
+        const callGroups = await q(() => db3.all(`SELECT outcome, direction, crisis, method, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE ${ts("started_at")} AND ${cs.sql} GROUP BY outcome, direction, crisis, method`, ...tsP, ...cs.params));
         const workerNames = new Map(db3.all(`SELECT id, display_name FROM users`).map((u) => [u.id, u.display_name]));
         const G = dashGroups;
         const out2 = {
@@ -32115,7 +32195,10 @@ var require_notes2 = __commonJS({
         const addenda = db3.all(`SELECT a.id,a.reason_enc,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map((a) => ({ ...a, content: decrypt3(a.content_enc), reason: a.reason_enc ? decrypt3(a.reason_enc) : null, content_enc: void 0, reason_enc: void 0 }));
         const event = access === "breakglass" ? recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) }) : null;
         audit3.log({ user: ctx.user, action: access === "breakglass" ? "note.view.breakglass" : "note.view", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === "breakglass" ? { reason_recorded: true, breakglass_event: event } : { kind: n.kind } });
-        return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
+        const cl = n.client_id ? db3.one(`SELECT c.id AS client_id, c.client_code, ${require_client_name().SELECT} FROM clients c WHERE c.id=?`, n.client_id) : null;
+        const who = cl ? require_client_name().withClientName(ctx, cl) : null;
+        const client = who ? { client_code: who.client_code, client_name: access === "breakglass" || !auth3.canAccessClient(ctx.user, n.client_id) ? null : who.client_name } : {};
+        return { note: { ...present(n), ...client, ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
       });
       r.put("/api/notes/:id", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
@@ -32193,7 +32276,8 @@ var require_notes2 = __commonJS({
         const identity = await verifyIdentity(ctx);
         const hash2 = sha2562(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ""}`);
         db3.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db3.now(), ctx.user.id, hash2, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required, identity } });
+        const reminders = require_notes().closeSignReminders(ctx.user.id, n.id, n.client_id);
+        audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required, identity, reminders_closed: reminders.length ? reminders : void 0 } });
         return { ok: true, signature_hash: hash2, awaiting_cosign: !!n.cosign_required };
       });
       function cosignRefusal(ctx, n) {
@@ -37585,7 +37669,9 @@ var require_security = __commonJS({
             detail: anchorProblem,
             link: "#/admin?tab=security",
             doc: "docs/security/LOGGING-AND-AUDIT.md",
-            explain: `SUDS keeps sealed copies ("anchors") of the audit log outside the database, so that a changed or deleted entry can be detected. On this server they are kept on the same disk as the database, where someone able to change the records could change them too. Ask your IT support to store them on write-once storage elsewhere (the AUDIT_ANCHOR_DIR setting); the steps are in docs/security/LOGGING-AND-AUDIT.md.${failing ? " An audit log check has also failed: see Security status first." : ""}`
+            explain: `SUDS keeps sealed copies of its audit log so that a changed or deleted entry can be detected, but on this server they sit on the same disk as the database, where anyone able to change the records could change them too. Nothing inside SUDS fixes this, and your records are not at risk from it today: it is a setting on the server. Ask your IT support: "Please set AUDIT_ANCHOR_DIR for SUDS to a folder on write-once (WORM) storage that is not on the database's disk, and restart SUDS. The steps are in SUDS's docs/security/LOGGING-AND-AUDIT.md, under 'Pointing AUDIT_ANCHOR_DIR at write-once storage'." Until then, this notice stays.${failing ? " An audit log check has also failed: see Security status first." : ""}`,
+            // The request itself, for the "Copy the request for IT" button: what to set and where the steps are.
+            it_request: 'Please set AUDIT_ANCHOR_DIR for SUDS to a folder on write-once (WORM) storage that is not on the same disk as the SUDS database, and restart SUDS. SUDS then shows it as fixed on Settings > Security status. The steps (SnapLock, SmartLock, Synology WriteOnce, S3 Object Lock) are in docs/security/LOGGING-AND-AUDIT.md, "Pointing AUDIT_ANCHOR_DIR at write-once storage".'
           });
         }
         const backupProblem = sc.backupProblem();
@@ -37960,6 +38046,25 @@ var require_supervision = __commonJS({
         if (!t) throw notFound("Time entry not found");
         return t;
       }
+      const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const day = (d) => {
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || "");
+        return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : d;
+      };
+      const mins = (n) => {
+        const h = Math.floor((n || 0) / 60), m = (n || 0) % 60;
+        return h ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
+      };
+      function tellWorker(ctx, workerId, entries2, note, reopened) {
+        if (!workerId || !entries2.length) return null;
+        const what = entries2.length === 1 ? `your time for ${day(entries2[0].work_date)} (${mins(entries2[0].minutes)})` : `${entries2.length} of your time entries (${entries2.map((e) => day(e.work_date)).filter((x, i, a) => a.indexOf(x) === i).slice(0, 3).join(", ")}${entries2.length > 3 ? "\u2026" : ""})`;
+        const title = `Correct ${what}: ${reopened ? "reopened" : "returned"} by ${ctx.user.display_name || "your supervisor"}`;
+        const desc = `${reopened ? "Reopened" : "Returned"}: ${note}
+Open My time, correct ${entries2.length === 1 ? "the entry" : "them"} and submit again.`;
+        const id = require_crypto().uuid();
+        db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, null, workerId, ctx.user.id, encrypt3(title), encrypt3(desc), db3.now(), "high");
+        return id;
+      }
       r.post("/api/time/:id/submit", auth3.requireAuth, auth3.requirePerm("time:write"), (ctx) => {
         const t = loadEntry(ctx, ctx.params.id);
         if (t.user_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "time:all")) throw forbidden("Only the worker can submit their own time");
@@ -37984,7 +38089,8 @@ var require_supervision = __commonJS({
         if (v.decision === "rejected" && !v.note) throw badRequest(NO_REASON);
         const note = v.note ? encrypt3(v.note) : null;
         db3.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db3.now(), note, db3.now(), t.id);
-        audit3.log({ user: ctx.user, action: `time.${v.decision}`, entity: "time_entry", entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes, note_recorded: v.note ? true : void 0, reopened: reopening || void 0 } });
+        const task = v.decision === "rejected" ? tellWorker(ctx, t.user_id, [t], v.note, reopening) : null;
+        audit3.log({ user: ctx.user, action: `time.${v.decision}`, entity: "time_entry", entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes, note_recorded: v.note ? true : void 0, reopened: reopening || void 0, task: task || void 0 } });
         return { ok: true };
       });
       r.post("/api/time/approve-batch", auth3.requireAuth, auth3.requirePerm("time:approve"), (ctx) => {
@@ -37993,6 +38099,8 @@ var require_supervision = __commonJS({
         if (v.decision === "rejected" && !v.note) throw badRequest(NO_REASON);
         let n = 0;
         const skipped = [];
+        const byWorker = /* @__PURE__ */ new Map();
+        const tasks = [];
         db3.transaction(() => {
           for (const id of v.ids) {
             const t = db3.one(`SELECT * FROM time_entries WHERE id=?`, id);
@@ -38010,9 +38118,17 @@ var require_supervision = __commonJS({
             }
             db3.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db3.now(), v.note ? encrypt3(v.note) : null, db3.now(), t.id);
             n++;
+            if (v.decision === "rejected") {
+              if (!byWorker.has(t.user_id)) byWorker.set(t.user_id, []);
+              byWorker.get(t.user_id).push(t);
+            }
+          }
+          for (const [worker, entries2] of byWorker) {
+            const id = tellWorker(ctx, worker, entries2, v.note, false);
+            if (id) tasks.push(id);
           }
         });
-        audit3.log({ user: ctx.user, action: `time.${v.decision}.batch`, ip: ctx.ip, details: { count: n, skipped: skipped.length } });
+        audit3.log({ user: ctx.user, action: `time.${v.decision}.batch`, ip: ctx.ip, details: { count: n, skipped: skipped.length, tasks: tasks.length || void 0 } });
         return { ok: true, [v.decision]: n, skipped };
       });
     };
@@ -39439,7 +39555,7 @@ var require_app2 = __commonJS({
           if (!m) throw new HttpError3(404, "Not found");
           if (m.methodNotAllowed) throw new HttpError3(405, "Method not allowed");
           ctx.params = m.params;
-          if (!rateLimit(`api:${ctx.ip}`, 600, 6e4)) throw new HttpError3(429, "Too many requests");
+          if (!rateLimit(`api:${ctx.ip}`, config2.apiRateLimit, 6e4)) throw new HttpError3(429, "Too many requests");
           ctx.user = auth3.resolveSession(ctx);
           if (ctx.user && ctx.cookies[auth3.COOKIE] && !["GET", "HEAD", "OPTIONS"].includes(req.method) && req.headers["x-requested-with"] !== "suds") {
             throw new HttpError3(403, "Missing CSRF header");

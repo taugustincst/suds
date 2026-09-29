@@ -13,6 +13,21 @@ const parseList = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
 const SIGNED_KEEPS = ['kind', 'format', 'title_enc', 'content_enc', 'structured_enc', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'problem_ids',
   'status', 'signed_by', 'signed_at', 'signature_hash', 'source', 'source_ref', 'import_item_id', 'deleted_at'];
 
+/**
+ * A supervisor's "Finish and sign your note" reminder (public/views/supervision.js puts a reference line naming
+ * the note in the to-do's details) has done its job once the note is signed: it is closed rather than left open
+ * for the author to tick off (1.16.0). Only the author's own open to-dos for this client are read. Returns the ids.
+ */
+function closeSignReminders(authorId, noteId, clientId) {
+  const { decrypt } = require('../crypto');
+  const ref = `Reference: supervision reminder for note ${noteId}`;
+  const done = db.all(`SELECT id, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS ? AND description_enc IS NOT NULL`, authorId, clientId)
+    .filter(t => { try { return decrypt(t.description_enc).includes(ref); } catch { return false; } });
+  const now = db.now();
+  for (const t of done) db.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now, now, t.id);
+  return done.map(t => t.id);
+}
+
 module.exports = define({
   table: 'notes',
   fields: {
@@ -73,4 +88,11 @@ module.exports = define({
     }
     return asserted ? flag('was accepted, but not the countersignature on it: a supervisor countersigns at the office, never by sync', { code: 'ruling' }) : null;
   },
+  // A note signed on a device closes its reminder at the office too, as signing here does (routes/notes.js).
+  afterApply(row, o, c) {
+    if (c.existing && c.existing.status !== 'draft') return;
+    const n = db.one(`SELECT id, author_id, client_id, status FROM notes WHERE id=?`, row.id);
+    if (n && n.status !== 'draft') closeSignReminders(n.author_id, n.id, n.client_id);
+  },
 });
+module.exports.closeSignReminders = closeSignReminders;

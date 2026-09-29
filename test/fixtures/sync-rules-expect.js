@@ -424,7 +424,7 @@ module.exports = {
     "invalid: type unknown": { push: "rejected: has a value the office does not accept (assessment_type: not one of the values it accepts)", rest: 400 },
     "invalid: dated in the future": { push: "flagged: was accepted, but it is dated in the future; the office will review it", rest: 400 },
     "invalid: an answer the instrument does not ask": { push: "rejected: has a value the office does not accept (answers: no_such_item)", rest: 400 },
-    "invalid: complete with required answers missing": { push: "flagged: was accepted as complete, but it is missing required answers (2); the office will review it", rest: 400 },
+    "invalid: complete with required answers missing": { push: "flagged: was accepted as complete, but it is missing required answers (20); the office will review it", rest: 400 },
     // was: push "rejected: not on caseload", rest 403 -- 1.16.0: a navigator holds clients:all, so nav2's client is not off their caseload; a navigator denied clients:all is refused as before (test/role-expansion.test.js)
     "client off the caseload": { push: "applied", rest: 201 },
     "another worker's record on a shared client": { push: "applied", rest: 200 },

@@ -192,7 +192,10 @@ module.exports = (r) => {
     // is ten kits on Home and Reports as it is in the funder report and the NDP log.
     const visitGroups = await q(() => db.all(`SELECT i.type, i.user_id, strftime('%Y-%W', i.occurred_at) AS wk, COUNT(*) n, SUM(i.duration_minutes) minutes, SUM(i.naloxone_kits) kits, SUM(i.fentanyl_strips) strips
       FROM interventions i WHERE ${ts('i.occurred_at')} AND ${vs.sql} GROUP BY i.type, i.user_id, wk`, ...tsP, ...vs.params));
-    const callGroups = await q(() => db.all(`SELECT outcome, direction, crisis, method, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE ${ts('started_at')} GROUP BY outcome, direction, crisis, method`, ...tsP));
+    // Calls are scoped as visits are (1.16.0): a caseload-scoped worker's Home counted every call in the programme
+    // while every other tile counted their caseload. A call with no client counts for whoever made it.
+    const cs = visitScope(ctx.user, 'calls');
+    const callGroups = await q(() => db.all(`SELECT outcome, direction, crisis, method, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE ${ts('started_at')} AND ${cs.sql} GROUP BY outcome, direction, crisis, method`, ...tsP, ...cs.params));
     const workerNames = new Map(db.all(`SELECT id, display_name FROM users`).map(u => [u.id, u.display_name]));
     const G = dashGroups;
     const out = {

@@ -121,5 +121,12 @@ route('waitlist', async () => {
       { label: 'Level of care', render: r => r.asam_level || '—' },
       { label: 'Last contact', render: r => (r.last_contact ? fmt.date(r.last_contact) : h('span', { style: { color: 'var(--danger)' } }, 'never')) },
     ], rows, { onRow: (r) => nav(`client/${r.id}`), rowLabel: (r) => `${r.display_name}, waiting ${r.days_waiting} days` }) })
-      : emptyState('Nobody is waiting', 'Clients with the status "waitlist" appear here, ordered by how long they have waited.', h('a', { class: 'btn', 'data-empty-action': 'clients', href: '#/clients' }, 'Open the client list')));
+      // Empty, it says what to do next (1.16.0): put someone on it, with the intake form opened on "Waitlist" for a
+      // role that may add clients; anyone else is told who can.
+      : emptyState('Nobody is waiting', can('clients:write')
+        ? 'Clients with the status "waitlist" appear here, ordered by how long they have waited. Add someone waiting for a place, or change a client\'s status to Waitlist on their record.'
+        : 'Clients with the status "waitlist" appear here, ordered by how long they have waited. Staff who add clients (navigators, clinicians, supervisors) put people on it.',
+      can('clients:write')
+        ? h('button', { class: 'btn primary', type: 'button', 'data-empty-action': 'waitlist-add', onClick: async () => (await import('./clients.js')).openClientForm(null, (id) => nav(id ? `client/${id}` : `waitlist?_=${Date.now()}`), { full: true, prefill: { status: 'waitlist' } }) }, 'Add someone to the waitlist')
+        : h('a', { class: 'btn', 'data-empty-action': 'clients', href: '#/clients' }, 'Open the client list')));
 });

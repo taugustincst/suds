@@ -34,6 +34,38 @@ export async function supplyHome() {
   return { alerts, tile: h('div', { 'data-supply-tile': '1', style: { display: 'contents' } }, stat('Supply lots expired or expiring', fmt.num(n), c.expired ? 'danger' : c.expiring ? 'warn' : '', 'supplies?tab=lots', `Expired, or expiring within ${a.warn_days} days`)) };
 }
 
+/**
+ * The syringe services program report (server/ssp-report.js), on the Supplies page's SSP tab and on its own page
+ * (#/ssp) for the role that writes the funder report without supplies access (finance, 1.16.0): aggregate only.
+ */
+async function sspBody(r, { base, heading = true } = {}) {
+  const [lf, lt] = lastMonth();
+  const from = r.query.get('from') || lf; const to = r.query.get('to') || lt;
+  const fromI = h('input', { type: 'date', value: from }); const toI = h('input', { type: 'date', value: to });
+  const rep = await get(`/api/reports/ssp?from=${from}&to=${to}`);
+  const t = rep.totals;
+  const ratio = (x) => (x === null || x === undefined ? '—' : x.toFixed(2));
+  const monthCols = [{ label: 'Contacts', key: 'contacts', num: true }, { label: 'Anonymous', key: 'anonymous_contacts', num: true }, { label: 'Syringes out', key: 'syringes_distributed', num: true }, { label: 'Returned', key: 'syringes_returned', num: true }, { label: 'Returned per syringe', num: true, render: x => ratio(x.return_ratio) }, { label: 'Naloxone kits', key: 'naloxone_kits', num: true }];
+  const file = (fmtX) => downloadCsv(`/api/reports/ssp/export?from=${from}&to=${to}${fmtX ? '&format=xlsx' : ''}`);
+  return h('div', { 'data-ssp-report': '1' },
+    heading ? h('h2', {}, 'Syringe services program report') : null,
+    h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI),
+      h('button', { class: 'btn', onClick: () => nav(`${base}from=${fromI.value}&to=${toI.value}`) }, 'Apply'),
+      can('export:read') ? [h('button', { class: 'btn', 'data-ssp-export': 'xlsx', onClick: () => file(true) }, 'Excel'), h('button', { class: 'btn ghost', 'data-ssp-export': 'csv', onClick: () => file(false) }, 'CSV')] : null),
+    runKindBanner(rep),
+    rep.caseload_scope_note ? h('p', { class: 'small muted' }, rep.caseload_scope_note) : null,
+    h('div', { class: 'grid cols-4 mb' }, stat('Participants served', typeof t.participants === 'number' ? fmt.num(t.participants) : t.participants), stat('Contacts', fmt.num(t.contacts)), stat('Syringes distributed', fmt.num(t.syringes_distributed)),
+      stat('Syringes returned', fmt.num(t.syringes_returned)), stat('Returned per syringe distributed', ratio(t.return_ratio)), stat('Sharps containers given', fmt.num(t.sharps_containers)),
+      stat('Naloxone kits', fmt.num(t.naloxone_kits)), stat('Fentanyl test strips', fmt.num(t.fentanyl_strips)), stat('Referrals made', typeof t.referrals === 'number' ? fmt.num(t.referrals) : t.referrals)),
+    h('p', { class: 'small muted' }, `${rep.returns_note} ${t.syringes_returned_estimated ? `${fmt.num(t.syringes_returned_estimated)} of the ${fmt.num(t.syringes_returned)} returned were estimated.` : ''}`),
+    h('section', { class: 'card mb' }, h('h2', {}, 'By month'), table([{ label: 'Month', key: 'month' }, ...monthCols], rep.by_month, { empty: 'No contacts in this period.' })),
+    h('section', { class: 'card mb' }, h('h2', {}, 'By site'), table([{ label: 'Site', key: 'site' }, ...monthCols], rep.by_site, { empty: 'No contacts in this period.' })),
+    h('div', { class: 'grid cols-2' },
+      h('section', { class: 'card' }, h('h2', {}, 'Supplies given'), table([{ label: 'Item', key: 'item' }, { label: 'Category', key: 'category_label' }, { label: 'Quantity', num: true, render: x => `${fmt.num(x.quantity)} ${x.unit}` }], rep.by_item, { empty: 'None recorded by item in this period.' })),
+      h('section', { class: 'card' }, h('h2', {}, 'Naloxone by product'), table([{ label: 'Product', key: 'label' }, { label: 'Kits', key: 'kits', num: true }], rep.naloxone_by_product, { empty: 'No naloxone in this period.' }))),
+    h('p', { class: 'small muted mt' }, rep.template_note));
+}
+
 route('supplies', async (r) => {
   const d = await get('/api/supplies');
   const M = d.meta; const can2 = d.can;
@@ -284,31 +316,7 @@ route('supplies', async (r) => {
         ], d.sites)),
       settingsForm ? h('section', { class: 'card' }, h('h2', {}, 'Settings'), settingsForm) : null);
   } else if (tab === 'ssp') {
-    const [lf, lt] = lastMonth();
-    const from = r.query.get('from') || lf; const to = r.query.get('to') || lt;
-    const fromI = h('input', { type: 'date', value: from }); const toI = h('input', { type: 'date', value: to });
-    const rep = await get(`/api/reports/ssp?from=${from}&to=${to}`);
-    const t = rep.totals;
-    const ratio = (x) => (x === null || x === undefined ? '—' : x.toFixed(2));
-    const monthCols = [{ label: 'Contacts', key: 'contacts', num: true }, { label: 'Anonymous', key: 'anonymous_contacts', num: true }, { label: 'Syringes out', key: 'syringes_distributed', num: true }, { label: 'Returned', key: 'syringes_returned', num: true }, { label: 'Returned per syringe', num: true, render: x => ratio(x.return_ratio) }, { label: 'Naloxone kits', key: 'naloxone_kits', num: true }];
-    const file = (fmtX) => downloadCsv(`/api/reports/ssp/export?from=${from}&to=${to}${fmtX ? '&format=xlsx' : ''}`);
-    body = h('div', { 'data-ssp-report': '1' },
-      h('h2', {}, 'Syringe services program report'),
-      h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI),
-        h('button', { class: 'btn', onClick: () => nav(`supplies?tab=ssp&from=${fromI.value}&to=${toI.value}`) }, 'Apply'),
-        can('export:read') ? [h('button', { class: 'btn', 'data-ssp-export': 'xlsx', onClick: () => file(true) }, 'Excel'), h('button', { class: 'btn ghost', 'data-ssp-export': 'csv', onClick: () => file(false) }, 'CSV')] : null),
-      runKindBanner(rep),
-      rep.caseload_scope_note ? h('p', { class: 'small muted' }, rep.caseload_scope_note) : null,
-      h('div', { class: 'grid cols-4 mb' }, stat('Participants served', typeof t.participants === 'number' ? fmt.num(t.participants) : t.participants), stat('Contacts', fmt.num(t.contacts)), stat('Syringes distributed', fmt.num(t.syringes_distributed)),
-        stat('Syringes returned', fmt.num(t.syringes_returned)), stat('Returned per syringe distributed', ratio(t.return_ratio)), stat('Sharps containers given', fmt.num(t.sharps_containers)),
-        stat('Naloxone kits', fmt.num(t.naloxone_kits)), stat('Fentanyl test strips', fmt.num(t.fentanyl_strips)), stat('Referrals made', typeof t.referrals === 'number' ? fmt.num(t.referrals) : t.referrals)),
-      h('p', { class: 'small muted' }, `${rep.returns_note} ${t.syringes_returned_estimated ? `${fmt.num(t.syringes_returned_estimated)} of the ${fmt.num(t.syringes_returned)} returned were estimated.` : ''}`),
-      h('section', { class: 'card mb' }, h('h2', {}, 'By month'), table([{ label: 'Month', key: 'month' }, ...monthCols], rep.by_month, { empty: 'No contacts in this period.' })),
-      h('section', { class: 'card mb' }, h('h2', {}, 'By site'), table([{ label: 'Site', key: 'site' }, ...monthCols], rep.by_site, { empty: 'No contacts in this period.' })),
-      h('div', { class: 'grid cols-2' },
-        h('section', { class: 'card' }, h('h2', {}, 'Supplies given'), table([{ label: 'Item', key: 'item' }, { label: 'Category', key: 'category_label' }, { label: 'Quantity', num: true, render: x => `${fmt.num(x.quantity)} ${x.unit}` }], rep.by_item, { empty: 'None recorded by item in this period.' })),
-        h('section', { class: 'card' }, h('h2', {}, 'Naloxone by product'), table([{ label: 'Product', key: 'label' }, { label: 'Kits', key: 'kits', num: true }], rep.naloxone_by_product, { empty: 'No naloxone in this period.' }))),
-      h('p', { class: 'small muted mt' }, rep.template_note));
+    body = await sspBody(r, { base: 'supplies?tab=ssp&' });
   }
 
   return h('div', {},
@@ -322,3 +330,6 @@ route('supplies', async (r) => {
     pageTabs(tabs, tab, (k) => nav(`supplies?tab=${k}${siteId && k !== 'setup' && k !== 'ssp' ? `&site=${siteId}` : ''}`), { label: 'Supplies sections' }),
     body);
 });
+
+// The same report on its own page, for whoever may run it but has no Supplies page (finance: reports:funder).
+route('ssp', async (r) => h('div', {}, pageHead('Syringe services program report'), await sspBody(r, { base: 'ssp?', heading: false })));

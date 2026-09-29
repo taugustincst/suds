@@ -20,13 +20,20 @@ before(async () => {
   nav = H.client(); await nav.login('snav', 'StaffPassw0rd!x');
   fin = H.client(); await fin.login('sfin', 'StaffPassw0rd!x');
   ro = H.client(); await ro.login('sro', 'StaffPassw0rd!x');
-  const c = await nav.post('/api/clients', { first_name: 'Sora', last_name: 'Baseline', dob: '1990-04-05', gender: 'female', veteran: true, housing_status: 'unsheltered', primary_substance: 'opioids_fentanyl', route_of_use: 'smoking', mat_status: 'active', mat_medication: 'buprenorphine', overdose_history: true, co_occurring_mh: true, intake_date: '2026-01-05', status: 'active' });
+  const c = await nav.post('/api/clients', { first_name: 'Sora', last_name: 'Baseline', dob: '1990-04-05', gender: 'female', veteran: true, housing_status: 'unsheltered', primary_substance: 'opioids_fentanyl', route_of_use: 'smoked', mat_status: 'active', mat_medication: 'buprenorphine', overdose_history: true, co_occurring_mh: true, intake_date: '2026-01-05', status: 'active' });
   assert.equal(c.status, 201, JSON.stringify(c.data)); clientId = c.data.id;
   code = H.db.one(`SELECT client_code FROM clients WHERE id=?`, clientId).client_code;
   const o = await nav.post('/api/clients', { first_name: 'Otto', last_name: 'Missed', status: 'active', intake_date: '2026-01-05' });
   other = o.data.id; otherCode = H.db.one(`SELECT client_code FROM clients WHERE id=?`, other).client_code;
 });
 after(async () => { await H.stop(); });
+// Since 1.16.0 a complete assessment answers every question of the sections its point asks: what the record and
+// the test do not answer is given as "don't know" / "not screened", as a worker would.
+function fill(type, answers) {
+  const out = { ...answers };
+  for (const it of S.itemsFor(type, out)) if (it.required && it.type === 'choice' && !out[it.key]) out[it.key] = it.options.some(o => o.value === 'unknown') ? 'unknown' : it.options.some(o => o.value === 'not_screened') ? 'not_screened' : it.options[0].value;
+  return out;
+}
 
 test('the module is off for a programme with no SOR fund, and on once it has one', async () => {
   let me = (await nav.get('/api/auth/me')).data;
@@ -72,7 +79,7 @@ test('a baseline: required items before it is complete, stored encrypted, the or
   assert.equal(r.status, 400, 'a choice must be one of its options');
   r = await nav.post(`/api/clients/${clientId}/suprt`, { assessment_type: 'baseline', assessment_date: '2026-01-10', status: 'complete', answers: { ...pre, E_naloxone: 'yes' } });
   assert.equal(r.status, 400, 'an item not asked at baseline is refused');
-  r = await nav.post(`/api/clients/${clientId}/suprt`, { assessment_type: 'baseline', assessment_date: '2026-01-10', status: 'complete', answers: { ...pre, A_suprt_c: 'declined', C_trauma_screen: 'not_screened' } });
+  r = await nav.post(`/api/clients/${clientId}/suprt`, { assessment_type: 'baseline', assessment_date: '2026-01-10', status: 'complete', answers: fill('baseline', { ...pre, A_suprt_c: 'declined', C_trauma_screen: 'not_screened' }) });
   assert.equal(r.status, 201, JSON.stringify(r.data));
   assert.ok(r.data.derived_keys.includes('D_oud') && !r.data.derived_keys.includes('A_suprt_c'), 'the record says which answers came from the client record');
   const raw = H.db.one(`SELECT * FROM suprt_assessments WHERE id=?`, r.data.id);
@@ -80,8 +87,8 @@ test('a baseline: required items before it is complete, stored encrypted, the or
   for (const [k, v] of Object.entries(raw)) if (k !== 'answers_enc' && typeof v === 'string') for (const phi of [code, '1990-04-05', 'F11.20']) assert.ok(!v.includes(phi), `${k} holds no PHI in the clear`);
   assert.ok(!JSON.stringify(H.db.all(`SELECT details FROM audit_log WHERE action LIKE 'suprt.%'`)).includes('1990-04-05'), 'no PHI in the audit log');
   // Another baseline while this cycle is open is refused; a reassessment for a client with none is too.
-  assert.equal((await nav.post(`/api/clients/${clientId}/suprt`, { assessment_type: 'baseline', assessment_date: '2026-02-10', status: 'complete', answers: { A_first_service_date: '2026-01-05', A_suprt_c: 'completed' } })).status, 400);
-  const x = await nav.post(`/api/clients/${other}/suprt`, { assessment_type: 'reassessment', assessment_date: '2026-07-01', status: 'complete', answers: { A_first_service_date: '2026-01-05', A_suprt_c: 'completed' } });
+  assert.equal((await nav.post(`/api/clients/${clientId}/suprt`, { assessment_type: 'baseline', assessment_date: '2026-02-10', status: 'complete', answers: fill('baseline', { A_first_service_date: '2026-01-05', A_suprt_c: 'completed' }) })).status, 400);
+  const x = await nav.post(`/api/clients/${other}/suprt`, { assessment_type: 'reassessment', assessment_date: '2026-07-01', status: 'complete', answers: fill('reassessment', { A_first_service_date: '2026-01-05', A_suprt_c: 'completed' }) });
   assert.equal(x.status, 400); assert.match(JSON.stringify(x.data), /baseline first/);
   assert.equal((await nav.post(`/api/clients/${clientId}/suprt`, { assessment_type: 'reassessment', assessment_date: '2099-01-01' })).status, 400, 'not in the future');
   // Reading it back.
@@ -137,9 +144,9 @@ test('completion rates per period: done within the window, of those whose window
   assert.equal(pre.E_naloxone, 'yes'); assert.equal(pre.E_peer_recovery_support, 'yes'); assert.equal(pre.E_moud, 'yes'); assert.equal(pre.E_housing_support, 'no');
   assert.equal(pre.E_case_management, 'no', 'the case management visit was before the baseline');
   assert.ok(!('F_date_of_birth' in pre), 'demographics are asked at baseline only');
-  const r = await nav.post(`/api/clients/${clientId}/suprt`, { assessment_type: 'reassessment', assessment_date: '2026-07-01', status: 'complete', answers: { ...pre, A_suprt_c: 'completed' } });
+  const r = await nav.post(`/api/clients/${clientId}/suprt`, { assessment_type: 'reassessment', assessment_date: '2026-07-01', status: 'complete', answers: fill('reassessment', { ...pre, A_suprt_c: 'completed' }) });
   assert.equal(r.status, 201, JSON.stringify(r.data));
-  const b = await nav.post(`/api/clients/${other}/suprt`, { assessment_type: 'baseline', assessment_date: '2026-01-20', status: 'complete', answers: { A_first_service_date: '2026-01-05', A_suprt_c: 'completed' } });
+  const b = await nav.post(`/api/clients/${other}/suprt`, { assessment_type: 'baseline', assessment_date: '2026-01-20', status: 'complete', answers: fill('baseline', { A_first_service_date: '2026-01-05', A_suprt_c: 'completed' }) });
   assert.equal(b.status, 201, JSON.stringify(b.data));
   const c = await sup.get('/api/suprt/completion?from=2026-07-01&to=2026-07-31');
   assert.equal(c.status, 200, JSON.stringify(c.data));
@@ -148,7 +155,9 @@ test('completion rates per period: done within the window, of those whose window
   if (S.today() > '2026-08-18') { assert.equal(re.missed, 1); assert.equal(re.rate, 50); }
   assert.equal(c.data.baselines_recorded, 0, 'the baselines were in January');
   assert.equal((await sup.get('/api/suprt/completion?from=2026-01-01&to=2026-01-31')).data.baselines_recorded, 2);
-  assert.equal((await fin.get('/api/suprt/completion')).status, 403);
+  // Finance (reports:funder) reads the whole programme's rates since 1.16.0: counts only. Read-only does not.
+  assert.equal((await fin.get('/api/suprt/completion?from=2026-01-01&to=2026-01-31')).data.baselines_recorded, 2);
+  assert.equal((await ro.get('/api/suprt/completion')).status, 403);
 });
 
 test('the SPARS entry file is a disclosure: refused without a consent naming the recipient, accounted for when made', async () => {
@@ -200,9 +209,9 @@ test('a closeout, pre-filled from the discharge; switched off, the module stops 
   assert.ok(due, 'a closeout is due once services end'); assert.equal(due.due, '2026-08-31');
   const pre = (await nav.get(`/api/clients/${other}/suprt/prefill?type=closeout&date=2026-08-05`)).data.answers;
   assert.equal(pre.A_closeout_reason, 'no_contact'); assert.equal(pre.A_last_service_date, '2026-01-07');
-  const r = await nav.post(`/api/clients/${other}/suprt`, { assessment_type: 'closeout', assessment_date: '2026-08-05', status: 'complete', answers: pre });
+  const r = await nav.post(`/api/clients/${other}/suprt`, { assessment_type: 'closeout', assessment_date: '2026-08-05', status: 'complete', answers: fill('closeout', pre) });
   assert.equal(r.status, 201, JSON.stringify(r.data));
-  assert.equal((await nav.post(`/api/clients/${other}/suprt`, { assessment_type: 'reassessment', assessment_date: '2026-08-06', status: 'complete', answers: { A_first_service_date: '2026-01-05', A_suprt_c: 'completed' } })).status, 400, 'closed out: a new baseline first');
+  assert.equal((await nav.post(`/api/clients/${other}/suprt`, { assessment_type: 'reassessment', assessment_date: '2026-08-06', status: 'complete', answers: fill('reassessment', { A_first_service_date: '2026-01-05', A_suprt_c: 'completed' }) })).status, 400, 'closed out: a new baseline first');
   assert.equal((await admin.put('/api/admin/settings', { module_suprt: '0' })).status, 200);
   try {
     assert.equal((await nav.post(`/api/clients/${clientId}/suprt`, { assessment_type: 'annual', assessment_date: '2026-08-01' })).status, 403);
@@ -232,7 +241,7 @@ test('an assessment is corrected with PUT and a draft removed with DELETE; roles
   const draft = H.db.one(`SELECT id FROM suprt_assessments WHERE client_id=? AND assessment_type='annual'`, clientId).id;
   let r = await nav.put(`/api/suprt/${draft}`, { status: 'complete', answers: { A_suprt_c: 'completed' } });
   assert.equal(r.status, 400, 'still missing the first service date');
-  r = await nav.put(`/api/suprt/${draft}`, { status: 'complete', answers: { A_suprt_c: 'completed', A_first_service_date: '2026-01-05', B_crisis_since_last: 'no' } });
+  r = await nav.put(`/api/suprt/${draft}`, { status: 'complete', answers: fill('annual', { A_suprt_c: 'completed', A_first_service_date: '2026-01-05', B_crisis_since_last: 'no' }) });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.deepEqual([r.data.status, r.data.answers.B_crisis_since_last, r.data.answers.A_grant_id], ['complete', 'no', 'TI-081234']);
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='suprt.update' AND entity_id=?`, draft));
