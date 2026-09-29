@@ -11307,6 +11307,89 @@ var init_listener = __esm({
   }
 });
 
+// server/rules/shared.js
+var require_shared = __commonJS({
+  "server/rules/shared.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var auth3 = require_auth2();
+    var { flag, notPermitted } = require_core();
+    function periodProblem(fund, date, what) {
+      try {
+        require_budget().assertInPeriod(fund, date, what);
+        return null;
+      } catch (err2) {
+        return flag(`was accepted, but its ${what.toLowerCase()} is outside the period of the fund it is charged to, or in the future; the office will review it`, { message: err2.message, code: "fund_period" });
+      }
+    }
+    var ownedBy = (cols2, all, message = "You cannot edit this record") => (user, row) => cols2.some((c) => row[c] === user.id) || auth3.hasPerm(user, all) ? null : notPermitted(message);
+    function officeRuling(row, c, { initial, mayMove = () => false, rulings, cols: cols2 = [], enc: enc2 = [], what }) {
+      const e = c.existing;
+      const sent = row.status;
+      const has = (v) => v !== void 0 && v !== null && v !== "";
+      let ruled = false;
+      if (!e) {
+        const start2 = initial(sent);
+        if (has(sent) && sent !== start2 && rulings.includes(sent)) ruled = true;
+        row.status = start2;
+        for (const k of cols2) {
+          if (has(row[k])) ruled = true;
+          row[k] = null;
+        }
+        for (const k of enc2) {
+          if (has(row[k])) ruled = true;
+          row[k] = void 0;
+        }
+      } else {
+        if (has(sent) && sent !== e.status && !mayMove(e.status, sent, row, e)) {
+          if (rulings.includes(sent)) ruled = true;
+          row.status = e.status;
+        }
+        for (const k of cols2) {
+          if (has(row[k]) && String(row[k]) !== String(e[k] ?? "")) ruled = true;
+          row[k] = e[k];
+        }
+        for (const k of enc2) {
+          if (has(row[k]) && String(row[k]) !== String(c.was(k) ?? "")) ruled = true;
+          row[k] = void 0;
+        }
+      }
+      return ruled ? flag(`was accepted, but not the ruling on it (approved, returned or reimbursed): ${what} is ruled on at the office, never by sync, so the office's decision stands`, { code: "ruling" }) : null;
+    }
+    function officeMarks(row, c, cols2, what) {
+      const e = c.existing;
+      let asserted = false;
+      for (const k of cols2) {
+        const v = row[k];
+        if (v !== void 0 && v !== null && v !== "" && String(v) !== String((e && e[k]) ?? "")) asserted = true;
+        row[k] = e ? e[k] : null;
+      }
+      return asserted ? flag(`was accepted, but not ${what}: that is the office's record of its own act, never set by sync`, { code: "office_mark" }) : null;
+    }
+    function assertRulingHere(what) {
+      const config2 = require_config();
+      const staticHost = typeof window !== "undefined" && window.SUDS_STATIC_HOST === true;
+      if (config2.local && !staticHost) throw new (require_http()).HttpError(403, `${what} is done on the office SUDS, not on this device: sync does not carry it there.`, { rulingAtOffice: true });
+    }
+    function recordedOrChanged(entity, table, id, userId) {
+      return !!require_db().one(
+        `SELECT 1 FROM audit_log WHERE user_id=? AND entity_id=? AND ((entity=? AND action IN (?,?,?)) OR (entity=? AND action IN ('sync.overwrite','sync.record'))) LIMIT 1`,
+        userId,
+        id,
+        entity,
+        `${entity}.create`,
+        `${entity}.update`,
+        entity === "time_entry" ? "time.submit" : `${entity}.create`,
+        table
+      );
+    }
+    function logRecordedFor(table, row, c) {
+      if (!c.existing && row.user_id && row.user_id !== c.user.id) require_audit().log({ user: c.user, action: "sync.record", entity: table, entityId: row.id, clientId: row.client_id || null, ip: "device", details: { for: row.user_id } });
+    }
+    module.exports = { periodProblem, ownedBy, officeRuling, officeMarks, assertRulingHere, recordedOrChanged, logRecordedFor };
+  }
+});
+
 // server/participant-code.js
 var require_participant_code = __commonJS({
   "server/participant-code.js"(exports, module) {
@@ -11332,6 +11415,671 @@ var require_participant_code = __commonJS({
       return n ? blindIndex2(`ssp participant ${n}`) : null;
     }
     module.exports = { normalise, problem, index, MIN, MAX };
+  }
+});
+
+// server/supply-names.js
+var require_supply_names = __commonJS({
+  "server/supply-names.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var CATEGORIES = [
+      { code: "naloxone", label: "Naloxone", unit: "kit" },
+      { code: "fentanyl_test_strips", label: "Fentanyl test strips", unit: "strip" },
+      { code: "xylazine_test_strips", label: "Xylazine test strips", unit: "strip" },
+      { code: "syringes", label: "Syringes", unit: "syringe" },
+      { code: "sharps_container", label: "Sharps containers", unit: "container" },
+      { code: "cookers", label: "Cookers", unit: "each" },
+      { code: "cottons", label: "Cottons", unit: "each" },
+      { code: "alcohol_pads", label: "Alcohol pads", unit: "pad" },
+      { code: "safer_smoking", label: "Pipes and safer-smoking kits", unit: "kit" },
+      { code: "wound_care", label: "Wound care", unit: "kit" },
+      { code: "condoms", label: "Condoms", unit: "each" },
+      { code: "hygiene_kit", label: "Hygiene kits", unit: "kit" },
+      { code: "other", label: "Other", unit: "each" }
+    ];
+    var NALOXONE_PRODUCTS = [
+      { code: "nasal_4mg", label: "Nasal spray 4 mg" },
+      { code: "nasal_8mg", label: "Nasal spray 8 mg" },
+      { code: "nasal_3mg", label: "Nasal spray 3 mg" },
+      { code: "im_vial", label: "Injectable 0.4 mg/mL vial" },
+      { code: "im_ampule", label: "Injectable 0.4 mg/mL ampule" },
+      { code: "im_prefilled", label: "Injectable 0.4 mg prefilled syringe" },
+      { code: "other", label: "Other naloxone product" }
+    ];
+    var SOURCES = [
+      { code: "ndp", label: "DHCS Naloxone Distribution Project (NDP)" },
+      { code: "cdph_clearinghouse", label: "CDPH syringe services supply clearinghouse" },
+      { code: "purchase", label: "Purchased (with a fund)" },
+      { code: "donation", label: "Donation" },
+      { code: "other", label: "Other" }
+    ];
+    var ADJUST_REASONS = [
+      { code: "count_correction", label: "Count correction (after counting the shelf)" },
+      { code: "damaged", label: "Damaged" },
+      { code: "expired", label: "Expired" },
+      { code: "lost", label: "Lost or stolen" },
+      { code: "other", label: "Other" }
+    ];
+    var DISPOSAL_REASONS = [
+      { code: "expired", label: "Expired" },
+      { code: "damaged", label: "Damaged" },
+      { code: "recalled", label: "Recalled" }
+    ];
+    var SITE_KINDS = [
+      { code: "office", label: "Office" },
+      { code: "van", label: "Van or mobile unit" },
+      { code: "drop_in", label: "Drop-in center" },
+      { code: "partner", label: "Partner site" },
+      { code: "other", label: "Other" }
+    ];
+    var KIND_LABELS = {
+      opening: "Opening balance",
+      received: "Received",
+      transfer_out: "Transferred out",
+      transfer_in: "Transferred in",
+      adjustment: "Adjustment",
+      disposal: "Disposed of",
+      distributed: "Handed out on a visit",
+      restored: "Put back (visit corrected)"
+    };
+    var COUNTED = { naloxone_kits: "naloxone", fentanyl_strips: "fentanyl_test_strips" };
+    var codes = (list) => list.map((x) => x.code);
+    function categoryFromName(name) {
+      const n = String(name || "").toLowerCase();
+      if (/naloxone|narcan|kloxxado|zimhi/.test(n)) return "naloxone";
+      if (/xylazine/.test(n)) return "xylazine_test_strips";
+      if (/fentanyl|\bfts\b/.test(n)) return "fentanyl_test_strips";
+      if (/sharps|disposal container|biohazard/.test(n)) return "sharps_container";
+      if (/syringe|needle|\bcc\b|gauge/.test(n)) return "syringes";
+      if (/cooker/.test(n)) return "cookers";
+      if (/cotton/.test(n)) return "cottons";
+      if (/alcohol (pad|swab|prep)/.test(n)) return "alcohol_pads";
+      if (/pipe|smok|foil|straw/.test(n)) return "safer_smoking";
+      if (/wound|bandage|first aid/.test(n)) return "wound_care";
+      if (/condom/.test(n)) return "condoms";
+      if (/hygiene/.test(n)) return "hygiene_kit";
+      return "other";
+    }
+    function unitFor(category, name = "") {
+      if (/\bkit\b/i.test(name)) return "kit";
+      return (CATEGORIES.find((c) => c.code === category) || { unit: "each" }).unit;
+    }
+    var labelOf = (list, code) => (list.find((x) => x.code === code) || { label: code || "" }).label;
+    module.exports = { CATEGORIES, NALOXONE_PRODUCTS, SOURCES, ADJUST_REASONS, DISPOSAL_REASONS, SITE_KINDS, KIND_LABELS, COUNTED, codes, categoryFromName, unitFor, labelOf };
+  }
+});
+
+// server/supplies.js
+var require_supplies = __commonJS({
+  "server/supplies.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var N = require_supply_names();
+    var { uuid: uuid2 } = require_crypto();
+    var { badRequest } = require_http();
+    var KINDS = ["opening", "received", "transfer_out", "transfer_in", "adjustment", "disposal", "distributed", "restored"];
+    var POSITIVE = ["opening", "received", "transfer_in", "restored"];
+    var NEGATIVE = ["transfer_out", "disposal", "distributed"];
+    var VISIT_KINDS = ["distributed", "restored"];
+    var SHORTFALL = "shortfall";
+    var DEFAULTS = { expiry_warn_days: 60, syringes_per_litre: 100 };
+    var MAX_QTY = 1e6;
+    var budget = () => require_budget();
+    var today = () => budget().localDate();
+    var addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+    function dayOf(at) {
+      if (!at) return today();
+      const s = String(at);
+      return s.length === 10 ? s : budget().localDate(s) || s.slice(0, 10);
+    }
+    function setting(key) {
+      const raw = db3.getSetting(`supply_${key}`, null);
+      const n = Number(raw);
+      return raw !== null && raw !== "" && Number.isFinite(n) && n > 0 ? n : DEFAULTS[key];
+    }
+    var expiryWarnDays = () => Math.min(365, Math.round(setting("expiry_warn_days")));
+    var syringesPerLitre = () => setting("syringes_per_litre");
+    var item = (id) => id ? db3.one(`SELECT * FROM supply_items WHERE id=?`, id) : null;
+    var site = (id) => id ? db3.one(`SELECT * FROM supply_sites WHERE id=?`, id) : null;
+    var activeSite = (id) => id ? db3.one(`SELECT * FROM supply_sites WHERE id=? AND is_active=1`, id) : null;
+    var items = ({ all = true } = {}) => db3.all(`SELECT * FROM supply_items ${all ? "" : "WHERE is_active=1"} ORDER BY is_active DESC, sort_order, name COLLATE NOCASE`);
+    var sites = ({ all = true } = {}) => db3.all(`SELECT * FROM supply_sites ${all ? "" : "WHERE is_active=1"} ORDER BY is_active DESC, sort_order, name COLLATE NOCASE`);
+    function defaultSiteId() {
+      for (const id of [db3.getSetting("default_supply_site_id", null), db3.MAIN_SITE_ID]) if (activeSite(id)) return id;
+      const first = db3.one(`SELECT id FROM supply_sites WHERE is_active=1 ORDER BY sort_order, name COLLATE NOCASE LIMIT 1`);
+      return first ? first.id : null;
+    }
+    function siteForUser(userId) {
+      const u = userId ? db3.one(`SELECT default_site_id FROM users WHERE id=?`, userId) : null;
+      return (u && activeSite(u.default_site_id) ? u.default_site_id : null) || defaultSiteId();
+    }
+    function defaultItemFor(category) {
+      return db3.one(`SELECT * FROM supply_items WHERE category=? AND is_active=1 ORDER BY quick DESC, sort_order, name COLLATE NOCASE LIMIT 1`, category) || null;
+    }
+    var nameTaken = (table, name, id = null) => !!db3.one(`SELECT 1 FROM ${table} WHERE name=? COLLATE NOCASE AND id<>?`, String(name).trim(), id || "");
+    function addEntry(e, actor) {
+      const row = {
+        id: e.id || uuid2(),
+        item_id: e.item_id,
+        site_id: e.site_id,
+        kind: e.kind,
+        quantity: e.quantity,
+        lot_number: e.lot_number || "",
+        expires_on: e.expires_on || null,
+        occurred_on: e.occurred_on || today(),
+        source: e.source || null,
+        funding_source_id: e.funding_source_id || null,
+        reference: e.reference || null,
+        reason: e.reason || null,
+        transfer_id: e.transfer_id || null,
+        intervention_id: e.intervention_id || null,
+        flagged: e.flagged ? 1 : 0,
+        user_id: actor && actor.id && db3.one(`SELECT 1 FROM users WHERE id=?`, actor.id) ? actor.id : null
+      };
+      const stamp2 = db3.now();
+      db3.run(
+        `INSERT INTO supply_ledger(id,item_id,site_id,kind,quantity,lot_number,expires_on,occurred_on,source,funding_source_id,reference,reason,transfer_id,intervention_id,flagged,user_id,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        row.id,
+        row.item_id,
+        row.site_id,
+        row.kind,
+        row.quantity,
+        row.lot_number,
+        row.expires_on,
+        row.occurred_on,
+        row.source,
+        row.funding_source_id,
+        row.reference,
+        row.reason,
+        row.transfer_id,
+        row.intervention_id,
+        row.flagged,
+        row.user_id,
+        stamp2,
+        stamp2
+      );
+      return row;
+    }
+    function lots(itemId, siteId, { date = today(), all = false } = {}) {
+      const rows = db3.all(`SELECT lot_number, expires_on, SUM(quantity) quantity FROM supply_ledger WHERE item_id=? AND site_id=? GROUP BY lot_number, expires_on ${all ? "" : "HAVING SUM(quantity) > 0"}`, itemId, siteId);
+      const rank = (l) => l.expires_on && l.expires_on < date ? 2 : l.expires_on ? 0 : 1;
+      return rows.sort((a, b) => rank(a) - rank(b) || String(a.expires_on || "").localeCompare(String(b.expires_on || "")) || a.lot_number.localeCompare(b.lot_number));
+    }
+    var onHand = (itemId, siteId) => db3.one(`SELECT COALESCE(SUM(quantity),0) n FROM supply_ledger WHERE item_id=? AND site_id=?`, itemId, siteId).n;
+    var lotOnHand = (itemId, siteId, lot, expires) => db3.one(`SELECT COALESCE(SUM(quantity),0) n FROM supply_ledger WHERE item_id=? AND site_id=? AND lot_number=? AND expires_on IS ?`, itemId, siteId, lot || "", expires || null).n;
+    function drawFEFO(itemId, siteId, qty, { date, kind = "distributed", interventionId = null, extra = {} }, actor) {
+      const entries2 = [];
+      let left = qty;
+      for (const l of lots(itemId, siteId, { date })) {
+        if (left <= 0) break;
+        const take = Math.min(left, l.quantity);
+        entries2.push(addEntry({ item_id: itemId, site_id: siteId, kind, quantity: -take, lot_number: l.lot_number, expires_on: l.expires_on, occurred_on: date, intervention_id: interventionId, ...extra }, actor));
+        left -= take;
+      }
+      if (left > 0) {
+        entries2.push(addEntry({ item_id: itemId, site_id: siteId, kind: "adjustment", quantity: left, reason: SHORTFALL, flagged: 1, occurred_on: date, intervention_id: interventionId }, actor));
+        entries2.push(addEntry({ item_id: itemId, site_id: siteId, kind, quantity: -left, occurred_on: date, intervention_id: interventionId, ...extra }, actor));
+      }
+      return { entries: entries2, shortfall: Math.max(0, left) };
+    }
+    function visitLines(visitId) {
+      return db3.all(`SELECT l.*, i.name AS item_name, i.category, i.product, i.unit FROM intervention_supplies l JOIN supply_items i ON i.id=l.item_id WHERE l.intervention_id=? ORDER BY i.sort_order, i.name COLLATE NOCASE`, visitId);
+    }
+    function siteOfVisit(v) {
+      return (v.supply_site_id && site(v.supply_site_id) ? v.supply_site_id : null) || siteForUser(v.user_id);
+    }
+    function reconcileVisit(visitId, actor, { ip = null } = {}) {
+      const visit = db3.one(`SELECT id, occurred_at, user_id, client_id, supply_site_id FROM interventions WHERE id=?`, visitId);
+      const want = /* @__PURE__ */ new Map();
+      if (visit) for (const l of db3.all(`SELECT item_id, quantity, untracked FROM intervention_supplies WHERE intervention_id=?`, visitId)) {
+        const q = l.quantity - l.untracked;
+        if (q > 0) want.set(l.item_id, (want.get(l.item_id) || 0) + q);
+      }
+      const at = visit ? siteOfVisit(visit) : null;
+      const date = visit ? dayOf(visit.occurred_at) : today();
+      const drawn = db3.all(`SELECT item_id, site_id, lot_number, expires_on, -SUM(quantity) drawn FROM supply_ledger WHERE intervention_id=? AND kind IN ('distributed','restored') GROUP BY item_id, site_id, lot_number, expires_on`, visitId).filter((r) => r.drawn > 0);
+      if (!want.size && !drawn.length) return { drawn: [], restored: [] };
+      const moved = { drawn: [], restored: [] };
+      const putBack = (rows, qty) => {
+        const order = [...rows].sort((a, b) => String(b.expires_on || "9999").localeCompare(String(a.expires_on || "9999")) || b.lot_number.localeCompare(a.lot_number));
+        let left = qty;
+        for (const r of order) {
+          if (left <= 0) break;
+          const back = Math.min(left, r.drawn);
+          addEntry({ item_id: r.item_id, site_id: r.site_id, kind: "restored", quantity: back, lot_number: r.lot_number, expires_on: r.expires_on, occurred_on: date, intervention_id: visitId }, actor);
+          left -= back;
+        }
+        if (qty - left > 0) moved.restored.push({ item_id: rows[0].item_id, site_id: rows[0].site_id, quantity: qty - left });
+      };
+      db3.transaction(() => {
+        const groups = /* @__PURE__ */ new Map();
+        for (const r of drawn) {
+          const k = `${r.item_id}|${r.site_id}`;
+          if (!groups.has(k)) groups.set(k, []);
+          groups.get(k).push(r);
+        }
+        for (const [k, rows] of groups) {
+          const [itemId, siteId] = k.split("|");
+          const total = rows.reduce((n, r) => n + r.drawn, 0);
+          if (!at || siteId !== at || !want.has(itemId)) putBack(rows, total);
+          else if (want.get(itemId) < total) putBack(rows, total - want.get(itemId));
+        }
+        if (at) for (const [itemId, q] of want) {
+          const have = (groups.get(`${itemId}|${at}`) || []).reduce((n, r) => n + r.drawn, 0);
+          if (q > have) {
+            const r = drawFEFO(itemId, at, q - have, { date, interventionId: visitId }, actor);
+            moved.drawn.push({ item_id: itemId, site_id: at, quantity: q - have, shortfall: r.shortfall });
+          }
+        }
+      });
+      const nameOf = (id) => (item(id) || {}).name || id;
+      for (const x of moved.drawn) audit3.log({ user: actor, action: "supply.drawdown", entity: "supply_ledger", ip, details: { intervention: visitId, item: nameOf(x.item_id), site: x.site_id, quantity: x.quantity, shortfall: x.shortfall || void 0 } });
+      for (const x of moved.restored) audit3.log({ user: actor, action: "supply.restore", entity: "supply_ledger", ip, details: { intervention: visitId, item: nameOf(x.item_id), site: x.site_id, quantity: x.quantity } });
+      return moved;
+    }
+    function planLines({ existing = [], prev = null, desired = null, given = {} }) {
+      const byId = /* @__PURE__ */ new Map();
+      const itemOf = (id) => {
+        if (!byId.has(id)) byId.set(id, item(id));
+        return byId.get(id);
+      };
+      for (const l of existing) byId.set(l.item_id, { id: l.item_id, category: l.category, is_active: 1, name: l.item_name });
+      const catOf = (id) => (itemOf(id) || {}).category;
+      const COUNTED = Object.entries(N.COUNTED);
+      let want;
+      if (desired) {
+        if (!Array.isArray(desired)) throw badRequest("Validation failed", { fields: { supplies: "must be a list of items and quantities" } });
+        const merged = /* @__PURE__ */ new Map();
+        for (const d of desired) {
+          const id = d && typeof d.item_id === "string" ? d.item_id : null;
+          const q = Number(d && d.quantity);
+          if (!id) throw badRequest("Validation failed", { fields: { supplies: "each item needs an item_id" } });
+          if (!Number.isInteger(q) || q < 0 || q > 1e5) throw badRequest("Validation failed", { fields: { supplies: "each quantity must be a whole number from 0 to 100,000" } });
+          const it = itemOf(id);
+          if (!it) throw badRequest("Validation failed", { fields: { supplies: "lists an item this program does not keep" } });
+          if (!it.is_active && !existing.some((l) => l.item_id === id)) throw badRequest("Validation failed", { fields: { supplies: `${it.name} is no longer offered` } });
+          if (q > 0) merged.set(id, (merged.get(id) || 0) + q);
+        }
+        want = [...merged].map(([item_id, quantity]) => ({ item_id, quantity }));
+        for (const [col, cat] of COUNTED) {
+          if (!(given[col] > 0) || want.some((l) => catOf(l.item_id) === cat)) continue;
+          const d = defaultItemFor(cat);
+          if (d) {
+            byId.set(d.id, d);
+            want.push({ item_id: d.id, quantity: given[col] });
+          }
+        }
+      } else {
+        const changed = COUNTED.filter(([col]) => col in given && given[col] !== null && given[col] !== void 0 && (!prev || Number(given[col] || 0) !== Number(prev[col] || 0)));
+        if (!changed.length) return null;
+        want = existing.map((l) => ({ item_id: l.item_id, quantity: l.quantity }));
+        for (const [col, cat] of changed) {
+          const target = Number(given[col] || 0);
+          const mine = want.filter((l) => catOf(l.item_id) === cat);
+          const sum = mine.reduce((n, l) => n + l.quantity, 0);
+          if (target > sum) {
+            if (mine.length) mine[mine.length - 1].quantity += target - sum;
+            else {
+              const d = defaultItemFor(cat);
+              if (d) {
+                byId.set(d.id, d);
+                want.push({ item_id: d.id, quantity: target - sum });
+              }
+            }
+          } else {
+            let cut = sum - target;
+            for (const l of [...mine].reverse()) {
+              const c = Math.min(cut, l.quantity);
+              l.quantity -= c;
+              cut -= c;
+            }
+          }
+        }
+        want = want.filter((l) => l.quantity > 0);
+      }
+      const carried = {};
+      for (const [col, cat] of COUNTED) {
+        const mine = existing.filter((l) => l.category === cat);
+        carried[cat] = mine.reduce((n, l) => n + (l.untracked || 0), 0) + Math.max(0, Number(prev ? prev[col] || 0 : 0) - mine.reduce((n, l) => n + l.quantity, 0));
+      }
+      const lines = want.map((l) => {
+        const cat = catOf(l.item_id);
+        const untracked = carried[cat] ? Math.min(l.quantity, carried[cat]) : 0;
+        if (untracked) carried[cat] -= untracked;
+        return { ...l, untracked };
+      });
+      const counts = {};
+      for (const [col, cat] of COUNTED) {
+        const mine = lines.filter((l) => catOf(l.item_id) === cat);
+        const had = Number(prev ? prev[col] || 0 : 0);
+        counts[col] = mine.length ? mine.reduce((n, l) => n + l.quantity, 0) : col in given && given[col] !== null && given[col] !== void 0 ? Number(given[col] || 0) : !desired || !defaultItemFor(cat) ? had : 0;
+      }
+      return { lines, counts };
+    }
+    function writeLines(visit, lines) {
+      const existing = db3.all(`SELECT * FROM intervention_supplies WHERE intervention_id=?`, visit.id);
+      const stamp2 = db3.now();
+      const keep = /* @__PURE__ */ new Set();
+      for (const l of lines) {
+        const e = existing.find((x) => x.item_id === l.item_id && !keep.has(x.id));
+        if (e) {
+          keep.add(e.id);
+          if (e.quantity !== l.quantity || e.untracked !== l.untracked || e.client_id !== (visit.client_id || null) || e.user_id !== visit.user_id) {
+            db3.run(`UPDATE intervention_supplies SET quantity=?, untracked=?, client_id=?, user_id=?, updated_at=? WHERE id=?`, l.quantity, l.untracked, visit.client_id || null, visit.user_id, stamp2, e.id);
+          }
+        } else {
+          const id = uuid2();
+          keep.add(id);
+          db3.run(`INSERT INTO intervention_supplies(id,intervention_id,client_id,user_id,item_id,quantity,untracked,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, id, visit.id, visit.client_id || null, visit.user_id, l.item_id, l.quantity, l.untracked, stamp2, stamp2);
+        }
+      }
+      for (const e of existing) if (!keep.has(e.id)) {
+        db3.run(`DELETE FROM intervention_supplies WHERE id=?`, e.id);
+        db3.tombstone("intervention_supplies", e.id);
+      }
+    }
+    function relinkLines(visit) {
+      db3.run(`UPDATE intervention_supplies SET client_id=?, user_id=?, updated_at=? WHERE intervention_id=? AND (client_id IS NOT ? OR user_id IS NOT ?)`, visit.client_id || null, visit.user_id, db3.now(), visit.id, visit.client_id || null, visit.user_id);
+    }
+    var estimateReturns = (litres) => Math.round(Number(litres || 0) * syringesPerLitre());
+    function stock({ date = today() } = {}) {
+      const warnBy = addDays(date, expiryWarnDays());
+      const sums = db3.all(`SELECT item_id, site_id, lot_number, expires_on, SUM(quantity) quantity FROM supply_ledger GROUP BY item_id, site_id, lot_number, expires_on`);
+      const lotRows = sums.filter((l) => l.quantity !== 0).map((l) => ({ ...l, state: !l.expires_on ? "no_expiry" : l.expires_on < date ? "expired" : l.expires_on <= warnBy ? "expiring" : "ok" }));
+      const totals = /* @__PURE__ */ new Map();
+      for (const l of lotRows) {
+        const k = `${l.item_id}|${l.site_id}`;
+        totals.set(k, (totals.get(k) || 0) + l.quantity);
+      }
+      const out2 = { lots: lotRows, bySite: [...totals].map(([k, quantity]) => {
+        const [item_id, site_id] = k.split("|");
+        return { item_id, site_id, quantity };
+      }), warn_by: warnBy, date };
+      Object.defineProperty(out2, "onHandOf", { enumerable: false, value: (itemId, siteId) => totals.get(`${itemId}|${siteId}`) || 0 });
+      return out2;
+    }
+    function alerts({ date = today(), stock: s = null } = {}) {
+      if (!s || s.date !== date) s = stock({ date });
+      const positive = s.lots.filter((l) => l.quantity > 0);
+      const lowRows = [];
+      for (const it of db3.all(`SELECT id, name, low_stock FROM supply_items WHERE is_active=1 AND low_stock IS NOT NULL`)) {
+        for (const st of db3.all(`SELECT id, name FROM supply_sites WHERE is_active=1 AND id IN (SELECT site_id FROM supply_ledger WHERE item_id=?)`, it.id)) {
+          const q = s.onHandOf(it.id, st.id);
+          if (q <= it.low_stock) lowRows.push({ item_id: it.id, site_id: st.id, quantity: q, low_stock: it.low_stock });
+        }
+      }
+      const since = addDays(date, -90);
+      const shortfalls = db3.all(`SELECT id, item_id, site_id, quantity, occurred_on FROM supply_ledger WHERE flagged=1 AND occurred_on >= ? ORDER BY occurred_on DESC LIMIT 100`, since);
+      return {
+        expired: positive.filter((l) => l.state === "expired"),
+        expiring: positive.filter((l) => l.state === "expiring"),
+        low: lowRows,
+        shortfalls,
+        counts: { expired: positive.filter((l) => l.state === "expired").length, expiring: positive.filter((l) => l.state === "expiring").length, low: lowRows.length, shortfalls: shortfalls.length },
+        warn_days: expiryWarnDays(),
+        date
+      };
+    }
+    var DAY = /^\d{4}-\d{2}-\d{2}$/;
+    function ledgerPushProblem(user, raw) {
+      const auth3 = require_auth2();
+      if (VISIT_KINDS.includes(raw.kind) || raw.intervention_id || raw.reason === SHORTFALL || raw.flagged) return "drawn down at the office from the visit it belongs to";
+      if (!KINDS.includes(raw.kind)) return `has a value the office does not accept (supply entry "${String(raw.kind).slice(0, 30)}")`;
+      if (!item(raw.item_id)) return "refers to a record the office server does not have (the supply item)";
+      if (!site(raw.site_id)) return "refers to a record the office server does not have (the supply site)";
+      const q = Number(raw.quantity);
+      if (!Number.isInteger(q) || q === 0 || Math.abs(q) > MAX_QTY) return "has a value the office does not accept (the quantity must be a whole number, not zero)";
+      if (POSITIVE.includes(raw.kind) && q < 0) return "has a value the office does not accept (stock received or moved in cannot be negative)";
+      if (NEGATIVE.includes(raw.kind) && q > 0) return "has a value the office does not accept (stock moved out or disposed of is taken off, so it is negative)";
+      if (!raw.occurred_on || !DAY.test(String(raw.occurred_on))) return "is missing a required field: the date of the supply entry";
+      if (raw.expires_on && !DAY.test(String(raw.expires_on))) return "has a value the office does not accept (the expiry date)";
+      if (raw.kind === "received" && raw.source && !N.codes(N.SOURCES).includes(raw.source)) return "has a value the office does not accept (where the stock came from)";
+      if (raw.kind === "adjustment" && !N.codes(N.ADJUST_REASONS).includes(raw.reason)) return "has a value the office does not accept (the reason for the adjustment)";
+      if (raw.kind === "disposal" && !N.codes(N.DISPOSAL_REASONS).includes(raw.reason)) return "has a value the office does not accept (the reason for the disposal)";
+      const perm = ["opening", "received"].includes(raw.kind) ? "supplies:receive" : "supplies:manage";
+      if (!auth3.hasPerm(user, perm)) return `your role cannot record ${N.KIND_LABELS[raw.kind].toLowerCase()} supplies`;
+      return null;
+    }
+    function settlePushedEntry(user, row) {
+      if (!(row.quantity < 0)) return null;
+      const n = lotOnHand(row.item_id, row.site_id, row.lot_number, row.expires_on);
+      if (n >= 0) return null;
+      const s = addEntry({ item_id: row.item_id, site_id: row.site_id, kind: "adjustment", quantity: -n, lot_number: row.lot_number, expires_on: row.expires_on, reason: SHORTFALL, flagged: 1, occurred_on: row.occurred_on }, user);
+      audit3.log({ user, action: "supply.shortfall", entity: "supply_ledger", entityId: s.id, ip: "device", details: { item: (item(row.item_id) || {}).name, site: row.site_id, quantity: -n, after: row.id } });
+      return s;
+    }
+    function linePushProblem(user, raw, existing) {
+      const auth3 = require_auth2();
+      const visit = db3.one(`SELECT id, client_id, user_id FROM interventions WHERE id=?`, raw.intervention_id);
+      if (!visit) return "refers to a record the office server does not have (the visit)";
+      if (existing && existing.intervention_id !== raw.intervention_id) return "has a value the office does not accept (a supply line cannot move to another visit)";
+      if (visit.client_id && !auth3.canAccessClient(user, visit.client_id)) return "not on caseload";
+      if (require_rules().forTable("interventions").editableBy(user, visit)) return "not permitted";
+      const it = item(raw.item_id);
+      if (!it) return "refers to a record the office server does not have (the supply item)";
+      const q = Number(raw.quantity);
+      const u = Number(raw.untracked || 0);
+      if (!Number.isInteger(q) || q < 1 || q > 1e5) return "has a value the office does not accept (the quantity handed out)";
+      if (!Number.isInteger(u) || u < 0 || u > q || u > 0 && !Object.values(N.COUNTED).includes(it.category)) return "has a value the office does not accept (the part recorded before supplies were kept by item)";
+      raw.client_id = visit.client_id;
+      raw.user_id = visit.user_id;
+      raw.untracked = u;
+      return null;
+    }
+    function settlePushedVisit(user, visitId, { prev = null, countsPushed = false, linesPushed = false } = {}) {
+      const visit = db3.one(`SELECT * FROM interventions WHERE id=?`, visitId);
+      if (visit && countsPushed && !linesPushed) {
+        const given = {};
+        for (const col of Object.keys(N.COUNTED)) given[col] = visit[col];
+        const plan = planLines({ existing: visitLines(visitId), prev, given });
+        if (plan) writeLines(visit, plan.lines);
+      } else if (visit && linesPushed) {
+        const lines = visitLines(visitId);
+        const sets = [];
+        const params = [];
+        for (const [col, cat] of Object.entries(N.COUNTED)) {
+          const mine = lines.filter((l) => l.category === cat);
+          if (mine.length) {
+            const n = mine.reduce((s, l) => s + l.quantity, 0);
+            if (n !== visit[col]) {
+              sets.push(`${col}=?`);
+              params.push(n);
+            }
+          }
+        }
+        if (sets.length) db3.run(`UPDATE interventions SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, db3.now(), visitId);
+      }
+      return reconcileVisit(visitId, user, { ip: "device" });
+    }
+    module.exports = {
+      KINDS,
+      POSITIVE,
+      NEGATIVE,
+      VISIT_KINDS,
+      SHORTFALL,
+      DEFAULTS,
+      MAX_QTY,
+      N,
+      today,
+      addDays,
+      dayOf,
+      setting,
+      expiryWarnDays,
+      syringesPerLitre,
+      item,
+      site,
+      activeSite,
+      items,
+      sites,
+      defaultSiteId,
+      siteForUser,
+      defaultItemFor,
+      nameTaken,
+      addEntry,
+      lots,
+      onHand,
+      lotOnHand,
+      drawFEFO,
+      visitLines,
+      siteOfVisit,
+      reconcileVisit,
+      planLines,
+      writeLines,
+      relinkLines,
+      estimateReturns,
+      stock,
+      alerts,
+      ledgerPushProblem,
+      settlePushedEntry,
+      linePushProblem,
+      settlePushedVisit
+    };
+  }
+});
+
+// server/rules/interventions.js
+var require_interventions = __commonJS({
+  "server/rules/interventions.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var C = require_constants();
+    var { define: define2, refuse, flag } = require_core();
+    var { periodProblem, ownedBy } = require_shared();
+    var PC = require_participant_code();
+    var serviceDate = (row) => row.service_date || require_budget().localDate(row.occurred_at);
+    module.exports = define2({
+      table: "interventions",
+      fields: {
+        // Optional: community naloxone distribution and street outreach are services with no identified client.
+        client_id: { type: "string" },
+        user_id: { type: "string" },
+        type: { type: "string", required: true, list: "INTERVENTION_TYPES" },
+        occurred_at: { type: "datetime", required: true },
+        duration_minutes: { type: "number", integer: true, min: 0, max: 1440 },
+        location: { type: "string", list: "LOCATIONS" },
+        modality: { type: "string", list: "MODALITIES" },
+        outcome: { type: "string", list: "OUTCOMES" },
+        stage_of_change: { type: "string", enum: C.STAGES },
+        naloxone_kits: { type: "number", integer: true, min: 0 },
+        fentanyl_strips: { type: "number", integer: true, min: 0 },
+        funding_source_id: { type: "string" },
+        budget_line_id: { type: "string" },
+        cost: { type: "number", min: 0 },
+        summary: { type: "string", maxLen: 2e3 },
+        follow_up_due: { type: "date" },
+        // Request-only: whether to log a time entry with the visit, its category, and the calendar date the service
+        // belongs to when it is not the org-timezone date of occurred_at.
+        log_time: { type: "boolean", sync: false },
+        time_category: { type: "string", list: "TIME_CATEGORIES", sync: false },
+        service_date: { type: "date", sync: false },
+        // The items handed out ([{ item_id, quantity }]: request-only, they travel by sync as intervention_supplies rows),
+        // the site they came from, and syringe services returns (docs/SUPPLIES.md).
+        supplies: { type: "array", maxLen: 50, sync: false },
+        supply_site_id: { type: "string" },
+        syringes_returned: { type: "number", integer: true, min: 0, max: 1e5 },
+        returns_estimated: { type: "boolean" },
+        sharps_returned_litres: { type: "number", min: 0, max: 1e3 },
+        // An anonymous contact's SSP participant code (1.17.0, server/participant-code.js): stored encrypted, counted
+        // by its blind index, and only on a contact with no client record (check below).
+        participant_code: { type: "string", maxLen: 60 },
+        // Request-only (1.14.0): a note written with the visit ({ kind, format, title, content, part2_protected, ... }),
+        // created with it in one step and linked to it (routes/interventions.js; the note's own rules apply).
+        note: { type: "object", sync: false }
+      },
+      owner: { col: "user_id", all: "records:manage-others" },
+      editableBy: ownedBy(["user_id"], "records:manage-others"),
+      authorise(row, c) {
+        if (!auth3.hasPerm(c.user, "budget:write")) {
+          const e = c.existing;
+          const changed = !e || row.cost !== e.cost || row.funding_source_id !== e.funding_source_id || row.budget_line_id !== e.budget_line_id;
+          if (changed && (row.cost && row.cost > 0 || row.funding_source_id || row.budget_line_id)) return refuse("you do not have permission to attach a cost to a funding source", { status: 403, message: "You do not have permission to attach a cost to a funding source" });
+        }
+        return null;
+      },
+      check(row, c) {
+        const e = c.existing || {};
+        const val = (k) => row[k] !== void 0 ? row[k] : e[k];
+        const touched = (...ks) => !c.existing || ks.some((k) => row[k] !== void 0 && String(row[k] ?? "") !== String(e[k] ?? ""));
+        const out2 = [];
+        if (row.supply_site_id && touched("supply_site_id")) {
+          const site = require_supplies().site(row.supply_site_id);
+          if (!site) out2.push(refuse("refers to a record the office server does not have (the supply site)", { message: "Validation failed", fields: { supply_site_id: "is not one of this program's supply sites in use" } }));
+          else if (!site.is_active) out2.push(flag("was accepted, but the supply site it names is no longer in use at the office; the office will review it", { message: "Validation failed", fields: { supply_site_id: "is not one of this program's supply sites in use" }, code: "site_inactive" }));
+        }
+        if (touched("participant_code_enc", "client_id")) {
+          const code = c.plain("participant_code_enc");
+          const bad = PC.problem(code);
+          if (bad) out2.push(refuse(`has a value the office does not accept (participant code: ${bad})`, { message: "Validation failed", fields: { participant_code: bad } }));
+          else if (PC.normalise(code) && val("client_id")) out2.push(refuse("has a value the office does not accept (a participant code on a contact with a client)", { message: "A participant code is for an anonymous contact. This visit has a client: remove the code, or the client.", fields: { participant_code: "is only for a contact with no client record" } }));
+        }
+        if (touched("type", "client_id") && !val("client_id") && !C.CLIENTLESS_INTERVENTION_TYPES.includes(val("type"))) {
+          out2.push(refuse(
+            "is missing a required field (a client: only outreach and community naloxone distribution can be recorded without one)",
+            { message: "Choose the client this service was for. Only outreach and community naloxone distribution can be recorded without one.", fields: { client_id: "Client is required for this type of service" } }
+          ));
+        }
+        if (touched("cost", "funding_source_id", "budget_line_id", "occurred_at", "service_date")) {
+          const cost = val("cost");
+          const fund = val("funding_source_id");
+          const line = val("budget_line_id");
+          if (cost && cost > 0) {
+            if (!fund) out2.push(refuse("is missing a required field (a funding source for its cost)", { message: "A funding source is required when a cost is entered" }));
+            else if (!line) out2.push(refuse("is missing a required field (a budget line for its cost)", { message: "A budget line is required when a cost is entered, so it is deducted from the right allocation" }));
+            else if (!db3.one(`SELECT 1 FROM budget_lines WHERE id=? AND funding_source_id=?`, line, fund)) out2.push(refuse("has a value the office does not accept (its budget line belongs to another fund)", { message: "Budget line does not belong to the selected funding source" }));
+            else if (val("occurred_at")) out2.push(periodProblem(db3.one(`SELECT * FROM funding_sources WHERE id=?`, fund), serviceDate({ ...e, ...row }), "Date of service"));
+          } else if (line && !fund) out2.push(refuse("is missing a required field (the funding source of its budget line)", { message: "A funding source is required when a budget line is selected" }));
+        }
+        return out2;
+      },
+      // The code as stored, whoever typed it how (upper case, letters and digits): its blind index is worked out
+      // from this by sync-tables importRow, so "ab-07 85" on a phone and "AB0785" at the office count as one.
+      normalise(row) {
+        if (row.participant_code_enc !== void 0) row.participant_code_enc = participantCode(row.participant_code_enc).code;
+        return null;
+      },
+      // A visit that handed supplies out draws the office stock down once the whole batch has landed (finish), by the
+      // difference from what the office already drew for it, so a re-sent row counts once.
+      afterApply(row, o, c) {
+        const SUP = require_supplies();
+        const e = c.existing;
+        const countsPushed = Object.keys(SUP.N.COUNTED).some((col) => o[col] !== void 0 && (!e || Number(o[col] || 0) !== Number(e[col] || 0)));
+        const visits = supplyVisits(c.session);
+        touchVisit(c.session, row.id, visits.has(row.id) ? { countsPushed: countsPushed || visits.get(row.id).countsPushed } : { prev: e || null, countsPushed });
+      },
+      // A deleted visit puts back what it drew.
+      afterDelete(row, s) {
+        touchVisit(s, row.id, { linesPushed: true });
+      },
+      // The office's draw-down for every visit this push touched, after the rows, the items (intervention_supplies) and
+      // the deletions have all landed, so a device's visit and its items are weighed together. One visit's failure is
+      // its own: the device is told, and the rest of the push stands.
+      finish(s) {
+        const SUP = require_supplies();
+        for (const [id, how] of supplyVisits(s)) {
+          db3.savepoint(() => SUP.settlePushedVisit(s.user, id, how), (err2) => s.warnings.push({ table: "interventions", id, reason: `supplies not drawn down: ${String(err2 && err2.message || err2).slice(0, 160)}` }));
+        }
+      }
+    });
+    function supplyVisits(s) {
+      return s.state.supplyVisits || (s.state.supplyVisits = /* @__PURE__ */ new Map());
+    }
+    function touchVisit(s, id, patch) {
+      if (typeof id !== "string") return;
+      const m = supplyVisits(s);
+      m.set(id, { prev: null, countsPushed: false, linesPushed: false, ...m.get(id) || {}, ...patch });
+    }
+    module.exports.touchVisit = touchVisit;
+    function participantCode(value) {
+      const code = PC.normalise(value);
+      return { code, idx: PC.index(code) };
+    }
+    module.exports.participantCode = participantCode;
   }
 });
 
@@ -11636,7 +12384,7 @@ var require_sync_tables = __commonJS({
         if (r.dob_enc !== void 0) o.dob_idx = crypto3.blindIndex(r.dob_enc || "");
         if (r.phone_enc !== void 0) o.phone_idx = crypto3.blindIndex(String(r.phone_enc || "").replace(/\D/g, ""));
       }
-      if (t.name === "interventions" && r.participant_code_enc !== void 0) o.participant_code_idx = require_participant_code().index(r.participant_code_enc);
+      if (t.name === "interventions" && r.participant_code_enc !== void 0) o.participant_code_idx = require_interventions().participantCode(r.participant_code_enc).idx;
       return o;
     }
     function upgradeLegacyRow(t, r) {
@@ -11905,89 +12653,6 @@ var require_policy_documents = __commonJS({
       createdBy: ["uploaded_by"],
       fields: { title: { type: "string", required: true, maxLen: 200 }, category: { type: "string", required: true, enum: C.DOCUMENT_CATEGORIES }, description: { type: "string", maxLen: 2e3 }, effective_date: { type: "date" }, expires_at: { type: "date" }, filename: { type: "string", maxLen: 200 } }
     });
-  }
-});
-
-// server/rules/shared.js
-var require_shared = __commonJS({
-  "server/rules/shared.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var auth3 = require_auth2();
-    var { flag, notPermitted } = require_core();
-    function periodProblem(fund, date, what) {
-      try {
-        require_budget().assertInPeriod(fund, date, what);
-        return null;
-      } catch (err2) {
-        return flag(`was accepted, but its ${what.toLowerCase()} is outside the period of the fund it is charged to, or in the future; the office will review it`, { message: err2.message, code: "fund_period" });
-      }
-    }
-    var ownedBy = (cols2, all, message = "You cannot edit this record") => (user, row) => cols2.some((c) => row[c] === user.id) || auth3.hasPerm(user, all) ? null : notPermitted(message);
-    function officeRuling(row, c, { initial, mayMove = () => false, rulings, cols: cols2 = [], enc: enc2 = [], what }) {
-      const e = c.existing;
-      const sent = row.status;
-      const has = (v) => v !== void 0 && v !== null && v !== "";
-      let ruled = false;
-      if (!e) {
-        const start2 = initial(sent);
-        if (has(sent) && sent !== start2 && rulings.includes(sent)) ruled = true;
-        row.status = start2;
-        for (const k of cols2) {
-          if (has(row[k])) ruled = true;
-          row[k] = null;
-        }
-        for (const k of enc2) {
-          if (has(row[k])) ruled = true;
-          row[k] = void 0;
-        }
-      } else {
-        if (has(sent) && sent !== e.status && !mayMove(e.status, sent, row, e)) {
-          if (rulings.includes(sent)) ruled = true;
-          row.status = e.status;
-        }
-        for (const k of cols2) {
-          if (has(row[k]) && String(row[k]) !== String(e[k] ?? "")) ruled = true;
-          row[k] = e[k];
-        }
-        for (const k of enc2) {
-          if (has(row[k]) && String(row[k]) !== String(c.was(k) ?? "")) ruled = true;
-          row[k] = void 0;
-        }
-      }
-      return ruled ? flag(`was accepted, but not the ruling on it (approved, returned or reimbursed): ${what} is ruled on at the office, never by sync, so the office's decision stands`, { code: "ruling" }) : null;
-    }
-    function officeMarks(row, c, cols2, what) {
-      const e = c.existing;
-      let asserted = false;
-      for (const k of cols2) {
-        const v = row[k];
-        if (v !== void 0 && v !== null && v !== "" && String(v) !== String((e && e[k]) ?? "")) asserted = true;
-        row[k] = e ? e[k] : null;
-      }
-      return asserted ? flag(`was accepted, but not ${what}: that is the office's record of its own act, never set by sync`, { code: "office_mark" }) : null;
-    }
-    function assertRulingHere(what) {
-      const config2 = require_config();
-      const staticHost = typeof window !== "undefined" && window.SUDS_STATIC_HOST === true;
-      if (config2.local && !staticHost) throw new (require_http()).HttpError(403, `${what} is done on the office SUDS, not on this device: sync does not carry it there.`, { rulingAtOffice: true });
-    }
-    function recordedOrChanged(entity, table, id, userId) {
-      return !!require_db().one(
-        `SELECT 1 FROM audit_log WHERE user_id=? AND entity_id=? AND ((entity=? AND action IN (?,?,?)) OR (entity=? AND action IN ('sync.overwrite','sync.record'))) LIMIT 1`,
-        userId,
-        id,
-        entity,
-        `${entity}.create`,
-        `${entity}.update`,
-        entity === "time_entry" ? "time.submit" : `${entity}.create`,
-        table
-      );
-    }
-    function logRecordedFor(table, row, c) {
-      if (!c.existing && row.user_id && row.user_id !== c.user.id) require_audit().log({ user: c.user, action: "sync.record", entity: table, entityId: row.id, clientId: row.client_id || null, ip: "device", details: { for: row.user_id } });
-    }
-    module.exports = { periodProblem, ownedBy, officeRuling, officeMarks, assertRulingHere, recordedOrChanged, logRecordedFor };
   }
 });
 
@@ -12272,6 +12937,8 @@ var require_notes = __commonJS({
     var auth3 = require_auth2();
     var { define: define2, refuse, flag, notPermitted } = require_core();
     var isYes = (v) => v === true || v === 1 || v === "1" || v === "true";
+    var aiReviewed = (v) => isYes(v);
+    var keepAiAssisted = (value, existing) => existing && Number(existing.ai_assisted) ? 1 : value;
     var parseList = (v) => typeof v === "string" ? JSON.parse(v) : v;
     var SIGNED_KEEPS = [
       "kind",
@@ -12373,7 +13040,7 @@ var require_notes = __commonJS({
         if (counseling && ai && (!c.existing || ["counseling_note", "ai_assisted"].some((k) => row[k] !== void 0 && row[k] !== null && Number(row[k]) !== Number(e[k] || 0)))) {
           out2.push(refuse("has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot)", { message: "A SUD counseling note cannot include text drafted by the AI copilot", fields: { counseling_note: "this note has AI-drafted text; a SUD counseling note is written without the copilot" } }));
         }
-        if (c.via === "sync" && signs(row, c) && ai && !isYes(c.statements && c.statements.ai_reviewed)) {
+        if (c.via === "sync" && signs(row, c) && ai && !aiReviewed(c.statements && c.statements.ai_reviewed)) {
           out2.push(refuse("needs the author's review statement: this note includes text drafted by the AI copilot", { message: "This note includes text drafted by the AI copilot. Confirm you have reviewed and corrected it before signing.", fields: { ai_reviewed: "confirm you reviewed the AI-drafted text" } }));
         }
         if (c.via === "sync" && signs(row, c) && (c.user.id !== (c.existing ? e.author_id : row.author_id) || row.signed_by && row.signed_by !== c.user.id)) {
@@ -12393,7 +13060,7 @@ var require_notes = __commonJS({
         const asserted = COSIGN.some((k) => has(row[k]) && String(row[k]) !== String((e && e[k]) ?? "")) || has(row.cosign_note_enc) && String(row.cosign_note_enc) !== String((e && c.was("cosign_note_enc")) ?? "");
         if (e) {
           row.kind = e.kind;
-          if (Number(e.ai_assisted)) row.ai_assisted = 1;
+          row.ai_assisted = keepAiAssisted(row.ai_assisted, e);
           if (e.status !== "draft") for (const col of SIGNED_KEEPS) row[col] = col.endsWith("_enc") ? void 0 : e[col];
           if (e.author_id !== c.user.id && !auth3.hasPerm(c.user, "records:manage-others") || e.cosigned_at) row.cosign_requested = e.cosign_requested;
           for (const k of COSIGN) row[k] = e[k];
@@ -12438,6 +13105,7 @@ var require_notes = __commonJS({
     });
     module.exports.closeSignReminders = closeSignReminders;
     module.exports.reissueAddenda = reissueAddenda;
+    Object.assign(module.exports, { aiReviewed, keepAiAssisted });
     var readsCounseling = (user) => auth3.hasPerm(user, "notes:clinical:write");
     var mayReadCounseling = (user, n) => !Number(n.counseling_note) || readsCounseling(user) || n.author_id === user.id || !!n.cosigned_by && n.cosigned_by === user.id;
     function counselingFilter(user, alias = "n") {
@@ -13891,7 +14559,7 @@ var require_clients = __commonJS({
         }
         require_crud().assertFresh(ctx, row, "client");
         const body = Object.fromEntries(changes.map((ch) => [ch.field, ch.before]));
-        const v = validate(body, Object.fromEntries(changes.map((ch) => [ch.field, { ...shape[ch.field], required: false }])), { partial: true, existing: row });
+        const v = validate(body, Object.fromEntries(changes.map((ch) => [ch.field, { ...shape[ch.field], required: false }])), { partial: true, existing: { ...row, ...body } });
         for (const f of ["first_name", "last_name"]) if (f in v && !v[f]) throw badRequest("This change cannot be put back: it would leave the client without a name. Edit the record instead.");
         const done = updateClient(ctx, row, v, { reverts: rev2.id });
         audit3.log({ user: ctx.user, action: "client.revert", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reverted: rev2.id, revision: done.revision, fields: Object.keys(v) } });
@@ -14665,666 +15333,6 @@ var require_caloms_records = __commonJS({
       // When it went into a state extract is the office's (POST /api/caloms/extract); a device's copy may be stale.
       normalise: (row, c) => require_shared().officeMarks(row, c, ["extracted_at"], "its extract date (when it was sent to DHCS)")
     });
-  }
-});
-
-// server/supply-names.js
-var require_supply_names = __commonJS({
-  "server/supply-names.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var CATEGORIES = [
-      { code: "naloxone", label: "Naloxone", unit: "kit" },
-      { code: "fentanyl_test_strips", label: "Fentanyl test strips", unit: "strip" },
-      { code: "xylazine_test_strips", label: "Xylazine test strips", unit: "strip" },
-      { code: "syringes", label: "Syringes", unit: "syringe" },
-      { code: "sharps_container", label: "Sharps containers", unit: "container" },
-      { code: "cookers", label: "Cookers", unit: "each" },
-      { code: "cottons", label: "Cottons", unit: "each" },
-      { code: "alcohol_pads", label: "Alcohol pads", unit: "pad" },
-      { code: "safer_smoking", label: "Pipes and safer-smoking kits", unit: "kit" },
-      { code: "wound_care", label: "Wound care", unit: "kit" },
-      { code: "condoms", label: "Condoms", unit: "each" },
-      { code: "hygiene_kit", label: "Hygiene kits", unit: "kit" },
-      { code: "other", label: "Other", unit: "each" }
-    ];
-    var NALOXONE_PRODUCTS = [
-      { code: "nasal_4mg", label: "Nasal spray 4 mg" },
-      { code: "nasal_8mg", label: "Nasal spray 8 mg" },
-      { code: "nasal_3mg", label: "Nasal spray 3 mg" },
-      { code: "im_vial", label: "Injectable 0.4 mg/mL vial" },
-      { code: "im_ampule", label: "Injectable 0.4 mg/mL ampule" },
-      { code: "im_prefilled", label: "Injectable 0.4 mg prefilled syringe" },
-      { code: "other", label: "Other naloxone product" }
-    ];
-    var SOURCES = [
-      { code: "ndp", label: "DHCS Naloxone Distribution Project (NDP)" },
-      { code: "cdph_clearinghouse", label: "CDPH syringe services supply clearinghouse" },
-      { code: "purchase", label: "Purchased (with a fund)" },
-      { code: "donation", label: "Donation" },
-      { code: "other", label: "Other" }
-    ];
-    var ADJUST_REASONS = [
-      { code: "count_correction", label: "Count correction (after counting the shelf)" },
-      { code: "damaged", label: "Damaged" },
-      { code: "expired", label: "Expired" },
-      { code: "lost", label: "Lost or stolen" },
-      { code: "other", label: "Other" }
-    ];
-    var DISPOSAL_REASONS = [
-      { code: "expired", label: "Expired" },
-      { code: "damaged", label: "Damaged" },
-      { code: "recalled", label: "Recalled" }
-    ];
-    var SITE_KINDS = [
-      { code: "office", label: "Office" },
-      { code: "van", label: "Van or mobile unit" },
-      { code: "drop_in", label: "Drop-in center" },
-      { code: "partner", label: "Partner site" },
-      { code: "other", label: "Other" }
-    ];
-    var KIND_LABELS = {
-      opening: "Opening balance",
-      received: "Received",
-      transfer_out: "Transferred out",
-      transfer_in: "Transferred in",
-      adjustment: "Adjustment",
-      disposal: "Disposed of",
-      distributed: "Handed out on a visit",
-      restored: "Put back (visit corrected)"
-    };
-    var COUNTED = { naloxone_kits: "naloxone", fentanyl_strips: "fentanyl_test_strips" };
-    var codes = (list) => list.map((x) => x.code);
-    function categoryFromName(name) {
-      const n = String(name || "").toLowerCase();
-      if (/naloxone|narcan|kloxxado|zimhi/.test(n)) return "naloxone";
-      if (/xylazine/.test(n)) return "xylazine_test_strips";
-      if (/fentanyl|\bfts\b/.test(n)) return "fentanyl_test_strips";
-      if (/sharps|disposal container|biohazard/.test(n)) return "sharps_container";
-      if (/syringe|needle|\bcc\b|gauge/.test(n)) return "syringes";
-      if (/cooker/.test(n)) return "cookers";
-      if (/cotton/.test(n)) return "cottons";
-      if (/alcohol (pad|swab|prep)/.test(n)) return "alcohol_pads";
-      if (/pipe|smok|foil|straw/.test(n)) return "safer_smoking";
-      if (/wound|bandage|first aid/.test(n)) return "wound_care";
-      if (/condom/.test(n)) return "condoms";
-      if (/hygiene/.test(n)) return "hygiene_kit";
-      return "other";
-    }
-    function unitFor(category, name = "") {
-      if (/\bkit\b/i.test(name)) return "kit";
-      return (CATEGORIES.find((c) => c.code === category) || { unit: "each" }).unit;
-    }
-    var labelOf = (list, code) => (list.find((x) => x.code === code) || { label: code || "" }).label;
-    module.exports = { CATEGORIES, NALOXONE_PRODUCTS, SOURCES, ADJUST_REASONS, DISPOSAL_REASONS, SITE_KINDS, KIND_LABELS, COUNTED, codes, categoryFromName, unitFor, labelOf };
-  }
-});
-
-// server/supplies.js
-var require_supplies = __commonJS({
-  "server/supplies.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var N = require_supply_names();
-    var { uuid: uuid2 } = require_crypto();
-    var { badRequest } = require_http();
-    var KINDS = ["opening", "received", "transfer_out", "transfer_in", "adjustment", "disposal", "distributed", "restored"];
-    var POSITIVE = ["opening", "received", "transfer_in", "restored"];
-    var NEGATIVE = ["transfer_out", "disposal", "distributed"];
-    var VISIT_KINDS = ["distributed", "restored"];
-    var SHORTFALL = "shortfall";
-    var DEFAULTS = { expiry_warn_days: 60, syringes_per_litre: 100 };
-    var MAX_QTY = 1e6;
-    var budget = () => require_budget();
-    var today = () => budget().localDate();
-    var addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
-    function dayOf(at) {
-      if (!at) return today();
-      const s = String(at);
-      return s.length === 10 ? s : budget().localDate(s) || s.slice(0, 10);
-    }
-    function setting(key) {
-      const raw = db3.getSetting(`supply_${key}`, null);
-      const n = Number(raw);
-      return raw !== null && raw !== "" && Number.isFinite(n) && n > 0 ? n : DEFAULTS[key];
-    }
-    var expiryWarnDays = () => Math.min(365, Math.round(setting("expiry_warn_days")));
-    var syringesPerLitre = () => setting("syringes_per_litre");
-    var item = (id) => id ? db3.one(`SELECT * FROM supply_items WHERE id=?`, id) : null;
-    var site = (id) => id ? db3.one(`SELECT * FROM supply_sites WHERE id=?`, id) : null;
-    var activeSite = (id) => id ? db3.one(`SELECT * FROM supply_sites WHERE id=? AND is_active=1`, id) : null;
-    var items = ({ all = true } = {}) => db3.all(`SELECT * FROM supply_items ${all ? "" : "WHERE is_active=1"} ORDER BY is_active DESC, sort_order, name COLLATE NOCASE`);
-    var sites = ({ all = true } = {}) => db3.all(`SELECT * FROM supply_sites ${all ? "" : "WHERE is_active=1"} ORDER BY is_active DESC, sort_order, name COLLATE NOCASE`);
-    function defaultSiteId() {
-      for (const id of [db3.getSetting("default_supply_site_id", null), db3.MAIN_SITE_ID]) if (activeSite(id)) return id;
-      const first = db3.one(`SELECT id FROM supply_sites WHERE is_active=1 ORDER BY sort_order, name COLLATE NOCASE LIMIT 1`);
-      return first ? first.id : null;
-    }
-    function siteForUser(userId) {
-      const u = userId ? db3.one(`SELECT default_site_id FROM users WHERE id=?`, userId) : null;
-      return (u && activeSite(u.default_site_id) ? u.default_site_id : null) || defaultSiteId();
-    }
-    function defaultItemFor(category) {
-      return db3.one(`SELECT * FROM supply_items WHERE category=? AND is_active=1 ORDER BY quick DESC, sort_order, name COLLATE NOCASE LIMIT 1`, category) || null;
-    }
-    var nameTaken = (table, name, id = null) => !!db3.one(`SELECT 1 FROM ${table} WHERE name=? COLLATE NOCASE AND id<>?`, String(name).trim(), id || "");
-    function addEntry(e, actor) {
-      const row = {
-        id: e.id || uuid2(),
-        item_id: e.item_id,
-        site_id: e.site_id,
-        kind: e.kind,
-        quantity: e.quantity,
-        lot_number: e.lot_number || "",
-        expires_on: e.expires_on || null,
-        occurred_on: e.occurred_on || today(),
-        source: e.source || null,
-        funding_source_id: e.funding_source_id || null,
-        reference: e.reference || null,
-        reason: e.reason || null,
-        transfer_id: e.transfer_id || null,
-        intervention_id: e.intervention_id || null,
-        flagged: e.flagged ? 1 : 0,
-        user_id: actor && actor.id && db3.one(`SELECT 1 FROM users WHERE id=?`, actor.id) ? actor.id : null
-      };
-      const stamp2 = db3.now();
-      db3.run(
-        `INSERT INTO supply_ledger(id,item_id,site_id,kind,quantity,lot_number,expires_on,occurred_on,source,funding_source_id,reference,reason,transfer_id,intervention_id,flagged,user_id,created_at,updated_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        row.id,
-        row.item_id,
-        row.site_id,
-        row.kind,
-        row.quantity,
-        row.lot_number,
-        row.expires_on,
-        row.occurred_on,
-        row.source,
-        row.funding_source_id,
-        row.reference,
-        row.reason,
-        row.transfer_id,
-        row.intervention_id,
-        row.flagged,
-        row.user_id,
-        stamp2,
-        stamp2
-      );
-      return row;
-    }
-    function lots(itemId, siteId, { date = today(), all = false } = {}) {
-      const rows = db3.all(`SELECT lot_number, expires_on, SUM(quantity) quantity FROM supply_ledger WHERE item_id=? AND site_id=? GROUP BY lot_number, expires_on ${all ? "" : "HAVING SUM(quantity) > 0"}`, itemId, siteId);
-      const rank = (l) => l.expires_on && l.expires_on < date ? 2 : l.expires_on ? 0 : 1;
-      return rows.sort((a, b) => rank(a) - rank(b) || String(a.expires_on || "").localeCompare(String(b.expires_on || "")) || a.lot_number.localeCompare(b.lot_number));
-    }
-    var onHand = (itemId, siteId) => db3.one(`SELECT COALESCE(SUM(quantity),0) n FROM supply_ledger WHERE item_id=? AND site_id=?`, itemId, siteId).n;
-    var lotOnHand = (itemId, siteId, lot, expires) => db3.one(`SELECT COALESCE(SUM(quantity),0) n FROM supply_ledger WHERE item_id=? AND site_id=? AND lot_number=? AND expires_on IS ?`, itemId, siteId, lot || "", expires || null).n;
-    function drawFEFO(itemId, siteId, qty, { date, kind = "distributed", interventionId = null, extra = {} }, actor) {
-      const entries2 = [];
-      let left = qty;
-      for (const l of lots(itemId, siteId, { date })) {
-        if (left <= 0) break;
-        const take = Math.min(left, l.quantity);
-        entries2.push(addEntry({ item_id: itemId, site_id: siteId, kind, quantity: -take, lot_number: l.lot_number, expires_on: l.expires_on, occurred_on: date, intervention_id: interventionId, ...extra }, actor));
-        left -= take;
-      }
-      if (left > 0) {
-        entries2.push(addEntry({ item_id: itemId, site_id: siteId, kind: "adjustment", quantity: left, reason: SHORTFALL, flagged: 1, occurred_on: date, intervention_id: interventionId }, actor));
-        entries2.push(addEntry({ item_id: itemId, site_id: siteId, kind, quantity: -left, occurred_on: date, intervention_id: interventionId, ...extra }, actor));
-      }
-      return { entries: entries2, shortfall: Math.max(0, left) };
-    }
-    function visitLines(visitId) {
-      return db3.all(`SELECT l.*, i.name AS item_name, i.category, i.product, i.unit FROM intervention_supplies l JOIN supply_items i ON i.id=l.item_id WHERE l.intervention_id=? ORDER BY i.sort_order, i.name COLLATE NOCASE`, visitId);
-    }
-    function siteOfVisit(v) {
-      return (v.supply_site_id && site(v.supply_site_id) ? v.supply_site_id : null) || siteForUser(v.user_id);
-    }
-    function reconcileVisit(visitId, actor, { ip = null } = {}) {
-      const visit = db3.one(`SELECT id, occurred_at, user_id, client_id, supply_site_id FROM interventions WHERE id=?`, visitId);
-      const want = /* @__PURE__ */ new Map();
-      if (visit) for (const l of db3.all(`SELECT item_id, quantity, untracked FROM intervention_supplies WHERE intervention_id=?`, visitId)) {
-        const q = l.quantity - l.untracked;
-        if (q > 0) want.set(l.item_id, (want.get(l.item_id) || 0) + q);
-      }
-      const at = visit ? siteOfVisit(visit) : null;
-      const date = visit ? dayOf(visit.occurred_at) : today();
-      const drawn = db3.all(`SELECT item_id, site_id, lot_number, expires_on, -SUM(quantity) drawn FROM supply_ledger WHERE intervention_id=? AND kind IN ('distributed','restored') GROUP BY item_id, site_id, lot_number, expires_on`, visitId).filter((r) => r.drawn > 0);
-      if (!want.size && !drawn.length) return { drawn: [], restored: [] };
-      const moved = { drawn: [], restored: [] };
-      const putBack = (rows, qty) => {
-        const order = [...rows].sort((a, b) => String(b.expires_on || "9999").localeCompare(String(a.expires_on || "9999")) || b.lot_number.localeCompare(a.lot_number));
-        let left = qty;
-        for (const r of order) {
-          if (left <= 0) break;
-          const back = Math.min(left, r.drawn);
-          addEntry({ item_id: r.item_id, site_id: r.site_id, kind: "restored", quantity: back, lot_number: r.lot_number, expires_on: r.expires_on, occurred_on: date, intervention_id: visitId }, actor);
-          left -= back;
-        }
-        if (qty - left > 0) moved.restored.push({ item_id: rows[0].item_id, site_id: rows[0].site_id, quantity: qty - left });
-      };
-      db3.transaction(() => {
-        const groups = /* @__PURE__ */ new Map();
-        for (const r of drawn) {
-          const k = `${r.item_id}|${r.site_id}`;
-          if (!groups.has(k)) groups.set(k, []);
-          groups.get(k).push(r);
-        }
-        for (const [k, rows] of groups) {
-          const [itemId, siteId] = k.split("|");
-          const total = rows.reduce((n, r) => n + r.drawn, 0);
-          if (!at || siteId !== at || !want.has(itemId)) putBack(rows, total);
-          else if (want.get(itemId) < total) putBack(rows, total - want.get(itemId));
-        }
-        if (at) for (const [itemId, q] of want) {
-          const have = (groups.get(`${itemId}|${at}`) || []).reduce((n, r) => n + r.drawn, 0);
-          if (q > have) {
-            const r = drawFEFO(itemId, at, q - have, { date, interventionId: visitId }, actor);
-            moved.drawn.push({ item_id: itemId, site_id: at, quantity: q - have, shortfall: r.shortfall });
-          }
-        }
-      });
-      const nameOf = (id) => (item(id) || {}).name || id;
-      for (const x of moved.drawn) audit3.log({ user: actor, action: "supply.drawdown", entity: "supply_ledger", ip, details: { intervention: visitId, item: nameOf(x.item_id), site: x.site_id, quantity: x.quantity, shortfall: x.shortfall || void 0 } });
-      for (const x of moved.restored) audit3.log({ user: actor, action: "supply.restore", entity: "supply_ledger", ip, details: { intervention: visitId, item: nameOf(x.item_id), site: x.site_id, quantity: x.quantity } });
-      return moved;
-    }
-    function planLines({ existing = [], prev = null, desired = null, given = {} }) {
-      const byId = /* @__PURE__ */ new Map();
-      const itemOf = (id) => {
-        if (!byId.has(id)) byId.set(id, item(id));
-        return byId.get(id);
-      };
-      for (const l of existing) byId.set(l.item_id, { id: l.item_id, category: l.category, is_active: 1, name: l.item_name });
-      const catOf = (id) => (itemOf(id) || {}).category;
-      const COUNTED = Object.entries(N.COUNTED);
-      let want;
-      if (desired) {
-        if (!Array.isArray(desired)) throw badRequest("Validation failed", { fields: { supplies: "must be a list of items and quantities" } });
-        const merged = /* @__PURE__ */ new Map();
-        for (const d of desired) {
-          const id = d && typeof d.item_id === "string" ? d.item_id : null;
-          const q = Number(d && d.quantity);
-          if (!id) throw badRequest("Validation failed", { fields: { supplies: "each item needs an item_id" } });
-          if (!Number.isInteger(q) || q < 0 || q > 1e5) throw badRequest("Validation failed", { fields: { supplies: "each quantity must be a whole number from 0 to 100,000" } });
-          const it = itemOf(id);
-          if (!it) throw badRequest("Validation failed", { fields: { supplies: "lists an item this program does not keep" } });
-          if (!it.is_active && !existing.some((l) => l.item_id === id)) throw badRequest("Validation failed", { fields: { supplies: `${it.name} is no longer offered` } });
-          if (q > 0) merged.set(id, (merged.get(id) || 0) + q);
-        }
-        want = [...merged].map(([item_id, quantity]) => ({ item_id, quantity }));
-        for (const [col, cat] of COUNTED) {
-          if (!(given[col] > 0) || want.some((l) => catOf(l.item_id) === cat)) continue;
-          const d = defaultItemFor(cat);
-          if (d) {
-            byId.set(d.id, d);
-            want.push({ item_id: d.id, quantity: given[col] });
-          }
-        }
-      } else {
-        const changed = COUNTED.filter(([col]) => col in given && given[col] !== null && given[col] !== void 0 && (!prev || Number(given[col] || 0) !== Number(prev[col] || 0)));
-        if (!changed.length) return null;
-        want = existing.map((l) => ({ item_id: l.item_id, quantity: l.quantity }));
-        for (const [col, cat] of changed) {
-          const target = Number(given[col] || 0);
-          const mine = want.filter((l) => catOf(l.item_id) === cat);
-          const sum = mine.reduce((n, l) => n + l.quantity, 0);
-          if (target > sum) {
-            if (mine.length) mine[mine.length - 1].quantity += target - sum;
-            else {
-              const d = defaultItemFor(cat);
-              if (d) {
-                byId.set(d.id, d);
-                want.push({ item_id: d.id, quantity: target - sum });
-              }
-            }
-          } else {
-            let cut = sum - target;
-            for (const l of [...mine].reverse()) {
-              const c = Math.min(cut, l.quantity);
-              l.quantity -= c;
-              cut -= c;
-            }
-          }
-        }
-        want = want.filter((l) => l.quantity > 0);
-      }
-      const carried = {};
-      for (const [col, cat] of COUNTED) {
-        const mine = existing.filter((l) => l.category === cat);
-        carried[cat] = mine.reduce((n, l) => n + (l.untracked || 0), 0) + Math.max(0, Number(prev ? prev[col] || 0 : 0) - mine.reduce((n, l) => n + l.quantity, 0));
-      }
-      const lines = want.map((l) => {
-        const cat = catOf(l.item_id);
-        const untracked = carried[cat] ? Math.min(l.quantity, carried[cat]) : 0;
-        if (untracked) carried[cat] -= untracked;
-        return { ...l, untracked };
-      });
-      const counts = {};
-      for (const [col, cat] of COUNTED) {
-        const mine = lines.filter((l) => catOf(l.item_id) === cat);
-        const had = Number(prev ? prev[col] || 0 : 0);
-        counts[col] = mine.length ? mine.reduce((n, l) => n + l.quantity, 0) : col in given && given[col] !== null && given[col] !== void 0 ? Number(given[col] || 0) : !desired || !defaultItemFor(cat) ? had : 0;
-      }
-      return { lines, counts };
-    }
-    function writeLines(visit, lines) {
-      const existing = db3.all(`SELECT * FROM intervention_supplies WHERE intervention_id=?`, visit.id);
-      const stamp2 = db3.now();
-      const keep = /* @__PURE__ */ new Set();
-      for (const l of lines) {
-        const e = existing.find((x) => x.item_id === l.item_id && !keep.has(x.id));
-        if (e) {
-          keep.add(e.id);
-          if (e.quantity !== l.quantity || e.untracked !== l.untracked || e.client_id !== (visit.client_id || null) || e.user_id !== visit.user_id) {
-            db3.run(`UPDATE intervention_supplies SET quantity=?, untracked=?, client_id=?, user_id=?, updated_at=? WHERE id=?`, l.quantity, l.untracked, visit.client_id || null, visit.user_id, stamp2, e.id);
-          }
-        } else {
-          const id = uuid2();
-          keep.add(id);
-          db3.run(`INSERT INTO intervention_supplies(id,intervention_id,client_id,user_id,item_id,quantity,untracked,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, id, visit.id, visit.client_id || null, visit.user_id, l.item_id, l.quantity, l.untracked, stamp2, stamp2);
-        }
-      }
-      for (const e of existing) if (!keep.has(e.id)) {
-        db3.run(`DELETE FROM intervention_supplies WHERE id=?`, e.id);
-        db3.tombstone("intervention_supplies", e.id);
-      }
-    }
-    function relinkLines(visit) {
-      db3.run(`UPDATE intervention_supplies SET client_id=?, user_id=?, updated_at=? WHERE intervention_id=? AND (client_id IS NOT ? OR user_id IS NOT ?)`, visit.client_id || null, visit.user_id, db3.now(), visit.id, visit.client_id || null, visit.user_id);
-    }
-    var estimateReturns = (litres) => Math.round(Number(litres || 0) * syringesPerLitre());
-    function stock({ date = today() } = {}) {
-      const warnBy = addDays(date, expiryWarnDays());
-      const sums = db3.all(`SELECT item_id, site_id, lot_number, expires_on, SUM(quantity) quantity FROM supply_ledger GROUP BY item_id, site_id, lot_number, expires_on`);
-      const lotRows = sums.filter((l) => l.quantity !== 0).map((l) => ({ ...l, state: !l.expires_on ? "no_expiry" : l.expires_on < date ? "expired" : l.expires_on <= warnBy ? "expiring" : "ok" }));
-      const totals = /* @__PURE__ */ new Map();
-      for (const l of lotRows) {
-        const k = `${l.item_id}|${l.site_id}`;
-        totals.set(k, (totals.get(k) || 0) + l.quantity);
-      }
-      const out2 = { lots: lotRows, bySite: [...totals].map(([k, quantity]) => {
-        const [item_id, site_id] = k.split("|");
-        return { item_id, site_id, quantity };
-      }), warn_by: warnBy, date };
-      Object.defineProperty(out2, "onHandOf", { enumerable: false, value: (itemId, siteId) => totals.get(`${itemId}|${siteId}`) || 0 });
-      return out2;
-    }
-    function alerts({ date = today(), stock: s = null } = {}) {
-      if (!s || s.date !== date) s = stock({ date });
-      const positive = s.lots.filter((l) => l.quantity > 0);
-      const lowRows = [];
-      for (const it of db3.all(`SELECT id, name, low_stock FROM supply_items WHERE is_active=1 AND low_stock IS NOT NULL`)) {
-        for (const st of db3.all(`SELECT id, name FROM supply_sites WHERE is_active=1 AND id IN (SELECT site_id FROM supply_ledger WHERE item_id=?)`, it.id)) {
-          const q = s.onHandOf(it.id, st.id);
-          if (q <= it.low_stock) lowRows.push({ item_id: it.id, site_id: st.id, quantity: q, low_stock: it.low_stock });
-        }
-      }
-      const since = addDays(date, -90);
-      const shortfalls = db3.all(`SELECT id, item_id, site_id, quantity, occurred_on FROM supply_ledger WHERE flagged=1 AND occurred_on >= ? ORDER BY occurred_on DESC LIMIT 100`, since);
-      return {
-        expired: positive.filter((l) => l.state === "expired"),
-        expiring: positive.filter((l) => l.state === "expiring"),
-        low: lowRows,
-        shortfalls,
-        counts: { expired: positive.filter((l) => l.state === "expired").length, expiring: positive.filter((l) => l.state === "expiring").length, low: lowRows.length, shortfalls: shortfalls.length },
-        warn_days: expiryWarnDays(),
-        date
-      };
-    }
-    var DAY = /^\d{4}-\d{2}-\d{2}$/;
-    function ledgerPushProblem(user, raw) {
-      const auth3 = require_auth2();
-      if (VISIT_KINDS.includes(raw.kind) || raw.intervention_id || raw.reason === SHORTFALL || raw.flagged) return "drawn down at the office from the visit it belongs to";
-      if (!KINDS.includes(raw.kind)) return `has a value the office does not accept (supply entry "${String(raw.kind).slice(0, 30)}")`;
-      if (!item(raw.item_id)) return "refers to a record the office server does not have (the supply item)";
-      if (!site(raw.site_id)) return "refers to a record the office server does not have (the supply site)";
-      const q = Number(raw.quantity);
-      if (!Number.isInteger(q) || q === 0 || Math.abs(q) > MAX_QTY) return "has a value the office does not accept (the quantity must be a whole number, not zero)";
-      if (POSITIVE.includes(raw.kind) && q < 0) return "has a value the office does not accept (stock received or moved in cannot be negative)";
-      if (NEGATIVE.includes(raw.kind) && q > 0) return "has a value the office does not accept (stock moved out or disposed of is taken off, so it is negative)";
-      if (!raw.occurred_on || !DAY.test(String(raw.occurred_on))) return "is missing a required field: the date of the supply entry";
-      if (raw.expires_on && !DAY.test(String(raw.expires_on))) return "has a value the office does not accept (the expiry date)";
-      if (raw.kind === "received" && raw.source && !N.codes(N.SOURCES).includes(raw.source)) return "has a value the office does not accept (where the stock came from)";
-      if (raw.kind === "adjustment" && !N.codes(N.ADJUST_REASONS).includes(raw.reason)) return "has a value the office does not accept (the reason for the adjustment)";
-      if (raw.kind === "disposal" && !N.codes(N.DISPOSAL_REASONS).includes(raw.reason)) return "has a value the office does not accept (the reason for the disposal)";
-      const perm = ["opening", "received"].includes(raw.kind) ? "supplies:receive" : "supplies:manage";
-      if (!auth3.hasPerm(user, perm)) return `your role cannot record ${N.KIND_LABELS[raw.kind].toLowerCase()} supplies`;
-      return null;
-    }
-    function settlePushedEntry(user, row) {
-      if (!(row.quantity < 0)) return null;
-      const n = lotOnHand(row.item_id, row.site_id, row.lot_number, row.expires_on);
-      if (n >= 0) return null;
-      const s = addEntry({ item_id: row.item_id, site_id: row.site_id, kind: "adjustment", quantity: -n, lot_number: row.lot_number, expires_on: row.expires_on, reason: SHORTFALL, flagged: 1, occurred_on: row.occurred_on }, user);
-      audit3.log({ user, action: "supply.shortfall", entity: "supply_ledger", entityId: s.id, ip: "device", details: { item: (item(row.item_id) || {}).name, site: row.site_id, quantity: -n, after: row.id } });
-      return s;
-    }
-    function linePushProblem(user, raw, existing) {
-      const auth3 = require_auth2();
-      const visit = db3.one(`SELECT id, client_id, user_id FROM interventions WHERE id=?`, raw.intervention_id);
-      if (!visit) return "refers to a record the office server does not have (the visit)";
-      if (existing && existing.intervention_id !== raw.intervention_id) return "has a value the office does not accept (a supply line cannot move to another visit)";
-      if (visit.client_id && !auth3.canAccessClient(user, visit.client_id)) return "not on caseload";
-      if (require_rules().forTable("interventions").editableBy(user, visit)) return "not permitted";
-      const it = item(raw.item_id);
-      if (!it) return "refers to a record the office server does not have (the supply item)";
-      const q = Number(raw.quantity);
-      const u = Number(raw.untracked || 0);
-      if (!Number.isInteger(q) || q < 1 || q > 1e5) return "has a value the office does not accept (the quantity handed out)";
-      if (!Number.isInteger(u) || u < 0 || u > q || u > 0 && !Object.values(N.COUNTED).includes(it.category)) return "has a value the office does not accept (the part recorded before supplies were kept by item)";
-      raw.client_id = visit.client_id;
-      raw.user_id = visit.user_id;
-      raw.untracked = u;
-      return null;
-    }
-    function settlePushedVisit(user, visitId, { prev = null, countsPushed = false, linesPushed = false } = {}) {
-      const visit = db3.one(`SELECT * FROM interventions WHERE id=?`, visitId);
-      if (visit && countsPushed && !linesPushed) {
-        const given = {};
-        for (const col of Object.keys(N.COUNTED)) given[col] = visit[col];
-        const plan = planLines({ existing: visitLines(visitId), prev, given });
-        if (plan) writeLines(visit, plan.lines);
-      } else if (visit && linesPushed) {
-        const lines = visitLines(visitId);
-        const sets = [];
-        const params = [];
-        for (const [col, cat] of Object.entries(N.COUNTED)) {
-          const mine = lines.filter((l) => l.category === cat);
-          if (mine.length) {
-            const n = mine.reduce((s, l) => s + l.quantity, 0);
-            if (n !== visit[col]) {
-              sets.push(`${col}=?`);
-              params.push(n);
-            }
-          }
-        }
-        if (sets.length) db3.run(`UPDATE interventions SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, db3.now(), visitId);
-      }
-      return reconcileVisit(visitId, user, { ip: "device" });
-    }
-    module.exports = {
-      KINDS,
-      POSITIVE,
-      NEGATIVE,
-      VISIT_KINDS,
-      SHORTFALL,
-      DEFAULTS,
-      MAX_QTY,
-      N,
-      today,
-      addDays,
-      dayOf,
-      setting,
-      expiryWarnDays,
-      syringesPerLitre,
-      item,
-      site,
-      activeSite,
-      items,
-      sites,
-      defaultSiteId,
-      siteForUser,
-      defaultItemFor,
-      nameTaken,
-      addEntry,
-      lots,
-      onHand,
-      lotOnHand,
-      drawFEFO,
-      visitLines,
-      siteOfVisit,
-      reconcileVisit,
-      planLines,
-      writeLines,
-      relinkLines,
-      estimateReturns,
-      stock,
-      alerts,
-      ledgerPushProblem,
-      settlePushedEntry,
-      linePushProblem,
-      settlePushedVisit
-    };
-  }
-});
-
-// server/rules/interventions.js
-var require_interventions = __commonJS({
-  "server/rules/interventions.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth2();
-    var C = require_constants();
-    var { define: define2, refuse, flag } = require_core();
-    var { periodProblem, ownedBy } = require_shared();
-    var PC = require_participant_code();
-    var serviceDate = (row) => row.service_date || require_budget().localDate(row.occurred_at);
-    module.exports = define2({
-      table: "interventions",
-      fields: {
-        // Optional: community naloxone distribution and street outreach are services with no identified client.
-        client_id: { type: "string" },
-        user_id: { type: "string" },
-        type: { type: "string", required: true, list: "INTERVENTION_TYPES" },
-        occurred_at: { type: "datetime", required: true },
-        duration_minutes: { type: "number", integer: true, min: 0, max: 1440 },
-        location: { type: "string", list: "LOCATIONS" },
-        modality: { type: "string", list: "MODALITIES" },
-        outcome: { type: "string", list: "OUTCOMES" },
-        stage_of_change: { type: "string", enum: C.STAGES },
-        naloxone_kits: { type: "number", integer: true, min: 0 },
-        fentanyl_strips: { type: "number", integer: true, min: 0 },
-        funding_source_id: { type: "string" },
-        budget_line_id: { type: "string" },
-        cost: { type: "number", min: 0 },
-        summary: { type: "string", maxLen: 2e3 },
-        follow_up_due: { type: "date" },
-        // Request-only: whether to log a time entry with the visit, its category, and the calendar date the service
-        // belongs to when it is not the org-timezone date of occurred_at.
-        log_time: { type: "boolean", sync: false },
-        time_category: { type: "string", list: "TIME_CATEGORIES", sync: false },
-        service_date: { type: "date", sync: false },
-        // The items handed out ([{ item_id, quantity }]: request-only, they travel by sync as intervention_supplies rows),
-        // the site they came from, and syringe services returns (docs/SUPPLIES.md).
-        supplies: { type: "array", maxLen: 50, sync: false },
-        supply_site_id: { type: "string" },
-        syringes_returned: { type: "number", integer: true, min: 0, max: 1e5 },
-        returns_estimated: { type: "boolean" },
-        sharps_returned_litres: { type: "number", min: 0, max: 1e3 },
-        // An anonymous contact's SSP participant code (1.17.0, server/participant-code.js): stored encrypted, counted
-        // by its blind index, and only on a contact with no client record (check below).
-        participant_code: { type: "string", maxLen: 60 },
-        // Request-only (1.14.0): a note written with the visit ({ kind, format, title, content, part2_protected, ... }),
-        // created with it in one step and linked to it (routes/interventions.js; the note's own rules apply).
-        note: { type: "object", sync: false }
-      },
-      owner: { col: "user_id", all: "records:manage-others" },
-      editableBy: ownedBy(["user_id"], "records:manage-others"),
-      authorise(row, c) {
-        if (!auth3.hasPerm(c.user, "budget:write")) {
-          const e = c.existing;
-          const changed = !e || row.cost !== e.cost || row.funding_source_id !== e.funding_source_id || row.budget_line_id !== e.budget_line_id;
-          if (changed && (row.cost && row.cost > 0 || row.funding_source_id || row.budget_line_id)) return refuse("you do not have permission to attach a cost to a funding source", { status: 403, message: "You do not have permission to attach a cost to a funding source" });
-        }
-        return null;
-      },
-      check(row, c) {
-        const e = c.existing || {};
-        const val = (k) => row[k] !== void 0 ? row[k] : e[k];
-        const touched = (...ks) => !c.existing || ks.some((k) => row[k] !== void 0 && String(row[k] ?? "") !== String(e[k] ?? ""));
-        const out2 = [];
-        if (row.supply_site_id && touched("supply_site_id")) {
-          const site = require_supplies().site(row.supply_site_id);
-          if (!site) out2.push(refuse("refers to a record the office server does not have (the supply site)", { message: "Validation failed", fields: { supply_site_id: "is not one of this program's supply sites in use" } }));
-          else if (!site.is_active) out2.push(flag("was accepted, but the supply site it names is no longer in use at the office; the office will review it", { message: "Validation failed", fields: { supply_site_id: "is not one of this program's supply sites in use" }, code: "site_inactive" }));
-        }
-        if (touched("participant_code_enc", "client_id")) {
-          const code = c.plain("participant_code_enc");
-          const bad = PC.problem(code);
-          if (bad) out2.push(refuse(`has a value the office does not accept (participant code: ${bad})`, { message: "Validation failed", fields: { participant_code: bad } }));
-          else if (PC.normalise(code) && val("client_id")) out2.push(refuse("has a value the office does not accept (a participant code on a contact with a client)", { message: "A participant code is for an anonymous contact. This visit has a client: remove the code, or the client.", fields: { participant_code: "is only for a contact with no client record" } }));
-        }
-        if (touched("type", "client_id") && !val("client_id") && !C.CLIENTLESS_INTERVENTION_TYPES.includes(val("type"))) {
-          out2.push(refuse(
-            "is missing a required field (a client: only outreach and community naloxone distribution can be recorded without one)",
-            { message: "Choose the client this service was for. Only outreach and community naloxone distribution can be recorded without one.", fields: { client_id: "Client is required for this type of service" } }
-          ));
-        }
-        if (touched("cost", "funding_source_id", "budget_line_id", "occurred_at", "service_date")) {
-          const cost = val("cost");
-          const fund = val("funding_source_id");
-          const line = val("budget_line_id");
-          if (cost && cost > 0) {
-            if (!fund) out2.push(refuse("is missing a required field (a funding source for its cost)", { message: "A funding source is required when a cost is entered" }));
-            else if (!line) out2.push(refuse("is missing a required field (a budget line for its cost)", { message: "A budget line is required when a cost is entered, so it is deducted from the right allocation" }));
-            else if (!db3.one(`SELECT 1 FROM budget_lines WHERE id=? AND funding_source_id=?`, line, fund)) out2.push(refuse("has a value the office does not accept (its budget line belongs to another fund)", { message: "Budget line does not belong to the selected funding source" }));
-            else if (val("occurred_at")) out2.push(periodProblem(db3.one(`SELECT * FROM funding_sources WHERE id=?`, fund), serviceDate({ ...e, ...row }), "Date of service"));
-          } else if (line && !fund) out2.push(refuse("is missing a required field (the funding source of its budget line)", { message: "A funding source is required when a budget line is selected" }));
-        }
-        return out2;
-      },
-      // The code as stored, whoever typed it how (upper case, letters and digits): its blind index is worked out
-      // from this by sync-tables importRow, so "ab-07 85" on a phone and "AB0785" at the office count as one.
-      normalise(row) {
-        if (row.participant_code_enc !== void 0) row.participant_code_enc = PC.normalise(row.participant_code_enc);
-        return null;
-      },
-      // A visit that handed supplies out draws the office stock down once the whole batch has landed (finish), by the
-      // difference from what the office already drew for it, so a re-sent row counts once.
-      afterApply(row, o, c) {
-        const SUP = require_supplies();
-        const e = c.existing;
-        const countsPushed = Object.keys(SUP.N.COUNTED).some((col) => o[col] !== void 0 && (!e || Number(o[col] || 0) !== Number(e[col] || 0)));
-        const visits = supplyVisits(c.session);
-        touchVisit(c.session, row.id, visits.has(row.id) ? { countsPushed: countsPushed || visits.get(row.id).countsPushed } : { prev: e || null, countsPushed });
-      },
-      // A deleted visit puts back what it drew.
-      afterDelete(row, s) {
-        touchVisit(s, row.id, { linesPushed: true });
-      },
-      // The office's draw-down for every visit this push touched, after the rows, the items (intervention_supplies) and
-      // the deletions have all landed, so a device's visit and its items are weighed together. One visit's failure is
-      // its own: the device is told, and the rest of the push stands.
-      finish(s) {
-        const SUP = require_supplies();
-        for (const [id, how] of supplyVisits(s)) {
-          db3.savepoint(() => SUP.settlePushedVisit(s.user, id, how), (err2) => s.warnings.push({ table: "interventions", id, reason: `supplies not drawn down: ${String(err2 && err2.message || err2).slice(0, 160)}` }));
-        }
-      }
-    });
-    function supplyVisits(s) {
-      return s.state.supplyVisits || (s.state.supplyVisits = /* @__PURE__ */ new Map());
-    }
-    function touchVisit(s, id, patch) {
-      if (typeof id !== "string") return;
-      const m = supplyVisits(s);
-      m.set(id, { prev: null, countsPushed: false, linesPushed: false, ...m.get(id) || {}, ...patch });
-    }
-    module.exports.touchVisit = touchVisit;
   }
 });
 
@@ -25668,7 +25676,8 @@ var require_caloms_schedule = __commonJS({
       return { id, from, to, provider_id: providerId, clients: x.clientIds.length, counts: x.counts, held_back: x.excluded, sha256: hash2, file_name: fileName };
     }
     function alreadyPrepared(from, to, providerId) {
-      return db3.one(`SELECT id FROM caloms_submissions WHERE period_from=? AND period_to=? AND origin='scheduled' AND status='prepared' AND file_enc IS NOT NULL AND provider_id IS ? ORDER BY created_at LIMIT 1`, from, to, providerId);
+      return db3.one(`SELECT id FROM caloms_submissions WHERE period_from=? AND period_to=? AND origin='scheduled' AND provider_id IS ?
+    AND ((status='prepared' AND file_enc IS NOT NULL) OR status IN ('produced','discarded')) ORDER BY created_at LIMIT 1`, from, to, providerId);
     }
     function run2({ from, to, user = null, ip = null, origin = "scheduled" }) {
       const S = C.schedule();
@@ -26174,8 +26183,8 @@ var require_caloms2 = __commonJS({
         wholeProgramme(ctx, "produce");
         const ids = JSON.parse(sub.record_ids || "[]");
         const recs = ids.length ? db3.all(`SELECT id, client_id, updated_at, extracted_at FROM caloms_records WHERE id IN (${ids.map(() => "?").join(",")})`, ...ids) : [];
-        const stale = ids.length - recs.length + recs.filter((x) => x.updated_at > sub.created_at || x.extracted_at && x.extracted_at > sub.created_at).length;
-        if (stale) throw new HttpError3(409, `${stale} record(s) in this file were changed, removed or sent in another file after it was prepared, so it no longer matches the records. Discard it and prepare a new one.`, { stale });
+        const stale = ids.length - recs.length + recs.filter((x) => x.updated_at > sub.created_at || x.extracted_at).length;
+        if (stale) throw new HttpError3(409, `${stale} record(s) in this file were changed or removed after it was prepared, or were already sent in another file, so it no longer matches what is left to send. Discard it and prepare a new one.`, { stale });
         const clientIds = [...new Set(recs.map((x) => x.client_id))];
         const counts = JSON.parse(sub.counts || "{}");
         const stamp2 = db3.now();
@@ -26205,7 +26214,8 @@ var require_caloms2 = __commonJS({
         const v = validate(ctx.body || {}, { uploaded_on: { type: "date", required: true }, dhcs_reference: { type: "string", maxLen: 60, pattern: /^[A-Za-z0-9 ._/#-]*$/ } });
         if (sub.status !== "produced") throw new HttpError3(409, "Produce the file first: a prepared file has not been accounted, so it cannot have been sent.");
         if (v.uploaded_on > require_budget().localDate()) throw badRequest("The upload date cannot be in the future", { fields: { uploaded_on: "in the future" } });
-        if (v.uploaded_on < sub.created_at.slice(0, 10)) throw badRequest("The upload date is before the file was produced", { fields: { uploaded_on: "before the file existed" } });
+        const produced = db3.one(`SELECT created_at FROM caloms_submission_events WHERE submission_id=? AND action='produced' ORDER BY created_at LIMIT 1`, sub.id);
+        if (v.uploaded_on < (produced ? produced.created_at : sub.created_at).slice(0, 10)) throw badRequest("The upload date is before the file was produced", { fields: { uploaded_on: "before the file existed" } });
         db3.transaction(() => {
           db3.run(`UPDATE caloms_submissions SET uploaded_at=?, uploaded_by=?, dhcs_reference=?, updated_at=? WHERE id=?`, v.uploaded_on, ctx.user.id, v.dhcs_reference || null, db3.now(), sub.id);
           SCHED.logEvent(sub.id, "uploaded", ctx.user, [v.uploaded_on, v.dhcs_reference].filter(Boolean).join(" "));
@@ -35579,7 +35589,7 @@ var require_notes2 = __commonJS({
         rules.assertEditable("notes", ctx, n);
         require_crud().assertFresh(ctx, n, "note");
         const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids, ai_assisted: shape.ai_assisted }, { partial: true, existing: n });
-        if (v.ai_assisted !== void 0) v.ai_assisted = v.ai_assisted || Number(n.ai_assisted) ? 1 : 0;
+        if (v.ai_assisted !== void 0) v.ai_assisted = require_notes().keepAiAssisted(v.ai_assisted, n);
         rules.assertWrite("notes", { id: n.id, ...rules.toColumns("notes", v) }, ctx, { existing: n });
         const sets = [];
         const params = [];
@@ -35648,7 +35658,7 @@ var require_notes2 = __commonJS({
         if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
         if (n.status !== "draft") throw badRequest("Note is already signed");
         if (n.author_id !== ctx.user.id) throw forbidden("Only the author can sign a note. Supervisors countersign instead.");
-        const aiReviewed = ctx.body && (ctx.body.ai_reviewed === true || ctx.body.ai_reviewed === 1 || ctx.body.ai_reviewed === "1");
+        const aiReviewed = require_notes().aiReviewed(ctx.body && ctx.body.ai_reviewed);
         if (Number(n.ai_assisted) && !aiReviewed) throw badRequest("This note includes text drafted by the AI copilot. Confirm you have reviewed and corrected it before signing.", { ai_review_required: true, fields: { ai_reviewed: "confirm you reviewed the AI-drafted text" } });
         const identity = await verifyIdentity(ctx);
         const hash2 = sha2562(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ""}`);
@@ -35842,7 +35852,6 @@ var require_interventions2 = __commonJS({
     var SN = require_supply_names();
     var UNTRACKED_NAMES = { naloxone_kits: "Naloxone kit", fentanyl_strips: "Fentanyl test strips" };
     var { localDate, cents } = require_budget();
-    var PC = require_participant_code();
     function serviceDate(v) {
       return v._service_date || localDate(v.occurred_at);
     }
@@ -35933,9 +35942,9 @@ var require_interventions2 = __commonJS({
     }
     function encodeCode(v) {
       if (v.participant_code === void 0) return;
-      const n = PC.normalise(v.participant_code);
-      v.participant_code_enc = n ? encrypt3(n) : null;
-      v.participant_code_idx = PC.index(n);
+      const { code, idx } = require_interventions().participantCode(v.participant_code);
+      v.participant_code_enc = code ? encrypt3(code) : null;
+      v.participant_code_idx = idx;
       delete v.participant_code;
     }
     var notes = require_notes2();
