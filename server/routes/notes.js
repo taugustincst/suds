@@ -97,7 +97,10 @@ function checkNewNote(ctx, v) {
   if (!auth.hasPerm(ctx.user, kindPerm(v.kind, 'write'))) throw forbidden(`You cannot author ${v.kind} notes`);
   if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound('Client not found');
   auth.assertClientAccess(ctx, v.client_id);
-  rules.assertWrite('notes', rules.toColumns('notes', v), ctx);
+  const cols = rules.toColumns('notes', v);
+  rules.assertWrite('notes', cols, ctx);
+  // Marked by the table's rules when the author's copilot draft for this client went into it (rules/notes.js).
+  if (Number(cols.ai_assisted) && !v.ai_assisted) { v.ai_assisted = 1; v._ai_from_draft = true; }
 }
 /** Write a new (draft) note that checkNewNote has passed, and audit it. Returns its id. */
 function insertNote(ctx, v) {
@@ -107,7 +110,7 @@ function insertNote(ctx, v) {
   db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids,counseling_note,ai_assisted) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     id, v.client_id, ctx.user.id, v.kind, v.format || 'narrative', v.title ? encrypt(v.title) : null, encrypt(v.content), v.structured ? encrypt(JSON.stringify(v.structured)) : null, v.occurred_at,
     v.intervention_id || null, v.call_id || null, v.part2_protected ?? 1, v.source || 'manual', v.source_ref || null, author?.requires_cosign ? 1 : 0, v.cosign_requested ? 1 : 0, linked, v.counseling_note ? 1 : 0, v.ai_assisted ? 1 : 0);
-  audit.log({ user: ctx.user, action: 'note.create', entity: 'note', entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : undefined, counseling_note: v.counseling_note ? true : undefined, with_visit: v._with_visit ? true : undefined, ai_assisted: v.ai_assisted ? true : undefined } });
+  audit.log({ user: ctx.user, action: 'note.create', entity: 'note', entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : undefined, counseling_note: v.counseling_note ? true : undefined, with_visit: v._with_visit ? true : undefined, ai_assisted: v.ai_assisted ? true : undefined, ai_from_draft: v._ai_from_draft || undefined } });
   return id;
 }
 
@@ -189,7 +192,11 @@ module.exports = (r) => {
     const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids, ai_assisted: shape.ai_assisted }, { partial: true, existing: n });
     // AI-assisted stays AI-assisted (server/rules/notes.js): a later save cannot take the mark off.
     if (v.ai_assisted !== undefined) v.ai_assisted = v.ai_assisted || Number(n.ai_assisted) ? 1 : 0;
-    rules.assertWrite('notes', { id: n.id, ...rules.toColumns('notes', v) }, ctx, { existing: n });
+    const cols = { id: n.id, ...rules.toColumns('notes', v) };
+    rules.assertWrite('notes', cols, ctx, { existing: n });
+    // Marked by the table's rules when the author's copilot draft for this client went into it (rules/notes.js).
+    const fromDraft = Number(cols.ai_assisted) === 1 && !Number(n.ai_assisted) && !v.ai_assisted;
+    if (fromDraft) v.ai_assisted = 1;
     const sets = []; const params = [];
     for (const k of ['format', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'cosign_requested', 'ai_assisted']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
     if (v.title !== undefined) { sets.push('title_enc=?'); params.push(v.title ? encrypt(v.title) : null); }
@@ -202,7 +209,7 @@ module.exports = (r) => {
     if (v.counseling_note !== undefined) require('../rules/notes').reissueAddenda(n.id, n.counseling_note, v.counseling_note ? 1 : 0);
     // Flagged as a counseling note here: the devices that held it drop it (routes/sync.js flaggedSince).
     const flagged = v.counseling_note !== undefined && !Number(n.counseling_note) && !!v.counseling_note;
-    audit.log({ user: ctx.user, action: 'note.update', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v), counseling_note_set: flagged || undefined } });
+    audit.log({ user: ctx.user, action: 'note.update', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v), counseling_note_set: flagged || undefined, ai_from_draft: fromDraft || undefined } });
     return { ok: true, updated_at: stamp };
   });
 

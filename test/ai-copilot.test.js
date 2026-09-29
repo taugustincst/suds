@@ -61,8 +61,10 @@ before(async () => {
 });
 after(async () => { await H.stop(); await new Promise(ok => fake.close(ok)); });
 
-// Each person may ask for a dozen drafts a minute (routes/ai.js); the tests ask for more than that.
-const fresh = () => { for (const u of H.db.all(`SELECT id FROM users`)) require('../server/app').rateLimitReset(`ai:${u.id}`); };
+// Each person may ask for a dozen drafts a minute (routes/ai.js); the tests ask for more than that. Each test
+// also starts with no copilot draft waiting for a note (server/rules/notes.js): an earlier test's drafts were
+// never saved, and would otherwise mark the next note a test writes for the same client.
+const fresh = () => { for (const u of H.db.all(`SELECT id FROM users`)) require('../server/app').rateLimitReset(`ai:${u.id}`); require('../server/rules/notes').pendingDrafts.clear(); };
 const lastAudit = (action) => H.db.one(`SELECT * FROM audit_log WHERE action=? ORDER BY id DESC LIMIT 1`, action);
 async function attestAndEnable() {
   const a = await admin.post('/api/ai/attestation', { provider: 'Anthropic', signed_by: 'County counsel office', agreement_date: '2026-01-15', reference: 'BAA-2026-017', baa: true, qsoa: true, counsel_reviewed: true });

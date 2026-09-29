@@ -65,7 +65,7 @@ administrator, under Settings → Users & permissions. And the client must be on
 | --- | --- | --- |
 | Switched on | off | Needs the agreement and the key. |
 | Model | `claude-opus-5-5` | Leave blank for the default. Another model id from the provider (a `claude-…` id) can be entered, for example a newer or a cheaper model; the request for any model other than the default leaves out the options only the default is known to accept (the explicit effort level and the provider's safeguard fallback). Test a draft after changing it. |
-| Most drafts per calendar month | 500 | For the whole programme, counted from the 1st (UTC). Every draft the provider returns counts, including one it declined or cut off (it did the work); since 1.17.0 a call that failed (rate limited, unavailable, timed out, refused as a request) is recorded and shown but does not use up the cap. Once reached, staff are told and write documentation themselves until the 1st. 0 stops it. |
+| Most drafts per calendar month | 500 | For the whole programme, counted from the 1st (UTC). Every draft the provider returns counts, including one it declined or cut off (it did the work); since 1.17.0 a call that failed (rate limited, unavailable, timed out, refused as a request) is recorded and shown but does not use up the cap. Once reached, staff are told and write documentation themselves until the 1st. 0 stops it. A draft on its way to the provider counts from the moment it is sent (since 1.17.1), so concurrent requests cannot overshoot the cap. |
 
 The *This month* card shows the drafts used, failures, tokens sent and received, and drafts by feature. The
 audit log's `ai.` entries show each call.
@@ -165,8 +165,11 @@ client's information. The legal basis for sending the rest is the BAA/QSOA, not 
   review before signing". Signing such a note requires the author's statement that they reviewed and corrected
   it (`ai_reviewed`) — on the office server and in a sync from a device alike — and the `note.sign` audit entry
   records `ai_assisted` and `ai_reviewed`. **The `ai.draft` audit entry is the authoritative record that the
-  copilot was used** (with the note's id when the draft was asked for in a saved note): a draft copied into a
-  note that was never saved first carries the mark only because the note form set it. (Assessments and care
+  copilot was used** (with the note's id when the draft was asked for in a saved note). A draft asked for in a
+  note not saved yet is remembered by the office (in memory, for 120 minutes) for its author and client: the next
+  note that author writes text into for that client, over REST or sync, is marked AI-assisted by the server
+  whatever the browser sends, and a SUD counseling note is refused while one is waiting (since 1.17.1;
+  `server/rules/notes.js`). (Assessments and care
   plan entries made from suggestions are not flagged in the record; the `ai.draft` audit entry shows the copilot
   was used for that client.)
 * **Settings changes** (`ai.settings.update`: enabled, model, cap) and the agreement (`ai.attestation.record`,

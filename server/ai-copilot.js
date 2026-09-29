@@ -75,10 +75,19 @@ function usage(since = monthStart()) {
   return { since, calls: drafts, attempts: t.attempts, input_tokens: t.input_tokens, output_tokens: t.output_tokens, errors, failed, by_feature: byFeature };
 }
 
+// Drafts sent to the provider and not answered yet (this process; SUDS runs one server process per database).
+// The cap is checked before the provider is called and the draft recorded in ai_usage only once it answers, so
+// without these a burst of concurrent requests at cap - 1 all passed the check and overshot the cap (security
+// review of 1.17.0, r11 finding 1). draft() reserves one before anything is sent and releases it once the outcome
+// is recorded; status() counts them as used.
+let inFlight = 0;
+const pending = () => inFlight;
+
 /** Whether a draft can be asked for now, and if not, why (in words for the person at the keyboard). */
 function status() {
   const s = settings();
   const used = usage().calls; // drafts, not failed calls (COUNTED)
+  const reserved = used + inFlight; // with the drafts on their way to the provider
   let reason = null; let code = null;
   const no = (c, r) => { code = c; reason = r; };
   if (config.local) no('device', 'The AI copilot runs only on an office server. SUDS on this device never sends anything to an AI provider.');
@@ -87,7 +96,7 @@ function status() {
   else if (!keyConfigured()) no('no_key', 'The AI copilot is not configured on this server (no provider API key). Tell your administrator.');
   else if (endpointProblem()) no('endpoint', `The AI copilot is misconfigured on this server: ${endpointProblem()}.`);
   else if (!s.monthly_cap) no('cap', 'The AI copilot is paused for this program. Write the documentation yourself as usual.');
-  else if (used >= s.monthly_cap) no('cap', `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? '' : 's'} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
+  else if (reserved >= s.monthly_cap) no('cap', `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? '' : 's'} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
   return { available: !reason, reason, code, enabled: s.enabled, attested: !!s.attestation, key_configured: keyConfigured(), model: s.model, monthly_cap: s.monthly_cap, used_this_month: used };
 }
 
@@ -349,9 +358,12 @@ async function send(prompt, model) {
   for (let attempt = 0; ; attempt++) {
     let wait = null; let failure = null;
     try {
-      res = await fetch(`${config.ai.baseUrl}/v1/messages`, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
+      // A redirect is never followed (security review of 1.17.0, r11 finding 5): the session text and the key would
+      // go wherever the answer points. The provider's API does not redirect, so one is refused, not retried.
+      res = await fetch(`${config.ai.baseUrl}/v1/messages`, { method: 'POST', headers, body: payload, redirect: 'error', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
     } catch (e) {
       if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) throw new AiError('timeout', 504, 'The AI provider did not answer in time. Your form is unchanged: try again, or write it yourself.');
+      if (e && e.cause && /redirect/i.test(String(e.cause.message || ''))) throw new AiError('redirect', 502, 'The AI provider\'s address answered with a redirect, which SUDS does not follow. Your form is unchanged: write it yourself, and tell your administrator.');
       failure = new AiError('unreachable', 503, 'The server could not reach the AI provider. Your form is unchanged: try again later, or write it yourself.');
       wait = retryWait(null);
     }
@@ -390,6 +402,12 @@ function recordUsage({ user, feature, model, outcome, tokens = {}, ms }) {
 async function draft({ user, clientId, feature, pieces, build }) {
   const st = status();
   if (!st.available) throw new AiError(st.code === 'cap' ? 'cap' : 'off', st.code === 'cap' ? 429 : 409, st.reason, { ai_unavailable: st.code });
+  // Reserved in the same turn of the event loop as the check above, before anything is awaited; released in the
+  // finally below, after the outcome is in ai_usage.
+  inFlight++;
+  try { return await sendDraft({ user, clientId, feature, pieces, build }); } finally { inFlight--; }
+}
+async function sendDraft({ user, clientId, feature, pieces, build }) {
   const author = db.one(`SELECT display_name FROM users WHERE id=?`, user.id);
   const ids = identifiersFor(clientId, author);
   const counts = {};
@@ -413,5 +431,5 @@ async function draft({ user, clientId, feature, pieces, build }) {
   }
 }
 
-module.exports = { DEFAULT_MODEL, MODEL_ID, DEFAULT_CAP, MAX_TEXT, MAX_TOKENS, COUNTED, retryWait, settings, attestation, status, usage, monthStart, keyConfigured, endpointProblem,
+module.exports = { DEFAULT_MODEL, MODEL_ID, DEFAULT_CAP, MAX_TEXT, MAX_TOKENS, COUNTED, retryWait, settings, attestation, status, pending, usage, monthStart, keyConfigured, endpointProblem,
   identifiersFor, deidentify, reidentify, buildRequest, send, draft, AiError, PATTERNS };

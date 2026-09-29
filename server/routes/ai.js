@@ -152,6 +152,9 @@ module.exports = (r) => {
     // of 1.17.0, L1): signing it then needs the author's review statement. The ai.draft audit entry above, with
     // this note's id, is the authoritative record that the copilot was used.
     if (v.note_id) db.run(`UPDATE notes SET ai_assisted=1, updated_at=? WHERE id=? AND ai_assisted=0`, db.now(), v.note_id);
+    // A note not saved yet: the next note this author writes for this client is marked AI-assisted by the office,
+    // over REST or sync, whatever the browser sends (server/rules/notes.js, security review of 1.17.0, r11 finding 2).
+    else require('../rules/notes').copilotDrafted(ctx.user.id, v.client_id);
     const secs = P.NOTE_SECTIONS[format];
     const d = out.data || {};
     const draft = secs ? { sections: Object.fromEntries(secs.map(([k]) => [k, s(d.sections && d.sections[k], 20000)])) } : { narrative: s(d.narrative, 50000) };

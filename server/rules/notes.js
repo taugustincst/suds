@@ -40,6 +40,36 @@ function reissueAddenda(noteId, was, now) {
   if (Number(was) && !Number(now)) db.run(`UPDATE note_addenda SET updated_at=? WHERE note_id=?`, db.now(), noteId);
 }
 
+/**
+ * Copilot drafts not yet in a note (security review of 1.17.0, r11 finding 2). A draft asked for in a saved note
+ * marks that note on the server (routes/ai.js); one asked for in a note not saved yet has no note to mark, and
+ * until now the note it went into was marked AI-assisted only if the browser said so. So a successful note draft
+ * with no note id is remembered here, for its author and client, for AI_DRAFT_MINUTES: the next note that author
+ * writes text into for that client (a new note, or new text in a draft, over REST or sync push) is marked
+ * AI-assisted by the office, whatever the browser sends, and uses it up. Several drafts before a save (asking
+ * again) are one pending draft: they go into one note. Held in memory (SUDS runs one server process per
+ * database; the copilot runs only on the office server): no schema change, and a restart forgets them.
+ * Consequences of the mark are the existing ones: signing needs the review statement, and a SUD counseling note
+ * is refused while one is pending (the author writes one without the copilot, or saves the draft first).
+ */
+const AI_DRAFT_MINUTES = 120;
+const pendingDrafts = new Map(); // `${userId}|${clientId}` -> expiry (ms)
+const draftKey = (userId, clientId) => `${userId}|${clientId}`;
+function copilotDrafted(userId, clientId) {
+  const now = Date.now();
+  if (pendingDrafts.size > 5000) for (const [k, exp] of pendingDrafts) if (exp <= now) pendingDrafts.delete(k);
+  pendingDrafts.set(draftKey(userId, clientId), now + AI_DRAFT_MINUTES * 60_000);
+}
+function draftPending(userId, clientId) {
+  const k = draftKey(userId, clientId); const exp = pendingDrafts.get(k);
+  if (exp === undefined) return false;
+  if (exp <= Date.now()) { pendingDrafts.delete(k); return false; }
+  return true;
+}
+const useDraft = (userId, clientId) => pendingDrafts.delete(draftKey(userId, clientId));
+/** Does this write put text into the note: a new note, or new title, text or sections in a draft? */
+const writesText = (c) => !c.existing || (c.existing.status === 'draft' && c.changed().some(k => ['title_enc', 'content_enc', 'structured_enc'].includes(k)));
+
 /** Does this push sign the note: a new note that is not a draft, or a draft that stops being one? */
 const signs = (row, c) => !!row.status && row.status !== 'draft' && (!c.existing || c.existing.status === 'draft');
 
@@ -71,6 +101,9 @@ module.exports = define({
     const e = c.existing || {};
     const kind = c.existing ? e.kind : row.kind;
     const out = [];
+    // A copilot draft this author asked for this client, not in a note yet: this note is where it went (above).
+    const fromDraft = !!c.user && writesText(c) && draftPending(c.user.id, c.existing ? e.client_id : row.client_id);
+    if (fromDraft) { row.ai_assisted = 1; c.copilotDraft = true; }
     if (row.counseling_note && Number(row.counseling_note) && kind !== 'clinical') out.push(refuse('has a value the office does not accept (only a clinical note can be a SUD counseling note)', { message: 'Only a clinical note can be a SUD counseling note' }));
     // Problem ids must be on this client's problem list.
     if (row.problem_ids !== undefined && row.problem_ids !== null && (!c.existing || String(row.problem_ids) !== String(e.problem_ids))) {
@@ -86,7 +119,8 @@ module.exports = define({
     const counseling = Number(row.counseling_note ?? e.counseling_note) === 1;
     const ai = Number(row.ai_assisted) === 1 || Number(e.ai_assisted) === 1;
     if (counseling && ai && (!c.existing || ['counseling_note', 'ai_assisted'].some(k => row[k] !== undefined && row[k] !== null && Number(row[k]) !== Number(e[k] || 0)))) {
-      out.push(refuse('has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot)', { message: 'A SUD counseling note cannot include text drafted by the AI copilot', fields: { counseling_note: 'this note has AI-drafted text; a SUD counseling note is written without the copilot' } }));
+      if (fromDraft && Number(e.ai_assisted) !== 1) out.push(refuse('has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot: a copilot draft for this client is not in a note yet)', { message: `You asked the AI copilot for a note draft for this client in the last ${AI_DRAFT_MINUTES / 60} hours that has not been saved in a note, so this note is treated as including it, and a SUD counseling note cannot include text drafted by the AI copilot. Save the drafted note first, or write the counseling note later.`, fields: { counseling_note: 'a copilot draft for this client is not in a note yet' } }));
+      else out.push(refuse('has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot)', { message: 'A SUD counseling note cannot include text drafted by the AI copilot', fields: { counseling_note: 'this note has AI-drafted text; a SUD counseling note is written without the copilot' } }));
     }
     // An AI-assisted note is signed only with its author's statement that they reviewed the drafted text, over sync
     // as over REST (security review of 1.17.0, L1): the device sends it with the row (local/sync.js).
@@ -98,6 +132,8 @@ module.exports = define({
     if (c.via === 'sync' && signs(row, c) && (c.user.id !== (c.existing ? e.author_id : row.author_id) || (row.signed_by && row.signed_by !== c.user.id))) {
       out.push(refuse('not permitted: only the author can sign a note', { status: 403, message: 'Only the author can sign a note. Supervisors countersign instead.' }));
     }
+    // Used up by this note once nothing refuses it: over REST now (the route writes next), over sync once it lands.
+    if (fromDraft && !out.length && c.via !== 'sync') useDraft(c.user.id, c.existing ? e.client_id : row.client_id);
     return out;
   },
   normalise(row, c) {
@@ -146,6 +182,10 @@ module.exports = define({
   // A note signed on a device closes its reminder at the office too, as signing here does (routes/notes.js).
   // The signature is recomputed as POST /api/notes/:id/sign computes it, and audited as that route audits it.
   afterApply(row, o, c) {
+    if (c.copilotDraft) {
+      useDraft(c.user.id, c.existing ? c.existing.client_id : row.client_id);
+      require('../audit').log({ user: c.user, action: 'note.ai_assisted', entity: 'note', entityId: row.id, clientId: c.existing ? c.existing.client_id : row.client_id, ip: 'device', details: { via: 'sync', cause: 'copilot_draft' } });
+    }
     if (c.existing) reissueAddenda(row.id, c.existing.counseling_note, o.counseling_note ?? c.existing.counseling_note);
     if (c.existing && c.existing.status !== 'draft') return;
     const n = db.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required, ai_assisted FROM notes WHERE id=?`, row.id);
@@ -158,6 +198,7 @@ module.exports = define({
 });
 module.exports.closeSignReminders = closeSignReminders;
 module.exports.reissueAddenda = reissueAddenda;
+Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts });
 
 /**
  * Who may read a SUD counseling note (42 CFR §2.11), restricted by design from 1.16.1 (the owner's decision): its
