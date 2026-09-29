@@ -127,6 +127,18 @@ function contentDisposition(type, filename, fallback = 'download') {
   return `${type === 'inline' ? 'inline' : 'attachment'}; filename="${ascii}"${ascii !== name ? `; filename*=UTF-8''${star}` : ''}`;
 }
 
+/**
+ * The headers for a stored file served back to the browser (a resource photo, a form attachment, a document).
+ * Its bytes came from a person or a device, so it is never a page of this origin (security review of 1.16.0,
+ * H1): the type is one the route has checked, never sniffed, and the file runs in a sandbox that loads nothing.
+ * A PDF keeps the app's own policy instead, because browsers do not show a PDF in a sandboxed document; its
+ * bytes run in the PDF viewer, not as a page of this origin.
+ */
+function fileHeaders(type, disposition) {
+  return { 'Content-Type': type, 'Content-Disposition': disposition, 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'same-origin',
+    ...(type === 'application/pdf' ? {} : { 'Content-Security-Policy': "sandbox; default-src 'none'" }) };
+}
+
 function sendJson(res, status, obj) {
   const body = JSON.stringify(obj ?? null);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(body) });
@@ -311,4 +323,4 @@ function serveStatic(root) {
   };
 }
 
-module.exports = { Router, HttpError, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, parseRequestUrl, readBody, securityHeaders, contentDisposition, sendJson, sendJsonTo, sendFile, serveStatic, chooseEncoding, COMPRESS_MIN };
+module.exports = { Router, HttpError, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, parseRequestUrl, readBody, securityHeaders, contentDisposition, fileHeaders, sendJson, sendJsonTo, sendFile, serveStatic, chooseEncoding, COMPRESS_MIN };

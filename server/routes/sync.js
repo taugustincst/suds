@@ -417,8 +417,26 @@ module.exports = (r) => {
     if (t.clientCol && row[t.clientCol]) auth.assertClientAccess(ctx, row[t.clientCol]);
     const value = ctx.body && ctx.body.value;
     if (typeof value !== 'string' || !value) throw badRequest('value is required');
-    const stored = t.enc.includes(ctx.params.column) ? encrypt(value) : value;
-    db.run(`UPDATE ${t.name} SET ${ctx.params.column}=?, updated_at=? WHERE id=?`, stored, db.now(), row.id);
+    // Whose file this is (security review of 1.16.0, M1). A device fills in the file of a row its own push
+    // created, while it is still empty; anything else replaces a stored file, which is a change to the record:
+    // its table's rules (a completed form is a supervisor's), and its creator's or records:manage-others'. A
+    // completed form's signed copy is never replaced this way.
+    const R = require('../rules').forTable(t.name);
+    const mine = !!R.createdBy[0] && row[R.createdBy[0]] === ctx.user.id;
+    if (!(row[ctx.params.column] == null && mine)) {
+      if (row[ctx.params.column] != null && R.fileFrozen && R.fileFrozen(row)) throw forbidden('This file belongs to a completed form and cannot be replaced');
+      require('../rules').assertEditable(t.name, ctx, row);
+      if (!mine && !auth.hasPerm(ctx.user, 'records:manage-others')) throw forbidden('Only the person who added this file, or a supervisor, can replace it');
+    }
+    // The bytes are checked as the upload routes check them: a resource photo is a picture, whatever the row says.
+    if (!/^[A-Za-z0-9+/=\s]+$/.test(value)) throw badRequest('value must be base64');
+    const buf = Buffer.from(value, 'base64');
+    const sets = { [ctx.params.column]: t.enc.includes(ctx.params.column) ? encrypt(value) : value, bytes: buf.length };
+    if (t.name === 'resource_photos') {
+      sets.content_type = require('./resources').sniffPicture(buf);
+      if (!sets.content_type) throw badRequest('A picture must be a JPEG, PNG or WebP image');
+    }
+    db.run(`UPDATE ${t.name} SET ${Object.keys(sets).map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...Object.values(sets), db.now(), row.id);
     audit.log({ user: ctx.user, action: 'sync.blob.upload', entity: t.name, entityId: row.id, clientId: t.clientCol ? row[t.clientCol] : null, ip: ctx.ip, details: { bytes: value.length } });
     return { ok: true };
   });

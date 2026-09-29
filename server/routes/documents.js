@@ -7,7 +7,7 @@ const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
 const C = require('../constants');
-const { badRequest, notFound, contentDisposition } = require('../http');
+const { badRequest, notFound, contentDisposition, fileHeaders } = require('../http');
 const { validate } = require('../validate');
 const { uuid } = require('../crypto');
 const { extractText } = require('../doc-text');
@@ -108,7 +108,7 @@ module.exports = (r) => {
   r.get('/api/documents/:id/file', auth.requireAuth, auth.requirePerm('documents:read'), (ctx) => {
     const d = loadVisible(ctx, ctx.params.id); if (!d.file_b64) throw notFound('No file for this document');
     audit.log({ user: ctx.user, action: 'document.download', entity: 'policy_document', entityId: d.id, ip: ctx.ip });
-    ctx.res.writeHead(200, { 'Content-Type': safeContentType(d.content_type), 'Content-Disposition': contentDisposition(ctx.query.get('inline') === '1' ? 'inline' : 'attachment', d.filename, 'document') });
+    ctx.res.writeHead(200, fileHeaders(safeContentType(d.content_type), contentDisposition(ctx.query.get('inline') === '1' ? 'inline' : 'attachment', d.filename, 'document')));
     ctx.res.end(Buffer.from(d.file_b64, 'base64')); return null;
   });
 };

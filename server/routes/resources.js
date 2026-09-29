@@ -10,7 +10,7 @@ const C = require('../constants');
 // A resource's fields: the table's rules (server/rules/resources.js), which sync push applies to a device's rows.
 const shape = require('../rules').forTable('resources').fields;
 const MAX_PHOTOS = 12, MAX_PHOTO_BYTES = 2 * 1024 * 1024, MAX_THUMB_BYTES = 96 * 1024;
-const { badRequest, HttpError } = require('../http');
+const { badRequest, HttpError, fileHeaders, contentDisposition } = require('../http');
 const pictures = require('../region-pictures');
 // Accept only real picture bytes (magic numbers), never trusting the declared type.
 function sniff(buf) {
@@ -28,7 +28,6 @@ function fromDataUrl(v, maxBytes, label) {
   const type = sniff(buf); if (!type) throw badRequest(`${label} must be a JPEG, PNG or WebP picture`);
   return { b64, buf, type };
 }
-const b64Type = (b) => !b ? null : b.startsWith('iVBOR') ? 'image/png' : b.startsWith('UklGR') ? 'image/webp' : 'image/jpeg';
 const tagList = (v, allowed) => v == null ? v : String(v).split(',').map(x => x.trim().toLowerCase().replace(/[\s-]+/g, '_')).filter(x => allowed.includes(x)).filter((x, i, a) => a.indexOf(x) === i).join(',');
 function photoRows(resourceId, withData = false) {
   // Pictures are referenced by URL, never inlined. A directory of a few hundred providers with photos
@@ -72,10 +71,13 @@ module.exports = (r) => {
     const body = Buffer.from(p[column], 'base64');
     const etag = `"${require('../crypto').sha256(p.id + (p.updated_at || p.created_at) + column).slice(0, 32)}"`;
     if (ctx.headers['if-none-match'] === etag) { ctx.res.writeHead(304, { ETag: etag }); ctx.res.end(); return null; }
+    // The type is the bytes' own, never the one recorded with them (a device once chose it: security review
+    // of 1.16.0, H1). Anything that is not a picture is handed over as an opaque download.
+    const type = sniff(body);
+    const name = `picture-${p.id.slice(0, 8)}${column === 'thumb_b64' ? '-thumb' : ''}.${type ? type.split('/')[1] : 'bin'}`;
     ctx.res.writeHead(200, {
-      'Content-Type': column === 'thumb_b64' ? b64Type(p.thumb_b64) : p.content_type,
-      'Content-Length': body.length, ETag: etag,
-      'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff',
+      ...fileHeaders(type || 'application/octet-stream', contentDisposition(type ? 'inline' : 'attachment', name)),
+      'Content-Length': body.length, ETag: etag, 'Cache-Control': 'private, max-age=86400',
     });
     ctx.res.end(body);
     return null;
@@ -180,3 +182,4 @@ module.exports = (r) => {
     return { ok: true };
   });
 };
+module.exports.sniffPicture = sniff;
