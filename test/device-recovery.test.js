@@ -82,17 +82,19 @@ test('locked: the sign-in page learns a code exists; wrong codes are refused, sl
   const malformed = await recover({ code: 'ABCD-1234', password: PW2 });
   assert.equal(malformed.status, 400); assert.ok(malformed.data.fields && malformed.data.fields.code, 'a code of the wrong shape is said so');
   assert.ok(!malformed.data.wrongRecoveryCode, 'and does not count as a wrong code');
-  const times = [];
-  for (let i = 1; i <= 3; i++) {
-    const t0 = Date.now();
+  // The waits the kernel schedules, not wall time: a busy machine stretches the PBKDF2 derivation each guess
+  // costs by more than the backoff's steps, so timing the whole call measured the machine, not the backoff.
+  const waits = []; const realSetTimeout = global.setTimeout;
+  global.setTimeout = (fn, ms, ...a) => { if (ms >= 250) waits.push(ms); return realSetTimeout(fn, ms, ...a); };
+  try { for (let i = 1; i <= 3; i++) {
     const r = await recover({ code: otherCode(), password: PW2 });
-    times.push(Date.now() - t0);
     assert.equal(r.status, 400); assert.equal(r.data.wrongRecoveryCode, true); assert.equal(r.data.attempts, i);
     if (i < 3) assert.match(r.data.error, /not right\. Check it and try again/);
     else assert.match(r.data.error, /file you downloaded or the page you printed/, 'after several, the message says to check the saved file');
     assert.equal(L.phase(), 'locked', 'the device stays locked');
-  }
-  assert.ok(times[2] - times[0] >= 300, `each wrong code waits longer (${times.join(', ')} ms)`);
+  } } finally { global.setTimeout = realSetTimeout; }
+  assert.equal(waits.length, 3, `one wait per wrong code (${waits.join(', ')} ms)`);
+  assert.ok(waits[0] < waits[1] && waits[1] < waits[2], `each wrong code waits longer (${waits.join(', ')} ms)`);
 });
 
 test('the recovery code opens the device: new password, records there, used code replaced, old password gone', async () => {
