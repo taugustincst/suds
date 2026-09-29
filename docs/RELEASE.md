@@ -168,6 +168,16 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.15.1 | new device routes in a patch (not checked then) | owner recovery code for SUDS on this device | owner (`policy_exception`, per HANDOFF.md) |
 | 1.16.0 | monthly limit | role-permission expansion and the pending review fixes as one release | owner (`policy_exception`) |
 
+**Owner decisions inside a patch (not policy exceptions).** The policy checks a patch's surface (migrations,
+permissions, routes, size), not what its code does, so a patch can change behaviour without breaking a rule. That
+is allowed when the owner decides it; it is recorded here so that "patch" keeps an explicit meaning:
+
+| Release | Behaviour changed | Why a patch | Decided by |
+| --- | --- | --- | --- |
+| 1.16.1 | Someone off a client's care team who updates the client's record now gives the primary worker a to-do naming who changed which fields (never the values) | mitigates 1.16.0's wider default of `clients:all` | owner |
+| 1.16.1 | SUD counseling notes (42 CFR §2.11) are read only by their author, their co-signer and staff with `notes:clinical:write`: not by a navigator with `notes:clinical:read`, not by break-glass, device sync included | narrows 1.16.0's wider default of `notes:clinical:read` | owner |
+| 1.16.2 | A publication release that 1.16.1 published by withholding the overdose events by month is refused whole again (1.16.1's rule leaked; ADR-0009) | a disclosure-control defect: refusal is safe | the owner, approving these notes |
+
 ## Cutting a release
 ```bash
 git checkout main && git pull
@@ -175,6 +185,19 @@ npm version 1.0.1 --no-git-tag-version   # bump, then add the CHANGELOG entry
 git commit -am "Release 1.0.1" && git push
 git tag v1.0.1 && git push origin v1.0.1
 ```
+
+**The released commit is the version-stamp commit** (1.16.2). The commit tagged and released is the one that
+sets `package.json`'s version (the "Release x.y.z" commit above), and nothing comes after it: every fix, test fix
+included, is merged and green on `main` **before** the stamp, and the stamp commit's own CI (the whole gate,
+`thorough-sdc` and `browser` included) is what releases it. 1.14.x to 1.16.1 each released a commit after their
+stamp (1.16.1: `3c57362`, a test fix after `a877a9a`), so the CHANGELOG section and the stamp had not seen what
+shipped. A fix needed after the stamp and before the tag means stamping again: put the fix on `main`, then a new
+stamp commit on top (the next patch version, if the version line is to change; the gate recognises the stamp by
+the commit that last changed the `"version":` line). The gate checks it: `release-policy.js --sha` **warns**
+(`::warning::… is not the commit that set package.json's version …`) when the released commit is not the stamp,
+and **refuses** a pushed tag that is not `v<package.json version>` (until 1.16.2 only the release job, after the
+owner's approval, checked the tag). A warning, not a refusal, so that a reviewed exception stays possible: the
+owner decides, and says so in the notes.
 Pushing the tag runs `.github/workflows/release.yml` (or start it from the Actions tab with *Run workflow* → type `release`; it then creates the tag itself), which first passes the release gate (below), then re-runs the tests, packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release with the zip attached. As its last step it starts the web-app (GitHub Pages) workflow for the new tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. That dispatch is the web-app workflow's only trigger (since 1.16.1 a tag push or a `release` event no longer starts it): it runs only on a `v*` tag whose GitHub Release exists at that commit, and in the `release` environment, so the owner approves it too. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses marketplace actions, so they run under restrictive Actions policies.
 
 ### Release gate
@@ -193,18 +216,69 @@ QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` r
 
 1.11.0 itself was published while its `browser` job had failed — the case this gate now refuses.
 
-**The gate does not trust the commit it judges** (1.16.1). It checks out the commit being released, but runs
-`scripts/release-gate.js` and `scripts/release-policy.js` from **`main`'s copy** (`git archive origin/main …`
-into a temporary directory; `release-policy.js --root src` then reads the released tree): a commit that trimmed
-`REQUIRED_JOBS` or lifted a policy limit, together with the tests that pin them, could otherwise release itself.
-The release notes' exception text comes from `main`'s copy too. A change to the gate therefore takes effect for
-the releases after it is merged. Whatever the `policy_exception`, the gate also refuses:
+**The gate runs main's copy of its scripts** (1.16.1). It checks out the commit being released, but runs
+`scripts/release-gate.js` and `scripts/release-policy.js` from **`main`'s copy** (`git archive <main commit> …`
+into a temporary directory; `release-policy.js --root src` then reads the released tree), so that a commit that
+trimmed `REQUIRED_JOBS` or lifted a policy limit, together with the tests that pin them, cannot release itself by
+those two scripts. Since 1.16.2 the gate records the main commit it used (`main_sha`, a job output) and the release
+job's notes step runs the policy script from that same commit, not from `origin/main` at publish time (main can move
+while the release waits for approval). Whatever the `policy_exception`, the gate also refuses:
 
 * a commit that is not on `main` (`git merge-base --is-ancestor <commit> origin/main`; a tag on a feature-branch
-  commit with green CI used to release), and
+  commit with green CI used to release),
 * a version already tagged at another commit (`v<version>` exists and is not this commit): dispatching *Run
   workflow* on `main` after a release, with `package.json` not yet bumped, used to rebuild the zip and checksum
-  from the new commit and upload them over the published ones (`--clobber`).
+  from the new commit and upload them over the published ones (`--clobber`), and
+* since 1.16.2, a pushed tag that is not `v<package.json version>`; and it warns when the released commit is not
+  the version-stamp commit (*Cutting a release*, above).
+
+**What running main's copy guarantees, and what it does not** (engineering review of 1.16.1, M2). It guarantees
+exactly this: the two gate scripts that decide are `main`'s at the moment the gate ran (`main_sha`), never the
+released commit's own edit of them, and the commit released is on that `main`. It does **not** guarantee more:
+
+* **The workflow file at the released ref decides.** GitHub runs `release.yml` (and `web-app.yml`) from the ref
+  that was pushed or dispatched. A commit that edits `release.yml` itself (to skip the gate job, or to run its own
+  copy of the scripts) is not held by main's scripts at all. What holds it: that commit must still be merged to
+  `main` through review (branch protection with code-owner review, *Owner: repository settings*, step 2), and the
+  `release` job waits for the owner's approval (step 1). The same holds for every **older ref**: an old tag or
+  branch carries the workflow files of its day (the 18 tags v1.10.0 to v1.16.0 and the `release/v*` branches carry
+  a `web-app.yml` that publishes with no approval), which only repository settings can stop (step 5).
+* **The policy reads the released tree by running it.** `release-policy.js` learns the released commit's
+  migrations, permissions and routes by `require`-ing its `server/db.js`, `server/auth.js`, `server/app.js` and
+  route modules (`PROBE`), so a commit can understate its own surface (a route registered only when the probe is
+  not looking). The size count (`git diff --numstat`) and the device routes (read from `local/` source) do not run
+  the released code. Proposed, not done: read the surface statically from `git show <sha>:server/…`, or run
+  main's probe against main's tree and compare the two.
+* **A loosening governs its own release.** The released commit must be on `main`, so `main` is that commit or
+  later: a pull request that raises `PATCH_MAX_ADDED_LINES` or trims `REQUIRED_JOBS` is in `main`'s copy by the time
+  the release that contains it runs, and governs that release. "A change to the gate takes effect for the releases
+  after it is merged" includes the release it is merged in. The control is the review of the pull request that
+  changes the gate (CODEOWNERS names the owner for `scripts/release-*.js` and `.github/`), which counts only once
+  branch protection is on (step 2); the repository cannot show that it is.
+* **Changes to the gate fail closed, not open.** If `main`'s `release-policy.js` ever `require`s a helper file,
+  the two-file `git archive` leaves it out and every release fails until `release.yml` lists the helper; re-running
+  an old tag's release after `main` changed the scripts' flags fails too. Neither releases anything unchecked.
+* Proposed, not done: a scheduled job that fails when `gh api repos/:owner/:repo/environments/release` has no
+  required reviewer or `…/branches/main/protection` is missing, so the settings above are checked, not assumed.
+
+**Backports: there is no maintenance line today** (engineering review of 1.16.1, M3). A release must be on `main`,
+and a patch release is measured against the tag below it: once 1.17.0 is on `main`, a 1.16.3 cut from `main` would
+carry 1.17's features and be refused as a patch, and a commit on a branch off `v1.16.2` is refused as "not on
+main". So *Supported versions* above cannot be met by a release on the previous minor's line: until the path below
+exists, a security fix for 1.16.x ships as a patch of the latest minor, and the previous minor's 30 days of security
+fixes are a promise the release machinery cannot yet keep. Proposed (not implemented; a change to the gate, so it
+lands through code-owner review and takes effect as described above):
+
+1. A maintenance branch per minor, `maint/1.16` (not `release/v*`, which names one release each), created from the
+   minor's last tag when the next minor ships, protected like `main` (a ruleset: pull request, code-owner review,
+   the same required CI jobs, no force push or deletion), and listed in the `release` environment's deployment
+   branches.
+2. `release-policy.js --sha` accepts a commit on `origin/maint/X.Y` in place of `main` **only** when the version
+   being released is `X.Y.z` and `X.Y` is older than `main`'s minor; the patch rules and the size limit apply
+   unchanged against the previous `vX.Y.*` tag (`previousTag` already picks it).
+3. The gate job fetches `refs/heads/maint/*` beside `main`, and still runs `main`'s copy of the scripts.
+4. Fixes are made on `main` first and cherry-picked to `maint/X.Y`, each cherry-pick's pull request naming the
+   commit on `main`.
 
 The release job never replaces a published file: when the GitHub Release already exists (a re-run of the same
 commit's release) it uploads the zip and checksum only if neither is there, and stops with an error if only one
@@ -228,32 +302,85 @@ on the GitHub settings below** (an assistant or a workflow cannot change reposit
 * **Who released it** is written at the foot of the GitHub Release notes: `Released by @<github.actor>
   (<event>, run <id>)`, and `re-run by @<github.triggering_actor>` when someone else re-ran it.
 
-**What the owner must turn on (GitHub → the repository → Settings):**
+### Owner: repository settings
 
-1. **Environments → New environment → `release`** (or open it, once the first release has created it):
-   * tick **Required reviewers** and add `taugustincst` (up to six people or teams may be listed; one approval
-     releases);
-   * tick **Prevent self-review**, so the person who pushed the tag or dispatched the run cannot approve it
-     themselves (leave it off only while the owner is the sole releaser);
-   * under **Deployment branches and tags**, choose *Selected branches and tags* and add the rules `main`
-     (branch, for *Run workflow*) and `v*` (tag), so the job cannot run from any other ref.
-2. **Branches → Add branch ruleset** (or *Add classic branch protection rule*) for **`main`**:
-   * **Require a pull request before merging**, with **Required approvals: 1** and **Require review from Code
-     Owners**; tick **Dismiss stale pull request approvals when new commits are pushed**;
-   * **Require status checks to pass**, with **Require branches to be up to date before merging**, and add the
-     CI jobs `test`, `thorough`, `thorough-sdc`, `browser`, `node24` and `dr-drill` (the release gate's
-     `REQUIRED_JOBS`; they appear in the list once they have run on a pull request);
-   * **Block force pushes** and **Restrict deletions**;
-   * **Do not allow bypassing the above settings** (classic: *Include administrators*), or the owner's own
-     pushes skip review — leave it off only if the owner accepts that.
-3. **Tags → Add rule** (Settings → Rules → Rulesets → *New tag ruleset*) for `v*`: **Restrict creations,
-   updates and deletions** to the owner (bypass list: repository admin), so nobody else can push a release tag.
-4. **Actions → General → Workflow permissions**: *Read repository contents and packages permissions* as the
-   default (`release.yml` asks for `contents: write` and `actions: write` itself), and leave **Allow GitHub
-   Actions to create and approve pull requests** off.
+Everything in this section is a setting only the repository owner can change (GitHub → the repository →
+**Settings**); a workflow or an assistant cannot. Until each is done, the protection it names is **not in force**,
+whatever the workflow files say. Do them in this order; each ends with how to check it.
 
-Check it: push a test tag from a branch other than `main` (it must not run), then release normally and see
-the run stop at *Waiting for review: release needs approval* until the owner approves it.
+**1. The `release` environment: the owner approves every release and every web-app publish.**
+Settings → **Environments** → **New environment** → name `release` (or open it, once a release has created it):
+* tick **Required reviewers**, add `taugustincst` (up to six people or teams; one approval releases), **Save
+  protection rules**;
+* tick **Prevent self-review** (the person who pushed the tag or dispatched the run cannot approve it; leave it
+  off only while the owner is the sole releaser);
+* **Deployment branches and tags** → *Selected branches and tags* → **Add deployment branch or tag rule**: `main`
+  (Ref type: Branch, for *Run workflow*), then `v*` (Ref type: Tag). No other ref can then run a job in the
+  environment.
+* Check: release normally; the run stops at *Waiting for review: release needs approval* until approved.
+
+**2. Branch protection on `main`: every change, the gate's own included, is reviewed.**
+Settings → **Rules** → **Rulesets** → **New ruleset** → **New branch ruleset** (or Settings → Branches → *Add
+classic branch protection rule*): name `main`, Enforcement status **Active**, **Target branches** → *Add target* →
+*Include default branch*; then tick:
+* **Restrict deletions** and **Block force pushes**;
+* **Require a pull request before merging**: Required approvals **1**, **Require review from Code Owners**,
+  **Dismiss stale pull request approvals when new commits are pushed**;
+* **Require status checks to pass**, **Require branches to be up to date before merging**, and add `test`,
+  `thorough`, `thorough-sdc`, `browser`, `node24` and `dr-drill` (the release gate's `REQUIRED_JOBS`; they are
+  offered once they have run on a pull request);
+* **Bypass list**: leave it empty (classic: tick *Do not allow bypassing the above settings*), or the owner's own
+  pushes skip review; add *Repository admin* only if the owner accepts that.
+* Check: `git push origin HEAD:main` from a local commit is refused (`GH013`).
+
+**3. A tag ruleset for `v*`: only the owner makes release tags.**
+Rulesets → **New ruleset** → **New tag ruleset**: name `release tags`, **Active**, *Add target* → *Include by
+pattern* `v*`; tick **Restrict creations**, **Restrict updates**, **Restrict deletions**; **Bypass list** →
+*Add bypass* → *Repository admin* (Always allow). Check: a collaborator's `git push origin v9.9.9` is refused.
+
+**4. The default Actions token is read-only.**
+Settings → **Actions** → **General** → *Workflow permissions*: **Read repository contents and packages
+permissions**, and untick **Allow GitHub Actions to create and approve pull requests** → Save. `release.yml` and
+`web-app.yml` ask for the write scopes they need themselves; every other workflow runs read-only.
+
+**5. Only an approved, released tag can publish the web app (engineering review of 1.16.1, H2).**
+Every ref made before 1.16.1 (the tags v1.10.0 to v1.16.0, the `release/v*` branches, older feature and
+Dependabot branches) carries a `web-app.yml` that force-pushes its own build to `gh-pages` on *Run workflow*,
+with no approval and no version check: anyone with write access could put an old, unfixed build, or unreleased
+code, on the public URL. A workflow file cannot fix old refs; this setting does. Since 1.16.2 `web-app.yml`
+pushes with a deploy key held as a secret of the `release` environment, so only a job that waited for the owner's
+approval in that environment (step 1: only on `main` or a `v*` tag) can read it, and a ruleset lets only that key
+update `gh-pages`:
+1. On your own machine: `ssh-keygen -t ed25519 -N '' -C 'suds gh-pages (release environment)' -f suds-pages`.
+2. Settings → **Deploy keys** → **Add deploy key**: title `gh-pages publish (release environment)`, key: the
+   contents of `suds-pages.pub`, tick **Allow write access** → Add key.
+3. Settings → **Environments** → `release` → **Environment secrets** → **Add environment secret**: name
+   `PAGES_DEPLOY_KEY`, value: the whole contents of `suds-pages` (the private key, with its BEGIN and END lines)
+   → Add secret. Then delete both files from your machine.
+4. Rulesets → **New ruleset** → **New branch ruleset**: name `gh-pages: release only`, **Active**, *Add target* →
+   *Include by pattern* `gh-pages`; tick **Restrict updates**, **Restrict deletions**, **Block force pushes**
+   (and **Restrict creations**); **Bypass list** → *Add bypass* → **Deploy keys** → *Always allow* (and
+   *Repository admin* if the owner wants to repair the branch by hand). Do **not** add the GitHub Actions app.
+5. Check it: Actions → *Web app* → **Run workflow** on an old tag (`v1.16.0`): its publish step must fail
+   (`GH013`, the ruleset) and `gh-pages` must not change. Then release normally (or *Run workflow* on the current
+   release tag): after the approval, the publish succeeds and the site shows the released version.
+
+The other way, which the review also offered: Settings → **Pages** → *Source*: **GitHub Actions**, with the
+`github-pages` environment given required reviewers and a `v*`-only deployment rule. Then pushes to `gh-pages`
+publish nothing, but `web-app.yml` must first be changed to deploy through the Pages artifact API
+(`actions/upload-pages-artifact`, `actions/deploy-pages`); that is not done, so switching the source today would
+stop publishing. Use the deploy key above until then.
+
+**6. Delete stale branches.** List them: `git ls-remote --heads origin`. Delete every feature, `claude/…` and
+Dependabot branch that is merged or abandoned — at the time of the 1.16.1 review `feature/admin-managed-permissions`,
+`claude/perms-expansion-1.16.0-wip` and `dependabot/docker/node-26.10-alpine` (close its pull request; Dependabot
+opens a fresh one) — with `git push origin --delete <branch>`, and tick Settings → General → **Automatically
+delete head branches**. After step 5 the `release/v*` branches can no longer publish, and step 1 keeps them from
+running the `release` job, so they may stay (a zip of a release is also served from its tag).
+
+**7. Code scanning (optional).** Settings → **Code security** → *Code scanning* → **Set up** → **Default** →
+languages *JavaScript/TypeScript* and *GitHub Actions* → **Enable CodeQL**; on the same page turn on **Secret
+scanning** and **Push protection**. None of these changes what SUDS ships; they report.
 
 ### Migration numbering across branches
 A migration's position in `server/db.js`'s `migrations` array is the schema version a database records, so

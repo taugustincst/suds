@@ -46,18 +46,25 @@ jobs:
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
+    # The main commit whose gate scripts ran, for the release job's notes (1.16.2: it read origin/main again at
+    # publish time, which may have moved during the approval).
+    outputs:
+      main_sha: ${{ steps.src.outputs.main_sha }}
     steps:
       # The gate's own scripts are main's copy, not the released commit's (1.16.1): a commit that trims
       # REQUIRED_JOBS or lifts a policy limit, with the tests that pin them, could otherwise release itself.
       # History without file contents (--filter=blob:none), so the policy can ask whether the commit is on main.
+      # What this does and does not guarantee: docs/RELEASE.md, "What running main's copy guarantees".
       - name: Check out the commit being released, and main's copy of the gate scripts
+        id: src
         run: |
           git clone --quiet --filter=blob:none --no-checkout "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
           cd src
           git fetch --quiet origin "${GITHUB_SHA}" '+refs/heads/main:refs/remotes/origin/main' '+refs/tags/v*:refs/tags/v*'
           git checkout --quiet "${GITHUB_SHA}"
           mkdir -p "$RUNNER_TEMP/main"
-          git archive origin/main scripts/release-gate.js scripts/release-policy.js | tar -x -C "$RUNNER_TEMP/main"
+          main_sha="$(git rev-parse origin/main)"; echo "main_sha=${main_sha}" >> "$GITHUB_OUTPUT"
+          git archive "${main_sha}" scripts/release-gate.js scripts/release-policy.js | tar -x -C "$RUNNER_TEMP/main"
       - name: CI passed for this exact commit
         run: node "$RUNNER_TEMP/main/scripts/release-gate.js" "${GITHUB_SHA}"
       # A patch bump may not add a migration, permission or route, and a minor or major bump may not come within
@@ -69,7 +76,9 @@ jobs:
         env:
           RELEASE_POLICY_EXCEPTION: ${{ github.event.inputs.policy_exception }}
           ALLOW_PATCH_CHANGES: ${{ github.event.inputs.allow_patch_changes }}
-        run: node "$RUNNER_TEMP/main/scripts/release-policy.js" --root src --sha "${GITHUB_SHA}" --main origin/main
+          # A pushed tag must name package.json's version (1.16.2); a dispatch has none.
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+        run: node "$RUNNER_TEMP/main/scripts/release-policy.js" --root src --sha "${GITHUB_SHA}" --main origin/main ${RELEASE_TAG:+--tag "$RELEASE_TAG"}
   # The `release` environment: once the owner adds a required reviewer to it (GitHub -> Settings ->
   # Environments -> release; docs/RELEASE.md, "Owner control over releases"), this job waits for that person's
   # approval before anything is tested, packaged or published, however the workflow was started. Without the
@@ -84,6 +93,7 @@ jobs:
       # Who started the release, recorded in the release notes. Through the environment, never pasted into a script.
       RELEASE_ACTOR: ${{ github.actor }}
       RELEASE_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+      MAIN_SHA: ${{ needs.gate.outputs.main_sha }}
     steps:
       - name: Check out
         run: git clone --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
@@ -143,8 +153,9 @@ jobs:
           # A version already tagged at another commit is never released again (the gate refused it too).
           at="$(git rev-parse -q --verify "refs/tags/$ver^{commit}" || true)"
           if [ -n "$at" ] && [ "$at" != "$(git rev-parse HEAD)" ]; then echo "::error::$ver is already tagged at $at, not this commit"; exit 1; fi
-          # main's copy of the policy script, as in the gate.
-          git show origin/main:scripts/release-policy.js > "$RUNNER_TEMP/release-policy.js"
+          # main's copy of the policy script, the very commit the gate ran (not main's tip now).
+          git fetch --quiet origin "${MAIN_SHA}"
+          git show "${MAIN_SHA}:scripts/release-policy.js" > "$RUNNER_TEMP/release-policy.js"
           node "$RUNNER_TEMP/release-policy.js" --root . --notes-out "$RUNNER_TEMP/policy-notes.md"
           if [ -s "$RUNNER_TEMP/policy-notes.md" ]; then notes="$(cat "$RUNNER_TEMP/policy-notes.md")"$'\n\n'"${notes}"; fi
           # Who released it: the account that pushed the tag or dispatched the workflow (and, on a re-run, who re-ran it).

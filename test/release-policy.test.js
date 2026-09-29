@@ -147,16 +147,30 @@ test('a commit is released only from main, and a version already tagged at anoth
   const branch = P.commitProblems({ version: '1.16.1', sha, onMain: false, mainRef: 'origin/main' });
   assert.equal(branch.length, 1); assert.match(branch[0], /not on origin\/main/);
   assert.equal(P.commitProblems({ version: '1.16.1', sha, tagSha: other, onMain: false }).length, 2);
+  // A pushed tag must name the version (1.16.2).
+  assert.deepEqual(P.commitProblems({ version: '1.16.2', sha, tag: 'v1.16.2' }), []);
+  assert.match(P.commitProblems({ version: '1.16.1', sha, tag: 'v1.16.2' })[0], /the tag v1\.16\.2 does not match package\.json's version 1\.16\.1/);
+});
+test('a release that is not the version-stamp commit is warned about (1.16.2; 1.14.x to 1.16.1 released a later commit)', () => {
+  const sha = 'a'.repeat(40); const stamp = 'b'.repeat(40);
+  assert.equal(P.stampWarning({ version: '1.16.2', sha, stampSha: sha }), null);
+  assert.equal(P.stampWarning({ version: '1.16.2', sha, stampSha: null }), null, 'unknown: nothing to say');
+  assert.match(P.stampWarning({ version: '1.16.1', sha, stampSha: stamp }), /is not the commit that set package\.json's version to 1\.16\.1 \(b{40}\)/);
 });
 test('release.yml runs main\'s copy of the gate and policy scripts, with --sha and --main, and never replaces a published file (1.16.1)', () => {
   const rel = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8');
   const gate = rel.slice(rel.indexOf('\n  gate:'), rel.indexOf('\n  release:'));
-  assert.match(gate, /git archive origin\/main scripts\/release-gate\.js scripts\/release-policy\.js \| tar -x -C "\$RUNNER_TEMP\/main"/);
+  assert.match(gate, /main_sha="\$\(git rev-parse origin\/main\)"; echo "main_sha=\$\{main_sha\}" >> "\$GITHUB_OUTPUT"/);
+  assert.match(gate, /git archive "\$\{main_sha\}" scripts\/release-gate\.js scripts\/release-policy\.js \| tar -x -C "\$RUNNER_TEMP\/main"/);
+  assert.match(gate, /\n {6}main_sha: \$\{\{ steps\.src\.outputs\.main_sha \}\}\n/);
   assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-gate\.js" "\$\{GITHUB_SHA\}"/);
-  assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-policy\.js" --root src --sha "\$\{GITHUB_SHA\}" --main origin\/main/);
+  assert.match(gate, /node "\$RUNNER_TEMP\/main\/scripts\/release-policy\.js" --root src --sha "\$\{GITHUB_SHA\}" --main origin\/main \$\{RELEASE_TAG:\+--tag "\$RELEASE_TAG"\}/);
+  assert.match(gate, /RELEASE_TAG: \$\{\{ github\.event_name == 'push' && github\.ref_name \|\| '' \}\}/);
   assert.ok(!/\n\s+run: node scripts\/release-(gate|policy)/.test(gate), 'not the released commit\'s copy');
   assert.ok(!/--clobber/.test(rel), 'a published zip or checksum is never overwritten');
-  assert.match(rel, /git show origin\/main:scripts\/release-policy\.js/, 'the notes come from main\'s copy too');
+  assert.match(rel, /MAIN_SHA: \$\{\{ needs\.gate\.outputs\.main_sha \}\}/);
+  assert.match(rel, /git show "\$\{MAIN_SHA\}:scripts\/release-policy\.js"/, 'the notes come from the main commit the gate ran (1.16.2), not main\'s tip at publish time');
+  assert.ok(!/origin\/main:scripts/.test(rel));
 });
 test('the web app is published only by a dispatch on a released tag, after the owner\'s approval (1.16.1)', () => {
   const wa = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'web-app.yml'), 'utf8');
@@ -167,6 +181,10 @@ test('the web app is published only by a dispatch on a released tag, after the o
   const steps = wa.slice(wa.indexOf('steps:'));
   assert.ok(steps.indexOf('gh release view "${GITHUB_REF_NAME}"') > 0 && steps.indexOf('gh release view') < steps.indexOf('Check out'), 'the release is checked before anything is built');
   assert.match(steps, /\[ "\$at" = "\$\{GITHUB_SHA\}" \]/, 'at this commit');
+  // 1.16.2: pushes with the release environment's deploy key when there is one (the gh-pages ruleset admits only it).
+  assert.match(steps, /PAGES_DEPLOY_KEY: \$\{\{ secrets\.PAGES_DEPLOY_KEY \}\}/);
+  assert.match(steps, /StrictHostKeyChecking=yes/, 'github.com\'s host keys pinned from the API, not trusted on first use');
+  assert.match(steps, /git push -q --force "\$\{remote\}" gh-pages:gh-pages/);
 });
 test('a policy exception lets the early feature release through, with its reason at the top of the release notes', () => {
   const out = P.decide({ prevVersion: 'v1.12.4', nextVersion: '1.13.0', diff: P.diffSurfaces(base, clone(base)), feature: V1120, now: Date.parse(V1120.date) + 22 * HOUR, override: 'Encrypts document references (migration 43)\nbefore the county pilot' });
