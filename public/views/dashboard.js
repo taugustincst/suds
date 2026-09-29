@@ -287,14 +287,19 @@ async function drawHome(r) {
 }
 // "Your first day" is for a first day (r9 L6): someone who logged a visit or wrote a note before today, as every
 // worker has after an upgrade, is not asked to "Log your first visit". Remembered once known (prefs first_day_skip).
+// A "no" is remembered for the session too (per signed-in user): Home redraws every few minutes, and asking the
+// office twice on each redraw, for as long as someone has logged nothing, is traffic the rate limit counts.
+let priorWorkNo = null;
 async function priorWork() {
   if (prefs.get('first_day_skip')) return true;
+  const who = state.user && state.user.id;
+  if (who && priorWorkNo === who) return false;
   const d = new Date(); d.setDate(d.getDate() - 1); const p = n => String(n).padStart(2, '0');
   const before = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   const any = async (path) => { try { return ((await get(path, { quiet: true })).rows || []).length > 0; } catch { return false; } };
   const seen = (can('interventions:read') && await any(`/api/interventions?mine=1&to=${before}&limit=1`))
     || ((can('notes:admin:read') || can('notes:clinical:read')) && await any(`/api/notes?mine=1&to=${before}&limit=1`));
-  if (seen) prefs.set('first_day_skip', true);
+  if (seen) prefs.set('first_day_skip', true); else priorWorkNo = who;
   return seen;
 }
 route('dashboard', drawHome);
