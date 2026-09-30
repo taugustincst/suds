@@ -105,9 +105,9 @@ function checkFund(f, at, problems) {
   if (!name) problems.push([at('name'), 'is required: the fund\'s name, as the program calls it']);
   else if (name.toLowerCase() === TOTAL_FUND.toLowerCase()) problems.push([at('name'), `cannot be "${TOTAL_FUND}": that is what the long CSV calls the totals`]);
   const grant = K.cleanText(f.grant_number, K.TEXT_MAX.grant_number) || null;
-  const category = f.category === undefined || f.category === null || f.category === '' ? 'uncategorised' : String(f.category);
+  const category = f.category === undefined || f.category === null || f.category === '' ? 'uncategorised' : K.textOf(f.category);
   if (!K.USE_CODES.has(category)) problems.push([at('category'), 'must be one of the Exhibit E allowable uses offered']);
-  const hiaa = f.hiaa === undefined || f.hiaa === null || f.hiaa === '' || f.hiaa === 'none' ? null : String(f.hiaa);
+  const hiaa = f.hiaa === undefined || f.hiaa === null || f.hiaa === '' || f.hiaa === 'none' ? null : K.textOf(f.hiaa);
   if (hiaa !== null && !K.HIAA_CODES.has(hiaa)) problems.push([at('hiaa'), 'must be one of the High Impact Abatement Activities offered']);
   const num = (code) => { try { return strictNumber(f[code], code); } catch (e) { problems.push([at(code), e.message]); return 0; } };
   const own = num('spend_own_category'); const other = num('spend_other_categories'); const pending = num('spend_pending');
@@ -174,7 +174,9 @@ function enter(programmeId, body, user, { today }) {
   if (!prog) return null;
   const b = body && typeof body === 'object' ? body : {};
   const problems = [];
-  const from = String(b.from || ''); const to = String(b.to || '');
+  // K.textOf: a JSON body may carry an object whose toString is not a function ({"toString": 1}), which String()
+  // cannot convert: it is no date, refused as one, never a 500 (found by test/county-fuzz.test.js).
+  const from = K.textOf(b.from); const to = K.textOf(b.to);
   const pf = checkPeriod(from, to, today);
   if (pf) for (const [k, m] of Object.entries(pf)) problems.push([k, m]);
   const ref = checkRef(b.source_ref);
@@ -197,8 +199,12 @@ function enter(programmeId, body, user, { today }) {
 }
 
 // ---- the CSV ---------------------------------------------------------------------------------------------------
-/** A cell as exported: the spreadsheet guard's leading quote before =, +, -, @ (spreadsheet.js toCsv) taken off. */
-const cellText = (v) => { const t = String(v === undefined || v === null ? '' : v); return /^'[=+\-@\t\r]/.test(t) ? t.slice(1) : t; };
+/**
+ * A cell as exported: the spreadsheet guard's one leading quote (spreadsheet.js toCsv) taken off a cell that begins
+ * with quotes before =, +, -, @, a tab or a carriage return (spreadsheet.js UNGUARD). toCsv adds exactly one there,
+ * so a name SUDS exported reads back as itself, "'=x" included (test/county-fuzz.test.js, the round trip).
+ */
+const cellText = (v) => { const t = String(v === undefined || v === null ? '' : v); return require('./spreadsheet').UNGUARD.test(t) ? t.slice(1) : t; };
 
 /**
  * Read a tidy CSV for one programme, as far as can be done without writing: the header, each row (the programme's

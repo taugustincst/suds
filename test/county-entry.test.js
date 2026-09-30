@@ -646,6 +646,39 @@ test('entered= takes include or exclude only: anything else is refused, on the v
 });
 
 // ---------------------------------------------------------------- pure
+// Found by test/county-fuzz.test.js (1.21.0): a JSON body can carry an object whose toString is not a function, which
+// String() cannot convert; the form answered 500 (unaudited, and not counted by the refusal throttle).
+test('regression: an object in a text or date field of the form is refused at its field (400, audited), never a 500', async () => {
+  const p = await notOnSuds();
+  for (const body of [entry(Q1, { from: { toString: 1 } }), entry(Q1, { to: ['2026-03-31'] }), entry(Q1, { source_ref: { toString: 1 } }),
+    entry(Q1, { funds: [fund(1, { name: { toString: 1 } })] }), entry(Q1, { funds: [fund(1, { category: { valueOf: 'x', toString: [] } })] }), entry(Q1, { funds: [fund(1, { hiaa: { toString: null } })] })]) {
+    const r = await enter(p.id, body);
+    assert.equal(r.status, 400, JSON.stringify(r.data));
+    assert.equal(r.data.reason, 'invalid'); assert.ok(Object.keys(r.data.fields).length > 0, 'said at its field');
+    assert.equal(lastAudit('county.entry.refuse').details.reason, 'invalid');
+  }
+  // The import's fund choices, the same.
+  const csv = tidyCsv(p.name, Q1, [fund()]);
+  const r = await importCsv(p.id, { text: csv, preview: true, funds: [{ name: { toString: 1 }, grant_number: { toString: 1 }, category: { toString: 1 } }] });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM county_submissions`).n, 0);
+});
+
+// Found by test/county-fuzz.test.js (1.21.0): a name that began with a quote before =, +, - or @ ('=x) went out of the
+// long CSV unguarded (it starts with a quote) and came back without its quote, so the programme's own rows were read
+// as another programme's and a fund came back renamed. The guard now adds one quote there too, and the import takes
+// exactly one off.
+test('regression: a programme or fund named with a leading quote before a formula character survives the long CSV round trip', async () => {
+  const p = await notOnSuds('\'=Valley Outreach');
+  ok(await enter(p.id, entry(Q1, { funds: [fund(1, { name: '\'-Settlement share', grant_number: '\'\'@G-1' })] })));
+  const tidy = await got(fin, `/api/county/view/export?from=${Q1.from}&to=${Q1.to}&format=tidy`);
+  const rows = require('../server/spreadsheet').parseCsv(tidy.data);
+  assert.ok(rows.slice(1).every(r => r[0] === '\'\'=Valley Outreach' && (r[3] === E.TOTAL_FUND || r[3] === '\'\'-Settlement share')), 'each guarded with one more quote');
+  const pv = ok(await importCsv(p.id, { text: tidy.data, preview: true }), 200);
+  assert.deepEqual(pv.others, [], 'its own rows, read as its own');
+  assert.deepEqual(pv.periods[0].funds.map(f => [f.name, f.grant_number]), [['\'-Settlement share', '\'\'@G-1']], 'the fund as it was entered');
+});
+
 test('strict numbers: digits and one decimal point only, by kind', () => {
   assert.equal(E.strictNumber('1234.50', 'spend_pending'), 1234.5); assert.equal(E.strictNumber('0', 'contacts'), 0); assert.equal(E.strictNumber(7, 'contacts'), 7);
   assert.equal(E.strictNumber(' 12 ', 'contacts'), 12); assert.equal(E.strictNumber('3.25', 'staff_training_hours'), 3.25);

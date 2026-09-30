@@ -110,7 +110,10 @@ const sha256Hex = (s) => nodeCrypto.createHash('sha256').update(s).digest('hex')
 // not already in that form (textOk), since a signed file cannot be tidied without breaking its signature.
 // eslint-disable-next-line no-control-regex
 const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029\ufeff]/g;
-function cleanText(s, max) { return String(s === null || s === undefined ? '' : s).replace(UNSAFE, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trim(); }
+// Only text, a number or a boolean is text: anything else (an object or a list from a JSON body, including one whose
+// toString is not a function, which String() cannot convert) is no text at all (1.21.0; it was a 500 before).
+const textOf = (s) => (typeof s === 'string' ? s : typeof s === 'number' || typeof s === 'boolean' ? String(s) : '');
+function cleanText(s, max) { return textOf(s).replace(UNSAFE, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trim(); }
 
 // ---- keys and fingerprints -----------------------------------------------------------------------------------
 /**
@@ -728,7 +731,7 @@ const PUBLICATION_NOTE = 'Publishing these figures needs the publication screen 
 module.exports = {
   FORMAT, SCHEMA_VERSION, ALGORITHM, MAX_FILE_BYTES, MAX_QUARTERS, VALUE_KEYS, PAYLOAD, TEXT_MAX, CAVEATS, CAVEAT_SUMMARY, PERIOD_RULE, PUBLICATION_NOTE, SubmissionError,
   ENTERED, ENTERED_LABEL, ENTERED_NOTE, LEFT_OUT, USE_CODES, HIAA_CODES, CURRENT, subById, sha256Hex, isEntered, sourceOf, hasEntered,
-  SUBS, canonical, cleanText, fingerprintOf, formatFingerprint, normaliseFingerprint, parsePublicKey, normaliseCode, formatCode, countyCode,
+  SUBS, canonical, textOf, cleanText, fingerprintOf, formatFingerprint, normaliseFingerprint, parsePublicKey, normaliseCode, formatCode, countyCode,
   currentKey, retiredKeys, ensureKey, rotateKey, payloadFrom, signFile, signWithSeed, checkPayload, parseFile, importParsed, withdraw, reinstate, resettle, resettleProgramme,
   importMessage, countingSubs, filesCount, coverage, summary, programmeOut, programmeKeys, choose, combined, byQuarter, headline, measureLabel, quartersIn, daysIn, isDay, isInstant, humanDay, humanPeriod, slug,
 };

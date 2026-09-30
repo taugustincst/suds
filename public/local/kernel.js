@@ -17864,7 +17864,8 @@ var require_spreadsheet = __commonJS({
       }
       return rows.filter((r) => r.some((v) => String(v).trim() !== ""));
     }
-    var FORMULA_START = /^[=+\-@\t\r]/;
+    var FORMULA_START = /^'*[=+\-@\t\r]/;
+    var UNGUARD = /^'+[=+\-@\t\r]/;
     function toCsv(rows, columns) {
       const esc = (v) => {
         if (v === null || v === void 0) return "";
@@ -18096,7 +18097,7 @@ var require_spreadsheet = __commonJS({
         return { name: s.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
       }) };
     }
-    module.exports = { parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip, defer };
+    module.exports = { FORMULA_START, UNGUARD, parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip, defer };
   }
 });
 
@@ -28828,8 +28829,9 @@ var require_county = __commonJS({
     }
     var sha256Hex = (s) => nodeCrypto.createHash("sha256").update(s).digest("hex");
     var UNSAFE = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029\ufeff]/g;
+    var textOf = (s) => typeof s === "string" ? s : typeof s === "number" || typeof s === "boolean" ? String(s) : "";
     function cleanText(s, max2) {
-      return String(s === null || s === void 0 ? "" : s).replace(UNSAFE, " ").replace(/\s+/g, " ").trim().slice(0, max2).trim();
+      return textOf(s).replace(UNSAFE, " ").replace(/\s+/g, " ").trim().slice(0, max2).trim();
     }
     function fingerprintOf(publicKeyPem) {
       const der = nodeCrypto.createPublicKey(publicKeyPem).export({ type: "spki", format: "der" });
@@ -29461,6 +29463,7 @@ var require_county = __commonJS({
       hasEntered,
       SUBS,
       canonical,
+      textOf,
       cleanText,
       fingerprintOf,
       formatFingerprint,
@@ -34994,9 +34997,9 @@ var require_county_entry = __commonJS({
       if (!name) problems.push([at("name"), "is required: the fund's name, as the program calls it"]);
       else if (name.toLowerCase() === TOTAL_FUND.toLowerCase()) problems.push([at("name"), `cannot be "${TOTAL_FUND}": that is what the long CSV calls the totals`]);
       const grant = K.cleanText(f.grant_number, K.TEXT_MAX.grant_number) || null;
-      const category = f.category === void 0 || f.category === null || f.category === "" ? "uncategorised" : String(f.category);
+      const category = f.category === void 0 || f.category === null || f.category === "" ? "uncategorised" : K.textOf(f.category);
       if (!K.USE_CODES.has(category)) problems.push([at("category"), "must be one of the Exhibit E allowable uses offered"]);
-      const hiaa = f.hiaa === void 0 || f.hiaa === null || f.hiaa === "" || f.hiaa === "none" ? null : String(f.hiaa);
+      const hiaa = f.hiaa === void 0 || f.hiaa === null || f.hiaa === "" || f.hiaa === "none" ? null : K.textOf(f.hiaa);
       if (hiaa !== null && !K.HIAA_CODES.has(hiaa)) problems.push([at("hiaa"), "must be one of the High Impact Abatement Activities offered"]);
       const num = (code) => {
         try {
@@ -35079,8 +35082,8 @@ var require_county_entry = __commonJS({
       if (!prog) return null;
       const b = body && typeof body === "object" ? body : {};
       const problems = [];
-      const from = String(b.from || "");
-      const to = String(b.to || "");
+      const from = K.textOf(b.from);
+      const to = K.textOf(b.to);
       const pf = checkPeriod(from, to, today);
       if (pf) for (const [k, m] of Object.entries(pf)) problems.push([k, m]);
       const ref = checkRef(b.source_ref);
@@ -35115,7 +35118,7 @@ var require_county_entry = __commonJS({
     }
     var cellText = (v) => {
       const t = String(v === void 0 || v === null ? "" : v);
-      return /^'[=+\-@\t\r]/.test(t) ? t.slice(1) : t;
+      return require_spreadsheet().UNGUARD.test(t) ? t.slice(1) : t;
     };
     function readCsv(prog, text, { today, funds: choices = [] } = {}) {
       if (typeof text !== "string" || !text.trim()) throw new EntryError("csv", 'Choose a CSV file: the long "tidy" layout County view downloads (program, period_from, period_to, fund, grant_number, measure_code, measure_label, value).');

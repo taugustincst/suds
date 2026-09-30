@@ -22,7 +22,11 @@ function parseCsv(text) {
 // a formula, so a "summary" of `=HYPERLINK(...)` or `=cmd|' /C calc'!A0` runs on the analyst's machine.
 // Such text goes out prefixed with a single quote (the spreadsheet convention for "this is text") and
 // quoted; numbers are written as numbers, which cannot be formulas. Headers get the same treatment.
-const FORMULA_START = /^[=+\-@\t\r]/;
+// Text that already begins with quotes before such a character ('=x) gets one more (''=x), so the guard can
+// be taken off again exactly: county-entry.js cellText removes one quote from a cell that matches UNGUARD,
+// and a cell SUDS wrote reads back as the text it was made from (1.21.0; before, '=x came back as =x).
+const FORMULA_START = /^'*[=+\-@\t\r]/;
+const UNGUARD = /^'+[=+\-@\t\r]/;
 function toCsv(rows, columns) {
   const esc = v => {
     if (v === null || v === undefined) return '';
@@ -185,4 +189,4 @@ function parseFile(buf, filename = '') {
   return { sheets: sheets.map(s => { const [h, ...rest] = s.rows; const headers = (h || []).map(x => String(x ?? '').trim()); return { name: s.name, headers, rows: rest.map(r => Object.fromEntries(headers.map((k, i) => [k, r[i] === undefined ? null : r[i]]))) }; }) };
 }
 
-module.exports = { parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip, defer };
+module.exports = { FORMULA_START, UNGUARD, parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip, defer };

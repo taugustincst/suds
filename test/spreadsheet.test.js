@@ -22,6 +22,15 @@ test('csv text that would be read as a formula is prefixed with a quote, headers
   assert.equal(lines[5], `a=b,3.5`);
   assert.equal(S.parseCsv(csv)[1][0], `'=1+1`, 'round-trips as text');
 });
+test('the formula guard can be taken off exactly: text that already begins with quotes before a formula character gets one more', () => {
+  const texts = ['=1', '\'=1', '\'\'=1', '\'+x', '\'-x', '\'@x', '\'x', 'x\'=1', '\'', '-', 'plain'];
+  const csv = S.toCsv(texts.map(t => ({ a: t })), [{ key: 'a', label: 'a' }]);
+  const cells = S.parseCsv(csv).slice(1).map(r => r[0]);
+  assert.deepEqual(cells, ['\'=1', '\'\'=1', '\'\'\'=1', '\'\'+x', '\'\'-x', '\'\'@x', '\'x', 'x\'=1', '\'', '\'-', 'plain']);
+  for (const c of cells) assert.ok(!/^[=+\-@\t\r]/.test(c), `${c} is never a formula`);
+  // Undone by taking one quote off a cell that matches UNGUARD (county-entry.js cellText): every text comes back.
+  assert.deepEqual(cells.map(c => (S.UNGUARD.test(c) ? c.slice(1) : c)), texts);
+});
 test('xlsx write then read', () => {
   const buf = S.writeWorkbook([{ name: 'Clients', columns: [{ key: 'code', label: 'Client code' }, { key: 'n', label: 'Visits' }, { key: 'ok', label: 'Active' }], rows: [{ code: 'C26-0001', n: 3, ok: true }, { code: 'Ünïcode <&>', n: 0, ok: false }] }, { name: 'Empty/Sheet:2', columns: ['x'], rows: [] }]);
   assert.equal(buf[0], 0x50);
