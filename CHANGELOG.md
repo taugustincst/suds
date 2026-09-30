@@ -4,6 +4,41 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Security: the county surface's threat model and fuzz tests
+
+Built for 1.21.0, not yet released. No migration.
+
+- **Threat model brought to the current release.** `docs/security/THREAT-MODEL.md` now describes 1.20.0 and models
+  the county surface in full (*The county surface*: its entry points, the signed-versus-entered trust model, the
+  CSV import and its parser, correct, withdraw and reinstate, who sees the source document, how every view, file
+  and the read API mark entered figures, the refusal throttle, the county connection and read API, the signed-file
+  verifier) and SUDS Server (*SUDS Server: the installed host*: the installer's supply chain and checksum channels,
+  staged releases, LUKS, the service account and its sandbox, Caddy, upgrade rollback, compliance report signing),
+  each mitigation pointing at its code and tests, with new residual risks 15–19. `PEN-TEST-SCOPE.md` points each
+  county and SUDS Server area at those sections and tests, adds the installer and upgrade as an area, and says what
+  the suite already fuzzes.
+- **Fuzz and property tests for the county surface** (`test/county-fuzz.test.js`, Node built-ins only, seeded:
+  `SUDS_FUZZ_SEED` replays a run): the county-entered figures' CSV import and entry form under random bytes, random
+  CSV structure, formula text, Unicode and malformed numbers (nothing but a structured refusal is thrown; nothing
+  invalid is accepted; accepted figures are exact; other programmes' rows are never read), the county view's tidy
+  CSV imported back (the same payload; no CSV, tidy CSV, read API or Excel cell is a formula), the signed county
+  file's verifier (tampered bytes, signature, fingerprint or key never accepted), a pasted public key, and the county
+  connection's request parsing and push route. `npm test` runs a small fixed-seed pass in a few seconds; the
+  `thorough` CI job runs twenty times as many iterations with a fresh seed (it reads `SUDS_THOROUGH`, so
+  `scripts/test-thorough.js` finds it); `SUDS_FUZZ_ITERATIONS` sets the size by hand.
+- **Fixed: an object in a field of the county entry form was a 500.** A JSON body can carry an object whose
+  `toString` is not a function (`{"toString": 1}`); in a date, category or HIAA field (and, through the text cleaner,
+  a name, grant number, source document or an import's fund choice) the form answered 500, unaudited and outside the
+  refusal throttle. Only text, numbers and booleans are now read as text (`server/county.js` `textOf`); anything else
+  is refused at its field (400, audited). Found by the fuzz tests; regression test in `test/county-entry.test.js`.
+- **Fixed: a name beginning with a quote before a formula character did not survive the long CSV.** A programme,
+  fund or grant named `'=x` (or `'+`, `'-`, `'@`) went out of the tidy CSV unguarded and came back without its quote,
+  so the programme's own rows were read as another programme's and a fund came back renamed. The CSV formula guard
+  (`server/spreadsheet.js` `toCsv`, every SUDS CSV export) now also adds one quote to text that begins with quotes
+  before such a character (`''=x`), and the county import takes exactly one off (`UNGUARD`), so every exported name
+  reads back as itself; no exported cell is a formula either way. Found by the fuzz tests; regression tests in
+  `test/spreadsheet.test.js` and `test/county-entry.test.js`.
+
 ## 1.20.0 — 2026-09-30
 
 A feature release (migration 60 and the county-entered figures routes), released under a policy exception inside

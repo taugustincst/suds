@@ -484,7 +484,10 @@ by the program**.
   for 0), every figure of every fund present, the allow-list's measures and categories only, no fund or CSV cell twice,
   real dates, the start on or before the end, a period that has ended; for a CSV, the header, the programme's own name
   on every row it reads, at most 12 periods, 5,000 rows and 256 KB. Text is held to the signed files' rule
-  (`cleanText`), and a cell the spreadsheet guard quoted (`'=…`) is read back as its text. A figure that is not a
+  (`cleanText`), and a cell the spreadsheet guard quoted (`'=…`) is read back as its text: the guard adds one quote
+  to text that begins with quotes before a formula character too (`'=x` goes out as `''=x`), and the import takes
+  exactly one off, so every name SUDS exports reads back as itself (built for 1.21.0, not yet released;
+  `test/county-fuzz.test.js`). A figure that is not a
   number is one problem, said at its cell, not also "has no …" for the same fund. Refused entries and imports are
   **throttled per person** as refused files are (20 in ten minutes, then `429`, audited once per window as
   `county.entry.throttled`).
