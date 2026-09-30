@@ -124,13 +124,16 @@ test('triggers: CI on every push and pull request, a release on a v* tag, the we
   assert.match(s.schedule[0].cron, /^\d+ \d+ \* \* [0-6]$/, 'weekly');
 });
 
-test('ci.yml: every job the release gate requires exists and is not advisory; only webkit is', () => {
+test('ci.yml: every job the release gate requires exists and is not advisory; only webkit and release-state are', () => {
   const jobs = wf('ci.yml').jobs;
   for (const j of REQUIRED_JOBS) {
     assert.ok(jobs[j], `ci.yml has a ${j} job`);
     assert.ok(!jobs[j]['continue-on-error'], `${j} is not advisory`);
   }
-  assert.deepEqual(Object.keys(jobs).filter((j) => jobs[j]['continue-on-error']), ['webkit']);
+  // release-state (scripts/release-state.js) compares the documents with origin's tags and gh-pages, which change
+  // without a commit: advisory, and never a required job.
+  assert.deepEqual(Object.keys(jobs).filter((j) => jobs[j]['continue-on-error']), ['webkit', 'release-state']);
+  assert.ok(!REQUIRED_JOBS.includes('release-state'));
 });
 
 test('release.yml: gate, then verify, then the release job, which alone waits for approval', () => {
