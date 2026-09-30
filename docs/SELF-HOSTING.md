@@ -93,9 +93,17 @@ Each step, the control it implements, and where the compliance check verifies it
 2. Read the temporary password once (`sudo cat /var/lib/suds/first-admin-password.txt`), sign in at `https://<domain>`, change it and enrol two-step verification.
 3. Give your auditor two public keys, with their key ids, obtained on the server rather than from a report: the **evidence signing key** (Settings → Security status → *Download signing public key*), which verifies recovery-drill reports and audit exports, and the **compliance signing key** (`/etc/suds/compliance-signing-key.pub.pem`; the installer printed its id), which verifies compliance reports. SUDS itself cannot sign a compliance report: it never holds that key.
 4. Configure single sign-on if the county has an identity provider ([DEPLOYMENT.md](DEPLOYMENT.md), *Single sign-on*): set `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_REDIRECT_URI` in `/etc/suds/suds.env` and the client secret as a credential (`/etc/suds/credentials/oidc_client_secret`, a `LoadCredential=oidc_client_secret:…` line and `Environment=OIDC_CLIENT_SECRET_FILE=%d/oidc_client_secret` in a drop-in), then `systemctl restart suds`.
-5. Run a **recovery drill with the escrowed key file** against the offsite copy (Settings → System & backups). The compliance check asks for one within 90 days.
-6. Remove `keys.json` from `/var/lib/suds` if the installer carried keys across from a wizard install (`shred -u`), once the escrow is confirmed.
-7. Check Settings → Security status: the *Host (last compliance check)* section shows the installer's run.
+5. **Fingerprint sign-in (passkeys)**, built for 1.19.0, not yet released ([FINGERPRINT.md](FINGERPRINT.md)): a passkey belongs
+   to one host name and works only over **HTTPS**, so it needs nothing more than the TLS set-up above — but set
+   `WEBAUTHN_RP_ID=<domain>` in `/etc/suds/suds.env` to the **same name as on the certificate and in the address staff
+   open** before anyone enrols (a passkey made for another name, or at an IP address, never works; one made before a
+   rename must be added again). Behind a proxy that changes what SUDS sees, list the exact page origins in
+   `WEBAUTHN_ORIGINS=https://<domain>` too. It is on by default; Settings → Security policy switches sign-in and signing
+   with it off, or requires a fingerprint or authenticator code for signing. SUDS stores no fingerprint, only each
+   passkey's public key.
+6. Run a **recovery drill with the escrowed key file** against the offsite copy (Settings → System & backups). The compliance check asks for one within 90 days.
+7. Remove `keys.json` from `/var/lib/suds` if the installer carried keys across from a wizard install (`shred -u`), once the escrow is confirmed.
+8. Check Settings → Security status: the *Host (last compliance check)* section shows the installer's run.
 
 ## Upgrading
 
@@ -225,7 +233,7 @@ Run as root for every check; as the `suds` user the root-only checks say *could 
 | (a)(2)(iv) Encryption and decryption | Implements | AES-256-GCM on PHI fields, LUKS at rest (`host.disk_encryption`), keys as root-only credentials (`host.keys`) |
 | (b) Audit controls | Implements | Hash-chained audit log with WORM anchors, verified weekly by the check (`host.audit_verify`), synchronised clock (`host.time_sync`) |
 | (c)(1) Integrity; (c)(2) Mechanism to authenticate ePHI | Implements | The chain, anchors and Ed25519-signed evidence; note signatures (`host.audit_verify`, `app.audit_chain`, `app.audit_anchors`) |
-| (d) Person or entity authentication | Implements | Password + TOTP for every role (`app.mfa_required`), or the IdP's MFA |
+| (d) Person or entity authentication | Implements | Password + TOTP for every role (`app.mfa_required`), or the IdP's MFA, or a passkey with user verification (fingerprint sign-in, `app.passkeys`; needs HTTPS and `WEBAUTHN_RP_ID` matching the domain) |
 | (e)(1) Transmission security; (e)(2)(i) Integrity controls; (e)(2)(ii) Encryption | Implements | TLS 1.2+ only, HSTS (`host.tls`, `host.http_redirect`) |
 
 ### HIPAA — policies and documentation (§164.316)

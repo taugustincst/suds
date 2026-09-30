@@ -41,6 +41,18 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-09-30 — Claude: fingerprint sign-in and signing with passkeys (built for 1.19.0, not yet released)
+
+- Branch `feat/fingerprint`, from `574a257` (the 1.18.0 candidate before its stamp). Not stamped, not pushed.
+  Migration **58** (`passkeys`, `webauthn_challenges`, `signature_evidence`, `sessions.reauth_method`): if another
+  1.19.0 stream takes 58 first, renumber this one (it is self-contained and idempotent).
+- WebAuthn on `node:crypto` only (`server/webauthn.js`); `server/passkeys.js`; docs/FINGERPRINT.md has the design
+  (no biometric data; UV required; challenges bound to the statement of what is signed; evidence re-verifiable
+  offline; NIST AAL2; policy switches; SUDS on this device deferred).
+- The browser suite is **54 scripts** with `fingerprint.mjs` (before `permissions-admin`); it opens the office server
+  as `http://localhost` because a passkey cannot belong to an IP address, so the other scripts (at 127.0.0.1) are never
+  offered fingerprint sign-in. Set `WEBAUTHN_RP_ID` on a server with more than one name before anyone enrols.
+
 ### 2026-09-30 — Claude: the county view (released in 1.18.0) and its feature interval
 
 - The county view (docs/COUNTY-VIEW.md) is on `feat/county-view` and its review fixes on `fix/county-view-r1`:

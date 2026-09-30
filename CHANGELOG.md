@@ -8,6 +8,57 @@ A feature release (two migrations, two permissions and new routes): released in 
 not stamped. The release policy's feature interval runs 28 days from 1.17.0's stamp (2026-09-29 21:08 UTC), so it
 refuses 1.18.0 before about **2026-10-27 21:08 UTC** without the owner's `policy_exception` (HANDOFF.md).
 
+### Added: fingerprint sign-in, authorization and signing with passkeys (docs/FINGERPRINT.md; built for 1.19.0, not yet released)
+
+For the feature release after 1.18.0 (a migration and new routes; no new permission). Office server only.
+
+- **No biometric data.** Staff sign in, sign and approve with a WebAuthn passkey on their device's own authenticator
+  (Touch ID, Windows Hello, an Android fingerprint, or the device's screen lock). The device matches the finger; SUDS
+  receives a signature and stores only each passkey's public key, credential id, signature counter, transports,
+  AAGUID, its owner's name for it and dates — no fingerprint, template or measurement, so no biometric retention
+  schedule applies (FINGERPRINT.md sets out the CCPA/CPRA, BIPA and HIPAA position for counsel).
+- **Verified with `node:crypto` alone** (`server/webauthn.js`): a CBOR decoder, authenticator data, COSE keys for
+  ES256, EdDSA and RS256, registration and assertion checks. User verification is required and its flag checked (the
+  device may use its PIN instead of the finger: the screens say "fingerprint (or your device's screen lock)"). The
+  relying party is the server's host (`WEBAUTHN_RP_ID`), HTTPS only (plain http on localhost in development), never
+  an IP address; the origin is checked and `crossOrigin` refused. Attestation `none`; the AAGUID is recorded.
+  Challenges are stored hashed, single-use, two minutes, bound to purpose, user and session. A signature counter that
+  goes backwards disables the passkey and is audited (`auth.passkey.clone_suspected`).
+- **Enrolment** (My profile → Fingerprint sign-in): the password again, and the authenticator code with two-step
+  verification on; at most ten per account; rename, remove (the password again). Administrators see the count and
+  revoke them (`users:manage`); deactivation, SCIM deprovisioning and deprovisioning by absence remove them. Audited:
+  `auth.passkey.enrolled`, `.renamed`, `.removed`, `.enrol.failed`, `user.passkeys.revoked`.
+- **Sign-in**: "Sign in with fingerprint" (a discoverable passkey, or the typed username's), the username field's
+  passkey suggestions (conditional UI), and the fingerprint as the second step of a password sign-in. A passkey with UV
+  is multi-factor (NIST SP 800-63B, AAL2): it satisfies `MFA_REQUIRED_ROLES`, and an account with one is not given an
+  enrolment deadline. Lockout, rate limits, inactive accounts and "Require single sign-on" (emergency accounts
+  excepted) apply as to passwords. Audited `auth.login` with `method: "passkey"`.
+- **Signing and approvals**: "Confirm with fingerprint" beside the password or code for signing, countersigning (one
+  and batch), approving time (one and batch) and spending, and the key backup. The challenge is SHA-256 over a
+  canonical statement of exactly what is signed (purpose, record type and ids, the content hash or version, the
+  signer, the time, a nonce); the route recomputes it from the record as it is, so a confirmation for record A cannot
+  sign record B or a record changed since. The evidence (statement, assertion, public key) is stored encrypted
+  (`signature_evidence.evidence_enc`) and re-verifies offline even after the passkey is removed: Verify signature
+  shows it, auditors export it (`GET /api/admin/signature-evidence`, `audit:read`) and check it with
+  `npm run verify-passkey-evidence`. A fingerprint opens the quick-signing window as a password does. Audit entries
+  carry `identity`/`method: "passkey"` and the evidence id.
+- **Settings → Security policy**: *Allow fingerprint sign-in* and *Allow fingerprint to confirm signatures and
+  approvals* (on), *Require fingerprint or authenticator for signing* (off; when on, the password alone no longer
+  signs or approves, and only a quick-signing window opened by a fingerprint or code counts; time and spending
+  approval, which asked for no proof before, then need a fingerprint or code). Audited `security.passkey_policy`.
+  Security status reports passkey adoption and counts passkeys as two-step verification.
+- **SUDS on this device: deferred** (unlocking the vault with the WebAuthn PRF extension); no fingerprint is offered
+  there, and the passkey routes are not in the local kernel.
+- **Migration 58**: `passkeys`, `webauthn_challenges`, `signature_evidence` (office only, `server_only` in
+  sync-tables) and `sessions.reauth_method`.
+- Also: a dialog opened over another (the signature dialog over a note) no longer has the one below take its Tab and
+  Escape keys (`public/app.js` `modal`).
+- Tests: `test/fingerprint.test.js` with a software authenticator (`test/authenticator.js`: ES256, EdDSA, RS256);
+  browser script `scripts/ui/fingerprint.mjs` with Chromium's virtual authenticator (the suite is now 54 scripts), and
+  the new dialogs in the accessibility audit.
+- Docs: FINGERPRINT.md, USER_GUIDE, API.md, HIPAA.md (§164.312(d)), DEPLOYMENT and SELF-HOSTING (`WEBAUTHN_RP_ID`,
+  HTTPS), security/THREAT-MODEL, DATA-INVENTORY, PEN-TEST-SCOPE, QUESTIONNAIRE, IDENTITY.
+
 ### Added: the county connection (docs/COUNTY-VIEW.md, *Connecting*; released in 1.18.0)
 
 - **Optional, off by default on both sides.** A county that runs the county view can switch on a connection
