@@ -22,8 +22,9 @@ const TTL_MS = 24 * 3600 * 1000;
 const MAX_STORED_BYTES = 512 * 1024;
 // Not covered: sign-in and session routes (their answers are credentials, and there is no user yet),
 // the sync protocol (it has its own per-row idempotency and very large payloads), first-run setup and
-// account management (answers can carry a temporary password or an API key, which must not be kept).
-const EXEMPT = [/^\/api\/auth\//, /^\/api\/sync\//, /^\/api\/local\//, /^\/api\/setup(\/|$)/, /^\/api\/users(\/|$)/, /^\/api\/admin\/(api-keys|restore|keys-backup)/, /^\/api\/me\/(password|mfa)/];
+// account management (answers can carry a temporary password or an API key, which must not be kept), and issuing a
+// county connection or read token (its answer is the token, shown once; server/county-connect.js).
+const EXEMPT = [/^\/api\/auth\//, /^\/api\/sync\//, /^\/api\/local\//, /^\/api\/setup(\/|$)/, /^\/api\/users(\/|$)/, /^\/api\/admin\/(api-keys|restore|keys-backup)/, /^\/api\/county-connect\/tokens(\/|$)/, /^\/api\/me\/(password|mfa)/];
 
 // Requests with the same key that are still running: the second waits for the first and then replays it,
 // rather than both running because neither had finished storing its answer.

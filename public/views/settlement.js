@@ -1,4 +1,6 @@
 import { h, route, get, post, state, fmt, can, pageHead, stat, table, kv, nav, toast, emptyState, loadingFor, confirmDialog, announce } from '../app.js';
+// Send to the county over the county connection (views/countyconnect.js; built for 1.18.0), after the file card.
+import { countySendCard } from './countyconnect.js';
 import { fetchDownload } from './reports.js';
 import { submissionPeriods, monthsLabel, isQuarter } from '../county-periods.js';
 
@@ -105,7 +107,7 @@ route('settlement', async (r) => {
       table(trendCols, f.months, { empty: 'No months in this period.' }));
   };
 
-  return h('div', { 'data-settlement-outcomes': '1' }, ...head, totalCard, catCard, ...d.funds.map(fundCard), countyCard(from, to),
+  return h('div', { 'data-settlement-outcomes': '1' }, ...head, totalCard, catCard, ...d.funds.map(fundCard), countyCard(from, to), countySendCard(from, to),
     h('details', { class: 'small muted' }, h('summary', {}, 'How the counts were made'), h('p', {}, d.counting_statement)));
 });
 

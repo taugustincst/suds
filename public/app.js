@@ -2021,7 +2021,7 @@ function restoreFocus(root, k) {
 }
 // Every address has its own title (WCAG 2.4.2): the page, the section within it, and the programme — never a
 // client's name, which would sit in the browser's history and tab list.
-const TITLES = { client: 'Client record', caloms: 'State reporting', resource: 'Resource profile', profile: 'My profile', sync: 'This device', 'recovery-code': 'Recovery code', mfa: 'Two-step verification', setup: 'Set up SUDS' };
+const TITLES = { client: 'Client record', caloms: 'State reporting', resource: 'Resource profile', profile: 'My profile', sync: 'This device', 'recovery-code': 'Recovery code', mfa: 'Two-step verification', setup: 'Set up SUDS', 'county-connect': 'County connections' };
 export function setPageTitle(r = parseHash(), navItem = NAV.find(n => n.name === r.name)) {
   let page = TITLES[r.name] || navItem?.label;
   if (!page) page = document.querySelector('.main h1')?.textContent.trim() || (document.querySelector('[data-not-found]') ? 'Page not found' : 'SUDS');

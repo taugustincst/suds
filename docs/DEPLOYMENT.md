@@ -32,6 +32,13 @@ The optional **AI documentation copilot** (off by default; `docs/AI-COPILOT.md`)
 `docs/AI-COPILOT.md`, *Providers*), only after an administrator records the programme's BAA/QSOA with the provider and switches it on. Allow
 outbound HTTPS to that host if you use it.
 
+The optional **county connection** (off by default; built for 1.18.0, not yet released; `docs/COUNTY-VIEW.md`,
+*Connecting*): a programme's server that an administrator connects to its county posts its county submission file
+to the county's SUDS over HTTPS, to that one configured host only (no redirects, 15-second timeout). Allow outbound
+HTTPS to the county's host. The county's address must be public HTTPS; a county reached over a VPN on a private
+address is allowed only when the service is started with `SUDS_COUNTY_ALLOW_PRIVATE=1`, and a county certificate
+issued by its own CA is trusted with `NODE_EXTRA_CA_CERTS=/path/to/county-ca.pem`.
+
 ### Inbound from the internet: secure referral links
 
 **Secure referral links** (off by default; `docs/security/REFERRAL-LINKS.md`) are opened by a provider outside
@@ -39,7 +46,16 @@ the programme, in their own browser, **on this server**. For them to work the se
 internet over HTTPS — an office server reachable only on the office network cannot serve one. Exposing it
 (a TLS reverse proxy, `TRUST_PROXY=1` so the per-address limits see real addresses) is a decision for the
 programme's IT and its risk register, and counsel reviews the link design before an administrator switches the
-setting on. Nothing else in SUDS needs inbound access from outside the office.
+setting on.
+
+### Inbound from the internet: the county connection (a county's server)
+
+A **county** that switches on the county connection (off by default; `docs/COUNTY-VIEW.md`, *Connecting*) must let
+its programmes' servers reach `https://<county SUDS>/api/county-connect/v1/` — through its TLS reverse proxy on the
+internet, or over a VPN. Set `TRUST_PROXY=1` behind the proxy so the per-address limits and each token's recorded
+last-use address are the caller's. The routes need a bearer token (hashed at rest, revocable) and answer 404 while
+the switch is off; a county may also allow-list its programmes' addresses at the proxy or WAF for that path only.
+Nothing else in SUDS needs inbound access from outside the office.
 
 Behind a county web proxy, Node's built-in `fetch` ignores `HTTPS_PROXY` unless told to use it: set **both**
 `HTTPS_PROXY=http://proxy.example.gov:8080` and `NODE_USE_ENV_PROXY=1` in the service's environment (Node 22.21

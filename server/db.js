@@ -732,6 +732,20 @@ const migrations = [
       for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
     }
   },
+  // 57: the county connection (docs/COUNTY-VIEW.md, "Connecting"): county_connect_tokens (on a county's server, the
+  //     connection and read tokens it issues, hashed), county_connection and county_connect_sends (on a programme's
+  //     server, the county it sends to, its token encrypted, and what it sent). Office server only, off by default.
+  //     Kept apart from 56 (the county view) so the two can be reviewed and renumbered separately; self-contained
+  //     and idempotent.
+  (d) => {
+    const schemaText = safeSchema();
+    for (const t of ['county_connect_tokens', 'county_connection', 'county_connect_sends']) {
+      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+      if (!m) throw new Error(`migration 57: no definition for ${t} in schema`);
+      d.exec(m[0]);
+      for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
+    }
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

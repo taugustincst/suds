@@ -1,6 +1,8 @@
 import { h, route, get, post, put, fmt, can, pageHead, pageTabs, table, kv, nav, toast, modal, form, confirmDialog, emptyState, badge, loadingFor, announce } from '../app.js';
 import { fetchDownload } from './reports.js';
 import { presets, lastCompleteQuarter, monthsLabel, describe } from '../county-periods.js';
+// The county connection's Connection tokens card (views/countyconnect.js; built for 1.18.0), under the programmes.
+import { programmeConnections } from './countyconnect.js';
 
 // The county view (server/county.js, server/routes/county.js; docs/COUNTY-VIEW.md). For a county that runs SUDS
 // and funds programs that do too: each program sends the county a signed file of its settlement figures
@@ -243,7 +245,9 @@ async function programmesTab() {
         { label: 'Last file received', render: p => (p.last_received ? fmt.date(p.last_received) : '—') },
         manage ? { label: '', srLabel: 'Actions', render: p => h('div', { class: 'row' }, h('button', { class: 'btn sm', 'data-cp-edit': p.id, 'aria-label': `Edit ${p.name}`, onClick: () => programmeForm(p) }, 'Edit'),
           h('button', { class: 'btn sm', 'data-cp-keys': p.id, 'aria-label': `Keys of ${p.name}`, onClick: () => keysDialog(p) }, 'Keys')) } : null].filter(Boolean),
-      rows, { empty: 'No programs registered yet.' })));
+      rows, { empty: 'No programs registered yet.' })),
+    // County connection hook (views/countyconnect.js): each program's connection token, for county:manage.
+    await programmeConnections(rows));
 }
 /** The fingerprint of the key being pasted, worked out as it is typed (debounced), to compare with the one read out (U6). */
 function fingerprintPreview(keyInput) {

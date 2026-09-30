@@ -31,7 +31,7 @@ function rateLimitReset(key) { buckets.delete(key); }
 // out of the local-mode kernel.
 const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
   'interventions', 'overdose', 'prevention', 'calls', 'time', 'supervision', 'resources', 'referrals', 'referral-links', 'tasks', 'budget', 'notes',
-  'consents', 'patient-requests', 'part2', 'compliance', 'careplan', 'assessments', 'suprt', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors', 'fhir', 'scim', 'ai', 'county'];
+  'consents', 'patient-requests', 'part2', 'compliance', 'careplan', 'assessments', 'suprt', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors', 'fhir', 'scim', 'ai', 'county', 'county-connect'];
 
 // Not on a device: setup and app are office-server concerns (first-run wizard, connection info), sync is the
 // device's own runner, intake is an inbound API for other systems to call, and oidc needs a live identity
@@ -44,8 +44,10 @@ const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport
 // and a device never sends a client's text to an AI provider. referral-links serves one-time links to
 // organisations outside the programme (server/referral-links.js): only the office has an address they can reach.
 // county is the county view and the programme's Send to the county file (server/county.js): SUDS on this device has
-// no county relationship, signs nothing for one and imports nothing from one.
-const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security', 'scim', 'ai', 'referral-links', 'county'].includes(m));
+// no county relationship, signs nothing for one and imports nothing from one. county-connect is the connection between
+// a programme's office server and its county's (server/county-connect.js): the same, and a device has no address a
+// county could reach.
+const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security', 'scim', 'ai', 'referral-links', 'county', 'county-connect'].includes(m));
 
 // Served in place of the app shell when local mode is off (the wizard's answer in server.json, or LOCAL_MODE_ENABLED). No scripts, nothing to configure.
 const LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS — local mode is off</title>
@@ -77,7 +79,15 @@ const LARGE_BODY_ROUTES = [
   /^\/api\/imports\//,                       // OneNote / spreadsheet / data imports
   /^\/api\/sync\/(push|blob)(\/|$)/,         // a local-mode device's sync payload and attachments
 ];
+// A route module may set the cap of one path of its own that is called without a session (bodyLimitFor): the county
+// connection's push, whose body is a signed file of up to 256 KB, gets that cap only for a live connection token while
+// the connection is switched on (server/county-connect.js pushBodyLimit); otherwise its hook answers null and the
+// rules below apply. Still decided before a byte of the body is read.
+const BODY_LIMIT_HOOKS = new Map();
+function bodyLimitFor(path, fn) { BODY_LIMIT_HOOKS.set(path, fn); }
 function bodyLimit(ctx) {
+  const hook = BODY_LIMIT_HOOKS.get(ctx.path);
+  if (hook) { const n = hook(ctx); if (n) return n; }
   const authed = !!ctx.user && !ctx.session?.mfa_pending;
   if (!authed) return ctx.path.startsWith('/api/intake/') || ctx.path.startsWith('/scim/') ? config.maxJsonBodyBytes : config.maxUnauthBodyBytes;
   if (ctx.path.startsWith('/api/admin/restore')) return config.maxRestoreBodyBytes;
@@ -194,4 +204,4 @@ function createHandler() {
   };
 }
 
-module.exports = { createHandler, rateLimit, rateLimited, rateLimitReset, ROUTE_MODULES, LOCAL_ROUTE_MODULES };
+module.exports = { createHandler, rateLimit, rateLimited, rateLimitReset, bodyLimitFor, ROUTE_MODULES, LOCAL_ROUTE_MODULES };
