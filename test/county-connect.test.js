@@ -165,7 +165,8 @@ test('push: county.js\'s refusals pass through with their reasons: a file for an
   assert.match(r.data.message, new RegExp(`This county's code is ${K.formatCode(COUNTY.county_code)}`));
   const stranger = K.signWithSeed(SAMPLE.payloadFor(SAMPLE.PROGRAMMES[2], Q1, 1, { recipient: COUNTY }), crypto.randomBytes(32));
   const u = await bearer('POST', '/api/county-connect/v1/submissions', t.token, JSON.stringify(stranger.file));
-  assert.equal(u.status, 422); assert.equal(u.data.reason, 'unknown_key');
+  // An unknown key and another programme's key are one answer to the token holder; the county's audit says which.
+  assert.equal(u.status, 422); assert.equal(u.data.reason, 'not_this_programme'); assert.equal(u.data.message, CC.NOT_THIS_KEY);
   assert.equal(lastAudit('county.submission.refuse').details.reason, 'unknown_key');
 });
 
@@ -174,7 +175,9 @@ test('push: a file signed by another programme is refused under this token, and 
   const fB = samples[1].files[0];
   const before = H.db.one(`SELECT COUNT(*) n FROM county_submissions`).n;
   const r = await bearer('POST', '/api/county-connect/v1/submissions', tA.token, JSON.stringify(fB.file));
-  assert.equal(r.status, 422); assert.equal(r.data.status, 'refused'); assert.equal(r.data.reason, 'wrong_programme');
+  assert.equal(r.status, 422); assert.equal(r.data.status, 'refused'); assert.equal(r.data.reason, 'not_this_programme');
+  assert.equal(r.data.message, CC.NOT_THIS_KEY, 'the same words as for an unknown key');
+  assert.ok(!r.data.message.includes(samples[1].name), 'nothing of the other programme');
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM county_submissions`).n, before, 'rolled back');
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM county_submissions WHERE sha256=?`, fB.sha256).n, 0);
   const a = lastAudit('county.submission.refuse'); assert.equal(a.details.reason, 'wrong_programme'); assert.equal(a.details.via, 'county-connect'); assert.equal(a.success, 0);
@@ -536,4 +539,251 @@ test('end to end: this programme\'s server sends its real signed file to the cou
     assert.equal((await CL.autoSendIfDue()), null, 'not again the same day');
     ok(await admin.put('/api/county-connect/connection', { auto_send: false }), 200);
   } finally { await new Promise(r => { county.closeAllConnections(); county.close(r); }); }
+});
+
+// ---------------------------------------------------------------- security review (r1): a hostile caller, a hostile county
+const P = require('../server/county-periods');
+const { rateLimitReset: resetBucket } = require('../server/app');
+
+test('r1 #1: a flood of made-up tokens from many addresses never makes a real token wait', async () => {
+  const t = ok(await issue(admin, { scope: 'county.submit', programme_id: progA.id }));
+  const saved = { all: CC.LIMITS.all, badAll: CC.LIMITS.badAll, trust: config.trustProxy };
+  const from = (ip) => ({ 'X-Forwarded-For': ip });
+  const call = async (token, ip) => (await fetch(`${base}/api/county-connect/v1/status`, { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...from(ip) } })).status;
+  try {
+    config.trustProxy = true;
+    CC.LIMITS.all = 40; CC.LIMITS.badAll = 30; // the shared limits, small enough to exhaust here
+    for (const k of ['county-connect:*', 'county-connect-bad:*']) resetBucket(k);
+    // 60 garbage calls, each from its own address (under every per-address limit), more than both shared limits.
+    const seen = [];
+    for (let i = 0; i < 60; i++) seen.push(await call('sudscc_' + String(i).padStart(43, 'g'), `203.0.113.${i + 1}`));
+    assert.ok(seen.slice(0, 30).every(s => s === 401), JSON.stringify(seen));
+    assert.ok(seen.slice(30).every(s => s === 429), 'past the limit for callers without a good token, they wait');
+    // A real token, from a new address and from one of the flooding addresses (under its own bad limit), is served.
+    assert.equal(await call(t.token, '198.51.100.7'), 200, 'the garbage never counted against good tokens');
+    assert.equal(await call(t.token, '203.0.113.5'), 200);
+  } finally {
+    Object.assign(CC.LIMITS, { all: saved.all, badAll: saved.badAll }); config.trustProxy = saved.trust;
+    for (const k of ['county-connect:*', 'county-connect-bad:*', 'county-connect:198.51.100.7', 'county-connect:203.0.113.5', `county-connect-token:${t.id}`]) resetBucket(k);
+    for (let i = 0; i < 60; i++) resetBucket(`county-connect-bad:203.0.113.${i + 1}`);
+  }
+});
+
+test('r1 #1: behind a proxy without TRUST_PROXY, the settings say so', async () => {
+  CC._resetForwardedForTests();
+  const t = ok(await issue(admin, { scope: 'county.submit', programme_id: progA.id }));
+  assert.equal(ok(await admin.get('/api/county-connect/settings'), 200).proxy_warning, null);
+  const was = config.trustProxy; config.trustProxy = false;
+  try {
+    await fetch(`${base}/api/county-connect/v1/status`, { headers: { Authorization: `Bearer ${t.token}`, 'X-Forwarded-For': '198.51.100.9' } });
+    assert.match(ok(await admin.get('/api/county-connect/settings'), 200).proxy_warning, /TRUST_PROXY=1/);
+  } finally { config.trustProxy = was; CC._resetForwardedForTests(); }
+});
+
+/** A hostile (or broken) county for the programme's side: `status()` is its /status answer; files posted are kept. */
+async function scriptedCounty(status) {
+  const posted = [];
+  const c = await fakeCounty((req, res) => {
+    const chunks = []; req.on('data', d => chunks.push(d));
+    req.on('end', () => {
+      res.writeHead(req.method === 'POST' ? 201 : 200, { 'content-type': 'application/json' });
+      if (req.method !== 'POST') { res.end(JSON.stringify(status())); return; }
+      const file = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      posted.push({ ...file.payload.period, recipient: file.payload.recipient });
+      res.end(JSON.stringify({ status: 'imported', reason: null, receipt: { sha256: null, received_at: new Date().toISOString() } }));
+    });
+  });
+  return { ...c, posted };
+}
+const statusOf = (code, outstanding, extra = {}) => ({ county: { code, name: 'Fake County' }, programme: { id: 'p', name: 'x', active: true }, cadence: 'quarterly_calendar', expected: [], outstanding, received: [], ...extra });
+function remember(code, funds) { const r = JSON.parse(H.db.getSetting('county_submission_recipients', '{}')); r[code] = { name: 'Fake County', fund_ids: funds, used_at: new Date().toISOString() }; H.db.setSetting('county_submission_recipients', JSON.stringify(r)); }
+const aToken = 'sudscc_' + 'F'.repeat(43);
+
+test('r1 #2: automatic sending sends only real, ended periods of the cadence in the last two years; the rest are skipped and audited', async () => {
+  const day = CC.today();
+  const [q0, q1] = P.completeQuarters(day, 2);
+  const old = P.completeQuarters(day, 12)[11]; // three years back: beyond the lookback
+  const tomorrow = new Date(Date.parse(`${day}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+  const dayBefore = (d) => new Date(Date.parse(`${d}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+  const outstanding = [
+    { from: '2026-02-30', to: '2026-03-31' }, { from: q0.to, to: q0.from }, { from: '2019-01-01', to: q0.to }, { from: q0.from, to: tomorrow },
+    { from: old.from, to: old.to }, { from: q0.from, to: dayBefore(q0.to) }, { from: 123, to: null }, 'nonsense', q1, q0, q0,
+  ].map(p => (p && typeof p === 'object' && 'y' in p ? { from: p.from, to: p.to } : p));
+  const county = await scriptedCounty(() => statusOf('FAKE2345', outstanding));
+  try {
+    H.db.run(`DELETE FROM county_connect_sends`);
+    remember('FAKE2345', [fund]);
+    ok(await admin.put('/api/county-connect/connection', { base_url: county.url, token: aToken, auto_send: true }), 200);
+    const skips = auditCount('county_submission.auto_skip');
+    const out = await CL.autoSendIfDue({ force: true });
+    assert.deepEqual(county.posted.map(p => [p.from, p.to]), [[q1.from, q1.to], [q0.from, q0.to]], 'only the two real quarters, oldest first, once each');
+    assert.equal(out.skipped, 8); assert.equal(auditCount('county_submission.auto_skip') - skips, 8);
+    const s = lastAudit('county_submission.auto_skip');
+    assert.ok(['not_dates', 'reversed', 'longer_than_a_year', 'not_over', 'not_a_period_of_the_cadence'].includes(s.details.reason));
+    assert.ok(!/naloxone|values|777/.test(JSON.stringify(s.details)), 'no figures');
+    const reasons = H.db.all(`SELECT details FROM audit_log WHERE action='county_submission.auto_skip' ORDER BY id DESC LIMIT 8`).map(r => JSON.parse(r.details).reason).sort();
+    assert.deepEqual(reasons, ['longer_than_a_year', 'not_a_period_of_the_cadence', 'not_a_period_of_the_cadence', 'not_dates', 'not_dates', 'not_dates', 'not_over', 'reversed']);
+    // An unknown cadence: nothing is a period of it.
+    const periods = CL.cadencePeriods('weekly', day); assert.equal(periods, null);
+    assert.equal(CL.periodProblem(q0, null, day), 'not_a_period_of_the_cadence');
+    assert.equal(CL.periodProblem({ from: P.completeMonths(day, 1)[0].from, to: P.completeMonths(day, 1)[0].to }, CL.cadencePeriods('monthly', day), day), null);
+  } finally { ok(await admin.put('/api/county-connect/connection', { auto_send: false }), 200); await county.close(); }
+});
+
+test('r1 #3: a county that starts giving another county code: automatic sending switches off, nothing is sent, an administrator confirms', async () => {
+  const [q0] = P.completeQuarters(CC.today(), 1);
+  let code = 'FAKE2345';
+  const county = await scriptedCounty(() => statusOf(code, [{ from: q0.from, to: q0.to }]));
+  try {
+    H.db.run(`DELETE FROM county_connect_sends`);
+    ok(await admin.put('/api/county-connect/connection', { base_url: county.url, token: aToken }), 200);
+    // No funds remembered for this county's code: automatic sending sends nothing, and says why.
+    const r0 = JSON.parse(H.db.getSetting('county_submission_recipients', '{}')); delete r0.FAKE2345; H.db.setSetting('county_submission_recipients', JSON.stringify(r0));
+    ok(await admin.put('/api/county-connect/connection', { auto_send: true }), 200);
+    const none = await CL.autoSendIfDue({ force: true });
+    assert.equal(none.error, 'funds'); assert.equal(county.posted.length, 0); assert.equal(lastAudit('county_submission.auto').details.error, 'funds');
+    // Funds chosen for this county, and (from a download for another county) for ZZZZ2345.
+    remember('FAKE2345', [fund]); remember('ZZZZ2345', [fund]);
+    const otherBefore = JSON.parse(H.db.getSetting('county_submission_recipients'))['ZZZZ2345'];
+    code = 'ZZZZ2345';
+    const out = await CL.autoSendIfDue({ force: true });
+    assert.equal(out.error, 'county_code_changed');
+    assert.equal(county.posted.length, 0, 'nothing was sent to a county claiming another county\'s code');
+    const c = ok(await admin.get('/api/county-connect/connection'), 200);
+    assert.equal(c.auto_send, false, 'automatic sending switched itself off');
+    assert.equal(c.county_code, 'FAKE2345', 'the saved code is kept');
+    assert.equal(c.pending_county_code.code, 'ZZZZ2345'); assert.equal(c.pending_county_code.previous, 'FAKE2345');
+    const a = lastAudit('county_connect.county_code.changed');
+    assert.equal(a.details.previous, 'FAKE2345'); assert.equal(a.details.county_code, 'ZZZZ2345'); assert.equal(a.details.auto_send_switched_off, true);
+    // A person's send is refused too, and automatic sending cannot be switched back on, until an administrator confirms.
+    const s = await fin.post('/api/county-connect/send', { ...q0, funds: [fund] });
+    assert.equal(s.status, 400); assert.match(s.data.error, /different county code/);
+    const on = await admin.put('/api/county-connect/connection', { auto_send: true });
+    assert.equal(on.status, 400); assert.ok(on.data.fields.auto_send);
+    assert.equal((await fin.put('/api/county-connect/connection', { confirm_county_code: true })).status, 403);
+    assert.deepEqual(JSON.parse(H.db.getSetting('county_submission_recipients'))['ZZZZ2345'], otherBefore, 'another code\'s remembered selection is never overwritten');
+    const conf = ok(await admin.put('/api/county-connect/connection', { confirm_county_code: true, auto_send: true }), 200);
+    assert.equal(conf.county_code, 'ZZZZ2345'); assert.equal(conf.pending_county_code, null); assert.equal(conf.auto_send, true);
+    assert.equal(lastAudit('county_connect.county_code.confirm').details.county_code, 'ZZZZ2345');
+    assert.equal((await admin.put('/api/county-connect/connection', { confirm_county_code: true })).status, 400, 'nothing left to confirm');
+  } finally { ok(await admin.put('/api/county-connect/connection', { auto_send: false }), 200); await county.close(); }
+});
+
+test('r1 #3: the county\'s code and name are held to a file recipient\'s rules before they are stored or signed', async () => {
+  let county = { code: 'FAKE2345', name: 'Fake County' };
+  const srv = await scriptedCounty(() => ({ ...statusOf(null, []), county }));
+  try {
+    ok(await admin.put('/api/county-connect/connection', { base_url: srv.url, token: aToken }), 200);
+    for (const bad of [{ code: 'FAKE2345', name: 'Fake‮County' }, { code: 'FAKE2345', name: 'Fake\nCounty' }, { code: 'FAKE2345', name: 'x'.repeat(201) }, { code: 'FAKE2345', name: { toString: 1 } },
+      { code: 'not a county code at all', name: 'Fake County' }, { code: ['FAKE2345'], name: 'Fake County' }, { code: 'FAKE2345'.repeat(3), name: 'Fake County' }]) {
+      county = bad;
+      const r = ok(await admin.post('/api/county-connect/connection/test', {}), 200);
+      assert.equal(r.ok, false, JSON.stringify(bad)); assert.equal(r.reason, 'bad_answer');
+      const c = ok(await admin.get('/api/county-connect/connection'), 200);
+      assert.equal(c.county_code, null); assert.equal(c.county_name, null, 'nothing of it stored');
+    }
+    county = { code: 'fake-2345', name: 'Fake County' };
+    const g = ok(await admin.post('/api/county-connect/connection/test', {}), 200);
+    assert.equal(g.ok, true); assert.equal(g.connection.county_code, 'FAKE2345'); assert.equal(g.connection.county_name, 'Fake County');
+  } finally { await srv.close(); }
+});
+
+test('r1 #4: SUDS_COUNTY_ALLOW_PRIVATE allows RFC 1918 and ULA, resolved and pinned, never loopback, link-local or metadata', async () => {
+  for (const a of ['10.1.2.3', '172.16.0.1', '172.31.255.254', '192.168.1.1', 'fd12:3456::1', 'fc00::5', '93.184.216.34', '::ffff:10.0.0.1', '2606:4700::1111']) assert.equal(outbound.isAllowedPrivateNetworkAddress(a), true, a);
+  for (const a of ['127.0.0.1', '127.8.8.8', '169.254.169.254', '169.254.1.1', '169.254.170.2', '100.100.100.200', 'fe80::1', '0.0.0.0', '::', '::1', '::ffff:127.0.0.1', '::ffff:169.254.169.254', '::ffff:0.0.0.0',
+    '::127.0.0.1', 'fd00:ec2::254', '2002:7f00:1::', '2002:a9fe:a9fe::', '100.64.0.1', '224.0.0.1', 'not an address']) assert.equal(outbound.isAllowedPrivateNetworkAddress(a), false, a);
+  const prod = config.isProd;
+  const tok = ok(await issue(admin, { scope: 'county.submit', programme_id: own.id }));
+  const seen = [];
+  try {
+    config.isProd = true; process.env.SUDS_COUNTY_ALLOW_PRIVATE = '1';
+    for (const bad of ['https://127.0.0.1', 'https://localhost', 'https://169.254.169.254', 'https://[::ffff:127.0.0.1]', 'https://[fe80::1]', 'https://0.0.0.0', 'https://[fd00:ec2::254]', 'https://metadata.google.internal']) {
+      assert.throws(() => CL.checkBaseUrl(bad), CL.ConnectError, bad);
+    }
+    assert.equal(CL.checkBaseUrl('https://[fd12::7]:8443'), 'https://[fd12::7]:8443');
+    // A normal name that resolves to a private address through split DNS: allowed, and asked for by its name (TLS
+    // checks the county's certificate against that name; the connection is pinned to the address checked).
+    ok(await admin.put('/api/county-connect/connection', { base_url: 'https://suds.county.example', token: tok.token }), 200);
+    outbound._setFetchForTests(async (url) => { seen.push(url); return new Response(JSON.stringify(statusOf('FAKE2345', [])), { status: 200, headers: { 'content-type': 'application/json' } }); });
+    outbound._setLookupForTests(async () => [{ address: '10.0.0.7' }]);
+    const okr = ok(await admin.post('/api/county-connect/connection/test', {}), 200);
+    assert.equal(okr.ok, true, JSON.stringify(okr)); assert.deepEqual(seen, ['https://suds.county.example/api/county-connect/v1/status']);
+    for (const addr of ['127.0.0.1', '169.254.169.254', '::ffff:127.0.0.1', 'fe80::1']) {
+      seen.length = 0;
+      outbound._setLookupForTests(async () => [{ address: '10.0.0.8' }, { address: addr }]);
+      const r = ok(await admin.post('/api/county-connect/connection/test', {}), 200);
+      assert.equal(r.ok, false, addr); assert.equal(r.reason, 'refused_address', addr); assert.deepEqual(seen, [], `nothing sent (${addr})`);
+    }
+    // The connection's own lookup hook checks again, at connect time (DNS rebinding).
+    outbound._setLookupForTests(async () => [{ address: '10.0.0.9', family: 4 }]);
+    const got = await new Promise((resolve) => outbound.privateNetworkLookup('suds.county.example', { all: true }, (e, a) => resolve([e, a])));
+    assert.equal(got[0], null); assert.deepEqual(got[1], [{ address: '10.0.0.9', family: 4 }]);
+    outbound._setLookupForTests(async () => [{ address: '169.254.169.254', family: 4 }]);
+    const refused = await new Promise((resolve) => outbound.privateNetworkLookup('suds.county.example', {}, (e) => resolve(e)));
+    assert.ok(refused && refused.soft);
+  } finally {
+    config.isProd = prod; delete process.env.SUDS_COUNTY_ALLOW_PRIVATE;
+    outbound._setFetchForTests(null); outbound._setLookupForTests(null);
+    ok(await admin.del('/api/county-connect/connection'), 200);
+  }
+});
+
+test('r1 #5: a county that drips its answer is cut off at the deadline, and the automatic run is free to run again', async () => {
+  const drip = await fakeCounty((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.write(' ');
+    const iv = setInterval(() => { try { res.write(' '); } catch { clearInterval(iv); } }, 50);
+    setTimeout(() => { clearInterval(iv); try { res.end(JSON.stringify(statusOf('FAKE2345', []))); } catch { /* closed */ } }, 3000);
+    res.on('close', () => clearInterval(iv));
+  });
+  CL._setTimeoutForTests(400);
+  try {
+    ok(await admin.put('/api/county-connect/connection', { base_url: drip.url, token: aToken }), 200);
+    const t0 = Date.now();
+    const r = ok(await admin.post('/api/county-connect/connection/test', {}), 200);
+    assert.ok(Date.now() - t0 < 2000, `cut off at the deadline, not when the county stopped (${Date.now() - t0} ms)`);
+    assert.equal(r.ok, false); assert.equal(r.reason, 'timeout');
+    remember('FAKE2345', [fund]);
+    H.db.run(`UPDATE county_connection SET auto_send=1, county_code='FAKE2345'`);
+    const a = await CL.autoSendIfDue({ force: true });
+    assert.ok(a && a.error, 'the run ended');
+    const b = await CL.autoSendIfDue({ force: true });
+    assert.notEqual(b, null, 'and the next one is not held back by it');
+  } finally { CL._setTimeoutForTests(null); H.db.run(`UPDATE county_connection SET auto_send=0`); await drip.close(); }
+});
+
+test('r1 #6: a deactivated programme\'s connection tokens stop working and are revoked, audited', async () => {
+  const pub = crypto.generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' });
+  const prog = ok(await admin.post('/api/county/programmes', { name: 'Short-lived Programme', public_key: pub, compared: true }));
+  const t1 = ok(await issue(admin, { scope: 'county.submit', programme_id: prog.id }));
+  const t2 = ok(await issue(admin, { scope: 'county.submit', programme_id: prog.id }));
+  assert.equal((await bearer('GET', '/api/county-connect/v1/status', t1.token)).status, 200);
+  // Inactive by any path (here, straight in the database): the token is refused though not yet revoked.
+  H.db.run(`UPDATE county_programmes SET active=0 WHERE id=?`, prog.id);
+  const r = await bearer('GET', '/api/county-connect/v1/status', t1.token);
+  assert.equal(r.status, 401); assert.equal(lastAudit('county_connect.refuse').details.reason, 'inactive_programme');
+  H.db.run(`UPDATE county_programmes SET active=1 WHERE id=?`, prog.id);
+  // Deactivated on County view › Programmes: every live token revoked, each audited.
+  const n0 = auditCount('county_connect.token.revoke');
+  ok(await admin.put(`/api/county/programmes/${prog.id}`, { active: false }), 200);
+  assert.equal(auditCount('county_connect.token.revoke') - n0, 2);
+  assert.equal(lastAudit('county_connect.token.revoke').details.reason, 'programme_deactivated');
+  assert.equal(lastAudit('county.programme.deactivate').details.connection_tokens_revoked, 2);
+  for (const t of [t1, t2]) assert.ok(H.db.one(`SELECT revoked_at FROM county_connect_tokens WHERE id=?`, t.id).revoked_at);
+  ok(await admin.put(`/api/county/programmes/${prog.id}`, { active: true }), 200);
+  assert.equal((await bearer('GET', '/api/county-connect/v1/status', t2.token)).status, 401, 'reactivating does not bring an old token back');
+});
+
+test('r1 #8: the hourly housekeeping writes the summary of a throttled refusal window that is over', () => {
+  const tok = { id: 'sweep-test-token', prefix: 'sudscc_sweep' };
+  for (let i = 0; i < CC.REFUSALS_LOGGED_PER_HOUR + 3; i++) CC.logRefusal({ action: 'county_connect.refuse', token: tok, ip: `192.0.2.${i}`, reason: 'expired_token' });
+  const mine = () => H.db.all(`SELECT details FROM audit_log WHERE action='county_connect.refuse' AND entity_id=? ORDER BY id`, tok.id).map(r => JSON.parse(r.details));
+  const before = mine().length;
+  CC.sweepRefusals(Date.now());
+  assert.equal(mine().length, before, 'a window still open is left');
+  assert.ok(CC.sweepRefusals(Date.now() + 3600_000 + 1) >= 1);
+  const got = mine();
+  assert.equal(got.length - before, 1);
+  assert.equal(got.at(-1).reason, 'refused_summary'); assert.equal(got.at(-1).count, 3);
+  assert.match(require('node:fs').readFileSync(require('node:path').join(__dirname, '../server/index.js'), 'utf8'), /county-connect'\)\.sweepRefusals\(\)/, 'housekeeping calls it');
 });

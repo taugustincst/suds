@@ -43,25 +43,34 @@ function period(from, to) {
 
 /**
  * The gate every machine route passes before it does anything: switched on (else 404, as if the route did not
- * exist), the address and all addresses together within their limits, a live token of the right scope in the
- * Authorization header (a session is never looked at), and that token within its own limit. Returns the token row.
+ * exist), a live token of the right scope in the Authorization header (a session is never looked at), then the
+ * address, all addresses together and the token within their limits. Returns the token row.
+ *
+ * Callers without a good token have limits of their own, checked first and counted only for them: per address
+ * (badPerIp; an address over it waits, good token or not) and all addresses together (badAll). They never count
+ * towards the limits of calls with a good token (perIp, all, per token), so a flood of made-up tokens from many
+ * addresses cannot make a programme's real token wait.
  */
 function machine(ctx, scope, perToken) {
   if (!CC.enabled()) throw notFound('Not found');
   ctx.res.setHeader('Cache-Control', 'no-store');
+  CC.noteForwarded(ctx);
   const { rateLimit, rateLimited } = require('../app');
-  if (!rateLimit(`county-connect:${ctx.ip}`, CC.LIMITS.perIp, CC.WINDOW_MS)) throw new HttpError(429, 'Too many requests from this address. Wait ten minutes.');
-  if (!rateLimit('county-connect:*', CC.LIMITS.all, CC.WINDOW_MS)) throw new HttpError(429, 'Too many requests. Wait ten minutes.');
   const badKey = `county-connect-bad:${ctx.ip}`;
   if (rateLimited(badKey, CC.LIMITS.badPerIp)) throw new HttpError(429, 'Too many requests with a token that is not valid from this address. Wait ten minutes.');
   const r = CC.lookup(ctx);
   if (r.refused) {
     rateLimit(badKey, CC.LIMITS.badPerIp, CC.WINDOW_MS);
+    // Past the limit for all addresses together, a caller without a good token is told to wait, unlogged (the
+    // refusals already logged are summarised); a good token is never held back by it.
+    if (!rateLimit('county-connect-bad:*', CC.LIMITS.badAll, CC.WINDOW_MS)) throw new HttpError(429, 'Too many requests with a token that is not valid. Wait ten minutes.');
     CC.logRefusal({ action: 'county_connect.refuse', token: r.token || null, ip: ctx.ip, reason: r.refused, details: { path: ctx.path } });
     ctx.res.setHeader('WWW-Authenticate', 'Bearer realm="suds-county-connect"');
     throw unauthorized(r.refused === 'no_token' ? 'A county connection bearer token is required.' : 'The token is not valid: it is unknown, expired or revoked.');
   }
   const t = r.token;
+  if (!rateLimit(`county-connect:${ctx.ip}`, CC.LIMITS.perIp, CC.WINDOW_MS)) throw new HttpError(429, 'Too many requests from this address. Wait ten minutes.');
+  if (!rateLimit('county-connect:*', CC.LIMITS.all, CC.WINDOW_MS)) throw new HttpError(429, 'Too many requests. Wait ten minutes.');
   if (t.scope !== scope) {
     CC.logRefusal({ action: 'county_connect.refuse', token: t, ip: ctx.ip, reason: 'wrong_scope', details: { path: ctx.path, scope: t.scope } });
     throw forbidden(scope === CC.SCOPES.read ? 'A connection token cannot read the combined view: use a read token.' : 'A read token cannot send or ask for a program\'s status: use the program\'s connection token.');
@@ -103,9 +112,18 @@ module.exports = (r) => {
       // (older); the token decides who is calling. They must be the same programme, or nothing is kept (the import is
       // rolled back). Every refusal is county.js's own, with its reason code, passed through as it is.
       const here = CC.countyCode({ user: CC.actor(t), ip: ctx.ip });
+      // The key that signed the file must be one the county registered for this token's programme, decided before
+      // county.js looks further (so nothing it would say about another programme's key, name or files is said to
+      // this caller). An unknown key and another programme's key are one refusal to the caller (CC.NOT_THIS_KEY);
+      // which it was is kept in the county's audit log.
+      if (parsed.payload && parsed.payload.recipient && parsed.payload.recipient.county_code === here) {
+        const key = db.one(`SELECT programme_id FROM county_programme_keys WHERE fingerprint=?`, parsed.fingerprint);
+        if (!key) throw new K.SubmissionError('unknown_key', CC.NOT_THIS_KEY);
+        if (key.programme_id !== t.programme_id) throw new K.SubmissionError('wrong_programme', CC.NOT_THIS_KEY);
+      }
       const out = db.transaction(() => {
         const o = K.importParsed(parsed, null, { countyCode: here });
-        if (o.programme.id !== t.programme_id) throw new K.SubmissionError('wrong_programme', 'The file was not signed with the key the county registered for the program this token belongs to. Send your own program\'s file, with your own token.');
+        if (o.programme.id !== t.programme_id) throw new K.SubmissionError('wrong_programme', CC.NOT_THIS_KEY);
         return o;
       });
       const s = out.submission;
@@ -120,7 +138,8 @@ module.exports = (r) => {
       rateLimit(refusedKey, CC.LIMITS.refusedPerToken, CC.WINDOW_MS);
       CC.logRefusal({ action: 'county.submission.refuse', token: t, ip: ctx.ip, reason: e.code, details: { via: 'county-connect', token_id: t.id, programme_id: t.programme_id, file_sha256: fileSha, bytes: textIn ? Buffer.byteLength(textIn) : 0 } });
       ctx.status = e.code === 'too_large' ? 413 : 422;
-      return { status: 'refused', reason: e.code, message: e.message, receipt: { sha256: null, received_at: receivedAt } };
+      const merged = e.code === 'unknown_key' || e.code === 'wrong_programme';
+      return { status: 'refused', reason: merged ? CC.NOT_THIS_KEY_REASON : e.code, message: merged ? CC.NOT_THIS_KEY : e.message, receipt: { sha256: null, received_at: receivedAt } };
     }
   });
 
@@ -217,10 +236,14 @@ module.exports = (r) => {
     return { ...c, sends: log, can_configure: auth.hasPerm(ctx.user, 'settings:manage'), can_send: cboCan(ctx) && auth.hasPerm(ctx.user, 'export:read') };
   });
   r.put('/api/county-connect/connection', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
-    const v = validate(ctx.body, { base_url: { type: 'string', maxLen: 500 }, token: { type: 'string', maxLen: 200 }, auto_send: { type: 'boolean' } }, { partial: true });
+    const v = validate(ctx.body, { base_url: { type: 'string', maxLen: 500 }, token: { type: 'string', maxLen: 200 }, auto_send: { type: 'boolean' }, confirm_county_code: { type: 'boolean' } }, { partial: true });
     let out;
-    try { out = CL.save({ baseUrl: v.base_url, token: v.token, autoSend: v.auto_send === undefined || v.auto_send === null ? undefined : !!v.auto_send }, ctx.user); }
-    catch (e) { if (e instanceof CL.ConnectError) throw badRequest(e.message, { fields: /token/i.test(e.message) && !/address/.test(e.message) ? { token: e.message } : { base_url: e.message } }); throw e; }
+    try { out = CL.save({ baseUrl: v.base_url, token: v.token, autoSend: v.auto_send === undefined || v.auto_send === null ? undefined : !!v.auto_send, confirmCode: !!v.confirm_county_code }, ctx.user); }
+    catch (e) {
+      if (e instanceof CL.ConnectError) throw badRequest(e.message, { fields: e.field ? { [e.field]: e.message } : /token/i.test(e.message) && !/address/.test(e.message) ? { token: e.message } : { base_url: e.message } });
+      throw e;
+    }
+    if (out.confirmed) audit.log({ user: ctx.user, action: 'county_connect.county_code.confirm', ip: ctx.ip, details: { host: out.host, previous: out.confirmed.previous, county_code: out.confirmed.code } });
     audit.log({ user: ctx.user, action: 'county_connect.connection.save', ip: ctx.ip, details: { host: out.host, base_url_changed: out.changed.base_url, token_changed: out.changed.token, auto_send: CL.describe().auto_send } });
     return CL.describe();
   });
@@ -231,7 +254,7 @@ module.exports = (r) => {
   });
   r.post('/api/county-connect/connection/test', auth.requireAuth, configOrFiler, async (ctx) => {
     if (!CL.describe().connected) throw badRequest('Save the county\'s address and token first.');
-    const out = await CL.test();
+    const out = await CL.test({ user: ctx.user, ip: ctx.ip });
     audit.log({ user: ctx.user, action: 'county_connect.connection.test', ip: ctx.ip, success: out.ok, details: { host: new URL(CL.describe().base_url).host, ok: out.ok, reason: out.reason || undefined, outstanding: out.ok ? out.status.outstanding.length : undefined } });
     return { ...out, connection: CL.describe() };
   });

@@ -169,7 +169,10 @@ module.exports = (r) => {
     const keep = v.keep_files === undefined || v.keep_files === null ? !!p.keep_files : !!v.keep_files;
     db.run(`UPDATE county_programmes SET name=?, notes=?, active=?, keep_files=?, updated_at=? WHERE id=?`, name, v.notes !== undefined ? (v.notes || null) : p.notes, active ? 1 : 0, keep ? 1 : 0, db.now(), p.id);
     const action = !!p.active && !active ? 'county.programme.deactivate' : !p.active && active ? 'county.programme.reactivate' : 'county.programme.update';
-    audit.log({ user: ctx.user, action, entity: 'county_programme', entityId: p.id, ip: ctx.ip, details: { changed: ['name', 'notes', 'active', 'keep_files'].filter(k => v[k] !== undefined), active, keep_files: keep } });
+    // A deactivated programme's county connection tokens stop working (county-connect.js lookup) and are revoked,
+    // each audited, so reactivating it later does not bring an old token back.
+    const revoked = action === 'county.programme.deactivate' ? require('../county-connect').revokeForProgramme(p.id, ctx.user, ctx.ip) : 0;
+    audit.log({ user: ctx.user, action, entity: 'county_programme', entityId: p.id, ip: ctx.ip, details: { changed: ['name', 'notes', 'active', 'keep_files'].filter(k => v[k] !== undefined), active, keep_files: keep, connection_tokens_revoked: revoked || undefined } });
     return K.programmeOut(programme(p.id));
   });
   r.post('/api/county/programmes/:id/keys', ...manage, (ctx) => {

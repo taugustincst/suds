@@ -68,6 +68,26 @@ function isPrivateAddress(ip) {
     || (g[0] & 0xff00) === 0xff00 /* multicast */ || (g[0] === 0x2001 && g[1] === 0x0db8) /* documentation */ || (g[0] === 0x2001 && g[1] === 0 /* Teredo */);
 }
 
+// ---- a county on a private network (SUDS_COUNTY_ALLOW_PRIVATE=1; server/county-connect-client.js) -----------------
+// A county reached over a VPN or split DNS may be on RFC 1918 space (10/8, 172.16/12, 192.168/16) or IPv6 unique
+// local space (fc00::/7). Those, and public addresses, are allowed; this machine (loopback), link-local
+// (169.254/16, fe80::/10), the cloud metadata addresses, the unspecified address (0.0.0.0, ::), everything else
+// isPrivateAddress refuses, and the IPv4-mapped, IPv4-compatible and 6to4 forms of all of them stay refused.
+const METADATA_V4 = new Set(['169.254.169.254', '169.254.170.2', '100.100.100.200', '192.0.0.192']);
+const rfc1918 = (a) => { const [x, y] = a.split('.').map(Number); return x === 10 || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168); };
+function privateNetworkV4(a) { return !METADATA_V4.has(a) && (!privateV4(a) || rfc1918(a)); }
+/** Whether a county under SUDS_COUNTY_ALLOW_PRIVATE may be at this address (see above). */
+function isAllowedPrivateNetworkAddress(ip) {
+  const a = String(ip).toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(a)) return a.split('.').every(n => Number(n) <= 255) && privateNetworkV4(a);
+  const g = v6groups(a); if (!g) return false;
+  const v4of = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+  if (g.slice(0, 5).every(n => n === 0) && (g[5] === 0xffff || g[5] === 0)) return !(g[5] === 0 && g[6] === 0 && g[7] <= 1) && privateNetworkV4(v4of(g[6], g[7]));
+  if (g[0] === 0x2002) return privateNetworkV4(v4of(g[1], g[2]));
+  if ((g[0] & 0xfe00) === 0xfc00) return g.join(':') !== [0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254].join(':'); // fd00:ec2::254, the AWS metadata address
+  return !isPrivateAddress(a);
+}
+
 const PRIVATE_HOST = /^(localhost|.*\.local|.*\.internal|.*\.localhost|.*\.home\.arpa|metadata\.google\.internal)$/i;
 /** https, and not a name or literal address on this machine or a private network. Returns the normalised href. */
 function assertPublicHttps(u) {
@@ -82,8 +102,11 @@ function assertPublicHttps(u) {
   return url.href;
 }
 
-/** What `host` resolves to, every address public, or a soft error. `viaProxy`: a proxy connects (see top). */
-async function resolvePublic(host, { viaProxy = false } = {}) {
+/**
+ * What `host` resolves to, every address public (or, with `allow`, every address allow() accepts), or a soft error.
+ * `viaProxy`: a proxy connects (see top).
+ */
+async function resolvePublic(host, { viaProxy = false, allow = null } = {}) {
   const lookup = resolver();
   if (!lookup) return null;
   let addrs;
@@ -94,7 +117,7 @@ async function resolvePublic(host, { viaProxy = false } = {}) {
     throw describeNetworkError({ cause: e }) || soft('could not find that address');
   }
   addrs = (addrs || []).map(x => (typeof x === 'string' ? { address: x } : x)).map(x => ({ address: x.address, family: x.family || (String(x.address).includes(':') ? 6 : 4) }));
-  if (!addrs.length || addrs.some(x => isPrivateAddress(x.address))) throw soft('that address is not on the public internet');
+  if (!addrs.length || addrs.some(x => (allow ? !allow(x.address) : isPrivateAddress(x.address)))) throw soft(allow ? 'that address is this machine, link-local or a cloud metadata address' : 'that address is not on the public internet');
   return addrs;
 }
 async function assertResolvesPublic(url) {
@@ -107,9 +130,12 @@ async function assertResolvesPublic(url) {
  * step that hands the address to the socket, so what is connected to is what was checked. Both callback
  * shapes (options.all, which Node uses for happy-eyeballs, and a single address).
  */
-function connectLookup(hostname, options, callback) {
+function connectLookup(hostname, options, callback) { return checkedLookup(hostname, options, callback, null); }
+/** connectLookup for a county under SUDS_COUNTY_ALLOW_PRIVATE: private networks allowed, loopback, link-local and metadata not. */
+function privateNetworkLookup(hostname, options, callback) { return checkedLookup(hostname, options, callback, isAllowedPrivateNetworkAddress); }
+function checkedLookup(hostname, options, callback, allow) {
   if (typeof options === 'function') { callback = options; options = {}; }
-  resolvePublic(String(hostname).replace(/^\[|\]$/g, ''))
+  resolvePublic(String(hostname).replace(/^\[|\]$/g, ''), { allow })
     .then((addrs) => {
       if (!addrs) throw soft('could not find that address');
       const want = options && options.family ? addrs.filter(a => a.family === options.family) : addrs;
@@ -122,10 +148,14 @@ function connectLookup(hostname, options, callback) {
  * An https request whose connection is pinned to checked addresses (connectLookup), as a fetch Response.
  * Reads at most `maxBytes` (+1, so "too large" is still detected) of the body.
  */
-function pinnedFetch(url, { method = 'GET', body, headers = {}, signal, maxBytes = 2 * 1024 * 1024 } = {}) {
+function pinnedFetch(url, { method = 'GET', body, headers = {}, signal, maxBytes = 2 * 1024 * 1024, lookup = connectLookup } = {}) {
   const https = require('node:https');
   return new Promise((resolve, reject) => {
-    const req = https.request(url, { method, headers, signal, lookup: connectLookup, autoSelectFamily: false }, (res) => {
+    // The signal is a deadline for the whole exchange, the body included: an answer dripped a byte at a time is
+    // cut off when it fires, not only a connection that goes quiet.
+    if (signal && signal.aborted) { reject(signal.reason); return; }
+    const onAbort = () => { reject(signal.reason); req.destroy(); };
+    const req = https.request(url, { method, headers, signal, lookup, autoSelectFamily: false }, (res) => {
       const chunks = []; let size = 0;
       res.on('data', (c) => { size += c.length; if (size > maxBytes + 1) { reject(soft('file is too large')); res.destroy(); req.destroy(); return; } chunks.push(c); });
       res.on('end', () => {
@@ -137,9 +167,26 @@ function pinnedFetch(url, { method = 'GET', body, headers = {}, signal, maxBytes
       res.on('error', reject);
     });
     req.on('error', reject); // a promise settles once: an error after an early reject (too large) is dropped
+    if (signal) { signal.addEventListener('abort', onAbort, { once: true }); req.on('close', () => signal.removeEventListener('abort', onAbort)); }
     if (body !== undefined && body !== null) req.write(body);
     req.end();
   });
+}
+/**
+ * A request to a county under SUDS_COUNTY_ALLOW_PRIVATE: https, the name resolved and every address checked
+ * (isAllowedPrivateNetworkAddress), the connection pinned to a checked address, and TLS verified against the real
+ * host name (the name stays in the URL; only the lookup is ours). Never through a proxy: the county is on a
+ * private network. A literal address is checked as it is (no lookup happens for one).
+ */
+async function privateNetworkFetch(url, opts = {}) {
+  const u = new URL(url);
+  if (u.protocol !== 'https:') throw soft('not an https address');
+  const host = u.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  const literal = /^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(':');
+  if (literal ? !isAllowedPrivateNetworkAddress(host) : /^(localhost|.*\.localhost)$/i.test(host)) throw soft('that address is this machine, link-local or a cloud metadata address');
+  if (!literal && (lookupImpl || !fetchOverridden)) await resolvePublic(host, { allow: isAllowedPrivateNetworkAddress });
+  if (fetchImpl) return fetchImpl(url, opts);
+  return pinnedFetch(url, { ...opts, lookup: privateNetworkLookup });
 }
 /** How a checked request goes out: a test's stand-in; through the proxy when Node uses one; else pinned. */
 function transport(url, opts) {
@@ -192,4 +239,4 @@ async function fetchChecked(url, { timeoutMs = 10000, maxBytes = 2 * 1024 * 1024
   return { buf, url: target, res };
 }
 
-module.exports = { isPrivateAddress, assertPublicHttps, assertResolvesPublic, connectLookup, pinnedFetch, proxyInUse, transport, fetchChecked, describeNetworkError, soft, _setFetchForTests, _setLookupForTests };
+module.exports = { isPrivateAddress, isAllowedPrivateNetworkAddress, privateNetworkLookup, privateNetworkFetch, assertPublicHttps, assertResolvesPublic, connectLookup, pinnedFetch, proxyInUse, transport, fetchChecked, describeNetworkError, soft, _setFetchForTests, _setLookupForTests };

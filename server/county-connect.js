@@ -51,15 +51,20 @@ const MAX_PUSH_BYTES = 256 * 1024;
 
 // ---- rate limits (per 10 minutes; process-local, as every limit in SUDS is: server/app.js rateLimit) ----
 const LIMITS = {
-  perIp: 120,          // every machine route together, per address
-  all: 2000,           // every address together: a flood spread over many addresses is still bounded
+  perIp: 120,          // calls with a good token, every machine route together, per address
+  all: 2000,           // calls with a good token from every address together
   badPerIp: 20,        // a missing, unknown, expired or revoked token, per address, before the next is refused unread
+  badAll: 1000,        // calls without a good token from every address together; never counted against good tokens
   pushPerToken: 30,
   statusPerToken: 60,
   readPerToken: 120,
   refusedPerToken: 20, // files refused under one token, as the upload path allows a person (routes/county.js)
 };
 const WINDOW_MS = 10 * 60_000;
+
+/** What a token holder is told when the file's key is unknown here or another programme's: one answer for both. */
+const NOT_THIS_KEY_REASON = 'not_this_programme';
+const NOT_THIS_KEY = 'The file was not signed with a key the county registered for the program this token belongs to. Send your own program\'s file, made with its current key, under your own token; if your program made a new key, ask the county to register it first.';
 
 const enabled = () => db.getSetting(SETTING_ENABLED, '0') === '1';
 function cadence() { const c = db.getSetting(SETTING_CADENCE, 'quarterly_calendar'); return CADENCES[c] ? c : 'quarterly_calendar'; }
@@ -76,13 +81,28 @@ function countyCode({ user = null, ip = null } = {}) {
   return c.code;
 }
 
+// ---- a proxy in front without TRUST_PROXY ------------------------------------------------------------------------
+// Behind a reverse proxy every call arrives from the proxy's address, so without TRUST_PROXY the per-address limits
+// are one limit for every programme together (docs/DEPLOYMENT.md). A machine call carrying X-Forwarded-For while
+// TRUST_PROXY is unset is noted (in memory, the time only), and the settings page says so.
+let forwardedSeenAt = null;
+function noteForwarded(ctx) {
+  if (!require('./config').trustProxy && ctx.headers && ctx.headers['x-forwarded-for']) forwardedSeenAt = Date.now();
+}
+function proxyWarning() {
+  return enabled() && !require('./config').trustProxy && forwardedSeenAt !== null;
+}
+function _resetForwardedForTests() { forwardedSeenAt = null; }
+
 // ---- settings ------------------------------------------------------------------------------------------------------
 function settings(who = {}) {
   const code = countyCode(who);
   return { enabled: enabled(), cadence: cadence(), cadences: Object.entries(CADENCES).map(([value, label]) => ({ value, label })), start: startDate(),
     county_code: code, county_code_display: K.formatCode(code), county_name: db.getSetting('org_name', '') || null,
     endpoints: { submissions: '/api/county-connect/v1/submissions', status: '/api/county-connect/v1/status', combined: '/api/county-connect/v1/combined', programs: '/api/county-connect/v1/programs' },
-    limits: { max_file_bytes: MAX_PUSH_BYTES, read_default_days: READ_DEFAULT_DAYS, read_max_days: READ_MAX_DAYS, connection_max_days: CONNECTION_MAX_DAYS } };
+    limits: { max_file_bytes: MAX_PUSH_BYTES, read_default_days: READ_DEFAULT_DAYS, read_max_days: READ_MAX_DAYS, connection_max_days: CONNECTION_MAX_DAYS },
+    trust_proxy: !!require('./config').trustProxy,
+    proxy_warning: proxyWarning() ? 'Calls to the county connection arrive through a proxy (they carry X-Forwarded-For), but this server is not started with TRUST_PROXY=1: every program is counted as the proxy\'s one address, so one program\'s calls can make the others wait, and the audit log records the proxy\'s address. Set TRUST_PROXY=1 (docs/DEPLOYMENT.md).' : null };
 }
 function saveSettings({ enabled: on, cadence: c, start }) {
   const changed = [];
@@ -140,6 +160,18 @@ function revoke(id, user) {
   db.run(`UPDATE county_connect_tokens SET revoked_at=COALESCE(revoked_at, ?), revoked_by=COALESCE(revoked_by, ?) WHERE id=?`, db.now(), user ? user.id : null, id);
   return { before: t, row: tokenOut(db.one(`SELECT t.*, p.name programme FROM county_connect_tokens t LEFT JOIN county_programmes p ON p.id=t.programme_id WHERE t.id=?`, id)) };
 }
+/**
+ * A programme the county deactivated: its live connection tokens are revoked, each audited
+ * (county_connect.token.revoke, reason programme_deactivated). Returns how many.
+ */
+function revokeForProgramme(programmeId, user, ip = null) {
+  const live = db.all(`SELECT * FROM county_connect_tokens WHERE programme_id=? AND revoked_at IS NULL`, programmeId);
+  for (const t of live) {
+    db.run(`UPDATE county_connect_tokens SET revoked_at=?, revoked_by=? WHERE id=? AND revoked_at IS NULL`, db.now(), user ? user.id : null, t.id);
+    audit.log({ user, action: 'county_connect.token.revoke', entity: 'county_connect_token', entityId: t.id, ip, details: { scope: t.scope, programme_id: programmeId, prefix: t.prefix, reason: 'programme_deactivated' } });
+  }
+  return live.length;
+}
 
 /** The bearer token on a request (the Authorization header only; never a cookie, a query string or a body). */
 function bearer(ctx) {
@@ -157,6 +189,8 @@ function lookup(ctx) {
   if (!t) return { refused: 'unknown_token' };
   const st = tokenState(t);
   if (st !== 'live') return { refused: `${st}_token`, token: t };
+  // A connection token of a programme the county has deactivated (or no longer has) is not valid, revoked or not.
+  if (t.scope === SCOPES.submit && !t.programme_active) return { refused: 'inactive_programme', token: t };
   return { token: t };
 }
 function touch(t, ip) { db.run(`UPDATE county_connect_tokens SET last_used_at=?, last_used_ip=? WHERE id=?`, db.now(), ip ? String(ip).slice(0, 64) : null, t.id); }
@@ -184,6 +218,16 @@ function summarise(key, w) {
     details: { reason: 'refused_summary', count: w.extra, window_start: new Date(w.start).toISOString(), window_end: new Date(Math.min(Date.now(), w.start + REFUSAL_WINDOW_MS)).toISOString(), addresses } });
 }
 function flushRefusals() { for (const [key, w] of refusals) summarise(key, w); refusals.clear(); }
+/**
+ * From the hourly housekeeping (server/index.js): every window whose hour is over is summarised and closed, so a
+ * burst of refusals that then stops is still written to the audit log within the hour, not only at the next refusal
+ * under the same key or when the server stops.
+ */
+function sweepRefusals(now = Date.now()) {
+  let n = 0;
+  for (const [key, w] of refusals) if (now - w.start >= REFUSAL_WINDOW_MS) { summarise(key, w); refusals.delete(key); n++; }
+  return n;
+}
 function logRefusal({ action, token = null, ip, reason, details = {} }) {
   const key = `${action}|${token ? token.id : 'unknown'}`;
   const now = Date.now();
@@ -247,6 +291,6 @@ function statusFor(t, who = {}) {
 
 module.exports = {
   SETTING_ENABLED, SETTING_CADENCE, SETTING_START, CADENCES, SCOPES, PREFIX, LIMITS, WINDOW_MS, MAX_PUSH_BYTES, READ_DEFAULT_DAYS, READ_MAX_DAYS, CONNECTION_MAX_DAYS,
-  REFUSALS_LOGGED_PER_HOUR, enabled, cadence, startDate, countyCode, settings, saveSettings, issue, revoke, listTokens, tokenOut, tokenState, bearer, lookup, touch, actor,
+  REFUSALS_LOGGED_PER_HOUR, NOT_THIS_KEY, NOT_THIS_KEY_REASON, enabled, noteForwarded, proxyWarning, _resetForwardedForTests, revokeForProgramme, sweepRefusals, cadence, startDate, countyCode, settings, saveSettings, issue, revoke, listTokens, tokenOut, tokenState, bearer, lookup, touch, actor,
   pushBodyLimit, logRefusal, flushRefusals, expectedPeriods, statusFor, today,
 };

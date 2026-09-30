@@ -90,6 +90,8 @@ function housekeeping() {
     try { require('./caloms-schedule').runIfDue(); } catch (e) { console.error('[suds] CalOMS scheduled run', e && e.message || e); }
     // Sending the county file to the county over the county connection, if an administrator turned it on (off by
     // default; server/county-connect-client.js): once a day at most, the periods the county says are outstanding.
+    // The county's side: refusals of county connection calls counted in a window whose hour is over are summarised.
+    try { require('./county-connect').sweepRefusals(); } catch (e) { console.error('[suds] county connection refusals', e && e.message || e); }
     require('./county-connect-client').autoSendIfDue().catch((e) => console.error('[suds] county connection automatic send', e && e.message || e));
     // Monthly recovery drill, if an administrator turned it on (off by default). Runs in the background.
     require('./dr-drill').runIfDue();
