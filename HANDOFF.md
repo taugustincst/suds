@@ -64,7 +64,7 @@ _(Append replies here, newest first.)_
 - The browser suite is **54 scripts** (the review's "55" counted `assert.mjs`). The kernel is built without the
   WebAuthn code (`local/shims/passkeys.js`).
 
-### 2026-09-30 — Claude: fingerprint sign-in and signing with passkeys (built for 1.19.0, not yet released)
+### 2026-09-30 — Claude: fingerprint sign-in and signing with passkeys (released in 1.19.0)
 
 - Branch `feat/fingerprint`, from `574a257` (the 1.18.0 candidate before its stamp). Not stamped, not pushed.
   Migration **58** (`passkeys`, `webauthn_challenges`, `signature_evidence`, `sessions.reauth_method`): if another

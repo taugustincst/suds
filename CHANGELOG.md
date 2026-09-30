@@ -2,13 +2,12 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## 1.18.0 — 2026-09-30
+## 1.19.0 — 2026-09-30
 
-A feature release (two migrations, two permissions and new routes): released in 1.18.0. The version is
-not stamped. The release policy's feature interval runs 28 days from 1.17.0's stamp (2026-09-29 21:08 UTC), so it
-refuses 1.18.0 before about **2026-10-27 21:08 UTC** without the owner's `policy_exception` (HANDOFF.md).
+A feature release (migrations 58 and 59 and the passkey routes), released under a policy exception inside 1.18.0's
+28 days (docs/RELEASE.md, *Record: 1.19.0*).
 
-### Added: fingerprint sign-in, authorization and signing with passkeys (docs/FINGERPRINT.md; built for 1.19.0, not yet released)
+### Added: fingerprint sign-in, authorization and signing with passkeys (docs/FINGERPRINT.md; released in 1.19.0)
 
 For the feature release after 1.18.0 (a migration and new routes; no new permission). Office server only.
 
@@ -114,6 +113,19 @@ For the feature release after 1.18.0 (a migration and new routes; no new permiss
   The browser kernel is now built without the WebAuthn code. The browser suite is still 54 scripts: 1.18.0's
   documents said 53, which was right for 1.18.0 (the review counted the `assert.mjs` helper); a test now also checks
   the newest count in HANDOFF.md and CHANGELOG.md.
+- **Single sign-on without multi-factor asks for the fingerprint.** Someone in a role that requires two-step
+  verification whose only second factor is a passkey, signing in through an identity provider that did not assert
+  multi-factor, is taken to the same second step as after a password (the fingerprint, or the code with an
+  authenticator app). With multi-factor asserted by a trusted provider nothing changes (`test/fingerprint-sso.test.js`).
+- **Without a fingerprint the signature dialog reads as in 1.18.0**: its password field is "Re-enter your password to
+  …" again; "Your password" is used only under the fingerprint's "Or use your password:".
+- **Tests use a throwaway key file** instead of the checkout's `data/keys.json`, which parallel test files created and
+  removed under each other and which could delete a developer's real keys.
+
+## 1.18.0 — 2026-09-30
+
+A feature release (migrations 56 and 57, the `county:view` and `county:manage` permissions and new routes), released
+under a policy exception inside 1.17.0's 28 days (docs/RELEASE.md, *Record: 1.18.0*).
 
 ### Added: the county connection (docs/COUNTY-VIEW.md, *Connecting*; released in 1.18.0)
 

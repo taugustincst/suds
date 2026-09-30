@@ -1,6 +1,6 @@
 # Fingerprint sign-in, authorization and signing (passkeys)
 
-Built for 1.19.0, not yet released. Office server only.
+Released in 1.19.0. Office server only.
 
 Staff can sign in to SUDS, finish two-step verification, sign and countersign notes, approve time and spending, and
 download the key backup with their **fingerprint** — or with whatever else their device uses to unlock (Face ID, a
