@@ -1616,7 +1616,8 @@ CREATE TABLE IF NOT EXISTS county_signing_keys (
 );
 -- On a county's server: the programs whose signed submissions it accepts. Registering, changing and deactivating
 -- one needs county:manage. An inactive program's files stop counting in the combined view unless keep_files is set
--- (a program whose contract ended, whose past quarters still stand).
+-- (a program whose contract ended, whose past quarters still stand). on_suds 0 (migration 60): a grantee not on
+-- SUDS, registered with no key, whose figures the county enters itself (source 'county_entered' below).
 CREATE TABLE IF NOT EXISTS county_programmes (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -1625,7 +1626,8 @@ CREATE TABLE IF NOT EXISTS county_programmes (
   notes TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   created_by TEXT REFERENCES users(id),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  on_suds INTEGER NOT NULL DEFAULT 1
 );
 -- Each program's public keys, current and past (key history). The current one has replaced_at NULL; a new file must
 -- be signed with it. Files a replaced key signed that were already imported keep counting unless the key is marked
@@ -1650,10 +1652,14 @@ CREATE INDEX IF NOT EXISTS idx_county_programme_keys_programme ON county_program
 -- for exactly the same period, the latest made counts and the others are kept, superseded_by it, whatever order they
 -- arrived in. A withdrawn one is kept, counts for nothing, and can be reinstated. The same payload twice from one
 -- program is one submission (UNIQUE programme_id, sha256).
+-- source (migration 60): 'signed', a file the program's key signed (key_id and signature set), or 'county_entered',
+-- figures the county's own staff typed or imported as a CSV for a program not on SUDS (no key, no signature;
+-- received_by and received_at say who entered them and when, entered_via how, and source_ref_enc the document they
+-- came from, encrypted like the payload). Both kinds are payloads of the same allow-list and counted by the same rule.
 CREATE TABLE IF NOT EXISTS county_submissions (
   id TEXT PRIMARY KEY,
   programme_id TEXT NOT NULL REFERENCES county_programmes(id),
-  key_id TEXT NOT NULL REFERENCES county_programme_keys(id),
+  key_id TEXT REFERENCES county_programme_keys(id),
   period_from TEXT NOT NULL,
   period_to TEXT NOT NULL,
   schema_version INTEGER NOT NULL,
@@ -1662,13 +1668,17 @@ CREATE TABLE IF NOT EXISTS county_submissions (
   suds_version TEXT,
   payload_enc TEXT NOT NULL,
   sha256 TEXT NOT NULL,                -- of the canonical payload
-  signature TEXT NOT NULL,
+  signature TEXT,
   received_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   received_by TEXT REFERENCES users(id),
   superseded_by TEXT REFERENCES county_submissions(id),
   withdrawn_at TEXT,
   withdrawn_by TEXT REFERENCES users(id),
-  UNIQUE(programme_id, sha256)
+  source TEXT NOT NULL DEFAULT 'signed' CHECK (source IN ('signed','county_entered')),
+  entered_via TEXT CHECK (entered_via IN ('form','csv')),
+  source_ref_enc TEXT,                 -- county_entered: the source document's reference, AES-256-GCM
+  UNIQUE(programme_id, sha256),
+  CHECK ((source = 'signed' AND key_id IS NOT NULL AND signature IS NOT NULL AND entered_via IS NULL) OR (source = 'county_entered' AND key_id IS NULL AND signature IS NULL AND entered_via IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_county_submissions_programme ON county_submissions(programme_id, period_from, period_to);
 

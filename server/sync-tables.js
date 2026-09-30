@@ -155,7 +155,7 @@ module.exports = {
     privacy_incidents: ['title_enc', 'description_enc', 'risk_nature_enc', 'risk_recipient_enc', 'risk_acquired_enc', 'risk_mitigation_enc', 'determination_reason_enc'],
     privacy_incident_clients: ['client_name_enc'], fhir_jwt_assertions: [], caloms_submissions: ['file_enc'], client_revisions: ['changes_enc'], ai_usage: [],
     caloms_submission_events: [], referral_links: ['packet_enc', 'ack_by_enc', 'ack_note_enc'],
-    county_signing_keys: ['private_key_enc'], county_programmes: [], county_programme_keys: [], county_submissions: ['payload_enc'],
+    county_signing_keys: ['private_key_enc'], county_programmes: [], county_programme_keys: [], county_submissions: ['payload_enc', 'source_ref_enc'],
     county_connect_tokens: [], county_connection: ['token_enc'], county_connect_sends: [],
     passkeys: [], webauthn_challenges: [], signature_evidence: ['evidence_enc'],
     idempotency_keys: ['response_enc'],

@@ -757,6 +757,16 @@ const migrations = [
   (d) => {
     addColumn(d, 'sessions', 'sync_client', 'INTEGER NOT NULL DEFAULT 0');
   },
+  // 60: county-entered figures for grantees not on SUDS (built for 1.20.0, docs/COUNTY-VIEW.md "County-entered
+  //     figures"): county_programmes.on_suds (1 for every programme registered so far: each has a key), and
+  //     county_submissions rebuilt so key_id and signature may be NULL for figures the county entered, with source
+  //     ('signed' for every existing row), entered_via and source_ref_enc, and a CHECK that a signed row has a key and
+  //     a signature and an entered one neither. Rebuilt from schema.sql (the only way SQLite relaxes NOT NULL), only
+  //     when source is missing, so it is idempotent and can be renumbered.
+  (d) => {
+    addColumn(d, 'county_programmes', 'on_suds', 'INTEGER NOT NULL DEFAULT 1');
+    if (tableExists(d, 'county_submissions') && !tableCols(d, 'county_submissions').includes('source')) rebuildTable(d, safeSchema(), 'county_submissions');
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

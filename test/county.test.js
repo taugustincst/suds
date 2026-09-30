@@ -683,10 +683,11 @@ test('the combined view as Excel, CSV and a tidy CSV: labelled internal and exac
   const t = await fin.get(`/api/county/view/export?from=${Q1.from}&to=${Q2.to}&format=tidy`);
   assert.equal(t.status, 200); assert.match(t.headers.get('content-disposition'), /-tidy-internal-exact\.csv/);
   const lines = t.data.trim().split(/\r?\n/);
-  assert.equal(lines[0], 'program,period_from,period_to,fund,grant_number,measure_code,measure_label,value');
+  assert.equal(lines[0], 'program,period_from,period_to,fund,grant_number,measure_code,measure_label,value,source', 'the layout county-entered figures are imported in, and who each figure is from');
   const f = sampleFile(0, Q1).file.payload;
   const kitsRow = lines.find(l => l.startsWith(`${samples[0].name},2026-01-01,2026-03-31,County settlement share,OSF-RB-1,naloxone_kits,`));
-  assert.ok(kitsRow, 'a fund\'s measure'); assert.equal(Number(kitsRow.split(',').pop()), f.funds[0].values.naloxone_kits);
+  assert.ok(kitsRow, 'a fund\'s measure'); assert.equal(Number(kitsRow.split(',')[7]), f.funds[0].values.naloxone_kits);
+  assert.equal(kitsRow.split(',')[8], 'signed by the program', 'a signed file\'s figure says so');
   assert.ok(lines.some(l => l.startsWith(`${samples[0].name},2026-01-01,2026-03-31,All funds in the submission,,spend_approved,`)));
   assert.ok(!lines.some(l => l.startsWith(samples[2].name)), 'a program with nothing counted has no rows');
   assert.ok(!/unduplicated/i.test(t.data));
@@ -718,7 +719,7 @@ test('SUDS on this device has no county view: the local kernel does not load the
 test('the county tables stay at the office', () => {
   const S = require('../server/sync-tables');
   for (const t of ['county_signing_keys', 'county_programmes', 'county_programme_keys', 'county_submissions']) { assert.ok(S.server_only.includes(t), t); assert.ok(!S.tables.some(x => x.name === t), t); }
-  assert.deepEqual(S.unsynced_enc.county_signing_keys, ['private_key_enc']); assert.deepEqual(S.unsynced_enc.county_submissions, ['payload_enc']); assert.deepEqual(S.unsynced_enc.county_programme_keys, []);
+  assert.deepEqual(S.unsynced_enc.county_signing_keys, ['private_key_enc']); assert.deepEqual(S.unsynced_enc.county_submissions, ['payload_enc', 'source_ref_enc']); assert.deepEqual(S.unsynced_enc.county_programme_keys, []);
 });
 
 test('M11: county-sample.js --register sets up a development server\'s county view, and refuses a production one', () => {

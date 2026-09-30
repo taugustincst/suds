@@ -4,6 +4,34 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Added: county-entered figures for grantees not on SUDS (docs/COUNTY-VIEW.md; built for 1.20.0, not yet released)
+
+For the feature release after 1.19.0: migration 60 and new routes; no new permission (`county:manage` enters,
+`county:view` sees). Office server only.
+
+- **A program not on SUDS.** County view › Programs › **Add a program not on SUDS** registers a grantee with no key
+  (`county_programmes.on_suds`). It gets no connection token; when it starts running SUDS, adding its key makes it an
+  ordinary programme and its entered figures stay, marked.
+- **Enter figures** for a period, per fund: Exhibit E allowable use, HIAA, spending and the thirteen outcomes, with the
+  source document they come from. **Import a CSV** in the combined view's own long "tidy" layout: **Check the file**
+  lists every problem by row and column and saves nothing, or shows what the file holds and asks each fund's category;
+  **Import** enters every period or none. Both build a payload of the signed files' own allow-list (`checkPayload`),
+  with strict numbers, the period rules and the signed files' text rules (`server/county-entry.js`).
+- **Stored and counted as county submissions** with `source` `county_entered`: no key or signature (a CHECK keeps the
+  two kinds apart), the figures and the source document encrypted, who entered them, when and how. The combined view's
+  own counting (`countingSubs`, `coverage`, `filesCount`), supersession, withdraw and reinstate are reused, not
+  re-implemented; **Correct** reopens the form with the figures.
+- **Marked "entered by the county — not signed by the program"** in the combined view (a Source column, "(entered)"
+  in every figure and heading, the entered part under each total), by quarter, the Excel and CSV (column headings, an
+  *Of the total* column, the Submissions sheet's Source, an About row), the tidy CSV (a ninth column, `source`) and
+  the read API (`source` per programme and submission, `total_entered` per row, `on_suds` and `source` on
+  `/v1/programs`). The headline counts them separately. **Leave out figures entered by the county** (and
+  `&entered=exclude` on the view, its files and `/v1/combined`) takes exactly them away.
+- **Audited without figures or typed text:** `county.entry.create`, `.update`, `.import`, `.refuse`, `.withdraw`,
+  `.reinstate`.
+- The penetration test scope has a row for the CSV import parser; the pricing options say the feature is built for
+  1.20.0, not yet released.
+
 ### Documentation: the county-contract kit
 
 No code, migration, permission or route: documents for a county that funds several CBOs and wants the county view

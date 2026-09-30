@@ -19,7 +19,9 @@ It has two halves:
   county connection, SUDS posts the same file to the county's server (see *Connecting*).
 - **County view** (the county's own SUDS server): the county gives each programme its **county code**, registers
   each programme it funds by the public key the programme gives it, imports the files the programmes send, and sees
-  them combined for a period (or quarter by quarter), on screen and as Excel, CSV or a long "tidy" CSV.
+  them combined for a period (or quarter by quarter), on screen and as Excel, CSV or a long "tidy" CSV. For a
+  grantee that does not run SUDS, the county's own staff enter its figures, marked everywhere as entered by the
+  county (built for 1.20.0, not yet released: [County-entered figures](#county-entered-figures)).
 
 The screens say "program" (US spelling, as Settings › Program does); this document keeps the codebase's
 "programme".
@@ -238,7 +240,8 @@ Every read and write is audited: `county.view`, `county.export`, `county.code.cr
 `county.programme.update`, `county.programme.deactivate`, `county.programme.reactivate`,
 `county.programme.key.replace|compromised|trusted`, `county.submission.import` (with its status: imported,
 superseded or older) and `.duplicate`, `county.submission.refuse`, `county.submission.throttled`,
-`county.submission.withdraw` (with the reason), `county.submission.reinstate`. On the programme's side:
+`county.submission.withdraw` (with the reason), `county.submission.reinstate`; for figures the county entered (built for
+1.20.0, not yet released), `county.entry.create|update|import|refuse|withdraw|reinstate`. On the programme's side:
 `county_submission.key.create`, `county_submission.key.rotate`, `county_submission.export`. The audit entries carry
 ids, periods, fingerprints and hashes, never figures.
 
@@ -268,7 +271,7 @@ not withdrawn), signed by a key not marked compromised, from an active programme
 | Permission | Who holds it by default | What it allows |
 | --- | --- | --- |
 | `county:view` | Administrator, supervisor, finance | The combined view and its files (with `export:read`), the list of programmes and files, the county code |
-| `county:manage` (sensitive) | Administrator | Register, change, deactivate programmes and replace or distrust their keys (it decides whose figures the county accepts); import, withdraw and reinstate files |
+| `county:manage` (sensitive) | Administrator | Register, change, deactivate programmes and replace or distrust their keys (it decides whose figures the county accepts); import, withdraw and reinstate files; register a programme not on SUDS and enter or import its figures (built for 1.20.0, not yet released) |
 
 Neither can be granted to a role that does not see exact aggregate counts (`reports:exact` or `reports:funder`):
 **read-only**, navigators and clinicians (`server/permissions.js` `grantProblem`). Read-only's reports are
@@ -428,6 +431,74 @@ internet, or a VPN between them ([DEPLOYMENT.md](DEPLOYMENT.md), *Inbound from t
 allow-list its programmes' addresses at its proxy or WAF (only `/api/county-connect/v1/` needs to be reachable).
 Nothing else changes: the connection carries what the emailed file carried.
 
+## County-entered figures
+
+*Built for 1.20.0, not yet released. Office server only. Migration 60; `server/county-entry.js`.*
+
+A county funds some grantees that do not run SUDS. Without them the combined view is not the county's portfolio, and
+the only alternative is a spreadsheet beside it. So the county can register a programme as **not on SUDS** and its
+own staff enter that programme's figures, marked everywhere as what they are: **entered by the county — not signed
+by the program**.
+
+- **Registering.** County view › Programs › **Add a program not on SUDS**: a name and notes, no key
+  (`POST /api/county/programmes { name, notes, not_on_suds: true }`; `county_programmes.on_suds = 0`; audited
+  `county.programme.add` with `on_suds: false`). It has no key, so it can send no signed file and gets no connection
+  token. When it starts running SUDS, the county adds its key (**Keys**): it is then on SUDS, its entered figures stay
+  (marked), and its signed files count by the usual rule (the one made last for a period counts).
+- **Entering figures** (`county:manage`): **Enter figures** for a period — the period, the **source document** the
+  figures come from (required: "Q2 report emailed 3 July 2026"), and for each fund its name, grant number, Exhibit E
+  allowable use, High Impact Abatement Activity, spending (under its own category, under other categories, pending)
+  and the thirteen outcomes. Exactly the fields a signed file carries for a fund: the entry is turned into a payload
+  of the **same allow-list** (`county.js` `PAYLOAD`, checked by `checkPayload`), for this county's code, with the
+  programme's registered name, "made" now. Each category's spending and outcomes are its funds' added up, and so are
+  the totals (a signed file's people counts are unduplicated within the programme; an entered one's are the funds'
+  counts added up, and the county types them as the programme reported them).
+- **Importing a CSV** (`county:manage`): **Import a CSV** takes the long "tidy" layout the combined view downloads
+  (`program, period_from, period_to, fund, grant_number, measure_code, measure_label, value`, and optionally `source`),
+  so a county can fill it in from a grantee's report or send the layout to the grantee. **Check the file** reads it
+  and says, by row and column, everything wrong with it (nothing is saved), or shows the periods and funds it holds
+  and asks for each fund's Exhibit E use and HIAA (the layout has neither); **Import** then enters every period, all
+  or none, each by the same path as the form. Rows of "All funds in the submission" give the totals: if present,
+  every total is needed and the spending totals must equal the funds' added up.
+- **What is checked**, form and CSV alike: strict numbers (digits and one decimal point: up to two decimals for money
+  and hours, whole numbers for counts; no thousands separators, currency signs, spaces, signs, exponents, or blank
+  for 0), every figure of every fund present, the allow-list's measures and categories only, no fund or CSV cell twice,
+  real dates, the start on or before the end, a period that has ended; for a CSV, the header, the programme's own name
+  on every row, at most 12 periods, 5,000 rows and 256 KB. Text is held to the signed files' rule (`cleanText`), and a
+  cell the spreadsheet guard quoted (`'=…`) is read back as its text.
+- **Stored** as a county submission with `source = 'county_entered'`, no key and no signature (a CHECK keeps a signed
+  row signed and an entered one unsigned), the payload encrypted like a signed one's (`payload_enc`), who entered it
+  (`received_by`), when (`received_at`), how (`entered_via`: `form` or `csv`) and the source document
+  (`source_ref_enc`, encrypted; on the county's own Submissions list only, never in the read API). Entering figures
+  again for the same period **replaces** the earlier ones by the signed files' rule (`resettle`: the one "made" last
+  counts; the earlier kept, marked replaced); **Withdraw** and **Reinstate** are the signed files' own routes;
+  **Correct** on a current entry opens the form filled in with it.
+- **Counted by the same rule** (`countingSubs`, `coverage`, `filesCount`): an entered quarter counts in a quarter as a
+  signed quarter does, and a programme's entered and signed files are combined as any two of its files are.
+- **Marked everywhere.** The combined view: each programme's **Source** (*Signed by the program*, *Entered by the
+  county — not signed by the program*, or both), "(entered)" beside every figure of such a programme and in its column
+  heading, and under each total the part of it entered by the county; the **headline counts them separately** ("Of
+  the 3 with figures, 1 has figures entered by the county — not signed by the program."). By quarter: the part of each
+  quarter's total, and the count in its heading. Excel and CSV: the column heading, a column *Of the total, entered by
+  the county*, the Submissions sheet's *Source* column and an About row. The tidy CSV: a ninth column, `source`. The
+  read API: `source` per programme and per submission, `total_entered` per row, a tidy-CSV `source` column and rows
+  of the entered part, and `/v1/programs`' `on_suds`, `source` and each period's `source`.
+- **Leaving them out.** Counted by default; **Leave out figures entered by the county** on the combined view (and
+  `&entered=exclude` on the view, its export and `/v1/combined`) takes them away before the counting rule is applied:
+  a programme not on SUDS with no signed file is no column, a programme with both keeps its signed files only, and the
+  page, headline and files say what was left out (`entered_left_out`). Every total then drops by exactly its entered
+  part (`test/county-entry.test.js`).
+- **Audited** without figures or typed text: `county.entry.create` (a first entry for the period) and
+  `county.entry.update` (one that replaces figures or a file), `county.entry.import` (the file's SHA-256, its rows and
+  each entry's id, period, hash and status), `county.entry.refuse` (the reason, the fields or the number of rows
+  wrong; never the values), `county.entry.withdraw` (with the reason), `county.entry.reinstate`, and `county.view`
+  with `what: "entry"` for the correction form.
+
+What it is not: a way to make a programme's figures look signed. Nothing about an entered figure is signed; the
+county's staff are accountable for it through the audit log and the source document, and the data contribution
+agreement says what the county may enter ([market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md),
+section 8).
+
 ## Not on SUDS on this device
 
 The routes are office-server only (`server/app.js` `LOCAL_ROUTE_MODULES`; `test/county-device.test.js`): SUDS on
@@ -441,9 +512,6 @@ office-only too (`county-connect` in `LOCAL_ROUTE_MODULES`'s exclusions; `test/c
   over the combined release** (planned): the small-cell method audited over the county total *and* every
   programme's own releases it could be differenced against (DATA-NETWORK, *The basis*). The page and its files say
   so.
-- **County-entered figures for grantees not on SUDS**: an unsigned import the county types or uploads for a
-  programme that does not run SUDS, marked as such in every view and file. Not built: every figure in the view
-  today is signed by the programme that recorded it.
 - **Award and contract amounts per fund** (spending against the award): needs the award in the file, so a schema
   version 2 of the payload.
 - **Reporting-cadence reminders on the programme's side** (the quarter the county expects, and whether its file was
@@ -466,6 +534,13 @@ withdraw and reinstate, the combined and by-quarter views), `server/routes/count
 `county_programmes`, `county_programme_keys`, `county_submissions`); tests `test/county.test.js` (each test stands
 on its own), `test/county-device.test.js`; browser script `scripts/ui/county.mjs`, and the county pages and dialogs
 in `scripts/ui/accessibility.mjs` (`A11Y_PAGES='county|settlement'` audits just them, in every pass).
+
+County-entered figures (built for 1.20.0, not yet released): `server/county-entry.js`, the entry routes in
+`server/routes/county.js`, the Add a program not on SUDS, Enter figures and Import a CSV dialogs in
+`public/views/county.js`; migration 60 (`county_programmes.on_suds`; `county_submissions` rebuilt with `source`,
+`entered_via`, `source_ref_enc`); tests `test/county-entry.test.js` and `test/migrations.test.js` (migration 60 on a
+database with signed submissions); the browser script `scripts/ui/county.mjs` (section 4) and the dialogs in
+`scripts/ui/accessibility.mjs`.
 
 The county connection: `server/county-connect.js`, `server/county-connect-client.js`,
 `server/routes/county-connect.js`, `public/views/countyconnect.js`; migration 57 (`county_connect_tokens`,

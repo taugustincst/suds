@@ -374,8 +374,14 @@ function parseFile(textIn, { today, now } = {}) {
   return { payload: f.payload, bytes, sha256: sha256Hex(bytes), fingerprint, signature: f.signature.value };
 }
 
-/** Submissions with the key that signed each (its fingerprint, and whether it is replaced or compromised). */
-const SUBS = `SELECT s.*, k.fingerprint key_fingerprint, k.replaced_at key_replaced_at, k.compromised_at key_compromised_at FROM county_submissions s JOIN county_programme_keys k ON k.id=s.key_id`;
+/**
+ * Submissions with the key that signed each (its fingerprint, and whether it is replaced or compromised). Figures the
+ * county entered for a programme not on SUDS (source 'county_entered', migration 60) have no key: a LEFT JOIN, so
+ * their key columns are NULL and "not signed by a key marked compromised" holds for them.
+ */
+const SUBS = `SELECT s.*, k.fingerprint key_fingerprint, k.replaced_at key_replaced_at, k.compromised_at key_compromised_at FROM county_submissions s LEFT JOIN county_programme_keys k ON k.id=s.key_id`;
+/** The file of one programme and period that counts now, if any (what an import or a reinstatement may displace). */
+const CURRENT = `SELECT id FROM county_submissions WHERE programme_id=? AND period_from=? AND period_to=? AND superseded_by IS NULL AND withdrawn_at IS NULL AND (key_id IS NULL OR key_id IN (SELECT id FROM county_programme_keys WHERE compromised_at IS NULL))`;
 const subById = (id) => db.one(`${SUBS} WHERE s.id=?`, id);
 const byMade = (a, b) => Date.parse(b.generated_at) - Date.parse(a.generated_at) || String(b.received_at).localeCompare(String(a.received_at)) || String(b.id).localeCompare(String(a.id));
 
@@ -424,7 +430,7 @@ function importParsed(parsed, user, { countyCode: here } = {}) {
   const id = uuid(); const now = db.now();
   let before = null; let winner = null;
   db.transaction(() => {
-    const cur = db.one(`SELECT id FROM county_submissions WHERE programme_id=? AND period_from=? AND period_to=? AND superseded_by IS NULL AND withdrawn_at IS NULL AND key_id IN (SELECT id FROM county_programme_keys WHERE compromised_at IS NULL)`, prog.id, p.period.from, p.period.to);
+    const cur = db.one(CURRENT, prog.id, p.period.from, p.period.to);
     before = cur ? cur.id : null;
     db.run(`INSERT INTO county_submissions(id,programme_id,key_id,period_from,period_to,schema_version,programme_name,generated_at,suds_version,payload_enc,sha256,signature,received_at,received_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, prog.id, key.id, p.period.from, p.period.to, p.schema_version, p.programme, p.generated_at, p.suds_version, encrypt(parsed.bytes), parsed.sha256, parsed.signature, now, user ? user.id : null);
@@ -477,7 +483,7 @@ function reinstate(id) {
   if (!s.withdrawn_at) refuse('conflict', 'This file is not withdrawn.');
   let before = null; let winner = null;
   db.transaction(() => {
-    const cur = db.one(`SELECT id FROM county_submissions WHERE programme_id=? AND period_from=? AND period_to=? AND superseded_by IS NULL AND withdrawn_at IS NULL AND key_id IN (SELECT id FROM county_programme_keys WHERE compromised_at IS NULL)`, s.programme_id, s.period_from, s.period_to);
+    const cur = db.one(CURRENT, s.programme_id, s.period_from, s.period_to);
     before = cur ? cur.id : null;
     db.run(`UPDATE county_submissions SET withdrawn_at=NULL, withdrawn_by=NULL WHERE id=?`, id);
     winner = resettle(s.programme_id, s.period_from, s.period_to);
@@ -490,7 +496,8 @@ function summary(s) {
   const status = s.withdrawn_at ? 'withdrawn' : s.superseded_by ? 'superseded' : s.key_compromised_at ? 'key_compromised' : 'current';
   return { id: s.id, programme_id: s.programme_id, period_from: s.period_from, period_to: s.period_to, schema_version: s.schema_version, programme_name: s.programme_name,
     generated_at: s.generated_at, suds_version: s.suds_version, sha256: s.sha256, received_at: s.received_at, received_by: s.received_by, superseded_by: s.superseded_by,
-    withdrawn_at: s.withdrawn_at, withdrawn_by: s.withdrawn_by, key_fingerprint: s.key_fingerprint || null, key_fingerprint_display: formatFingerprint(s.key_fingerprint), status };
+    withdrawn_at: s.withdrawn_at, withdrawn_by: s.withdrawn_by, key_fingerprint: s.key_fingerprint || null, key_fingerprint_display: formatFingerprint(s.key_fingerprint), status,
+    source: s.source || 'signed', entered_via: s.entered_via || null };
 }
 /** A program's keys, current first then newest replaced. */
 function programmeKeys(programmeId) {
@@ -501,7 +508,8 @@ function programmeKeys(programmeId) {
 function programmeOut(p) {
   const keys = programmeKeys(p.id); const cur = keys.find(k => k.current) || null;
   return { id: p.id, name: p.name, fingerprint: cur ? cur.fingerprint : null, fingerprint_display: cur ? cur.fingerprint_display : '', public_key: cur ? cur.public_key : null, keys,
-    active: !!p.active, keep_files: !!p.keep_files, counts: !!p.active || !!p.keep_files, notes: p.notes || '', created_at: p.created_at, updated_at: p.updated_at };
+    active: !!p.active, keep_files: !!p.keep_files, counts: !!p.active || !!p.keep_files, notes: p.notes || '', created_at: p.created_at, updated_at: p.updated_at,
+    on_suds: p.on_suds === undefined || p.on_suds === null ? true : !!p.on_suds };
 }
 
 // ---- the combined view ------------------------------------------------------------------------------------------
@@ -565,42 +573,71 @@ function measureLabel(k) {
 const USE_ROWS = () => [...C.SETTLEMENT_USES.map(u => ({ code: u.code, label: `${u.label} (${u.schedule})` })), { code: 'uncategorised', label: 'No settlement category recorded' }];
 const HIAA_ROWS = () => [...C.SETTLEMENT_HIAA.map(x => ({ code: x.code, label: x.label })), { code: 'none', label: 'No High Impact Abatement Activity recorded' }];
 
+/** Figures the county entered for a programme not on SUDS (migration 60): what every view and file marks them as. */
+const ENTERED = 'county_entered';
+const ENTERED_LABEL = 'entered by the county — not signed by the program';
+const ENTERED_NOTE = 'Figures marked "entered by the county — not signed by the program" were typed or imported by the county\'s own staff, from a document the program sent, for a program that does not run SUDS. No key of the program signed them. They are counted unless you leave them out.';
+const isEntered = (s) => s.source === ENTERED;
+/** Where a programme's counted figures came from: 'signed', 'county_entered', 'mixed' (both), or null (none). */
+const sourceOf = (used) => (!used.length ? null : used.every(isEntered) ? ENTERED : used.some(isEntered) ? 'mixed' : 'signed');
+
 /**
  * The combined view for [from, to]: each programme's figures, from the submissions that count, and the total.
  * A programme's submissions count when the programme is active, or inactive and kept (keep_files); an inactive
  * programme not kept is left out whole (inactive_left_out), never a column of its own. Money is summed exactly;
  * counts of people are summed too, which counts a person served by two programmes (or in two of one programme's
  * submissions) twice: the view says so. A programme with nothing for the period has no figures (null), not 0.
+ *
+ * Figures the county entered (source 'county_entered') count by the same rule (countingSubs, coverage) and are
+ * marked: each programme's `source`, each row's `total_entered` (the part of the total they make up), the
+ * headline's own count of them. `entered: false` leaves them out: they are taken away before the rule is applied,
+ * a programme not on SUDS with no signed file for the period is no column at all (as an inactive one is not), and
+ * `entered_left_out` names the programmes whose entered figures were left out.
  */
-function combined(from, to) {
+function combined(from, to, { entered = true } = {}) {
   const programmes = db.all(`SELECT * FROM county_programmes ORDER BY name COLLATE NOCASE, id`);
   const subs = countingSubs();
-  const byProg = new Map(programmes.map(p => [p.id, []]));
-  for (const s of subs) if (byProg.has(s.programme_id)) byProg.get(s.programme_id).push(s);
+  const all = new Map(programmes.map(p => [p.id, []])); const byProg = new Map(programmes.map(p => [p.id, []]));
+  for (const s of subs) {
+    if (!all.has(s.programme_id)) continue;
+    all.get(s.programme_id).push(s);
+    if (entered || !isEntered(s)) byProg.get(s.programme_id).push(s);
+  }
   const period = daysIn(from, to);
-  const cols = []; const inactiveLeftOut = [];
+  const cols = []; const inactiveLeftOut = []; const enteredLeftOut = [];
+  const blank = () => ({ spend_approved: 0, spend_pending: 0, use: {}, hiaa: {}, values: Object.fromEntries(VALUE_KEYS.map(k => [k, 0])) });
+  const add = (agg, pl) => {
+    agg.spend_approved += pl.total.spend.approved; agg.spend_pending += pl.total.spend.pending;
+    for (const k of VALUE_KEYS) agg.values[k] += pl.total.values[k];
+    for (const c of pl.categories) agg.use[c.key] = (agg.use[c.key] || 0) + c.spend_own_category;
+    for (const f of pl.funds) { const h = f.hiaa || 'none'; agg.hiaa[h] = (agg.hiaa[h] || 0) + f.spend.approved; }
+  };
   for (const p of programmes) {
     const { used, overlapped, outside, days_covered: covered, status } = coverage(byProg.get(p.id), from, to);
     if (!filesCount(p)) { if (used.length) inactiveLeftOut.push({ id: p.id, name: p.name, files: used.length }); continue; }
+    if (!entered) {
+      const had = coverage(all.get(p.id), from, to).used.filter(isEntered);
+      if (had.length) enteredLeftOut.push({ id: p.id, name: p.name, files: had.length });
+      if (p.on_suds === 0 && !used.length) continue;
+    }
     if (!p.active && !used.length) continue;
-    const agg = { spend_approved: 0, spend_pending: 0, use: {}, hiaa: {}, values: Object.fromEntries(VALUE_KEYS.map(k => [k, 0])) };
+    const agg = blank(); const aggEntered = blank();
     for (const s of used) {
       const pl = JSON.parse(decrypt(s.payload_enc));
-      agg.spend_approved += pl.total.spend.approved; agg.spend_pending += pl.total.spend.pending;
-      for (const k of VALUE_KEYS) agg.values[k] += pl.total.values[k];
-      for (const c of pl.categories) agg.use[c.key] = (agg.use[c.key] || 0) + c.spend_own_category;
-      for (const f of pl.funds) { const h = f.hiaa || 'none'; agg.hiaa[h] = (agg.hiaa[h] || 0) + f.spend.approved; }
+      add(agg, pl); if (isEntered(s)) add(aggEntered, pl);
     }
+    const source = sourceOf(used);
     cols.push({
-      id: p.id, name: p.name, active: !!p.active, keep_files: !!p.keep_files,
-      status, days_covered: covered, days_in_period: period,
+      id: p.id, name: p.name, active: !!p.active, keep_files: !!p.keep_files, on_suds: p.on_suds !== 0,
+      status, days_covered: covered, days_in_period: period, source,
       submissions: used.map(summary), left_out: [...overlapped.map(s => ({ ...summary(s), why: 'overlaps' })), ...outside.filter(s => s.period_from <= to && s.period_to >= from).map(s => ({ ...summary(s), why: 'outside' }))],
-      agg: used.length ? agg : null,
+      agg: used.length ? agg : null, aggEntered: source === ENTERED || source === 'mixed' ? aggEntered : null,
     });
   }
   const row = (group, key, label, pick, { money = true, round = round2 } = {}) => {
     const by = Object.fromEntries(cols.map(c => [c.id, c.agg ? round(pick(c.agg) || 0) : null]));
-    return { group, key, label, money, by, total: round(cols.reduce((n, c) => n + (c.agg ? pick(c.agg) || 0 : 0), 0)) };
+    return { group, key, label, money, by, total: round(cols.reduce((n, c) => n + (c.agg ? pick(c.agg) || 0 : 0), 0)),
+      total_entered: round(cols.reduce((n, c) => n + (c.aggEntered ? pick(c.aggEntered) || 0 : 0), 0)) };
   };
   const rows = [
     row('spending', 'spend_approved', 'Spent from settlement funds (approved or reimbursed)', a => a.spend_approved),
@@ -610,42 +647,54 @@ function combined(from, to) {
   for (const x of HIAA_ROWS()) if (cols.some(c => c.agg && c.agg.hiaa[x.code])) rows.push(row('hiaa', x.code, x.label, a => a.hiaa[x.code]));
   for (const k of VALUE_KEYS) rows.push(row('outcome', k, measureLabel(k), a => a.values[k], { money: false, round: k === 'staff_training_hours' ? round1 : (n) => n }));
   const whole = cols.filter(c => c.status === 'whole').length; const part = cols.filter(c => c.status === 'part').length; const none = cols.filter(c => c.status === 'none').length;
+  const enteredProgrammes = cols.filter(c => c.source === ENTERED || c.source === 'mixed').length;
   return {
     from, to, days_in_period: period,
-    programmes: cols.map(({ agg, ...c }) => c),
+    programmes: cols.map(({ agg, aggEntered, ...c }) => c), // eslint-disable-line no-unused-vars
     rows,
     submitted: whole + part, not_submitted: none, whole, part, none, of: cols.length,
-    headline: headline(whole, part, none, cols.length),
+    entered, entered_programmes: enteredProgrammes, entered_left_out: enteredLeftOut, has_entered: hasEntered(),
+    headline: headline(whole, part, none, cols.length, { entered: enteredProgrammes, leftOut: enteredLeftOut.length }),
     inactive_left_out: inactiveLeftOut,
-    caveats: CAVEATS, caveat_summary: CAVEAT_SUMMARY, publication_note: PUBLICATION_NOTE, rule: PERIOD_RULE,
+    caveats: CAVEATS, caveat_summary: CAVEAT_SUMMARY, publication_note: PUBLICATION_NOTE, rule: PERIOD_RULE, entered_label: ENTERED_LABEL, entered_note: ENTERED_NOTE,
   };
 }
-/** "3 of 4 programs submitted for the whole period, 0 for part of it, 1 not at all." */
-function headline(whole, part, none, of) {
-  return `${whole} of ${of} program${of === 1 ? '' : 's'} submitted for the whole period, ${part} for part of it, ${none} not at all.`;
+/** Whether the county has entered figures for any programme (the views offer to leave them out only then). */
+const hasEntered = () => !!db.one(`SELECT 1 x FROM county_submissions WHERE source=? LIMIT 1`, ENTERED);
+/**
+ * "3 of 4 programs submitted for the whole period, 0 for part of it, 1 not at all." Figures the county entered are
+ * counted in it, and said apart: "Of the 3 with figures, 1 has figures entered by the county — not signed by the
+ * program." Left out, it says so.
+ */
+function headline(whole, part, none, of, { entered = 0, leftOut = 0 } = {}) {
+  let out = `${whole} of ${of} program${of === 1 ? '' : 's'} submitted for the whole period, ${part} for part of it, ${none} not at all.`;
+  if (entered) out += ` Of the ${whole + part} with figures, ${entered} ${entered === 1 ? 'has' : 'have'} figures ${ENTERED_LABEL}.`;
+  if (leftOut) out += ` Figures entered by the county are left out (${leftOut} program${leftOut === 1 ? '' : 's'}).`;
+  return out;
 }
 
 /**
  * The combined view by quarter: each whole calendar quarter inside [from, to] (a California fiscal year's
  * quarters are the same months) combined on its own, by the same rule as combined(). Rows are the measures,
- * columns the quarters (the total of each); each quarter's per-programme figures come with it.
+ * columns the quarters (the total of each, and the part of it the county entered); each quarter's per-programme
+ * figures come with it. `entered` as for combined().
  */
-function byQuarter(from, to) {
+function byQuarter(from, to, { entered = true } = {}) {
   const qs = quartersIn(from, to);
-  if (!qs.length) return { from, to, quarters: [], rows: [], days_outside_quarters: daysIn(from, to), too_many: false };
-  if (qs.length > MAX_QUARTERS) return { from, to, quarters: [], rows: [], too_many: true, max_quarters: MAX_QUARTERS };
-  const views = qs.map(q => combined(q.from, q.to));
+  if (!qs.length) return { from, to, quarters: [], rows: [], days_outside_quarters: daysIn(from, to), too_many: false, entered, has_entered: hasEntered() };
+  if (qs.length > MAX_QUARTERS) return { from, to, quarters: [], rows: [], too_many: true, max_quarters: MAX_QUARTERS, entered, has_entered: hasEntered() };
+  const views = qs.map(q => combined(q.from, q.to, { entered }));
   const order = [['spending', 'spend_approved'], ['spending', 'spend_pending'], ...USE_ROWS().map(u => ['use', u.code]), ...HIAA_ROWS().map(x => ['hiaa', x.code]), ...VALUE_KEYS.map(k => ['outcome', k])];
   const rows = [];
   for (const [g, k] of order) {
     const found = views.map(v => v.rows.find(r => r.group === g && r.key === k));
     const first = found.find(Boolean); if (!first) continue;
-    rows.push({ group: g, key: k, label: first.label, money: first.money, by_quarter: found.map(r => (r ? r.total : 0)) });
+    rows.push({ group: g, key: k, label: first.label, money: first.money, by_quarter: found.map(r => (r ? r.total : 0)), by_quarter_entered: found.map(r => (r ? r.total_entered : 0)) });
   }
   const inQuarters = qs.reduce((n, q) => n + daysIn(q.from, q.to), 0);
   return {
-    from, to, rows, too_many: false, days_outside_quarters: daysIn(from, to) - inQuarters,
-    quarters: views.map((v) => ({ from: v.from, to: v.to, whole: v.whole, part: v.part, none: v.none, of: v.of, headline: v.headline, programmes: v.programmes, rows: v.rows })),
+    from, to, rows, too_many: false, days_outside_quarters: daysIn(from, to) - inQuarters, entered, has_entered: hasEntered(), entered_label: ENTERED_LABEL, entered_note: ENTERED_NOTE,
+    quarters: views.map((v) => ({ from: v.from, to: v.to, whole: v.whole, part: v.part, none: v.none, of: v.of, headline: v.headline, entered_programmes: v.entered_programmes, entered_left_out: v.entered_left_out, programmes: v.programmes, rows: v.rows })),
   };
 }
 
@@ -660,6 +709,7 @@ const PUBLICATION_NOTE = 'Publishing these figures needs the publication screen 
 
 module.exports = {
   FORMAT, SCHEMA_VERSION, ALGORITHM, MAX_FILE_BYTES, MAX_QUARTERS, VALUE_KEYS, PAYLOAD, TEXT_MAX, CAVEATS, CAVEAT_SUMMARY, PERIOD_RULE, PUBLICATION_NOTE, SubmissionError,
+  ENTERED, ENTERED_LABEL, ENTERED_NOTE, USE_CODES, HIAA_CODES, CURRENT, subById, sha256Hex, isEntered, sourceOf, hasEntered,
   SUBS, canonical, cleanText, fingerprintOf, formatFingerprint, normaliseFingerprint, parsePublicKey, normaliseCode, formatCode, countyCode,
   currentKey, retiredKeys, ensureKey, rotateKey, payloadFrom, signFile, signWithSeed, checkPayload, parseFile, importParsed, withdraw, reinstate, resettle, resettleProgramme,
   importMessage, countingSubs, filesCount, coverage, summary, programmeOut, programmeKeys, choose, combined, byQuarter, headline, measureLabel, quartersIn, daysIn, isDay, isInstant, humanDay, humanPeriod, slug,

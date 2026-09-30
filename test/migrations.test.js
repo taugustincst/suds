@@ -490,3 +490,68 @@ test('SUDS 1.17.0\'s first start on a 1.16.4 database: caseload default off, acc
     fs.rmSync(fdir, { recursive: true, force: true });
   }
 });
+
+// Migration 60 (county-entered figures, built for 1.20.0) on a county's 1.19.0 database that already holds signed
+// county submissions: county_submissions is rebuilt (key_id and signature may be NULL now, with source, entered_via,
+// source_ref_enc and a CHECK), every existing row is kept as a signed one, and county_programmes gains on_suds (1).
+test('migration 60: a county\'s signed submissions survive the rebuild as signed ones, and the table takes entered figures', () => {
+  const fdir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-migrate-60-'));
+  const fpath = path.join(fdir, 'suds.db');
+  require('../server/db').close();
+  try {
+    require('../server/db').open(fpath); require('../server/db').close();
+    // Back to 1.19.0's shape (schema 59): the table as migration 56 made it, and no on_suds.
+    const d = new DatabaseSync(fpath);
+    d.exec('DROP TABLE county_submissions');
+    d.exec(`CREATE TABLE IF NOT EXISTS county_submissions (
+  id TEXT PRIMARY KEY,
+  programme_id TEXT NOT NULL REFERENCES county_programmes(id),
+  key_id TEXT NOT NULL REFERENCES county_programme_keys(id),
+  period_from TEXT NOT NULL,
+  period_to TEXT NOT NULL,
+  schema_version INTEGER NOT NULL,
+  programme_name TEXT,
+  generated_at TEXT NOT NULL,
+  suds_version TEXT,
+  payload_enc TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  signature TEXT NOT NULL,
+  received_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  received_by TEXT REFERENCES users(id),
+  superseded_by TEXT REFERENCES county_submissions(id),
+  withdrawn_at TEXT,
+  withdrawn_by TEXT REFERENCES users(id),
+  UNIQUE(programme_id, sha256)
+)`);
+    d.exec('CREATE INDEX IF NOT EXISTS idx_county_submissions_programme ON county_submissions(programme_id, period_from, period_to)');
+    d.exec('ALTER TABLE county_programmes DROP COLUMN on_suds');
+    d.prepare(`INSERT INTO county_programmes(id,name) VALUES('p1','Riverbend')`).run();
+    d.prepare(`INSERT INTO county_programme_keys(id,programme_id,public_key,fingerprint) VALUES('k1','p1','pem','f01')`).run();
+    const ins = d.prepare(`INSERT INTO county_submissions(id,programme_id,key_id,period_from,period_to,schema_version,programme_name,generated_at,suds_version,payload_enc,sha256,signature,superseded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    ins.run('s2', 'p1', 'k1', '2026-01-01', '2026-03-31', 1, 'Riverbend', '2026-04-03T00:00:00.000Z', '1.19.0', 'enc2', 'h2', 'sig2', null);
+    ins.run('s1', 'p1', 'k1', '2026-01-01', '2026-03-31', 1, 'Riverbend', '2026-04-02T00:00:00.000Z', '1.19.0', 'enc1', 'h1', 'sig1', 's2');
+    d.prepare(`UPDATE settings SET value='59' WHERE key='schema_version'`).run();
+    d.close();
+    require('../server/db').open(fpath);
+    assert.equal(db().getSetting('schema_version'), String(require('../server/db').LATEST_SCHEMA_VERSION));
+    assertSameShape(schemaShape(db().get()), freshShape(), '1.19.0 with county submissions');
+    const rows = db().all(`SELECT id, key_id, signature, superseded_by, source, entered_via, source_ref_enc, payload_enc FROM county_submissions ORDER BY id`).map(r => ({ ...r }));
+    assert.deepEqual(rows, [
+      { id: 's1', key_id: 'k1', signature: 'sig1', superseded_by: 's2', source: 'signed', entered_via: null, source_ref_enc: null, payload_enc: 'enc1' },
+      { id: 's2', key_id: 'k1', signature: 'sig2', superseded_by: null, source: 'signed', entered_via: null, source_ref_enc: null, payload_enc: 'enc2' },
+    ], 'every row kept, as signed');
+    assert.equal(db().one(`SELECT on_suds FROM county_programmes WHERE id='p1'`).on_suds, 1);
+    assert.deepEqual(db().all('PRAGMA foreign_key_check'), []);
+    // The rebuilt table takes figures the county entered, and refuses a signed row with no key or an entered one with one.
+    db().run(`INSERT INTO county_submissions(id,programme_id,key_id,period_from,period_to,schema_version,generated_at,payload_enc,sha256,signature,source,entered_via) VALUES('e1','p1',NULL,'2026-04-01','2026-06-30',1,'x','enc','h3',NULL,'county_entered','form')`);
+    assert.throws(() => db().run(`INSERT INTO county_submissions(id,programme_id,key_id,period_from,period_to,schema_version,generated_at,payload_enc,sha256,signature) VALUES('x1','p1',NULL,'2026-04-01','2026-06-30',1,'x','enc','h4',NULL)`), /CHECK/);
+    assert.throws(() => db().run(`INSERT INTO county_submissions(id,programme_id,key_id,period_from,period_to,schema_version,generated_at,payload_enc,sha256,signature,source,entered_via) VALUES('x2','p1','k1','2026-04-01','2026-06-30',1,'x','enc','h5','sig','county_entered','csv')`), /CHECK/);
+    // A second start changes nothing (idempotent).
+    require('../server/db').close(); require('../server/db').open(fpath);
+    assert.equal(db().one(`SELECT COUNT(*) n FROM county_submissions`).n, 3);
+  } finally {
+    require('../server/db').close();
+    require('../server/db').open(dbPath);
+    fs.rmSync(fdir, { recursive: true, force: true });
+  }
+});

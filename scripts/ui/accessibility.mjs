@@ -322,12 +322,20 @@ async function prepareOffice() {
     must(await api(page, 'POST', '/api/county/submissions', { text: fs.readFileSync(path.join(sampleDir, f), 'utf8') }), `county submission ${f}`);
   }
   fs.rmSync(sampleDir, { recursive: true, force: true });
+  // A programme not on SUDS with figures the county entered for the latest quarter the sample files cover (built for
+  // 1.20.0; docs/COUNTY-VIEW.md "County-entered figures"): the combined view then marks them, Submissions offers
+  // Correct, and Programs offers Enter figures and Import a CSV.
+  const canyon = must(await api(page, 'POST', '/api/county/programmes', { name: 'Canyon Mobile Outreach', not_on_suds: true }), 'a county programme not on SUDS');
+  const measureKeys = (must(await api(page, 'GET', '/api/county/programmes'), 'the county programmes').measures || []).map(m => m.key);
+  const [, enteredFrom, enteredTo] = /(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})\.json$/.exec(hillviewLatest);
+  must(await api(page, 'POST', `/api/county/programmes/${canyon.id}/entries`, { from: enteredFrom, to: enteredTo, source_ref: 'Quarterly report (fictional)',
+    funds: [{ name: 'County settlement share', grant_number: 'OSF-CM-3', category: 'core_h', hiaa: 'hiaa_4', spend_own_category: '4200', spend_other_categories: '0', spend_pending: '100', ...Object.fromEntries(measureKeys.map(k => [k, '5'])) }] }), 'figures entered by the county');
   // The county connection switched on, a connection token for one programme and a read token, so County connections and
   // the Connection tokens card are audited with rows in them (Settlement outcomes' connection card is audited not yet
   // connected, with its Connect dialog; county-connect.mjs audits it connected, with a send in its log).
   must(await api(page, 'PUT', '/api/county-connect/settings', { enabled: true }), 'the county connection is on');
   const ccProgs = (await api(page, 'GET', '/api/county/programmes')).data.rows;
-  must(await api(page, 'POST', '/api/county-connect/tokens', { scope: 'county.submit', programme_id: ccProgs[0].id }), 'a connection token');
+  must(await api(page, 'POST', '/api/county-connect/tokens', { scope: 'county.submit', programme_id: ccProgs.find(p => p.on_suds !== false).id }), 'a connection token');
   must(await api(page, 'POST', '/api/county-connect/tokens', { scope: 'county.read', name: 'County data warehouse' }), 'a read token');
   // A supervisor (clients:all, care plan, assessments, Part 2 registers) records the clinical and Part 2 records.
   await as('jwalker', PW);
@@ -501,6 +509,8 @@ const BUTTON_DIALOGS = [
   ['reports', 'Identified Excel workbook'], ['admin?tab=lists', '+ Add funding source'],
   // The county view: registering and editing a programme, and withdrawing an imported file.
   ['county?tab=programmes', 'Register a program'], ['county?tab=programmes', 'Edit'], ['county?tab=programmes', 'Keys'], ['county?tab=submissions', 'Withdraw'],
+  // Figures the county enters for a programme not on SUDS (built for 1.20.0): adding one, entering, importing, correcting.
+  ['county?tab=programmes', 'Add a program not on SUDS'], ['county?tab=programmes', 'Enter figures'], ['county?tab=programmes', 'Import a CSV'], ['county?tab=submissions', 'Correct'],
   // Settlement outcomes › Send to the county: Make a new key (its confirmation).
   ['settlement', 'Make a new key'],
   // The county connection: issuing a connection or read token, and connecting this server to a county.

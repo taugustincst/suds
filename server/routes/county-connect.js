@@ -155,27 +155,34 @@ module.exports = (r) => {
     const { from, to } = period(ctx.query.get('from') || '', ctx.query.get('to') || '');
     const format = ctx.query.get('format') || 'json';
     if (!['json', 'tidy-csv'].includes(format)) throw badRequest('format must be json or tidy-csv');
-    const d = K.combined(from, to);
-    audit.log({ user: CC.actor(t), action: 'county.api.read', ip: ctx.ip, details: { what: 'combined', token_id: t.id, from, to, format, programmes: d.programmes.length, submitted: d.submitted } });
+    // Figures the county entered for a programme not on SUDS are counted unless ?entered=exclude, and each programme
+    // and figure says where it came from (source: signed, county_entered or mixed).
+    const entered = ctx.query.get('entered') !== 'exclude';
+    const d = K.combined(from, to, { entered });
+    audit.log({ user: CC.actor(t), action: 'county.api.read', ip: ctx.ip, details: { what: 'combined', token_id: t.id, from, to, format, programmes: d.programmes.length, submitted: d.submitted, entered_excluded: !entered || undefined } });
     const notes = { counts: 'exact', purpose: 'internal', classification: 'Exact, internal, not for publication: for authorised county staff and systems only.', unduplicated: false,
       not_unduplicated: 'People are counted by each program and summed: a person served by two programs counts twice. Not unduplicated across programs.',
-      caveats: d.caveats, rule: d.rule, publication_note: d.publication_note };
+      caveats: d.caveats, rule: d.rule, publication_note: d.publication_note,
+      entered: entered ? 'counted' : 'left out', entered_label: K.ENTERED_LABEL, entered_note: d.entered_note,
+      source: 'Each programme and submission has a source: "signed" (a file the program\'s key signed), "county_entered" (' + K.ENTERED_LABEL + ') or, for a programme, "mixed". Each row\'s total_entered is the part of its total entered by the county.' };
     if (format === 'json') {
-      const { caveats, rule, publication_note, ...rest } = d; // eslint-disable-line no-unused-vars
+      const { caveats, rule, publication_note, entered_note, entered_label, ...rest } = d; // eslint-disable-line no-unused-vars
       return { ...rest, notes };
     }
     // Tidy: one row per programme and measure, and one per measure for the total; the notes in the headers.
     const S = require('../spreadsheet');
     const rows = [];
+    const anyEntered = d.programmes.some(p => p.source === K.ENTERED || p.source === 'mixed');
     for (const x of d.rows) {
-      for (const p of d.programmes) rows.push({ from, to, programme_id: p.id, programme: p.name, programme_status: p.status, group: x.group, measure_key: x.key, measure: x.label, unit: x.money ? 'money' : 'count', value: x.by[p.id] });
-      rows.push({ from, to, programme_id: '', programme: 'Total (summed, not unduplicated)', programme_status: '', group: x.group, measure_key: x.key, measure: x.label, unit: x.money ? 'money' : 'count', value: x.total });
+      for (const p of d.programmes) rows.push({ from, to, programme_id: p.id, programme: p.name, programme_status: p.status, source: p.source || '', group: x.group, measure_key: x.key, measure: x.label, unit: x.money ? 'money' : 'count', value: x.by[p.id] });
+      rows.push({ from, to, programme_id: '', programme: 'Total (summed, not unduplicated)', programme_status: '', source: '', group: x.group, measure_key: x.key, measure: x.label, unit: x.money ? 'money' : 'count', value: x.total });
+      if (anyEntered) rows.push({ from, to, programme_id: '', programme: `Of the total, ${K.ENTERED_LABEL}`, programme_status: '', source: K.ENTERED, group: x.group, measure_key: x.key, measure: x.label, unit: x.money ? 'money' : 'count', value: x.total_entered });
     }
-    const cols = ['from', 'to', 'programme_id', 'programme', 'programme_status', 'group', 'measure_key', 'measure', 'unit', 'value'].map(key => ({ key, label: key }));
+    const cols = ['from', 'to', 'programme_id', 'programme', 'programme_status', 'source', 'group', 'measure_key', 'measure', 'unit', 'value'].map(key => ({ key, label: key }));
     ctx.res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store',
       'Content-Disposition': `attachment; filename="suds-county-combined-${from}_${to}-internal-exact.csv"`,
       'X-SUDS-Report-Counts': 'exact', 'X-SUDS-Report-Purpose': 'internal',
-      'X-SUDS-Export': 'County view: exact aggregate figures from programs\' signed submissions, for authorised county staff; not for publication; summed, not unduplicated. No client-level data.' });
+      'X-SUDS-Export': `County view: exact aggregate figures from programs' signed submissions${anyEntered ? ' and figures entered by the county (not signed by the program; source column)' : ''}, for authorised county staff; not for publication; summed, not unduplicated. No client-level data.` });
     ctx.res.end(S.toCsv(rows, cols));
   });
 
@@ -189,13 +196,14 @@ module.exports = (r) => {
       // The current key and the key history from county.js (county_programme_keys): fingerprints and dates only.
       const out = K.programmeOut(p);
       const mine = K.filesCount(p) ? subs.filter(s => s.programme_id === p.id) : [];
-      return { id: p.id, name: p.name, active: !!p.active, keep_files: !!p.keep_files, files_count: K.filesCount(p), fingerprint: out.fingerprint, fingerprint_display: out.fingerprint_display,
+      // source: a programme on SUDS signs its files; one not on SUDS has only figures the county entered.
+      return { id: p.id, name: p.name, active: !!p.active, keep_files: !!p.keep_files, files_count: K.filesCount(p), on_suds: out.on_suds, source: out.on_suds ? 'signed' : K.ENTERED, fingerprint: out.fingerprint, fingerprint_display: out.fingerprint_display,
         keys: out.keys.map(k => ({ fingerprint: k.fingerprint, added_at: k.added_at, replaced_at: k.replaced_at, compromised_at: k.compromised_at, current: k.current })),
         last_received: mine.reduce((m, s) => (s.received_at > m ? s.received_at : m), '') || null,
-        periods: mine.map(s => ({ from: s.period_from, to: s.period_to, generated_at: s.generated_at, received_at: s.received_at, sha256: s.sha256, key_fingerprint: s.key_fingerprint })) };
+        periods: mine.map(s => ({ from: s.period_from, to: s.period_to, generated_at: s.generated_at, received_at: s.received_at, sha256: s.sha256, key_fingerprint: s.key_fingerprint, source: s.source || 'signed' })) };
     });
     audit.log({ user: CC.actor(t), action: 'county.api.read', ip: ctx.ip, details: { what: 'programs', token_id: t.id, programmes: rows.length } });
-    return { rows, notes: { classification: 'Internal: for authorised county staff and systems only.' } };
+    return { rows, notes: { classification: 'Internal: for authorised county staff and systems only.', source: `A programme's source is "signed" (it runs SUDS and signs its files) or "county_entered" (not on SUDS: ${K.ENTERED_LABEL}); each period's source says which its figures are.` } };
   });
 
   // ---- the county's settings and tokens ----
