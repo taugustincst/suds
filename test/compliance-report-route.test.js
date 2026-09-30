@@ -251,3 +251,29 @@ test('app checks: on a new server no backup and no drill yet is "pending first r
     assert.equal(c.result, 'fail', 'an offsite share that is not there is never "pending"'); assert.match(c.evidence, /is the share mounted/);
   } finally { if (saved) db.setSetting('dr_last_drill', saved); }
 });
+
+test('provisioned settings may only tighten: a weaker value is refused, never written, and never counts as chosen', () => {
+  const provision = require('../server/provision');
+  const f = path.join(dir, 'provision-weak.json');
+  const keys = ['mfa_require_all', 'self_signup', 'dr_drill_monthly', 'backup_schedule_hours'];
+  const saved = Object.fromEntries(keys.map((k) => [k, db.getSetting(k, null)]));
+  db.run(`DELETE FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`, ...keys);
+  try {
+    fs.writeFileSync(f, JSON.stringify({ settings: { mfa_require_all: '0', self_signup: '1', dr_drill_monthly: '0', backup_schedule_hours: '48' } }));
+    const out = provision.apply({ file: f });
+    assert.deepEqual(out.applied, []);
+    assert.deepEqual(out.refused.map((r) => r.key).sort(), keys.slice().sort());
+    for (const r of out.refused) assert.match(r.reason, /may only tighten/);
+    for (const k of keys) assert.equal(db.getSetting(k, null), null, `${k} was not written, so an administrator still chooses it`);
+    assert.equal(provision.apply({ file: f }).applied.length, 0);
+    // The stricter values are accepted.
+    fs.writeFileSync(f, JSON.stringify({ settings: { mfa_require_all: '1', self_signup: '0', dr_drill_monthly: '1', backup_schedule_hours: '24' } }));
+    assert.deepEqual(provision.apply({ file: f }).applied.sort(), keys.slice().sort());
+    assert.equal(db.getSetting('self_signup'), '0');
+    assert.equal(provision.KEYS.backup_schedule_hours('0'), false);
+    assert.equal(provision.KEYS.backup_schedule_hours('4'), true);
+  } finally {
+    db.run(`DELETE FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`, ...keys);
+    for (const [k, v] of Object.entries(saved)) if (v !== null) db.setSetting(k, v);
+  }
+});
