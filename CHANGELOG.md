@@ -4,8 +4,54 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
-For the fix release 1.19.1: documentation, evidence, a test of documentation and repository metadata only. No
-migration, route, permission or behaviour change; nothing for an administrator to do.
+For 1.20.0. The version is not stamped.
+
+### Fixed: installer and day-one problems found by a real install in a systemd container (SUDS Server)
+
+The run of `deploy/linux/install.sh` and `upgrade.sh` on Ubuntu 24.04 with systemd, as root, on 2026-09-30
+(evidence branch `evidence/1191-drill`, `docs/evidence/installer-container-run-2026-09-30/`) found these. Each has a
+test that failed before the fix, in the real-execution harness (`test/deploy-linux-real.test.js`) where it applies.
+
+- **The record of how the release zip was checked survives an interrupted first run.** A run that stopped after
+  staging the release (the share refusals did, twice) left the next runs writing `SUDS_RELEASE_CHECKSUM_SOURCE=`
+  empty, so `host.release_integrity` said *could not check* until the next upgrade. The source (`operator`,
+  `same-release`, `local-tree`) is now written into the staged release (`/opt/suds/<version>/.suds-release-checksum`,
+  covered by its manifest and marker) and read back whenever a later run or an upgrade reuses that stage.
+- **Both shares checked at once, as a `suds` account that exists.** The installer creates the service account
+  before its checks (it existed only after a first run), tests the anchor and the offsite share as it together, and
+  refuses once, naming every share that is not writable with its owner and mode, the account's uid and gid, and the
+  `chown suds:suds <dir> && chmod 0700 <dir>` or `setfacl -m u:suds:rwx <dir>` that fixes it (or the uid/gid to grant
+  on an NFS/SMB server): one fix and one more run, not three runs, and nothing is staged or installed before it.
+  `--dry-run` reads the modes and warns.
+- **Day one is not red.** The installer now runs the first backup and recovery drill once SUDS is up
+  (`scripts/dr-drill.js --offsite`, as `suds` with the service's keys): the drill takes the first scheduled backup,
+  copies it offsite and restores that copy, so the first compliance report has both. As the fallback, a first backup
+  or drill that has not run yet is *pending first run (expected on day one)*, a warning, on every surface, not only in
+  the host checks: `app.backups` and `app.dr_drill` (Settings → Security status) for twice the backup interval and 31
+  days after the schedule and the monthly drill were turned on, and `/api/health` answers **200, `ok: true`**, with
+  the pending backup in `warnings` (it was 503 for up to the first 4 hours, which a monitor alarms on). After the
+  window a missing backup or drill fails, and `/api/health` answers 503, as before.
+- **A new server's first drill no longer fails for the offsite copy it has just made.** With an offsite share and no
+  backup anywhere, `server/dr-drill.js` recorded "the offsite directory holds no backup", then took a backup, copied
+  it there and restored that copy — and still failed. The failure now stands only when the offsite copy was not
+  restored.
+- **`app.https` failed on the installer's report and passed on the weekly one.** The installer (and `upgrade.sh`) ran
+  the compliance check without `/etc/suds/suds.env`, so it saw no `TRUST_PROXY` (nor `WEBAUTHN_RP_ID`,
+  `MFA_REQUIRED_ROLES`, `LOCAL_MODE_ENABLED`); the weekly `suds-compliance.service` has them. The check now runs with
+  every line of that file, `SUDS_ENV=production` and `SUDS_DATA_DIR`, as the unit does, and only once
+  `https://<domain>/api/health/ready` answers through Caddy (up to 90 s: Caddy starting, or obtaining its ACME
+  certificate), warning if it does not.
+- **Passkeys work on a new install.** The installer writes `WEBAUTHN_RP_ID=<domain>` and
+  `WEBAUTHN_ORIGINS=https://<domain>` into `/etc/suds/suds.env` from `--domain`, and `upgrade.sh` adds them to a
+  server installed before; an operator's own `WEBAUTHN_RP_ID` or `WEBAUTHN_ORIGINS` is kept (a re-run of the
+  installer used to drop it with the rest of the file). `app.passkeys` no longer fails on every new install.
+- **Where the release checksum is.** The refusal without `--release-sha256` and the `host.release_integrity`
+  remediation (and so the browser kernel) said "the CHANGELOG entry at the release tag", which cannot hold it: the zip
+  is built from the tagged commit. They now say the SHA-256 published in the GitHub Release notes and recorded in the
+  version's CHANGELOG section on `main`, which must agree (docs/RELEASE.md, *The zip's SHA-256 in two places*);
+  SELF-HOSTING.md and deploy/linux/README.md likewise.
+
+### Documentation, evidence and repository metadata
 
 - **Buyer and security documents describe 1.19.0.** The market-readiness review of 1.19.0 found them two releases
   behind. The IT buyer guide no longer says the county view is "one file, carried by people, not a connection": it

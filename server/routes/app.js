@@ -88,6 +88,9 @@ module.exports = (r) => {
     // stopped verifying, and a certificate about to expire. Each one is a reason to say "not ok" to whatever
     // is watching this endpoint, with a sentence a county IT person can act on.
     const warnings = [];
+    // Expected on a new server and bounded in time (the first scheduled backup, before it is due): said, as a
+    // warning, without making the answer "not ok" — a monitor would otherwise alarm on every new install.
+    const pending = [];
     try {
       if (db.getSetting('audit_verify_failed_at', null)) warnings.push(`The audit log failed its integrity check at ${db.getSetting('audit_verify_failed_at')}. Investigate before anything else.`);
       const placement = config.local ? null : require('../audit-anchor').placementProblem();
@@ -95,7 +98,9 @@ module.exports = (r) => {
       if (/^FAILED/.test(db.getSetting('audit_anchor_verify_status', '') || '')) warnings.push(`The audit log no longer matches the anchors written outside the database (checked ${db.getSetting('audit_anchor_verified_at')}). Investigate before anything else.`);
       const hours = Number(db.getSetting('backup_schedule_hours', '0')) || 0;
       const last = db.getSetting('last_scheduled_backup_at', null); const status = db.getSetting('last_scheduled_backup_status', '') || '';
-      if (hours && (!last || Date.now() - Date.parse(last) > 2 * hours * 3600_000)) warnings.push(`Scheduled backups are set for every ${hours} hours but the last one ${last ? 'ran ' + last : 'has never run'}.`);
+      const firstBackup = hours && !last ? require('../scheduled-backup').firstRunPending() : null;
+      if (firstBackup) pending.push(`Scheduled backups are set for every ${hours} hours and the first has not run yet: ${require('../compliance-rules').PENDING_FIRST_RUN}. It is overdue after ${firstBackup.until}.`);
+      else if (hours && (!last || Date.now() - Date.parse(last) > 2 * hours * 3600_000)) warnings.push(`Scheduled backups are set for every ${hours} hours but the last one ${last ? 'ran ' + last : 'has never run'}.`);
       if (hours && status && !/^ok/.test(status)) warnings.push(`The last scheduled backup reported: ${status}`);
       const minutes = Number(db.getSetting('backup_schedule_minutes', '0')) || 0;
       const lastSnap = db.getSetting('last_snapshot_at', null); const snap = db.getSetting('last_snapshot_status', '') || '';
@@ -110,7 +115,8 @@ module.exports = (r) => {
       // trusts the old one (docs/INSTALL.md), which takes an office more than a fortnight to get round to.
       if (fs.existsSync(crt)) { const validTo = new (require('node:crypto').X509Certificate)(fs.readFileSync(crt)).validTo; const left = (Date.parse(validTo) - Date.now()) / 86400000; if (left < CERT_WARN_DAYS) warnings.push(`The HTTPS certificate ${left < 0 ? 'expired' : 'expires'} ${validTo}. Create a new one under Settings → Network & devices.`); }
     } catch { /* a check that cannot run must not itself take the endpoint down */ }
-    if (warnings.length) { out.ok = false; out.warnings = warnings; }
+    if (warnings.length) out.ok = false;
+    if (warnings.length || pending.length) out.warnings = [...warnings, ...pending];
     ctx.status = out.ok ? 200 : 503;
     return out;
   });

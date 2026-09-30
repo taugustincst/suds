@@ -60,7 +60,7 @@ const HOST_CHECKS = [
   { id: 'host.auditd', title: 'Linux audit daemon (recommended)', rules: ['hipaa-312b', 'hipaa-308a1iiD'], remediation: 'Recommended, not required: install and enable auditd so logins, sudo and changes to /etc/suds are recorded by the OS as well.' },
   { id: 'host.node', title: 'Node.js is the pinned, checksum-verified release', rules: ['hipaa-308a1iiB'], remediation: 'Install the release pinned in deploy/linux/pins (the one CI tests) with deploy/linux/install.sh or upgrade.sh.' },
   { id: 'host.suds_version', title: 'SUDS release is supported', rules: ['hipaa-308a1iiB', 'hipaa-308a5iiB'], remediation: 'Upgrade to the latest minor release (docs/RELEASE.md, "Supported versions") with deploy/linux/upgrade.sh.' },
-  { id: 'host.release_integrity', title: 'SUDS release checked against an independently published checksum', rules: ['hipaa-308a1iiB', 'hipaa-308a5iiB'], remediation: 'Upgrade with --release-sha256=<hex> taken from a channel other than the download (the release notes and the CHANGELOG entry at the release tag: docs/SELF-HOSTING.md, Upgrading), not --trust-release-checksum.' },
+  { id: 'host.release_integrity', title: 'SUDS release checked against an independently published checksum', rules: ['hipaa-308a1iiB', 'hipaa-308a5iiB'], remediation: 'Upgrade with --release-sha256=<hex> taken from a channel other than the download: the SHA-256 published in the GitHub Release notes and recorded in that version\'s CHANGELOG section on the main branch, which must agree (not at the release tag: the zip is built from the tagged commit, so its checksum is added after it; docs/SELF-HOSTING.md, Upgrading). Not --trust-release-checksum.' },
   { id: 'host.backup_files', title: 'Latest backup is recent and the offsite copy exists', rules: ['hipaa-308a7iiA', 'hipaa-310d2iv'], remediation: 'Scheduled backups (Settings → Scheduled backups) with the offsite directory on the mounted offsite share; check the share is mounted.' },
   { id: 'host.dr_evidence', title: 'Recovery drill within 90 days, signed report verifies', rules: ['hipaa-308a7iiD', 'hipaa-308a7iiB'], remediation: 'Run a recovery drill with the escrowed key file against the offsite copy (Settings → System & backups, or npm run dr-drill); turn the monthly drill on.' },
   { id: 'host.audit_verify', title: 'Audit chain and external anchors verify now', rules: ['hipaa-312b', 'hipaa-312c1', 'hipaa-312c2', 'cmia-56101b1B', 'part2-16a2iii'], remediation: 'A failure is a possible incident: follow docs/security/INCIDENT-RESPONSE.md. "Could not check" means the check ran without the index key (run it as root, or from suds-compliance.service).' },
@@ -122,4 +122,8 @@ function resultOfLevel(level, entry) {
 /** Compliance result → Security status level (for the host lines Security status shows). */
 function levelOfResult(result) { return result === 'pass' ? 'ok' : result === 'fail' ? 'bad' : 'warn'; }
 
-module.exports = { RULES, HOST_CHECKS, APP_CHECKS, forItem, cite, byId, resultOfLevel, levelOfResult, RESULTS: ['pass', 'fail', 'warn', 'not-checked'] };
+// What a new server's first backup or recovery drill that has not run yet reads as, for a bounded time after it
+// was scheduled: a warning, on every surface (Security status, the compliance report, /api/health).
+const PENDING_FIRST_RUN = 'pending first run (expected on day one)';
+
+module.exports = { RULES, HOST_CHECKS, APP_CHECKS, forItem, cite, byId, resultOfLevel, levelOfResult, PENDING_FIRST_RUN, RESULTS: ['pass', 'fail', 'warn', 'not-checked'] };

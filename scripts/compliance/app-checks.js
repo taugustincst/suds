@@ -69,7 +69,7 @@ function installedHoursAgo(conf, now) {
   const t = Date.parse((conf && conf.installedAt) || '');
   return Number.isFinite(t) ? (now - t) / 3600_000 : null;
 }
-const PENDING = 'pending first run (expected on day one)';
+const PENDING = require('../../server/compliance-rules').PENDING_FIRST_RUN; // pure data: safe before prepareEnv
 
 function backupFiles({ config, db, now, conf }) {
   const id = 'host.backup_files';

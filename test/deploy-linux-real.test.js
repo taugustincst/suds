@@ -56,12 +56,14 @@ const fixtures = (() => {
 })();
 
 /** A SUDS release tree (what install.sh / upgrade.sh run from): the real deploy/, server/ and scripts, pins for the fixtures. */
-function tree(version, { caddy = CADDY_V, caddyfileExtra = '' } = {}) {
+function tree(version, { caddy = CADDY_V, caddyfileExtra = '', complianceCheck = null } = {}) {
   const t = path.join(work, `tree-${version}-${++n}`);
   fs.mkdirSync(path.join(t, 'deploy'), { recursive: true }); fs.mkdirSync(path.join(t, 'scripts'));
   fs.cpSync(path.join(REPO, 'deploy', 'linux'), path.join(t, 'deploy', 'linux'), { recursive: true });
   fs.cpSync(path.join(REPO, 'server'), path.join(t, 'server'), { recursive: true });
-  for (const f of ['backup.js', 'compliance-check.js']) fs.copyFileSync(path.join(REPO, 'scripts', f), path.join(t, 'scripts', f));
+  for (const f of ['backup.js', 'compliance-check.js', 'dr-drill.js']) fs.copyFileSync(path.join(REPO, 'scripts', f), path.join(t, 'scripts', f));
+  // A stand-in for the compliance check (its host checks need a real host), e.g. one that records its environment.
+  if (complianceCheck) fs.writeFileSync(path.join(t, 'scripts', 'compliance-check.js'), complianceCheck);
   fs.cpSync(path.join(REPO, 'scripts', 'compliance'), path.join(t, 'scripts', 'compliance'), { recursive: true });
   fs.writeFileSync(path.join(t, 'package.json'), fs.readFileSync(path.join(REPO, 'package.json'), 'utf8').replace(/^ {2}"version": ".*",$/m, `  "version": "${version}",`));
   fs.writeFileSync(path.join(t, 'Caddyfile'), fs.readFileSync(path.join(REPO, 'Caddyfile'), 'utf8') + caddyfileExtra);
@@ -80,9 +82,16 @@ function host({ os: osName = 'ubuntu' } = {}) {
   fs.writeFileSync(path.join(root, 'etc/os-release'), osName === 'ubuntu' ? 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.1 LTS"\n' : 'ID="rocky"\nVERSION_ID="9.4"\nPRETTY_NAME="Rocky Linux 9.4"\n');
   fs.writeFileSync(path.join(root, 'etc/dnf/automatic.conf'), '[commands]\nupgrade_type = default\napply_updates = no\n');
   const logIt = `echo "$(basename "$0") $*" >> "${log}"`;
-  for (const c of ['apt-get', 'dnf', 'useradd', 'runuser', 'ufw', 'timedatectl', 'restorecon', 'chown']) sh(path.join(bin, c), `${logIt}\nexit 0`);
+  for (const c of ['apt-get', 'dnf', 'ufw', 'timedatectl', 'restorecon', 'chown']) sh(path.join(bin, c), `${logIt}\nexit 0`);
   sh(path.join(bin, 'firewall-cmd'), `${logIt}\n[ "$1" = "--get-default-zone" ] && echo public\nexit 0`);
-  sh(path.join(bin, 'id'), 'exit 1');
+  // useradd makes the account (a marker file) that id then answers for, with uid and gid 998.
+  const users = path.join(dir, 'users'); fs.mkdirSync(users);
+  sh(path.join(bin, 'useradd'), `${logIt}\nfor u in "$@"; do :; done\ntouch "${users}/$u"\nexit 0`);
+  sh(path.join(bin, 'id'), `[ -e "${users}/$2" ] || exit 1\necho 998`);
+  // runuser: "runuser -u suds -- test -w DIR ..." fails for the (unprefixed) directories in HARNESS_UNWRITABLE.
+  js(path.join(bin, 'runuser'), `const a = process.argv.slice(2); require('fs').appendFileSync(${JSON.stringify(log)}, 'runuser ' + a.join(' ') + '\\n');
+    const root = process.env.SUDS_INSTALL_ROOT; const bad = (process.env.HARNESS_UNWRITABLE || '').split(',').filter(Boolean);
+    process.exit(a.some((x) => bad.some((b) => x === root + b)) ? 1 : 0);`);
   sh(path.join(bin, 'uname'), 'echo x86_64');
   sh(path.join(bin, 'findmnt'), 'echo "/dev/mapper/suds-data ext4"');
   sh(path.join(bin, 'lsblk'), "printf 'suds-data crypt\\nsda3 part\\nsda disk\\n'");
@@ -101,6 +110,14 @@ function host({ os: osName = 'ubuntu' } = {}) {
     fs.appendFileSync(${JSON.stringify(log)}, 'systemctl ' + a.join(' ') + '\\n');
     if (a[0] === 'is-active' || a[0] === 'is-enabled') process.exit(process.env.HARNESS_CHRONY_ACTIVE && a.includes('chrony') ? 0 : 3);
     const root = process.env.SUDS_INSTALL_ROOT;
+    // HARNESS_SERVICE_DB: starting suds.service creates the database the way the first start does (bootstrap, and
+    // the settings provision.json gives, with the offsite share inside the fake root).
+    if (a[0] === 'enable' && a.includes('suds.service') && process.env.HARNESS_SERVICE_DB && !fs.existsSync(root + '/var/lib/suds/suds.db')) {
+      const r = require('child_process').spawnSync(process.execPath, ['--no-warnings=ExperimentalWarning', '-e', \`const db = require('./server/db'); db.open(); require('./server/bootstrap').ensureBootstrap();
+        db.setSetting('backup_schedule_hours', '4'); db.setSetting('backup_offsite_dir', \${JSON.stringify(root + '/mnt/offsite')}); db.setSetting('dr_drill_monthly', '1'); db.close();\`],
+        { cwd: root + '/opt/suds/current', env: { PATH: process.env.PATH, SUDS_ENV: 'production', SUDS_DATA_DIR: root + '/var/lib/suds', AUDIT_ANCHOR_DIR: root + '/mnt/worm/suds-anchors', CREDENTIALS_DIRECTORY: root + '/etc/suds/credentials', SUDS_ADMIN_PASSWORD: 'AdminPassw0rd!x' }, encoding: 'utf8' });
+      if (r.status !== 0) { process.stderr.write(r.stderr); process.exit(1); }
+    }
     if (a[0] === 'start' && a[1] === 'suds.service' && process.env.HARNESS_MIGRATE_VERSION && fs.readlinkSync(root + '/opt/suds/current') === process.env.HARNESS_MIGRATE_VERSION) {
       const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(root + '/var/lib/suds/suds.db');
       const v = Number(d.prepare("SELECT value FROM settings WHERE key='schema_version'").get().value);
@@ -208,6 +225,8 @@ test('install.sh for real: code 0755/read-only for everyone, data 0700, credenti
   const env = fs.readFileSync(path.join(R, 'etc/suds/suds.env'), 'utf8');
   assert.match(env, /^SUDS_COMPLIANCE_DIR=\/var\/lib\/suds-compliance$/m); assert.match(env, /^SUDS_COMPLIANCE_PUBLIC_KEY_FILE=\/etc\/suds\/compliance-signing-key\.pub\.pem$/m);
   assert.ok(!/[0-9a-f]{64}/.test(env), 'no key in the environment file');
+  // Passkeys need the relying party in production (app.passkeys): the installer knows it from --domain.
+  assert.match(env, /^WEBAUTHN_RP_ID=suds\.county\.example\.gov$/m); assert.match(env, /^WEBAUTHN_ORIGINS=https:\/\/suds\.county\.example\.gov$/m);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(R, 'etc/suds/provision.json'), 'utf8')).settings, { backup_schedule_hours: '4', backup_offsite_dir: '/mnt/offsite', dr_drill_monthly: '1', mfa_require_all: '1' });
   const site = fs.readFileSync(path.join(R, 'etc/systemd/system/suds.service.d/10-site.conf'), 'utf8');
   assert.match(site, /^RequiresMountsFor=\/mnt\/worm\/suds-anchors$/m, 'only the anchors are required');
@@ -230,6 +249,9 @@ test('install.sh run again: idempotent — keys kept, first install date kept, o
   const confFile = path.join(R, 'etc/suds/suds-server.conf');
   const first = /^SUDS_INSTALLED_AT=(.*)$/m.exec(fs.readFileSync(confFile, 'utf8'))[1];
   fs.appendFileSync(confFile, 'SUDS_LOCAL_NOTE=kept by the operator\n');
+  // The operator's own relying party (another name staff open) is never replaced by the installer's default.
+  const envFile = path.join(R, 'etc/suds/suds.env');
+  fs.writeFileSync(envFile, fs.readFileSync(envFile, 'utf8').replace(/^WEBAUTHN_RP_ID=.*$/m, 'WEBAUTHN_RP_ID=suds.county.gov').replace(/^WEBAUTHN_ORIGINS=.*\n/m, ''));
   // An interrupted stage elsewhere, and this release's marker gone: both are dealt with.
   fs.mkdirSync(path.join(R, `opt/suds/${VERSION}.partial/junk`), { recursive: true });
   spawnSync('chmod', ['u+w', path.join(R, 'opt/suds', VERSION)]); fs.unlinkSync(path.join(R, 'opt/suds', VERSION, '.suds-staged'));
@@ -242,6 +264,9 @@ test('install.sh run again: idempotent — keys kept, first install date kept, o
   assert.equal(/^SUDS_INSTALLED_AT=(.*)$/m.exec(conf)[1], first, 'the first install date is kept');
   assert.match(conf, /^SUDS_LOCAL_NOTE=kept by the operator$/m, 'a line the installer does not manage is kept');
   assert.match(conf, /^SUDS_ADMIN_CIDR=10\.30\.0\.0\/16$/m);
+  const env2 = fs.readFileSync(envFile, 'utf8');
+  assert.match(env2, /^WEBAUTHN_RP_ID=suds\.county\.gov$/m, 'the operator\'s WEBAUTHN_RP_ID is kept');
+  assert.ok(!/^WEBAUTHN_ORIGINS=/m.test(env2), 'and no WEBAUTHN_ORIGINS added beside it');
   const cmds = h.commands();
   assert.ok(cmds.includes('ufw allow proto tcp from 10.30.0.0/16 to any port 22'), cmds);
   assert.ok(cmds.includes('ufw delete allow proto tcp from 10.20.0.0/16 to any port 22'), 'the previous SSH rule is removed');
@@ -320,6 +345,9 @@ test('upgrade.sh for real: a successful upgrade swaps the code, installs the new
   const { h, R } = installedOld();
   const next = tree(VERSION, { caddy: CADDY_V2, caddyfileExtra: '\n# changed\n' });
   fs.writeFileSync(h.log, '');
+  // A server installed before the installer set WEBAUTHN_RP_ID (1.19.0 and earlier): the upgrade adds it.
+  const envFile = path.join(R, 'etc/suds/suds.env');
+  fs.writeFileSync(envFile, fs.readFileSync(envFile, 'utf8').replace(/^WEBAUTHN_.*\n/mg, ''));
   const r = run(h, 'upgrade.sh', next, [VERSION, '--ready-timeout=2', '--skip-compliance-check'], { HARNESS_HEALTHY: `${OLD},${VERSION}` });
   assert.equal(r.code, 0, r.all);
   assert.equal(fs.readlinkSync(path.join(R, 'opt/suds/current')), VERSION);
@@ -331,4 +359,113 @@ test('upgrade.sh for real: a successful upgrade swaps the code, installs the new
   assert.match(fs.readFileSync(path.join(R, 'etc/caddy/Caddyfile'), 'utf8'), /# changed/);
   assert.equal(mode(path.join(R, `opt/caddy/${CADDY_V2}`)), 0o755);
   assert.ok(fs.readdirSync(path.join(R, 'var/lib/suds/backups')).some((f) => f.startsWith('pre-upgrade-')), 'the pre-upgrade backup');
+  const env = fs.readFileSync(envFile, 'utf8');
+  assert.match(env, /^WEBAUTHN_RP_ID=suds\.county\.example\.gov$/m, 'the upgrade sets the relying party from the installed domain');
+  assert.match(env, /^WEBAUTHN_ORIGINS=https:\/\/suds\.county\.example\.gov$/m);
+  assert.match(env, /^TRUST_PROXY=1$/m, 'and keeps the rest of the file');
+});
+
+// ---- Found by the installer run in a systemd container (docs/evidence/installer-container-run-2026-09-30, 1.19.0) ----
+
+/** A tree as a release zip, the way release.yml builds it: one top directory, suds-v<version>/. */
+function releaseZip(t, version) {
+  const d = path.join(work, `zip-${++n}`); fs.mkdirSync(d);
+  fs.cpSync(t, path.join(d, `suds-v${version}`), { recursive: true });
+  const file = path.join(work, `suds-v${version}-${n}.zip`);
+  execFileSync('zip', ['-qr', file, `suds-v${version}`], { cwd: d });
+  return { file, sha: crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') };
+}
+
+test('install.sh for real: a first run that stops after staging keeps how the release zip was checked, and the next run records it (1.19.0 wrote it empty)', { skip: !(canRun && has('zip')) && 'xz, unzip, zip or tar missing' }, () => {
+  const h = host(); const t = tree(VERSION); const z = releaseZip(t, VERSION);
+  const badCaddy = path.join(work, `caddy-not-${++n}.tar.gz`); fs.writeFileSync(badCaddy, 'not the pinned Caddy');
+  const first = run(h, 'install.sh', t, [...INSTALL, `--source=${z.file}`, `--release-sha256=${z.sha}`, `--caddy-tarball=${badCaddy}`], { HARNESS_HEALTHY: VERSION });
+  assert.equal(first.code, 1, first.all);
+  assert.match(first.err, /REFUSED: checksum mismatch for caddy_/);
+  const staged = path.join(h.root, 'opt/suds', VERSION);
+  assert.ok(fs.existsSync(path.join(staged, '.suds-staged')), 'the release was staged before the run stopped');
+  assert.ok(!fs.existsSync(path.join(h.root, 'etc/suds/suds-server.conf')), 'and the site settings were not written yet');
+  assert.equal(fs.readFileSync(path.join(staged, '.suds-release-checksum'), 'utf8'), 'operator\n', 'how the zip was checked is recorded inside the staged release');
+  assert.match(fs.readFileSync(path.join(staged, '.suds-manifest'), 'utf8'), / \.\/\.suds-release-checksum$/m, 'and covered by its manifest');
+  // The operator fixes the cause and runs again (here from the unpacked tree, without the checksum): the staged
+  // release is reused, and so is its record.
+  const second = run(h, 'install.sh', t, INSTALL, { HARNESS_HEALTHY: VERSION });
+  assert.equal(second.code, 0, second.all);
+  assert.match(second.out, /its zip was checked when staged: operator/);
+  const conf = path.join(h.root, 'etc/suds/suds-server.conf');
+  assert.match(fs.readFileSync(conf, 'utf8'), /^SUDS_RELEASE_CHECKSUM_SOURCE=operator$/m);
+  // And it stays so on every later run.
+  assert.equal(run(h, 'install.sh', t, INSTALL, { HARNESS_HEALTHY: VERSION }).code, 0);
+  assert.match(fs.readFileSync(conf, 'utf8'), /^SUDS_RELEASE_CHECKSUM_SOURCE=operator$/m);
+});
+
+test('install.sh for real: shares the suds user cannot write are refused together in one run, with the commands that fix them; the account is made first so they can be checked as it', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const h = host(); const t = tree(VERSION);
+  const r = run(h, 'install.sh', t, INSTALL, { HARNESS_HEALTHY: VERSION, HARNESS_UNWRITABLE: '/mnt/worm/suds-anchors,/mnt/offsite' });
+  assert.equal(r.code, 1, r.all);
+  assert.equal((r.err.match(/REFUSED/g) || []).length, 1, 'one refusal');
+  assert.match(r.err, /REFUSED: 2 shares are not writable by the suds user \(uid 998, gid 998\)/);
+  for (const d of ['/mnt/worm/suds-anchors', '/mnt/offsite']) {
+    assert.ok(r.err.includes(`chown suds:suds ${d} && chmod 0700 ${d}`), `${d}: the chown/chmod\n${r.err}`);
+    assert.ok(r.err.includes(`setfacl -m u:suds:rwx ${d}`), `${d}: the ACL alternative`);
+  }
+  const cmds = h.commands();
+  assert.match(cmds, /^useradd --system --user-group --home-dir \/var\/lib\/suds --no-create-home --shell \/usr\/sbin\/nologin suds$/m);
+  assert.ok(cmds.indexOf('useradd') < cmds.indexOf('runuser -u suds'), 'the account exists before the shares are checked as it');
+  assert.ok(!fs.existsSync(path.join(h.root, 'opt/suds', VERSION)), 'refused before anything was staged');
+  assert.ok(!/apt-get install/.test(cmds), 'or installed');
+  // One share fixed: the other is still named, alone.
+  const one = run(h, 'install.sh', t, INSTALL, { HARNESS_HEALTHY: VERSION, HARNESS_UNWRITABLE: '/mnt/offsite' });
+  assert.equal(one.code, 1); assert.match(one.err, /REFUSED: \/mnt\/offsite \(the offsite share/); assert.ok(!one.err.includes('chown suds:suds /mnt/worm'));
+  // Both fixed: the next run goes through, and the account is not made again.
+  fs.writeFileSync(h.log, '');
+  const again = run(h, 'install.sh', t, INSTALL, { HARNESS_HEALTHY: VERSION });
+  assert.equal(again.code, 0, again.all);
+  assert.ok(!/^useradd .* suds$/m.test(h.commands()), 'the suds account already exists');
+});
+
+test('install.sh for real, day one: the first backup and recovery drill run before the compliance check, which runs with the service\'s settings (TRUST_PROXY, WEBAUTHN_RP_ID) once HTTPS answers', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  // The check itself needs a real host: this stand-in records the environment it was started with.
+  const recorder = `'use strict';
+const keys = ['TRUST_PROXY', 'WEBAUTHN_RP_ID', 'WEBAUTHN_ORIGINS', 'SUDS_ENV', 'SUDS_DATA_DIR', 'AUDIT_ANCHOR_DIR', 'LOCAL_MODE_ENABLED'];
+require('fs').writeFileSync(process.env.SUDS_INSTALL_ROOT + '/compliance-env.json', JSON.stringify(Object.fromEntries(keys.map((k) => [k, process.env[k] === undefined ? null : process.env[k]]))));
+`;
+  const h = host(); const t = tree(VERSION, { complianceCheck: recorder });
+  const r = run(h, 'install.sh', t, INSTALL.filter((a) => a !== '--skip-compliance-check'), { HARNESS_HEALTHY: VERSION, HARNESS_SERVICE_DB: '1' });
+  assert.equal(r.code, 0, r.all);
+  const R = h.root;
+  // 1.19.0 ran the check without /etc/suds/suds.env: app.https failed (no TRUST_PROXY) on the installer's report
+  // and passed on the weekly unit's, which has EnvironmentFile=/etc/suds/suds.env.
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(R, 'compliance-env.json'), 'utf8')), {
+    TRUST_PROXY: '1', WEBAUTHN_RP_ID: 'suds.county.example.gov', WEBAUTHN_ORIGINS: 'https://suds.county.example.gov', SUDS_ENV: 'production',
+    SUDS_DATA_DIR: '/var/lib/suds', AUDIT_ANCHOR_DIR: '/mnt/worm/suds-anchors', LOCAL_MODE_ENABLED: 'false' });
+  const cmds = h.commands();
+  const started = cmds.indexOf('systemctl enable --now suds.service');
+  const drill = cmds.search(/^systemd-run .*--uid=suds .*scripts\/dr-drill\.js --offsite$/m);
+  const https = cmds.search(/^curl .*https:\/\/suds\.county\.example\.gov\/api\/health\/ready$/m);
+  assert.ok(started > -1 && drill > started, 'the first drill runs once SUDS is up');
+  assert.ok(https > drill, 'the check waits for HTTPS through Caddy');
+  assert.match(r.out, /First backup and recovery drill/);
+  // The drill took the first scheduled backup, copied it offsite and restored that copy: the database says so.
+  const q = (sql) => { const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(path.join(R, 'var/lib/suds/suds.db'), { readOnly: true }); try { return d.prepare(sql).get(); } finally { d.close(); } };
+  assert.match(q(`SELECT value FROM settings WHERE key='last_scheduled_backup_status'`).value, /^ok/);
+  const last = JSON.parse(q(`SELECT value FROM settings WHERE key='dr_last_drill'`).value);
+  assert.equal(last.ok, true, JSON.stringify(last)); assert.equal(last.backup_copy, 'offsite');
+  assert.ok(fs.readdirSync(path.join(R, 'mnt/offsite')).some((f) => /^suds-\d.*\.db\.enc$/.test(f)), 'the offsite share has the backup');
+  // Security status (and so the app lines of the compliance report) on that database, with the service's settings.
+  const envFile = Object.fromEntries(fs.readFileSync(path.join(R, 'etc/suds/suds.env'), 'utf8').split('\n').filter((l) => /^[A-Z_]+=/.test(l)).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+  const st = spawnSync(process.execPath, ['--no-warnings=ExperimentalWarning', '-e', `const db = require('./server/db'); db.open(); const st = require('./server/security-status').status({ host: false }); db.close();
+    process.stdout.write(JSON.stringify(Object.fromEntries(st.items.map((i) => [i.name, i.level]))));`],
+  { cwd: path.join(R, 'opt/suds/current'), encoding: 'utf8', env: { PATH: process.env.PATH, ...envFile, SUDS_ENV: 'production', SUDS_DATA_DIR: path.join(R, 'var/lib/suds'), AUDIT_ANCHOR_DIR: path.join(R, 'mnt/worm/suds-anchors'),
+    SUDS_COMPLIANCE_DIR: path.join(R, 'var/lib/suds-compliance'), SUDS_COMPLIANCE_PUBLIC_KEY_FILE: path.join(R, 'etc/suds/compliance-signing-key.pub.pem'), SUDS_PROVISION_FILE: '', CREDENTIALS_DIRECTORY: path.join(R, 'etc/suds/credentials') } });
+  assert.equal(st.status, 0, st.stderr);
+  const levels = JSON.parse(st.stdout);
+  assert.equal(levels['Scheduled encrypted backups'], 'ok', 'app.backups');
+  assert.equal(levels['Last recovery drill'], 'ok', 'app.dr_drill');
+  assert.equal(levels.HTTPS, 'ok', 'app.https');
+  assert.notEqual(levels['Fingerprint sign-in (passkeys)'], 'bad', 'app.passkeys');
+  // Run again (a repair): there are backups now, so no second "first" drill.
+  fs.writeFileSync(h.log, '');
+  assert.equal(run(h, 'install.sh', t, INSTALL, { HARNESS_HEALTHY: VERSION, HARNESS_SERVICE_DB: '1' }).code, 0);
+  assert.ok(!/dr-drill\.js/.test(h.commands()), 'the first drill is run once');
 });

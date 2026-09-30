@@ -95,6 +95,9 @@ point_current_at "$VERSION"
 install_units "$STAGED_TREE"
 conf_set SUDS_VERSION "$VERSION"
 [[ -z "$RELEASE_CHECKSUM_SOURCE" ]] || conf_set SUDS_RELEASE_CHECKSUM_SOURCE "$RELEASE_CHECKSUM_SOURCE"
+# Passkeys need WEBAUTHN_RP_ID in production; a server installed before 1.20.0 lacks it. From the installed
+# domain, unless the operator set it (or WEBAUTHN_ORIGINS).
+webauthn_defaults "$(conf_get SUDS_DOMAIN)"
 act systemctl daemon-reload
 
 say ""; say "== 5. Start and check =="
