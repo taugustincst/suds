@@ -4,7 +4,13 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
-For 1.20.0. The version is not stamped.
+## 1.20.0 — 2026-09-30
+
+A feature release (migration 60 and the county-entered figures routes), released under a policy exception inside
+1.19.0's 28 days (docs/RELEASE.md, *Record: 1.20.0*). A county can now enter or import figures for a grantee not on
+SUDS, clearly marked as county-entered and always outranked by a signed file; SUDS Server's installer and first day
+are fixed after a real install; and the documents, evidence and county-contract kit describe 1.20.0. Upgrading runs
+migration 60 on start; nothing else for an administrator to do.
 
 ### Fixed: installer and day-one problems found by a real install in a systemd container (SUDS Server)
 
