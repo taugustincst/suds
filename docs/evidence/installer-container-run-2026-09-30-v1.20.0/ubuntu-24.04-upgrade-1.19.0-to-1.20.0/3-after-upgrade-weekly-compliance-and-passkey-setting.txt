@@ -1,0 +1,22 @@
+$ systemctl start suds-compliance
+Job for suds-compliance.service failed because the control process exited with error code.
+See "systemctl status suds-compliance.service" and "journalctl -xeu suds-compliance.service" for details.
+Result: FAIL  (31 pass, 2 fail, 11 warning, 2 could not check)
+Wrote /var/lib/suds-compliance/compliance-2026-09-30T21-25-18-670Z.json
+  app.passkeys: fail
+  app.https: pass
+  app.backups: warn
+  app.dr_drill: warn
+  host.release_integrity: pass
+
+$ printf "WEBAUTHN_RP_ID=suds.county.test\nWEBAUTHN_ORIGINS=https://suds.county.test\n" >> /etc/suds/suds.env && systemctl restart suds
+$ systemctl start suds-compliance
+Job for suds-compliance.service failed because the control process exited with error code.
+See "systemctl status suds-compliance.service" and "journalctl -xeu suds-compliance.service" for details.
+Result: FAIL  (32 pass, 1 fail, 11 warning, 2 could not check)
+Wrote /var/lib/suds-compliance/compliance-2026-09-30T21-25-36-274Z.json
+  app.passkeys: pass
+  app.https: pass
+  app.backups: warn
+  app.dr_drill: warn
+  host.release_integrity: pass

@@ -113,9 +113,16 @@ cloud security groups; RHEL 9 entirely. These are what [../INSTALLER-VM-RUN.md](
 
 ## Findings for the owner (no change made here)
 
-**Status: all four are fixed in 1.20.0** (CHANGELOG.md, 1.20.0, *Fixed: installer and day-one problems found by a
-real install in a systemd container*), each with a test that failed before the fix. The transcripts in this folder
-are 1.19.0's and are kept as they were recorded; they show the behaviour before the fixes.
+**Status (1.20.0):** all four were fixed in **1.20.0** (CHANGELOG, *1.20.0*, "Fixed: installer and day-one problems
+found by a real install in a systemd container"), and the [1.20.0 container run](../installer-container-run-2026-09-30-v1.20.0/README.md)
+verifies each on a fresh install: **1** its install runs 3 and 4 (a run stopped after staging, then
+`SUDS_RELEASE_CHECKSUM_SOURCE=operator` and `host.release_integrity` pass); **2** runs 1 and 2 (both shares in one
+refusal, the `suds` user made first, nothing staged); **3** runs 4 and 5 (the installer's first backup and drill,
+`app.backups`, `app.dr_drill` and `app.https` pass, `/api/health` 200 `ok: true`); **4** run 5 (`WEBAUTHN_RP_ID` set,
+`app.passkeys` pass). One gap remains on an **upgrade from 1.19.0** with the documented command, which runs the
+installed 1.19.0 `upgrade.sh`: it does not add `WEBAUTHN_RP_ID` (4) and its report still fails `app.https` (3); 1.20.0's
+own `upgrade.sh`, or the two lines added by hand, fixes both. That run's *New finding* has the detail. The findings
+below are kept as they were written against 1.19.0.
 
 1. **A first run that stops after staging loses the release-checksum record.** `stage_release` records
    `RELEASE_CHECKSUM_SOURCE=operator` when it checks the zip (deploy/linux/lib.sh:318), but a later run finds the

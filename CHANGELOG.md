@@ -121,6 +121,32 @@ documents, and several still said 1.19.0 was current.
   run's findings marked fixed in 1.20.0; HANDOFF.md's 1.20.0 entry; the RFI answers' security contact points at
   SECURITY.md.
 
+### Evidence on 1.20.0: recovery drill, upgrade drill and installer run
+
+Evidence and tests only; no change to what SUDS does.
+
+- **Recovery drill on 1.20.0** (docs/evidence/dr-drill-2026-09-30-v1.20.0/): `scripts/dr-exercise.js --clients 20000`
+  on the released tree (`8f365b4`, schema 60): 11 of 11 checks, drill RTO 3.6 s, host-procedure RTO 2.8 s, RPO 5 s;
+  the signed report verifies with the public key beside it.
+- **Upgrade drill to 1.20.0** (docs/evidence/upgrade-drill-2026-09-30-v1.20.0/): databases written by 1.16.2, 1.18.0
+  and 1.19.0 (20,000 fictional clients each) opened by 1.20.0. The driver now has the older release import its own
+  signed county files (one superseded) before the upgrade, so migration 60 rebuilds `county_submissions` with rows
+  in it: every row kept unchanged as `signed`, `on_suds` 1, listed and counted by 1.20.0's API, and county-entered
+  figures accepted in the rebuilt table. Schema identical to a fresh install, nothing lost; 11 of 11 drill checks each.
+- **`test/fixtures/release-v1.19.0.sql`** (`make-release-fixture.js --rich` from `3dc20dc`) joins the release-fixture
+  upgrade test, and `test/migrations.test.js` checks 1.20.0's first start on it: county submissions survive migration
+  60 as signed with their payloads, sessions 1.19.0 opened still sign in, the audit chain verifies.
+- **Installer run on 1.20.0** (docs/evidence/installer-container-run-2026-09-30-v1.20.0/): `install.sh` 1.20.0 and
+  `upgrade.sh` 1.19.0 → 1.20.0 on Ubuntu 24.04 with systemd in a container, as the 1.19.0 run. The four 1.19.0
+  findings are fixed on a new install (one refusal for both shares, nothing staged; the checksum source kept after a
+  run stopped after staging; the first backup and drill at install, `/api/health` 200; `WEBAUTHN_RP_ID` set; 37 pass,
+  1 fail: the container's clock). **New finding:** the documented upgrade from 1.19.0 runs the installed 1.19.0
+  `upgrade.sh`, which does not add `WEBAUTHN_RP_ID` and runs its compliance check without `suds.env` (`app.passkeys`
+  and `app.https` fail on its report); 1.20.0's own `upgrade.sh`, or the two lines added by hand, fixes both. The
+  1.19.0 run's README says which findings 1.20.0 fixed.
+- Citations moved to this evidence: the evidence index, BACKUP-AND-DR, the questionnaire's recovery answer and the
+  county RFI answers (drills; the security contact now cites SECURITY.md, the named address still owner-pending).
+
 ## 1.20.0 — 2026-09-30
 
 A feature release (migration 60 and the county-entered figures routes), released under a policy exception inside
