@@ -33,12 +33,21 @@ refuses 1.18.0 before about **2026-10-27 21:08 UTC** without the owner's `policy
   (no figures); audited `county_submission.send`. Automatic sending of outstanding periods, once a day, is off by
   default. Outbound: https only, no redirects, a timeout, a 64 KB answer cap, private addresses refused in production
   unless `SUDS_COUNTY_ALLOW_PRIVATE=1`, public ones through `server/outbound.js`.
+- **One set of rules with the county view.** The push is `county.js`'s own import, so its refusals and their reasons
+  (`recipient`, `retired_key`, …) and its words (an `older` file kept, not counting) reach the programme as they are;
+  `/status` counts as the combined view counts (`county.js` `countingSubs`/`coverage`: withdrawn, replaced and
+  compromised-key files do not count) and names periods with the same helpers as the county pages and the card
+  (`server/county-periods.js`, from which `scripts/gen-county-periods.js` generates the browser's
+  `public/county-periods.js`); `/v1/programs` gives the current key's fingerprint and the key history. **Send to the
+  county now** sends exactly what **Make the county file** downloads for the card's period, county name and ticked
+  funds, addressed to the county code the county's `/status` gives (a code typed on the card must match it; a county
+  that gives none gets nothing), and never "every fund".
 - **Migration 57**: `county_connect_tokens`, `county_connection` (`token_enc`), `county_connect_sends`. Office server
   only; not on SUDS on this device.
-- Tests: `test/county-connect.test.js` (tokens, push, refusals, the 256 KB cap, limits, scopes and sessions, status,
+- Tests: `test/county-periods.test.js` (the generated copy is current and answers the same), `test/county-connect.test.js` (tokens, push, refusals, the 256 KB cap, limits, scopes and sessions, status,
   the read API, the programme's side with a 307, a timeout and a private address, and a programme server sending to
   a county server over HTTP end to end), `test/county-connect-device.test.js`; browser script
-  `scripts/ui/county-connect.mjs` (the suite is now 54 scripts), and the County connections page and its dialogs in
+  `scripts/ui/county-connect.mjs` (the suite is now 53 scripts), and the County connections page and its dialogs in
   the accessibility audit.
 - Docs: COUNTY-VIEW *Connecting*, API.md, DEPLOYMENT (outbound to the county; inbound on the county's server),
   THREAT-MODEL, DATA-INVENTORY, PEN-TEST-SCOPE, DATA-NETWORK and STRATEGY (Tier 1 has an API), USER_GUIDE.
@@ -95,8 +104,8 @@ refuses 1.18.0 before about **2026-10-27 21:08 UTC** without the owner's `policy
   server's county view in one command (refused on production); `<dir> --county-code …` writes the files for a
   county. `npm run seed` stays a program's data.
 - Tests: `test/county.test.js` (each test stands on its own; the payload's fields frozen for schema version 1),
-  `test/county-device.test.js`; browser script `scripts/ui/county.mjs` (the 53rd script; `county-connect.mjs` is the 54th; 1.17.1 had
-  52), and the county pages, the program, keys, withdraw and new-key dialogs and the settlement card's public key in
+  `test/county-device.test.js`; browser script `scripts/ui/county.mjs` (the 52nd script; `county-connect.mjs` is the 53rd; 1.17.1 had
+  51), and the county pages, the program, keys, withdraw and new-key dialogs and the settlement card's public key in
   the accessibility audit (`A11Y_PAGES` audits one area in every pass).
 - Docs: `docs/COUNTY-VIEW.md` (new); DATA-NETWORK Tier 1 status, STRATEGY *Built vs planned*, POSITIONING, the market
   README, buyer guides, demo script (Path 2), pricing (model C), pilot kit (§8), README *At a glance*, USER_GUIDE,

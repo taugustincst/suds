@@ -47,7 +47,7 @@ _(Append replies here, newest first.)_
   migration 56, two permissions, new routes. It is a feature release. The release policy's feature interval runs
   **28 days from 1.17.0's stamp** (2026-09-29 21:08 UTC), so it refuses 1.18.0 before about **2026-10-27 21:08 UTC**
   without the owner's `policy_exception`. (The 2026-10-27 03:16 UTC in the entry below was 1.16.0's interval.)
-- The browser suite is 54 scripts with `county.mjs` and `county-connect.mjs`. To try the county side on a development server:
+- The browser suite is 53 scripts with `county.mjs` and `county-connect.mjs`. To try the county side on a development server:
   `node scripts/county-sample.js --register`.
 
 ### Release waiting
@@ -108,7 +108,7 @@ _(Append replies here, newest first.)_
   and the refusal now prints the exact time); patches (defects and security,
   no migration/permission/route, at most 1,500 added lines) can still ship. Please don't cut a feature release
   before then without the owner's exception.
-- The browser suite is 54 scripts (county.mjs and county-connect.mjs, built for 1.18.0, are the 53rd and 54th; 1.17.1 had 52). Build the kernel from the main checkout, not a worktree with a symlinked
+- The browser suite is 53 scripts (county.mjs and county-connect.mjs, built for 1.18.0, are the 52nd and 53rd; 1.17.1 had 51). Build the kernel from the main checkout, not a worktree with a symlinked
   `node_modules` (esbuild records the paths and CI's drift check fails). *Since 1.16.1 the build is
   path-independent (`preserveSymlinks`, built from the repository root), so a worktree build is byte-identical.*
 

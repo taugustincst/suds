@@ -315,9 +315,9 @@ that one programme. Never a figure back, never another programme's anything, nev
   time and address of its last use recorded. Issued, revoked and every use audited.
 - The token only says **which programme is calling**. The file must still verify through `county.js`'s own import
   path (`parseFile`, then `importParsed`: the allow-list, the period, this county's code, the current key of a
-  registered and active programme, the signature). If the key that signed the file belongs to a different programme than the token,
-  the import is rolled back and refused (`wrong_programme`): a token never makes a file count, and programme A's
-  token cannot carry programme B's file.
+  registered and active programme, the signature, and which of the programme's files for the period counts). If the
+  key that signed the file belongs to a different programme than the token, the import is rolled back and refused
+  (`wrong_programme`): a token never makes a file count, and programme A's token cannot carry programme B's file.
 - Neither kind of token is ever a session: a county token presented anywhere else is not a sign-in, and a signed-in
   session (cookie or its token) does not open the machine routes.
 
@@ -329,21 +329,31 @@ that one programme. Never a figure back, never another programme's anything, nev
 - `POST /api/county-connect/v1/submissions` with `Authorization: Bearer sudscc_…` and the file as the JSON body.
   Answers `201 { status: "imported" | "superseded" | "older", reason: null, message, period, receipt }`,
   `200 { status: "duplicate", … }` or `422` (`413` over 256 KB) `{ status: "refused", reason, message, receipt }`,
-  `reason` being `county.js`'s refusal code or `wrong_programme`. The body is capped at **256 KB before it is read**,
+  `reason` being `county.js`'s own refusal code (`recipient` for a file made for another county, `unknown_key`,
+  `inactive`, `signature`, `retired_key` for a new file signed with a replaced key, …) or `wrong_programme`, and
+  `message` the county view's own words (`county.js` `importMessage`; an `older` file is kept and does not count, as on
+  import). The body is capped at **256 KB before it is read**,
   and only for a live connection token while the switch is on (`server/app.js` `bodyLimitFor`); anything else
   without a session keeps the 64 KB cap. Audited `county.submission.import|duplicate|refuse` with `via:
   "county-connect"` and the token's id; the actor is the token's prefix, never a user.
-- `GET /api/county-connect/v1/status` (the same token): the county's code and name, the **cadence** it expects
-  (a setting: quarterly by calendar quarter, quarterly by the state fiscal year from July 1, or monthly; and an
-  optional first period), the last year of complete periods and, for each, whether it has a counting file, the outstanding
-  ones, and this programme's files' periods and receipts. Audited `county_connect.status`.
+- `GET /api/county-connect/v1/status` (the same token): the county's code (`county.js` `countyCode()`, the one on
+  County view › Programs, which the programme's file must name) and name, the **cadence** it expects (a setting:
+  quarterly by calendar quarter, quarterly by the California fiscal year from July 1, or monthly; and an optional
+  first period), the last year of complete periods and, for each, whether this programme's files cover it
+  (`received`, and `coverage`: `whole`, `part` or `none`), the outstanding ones, and this programme's files with their
+  receipts and status. Periods are made and named by `server/county-periods.js`, the helpers the county view and the
+  Send to the county card use ("Apr – Jun 2026 (calendar Q2 2026 · FY 2025-26 Q4)"; the fiscal cadence puts the
+  fiscal name first; months as "Feb 2026"). What counts is decided as the combined view decides it (`county.js`
+  `countingSubs` and `coverage`): a withdrawn or replaced file, one signed by a key marked compromised, and every file
+  of an inactive programme whose files are not kept, do not. Audited `county_connect.status`.
 - **Read tokens** (`sudscr_…`; scope `county.read`) for the county's own systems: named, expiring after 90 days
   unless chosen (at most a year), revocable, last use recorded. `GET /api/county-connect/v1/combined?from&to
   [&format=json|tidy-csv]` answers the combined view from `county.js` `combined()` (the same inclusion rule) with
   `notes` saying the figures are **summed, not unduplicated** and **exact, internal, not for publication**, and the
   caveats; the tidy CSV has one row per programme and measure plus the total, with the notes in its headers.
-  `GET /api/county-connect/v1/programs`: names, active, fingerprints, last received, the counting files' periods (no
-  public or private keys). Audited `county.api.read`, never with figures.
+  `GET /api/county-connect/v1/programs`: names, active, the current key's fingerprint and the key history
+  (fingerprints, when added, replaced or marked compromised), last received, the periods of the files that count, by
+  the same rule (no public or private keys). Audited `county.api.read`, never with figures.
 - **Rate limits** (per 10 minutes, on top of the global API limit): 120 per address across the machine routes, 2,000
   from all addresses together, 20 wrong tokens per address (then the address waits), per token 30 sends, 60 status
   calls, 120 reads, and 20 refused files. Refusals of callers without a good token are written to the audit log ten
@@ -356,11 +366,15 @@ that one programme. Never a figure back, never another programme's anything, nev
   returned to a browser once saved (only its first characters).
 - **Test connection** (whoever may make the county file, or `settings:manage`): asks the county's `/status` and shows
   what it expects and what is outstanding.
-- **Send to the county now** (`reports:funder`, `budget:read`, `export:read`: the same as making the file): builds
-  the file for the period, posts it, and shows the county's receipt. The funds that go in are the ones chosen for this
-  county on the Send to the county card (remembered per county code), or those given. Each send is kept in a **send
+- **Send to the county now** (`reports:funder`, `budget:read`, `export:read`: the same as making the file): sends
+  exactly the file **Make the county file** downloads for the choices on the Send to the county card above it: its
+  period, the county's name and the settlement funds ticked (with none ticked, it says so at the card, as the download
+  does). The file names the county's code from its `/status` (asked for when not yet known; a county that gives no
+  code gets no file); a code typed on the card must be that county's, or nothing is sent. The name and funds are
+  remembered per county code, as the download remembers them, and an automatic send uses them; nothing is ever sent
+  for "every fund". The county's receipt is shown. Each send is kept in a **send
   log** (`county_connect_sends`: period, payload SHA-256, the county's answer, when, who; never figures) and audited
-  `county_submission.send` (period, fingerprint, payload SHA-256, host, answer).
+  `county_submission.send` (period, county code, fingerprint, payload SHA-256, host, answer).
 - **Automatic sending**, off by default (a checkbox beside the address): the hourly housekeeping, once a day at
   most, asks `/status` what is outstanding and sends those periods (four at most a day), each logged and audited as
   automatic (`county_submission.auto` for the run).
@@ -413,7 +427,7 @@ office-only too (`county-connect` in `LOCAL_ROUTE_MODULES`'s exclusions; `test/c
 
 `server/county.js` (format, canonical form, text rules, keys, county code, allow-list, import, supersession,
 withdraw and reinstate, the combined and by-quarter views), `server/routes/county.js`, `public/views/county.js`,
-`public/county-periods.js` (calendar and fiscal periods), the Send to the county card in
+`server/county-periods.js` (calendar and fiscal periods; the browser's `public/county-periods.js` is generated from it by `scripts/gen-county-periods.js`, and `test/county-periods.test.js` checks the two agree), the Send to the county card in
 `public/views/settlement.js`, `scripts/county-sample.js`; migration 56 (`server/db.js`: `county_signing_keys`,
 `county_programmes`, `county_programme_keys`, `county_submissions`); tests `test/county.test.js` (each test stands
 on its own), `test/county-device.test.js`; browser script `scripts/ui/county.mjs`, and the county pages and dialogs
