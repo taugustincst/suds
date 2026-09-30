@@ -12,6 +12,8 @@ const FHIR_VERSION = '4.0.1';
 // county runs its own server and there is no one SUDS domain to publish them under.
 const SYS = {
   clientCode: 'urn:suds:client-code',
+  // A client known by a syringe services participant code (1.21.0, server/participant-code.js), as stored (normalised).
+  participantCode: 'urn:suds:participant-code',
   medicaid: 'urn:suds:medicaid-id',
   interventionType: 'urn:suds:codesystem:intervention-type',
   callPurpose: 'urn:suds:codesystem:contact',

@@ -77,15 +77,19 @@ function language(text) {
 const GENDER = { female: 'female', male: 'male', transgender_female: 'female', transgender_male: 'male', non_binary: 'other', other: 'other' };
 function mapPatient(c) {
   const first = dec(c.first_name_enc), last = dec(c.last_name_enc), preferred = dec(c.preferred_name_enc), dob = dec(c.dob_enc), medicaid = dec(c.medicaid_id_enc);
+  // A client known by a participant code (1.21.0): the code is an identifier, and a client with no name has no
+  // Patient.name at all (0..* in FHIR R4 and US Core, which asks for a name only when one is known), never an empty one.
+  const pcode = c.participant_code_enc ? dec(c.participant_code_enc) : null;
   return prune({
     resourceType: 'Patient', id: c.id, meta: meta(c.updated_at, { profile: 'us-core-patient' }),
     extension: raceEthnicity(c.race_codes),
     identifier: [
       { use: 'usual', type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'MR', display: 'Medical record number' }], text: 'SUDS client code' }, system: SYS.clientCode, value: c.client_code },
       medicaid ? { use: 'secondary', type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'MA', display: 'Patient Medicaid number' }] }, system: SYS.medicaid, value: medicaid } : undefined,
+      pcode ? { use: 'secondary', type: { text: 'Syringe services participant code' }, system: SYS.participantCode, value: pcode } : undefined,
     ],
     active: !['closed', 'inactive', 'deceased'].includes(c.status),
-    name: [{ use: 'official', family: last || undefined, given: first ? [first] : undefined }, preferred ? { use: 'usual', given: [preferred] } : undefined],
+    name: [first || last ? { use: 'official', family: last || undefined, given: first ? [first] : undefined } : undefined, preferred ? { use: 'usual', given: [preferred] } : undefined],
     telecom: [telecom('phone', dec(c.phone_enc), 'mobile'), telecom('phone', dec(c.alt_phone_enc), 'home'), telecom('email', dec(c.email_enc), 'home')],
     gender: GENDER[c.gender] || 'unknown',
     birthDate: /^\d{4}-\d{2}-\d{2}$/.test(dob || '') ? dob : undefined,
