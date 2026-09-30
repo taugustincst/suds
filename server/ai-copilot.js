@@ -206,6 +206,11 @@ function identifiersFor(clientId, author) {
   if (last) { add(last, 'CLIENT_LAST_NAME', 'name', last); for (const p of nameParts(last)) add(p, 'CLIENT_LAST_NAME', 'name', last); }
   if (pref) { add(pref, 'CLIENT_PREFERRED_NAME', 'name', pref); for (const p of nameParts(pref)) add(p, 'CLIENT_PREFERRED_NAME', 'name', pref); }
   if (row.client_code) add(row.client_code, 'CLIENT_CODE', 'code');
+  // A client known by an SSP participant code (1.21.0), often with no name at all: the code is built from their
+  // personal details and identifies them, so it goes as the client code does, however it is written in the text
+  // ("ABC123", "abc-123", "ABC 123": the code is stored with only its letters and digits, server/participant-code.js).
+  const pc = require('./participant-code').normalise(c.participant_code);
+  if (pc) add(pc, 'CLIENT_CODE', 'code', null, new RegExp(`(?<![\\p{L}\\p{N}])${[...pc].map(esc).join('[\\s.\\-]*')}(?![\\p{L}\\p{N}])`, 'giu'));
   const dob = dobPattern(c.dob); if (dob) add(c.dob, 'DOB', 'dob', null, dob);
   for (const ph of [c.phone, c.alt_phone]) { const re = phonePattern(ph); if (re) add(ph, 'PHONE', 'phone', null, re); }
   if (c.email) add(c.email, 'EMAIL', 'email');

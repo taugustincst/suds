@@ -554,3 +554,15 @@ test('de-identification: accents, apostrophes, more date-of-birth forms, abbrevi
   // Put back as the record spells them.
   assert.deepEqual(A.reidentify({ t: '[CLIENT_FIRST_NAME] [CLIENT_LAST_NAME]' }, ids), { t: "José O'Brien-Nakamura" });
 });
+
+test('de-identification: a client known by a participant code (1.21.0) has the code masked, however it is written', async () => {
+  const A = require('../server/ai-copilot');
+  const c = await clin.post('/api/clients', { participant_code: 'mr-85-kq7', confirm_duplicate: true });
+  assert.equal(c.status, 201, JSON.stringify(c.data));
+  const ids = A.identifiersFor(c.data.id, { display_name: 'Pat Jones' });
+  const d = (s) => A.deidentify(s, ids);
+  assert.equal(d('MR85KQ7 came by').text, '[CLIENT_CODE] came by');
+  assert.equal(d('code mr-85-kq7, then MR 85 KQ7 again').text, 'code [CLIENT_CODE], then [CLIENT_CODE] again');
+  assert.equal(d('XMR85KQ7 is another code').text, 'XMR85KQ7 is another code', 'only the whole code');
+  assert.equal(d('MR85KQ7').counts.code, 1);
+});
