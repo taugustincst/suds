@@ -557,6 +557,14 @@ body:has([data-outreach]) .fab { display: none; }
 @media print { .settlement-print-head { display: block !important; } .settlement-controls { display: none !important; } .settlement-fund { break-inside: avoid; } }
 .settlement-print-head { display: none; }
 .settlement-controls .field:has(#so-counts) { flex: 1 1 14rem; } .settlement-controls #so-counts { width: 100%; max-width: 100%; }
+/* ---- The county view and Send to the county (views/county.js, views/settlement.js; docs/COUNTY-VIEW.md). ---- */
+/* A public key is one long base-64 run per line: it wraps anywhere rather than pushing a phone sideways. */
+pre.county-pem { overflow-wrap: anywhere; word-break: break-all; }
+.county-code code { font-size: 1.4rem; letter-spacing: .08em; }
+.county-period { font-size: 1.05rem; margin: .5rem 0; }
+[data-so-county-funds] { border: 0; padding: 0; margin: 0; min-width: 0; }
+[data-so-county-funds] legend { font-weight: 600; margin-bottom: .3rem; }
+[data-so-county-funds] .check { display: flex; gap: .5rem; align-items: baseline; margin: .2rem 0; overflow-wrap: anywhere; }
 
 /* ---- Navigation (1.14.0 usability): a sideways-scrolling tab strip says it scrolls, the welcome card on
    Home, and the phone's Clients shortcut. ---- */

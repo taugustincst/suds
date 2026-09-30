@@ -1146,6 +1146,8 @@ export function filterBar(on, ...controls) {
   const phone = typeof matchMedia === 'function' && matchMedia('(max-width: 640px)').matches;
   return h('details', { class: 'filters-box', open: !phone, 'data-filters': '1' }, h('summary', { class: 'btn sm' }, on ? `Filters (${on} on)` : 'Filters'), h('div', { class: 'filters' }, controls));
 }
+// A column's cardLabel (optional) is what labels its cell on a phone, where each row is a card: a short name when
+// the heading is long (the county view's program columns).
 // compact: { primary(r), secondary(r), onTap(r) } -- a two-line row per record on a phone instead of every
 // column stacked as label/value pairs. The full table is still rendered for wider screens; CSS picks one.
 export function table(columns, rows, { onRow, empty = 'No records', wrap = true, rowLabel, compact } = {}) {
@@ -1158,7 +1160,7 @@ export function table(columns, rows, { onRow, empty = 'No records', wrap = true,
   // (rowLabel is accepted but not applied: a row's name is its own visible text, WCAG 2.5.3.)
   const cell = (c, r) => (c.render ? c.render(r) : (r[c.key] ?? '—'));
   const rowFor = (r) => {
-    const cells = columns.map(c => h('td', { class: c.num ? 'num' : '', 'data-label': c.label || '' }, cell(c, r)));
+    const cells = columns.map(c => h('td', { class: c.num ? 'num' : '', 'data-label': c.cardLabel ?? c.label ?? '' }, cell(c, r)));
     if (!onRow) return h('tr', {}, cells);
     const open = (e) => { e.stopPropagation(); onRow(r); };
     // Text a screen reader hears: a decorative initial (aria-hidden) is not a name, and a button made of it
@@ -1856,9 +1858,10 @@ export const NAV = [
   // it paid for. For the people who account for the money (reports:funder or reports:internal, with budget:read).
   { name: 'settlement', hideIn: ['part2_layer'], label: 'Settlement outcomes', ico: '◈', perm: ['reports:funder', 'reports:internal'], show: () => can('budget:read'), programme: true, more: true, help: 'For each opioid settlement fund: what it spent, what the program recorded of the work it paid for (kits, reversals, people served and linked to care, people trained), the cost per outcome where that means something, and the trend by month. Small counts of people are hidden as in the funder report.' },
   // The county view (docs/COUNTY-VIEW.md): for a county that runs SUDS, the signed submissions of the programmes it
-  // funds, side by side and summed. For county:view once a programme is registered here, and for county:manage
-  // (who registers them) always. Never on SUDS on this device, which has no county relationship.
-  { name: 'county', label: 'County view', ico: '⊞', perm: 'county:view', show: () => !state.local && (can('county:manage') || !!(state.programme && state.programme.county_programmes)), programme: true, more: true, help: 'For a county that funds programmes: the settlement spending and outcomes each one sends as a signed file, side by side and summed for a period. Exact figures for authorised county staff, not for publication; people are counted per programme, not unduplicated across programmes.' },
+  // funds, side by side and summed. For county:view once a programme is registered here (active or not: an inactive
+  // one's files are still there), and for county:manage (who registers them) always. Never on SUDS on this device,
+  // which has no county relationship.
+  { name: 'county', label: 'County view', ico: '⊞', perm: 'county:view', show: () => !state.local && (can('county:manage') || !!(state.programme && state.programme.county_programmes)), programme: true, more: true, help: 'For a county that funds programs: the settlement spending and outcomes each one sends as a signed file, side by side and summed for a period or by quarter. Exact figures for authorised county staff, not for publication; people are each program\'s own count, added up.' },
   { name: 'budget', hideIn: ['part2_layer'], label: 'Funding & spending', ico: '$', perm: 'budget:read', programme: true, help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
   { name: 'documents', label: 'Policies & contracts', ico: '📋', perm: 'documents:read', programme: true, help: 'County policies, procedures and signed contracts, searchable by title and category.' },
   { name: 'compliance', label: 'Privacy & Part 2', ico: '⚖', perm: ['consents:read', 'complaints:read', 'incidents:read', 'settings:manage'], more: true, help: '42 CFR Part 2: the patient notice and who has not been given it, the privacy complaint log, and the incident and breach register with its 60-day notification clock.' },

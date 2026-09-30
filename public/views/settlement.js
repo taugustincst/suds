@@ -1,5 +1,6 @@
-import { h, route, get, state, fmt, can, pageHead, stat, table, kv, nav, toast, emptyState, loadingFor } from '../app.js';
+import { h, route, get, post, state, fmt, can, pageHead, stat, table, kv, nav, toast, emptyState, loadingFor, confirmDialog, announce } from '../app.js';
 import { fetchDownload } from './reports.js';
+import { submissionPeriods, monthsLabel, isQuarter } from '../county-periods.js';
 
 // Settlement outcomes (1.17.0; server/settlement-outcomes.js, server/settlement-outcome-map.js): each opioid
 // settlement fund's spending beside what the program recorded of the work charged to it, by category and by
@@ -108,26 +109,102 @@ route('settlement', async (r) => {
     h('details', { class: 'small muted' }, h('summary', {}, 'How the counts were made'), h('p', {}, d.counting_statement)));
 });
 
-// Send to the county (docs/COUNTY-VIEW.md; server/county.js): the period's figures as a signed file for the county
-// that funds the programme, for whoever files its funder submission. Office server only: SUDS on this device has
-// no county relationship, and its kernel has no such route.
-function countyCard(from, to) {
+// Send to the county (docs/COUNTY-VIEW.md; server/county.js): a quarter's figures, for the settlement funds the
+// county pays for, as a signed file for that county, for whoever files the program's funder submission. It has its
+// own period (a quarter that has ended, by default the last one), apart from the dates the page shows. Office server
+// only: SUDS on this device has no county relationship, and its kernel has no such route.
+function countyCard(pageFrom, pageTo) {
   if (state.local || !can('reports:funder') || !can('budget:read') || !can('export:read')) return null;
-  const keyBox = h('div', { 'data-so-county-key': '1' });
-  const showKey = (k) => {
-    keyBox.replaceChildren(k
-      ? h('div', {}, kv([['This server\'s key fingerprint', h('code', { 'data-so-county-fingerprint': '1' }, k.fingerprint_display)], ['Made', fmt.date(k.created_at)]]),
-        h('details', { class: 'small' }, h('summary', {}, 'Public key (to give the county once)'), h('pre', { class: 'note', 'data-so-county-pem': '1' }, k.public_key)))
-      : h('p', { class: 'small muted' }, 'This server\'s signing key is made the first time a county file is made. Give the county its public key and read the fingerprint out to them, once, so they can check your files came from you.'));
-  };
-  get('/api/county-submission/key', { quiet: true }).then(x => showKey(x.key)).catch(() => showKey(null));
-  const make = () => fetchDownload(`/api/county-submission/file?from=${from}&to=${to}`)
-    .then(async () => { toast('County file made and downloaded. Send it to the county as your contract says; it holds exact counts and is not for publication.', 'ok'); try { showKey((await get('/api/county-submission/key', { quiet: true })).key); } catch { /* the file is made */ } })
-    .catch(e => toast(e.message, 'error'));
-  return h('section', { class: 'card mb', 'aria-labelledby': 'so-county-h', 'data-so-county': '1' },
+  const today = fmt.today();
+  const body = h('div', { 'data-so-county-body': '1' }, h('p', { class: 'small muted' }, 'Loading…'));
+  const card = h('section', { class: 'card mb', 'aria-labelledby': 'so-county-h', 'data-so-county': '1' },
     h('div', { class: 'card-head' }, h('h2', { id: 'so-county-h' }, 'Send to the county')),
-    h('p', { class: 'small' }, `Makes a file of these settlement figures for ${fmt.date(from)} – ${fmt.date(to)} for the county that funds the program, signed by this server so the county can check it came from you unchanged. It holds exact counts, small numbers included, and money: aggregate figures only, with no names, client codes, dates of birth or single events.`),
+    h('p', { class: 'small' }, 'Makes a file of the program\'s settlement figures for a period, for the county that funds it, signed by this server so the county can check it came from you unchanged. It holds exact counts, small numbers included, and money: aggregate figures only, with no names, client codes, dates of birth or single events.'),
     h('p', { class: 'small', 'data-so-county-leaves': '1' }, h('b', {}, 'It leaves the program. '), 'It is for the county under your funding contract, not for publication or sharing. Making it is recorded in the audit log. SUDS sends nothing itself: you send the file the way the county asks.'),
-    keyBox,
-    h('div', { class: 'btn-row' }, h('button', { class: 'btn', 'data-so-county-file': '1', onClick: make }, 'Make the county file')));
+    body);
+  Promise.all([get('/api/county-submission/key', { quiet: true }), get('/api/county-submission/options', { quiet: true })])
+    .then(([k, o]) => body.replaceChildren(countyForm(k, o, today, pageFrom, pageTo)))
+    .catch(e => body.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)));
+  return card;
+}
+function countyForm(k, o, today, pageFrom, pageTo) {
+  const last = o.counties[0] || null;
+  // The period: the quarters that have ended (the last one first, and chosen), fiscal years, the last calendar year,
+  // and the dates on this page when they have ended and are not already offered.
+  const periods = submissionPeriods(today);
+  if (pageTo < today && pageFrom <= pageTo && !periods.some(p => p.from === pageFrom && p.to === pageTo)) periods.push({ key: 'page', label: `The dates on this page (${monthsLabel(pageFrom, pageTo)})`, from: pageFrom, to: pageTo });
+  const periodSel = h('select', { id: 'so-county-period', 'data-so-county-period-select': '1', 'aria-describedby': 'so-county-period-warn' }, periods.map(p => h('option', { value: p.key, selected: !!p.default }, p.label)));
+  const chosen = () => periods.find(p => p.key === periodSel.value) || periods[0];
+  const periodShown = h('strong', { 'data-so-county-period': '1' });
+  const warn = h('div', { class: 'help', id: 'so-county-period-warn', 'data-so-county-period-warn': '1' });
+  const makeBtn = h('button', { class: 'btn primary', type: 'submit', 'data-so-county-file': '1' });
+  const showPeriod = () => {
+    const p = chosen();
+    periodShown.textContent = `${fmt.date(p.from)} – ${fmt.date(p.to)}`;
+    makeBtn.textContent = `Make the county file for ${monthsLabel(p.from, p.to)}`;
+    warn.textContent = isQuarter(p.from, p.to) ? '' : '⚠ This is not a single quarter. The county counts a file only when its whole period lies inside the period it looks at, so a longer file never counts toward one quarter. Send quarters unless the county asked for this period.';
+  };
+  periodSel.addEventListener('change', showPeriod);
+  const codeI = h('input', { id: 'so-county-code', name: 'county_code', value: last ? last.code_display : '', autocomplete: 'off', 'aria-describedby': 'so-county-code-help', 'data-so-county-code': '1' });
+  const nameI = h('input', { id: 'so-county-name', name: 'county_name', value: last ? last.name : '', autocomplete: 'off', maxlength: 200, 'data-so-county-name': '1' });
+  const picked = new Set(last ? last.fund_ids : []);
+  const fundBoxes = o.funds.map(f => h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'so-county-fund', value: f.id, checked: picked.has(f.id), 'data-so-county-fund': f.id }),
+    `${f.name}${f.grant_number ? ` (${f.grant_number})` : ''}${f.is_active ? '' : ' (inactive)'}`));
+  const funds = h('fieldset', { class: 'field span', 'data-so-county-funds': '1', 'aria-describedby': 'so-county-funds-help' },
+    h('legend', {}, 'Settlement funds this county pays for'),
+    o.funds.length ? fundBoxes : h('p', { class: 'small muted' }, 'No funding source is marked as opioid settlement money.'),
+    h('div', { class: 'help', id: 'so-county-funds-help' }, 'Only the funds you tick go into the file, and every total in it is over them alone: a fund another funder pays for stays out. Nothing is ticked until you choose; SUDS remembers your choice for this county.'));
+  const err = h('div', { class: 'err', role: 'alert', 'data-so-county-error': '1' });
+  const keyBox = h('div', { 'data-so-county-key': '1' });
+  const showKey = (key, retired, fresh) => keyBox.replaceChildren(key
+    ? h('div', {},
+      fresh ? h('div', { class: 'banner info', role: 'status', 'data-so-county-newkey': '1' }, `New key made. Read its fingerprint to the county, and send it the public key, before you send a file signed with it: ${key.fingerprint_display}`) : null,
+      kv([['This server\'s key fingerprint', h('span', {}, h('code', { 'data-so-county-fingerprint': '1' }, key.fingerprint_display), ' ', copyBtn(key.fingerprint_display, 'Fingerprint', 'data-so-county-copy-fingerprint'))], ['Made', fmt.date(key.created_at)]]),
+      h('p', { class: 'small muted' }, 'A fingerprint is a short code worked out from the key. Read it out to the county (by phone, at a meeting) so it knows the key is yours.'),
+      h('details', { class: 'small' }, h('summary', {}, 'Public key (to give the county once)'),
+        h('pre', { class: 'note county-pem', 'data-so-county-pem': '1' }, key.public_key), copyBtn(key.public_key, 'Public key', 'data-so-county-copy-pem')),
+      retired && retired.length ? h('p', { class: 'small muted', 'data-so-county-retired': '1' }, `Keys retired: ${retired.map(r => `${r.fingerprint_display} (retired ${fmt.date(r.retired_at)})`).join('; ')}.`) : null,
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn ghost sm', type: 'button', 'data-so-county-newkey-btn': '1', onClick: newKey }, 'Make a new key')))
+    : h('div', {}, h('p', { class: 'small muted' }, 'This server has no county signing key yet. Show it to give the county its public key and read the fingerprint out to them, once, so they can check your files came from you.'),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', 'data-so-county-show-key': '1', onClick: async () => {
+        try { const x = await post('/api/county-submission/key', {}); showKey(x.key, x.retired); const c = keyBox.querySelector('[data-so-county-fingerprint]'); announce(`This server's key fingerprint: ${x.key.fingerprint_display}`); if (c) c.closest('dd').querySelector('button').focus(); }
+        catch (e) { toast(e.message, 'error'); }
+      } }, 'Show the key for the county'))));
+  async function newKey() {
+    const ok = await confirmDialog('Make a new key?', 'The current key is retired and a new one made. Files you make from now on are signed with the new key, and the county must register it (you read its fingerprint to them again) before it can import them. Do this when the key may have been lost or exposed, or when the county asks.', { danger: true, okText: 'Make a new key' });
+    if (!ok) return;
+    try { const x = await post('/api/county-submission/key/new', {}); showKey(x.key, x.retired, true); keyBox.querySelector('[data-so-county-newkey]').setAttribute('tabindex', '-1'); keyBox.querySelector('[data-so-county-newkey]').focus(); }
+    catch (e) { toast(e.message, 'error'); }
+  }
+  showKey(k.key, k.retired);
+  showPeriod();
+  const f = h('form', { noValidate: true, 'data-so-county-form': '1', onSubmit: (e) => {
+    e.preventDefault();
+    const ids = fundBoxes.map(l => l.querySelector('input')).filter(i => i.checked).map(i => i.value);
+    const problem = !codeI.value.trim() ? [codeI, 'Type the county code the county gave you (County view › Programs on its SUDS shows it).']
+      : !nameI.value.trim() ? [nameI, 'Type the county\'s name.'] : !ids.length ? [funds.querySelector('input') || funds, 'Tick the settlement funds this county pays for.'] : null;
+    for (const i of [codeI, nameI]) i.removeAttribute('aria-invalid');
+    if (problem) { err.textContent = problem[1]; if (problem[0].tagName === 'INPUT' && problem[0].type !== 'checkbox') problem[0].setAttribute('aria-invalid', 'true'); problem[0].focus(); return; }
+    err.textContent = '';
+    const p = chosen();
+    makeBtn.disabled = true;
+    fetchDownload(`/api/county-submission/file?from=${p.from}&to=${p.to}&county_code=${encodeURIComponent(codeI.value.trim())}&county_name=${encodeURIComponent(nameI.value.trim())}&funds=${ids.map(encodeURIComponent).join(',')}`)
+      .then(async () => { toast(`County file for ${monthsLabel(p.from, p.to)} made and downloaded. Send it to the county as your contract says; it holds exact counts and is not for publication.`, 'ok'); try { const x = await get('/api/county-submission/key', { quiet: true }); showKey(x.key, x.retired); } catch { /* the file is made */ } })
+      .catch(e2 => { err.textContent = e2.message; })
+      .finally(() => { makeBtn.disabled = false; });
+  } },
+  h('div', { class: 'form-grid' },
+    h('div', { class: 'field' }, h('label', { for: 'so-county-code' }, 'County code'), codeI, h('div', { class: 'help', id: 'so-county-code-help' }, 'Eight letters and digits the county gives you (its County view › Programs page shows it). The county refuses a file made for another county.')),
+    h('div', { class: 'field' }, h('label', { for: 'so-county-name' }, 'County name'), nameI),
+    funds,
+    h('div', { class: 'field span' }, h('label', { for: 'so-county-period' }, 'Period'), periodSel, warn)),
+  h('p', { class: 'county-period' }, 'Period: ', periodShown),
+  err,
+  h('div', { class: 'btn-row' }, makeBtn));
+  return h('div', {}, f, h('h3', {}, 'This server\'s key'), keyBox);
+}
+function copyBtn(value, what, attr) {
+  return h('button', { class: 'btn sm', type: 'button', [attr]: '1', onClick: async () => {
+    try { await navigator.clipboard.writeText(value); toast(`${what} copied.`, 'ok'); } catch { toast(`Could not copy: select the ${what.toLowerCase()} and copy it yourself.`, 'error'); }
+  } }, `Copy ${what.toLowerCase()}`);
 }

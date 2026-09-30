@@ -33,6 +33,9 @@
 // Environment: SUDS_URL (office server, seeded) and SUDS_STATIC_URL (the static build), as run-all.sh sets
 // them. A11Y_SCOPE=quick runs one role and the light desktop pass only (for iterating on a fix);
 // A11Y_SKIP_STATIC=1 leaves out the on-device build; A11Y_REPORT=file.json writes the findings as JSON.
+// A11Y_PAGES=<regex> audits only the pages, dialogs and folded sections whose address matches (county|settlement,
+// say), in every pass and for every role, and leaves out the signed-out pages and the keyboard and inactive-status
+// passes: the full audit of one area while iterating on it.
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -49,6 +52,8 @@ catch { console.error('axe-core is not installed. Run: npm i --no-save playwrigh
 const office = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const device = process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8878';
 const quick = process.env.A11Y_SCOPE === 'quick';
+const only = process.env.A11Y_PAGES ? new RegExp(process.env.A11Y_PAGES) : null;
+const wanted = (hash) => !only || only.test(hash);
 const PW = 'Navigator2026!!';
 const ROLES = [['admin', 'AdminPassw0rd!x'], ['jwalker', PW], ['kpatel', PW], ['mrivera', PW], ['afinance', PW], ['rreader', PW]];
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
@@ -250,7 +255,12 @@ async function pagesFor(page) {
     }
     if (out.includes('supervision') && a.can('audit:read')) out.push('supervision?tab=breakglass');
     // The county view's other sections (docs/COUNTY-VIEW.md).
-    if (out.includes('county')) out.push('county?tab=submissions', 'county?tab=programmes');
+    if (out.includes('county')) {
+      // …and the by-quarter view over the two quarters the sample files cover (prepareOffice).
+      const d = new Date(); let y = d.getFullYear(); let q = Math.floor(d.getMonth() / 3) - 2; if (q < 0) { q += 4; y--; }
+      const from = `${y}-${String(q * 3 + 1).padStart(2, '0')}-01`; const end = new Date(Date.UTC(d.getFullYear(), Math.floor(d.getMonth() / 3) * 3, 0)).toISOString().slice(0, 10);
+      out.push('county?tab=submissions', 'county?tab=programmes', `county?from=${from}&to=${end}&by=quarter`);
+    }
     if (a.state.local) out.push('sync');
     // State reporting (CalOMS Tx and the county EHR hand-off) is reached from Reports, not the navigation.
     if (a.can('episodes:read') || a.can('episodes:write') || a.can('export:identified')) out.push('caloms');
@@ -300,9 +310,10 @@ async function prepareOffice() {
   // shows its fingerprint and public key), and the three fictional programmes of scripts/county-sample.js registered,
   // with their files imported (all but one programme's latest, so the view has one "not submitted").
   must(await api(page, 'POST', '/api/county-submission/key', {}), 'this server has a county signing key');
+  const countyCode = must(await api(page, 'GET', '/api/county/code'), 'this server\'s county code').code;
   const sampleDir = fs.mkdtempSync(path.join(process.env.SUDS_UI_TMP || os.tmpdir(), 'suds-a11y-county-'));
-  execFileSync(process.execPath, ['--no-warnings', path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'county-sample.js'), sampleDir], { stdio: 'ignore' });
-  for (const p of JSON.parse(fs.readFileSync(path.join(sampleDir, 'programmes.json'), 'utf8'))) must(await api(page, 'POST', '/api/county/programmes', { name: p.name, public_key: p.public_key }), `county programme ${p.name}`);
+  execFileSync(process.execPath, ['--no-warnings', path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'county-sample.js'), sampleDir, '--county-code', countyCode], { stdio: 'ignore' });
+  for (const p of JSON.parse(fs.readFileSync(path.join(sampleDir, 'programmes.json'), 'utf8'))) must(await api(page, 'POST', '/api/county/programmes', { name: p.name, public_key: p.public_key, compared: true }), `county programme ${p.name}`);
   const sampleFiles = fs.readdirSync(sampleDir).filter(f => f.endsWith('.json') && f !== 'programmes.json').sort();
   const hillviewLatest = sampleFiles.filter(f => f.startsWith('hillview-')).pop();
   for (const f of sampleFiles.filter(f => f !== hillviewLatest)) {
@@ -388,6 +399,7 @@ const DIALOGS = [
 async function auditDialogs(page, base, tag, clientId) {
   await go(page, base, 'dashboard');
   for (const [name, perm, open] of DIALOGS) {
+    if (only) break;
     if (base === office) await pace();
     const allowed = await page.evaluate(async (perm) => { const a = await import('./app.js'); return !perm || [].concat(perm).some(x => a.can(x)); }, perm);
     if (!allowed) continue;
@@ -400,6 +412,7 @@ async function auditDialogs(page, base, tag, clientId) {
   // Dialogs opened from a button on a page, where the role has that button. A list of texts is a dialog
   // opened from inside another one (CalOMS records → + Annual update).
   for (const [hash, spec] of BUTTON_DIALOGS) {
+    if (!wanted(hash)) continue;
     if (hash.includes(':client') && !clientId) continue;
     if (hash.includes(':fresh') && (!prepared.freshClient || base !== office)) continue;
     const texts = [].concat(spec);
@@ -422,6 +435,7 @@ async function auditDialogs(page, base, tag, clientId) {
   }
   // Dialogs a list row opens (the row's own button, as the keyboard reaches it).
   for (const [hash, list, name] of ROW_DIALOGS) {
+    if (!wanted(hash)) continue;
     if (hash.includes(':client') && !clientId) continue;
     await go(page, base, hash.replace(':client', clientId));
     const row = page.locator(`.main ${list} tbody tr.click .row-open:visible, .main ${list} tbody tr.click .row-open-extra:visible`).first();
@@ -432,7 +446,7 @@ async function auditDialogs(page, base, tag, clientId) {
     await closeDialogs(page);
   }
   // A note, opened from the list, and its signature dialog.
-  if (clientId) {
+  if (clientId && wanted('client/')) {
     await go(page, base, `client/${clientId}/notes`);
     const row = page.locator('.main tbody tr.click:visible, .main .compact-row.click:visible').first();
     if (await row.count()) {
@@ -464,7 +478,9 @@ const BUTTON_DIALOGS = [
   ['admin?tab=users', 'Approve'], ['admin?tab=fhir', '+ New FHIR client'], ['admin?tab=fhir', 'Edit'],
   ['reports', 'Identified Excel workbook'], ['admin?tab=lists', '+ Add funding source'],
   // The county view: registering and editing a programme, and withdrawing an imported file.
-  ['county?tab=programmes', 'Register a programme'], ['county?tab=programmes', 'Edit'], ['county?tab=submissions', 'Withdraw'],
+  ['county?tab=programmes', 'Register a program'], ['county?tab=programmes', 'Edit'], ['county?tab=programmes', 'Keys'], ['county?tab=submissions', 'Withdraw'],
+  // Settlement outcomes › Send to the county: Make a new key (its confirmation).
+  ['settlement', 'Make a new key'],
   // The supervision queue: countersigning one note (the note's text, a comment, the signature step).
   ['supervision', 'Countersign'],
 ];
@@ -474,6 +490,8 @@ const EXPANDED = [
   ['admin?tab=lists', 'details.list-card > summary', 'a list open'],
   // Settlement outcomes › Send to the county: this server's public key.
   ['settlement', '[data-so-county-key] details > summary', 'the county public key open'],
+  // The county view: the caveats in full.
+  ['county', '[data-cv-caveats-full] > summary', 'the county caveats in full open'],
   // Settings › Programme is folded into sections (views/admin.js): every one of them opened.
   ['admin?tab=settings', 'details.section[data-section] > summary', 'every programme settings section open', { all: true }],
 ];
@@ -502,8 +520,8 @@ async function checkPage(page, cfg, tag, hash, extra = {}) {
 }
 async function auditPages(page, base, cfg, tag, { clientId, resourceId, settingsTabs }) {
   const pages = await pagesFor(page);
-  for (const hash of pages) { await go(page, base, hash); await checkPage(page, cfg, tag, hash); }
-  if (clientId) {
+  for (const hash of pages.filter(wanted)) { await go(page, base, hash); await checkPage(page, cfg, tag, hash); }
+  if (clientId && wanted('client/')) {
     await go(page, base, `client/${clientId}`);
     const clientName = await page.evaluate(() => document.querySelector('.main h1')?.firstChild?.textContent.trim());
     const tabs = await page.$$eval('.main nav.tabs [data-tab]', els => els.map(e => e.dataset.tab));
@@ -513,15 +531,16 @@ async function auditPages(page, base, cfg, tag, { clientId, resourceId, settings
     if (forbidden) await checkPage(page, cfg, tag, `client/${clientId}`);
     for (const t of tabs) { await go(page, base, `client/${clientId}/${t}`); await checkPage(page, cfg, tag, `client/${clientId}/${t}`, { clientName }); }
   }
-  if (resourceId) { await go(page, base, `resource/${resourceId}`); await checkPage(page, cfg, tag, `resource/${resourceId}`); }
+  if (resourceId && wanted('resource/')) { await go(page, base, `resource/${resourceId}`); await checkPage(page, cfg, tag, `resource/${resourceId}`); }
   // Privacy & Part 2: each of its sections the role may open, and the notice editor opened.
-  if (pages.includes('compliance')) {
+  if (pages.includes('compliance') && wanted('compliance')) {
     await go(page, base, 'compliance');
     const tabs = await page.$$eval('.main nav.tabs [data-tab]', els => els.map(e => e.dataset.tab));
     for (const t of tabs.slice(1)) { await go(page, base, `compliance?tab=${t}`); await checkPage(page, cfg, tag, `compliance?tab=${t}`); }
   }
   // Content that is on the page but folded away until it is opened.
   for (const [hash, summary, name, opts = {}] of EXPANDED) {
+    if (!wanted(hash)) continue;
     if (hash.startsWith('admin') && !settingsTabs) continue;
     if (hash.startsWith('compliance') && !pages.includes('compliance')) continue;
     await go(page, base, hash);
@@ -534,7 +553,7 @@ async function auditPages(page, base, cfg, tag, { clientId, resourceId, settings
     if (cfg.mobile) await reflowCheck(page, where, 320);
     if (cfg.text200) await reflowCheck(page, where);
   }
-  if (settingsTabs) {
+  if (settingsTabs && wanted('admin')) {
     await go(page, base, 'admin');
     const tabs = await page.$$eval('.main nav.tabs [data-tab]', els => els.map(e => e.dataset.tab));
     for (const t of tabs.slice(1)) { await go(page, base, `admin?tab=${t}`); await checkPage(page, cfg, tag, `admin?tab=${t}`); }
@@ -562,12 +581,12 @@ async function newPage(cfg) {
 async function officeRun(cfg, roles) {
   const { ctx, page } = await newPage(cfg); watch(page, `office ${cfg.id}`);
   // Signed out: the sign-in page, Sign up, and the phone/tablet page.
-  const signedOut = async (where) => { await axe(page, where); await titleCheck(page, where); if (cfg.mobile) await reflowCheck(page, where, 320); if (cfg.text200) await reflowCheck(page, where); if (cfg.id === 'desktop-light') { await spacingCheck(page, where); await focusCheck(page, where, 15); } };
+  const signedOut = async (where) => { if (only) return; await axe(page, where); await titleCheck(page, where); if (cfg.mobile) await reflowCheck(page, where, 320); if (cfg.text200) await reflowCheck(page, where); if (cfg.id === 'desktop-light') { await spacingCheck(page, where); await focusCheck(page, where, 15); } };
   await page.goto(office + '/#/login'); await page.waitForSelector('input[name=username]'); await settle(page);
   await signedOut(`office ${cfg.id} signed out #/login`);
   await page.goto(office + '/#/login?mode=signup'); await page.reload(); await page.waitForSelector('[data-account-mode=signup]'); await settle(page);
   await signedOut(`office ${cfg.id} signed out #/login?mode=signup`);
-  for (const file of ['get-app.html', 'accessibility.html']) {
+  for (const file of only ? [] : ['get-app.html', 'accessibility.html']) {
     await page.goto(`${office}/${file}`); await page.waitForLoadState('networkidle');
     await axe(page, `office ${cfg.id} ${file}`);
     if (cfg.mobile) await reflowCheck(page, `office ${cfg.id} ${file}`, 320);
@@ -875,8 +894,10 @@ for (const cfg of configs) {
   jobs.push(['office ' + cfg.id, () => officeRun(cfg, cfg.id === 'desktop-light' ? roles : roles.filter(([u]) => u === 'admin' || u === 'mrivera' || u === 'jwalker'))]);
   if (!process.env.A11Y_SKIP_STATIC) jobs.push(['device ' + cfg.id, () => deviceRun(cfg)]);
 }
-jobs.push(['keyboard', () => keyboardRun()]);
-jobs.push(['inactive status', () => inactiveRun()]);
+if (!only) {
+  jobs.push(['keyboard', () => keyboardRun()]);
+  jobs.push(['inactive status', () => inactiveRun()]);
+}
 await prepareOffice().catch(e => fail(`preparing the records for the newer views failed: ${e.message.split('\n').slice(0, 3).join(' / ')}`));
 const LIMIT = Number(process.env.A11Y_PARALLEL || 4);
 const running = new Set();
