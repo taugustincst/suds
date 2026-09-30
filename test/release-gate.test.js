@@ -67,6 +67,17 @@ test('RELEASE.md gives the browser suite\'s real size, wherever it gives one', (
   assert.deepEqual([...new Set(said)], [String(n)], `RELEASE.md says ${said.join(', ')} scripts; run-all.sh runs ${n}`);
 });
 
+test('the newest HANDOFF.md entry and the newest CHANGELOG.md mention give the browser suite\'s real size too', () => {
+  // The review of the fingerprint work counted the suite differently from run-all.sh; the number every document
+  // gives now is checked against the list itself (RELEASE.md above), and so is the latest one the hand-off notes and
+  // the changelog give, where a stale count would otherwise be copied forward.
+  const root = path.join(__dirname, '..');
+  const n = /\$\{SCRIPTS:-([^}]+)\}; do/.exec(fs.readFileSync(path.join(root, 'scripts', 'ui', 'run-all.sh'), 'utf8'))[1].trim().split(/\s+/).length;
+  const first = (file, re) => { const m = re.exec(fs.readFileSync(path.join(root, file), 'utf8')); return m ? Number(m[1]) : null; };
+  assert.equal(first('HANDOFF.md', /browser suite is \**(\d+) scripts/i), n, 'HANDOFF.md\'s newest count');
+  assert.equal(first('CHANGELOG.md', /the suite is now (\d+) scripts/i), n, 'CHANGELOG.md\'s newest count');
+});
+
 test('every browser script is in run-all.sh\'s default list (permissions-admin was left out until 1.16.0)', () => {
   const dir = path.join(__dirname, '..', 'scripts', 'ui');
   const list = /\$\{SCRIPTS:-([^}]+)\}; do/.exec(fs.readFileSync(path.join(dir, 'run-all.sh'), 'utf8'))[1].trim().split(/\s+/);

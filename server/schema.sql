@@ -116,7 +116,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- How reauth_at was last proved: 'password', 'totp', 'passkey' (a fingerprint or the device's screen lock,
   -- docs/FINGERPRINT.md) or 'sso'. "Require fingerprint or authenticator for signing" counts only a recent
   -- 'passkey' or 'totp' towards the quick-signing window (migration 58).
-  reauth_method TEXT
+  reauth_method TEXT,
+  -- The passkey that signed this session in (or finished its second step), when one did: removing that passkey
+  -- ends the session (server/passkeys.js remove; migration 58).
+  passkey_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
@@ -150,13 +153,16 @@ CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
 -- WebAuthn challenges waiting for an answer: stored by SHA-256 of the challenge (never the challenge itself),
 -- single-use (used_at), bound to a purpose and, once signed in, to the user and session; two minutes to live.
 -- `statement`: for a signature or an approval, the canonical statement the challenge is the hash of (ids,
--- hashes and dates: no PHI). Office server only, never synchronised (migration 58).
+-- hashes and dates: no PHI). `ip`: the address that asked, for one asked for before anyone signed in (the sign-in
+-- page), so how many wait unanswered per address can be capped. session_id is a sessions.id (a hash), not a user.
+-- Office server only, never synchronised (migration 58).
 CREATE TABLE IF NOT EXISTS webauthn_challenges (
   id TEXT PRIMARY KEY,                 -- hex SHA-256 of the challenge bytes
   purpose TEXT NOT NULL,
-  user_id TEXT,
+  user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
   session_id TEXT,
   statement TEXT,
+  ip TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   expires_at TEXT NOT NULL,
   used_at TEXT

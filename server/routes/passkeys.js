@@ -23,10 +23,12 @@ module.exports = (r) => {
   });
 
   // ---- sign-in (and the second step of a password sign-in) ----
+  // Discoverable passkeys only: a username sent here is ignored, so the answer says nothing about any account
+  // (server/passkeys.js loginOptions). Validated still, so an old page sending one gets the same answer.
   r.post('/api/auth/passkeys/login/options', (ctx) => {
     csrf(ctx);
-    const v = validate(ctx.body || {}, { username: { type: 'string', maxLen: 100 } }, { partial: true });
-    return P.loginOptions(ctx, { username: v.username });
+    validate(ctx.body || {}, { username: { type: 'string', maxLen: 100 } }, { partial: true });
+    return P.loginOptions(ctx);
   });
   r.post('/api/auth/passkeys/login', (ctx) => {
     csrf(ctx);
@@ -74,7 +76,8 @@ module.exports = (r) => {
       await auth.confirmPassword(ctx, v.password, { action: 'auth.passkey.remove.failed' });
       auth.clearFailures(ctx.user.id);
     } else if (!v.confirm) throw badRequest('Confirm that you want to remove this passkey');
-    P.remove(ctx.user.id, { id: p.id, actor: ctx.user, ip: ctx.ip, cause: 'owner' });
+    // Any other session that passkey signed in ends with it; this one has just given the password.
+    P.remove(ctx.user.id, { id: p.id, actor: ctx.user, ip: ctx.ip, cause: 'owner', keepSession: ctx.session && ctx.session.id });
     return { ok: true };
   });
 

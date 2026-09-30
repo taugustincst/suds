@@ -19,13 +19,30 @@ const { HttpError, badRequest, forbidden, notFound } = require('./http');
 const CHALLENGE_MS = 2 * 60_000;
 const MAX_PER_USER = 10;
 const TIMEOUT_MS = 120_000;
+// Challenges nobody has signed in for yet (the sign-in page's options): at most this many waiting per address, and
+// this many in all, so a script asking for options cannot fill the table.
+const MAX_OPEN_PER_IP = 20;
+const MAX_OPEN_TOTAL = 5000;
+const PURGE_EVERY_MS = 60 * 60_000;
 const auth = () => require('./auth');
 
 // ---- where passkeys work ----
-function hostParts(ctx) {
-  const raw = String((config.trustProxy && ctx.headers['x-forwarded-host']) || ctx.headers.host || '').split(',')[0].trim();
+/**
+ * The host a request was addressed to. `forwarded`: behind a trusted proxy, the host the browser used (X-Forwarded-Host)
+ * — used only to check the address and build the page's origin, never to choose the relying party ID: a header must
+ * not decide which host passkeys are made for.
+ */
+function hostParts(ctx, { forwarded = true } = {}) {
+  const raw = String((forwarded && config.trustProxy && ctx.headers['x-forwarded-host']) || ctx.headers.host || '').split(',')[0].trim();
   let url; try { url = new URL(`http://${raw}`); } catch { return null; }
   return { host: url.host, hostname: url.hostname.replace(/^\[|\]$/g, '').toLowerCase() };
+}
+/** The relying party ID the configuration sets: WEBAUTHN_RP_ID, else the host of the first of WEBAUTHN_ORIGINS. '' for none. */
+function configuredRpId() {
+  const wc = config.webauthn || {};
+  if (wc.rpId) return wc.rpId;
+  for (const o of wc.origins || []) { try { const h = new URL(o).hostname.toLowerCase(); if (h) return h; } catch { /* next */ } }
+  return '';
 }
 function secureRequest(ctx) {
   if (config.tls && config.tls.cert) return true;
@@ -35,7 +52,9 @@ function secureRequest(ctx) {
 const LOOPBACK = ['localhost', '127.0.0.1', '::1'];
 /**
  * The relying party for this request: { rpId, origins, rpName }, or throws saying why passkeys cannot work here.
- * The RP ID is WEBAUTHN_RP_ID, else the host the request was addressed to, which must be it or one of its
+ * The RP ID is WEBAUTHN_RP_ID (or the host of WEBAUTHN_ORIGINS), which production REQUIRES: without it no options are
+ * issued and Settings → Security status says so in red (the owner's decision, docs/FINGERPRINT.md). Outside production
+ * it falls back to the Host header (never X-Forwarded-Host). The request's host must be the RP ID or one of its
  * subdomains. HTTPS is required, except plain http on localhost outside production (a developer's machine).
  */
 function relyingParty(ctx) {
@@ -43,12 +62,16 @@ function relyingParty(ctx) {
   const hp = hostParts(ctx);
   if (!hp || !hp.hostname) throw badRequest('The request did not say which address it was sent to');
   const wc = config.webauthn || { rpId: '', origins: [] };
-  const rpId = wc.rpId || hp.hostname;
+  const configured = configuredRpId();
+  if (!configured && config.isProd) throw new HttpError(503, 'Fingerprint sign-in is not set up on this server yet: its administrator must set WEBAUTHN_RP_ID to the server\'s name, as in the address staff open (docs/SELF-HOSTING.md). Sign in with your password.', { passkeyUnavailable: 'config' });
+  const own = configured ? null : hostParts(ctx, { forwarded: false });
+  const rpId = configured || (own && own.hostname);
+  if (!rpId) throw badRequest('The request did not say which address it was sent to');
   if (hp.hostname !== rpId && !hp.hostname.endsWith('.' + rpId)) throw new HttpError(403, `Fingerprint sign-in is set up for ${rpId}; open SUDS at that address to use it.`, { passkeyUnavailable: 'address' });
   const secure = secureRequest(ctx);
   const devLoopback = LOOPBACK.includes(hp.hostname) && !config.isProd;
   // A passkey belongs to a host name; browsers refuse an IP address as one (a LAN install opened as https://192.168.1.10).
-  if (!wc.rpId && !devLoopback && (/^\d{1,3}(\.\d{1,3}){3}$/.test(hp.hostname) || hp.hostname.includes(':'))) throw new HttpError(403, 'Fingerprint sign-in needs SUDS to be opened by its name, not an IP address. Ask your administrator for the address (docs/SELF-HOSTING.md).', { passkeyUnavailable: 'address' });
+  if (!configured && !devLoopback && (/^\d{1,3}(\.\d{1,3}){3}$/.test(hp.hostname) || hp.hostname.includes(':'))) throw new HttpError(403, 'Fingerprint sign-in needs SUDS to be opened by its name, not an IP address. Ask your administrator for the address (docs/SELF-HOSTING.md).', { passkeyUnavailable: 'address' });
   if (!secure && !devLoopback) throw new HttpError(403, 'Fingerprint sign-in needs HTTPS. Ask your administrator to turn on HTTPS for SUDS (docs/SELF-HOSTING.md).', { passkeyUnavailable: 'https' });
   const origins = wc.origins && wc.origins.length ? wc.origins : [`${secure ? 'https' : 'http'}://${hp.host}`];
   return { rpId, origins, rpName: db.getSetting('org_name', 'SUDS') || 'SUDS' };
@@ -59,18 +82,33 @@ function availability(ctx) {
 }
 
 // ---- challenges ----
-// Answered or not, a challenge is kept for an hour past its expiry (so a replay is told it was used), then deleted.
-function purge() { db.run(`DELETE FROM webauthn_challenges WHERE expires_at < ?`, new Date(Date.now() - 60 * 60_000).toISOString()); }
-/** Issue a challenge (base64url). With a statement, it is the statement's SHA-256; otherwise 32 random bytes. */
-function issue({ purpose, userId = null, sessionId = null, statement = null }) {
-  purge();
+// Answered or not, a challenge is kept for an hour past its expiry (so a replay is told it was used), then deleted,
+// by a sweep at most once an hour (purgeDue) rather than on every request.
+let lastPurge = 0;
+function purge() { lastPurge = Date.now(); return db.run(`DELETE FROM webauthn_challenges WHERE expires_at < ?`, new Date(Date.now() - 60 * 60_000).toISOString()).changes; }
+function purgeDue() { if (Date.now() - lastPurge >= PURGE_EVERY_MS) purge(); }
+/**
+ * Issue a challenge (base64url). With a statement, it is the statement's SHA-256; otherwise 32 random bytes. One for
+ * nobody yet (`userId` null: the sign-in page) records the address that asked, and is refused past MAX_OPEN_PER_IP
+ * waiting from that address or MAX_OPEN_TOTAL in all.
+ */
+function issue({ purpose, userId = null, sessionId = null, statement = null, ip = null }) {
+  purgeDue();
+  const nowIso = new Date().toISOString();
+  if (!userId) {
+    const open = db.one(`SELECT COUNT(*) n, SUM(CASE WHEN ip IS ? THEN 1 ELSE 0 END) mine FROM webauthn_challenges WHERE user_id IS NULL AND used_at IS NULL AND expires_at > ?`, ip, nowIso);
+    if ((open.mine || 0) >= MAX_OPEN_PER_IP || open.n >= MAX_OPEN_TOTAL) throw new HttpError(429, 'Too many fingerprint sign-ins are waiting to be answered. Try again in two minutes.');
+  }
   const bytes = statement ? W.statementChallenge(statement) : crypto.randomBytes(32);
   const now = Date.now();
-  db.run(`INSERT INTO webauthn_challenges(id,purpose,user_id,session_id,statement,created_at,expires_at) VALUES(?,?,?,?,?,?,?)`,
-    sha256(bytes), purpose, userId, sessionId, statement ? JSON.stringify(statement) : null, new Date(now).toISOString(), new Date(now + CHALLENGE_MS).toISOString());
+  db.run(`INSERT INTO webauthn_challenges(id,purpose,user_id,session_id,statement,ip,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)`,
+    sha256(bytes), purpose, userId, sessionId, statement ? JSON.stringify(statement) : null, ip, new Date(now).toISOString(), new Date(now + CHALLENGE_MS).toISOString());
   return W.b64url(bytes);
 }
-/** The challenge the browser signed, read from the client data (verified against the signature afterwards). */
+/**
+ * The challenge the browser says it signed, read from the client data: only to find the stored challenge (take), by
+ * its hash. The assertion is then checked against the stored one (verifyAssertion's challengeHash), not against this.
+ */
 function challengeOf(credential) {
   try {
     const cd = JSON.parse(W.fromB64url(credential.response.clientDataJSON).toString('utf8'));
@@ -94,7 +132,8 @@ function take(challenge, { purpose, userId = null, sessionId = null }) {
   if (row.session_id && row.session_id !== sessionId) throw new W.WebAuthnError('challenge_session', 'This confirmation was asked for in another session.');
   const statement = row.statement ? JSON.parse(row.statement) : null;
   if (statement && sha256(W.statementChallenge(statement)) !== id) throw new W.WebAuthnError('challenge', 'The stored statement does not match its challenge');
-  return { ...row, statement };
+  // challengeHash: what the assertion's challenge must hash to (webauthn.js verifyAssertion), from the stored row.
+  return { ...row, statement, challengeHash: row.id };
 }
 
 // ---- credentials ----
@@ -142,7 +181,7 @@ async function registrationOptions(ctx, { password, code }) {
   const challenge = issue({ purpose: 'register', userId: u.id, sessionId: ctx.session.id });
   return { publicKey: {
     challenge, rp: { id: rp.rpId, name: rp.rpName }, user: { id: userHandle(u.id), name: u.username, displayName: u.display_name || u.username },
-    pubKeyCredParams: [{ type: 'public-key', alg: W.ALGS.ES256 }, { type: 'public-key', alg: W.ALGS.EdDSA }, { type: 'public-key', alg: W.ALGS.RS256 }],
+    pubKeyCredParams: [{ type: 'public-key', alg: W.ALGS.ES256 }, { type: 'public-key', alg: W.ALGS.EdDSA }, { type: 'public-key', alg: W.ALGS.Ed25519 }, { type: 'public-key', alg: W.ALGS.RS256 }],
     timeout: TIMEOUT_MS, attestation: 'none',
     // The device's own authenticator (Touch ID, Windows Hello, an Android fingerprint), discoverable where it can be,
     // and always with user verification: a passkey used without the fingerprint (or screen lock) is refused.
@@ -156,16 +195,19 @@ function registrationFinish(ctx, { credential, name }) {
   const rp = relyingParty(ctx);
   try {
     if (!credential || typeof credential !== 'object') throw new W.WebAuthnError('shape', 'The passkey response is missing');
-    take(challengeOf(credential), { purpose: 'register', userId: ctx.user.id, sessionId: ctx.session.id });
-    const reg = W.verifyRegistration(credential, { challenge: challengeOf(credential), rpId: rp.rpId, origins: rp.origins });
+    const row = take(challengeOf(credential), { purpose: 'register', userId: ctx.user.id, sessionId: ctx.session.id });
+    const reg = W.verifyRegistration(credential, { challengeHash: row.challengeHash, rpId: rp.rpId, origins: rp.origins });
     if (findByCredential(reg.credentialId)) throw new HttpError(409, 'This passkey is already registered.');
     if (db.one(`SELECT COUNT(*) n FROM passkeys WHERE user_id=?`, ctx.user.id).n >= MAX_PER_USER) throw badRequest(`You already have ${MAX_PER_USER} passkeys.`);
     const id = uuid();
     const label = cleanName(name) || 'Passkey';
     db.run(`INSERT INTO passkeys(id,user_id,credential_id,public_key,alg,sign_count,transports,aaguid,backup_eligible,backed_up,rp_id,name) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, ctx.user.id, reg.credentialId, reg.publicKey, reg.alg, reg.signCount, JSON.stringify(reg.transports), reg.aaguid, reg.backupEligible ? 1 : 0, reg.backedUp ? 1 : 0, rp.rpId, label);
-    // The name is the owner's label for their device ("Maria's iPhone"): staff information, not client information.
-    audit.log({ user: ctx.user, action: 'auth.passkey.enrolled', entity: 'passkey', entityId: id, ip: ctx.ip, details: { algorithm: W.ALG_NAMES[reg.alg], aaguid: reg.aaguid, synced: reg.backedUp, count: db.one(`SELECT COUNT(*) n FROM passkeys WHERE user_id=?`, ctx.user.id).n } });
+    // The name is the owner's label for their device ("Maria's iPhone"): kept out of the audit entry, as the key is.
+    // The entry anchors the key instead: the SHA-256 of its SPKI and of the credential id, in the hash-chained log,
+    // so a signature's evidence can be tied to the key accepted here (evidenceFor, scripts/verify-passkey-evidence.js).
+    audit.log({ user: ctx.user, action: 'auth.passkey.enrolled', entity: 'passkey', entityId: id, ip: ctx.ip, details: { algorithm: W.ALG_NAMES[reg.alg], alg: reg.alg, aaguid: reg.aaguid, synced: reg.backedUp,
+      ...W.credentialFingerprints({ publicKey: reg.publicKey, credentialId: reg.credentialId }), count: db.one(`SELECT COUNT(*) n FROM passkeys WHERE user_id=?`, ctx.user.id).n } });
     return present(db.one(`SELECT * FROM passkeys WHERE id=?`, id));
   } catch (e) {
     if (!(e instanceof W.WebAuthnError)) throw e;
@@ -182,11 +224,22 @@ function rename(ctx, id, name) {
   audit.log({ user: ctx.user, action: 'auth.passkey.renamed', entity: 'passkey', entityId: p.id, ip: ctx.ip });
   return present(db.one(`SELECT * FROM passkeys WHERE id=?`, p.id));
 }
-/** Remove passkeys (the owner's one, an administrator's revocation, offboarding). Returns how many went. */
-function remove(userId, { id = null, actor, ip, cause }) {
+/**
+ * Remove passkeys (the owner's one, an administrator's revocation, a two-step reset, a password reset, offboarding).
+ * The sessions those passkeys opened end with them (sessions.passkey_id; with every passkey gone, every session a
+ * passkey opened): a lost phone's passkey taken away must not leave that phone signed in. `keepSession`: the owner's
+ * own session, which has just given the password to remove it. Returns how many passkeys went.
+ */
+function remove(userId, { id = null, actor, ip, cause, keepSession = null }) {
   const rows = id ? db.all(`SELECT id FROM passkeys WHERE id=? AND user_id=?`, id, userId) : db.all(`SELECT id FROM passkeys WHERE user_id=?`, userId);
   for (const r of rows) db.run(`DELETE FROM passkeys WHERE id=?`, r.id);
-  if (rows.length) audit.log({ user: actor, action: 'auth.passkey.removed', entity: 'user', entityId: userId, ip, details: { count: rows.length, passkeys: rows.map(r => r.id), cause } });
+  let ended = 0;
+  if (rows.length) {
+    const ids = rows.map(r => r.id);
+    const which = id ? `passkey_id IN (SELECT value FROM json_each(?))` : `(passkey_id IN (SELECT value FROM json_each(?)) OR mfa_source='passkey' OR reauth_method='passkey')`;
+    ended = db.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL AND ${which} AND id IS NOT ?`, db.now(), userId, JSON.stringify(ids), keepSession).changes;
+    audit.log({ user: actor, action: 'auth.passkey.removed', entity: 'user', entityId: userId, ip, details: { count: rows.length, passkeys: ids, cause, sessions_ended: ended || undefined } });
+  }
   return rows.length;
 }
 
@@ -196,13 +249,13 @@ function remove(userId, { id = null, actor, ip, cause }) {
  * success the counter and last use are updated. A counter that went backwards flags the credential (refused from
  * then on) and is audited as auth.passkey.clone_suspected. Throws WebAuthnError on any failure.
  */
-function checkAssertion(ctx, credential, pk, rp, challenge) {
+function checkAssertion(ctx, credential, pk, rp, challengeHash) {
   if (pk.flagged_at) throw new W.WebAuthnError('flagged', 'This passkey has been disabled because it may have been copied. Remove it under My profile and add it again.');
   if (pk.rp_id !== rp.rpId) throw new W.WebAuthnError('rpid', `This passkey was made for ${pk.rp_id}.`);
   if (credential.rawId !== undefined && credential.rawId !== credential.id) throw new W.WebAuthnError('credential', 'The credential ids do not match');
   const uh = credential.response && credential.response.userHandle;
   if (uh && uh !== userHandle(pk.user_id)) throw new W.WebAuthnError('user_handle', 'The passkey belongs to another account');
-  const r = W.verifyAssertion(credential, { publicKey: pk.public_key, alg: pk.alg, signCount: pk.sign_count }, { challenge, rpId: rp.rpId, origins: rp.origins });
+  const r = W.verifyAssertion(credential, { publicKey: pk.public_key, alg: pk.alg, signCount: pk.sign_count }, { challengeHash, rpId: rp.rpId, origins: rp.origins });
   if (r.cloned) {
     db.run(`UPDATE passkeys SET flagged_at=?, flag_reason=? WHERE id=?`, db.now(), `signature counter went from ${pk.sign_count} to ${r.signCount}`, pk.id);
     audit.log({ user: { id: pk.user_id }, action: 'auth.passkey.clone_suspected', entity: 'passkey', entityId: pk.id, ip: ctx.ip, success: false, details: { stored_count: pk.sign_count, presented_count: r.signCount } });
@@ -214,12 +267,13 @@ function checkAssertion(ctx, credential, pk, rp, challenge) {
 
 // ---- sign-in ----
 /**
- * Options for "Sign in with fingerprint". Without a session: a discoverable-credential request (the browser offers the
- * device's passkeys for this site), or, with a username typed, that account's passkeys. A username nobody has gets a
- * made-up credential id, so the answer does not say which usernames exist. With a session still owing its second
- * step (a password sign-in, mfa_pending), the options are for finishing that sign-in with this account's passkeys.
+ * Options for "Sign in with fingerprint". Without a session: a discoverable-credential request only (no
+ * allowCredentials): the browser offers the device's passkeys for this site, and the answer is the same whoever is
+ * asking, so it says nothing about which usernames exist or which credentials an account has. A username sent with
+ * the request is ignored. With a session still owing its second step (a password sign-in, mfa_pending), the person is
+ * known: the options list this account's passkeys, so a passkey that is not discoverable finishes it too.
  */
-function loginOptions(ctx, { username } = {}) {
+function loginOptions(ctx) {
   requirePolicy('signin');
   const rp = relyingParty(ctx);
   const app = require('./app');
@@ -229,15 +283,7 @@ function loginOptions(ctx, { username } = {}) {
     if (!creds.length) throw badRequest('Your account has no passkey. Enter the code from your authenticator app.');
     return { purpose: 'mfa', publicKey: { challenge: issue({ purpose: 'mfa', userId: ctx.user.id, sessionId: ctx.session.id }), rpId: rp.rpId, timeout: TIMEOUT_MS, userVerification: 'required', allowCredentials: creds.map(descriptor) } };
   }
-  let allow = [];
-  const name = typeof username === 'string' ? username.trim().slice(0, 100) : '';
-  if (name) {
-    const u = db.one(`SELECT id, is_active FROM users WHERE username=?`, name);
-    const creds = u && u.is_active ? db.all(`SELECT * FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, u.id) : [];
-    allow = creds.length ? creds.map(descriptor)
-      : [{ type: 'public-key', id: W.b64url(crypto.createHmac('sha256', config.indexKey).update(`suds-no-passkey:${name.toLowerCase()}`).digest()), transports: ['internal'] }];
-  }
-  return { purpose: 'login', publicKey: { challenge: issue({ purpose: 'login' }), rpId: rp.rpId, timeout: TIMEOUT_MS, userVerification: 'required', allowCredentials: allow } };
+  return { purpose: 'login', publicKey: { challenge: issue({ purpose: 'login', ip: ctx.ip || null }), rpId: rp.rpId, timeout: TIMEOUT_MS, userVerification: 'required', allowCredentials: [] } };
 }
 
 /**
@@ -260,11 +306,11 @@ function loginFinish(ctx, { credential }) {
     throw new HttpError(status, message, { passkeyError: reason });
   };
   if (!credential || typeof credential !== 'object' || !credential.response) failedAttempt(ctx.user || null, 'shape', 'The passkey response is missing', 400);
-  let challenge;
-  try { challenge = challengeOf(credential); take(challenge, second ? { purpose: 'mfa', userId: ctx.user.id, sessionId: ctx.session.id } : { purpose: 'login' }); }
+  let row;
+  try { row = take(challengeOf(credential), second ? { purpose: 'mfa', userId: ctx.user.id, sessionId: ctx.session.id } : { purpose: 'login' }); }
   catch (e) { if (e instanceof W.WebAuthnError) failedAttempt(ctx.user || null, e.code, e.message); throw e; }
   const pk = findByCredential(credential.id);
-  if (!pk) failedAttempt(ctx.user || null, 'unknown passkey', 'That passkey is not registered with SUDS here. Sign in with your password, then add it under My profile.');
+  if (!pk) failedAttempt(ctx.user || null, 'unknown passkey', 'No fingerprint sign-in for SUDS was found on this device. Sign in with your password, then add one under My profile.');
   const user = db.one(`SELECT * FROM users WHERE id=?`, pk.user_id);
   const who = { id: user.id, username: user.username };
   if (second && user.id !== ctx.user.id) failedAttempt(who, 'another account', 'That passkey belongs to a different account.');
@@ -273,7 +319,7 @@ function loginFinish(ctx, { credential }) {
     audit.log({ user: who, action: 'auth.login.locked', ip: ctx.ip, success: false, details: { method: 'passkey' } });
     throw new HttpError(423, 'Account locked. Try again later or contact an administrator.');
   }
-  try { checkAssertion(ctx, credential, pk, rp, challenge); }
+  try { checkAssertion(ctx, credential, pk, rp, row.challengeHash); }
   catch (e) {
     if (!(e instanceof W.WebAuthnError)) throw e;
     // A signature that does not verify, or a missing fingerprint check, counts toward the account's lockout like a
@@ -285,7 +331,7 @@ function loginFinish(ctx, { credential }) {
   const pol = A.policy();
   if (second) {
     A.clearFailures(user.id);
-    db.run(`UPDATE sessions SET mfa_pending=0, mfa_source='passkey', reauth_at=?, reauth_method='passkey' WHERE id=?`, db.now(), ctx.session.id);
+    db.run(`UPDATE sessions SET mfa_pending=0, mfa_source='passkey', reauth_at=?, reauth_method='passkey', passkey_id=? WHERE id=?`, db.now(), pk.id, ctx.session.id);
     audit.log({ user: who, action: 'auth.login', ip: ctx.ip, details: { mfa: true, method: 'passkey', passkey: pk.id } });
     return { user: A.publicUser(user), mfaPending: false };
   }
@@ -296,7 +342,7 @@ function loginFinish(ctx, { credential }) {
     throw new HttpError(403, 'This organisation requires single sign-on. Use the county sign-in button instead.', { ssoRequired: true });
   }
   db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db.now(), user.id);
-  const token = A.createSession(user, ctx, { mfaPending: false, mfaSource: 'passkey', reauthMethod: 'passkey' });
+  const token = A.createSession(user, ctx, { mfaPending: false, mfaSource: 'passkey', reauthMethod: 'passkey', passkeyId: pk.id });
   if (emergency) console.warn(`[suds] emergency (break-glass) passkey sign-in by ${user.username} while single sign-on is required`);
   audit.log({ user: who, action: 'auth.login', ip: ctx.ip, details: { method: 'passkey', passkey: pk.id, ...(emergency ? { emergency_account: true } : {}) } });
   return { token, user: A.publicUser(user), mfaPending: false, mfaSetupRequired: false, mfaSetupDeadline: null };
@@ -307,8 +353,9 @@ function loginFinish(ctx, { credential }) {
 // from the record as it is now. The same function is called when the challenge is issued and again when the
 // signature arrives (by the route, as `bind`), so a confirmation for record A cannot sign record B, and one for a
 // record that has changed since cannot sign it either. Each checks the caller may act on what it names.
-const noteHash = (n, userId) => sha256(`${n.id}|${userId}|${n.content_enc}|${n.structured_enc || ''}`);
-const cosignHash = (n, userId) => sha256(`${n.id}|${userId}|cosign|${n.content_enc}|${n.structured_enc || ''}`);
+// A note is bound by its PLAINTEXT content hash (server/note-signature.js contentHash), which a key rotation does not
+// change, so the evidence verifies afterwards (the owner's decision, docs/FINGERPRINT.md).
+const NS = require('./note-signature');
 const listHash = (rows) => sha256(W.canonical(rows));
 function loadNote(ctx, id) {
   const n = typeof id === 'string' ? db.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id) : null;
@@ -321,12 +368,15 @@ const idList = (ids, max) => {
   return [...new Set(ids)].sort();
 };
 const BINDINGS = {
-  'note.sign': (ctx, p) => { const n = loadNote(ctx, p.note_id); if (n.author_id !== ctx.user.id) throw forbidden('Only the author can sign a note'); return { record_type: 'note', record_ids: [n.id], content: noteHash(n, ctx.user.id) }; },
-  'note.cosign': (ctx, p) => { const n = loadNote(ctx, p.note_id); if (!auth().hasPerm(ctx.user, 'notes:cosign')) throw forbidden(); return { record_type: 'note', record_ids: [n.id], content: cosignHash(n, ctx.user.id) }; },
+  'note.sign': (ctx, p) => { const n = loadNote(ctx, p.note_id); if (n.author_id !== ctx.user.id) throw forbidden('Only the author can sign a note'); return { record_type: 'note', record_ids: [n.id], content: NS.contentHash(n, ctx.user.id, 'sign') }; },
+  'note.cosign': (ctx, p) => { const n = loadNote(ctx, p.note_id); if (!auth().hasPerm(ctx.user, 'notes:cosign')) throw forbidden(); return { record_type: 'note', record_ids: [n.id], content: NS.contentHash(n, ctx.user.id, 'cosign') }; },
+  // Each note's own content hash is in the statement (`items`), and `content` is the hash of that list: the evidence
+  // then shows, for any one note, that its hash was among those countersigned (verifyNoteEvidence, step 5).
   'note.cosign-batch': (ctx, p) => {
     if (!auth().hasPerm(ctx.user, 'notes:cosign')) throw forbidden();
     const ids = idList(p.ids, 100);
-    return { record_type: 'note', record_ids: ids, content: listHash(ids.map(id => { const n = db.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id); return [id, n && auth().canAccessClient(ctx.user, n.client_id) ? cosignHash(n, ctx.user.id) : null]; })) };
+    const items = ids.map(id => { const n = db.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id); return [id, n && auth().canAccessClient(ctx.user, n.client_id) ? NS.contentHash(n, ctx.user.id, 'cosign') : null]; });
+    return { record_type: 'note', record_ids: ids, content: listHash(items), items };
   },
   'time.approve': (ctx, p) => {
     if (!auth().hasPerm(ctx.user, 'time:approve')) throw forbidden();
@@ -362,7 +412,7 @@ function signingOptions(ctx, purpose, params) {
   const b = bindingFor(ctx, purpose, params);
   const creds = db.all(`SELECT * FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, ctx.user.id);
   if (!creds.length) throw badRequest('You have no passkey yet. Add one under My profile → Fingerprint sign-in.');
-  const statement = { v: 1, purpose: b.purpose, record_type: b.record_type, record_ids: b.record_ids, content: b.content, user_id: ctx.user.id, rp_id: rp.rpId,
+  const statement = { v: 1, purpose: b.purpose, record_type: b.record_type, record_ids: b.record_ids, content: b.content, ...(b.items ? { items: b.items } : {}), user_id: ctx.user.id, rp_id: rp.rpId,
     issued_at: new Date().toISOString(), nonce: crypto.randomBytes(16).toString('hex') };
   const challenge = issue({ purpose: `sign:${b.purpose}`, userId: ctx.user.id, sessionId: ctx.session.id, statement });
   return { statement_hash: W.fromB64url(challenge).toString('hex'), publicKey: { challenge, rpId: rp.rpId, timeout: TIMEOUT_MS, userVerification: 'required', allowCredentials: creds.map(descriptor) } };
@@ -386,11 +436,10 @@ function confirm(ctx, credential, bind, { action }) {
     if (locked) throw new HttpError(423, `${message} The account is now locked after too many failed attempts.`);
     throw new HttpError(403, message, { passkeyError: reason });
   };
-  let row, challenge;
+  let row;
   try {
     if (!credential || typeof credential !== 'object' || !credential.response) throw new W.WebAuthnError('shape', 'The passkey response is missing');
-    challenge = challengeOf(credential);
-    row = take(challenge, { purpose: `sign:${bind.purpose}`, userId: ctx.user.id, sessionId: ctx.session && ctx.session.id });
+    row = take(challengeOf(credential), { purpose: `sign:${bind.purpose}`, userId: ctx.user.id, sessionId: ctx.session && ctx.session.id });
   } catch (e) { if (e instanceof W.WebAuthnError) refuse(e.code, e.message, { counts: false }); throw e; }
   const st = row.statement || {};
   if (st.record_type !== bind.record_type || W.canonical(st.record_ids) !== W.canonical(bind.record_ids)) refuse('another record', 'That fingerprint confirmation was for a different record. Confirm again for this one.', { counts: false });
@@ -399,7 +448,7 @@ function confirm(ctx, credential, bind, { action }) {
   const pk = findByCredential(credential.id);
   if (!pk || pk.user_id !== ctx.user.id) refuse('unknown passkey', 'That passkey is not one of yours on SUDS.', { counts: false });
   let r;
-  try { r = checkAssertion(ctx, credential, pk, rp, challenge); }
+  try { r = checkAssertion(ctx, credential, pk, rp, row.challengeHash); }
   catch (e) { if (e instanceof W.WebAuthnError) refuse(e.code, e.message, { counts: !['flagged', 'counter', 'rpid'].includes(e.code) }); throw e; }
   A.clearFailures(ctx.user.id);
   // statement_hash: SHA-256 of the canonical statement, which is the challenge the device signed (the challenge row's
@@ -417,15 +466,58 @@ function confirm(ctx, credential, bind, { action }) {
   return id;
 }
 
-/** The stored evidence for a record, each re-verified (server/webauthn.js verifyEvidence). `purpose` narrows it. */
+/**
+ * The enrolment record of a passkey, from the hash-chained audit log (auth.passkey.enrolled): { audit_id, at, user_id,
+ * spki_sha256, credential_sha256 }, or null. It outlives the passkey (the audit log is kept), so evidence can still be
+ * tied to the key accepted at enrolment once the passkey is removed.
+ */
+function enrolmentOf(passkeyId) {
+  if (!passkeyId) return null;
+  const a = db.one(`SELECT id, at, user_id, details FROM audit_log WHERE action='auth.passkey.enrolled' AND entity='passkey' AND entity_id=? ORDER BY id LIMIT 1`, passkeyId);
+  if (!a) return null;
+  let d = {}; try { d = JSON.parse(a.details || '{}'); } catch { d = {}; }
+  if (!d.spki_sha256 || !d.credential_sha256) return null;
+  return { audit_id: a.id, at: a.at, user_id: a.user_id, spki_sha256: d.spki_sha256, credential_sha256: d.credential_sha256 };
+}
+/**
+ * The stored evidence for a record, each re-verified (server/webauthn.js verifyEvidence) against the enrolment
+ * record of its passkey (the key in the evidence must be the one enrolled, by the signer). `purpose` narrows it.
+ */
 function evidenceFor(recordType, recordId, { purpose = null } = {}) {
   const rows = db.all(`SELECT * FROM signature_evidence WHERE record_type=? AND EXISTS (SELECT 1 FROM json_each(signature_evidence.record_ids) WHERE value=?) ${purpose ? 'AND purpose=?' : ''} ORDER BY created_at`,
     recordType, recordId, ...(purpose ? [purpose] : []));
   return rows.map((r) => {
     let ev = null; try { ev = JSON.parse(decrypt(r.evidence_enc)); } catch { ev = null; }
-    const check = ev ? W.verifyEvidence(ev) : { ok: false, reason: 'unreadable' };
-    return { id: r.id, purpose: r.purpose, user_id: r.user_id, created_at: r.created_at, statement_hash: r.statement_hash, evidence: ev, verified: check.ok, checks: check.checks, reason: check.reason };
+    const enrolment = ev ? enrolmentOf(ev.passkey_id) : null;
+    const anchor = enrolment && enrolment.user_id === r.user_id ? enrolment : null;
+    const check = ev ? W.verifyEvidence(ev, { anchor }) : { ok: false, reason: 'unreadable' };
+    const signerOk = !!ev && !!ev.statement && ev.statement.user_id === r.user_id;
+    const verified = check.ok && signerOk;
+    return { id: r.id, purpose: r.purpose, user_id: r.user_id, created_at: r.created_at, statement_hash: r.statement_hash, evidence: ev, enrolment, verified, checks: check.checks,
+      reason: verified ? null : !signerOk && check.ok ? 'signer' : check.reason };
   });
+}
+/**
+ * A note's fingerprint evidence, checked against the note as it is now (GET /api/notes/:id/verify, step 5): the
+ * evidence verifies, names this note, was given by `signerId`, and its statement's content is the note's plaintext
+ * content hash now — directly for a signature or a countersignature, and for a countersignature given with others
+ * (note.cosign-batch) as this note's entry in the statement's list, whose hash is the statement's content.
+ * Returns { verified, at, reason } for the latest such evidence, or null when there is none.
+ */
+function noteEvidence(n, act, signerId) {
+  const purposes = act === 'sign' ? ['note.sign'] : ['note.cosign', 'note.cosign-batch'];
+  const all = purposes.flatMap(p => evidenceFor('note', n.id, { purpose: p })).filter(e => e.user_id === signerId).sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+  const ev = all.pop();
+  if (!ev) return null;
+  const st = ev.evidence && ev.evidence.statement;
+  const want = NS.contentHash(n, signerId, act);
+  let content = false;
+  if (st && st.record_ids.includes(n.id)) {
+    if (ev.purpose === 'note.cosign-batch') content = Array.isArray(st.items) && listHash(st.items) === st.content && st.items.some(x => Array.isArray(x) && x[0] === n.id && x[1] === want);
+    else content = st.content === want;
+  }
+  const verified = ev.verified && content;
+  return { verified, at: ev.created_at, content_hash: want, reason: verified ? null : !ev.verified ? ev.reason : 'content' };
 }
 
 /** Passkey adoption, for Settings → Security status: accounts with one, and how many there are. */
@@ -440,5 +532,5 @@ function adoption() {
   return { active, with_passkey: withKey, total, flagged, sign_ins_30d: signIns, confirmations_30d: signatures };
 }
 
-module.exports = { CHALLENGE_MS, MAX_PER_USER, PURPOSES, relyingParty, availability, issue, take, list, remove, rename, registrationOptions, registrationFinish,
-  loginOptions, loginFinish, bindingFor, signingOptions, confirm, evidenceFor, adoption, userHandle };
+module.exports = { CHALLENGE_MS, MAX_PER_USER, MAX_OPEN_PER_IP, PURPOSES, relyingParty, configuredRpId, availability, issue, take, purge, list, remove, rename, registrationOptions, registrationFinish,
+  loginOptions, loginFinish, bindingFor, signingOptions, confirm, evidenceFor, enrolmentOf, noteEvidence, adoption, userHandle };

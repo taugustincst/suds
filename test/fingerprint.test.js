@@ -1,7 +1,9 @@
 'use strict';
 // Fingerprint sign-in, authorization and signing with passkeys (docs/FINGERPRINT.md): WebAuthn verified with
 // node:crypto alone (server/webauthn.js), driven here by a software authenticator (test/authenticator.js) that
-// answers the way a phone does once the finger has matched, and can be bent to answer the ways it must not.
+// answers the way a phone does once the finger has matched, and can be bent to answer the ways it must not. Every test
+// sets up what it needs (its own people, notes and passkeys), so any one runs on its own and in any order; the review's
+// fixes are in test/fingerprint-review.test.js.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('node:crypto');
@@ -13,14 +15,18 @@ const config = require('../server/config');
 
 const PW = 'StaffPassw0rd!x';
 const APW = 'AdminPassw0rd!x';
-let admin, base, clientId, fundId;
-const today = new Date().toISOString().slice(0, 10);
+let admin, base, clientId;
+// Dates are worked out when each test runs, from today: nothing here stops working on a given day.
+const today = () => new Date().toISOString().slice(0, 10);
+const yearFrom = (years) => { const d = new Date(); d.setUTCFullYear(d.getUTCFullYear() + years); return d.toISOString().slice(0, 10); };
+const newFund = async () => (await admin.post('/api/budget/funds', { name: `Passkey fund ${crypto.randomUUID().slice(0, 8)}`, source_type: 'other', fiscal_year_start: yearFrom(-1), fiscal_year_end: yearFrom(1), total_amount: 100000 })).data.id;
+const resetLimits = () => { const app = require('../server/app'); for (const k of ['passkey-options:127.0.0.1', 'login:127.0.0.1']) app.rateLimitReset(k); };
 
 before(async () => {
   base = await H.start();
   admin = H.client(); await admin.login('admin', APW);
+  // The one shared record: a client every role in these tests may see (navigators and clinicians hold clients:all).
   clientId = (await admin.post('/api/clients', { first_name: 'Finger', last_name: 'Print' })).data.id;
-  fundId = (await admin.post('/api/budget/funds', { name: 'Passkey fund', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2027-12-31', total_amount: 100000 })).data.id;
 });
 after(H.stop);
 
@@ -37,6 +43,7 @@ async function enrol(c, a, { password = PW, code, name = 'Test phone', bend } = 
   return c.post('/api/auth/passkeys/register', { credential: a.create(o.data.publicKey, bend), name });
 }
 async function passkeyLogin(a, { username, bend, client: c = H.client() } = {}) {
+  resetLimits();
   const o = await c.post('/api/auth/passkeys/login/options', username ? { username } : {});
   assert.equal(o.status, 200, JSON.stringify(o.data));
   const r = await c.post('/api/auth/passkeys/login', { credential: a.get(o.data.publicKey, bend) });
@@ -51,6 +58,15 @@ async function confirmWith(c, a, purpose, params = {}, bend) {
 const draft = async (c, content = 'Met at the drop-in; talked about detox.') => (await c.post('/api/notes', { client_id: clientId, kind: 'admin', title: 'Visit', content, occurred_at: new Date().toISOString() })).data.id;
 const stale = (userId) => H.db.run(`UPDATE sessions SET reauth_at=? WHERE user_id=? AND revoked_at IS NULL`, new Date(Date.now() - 60 * 60000).toISOString(), userId);
 const setting = (k, v) => { if (v === null) H.db.run(`DELETE FROM settings WHERE key=?`, k); else H.db.setSetting(k, v); };
+/** A note signed with a fingerprint by a new person: { u, c, a, note, evId }. */
+async function signedWithFingerprint(prefix) {
+  const p = await person(`${prefix}_${crypto.randomUUID().slice(0, 6)}`);
+  const a = key(); assert.equal((await enrol(p.c, a)).status, 201);
+  const note = await draft(p.c, `Signed with a fingerprint (${prefix})`);
+  const r = await p.c.post(`/api/notes/${note}/sign`, { passkey: await confirmWith(p.c, a, 'note.sign', { note_id: note }) });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  return { ...p, a, note, evId: JSON.parse(H.db.one(`SELECT details FROM audit_log WHERE action='note.sign' AND entity_id=?`, note).details).evidence };
+}
 
 // ---------------------------------------------------------------- the verifier on its own
 test('CBOR, authenticator data and COSE keys: ES256, EdDSA and RS256 turn into public keys that verify', () => {
@@ -86,7 +102,7 @@ test('enrolment: the password again, then the device\'s new key; only the public
   assert.equal(pk.authenticatorSelection.authenticatorAttachment, 'platform', 'the device\'s own authenticator');
   assert.equal(pk.attestation, 'none', 'no attestation: nothing about the device beyond its model id');
   assert.equal(pk.rp.id, '127.0.0.1');
-  assert.deepEqual(pk.pubKeyCredParams.map(p => p.alg), [-7, -8, -257]);
+  assert.deepEqual(pk.pubKeyCredParams.map(p => p.alg), [-7, -8, -19, -257]);
   assert.equal(W.fromB64url(pk.challenge).length, 32, 'a random 32-byte challenge');
   const a = key();
   const r = await c.post('/api/auth/passkeys/register', { credential: a.create(pk), name: "Maria's iPhone" });
@@ -136,7 +152,7 @@ test('enrolment refuses a wrong origin, another site\'s RP ID, no fingerprint ch
 });
 
 // ---------------------------------------------------------------- sign-in
-test('sign in with fingerprint: a discoverable passkey, or the username then the passkey; the session needs no code', async () => {
+test('sign in with fingerprint: a discoverable passkey, with or without a username typed; the session needs no code', async () => {
   const { u, c } = await person('fp_login');
   const a = key(); await enrol(c, a);
   const { r, c: s } = await passkeyLogin(a);
@@ -146,13 +162,10 @@ test('sign in with fingerprint: a discoverable passkey, or the username then the
   const sess = H.db.one(`SELECT mfa_source, reauth_method, mfa_pending FROM sessions WHERE user_id=? ORDER BY created_at DESC LIMIT 1`, u.id);
   assert.deepEqual({ ...sess }, { mfa_source: 'passkey', reauth_method: 'passkey', mfa_pending: 0 });
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='auth.login' AND user_id=? AND details LIKE '%"method":"passkey"%'`, u.id), 'audited as a passkey sign-in');
-  // Username first: the options list that account's passkeys; a username nobody has gets a made-up one.
+  // A username typed first changes nothing: the options never list an account's credentials (test/fingerprint-review).
   const named = await passkeyLogin(a, { username: 'fp_login' });
-  assert.deepEqual(named.options.publicKey.allowCredentials.map(x => x.id), [a.id]);
+  assert.deepEqual(named.options.publicKey.allowCredentials, []);
   assert.equal(named.r.status, 200);
-  const nobody = await H.client().post('/api/auth/passkeys/login/options', { username: 'nobody_here' });
-  assert.equal(nobody.data.publicKey.allowCredentials.length, 1, 'the answer looks the same for a username nobody has');
-  assert.equal((await H.client().post('/api/auth/passkeys/login/options', { username: 'nobody_here' })).data.publicKey.allowCredentials[0].id, nobody.data.publicKey.allowCredentials[0].id, 'and the same each time');
   assert.equal(H.db.one(`SELECT sign_count FROM passkeys WHERE credential_id=?`, a.id).sign_count, 2, 'the counter follows the device');
   // No CSRF header, no options.
   const raw = await fetch(base + '/api/auth/passkeys/login/options', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
@@ -338,10 +351,10 @@ test('signing a note with a fingerprint: bound to that note and its content; A\'
   assert.match(evRow.evidence_enc, /^v1:/, 'encrypted at rest');
   assert.equal(evRow.record_type, 'note'); assert.deepEqual(JSON.parse(evRow.record_ids), [A]);
   const ev = JSON.parse(decrypt(evRow.evidence_enc));
-  assert.equal(ev.statement.content, ok.data.signature_hash, 'the statement names the signature hash');
+  assert.equal(ev.statement.content, require('../server/note-signature').contentHash(H.db.one(`SELECT * FROM notes WHERE id=?`, A), u.id, 'sign'), 'the statement names the note\'s content hash');
   assert.equal(ev.statement.user_id, u.id); assert.equal(ev.statement.purpose, 'note.sign');
   assert.ok(ev.statement.nonce && ev.statement.issued_at);
-  assert.deepEqual(W.verifyEvidence(ev), { ok: true, checks: { statement: true, type: true, rp: true, flags: true, signature: true }, reason: null }, 'verifies offline with nothing but the evidence');
+  assert.deepEqual(W.verifyEvidence(ev), { ok: true, checks: { statement: true, type: true, rp: true, origin: true, flags: true, signature: true }, reason: null }, 'verifies offline with nothing but the evidence');
   assert.equal(W.verifyEvidence({ ...ev, statement: { ...ev.statement, record_ids: [B] } }).ok, false, 'a statement changed afterwards does not');
   assert.equal(W.verifyEvidence({ ...ev, public_key: key().keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64') }).ok, false, 'nor under another key');
   const v = (await c.get(`/api/notes/${A}/verify`)).data;
@@ -386,6 +399,7 @@ test('a challenge is bound to its user and session: another person\'s, or anothe
 });
 
 test('countersigning (one note and a batch) with a fingerprint', async () => {
+  resetLimits();
   const w = await person('fp_writer'); const s = await person('fp_super', 'supervisor');
   await admin.post(`/api/clients/${clientId}/assignments`, { user_id: w.u.id, role_on_case: 'secondary' });
   const a = key(); await enrol(s.c, a);
@@ -408,7 +422,7 @@ test('countersigning (one note and a batch) with a fingerprint', async () => {
 test('approving time with a fingerprint: bound to the entries and the decision', async () => {
   const w = await person('fp_timew'); const s = await person('fp_times', 'supervisor');
   const a = key(); await enrol(s.c, a);
-  const mk = async () => { const t = (await w.c.post('/api/time', { work_date: today, minutes: 45, category: 'documentation' })).data.id; await w.c.post(`/api/time/${t}/submit`, {}); return t; };
+  const mk = async () => { const t = (await w.c.post('/api/time', { work_date: today(), minutes: 45, category: 'documentation' })).data.id; await w.c.post(`/api/time/${t}/submit`, {}); return t; };
   const t1 = await mk(); const t2 = await mk(); const t3 = await mk();
   // Without a fingerprint, approval works as before (no proof asked by default).
   assert.equal((await s.c.post(`/api/time/${t3}/approve`, { decision: 'approved' })).status, 200);
@@ -431,7 +445,8 @@ test('approving time with a fingerprint: bound to the entries and the decision',
 test('approving spending with a fingerprint', async () => {
   const w = await person('fp_expw'); const s = await person('fp_exps', 'supervisor');
   const a = key(); await enrol(s.c, a);
-  const mk = async (amount) => (await w.c.post('/api/budget/expenditures', { funding_source_id: fundId, spent_at: today, amount, category: 'client_assistance' })).data.id;
+  const fundId = await newFund();
+  const mk = async (amount) => (await w.c.post('/api/budget/expenditures', { funding_source_id: fundId, spent_at: today(), amount, category: 'client_assistance' })).data.id;
   const e1 = await mk(10); const e2 = await mk(20);
   const forE1 = await confirmWith(s.c, a, 'expenditure.approve', { id: e1, status: 'approved' });
   assert.equal((await s.c.post(`/api/budget/expenditures/${e2}/approve`, { status: 'approved', passkey: forE1 })).data.passkeyError, 'another record');
@@ -462,13 +477,13 @@ test('"Require fingerprint or authenticator for signing": the password alone no 
     const n2 = await draft(c);
     assert.equal((await c.post(`/api/notes/${n2}/sign`, { confirm: true })).status, 200, 'and a window it opened counts');
     // Approvals now need it too.
-    const t = (await c.post('/api/time', { work_date: today, minutes: 30, category: 'documentation' })).data.id; await c.post(`/api/time/${t}/submit`, {});
+    const t = (await c.post('/api/time', { work_date: today(), minutes: 30, category: 'documentation' })).data.id; await c.post(`/api/time/${t}/submit`, {});
     stale(s.u.id);
     const none = await s.c.post(`/api/time/${t}/approve`, { decision: 'approved' });
     assert.equal(none.status, 403); assert.equal(none.data.strongRequired, true);
     assert.equal((await s.c.post(`/api/time/${t}/approve`, { decision: 'approved', passkey: await confirmWith(s.c, sa, 'time.approve', { ids: [t], decision: 'approved' }) })).status, 200);
     // Returning time still needs nothing.
-    const t2 = (await c.post('/api/time', { work_date: today, minutes: 30, category: 'documentation' })).data.id; await c.post(`/api/time/${t2}/submit`, {});
+    const t2 = (await c.post('/api/time', { work_date: today(), minutes: 30, category: 'documentation' })).data.id; await c.post(`/api/time/${t2}/submit`, {});
     assert.equal((await s.c.post(`/api/time/${t2}/approve`, { decision: 'rejected', note: 'wrong day' })).status, 200);
   } finally { setting('sign_strong_required', null); }
 });
@@ -500,8 +515,10 @@ test('where passkeys cannot work: plain http on a real host name, another host, 
     assert.throws(() => P.relyingParty(ctx('other.example', { 'x-forwarded-proto': 'https' })), /set up for suds\.county\.example/, 'another host is refused');
     const rp = P.relyingParty(ctx('suds.county.example', { 'x-forwarded-proto': 'https' }));
     assert.deepEqual(rp.origins, ['https://suds.county.example']);
-    config.isProd = true; config.webauthn.rpId = '';
+    config.isProd = true; config.webauthn.rpId = 'localhost';
     assert.throws(() => P.relyingParty(ctx('localhost:8080')), /HTTPS/, 'in production even localhost needs HTTPS');
+    config.webauthn.rpId = '';
+    assert.throws(() => P.relyingParty(ctx('suds.county.example', { 'x-forwarded-proto': 'https' })), /WEBAUTHN_RP_ID/, 'and production needs the relying party configured');
   } finally { Object.assign(config.webauthn, saved); config.trustProxy = wasProxy; config.isProd = wasProd; }
   // A device (SUDS on this device): no passkey route in its kernel, no policy, no relying party.
   assert.ok(!require('../server/app').LOCAL_ROUTE_MODULES.includes('passkeys'), 'the local kernel has no passkey routes');
@@ -516,28 +533,33 @@ test('where passkeys cannot work: plain http on a real host name, another host, 
 });
 
 test('audit entries carry no secret: no signature, client data, public key or challenge', async () => {
+  // Its own passkey sign-in, signature, countersignature and approval first, so it checks something whatever ran before.
+  const s = await signedWithFingerprint('fp_secret');
+  assert.equal((await passkeyLogin(s.a)).r.status, 200);
+  const sup = await person(`fp_secret_sup_${crypto.randomUUID().slice(0, 6)}`, 'supervisor'); const sa = key(); await enrol(sup.c, sa);
+  await s.c.post(`/api/notes/${s.note}/request-cosign`, {});
+  assert.equal((await sup.c.post(`/api/notes/${s.note}/cosign`, { passkey: await confirmWith(sup.c, sa, 'note.cosign', { note_id: s.note }) })).status, 200);
+  const t = (await s.c.post('/api/time', { work_date: today(), minutes: 15, category: 'documentation' })).data.id; await s.c.post(`/api/time/${t}/submit`, {});
+  assert.equal((await sup.c.post(`/api/time/${t}/approve`, { decision: 'approved', passkey: await confirmWith(sup.c, sa, 'time.approve', { ids: [t], decision: 'approved' }) })).status, 200);
   const rows = H.db.all(`SELECT details FROM audit_log WHERE details IS NOT NULL AND (action LIKE 'auth.%' OR action LIKE 'note.%' OR action LIKE 'time.%' OR action LIKE 'expenditure.%' OR action LIKE 'user.passkeys%')`);
   const keys = H.db.all(`SELECT public_key, credential_id FROM passkeys`);
   const ev = H.db.all(`SELECT evidence_enc FROM signature_evidence`).map(r => JSON.parse(decrypt(r.evidence_enc)));
-  assert.ok(ev.length > 3 && keys.length > 3);
+  assert.ok(ev.length >= 3 && keys.length >= 2, "there is something to check");
   for (const r of rows) {
     for (const k of keys) { assert.ok(!r.details.includes(k.public_key.slice(20, 60)), 'no public key'); assert.ok(!r.details.includes(k.credential_id), 'no credential id'); }
     for (const e of ev) { assert.ok(!r.details.includes(e.signature.slice(0, 30)), 'no signature'); assert.ok(!r.details.includes(e.client_data_json.slice(0, 30)), 'no client data'); assert.ok(!r.details.includes(e.statement.nonce), 'no statement nonce'); }
   }
 });
 
-test('key rotation re-encrypts the signature evidence like any other _enc column', () => {
+// The rotation itself (scripts/rotate-key.js run on a copy of the database, and the evidence verified afterwards) is
+// in test/fingerprint-review.test.js; this is that rotation finds the column and that it never leaves the office.
+test('key rotation finds the signature evidence like any other _enc column, and it is kept at the office', () => {
   const { encryptedColumns } = require('../scripts/rotate-key');
   const t = encryptedColumns(H.db).find(x => x.table === 'signature_evidence');
   assert.deepEqual(t && t.cols, ['evidence_enc'], 'rotation finds it by itself');
   const SYNC = require('../server/sync-tables');
   assert.ok(SYNC.server_only.includes('signature_evidence') && SYNC.unsynced_enc.signature_evidence.includes('evidence_enc'), 'declared as kept at the office');
   for (const tbl of ['passkeys', 'webauthn_challenges']) assert.ok(SYNC.server_only.includes(tbl), `${tbl} never synchronises`);
-  const newKey = crypto.randomBytes(32);
-  const row = H.db.one(`SELECT id, evidence_enc FROM signature_evidence LIMIT 1`);
-  const rotated = encrypt(decrypt(row.evidence_enc), newKey);
-  const back = JSON.parse(decrypt(rotated, newKey));
-  assert.equal(W.verifyEvidence(back).ok, true, 'and it still verifies after a rotation');
 });
 
 test('the key backup download accepts a fingerprint: fresh by nature, and bound to that download', async () => {
@@ -565,14 +587,16 @@ test('the key backup download accepts a fingerprint: fresh by nature, and bound 
 
 test('an auditor exports the evidence and verifies it offline with scripts/verify-passkey-evidence.js', async () => {
   const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
-  const note = H.db.one(`SELECT n.id, n.signature_hash FROM notes n JOIN signature_evidence e ON e.record_ids LIKE '%' || n.id || '%' WHERE e.purpose='note.sign' LIMIT 1`);
+  const s = await signedWithFingerprint('fp_auditor');
+  const note = { id: s.note };
   const exp = (await admin.get(`/api/admin/signature-evidence?record_type=note&record_id=${note.id}`)).data;
+  const content = (await s.c.get(`/api/notes/${note.id}/verify`)).data.fingerprint.content_hash;
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='signature_evidence.view' AND entity_id=?`, note.id), 'the export is audited');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-fp-'));
   const file = path.join(dir, 'evidence.json');
   fs.writeFileSync(file, JSON.stringify(exp));
   const { run } = require('../scripts/verify-passkey-evidence');
-  const good = run([file, '--content', note.signature_hash]);
+  const good = run([file, '--content', content]);
   assert.equal(good.code, 0, good.lines.join('\n')); assert.match(good.lines.join('\n'), /All 1 verified/);
   assert.equal(run([file, '--content', 'f'.repeat(64)]).code, 1, 'a different content hash does not match');
   exp.rows[0].evidence.statement.record_ids = ['someone-else'];

@@ -78,6 +78,15 @@ const writesText = (c) => !c.existing || (c.existing.status === 'draft' && c.cha
 
 /** Does this push sign the note: a new note that is not a draft, or a draft that stops being one? */
 const signs = (row, c) => !!row.status && row.status !== 'draft' && (!c.existing || c.existing.status === 'draft');
+/**
+ * "Require fingerprint or authenticator for signing" (Settings → Security policy, docs/FINGERPRINT.md): a signature
+ * then needs a fingerprint or an authenticator code given to the office, which a device syncing a note it signed
+ * offline cannot have given (its signature rests on the device's password). So such a note lands as a DRAFT, flagged
+ * so the device says why, and audited (sync.conflict with flagged "strong_signing", and note.sign.failed); its author
+ * signs it at the office. REST signing enforces the same policy in auth.verifySigner. Never on a device itself.
+ */
+const strongSigningRequired = () => !require('../config').local && auth.policy().signStrongRequired;
+const STRONG_SIGNING_FLAG = 'was saved as a draft, not signed: your programme requires your fingerprint or an authenticator code to sign a note, which cannot be given from a device. Open the note in SUDS at the office address and sign it there.';
 
 module.exports = define({
   table: 'notes',
@@ -169,6 +178,11 @@ module.exports = define({
     // When it was signed is the device's to say (a legal fact, never shifted by its clock offset), but never before
     // the note was written nor after now (security review of 1.16.2, L1). A draft carries no signature columns at
     // all, whatever a device sent (L2).
+    const flags = [];
+    if (signs(row, c) && c.via === 'sync' && strongSigningRequired()) {
+      row.status = 'draft'; c.signRefused = true;
+      flags.push(flag(STRONG_SIGNING_FLAG, { code: 'strong_signing' }));
+    }
     if (signs(row, c)) {
       const now = db.now(); const ms = row.signed_at ? Date.parse(row.signed_at) : NaN;
       const at = Number.isFinite(ms) ? new Date(ms).toISOString() : now;
@@ -183,7 +197,8 @@ module.exports = define({
       const author = db.one(`SELECT requires_cosign FROM users WHERE id=?`, row.author_id || c.user.id);
       row.cosign_required = author && author.requires_cosign ? 1 : 0;
     }
-    return asserted ? flag('was accepted, but not the countersignature on it: a supervisor countersigns at the office, never by sync', { code: 'ruling' }) : null;
+    if (asserted) flags.push(flag('was accepted, but not the countersignature on it: a supervisor countersigns at the office, never by sync', { code: 'ruling' }));
+    return flags.length ? flags : null;
   },
   // A note signed on a device closes its reminder at the office too, as signing here does (routes/notes.js).
   // The signature is recomputed as POST /api/notes/:id/sign computes it, and audited as that route audits it.
@@ -193,10 +208,11 @@ module.exports = define({
       require('../audit').log({ user: c.user, action: 'note.ai_assisted', entity: 'note', entityId: row.id, clientId: c.existing ? c.existing.client_id : row.client_id, ip: 'device', details: { via: 'sync', cause: 'copilot_draft' } });
     }
     if (c.existing) reissueAddenda(row.id, c.existing.counseling_note, o.counseling_note ?? c.existing.counseling_note);
+    if (c.signRefused) require('../audit').log({ user: c.user, action: 'note.sign.failed', entity: 'note', entityId: row.id, clientId: c.existing ? c.existing.client_id : row.client_id, ip: 'device', success: false, details: { via: 'sync', reason: 'fingerprint or authenticator code required', kept: 'draft' } });
     if (c.existing && c.existing.status !== 'draft') return;
     const n = db.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required, ai_assisted FROM notes WHERE id=?`, row.id);
     if (!n || n.status === 'draft') return;
-    const hash = require('../crypto').sha256(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ''}`);
+    const hash = require('../note-signature').signatureHash(n, n.signed_by);
     db.run(`UPDATE notes SET signature_hash=? WHERE id=?`, hash, n.id);
     const reminders = closeSignReminders(n.author_id, n.id, n.client_id);
     require('../audit').log({ user: c.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: 'device', details: { hash, via: 'sync', cosign_required: !!n.cosign_required, reminders_closed: reminders.length ? reminders : undefined, ai_assisted: Number(n.ai_assisted) ? true : undefined, ai_reviewed: Number(n.ai_assisted) ? true : undefined } });
@@ -204,7 +220,7 @@ module.exports = define({
 });
 module.exports.closeSignReminders = closeSignReminders;
 module.exports.reissueAddenda = reissueAddenda;
-Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts, aiReviewed, keepAiAssisted });
+Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts, aiReviewed, keepAiAssisted, strongSigningRequired });
 
 /**
  * Who may read a SUD counseling note (42 CFR §2.11), restricted by design from 1.16.1 (the owner's decision): its

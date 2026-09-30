@@ -283,14 +283,15 @@ function caseloadFilter(user, col = 'c.id') {
 
 // ---- Sessions ----
 const COOKIE = 'suds_session';
-function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = 'password' } = {}) {
+function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = 'password', passkeyId = null } = {}) {
   const token = randomToken(32);
   const now = new Date();
   const expires = new Date(now.getTime() + policy().absoluteHours * 3600 * 1000);
   // Creating a session is the moment its user proved who they are (a password, a passkey, or the identity provider).
   // reauth_method says which: "Require fingerprint or authenticator for signing" counts only a passkey or a code.
-  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource, now.toISOString(), reauthMethod);
+  // passkey_id: the passkey that opened it, so removing that passkey ends it (server/passkeys.js remove).
+  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method,passkey_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource, now.toISOString(), reauthMethod, passkeyId);
   return token;
 }
 // ---- recent re-authentication (the electronic-signature step) ----
@@ -370,18 +371,15 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 
   // route's audit entry.
   if (passkey) {
     if (!bind) throw badRequest('A fingerprint confirmation is not accepted here');
+    // One proof at a time: a password or code sent with a fingerprint would go unchecked, and whatever is given must verify.
+    if (password || code) throw badRequest('Confirm with your fingerprint, or with your password or code, not both at once');
     ctx.signatureEvidence = require('./passkeys').confirm(ctx, passkey, bind, { action });
     markReauth(ctx, 'passkey'); return 'passkey';
   }
   // The programme requires a fingerprint or an authenticator code for signatures and approvals: the password alone
   // is refused (not a failed attempt: nothing was guessed).
   const strongHow = (st) => (st.passkey && st.totp ? 'Confirm with your fingerprint or enter the code from your authenticator app' : st.passkey ? 'Confirm with your fingerprint' : st.totp ? 'Enter the code from your authenticator app' : 'Set up fingerprint sign-in or two-step verification under My profile, then try again');
-  if (pol.signStrongRequired && password && !code) {
-    const st = reauthStatus(ctx);
-    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'password alone not accepted' } });
-    throw new HttpError(403, `Your programme requires your fingerprint or an authenticator code to ${purpose}; your password alone is not enough. ${strongHow(st)}.`, { reauthRequired: true, strongRequired: true, method: st.method, passkey: st.passkey, totp: st.totp });
-  }
-  if (password) {
+  const checkPassword = async () => {
     const limit = config.loginRateLimit;
     const app = require('./app');
     if (app.rateLimited(`login:${ctx.ip}`, limit)) throw new HttpError(429, 'Too many attempts. Try again later.');
@@ -390,11 +388,16 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 
       const locked = recordPasswordFailure(u);
       failed(locked ? { reason: 'locked after failures' } : undefined, locked ? 'Password verification failed. The account is now locked after too many failed attempts.' : 'Password verification failed');
     }
-    clearFailures(u.id);
-    markReauth(ctx, 'password'); return 'password';
-  }
+  };
+  // A code that is given must verify, whatever else comes with it: a password with a made-up code is not a password
+  // and a code (security review of the fingerprint work, finding 1). With both given, both are checked; the code is
+  // what counts (a fingerprint or a code is what "Require fingerprint or authenticator for signing" asks for).
   if (code) {
-    if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest('Two-step verification is not set up for your account; give your password instead');
+    if (!u.mfa_enabled || !u.mfa_secret_enc) {
+      audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { method: 'totp', reason: 'no authenticator set up' } });
+      throw badRequest(pol.signStrongRequired ? `Two-step verification is not set up for your account, and your programme requires your fingerprint or an authenticator code to ${purpose}. ${strongHow(reauthStatus(ctx))}.` : 'Two-step verification is not set up for your account; give your password instead');
+    }
+    if (password) await checkPassword();
     if (!require('./app').rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 60_000)) throw new HttpError(429, 'Too many attempts');
     const r = useTotp(u.id, u.mfa_secret_enc, code);
     if (r !== 'ok') {
@@ -404,6 +407,16 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 
     }
     clearFailures(u.id);
     markReauth(ctx, 'totp'); return 'totp';
+  }
+  if (password) {
+    if (pol.signStrongRequired) {
+      const st = reauthStatus(ctx);
+      audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'password alone not accepted' } });
+      throw new HttpError(403, `Your programme requires your fingerprint or an authenticator code to ${purpose}; your password alone is not enough. ${strongHow(st)}.`, { reauthRequired: true, strongRequired: true, method: st.method, passkey: st.passkey, totp: st.totp });
+    }
+    await checkPassword();
+    clearFailures(u.id);
+    markReauth(ctx, 'password'); return 'password';
   }
   const st = reauthStatus(ctx);
   // Key custody (fresh: the key backup) has no window: the password or code with this very request, or, for an
@@ -743,8 +756,9 @@ function publicUser(u) {
     mfa_enabled: !!u.mfa_enabled, must_change_password: !!u.must_change_password, permissions: eff.allow,
     denied_permissions: eff.deny,
     mfa_required: policy().mfaRequiredRoles.includes(u.role), mfa_setup_deadline: mfaDeadline(u), caseload_restricted: caseloadRestricted(u),
-    // How many passkeys (fingerprint sign-in, docs/FINGERPRINT.md) the account has; 0 on a device.
-    passkeys: passkeyCount(u.id) };
+    // How many passkeys (fingerprint sign-in, docs/FINGERPRINT.md) the account has; 0 on a device. passkey_mfa: whether
+    // they count as its two-step verification, which they do only while fingerprint sign-in is allowed (mfaDeadline).
+    passkeys: passkeyCount(u.id), passkey_mfa: policy().passkeySignin && passkeyCount(u.id) > 0 };
 }
 
 function passwordPolicy(pw) {

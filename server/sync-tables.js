@@ -192,7 +192,7 @@ module.exports = {
     ['county_signing_keys', 'created_by'], ['county_signing_keys', 'retired_by'], ['county_programmes', 'created_by'], ['county_programme_keys', 'added_by'], ['county_programme_keys', 'replaced_by'],
     ['county_programme_keys', 'compromised_by'], ['county_submissions', 'received_by'], ['county_submissions', 'withdrawn_by'],
     ['county_connect_tokens', 'created_by'], ['county_connect_tokens', 'revoked_by'], ['county_connection', 'updated_by'], ['county_connect_sends', 'sent_by'],
-    ['passkeys', 'user_id'], ['signature_evidence', 'user_id'],
+    ['passkeys', 'user_id'], ['signature_evidence', 'user_id'], ['webauthn_challenges', 'user_id'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.

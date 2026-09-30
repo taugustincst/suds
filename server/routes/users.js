@@ -164,8 +164,12 @@ module.exports = (r) => {
     if (v.is_active === 0) auth.revokeAllForUser(u.id);
     // Their secure referral links that could still be opened are withdrawn (server/referral-links.js).
     if (v.is_active === 0 && u.is_active) require('../referral-links').revokeForUser(u.id, ctx.user);
-    // And their passkeys (fingerprint sign-in, docs/FINGERPRINT.md): re-enabling the account later does not bring them back.
-    const passkeysRemoved = v.is_active === 0 && !require('../config').local ? require('../passkeys').remove(u.id, { actor: ctx.user, ip: ctx.ip, cause: 'deactivated' }) : 0;
+    // And their passkeys (fingerprint sign-in, docs/FINGERPRINT.md): re-enabling the account later does not bring them
+    // back. Resetting their two-step verification or their password takes them too: both are how an administrator
+    // recovers an account someone else may have had, and a passkey is a way in and a second factor like the code
+    // (each removal audited as auth.passkey.removed with the cause, and the sessions they opened end with them).
+    const passkeyCause = v.is_active === 0 ? 'deactivated' : ctx.body.reset_mfa ? 'two-step verification reset' : v.password ? 'password reset' : null;
+    const passkeysRemoved = passkeyCause && !require('../config').local ? require('../passkeys').remove(u.id, { actor: ctx.user, ip: ctx.ip, cause: passkeyCause }) : 0;
     // Deactivating someone, or resetting their password from here, ends their hold on client records on
     // every phone they sync from too: each of their devices is told to erase itself at its next sync. The
     // wipe is answered before the credentials are (server/auth.js login()), so an inactive account or an

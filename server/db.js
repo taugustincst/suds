@@ -722,13 +722,7 @@ const migrations = [
     addColumn(d, 'caloms_submissions', 'uploaded_at', 'TEXT');
     addColumn(d, 'caloms_submissions', 'uploaded_by', 'TEXT REFERENCES users(id)');
     addColumn(d, 'caloms_submissions', 'dhcs_reference', 'TEXT');
-    const schemaText = safeSchema();
-    for (const t of ['caloms_submission_events', 'referral_links']) {
-      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-      if (!m) throw new Error(`migration 55: no definition for ${t} in schema`);
-      d.exec(m[0]);
-      for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
-    }
+    createTablesFromSchema(d, safeSchema(), ['caloms_submission_events', 'referral_links'], 55);
   },
   // 56: the county view (docs/COUNTY-VIEW.md): county_signing_keys (the keys a programme signs its county
   //     submission files with, current and retired), and on a county's server county_programmes (the programmes
@@ -736,13 +730,7 @@ const migrations = [
   //     county_submissions (the files it imported). Office server only. Self-contained and idempotent, so it can be
   //     renumbered.
   (d) => {
-    const schemaText = safeSchema();
-    for (const t of ['county_signing_keys', 'county_programmes', 'county_programme_keys', 'county_submissions']) {
-      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-      if (!m) throw new Error(`migration 56: no definition for ${t} in schema`);
-      d.exec(m[0]);
-      for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
-    }
+    createTablesFromSchema(d, safeSchema(), ['county_signing_keys', 'county_programmes', 'county_programme_keys', 'county_submissions'], 56);
   },
   // 57: the county connection (docs/COUNTY-VIEW.md, "Connecting"): county_connect_tokens (on a county's server, the
   //     connection and read tokens it issues, hashed), county_connection and county_connect_sends (on a programme's
@@ -750,32 +738,35 @@ const migrations = [
   //     Kept apart from 56 (the county view) so the two can be reviewed and renumbered separately; self-contained
   //     and idempotent.
   (d) => {
-    const schemaText = safeSchema();
-    for (const t of ['county_connect_tokens', 'county_connection', 'county_connect_sends']) {
-      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-      if (!m) throw new Error(`migration 57: no definition for ${t} in schema`);
-      d.exec(m[0]);
-      for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
-    }
+    createTablesFromSchema(d, safeSchema(), ['county_connect_tokens', 'county_connection', 'county_connect_sends'], 57);
   },
   // 58: fingerprint sign-in and signing with passkeys (1.19.0, docs/FINGERPRINT.md): passkeys (each credential's
   //     public key, id, counter and its owner's name for it; never a fingerprint), webauthn_challenges (hashed,
   //     single-use, two minutes) and signature_evidence (a passkey-confirmed signature's statement and assertion,
-  //     encrypted), all office-server only; and sessions.reauth_method, how the session last proved who is using it.
+  //     encrypted), all office-server only; and sessions.reauth_method, how the session last proved who is using it,
+  //     and sessions.passkey_id, the passkey that signed it in (removing the passkey ends the session).
   //     New tables and a new column: nothing to backfill. Self-contained and idempotent, so it can be renumbered.
   (d) => {
     addColumn(d, 'sessions', 'reauth_method', 'TEXT');
-    const schemaText = safeSchema();
-    for (const t of ['passkeys', 'webauthn_challenges', 'signature_evidence']) {
-      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-      if (!m) throw new Error(`migration 58: no definition for ${t} in schema`);
-      d.exec(m[0]);
-      for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
-    }
+    addColumn(d, 'sessions', 'passkey_id', 'TEXT');
+    createTablesFromSchema(d, safeSchema(), ['passkeys', 'webauthn_challenges', 'signature_evidence'], 58);
   },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];
+/**
+ * Create tables exactly as schema.sql declares them, with every index schema.sql declares on each (so a fresh and an
+ * upgraded database match). `n`: the migration's number, for the error when schema.sql has no such table. Shared by
+ * the migrations that add whole tables (55 to 58).
+ */
+function createTablesFromSchema(d, schemaText, tables, n) {
+  for (const t of tables) {
+    const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+    if (!m) throw new Error(`migration ${n}: no definition for ${t} in schema`);
+    d.exec(m[0]);
+    for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
+  }
+}
 /** Create the named indexes exactly as schema.sql declares them (so a fresh and an upgraded database match). */
 function createIndexesFromSchema(d, schemaText, names) {
   for (const name of names) {

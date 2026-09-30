@@ -5,7 +5,10 @@ const audit = require('../audit');
 const C = require('../constants');
 const { badRequest, notFound, forbidden } = require('../http');
 const { validate, paging } = require('../validate');
-const { encrypt, decrypt, sha256, uuid } = require('../crypto');
+const { encrypt, decrypt, uuid } = require('../crypto');
+// A note's signature hashes, one definition (server/note-signature.js): the ciphertext hash the note carries, and the
+// plaintext content hash a fingerprint confirmation is bound to.
+const NS = require('../note-signature');
 
 // A note's fields, and what they must satisfy (a counseling note is clinical; linked problems are this client's;
 // a draft is its author's to change): the table's rules, server/rules/notes.js, which sync push applies too.
@@ -259,7 +262,7 @@ module.exports = (r) => {
     const aiReviewed = require('../rules/notes').aiReviewed(ctx.body && ctx.body.ai_reviewed); // the same values sync push accepts
     if (Number(n.ai_assisted) && !aiReviewed) throw badRequest('This note includes text drafted by the AI copilot. Confirm you have reviewed and corrected it before signing.', { ai_review_required: true, fields: { ai_reviewed: 'confirm you reviewed the AI-drafted text' } });
     const identity = await verifyIdentity(ctx, 'note.sign', { note_id: n.id });
-    const hash = sha256(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ''}`);
+    const hash = NS.signatureHash(n, ctx.user.id);
     db.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db.now(), ctx.user.id, hash, db.now(), n.id);
     // The supervisor's "Finish and sign your note" reminder has done its job (server/rules/notes.js).
     const reminders = require('../rules/notes').closeSignReminders(ctx.user.id, n.id, n.client_id);
@@ -278,7 +281,7 @@ module.exports = (r) => {
     return null;
   }
   function applyCosign(ctx, n, note, identity, batch) {
-    const hash = sha256(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ''}`);
+    const hash = NS.cosignatureHash(n, ctx.user.id);
     db.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db.now(), hash, note ? encrypt(note) : null, db.now(), n.id);
     // The countersigner's comment is about the client's care: encrypted on the note, never in the audit entry.
     audit.log({ user: ctx.user, action: 'note.cosign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash, note_recorded: note ? true : undefined, identity, evidence: ctx.signatureEvidence || undefined, batch: batch || undefined } });
@@ -356,20 +359,19 @@ module.exports = (r) => {
     const n = load(ctx, ctx.params.id);
     if (!canRead(ctx, n)) throw forbidden();
     if (!n.signature_hash) return { signed: false, ...signatureState(n) };
-    const hash = sha256(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ''}`);
-    const out = { signed: true, intact: hash === n.signature_hash, signed_at: n.signed_at, signer: n.signer, ...signatureState(n) };
+    const out = { signed: true, intact: NS.signatureHash(n, n.signed_by) === n.signature_hash, signed_at: n.signed_at, signer: n.signer, ...signatureState(n) };
     if (n.cosignature_hash) {
       out.cosigner = n.cosigner; out.cosigned_at = n.cosigned_at;
-      out.cosignature_intact = sha256(`${n.id}|${n.cosigned_by}|cosign|${n.content_enc}|${n.structured_enc || ''}`) === n.cosignature_hash;
+      out.cosignature_intact = NS.cosignatureHash(n, n.cosigned_by) === n.cosignature_hash;
     }
-    // A signature confirmed with a fingerprint (docs/FINGERPRINT.md): its stored evidence is verified again — the
-    // statement names this note and the hash the note carries now, and the device's signature over it checks out
-    // under the passkey's public key. Office server only (a device keeps no such evidence).
+    // A signature confirmed with a fingerprint (docs/FINGERPRINT.md): its stored evidence is verified again — it was
+    // given with the passkey enrolled (the key anchored in the audit log), its statement names this note and the
+    // note's plaintext content hash as it is now (for a batch countersignature, among the batch's), and the device's
+    // signature over it checks out. Office server only (a device keeps no such evidence).
     if (!require('../config').local) {
       const P = require('../passkeys');
-      const fp = (purpose, signer, want) => { const ev = P.evidenceFor('note', n.id, { purpose }).filter(e => e.user_id === signer).pop(); return ev ? { verified: ev.verified && !!ev.evidence && ev.evidence.statement.content === want && ev.evidence.statement.record_ids.includes(n.id), at: ev.created_at, reason: ev.reason } : null; };
-      const s = fp('note.sign', n.signed_by, n.signature_hash); if (s) out.fingerprint = s;
-      if (n.cosignature_hash) { const c = fp('note.cosign', n.cosigned_by, n.cosignature_hash) || (() => { const ev = P.evidenceFor('note', n.id, { purpose: 'note.cosign-batch' }).filter(e => e.user_id === n.cosigned_by).pop(); return ev ? { verified: ev.verified, at: ev.created_at, reason: ev.reason } : null; })(); if (c) out.cosign_fingerprint = c; }
+      const s = P.noteEvidence(n, 'sign', n.signed_by); if (s) out.fingerprint = s;
+      if (n.cosignature_hash) { const c = P.noteEvidence(n, 'cosign', n.cosigned_by); if (c) out.cosign_fingerprint = c; }
     }
     return out;
   });
