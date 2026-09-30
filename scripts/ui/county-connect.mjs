@@ -15,7 +15,7 @@
 //      says so, the card says nothing is sent until an administrator confirms, and Confirm takes it; a proxy in front
 //      of the county without TRUST_PROXY is warned about on County connections.
 //   6. axe (WCAG 2.1 A/AA) on the pages and dialogs at 1280, 390 and 320 px, and nothing scrolls sideways.
-//   Built for 1.21.0: the county sets how many days after a period its file is due; a program connected to a county
+//   Released in 1.21.0: the county sets how many days after a period its file is due; a program connected to a county
 //   that reads the award is sent version 2 and shown the county's own schedule; one connected to a county on SUDS
 //   1.20 (the stand-in, which does not say what it reads) is warned, and the card ticks "make a version 1 file".
 import { chromium } from 'playwright';
@@ -91,7 +91,7 @@ try {
   ok(await toast(adm, /Saved/), 'switching it on is saved');
   await settle(adm);
   ok(/On: accepting connections/.test(await adm.textContent('[data-cc-settings]')), 'and the page says it is on');
-  // Built for 1.21.0: when a period's file is due, told to every connected program (30 days unless set).
+  // Released in 1.21.0: when a period's file is due, told to every connected program (30 days unless set).
   ok(/Files due\s*30 days after each period ends/.test(await adm.textContent('[data-cc-settings]')), 'the page says files are due 30 days after a period ends');
   await adm.fill('[data-cc-settings] input[name=due_days]', '20');
   await adm.click('[data-cc-settings] button[type=submit]');
@@ -184,7 +184,7 @@ try {
   const mine = opts.counties.find(c => c.code === code.code);
   ok(mine && mine.name === 'Sample County Behavioral Health' && mine.fund_ids.length === 1 && mine.fund_ids[0] === fund.data.id, 'the county\'s name and the fund ticked went into the file', mine);
   await axe(fin, 'settlement with the send log (1280)');
-  // Built for 1.21.0: this county reads version 2 (no warning), and its schedule and due dates are the reminders'.
+  // Released in 1.21.0: this county reads version 2 (no warning), and its schedule and due dates are the reminders'.
   ok(!(await fin.$('[data-cc-county-older]')), 'a county that reads the award (1.21) gets no older-county warning');
   const conn2 = (await api(fin, 'GET', '/api/county-connect/connection')).data;
   eq(conn2.send_version, 2, 'and is sent version 2, with the award');
@@ -230,7 +230,7 @@ try {
   try {
     eq((await api(adm, 'PUT', '/api/county-connect/connection', { base_url: `http://127.0.0.1:${fake.address().port}` })).status, 200, 'the connection points at the stand-in county');
     eq((await api(adm, 'POST', '/api/county-connect/connection/test', {})).data.ok, true, 'which gives its county code');
-    // Built for 1.21.0: this stand-in answers as SUDS 1.20 does, without accepts_schema_versions: it reads version 1 only.
+    // Released in 1.21.0: this stand-in answers as SUDS 1.20 does, without accepts_schema_versions: it reads version 1 only.
     await go(adm, `settlement?from=${lq.from}&to=${lq.to}`);
     const older = await until(() => adm.$('[data-cc-county-older]'));
     ok(older && /version 1 only \(SUDS 1\.20 or earlier\)/.test(await older.textContent()), 'the connection card warns that the county reads version 1 only', older && await older.textContent());

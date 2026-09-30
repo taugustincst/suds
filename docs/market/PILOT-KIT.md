@@ -20,7 +20,7 @@ model). Each CBO in it still runs sections 1–7. The county's side of it (the c
 | --- | --- |
 | **Programme** | One non-billing programme: outreach, harm reduction, naloxone / supply distribution, prevention-funded outreach or navigation. A SABG primary-prevention provider may pilot its group and community events (recorded and summarised since 1.17.0), but SUDS produces no PPSDS file: it keeps keying PPSDS itself, from the prevention activity summary. Programme profile *Harm reduction & outreach* unless the programme needs the clinical modules. |
 | **Users** | N = 5–15: navigators / outreach workers, their supervisor, a programme lead (super-user), one finance user if budgets are in scope, one administrator. |
-| **Deployment** | Self-hosted by the programme's IT partner, or hosted by a sponsoring county ([HOSTING.md](HOSTING.md)). Vendor hosting is not offered. Local mode off unless a documented field need is agreed. |
+| **Deployment** | Self-hosted by the programme's IT partner, or hosted by a sponsoring county ([HOSTING.md](HOSTING.md)). Vendor hosting is not offered. Local mode off unless a documented field need is agreed; where it is, outreach phones are **field devices** (released in 1.21.0: only the worker's own recent caseload, without contact, intake, legal or clinical details; [../PLATFORM.md](../PLATFORM.md), *Field devices*), and a harm-reduction programme may turn on *participant codes first*. |
 | **Data** | The pilot group's real caseload, supplies, resources, grants and budget. Parallel run with the existing spreadsheets for the first 30 days, then SUDS as the working record if the day-30 check-in agrees. |
 | **Out of scope** | DMC billing, prescribing, the treatment medical record, other programmes, integrations beyond file exports (FHIR and the EHR hand-off can be tried with county IT, not put into production, unless agreed). |
 | **Length** | 90 days from go-live, plus 2–3 weeks of setup before it. |
@@ -237,6 +237,11 @@ before it is proposed.
   the reports they already send, marked *entered by the county — not signed by the program* everywhere, outranked by
   a signed file when a CBO starts sending them, and possible to leave out of any view or file. What the county may
   enter is for the data contribution agreement ([templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md), section 8).
+- From 1.21.0: each fund's **award amount** in the CBOs' files (spending against the award; the county's server is
+  upgraded first), **reminders** on each CBO's Home when its county file is due, and, if the county wants to share
+  figures, a screened **publication release** of the combined figures (County view › Publish;
+  [../COUNTY-VIEW.md](../COUNTY-VIEW.md), *Publication*), recorded and never changed. The pilot agrees whether any
+  release is published, and at what threshold (at least the highest its CBOs publish with).
 - One security and privacy review covering every CBO's instance ([BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md)).
 - A measured answer to "does this reduce our grantees' reporting burden and improve what we receive?"
 - The information it needs to decide whether to act as data steward for pooled outcomes later
@@ -271,6 +276,7 @@ compromised if its files should stop counting).
 | Quarterly county files received and imported on time (county view builds) | County view › Submissions: a *Current* file per CBO per quarter; the headline for the quarter | Every CBO, every pilot quarter, within the time the contract sets |
 | County staff hours to combine its CBOs' figures (county view builds) | The same method as the compile-hours baseline, with the combined view and its Excel | Recorded; compared with the baseline |
 | Grantees not on SUDS in the combined view (1.20.0) | County view › Submissions: entries marked *entered by the county*, each with its source document; how long an entry takes | Recorded; every non-pilot grantee the county chooses to include, with a named source document per period |
+| County files made on time after a reminder (1.21.0) | Each CBO's county reporting schedule, and County view › Submissions | Every CBO, every pilot quarter, by the date the county sets |
 | County staff hours to compile its grantees' figures | Baseline from the last period; same method in the pilot | Recorded; target agreed with the county |
 | Settlement spending recorded with an allowable use | Settlement report, per CBO | All settlement spending categorised |
 | Implementation hours per CBO against the estimate | Vendor time log | Recorded — feeds [PRICING-OPTIONS.md](PRICING-OPTIONS.md) |

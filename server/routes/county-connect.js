@@ -9,7 +9,7 @@
 //     GET  /api/county-connect/v1/combined      the combined view for ?from&to[&format=json|tidy-csv] (read token)
 //     GET  /api/county-connect/v1/programs      the programmes and their files' periods (read token)
 //     GET  /api/county-connect/v1/publications  the county's publication releases, each as published, withdrawn ones
-//                                               marked (read token; built for 1.21.0, not yet released)
+//                                               marked (read token; released in 1.21.0)
 //   The county's settings and tokens (signed in):
 //     GET  /api/county-connect/settings          on or off, the cadence, the endpoints (county:view)
 //     PUT  /api/county-connect/settings          switch on or off, the cadence and start, and how many days after a

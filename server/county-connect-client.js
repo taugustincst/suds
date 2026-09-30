@@ -104,7 +104,7 @@ function pendingCode() {
 }
 const clearPending = () => db.run(`DELETE FROM settings WHERE key=?`, PENDING_CODE);
 /**
- * What the county's /status last said about what it expects and what it reads (built for 1.21.0, not yet released),
+ * What the county's /status last said about what it expects and what it reads (released in 1.21.0),
  * held to what SUDS can use (statusFacts): { county_code, cadence, due_days, start, expected, accepts_schema_versions,
  * at }. Read by the programme's reminders (county-schedule.js) and by send (which file version to make). Cleared with
  * the connection, or when the address or token changes.

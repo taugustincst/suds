@@ -26,7 +26,7 @@ State on its use of settlement funds]`, and for no other purpose without the Pro
 the Programme's name, the County's code and name, the period, when the file was made, and, for the settlement
 funds the Programme chooses as paid for by the County: each fund's name, grant or agreement number, Exhibit E
 allowable use and California High Impact Abatement Activity, its spending, its outcome counts and (from SUDS 1.21,
-built for 1.21.0, not yet released) its award or contract amount and award period as the Programme's fund record
+released in 1.21.0) its award or contract amount and award period as the Programme's fund record
 holds them; the same by allowable use and in total. The fields are those listed in [../../COUNTY-VIEW.md](../../COUNTY-VIEW.md), *What the
 file holds*.
 

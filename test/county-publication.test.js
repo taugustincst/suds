@@ -1,5 +1,5 @@
 'use strict';
-// County publication releases (built for 1.21.0, not yet released; server/county-publication.js,
+// County publication releases (released in 1.21.0; server/county-publication.js,
 // server/county-publication-audit.js, the routes in server/routes/county.js; docs/COUNTY-VIEW.md "Publication"):
 // the publication screen over the combined county release. Permissions (county:manage prepares, publishes and
 // withdraws; county:view reads; export:read downloads), the screening (the same small-cell method as a programme's own

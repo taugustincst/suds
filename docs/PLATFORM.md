@@ -123,7 +123,7 @@ database once a sync has run:
 
 - Every synchronised table, scoped to the account: clients on the caseload (all clients for anyone holding `clients:all`: from 1.16.0 navigators and clinicians by default),
   their visits, calls, notes, referrals, consents, tasks, funding and budget rows, the resource directory,
-  programme settings. On a field device (built for 1.21.0, not yet released), only what *Field devices* below lists.
+  programme settings. On a field device (released in 1.21.0), only what *Field devices* below lists.
 - **The whole `users` table** — every staff account's id, username, display name, title, role, active flag
   and supervisor, not only the syncing person's. The device needs them to name who did what on records it
   holds. Every *other* user's password hash is blanked before it leaves the office (`scrypt$0$…`, unusable);
@@ -135,7 +135,7 @@ database once a sync has run:
 
 ## Field devices
 
-Built for 1.21.0, not yet released. A device holds everything its user may see unless it is a **field device**,
+Released in 1.21.0. A device holds everything its user may see unless it is a **field device**,
 which holds only what a field worker needs. What each synchronised table contributes to a field device is
 declared once, as data, in `server/field-scope.js` (include, exclude, or reduced rows and blank columns), and
 `test/field-device.test.js` fails when a table has no decision there, so a new table never reaches a field device

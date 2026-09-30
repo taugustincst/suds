@@ -162,7 +162,7 @@ function countyForm(k, o, today, pageFrom, pageTo, choice, rem = null) {
     h('legend', {}, 'Settlement funds this county pays for'),
     o.funds.length ? fundBoxes : h('p', { class: 'small muted' }, 'No funding source is marked as opioid settlement money.'),
     h('div', { class: 'help', id: 'so-county-funds-help' }, 'Only the funds you tick go into the file, and every total in it is over them alone: a fund another funder pays for stays out. Nothing is ticked until you choose; SUDS remembers your choice for this county.'));
-  // The file's version (built for 1.21.0, not yet released): version 2, with each fund's award, unless the county still
+  // The file's version (released in 1.21.0): version 2, with each fund's award, unless the county still
   // runs SUDS 1.20 or earlier, which refuses it. Ticked for the person when the connected county says it reads only
   // version 1 and its code is the one typed.
   const conn = (rem && rem.connection) || { connected: false };
@@ -240,7 +240,7 @@ function copyBtn(value, what, attr) {
   } }, `Copy ${what.toLowerCase()}`);
 }
 
-// The county's reporting schedule (built for 1.21.0, not yet released; server/county-schedule.js): which periods each
+// The county's reporting schedule (released in 1.21.0; server/county-schedule.js): which periods each
 // county expects, by when, and whether the file for each was made or sent. Home shows the same reminders. A county
 // connected over the county connection says its own schedule (and what it received); for any other county the program
 // records it here. Office server only, for whoever makes the county file.

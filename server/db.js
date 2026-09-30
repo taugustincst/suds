@@ -767,7 +767,7 @@ const migrations = [
     addColumn(d, 'county_programmes', 'on_suds', 'INTEGER NOT NULL DEFAULT 1');
     if (tableExists(d, 'county_submissions') && !tableCols(d, 'county_submissions').includes('source')) rebuildTable(d, safeSchema(), 'county_submissions');
   },
-  // 61: county publication releases (built for 1.21.0, not yet released; docs/COUNTY-VIEW.md "Publication"):
+  // 61: county publication releases (released in 1.21.0; docs/COUNTY-VIEW.md "Publication"):
   //     county_publications, each screened release of the combined figures a county published and each withdrawal,
   //     append-only (its triggers, as schema.sql declares them). A new table: nothing to backfill. Self-contained and
   //     idempotent, so it can be renumbered.
@@ -776,7 +776,7 @@ const migrations = [
     createTablesFromSchema(d, text, ['county_publications'], 61);
     for (const m of text.matchAll(/CREATE TRIGGER IF NOT EXISTS county_publications_\w+ [\s\S]*?END;/g)) d.exec(m[0]);
   },
-  // 62: field devices and participant-code clients (built for 1.21.0, not yet released; server/field-scope.js,
+  // 62: field devices and participant-code clients (released in 1.21.0; server/field-scope.js,
   //     docs/PLATFORM.md "Field devices"). devices.sync_scope ('full' for every existing device: nothing a device
   //     holds changes on upgrade), scope_changed_at and field_applied_at; sessions.device_id, the device a sync
   //     sign-in came from (existing sessions predate it: NULL, and they end within hours); clients.participant_code_enc
@@ -791,7 +791,7 @@ const migrations = [
     addColumn(d, 'clients', 'participant_code_idx', 'TEXT');
     createIndexesFromSchema(d, safeSchema(), ['idx_clients_participant_code']);
   },
-  // 63: the authenticator allow-list for passkeys (built for 1.21.0, not yet released; docs/FINGERPRINT.md
+  // 63: the authenticator allow-list for passkeys (released in 1.21.0; docs/FINGERPRINT.md
   //     "Authenticator allow-list"): passkeys.attestation (the attestation verified at enrolment under the list; NULL
   //     for every passkey added before, which is right: none was attested) and authenticator_metadata (what SUDS keeps
   //     of an uploaded FIDO Metadata Service BLOB). Office server only. Self-contained and idempotent, so it can be

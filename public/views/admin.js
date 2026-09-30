@@ -529,7 +529,7 @@ route('admin', async (r) => {
           { name: 'scim_group_roles', label: 'Provisioning (SCIM): identity-provider groups to SUDS roles', type: 'textarea', rows: 3, value: s.scim_group_roles || '', placeholder: 'SUD Navigators=navigator; SUD Supervisors=supervisor', span: true, help: 'One Group=role per line or separated by semicolons. A person in several mapped groups gets the most privileged role.' },
           { name: 'scim_default_role', label: 'Role for a provisioned person in no mapped group', type: 'select', noBlank: true, value: s.scim_default_role || 'readonly', options: ['readonly', 'finance', 'navigator', 'clinician', 'supervisor'].map((r) => ({ value: r, label: r })) },
         ]),
-        // Minimal personal information (built for 1.21.0, not yet released): new clients and contacts start with a
+        // Minimal personal information (released in 1.21.0): new clients and contacts start with a
         // participant code; field devices hold only what a field worker needs (server/field-scope.js). All off unless
         // an administrator turns them on. Opened when a link says section=minimal.
         { type: 'section', label: 'Minimal personal information', hint: 'participant codes, field devices', collapsible: true, heading: true, open: r.query.get('section') === 'minimal' },

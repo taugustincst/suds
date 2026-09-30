@@ -17,7 +17,7 @@
 //      and no code field; a failed fingerprint gives the focus back to its button, enabled; with fingerprint-or-code
 //      required and neither set up, the signature dialog has no Sign button and links to My profile; a single sign-on
 //      account sees the fingerprint beside "Confirm with single sign-on"; the icon is an SVG hidden from screen readers.
-//   7. The authenticator allow-list (built for 1.21.0): an administrator loads a FIDO Metadata Service file signed under
+//   7. The authenticator allow-list (released in 1.21.0): an administrator loads a FIDO Metadata Service file signed under
 //      the TEST-ONLY root (test/fixtures/fido-mds, trusted by the dev server only), picks a model from it, sees whose
 //      passkeys would stop working, must confirm that, and saves with the password again; the supervisor's older
 //      passkey is marked not accepted on My profile and refused at sign-in with the reason; a passkey the virtual
@@ -273,7 +273,7 @@ try {
     await axe(d.page, `signature dialog (${width})`); ok(await noSideScroll(d.page), `the signature dialog does not scroll sideways at ${width} px`);
     await d.ctx.close();
   }
-  // ---------------- 7. the authenticator allow-list (built for 1.21.0) ----------------
+  // ---------------- 7. the authenticator allow-list (released in 1.21.0) ----------------
   {
     const A = admin.page;
     const X = require('../../test/x509.js');

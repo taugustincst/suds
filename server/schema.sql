@@ -1722,7 +1722,7 @@ CREATE TABLE IF NOT EXISTS county_submissions (
   CHECK ((source = 'signed' AND key_id IS NOT NULL AND signature IS NOT NULL AND entered_via IS NULL) OR (source = 'county_entered' AND key_id IS NULL AND signature IS NULL AND entered_via IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_county_submissions_programme ON county_submissions(programme_id, period_from, period_to);
--- County publication releases (migration 61; built for 1.21.0, not yet released; docs/COUNTY-VIEW.md "Publication";
+-- County publication releases (migration 61; released in 1.21.0; docs/COUNTY-VIEW.md "Publication";
 -- server/county-publication.js). On a county's server: each screened release of the combined figures it published,
 -- and each withdrawal of one. A release row holds exactly what was published (content: the canonical JSON of
 -- screened aggregates, never an exact small count, no client-level data: it is public) and its SHA-256, with who

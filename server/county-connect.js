@@ -30,7 +30,7 @@ const SETTING_ENABLED = 'county_connect_enabled';
 const SETTING_CADENCE = 'county_connect_cadence';
 const SETTING_START = 'county_connect_start';
 /**
- * How many days after a period ends the county expects its file (built for 1.21.0, not yet released): told to each
+ * How many days after a period ends the county expects its file (released in 1.21.0): told to each
  * programme through /status (due_days, and each expected period's due_by), so its SUDS can remind it. 30 unless set.
  */
 const SETTING_DUE_DAYS = 'county_connect_due_days';
@@ -299,7 +299,7 @@ function statusFor(t, who = {}) {
     county: { code: countyCode(who), name: db.getSetting('org_name', '') || null },
     programme: { id: prog.id, name: prog.name, active: !!prog.active, files_count: K.filesCount(prog) },
     cadence: cadence(), cadence_label: CADENCES[cadence()], start: startDate(), today: today(), due_days: due,
-    // What this county reads (built for 1.21.0, not yet released): a programme's SUDS makes the file in a version the
+    // What this county reads (released in 1.21.0): a programme's SUDS makes the file in a version the
     // county reads. A county on SUDS 1.20 or earlier says nothing here, and reads version 1 only.
     accepts_schema_versions: K.SCHEMA_VERSIONS,
     expected, outstanding: expected.filter(p => !p.received).map(({ received, ...p }) => p), // eslint-disable-line no-unused-vars

@@ -1,4 +1,4 @@
-// Field devices and minimal personal information (built for 1.21.0, not yet released), in a real browser:
+// Field devices and minimal personal information (released in 1.21.0), in a real browser:
 //   1. Settings › Program › Minimal personal information: "Outreach records use a participant code by default",
 //      "New devices start as field devices" and the field device's window;
 //   2. with the participant code on, New client asks for the code first and keeps the name behind "Add a name",

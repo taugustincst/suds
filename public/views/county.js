@@ -12,7 +12,7 @@ import { programmeConnections } from './countyconnect.js';
 //   #/county                   the combined view for a period (county:view); &by=quarter for the trend
 //   #/county?tab=submissions   import a file, and every file received (import, withdraw, reinstate: county:manage)
 //   #/county?tab=programmes    the programs whose files are accepted, their keys, and this county's code
-//   #/county?tab=publish       publication releases of the combined figures (built for 1.21.0, not yet released;
+//   #/county?tab=publish       publication releases of the combined figures (released in 1.21.0;
 //                              server/county-publication.js): prepare, review and publish (county:manage), the releases
 //                              published and withdrawn (county:view), their files (export:read)
 // Figures the county enters for a program not on SUDS (released in 1.20.0; server/county-entry.js): "Add a program not
@@ -201,7 +201,7 @@ function quarterView(d) {
     perQuarter);
 }
 
-// ---- publication releases of the combined figures (built for 1.21.0, not yet released) ----
+// ---- publication releases of the combined figures (released in 1.21.0) ----
 const PUB_STATUS = { published: ['Published', 'ok'], withdrawn: ['Withdrawn: do not use', 'danger'] };
 const PUB_GROUPS = { spending: 'Spending from settlement funds', use: 'Spent by allowable use (Exhibit E)', hiaa: 'Spent by High Impact Abatement Activity', outcome: 'Outcomes' };
 /** A published figure as shown: a number, or the symbol it is published as, in words (never colour alone). */
@@ -573,7 +573,7 @@ async function enterFiguresDialog(p, { initial = null } = {}) {
         { name: `${pre}category`, label: 'Exhibit E allowable use', type: 'select', options: useOpts, placeholder: 'No settlement category recorded', span: true },
         { name: `${pre}hiaa`, label: 'High Impact Abatement Activity', type: 'select', options: hiaaOpts, placeholder: '— not recorded —', span: true },
         ...SPEND.map(([k, label]) => ({ name: `${pre}${k}`, label, required: true })),
-        // The award (built for 1.21.0, not yet released): optional; all three, or none.
+        // The award (released in 1.21.0): optional; all three, or none.
         { type: 'section', label: `Fund ${i + 1}: award (optional)` },
         { name: `${pre}award_amount`, label: 'Award or contract amount ($)', help: 'Leave the three award fields empty if the program did not say. With an amount, give the award period too.' },
         { name: `${pre}award_from`, label: 'Award period from', type: 'date' },

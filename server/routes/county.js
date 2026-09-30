@@ -13,7 +13,7 @@
 //     GET  /api/county-submission/file     the signed county submission file for ?from&to&county_code&county_name
 //                                          &funds=id,id (also export:read); schema version 2 (each fund's award) unless
 //                                          &schema_version=1, for a county on SUDS 1.20 or earlier
-//   Reporting-cadence reminders (built for 1.21.0, not yet released; server/county-schedule.js), for the same people:
+//   Reporting-cadence reminders (released in 1.21.0; server/county-schedule.js), for the same people:
 //     GET    /api/county-submission/reminders          each county's expected periods, when each file is due, whether
 //                                                      it was made or sent, and the reminders (the periods not done)
 //     PUT    /api/county-submission/schedules/:code    the programme's own schedule for a county: { county_name,
@@ -45,7 +45,7 @@
 //     GET  /api/county/view                the combined view for ?from&to, or by quarter (&by=quarter) (county:view)
 //     GET  /api/county/view/export         the same as Excel (format=xlsx), CSV, or a long "tidy" CSV (format=tidy)
 //                                          (county:view and export:read)
-//   Publication releases of the combined figures (built for 1.21.0, not yet released; server/county-publication.js):
+//   Publication releases of the combined figures (released in 1.21.0; server/county-publication.js):
 //     POST /api/county/publications/prepare  screen a period's combined figures: { from, to, entered, threshold } ->
 //                                          the content and its SHA-256, nothing recorded (county:manage)
 //     POST /api/county/publications        publish it: the same choices, the SHA-256 reviewed and reviewed: true
@@ -532,7 +532,7 @@ module.exports = (r) => {
         : S.toCsv([...about.map(a => ({ group: 'About', measure: a.k, total: a.v })), ...matrix], matrixCols));
   });
 
-  // ---- publication releases of the combined figures (built for 1.21.0, not yet released; server/county-publication.js) ----
+  // ---- publication releases of the combined figures (released in 1.21.0; server/county-publication.js) ----
   const PUB = require('../county-publication');
   /** The period and choices of a release to prepare or publish, from a JSON body. */
   const pubChoices = (body) => {

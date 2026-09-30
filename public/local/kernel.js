@@ -8489,7 +8489,7 @@ CREATE TABLE IF NOT EXISTS county_submissions (
   CHECK ((source = 'signed' AND key_id IS NOT NULL AND signature IS NOT NULL AND entered_via IS NULL) OR (source = 'county_entered' AND key_id IS NULL AND signature IS NULL AND entered_via IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_county_submissions_programme ON county_submissions(programme_id, period_from, period_to);
--- County publication releases (migration 61; built for 1.21.0, not yet released; docs/COUNTY-VIEW.md "Publication";
+-- County publication releases (migration 61; released in 1.21.0; docs/COUNTY-VIEW.md "Publication";
 -- server/county-publication.js). On a county's server: each screened release of the combined figures it published,
 -- and each withdrawal of one. A release row holds exactly what was published (content: the canonical JSON of
 -- screened aggregates, never an exact small count, no client-level data: it is public) and its SHA-256, with who
@@ -12575,7 +12575,7 @@ var require_sync_tables = __commonJS({
         "county_programmes",
         "county_programme_keys",
         "county_submissions",
-        // county_publications (built for 1.21.0, not yet released): the county's published releases and their withdrawals.
+        // county_publications (released in 1.21.0): the county's published releases and their withdrawals.
         "county_publications",
         // county_connect_* and county_connection (the county connection, docs/COUNTY-VIEW.md "Connecting"): the machine
         // tokens a county issues, and on a programme's server the county it sends to and its send log. A device has none.
@@ -24177,7 +24177,7 @@ var require_admin = __commonJS({
       "suprt_grant_id",
       "suprt_site_id",
       "suprt_reassessment_months",
-      // Minimal personal information (built for 1.21.0, not yet released): new clients and outreach contacts start with a
+      // Minimal personal information (released in 1.21.0): new clients and outreach contacts start with a
       // participant code instead of a name; new devices start as field devices, and the window a field device holds
       // (server/field-scope.js). All three are off (or 90 days) unless an administrator changes them.
       "participant_code_default",
@@ -30058,7 +30058,7 @@ var require_county = __commonJS({
       "Each figure is what the program recorded in SUDS for the work charged to the opioid settlement funds it chose to report to the county, from its own Settlement outcomes page. Money is exact; a cost per outcome is not calculated across programs."
     ];
     var PERIOD_RULE = `A program's submission counts when its whole period lies inside the period chosen here; nothing is pro-rated. Where two of one program's submissions overlap (a quarter and a month inside it), the longer one counts, except that a signed file always counts over figures the county entered. A program whose submissions cover only part of the period is marked "part of the period". An inactive program's files count only if the county chose to keep counting them.`;
-    var PUBLICATION_NOTE = "To publish combined figures, use Publish (built for 1.21.0, not yet released): it screens the totals of a period with SUDS's small-cell method, checked against each program's own published figures, and records what was published. Nothing on the combined view or in its files is for publication.";
+    var PUBLICATION_NOTE = "To publish combined figures, use Publish (released in 1.21.0): it screens the totals of a period with SUDS's small-cell method, checked against each program's own published figures, and records what was published. Nothing on the combined view or in its files is for publication.";
     module.exports = {
       FORMAT: FORMAT2,
       SCHEMA_VERSION,
@@ -30559,7 +30559,7 @@ var require_county_connect = __commonJS({
         start: startDate(),
         today: today(),
         due_days: due,
-        // What this county reads (built for 1.21.0, not yet released): a programme's SUDS makes the file in a version the
+        // What this county reads (released in 1.21.0): a programme's SUDS makes the file in a version the
         // county reads. A county on SUDS 1.20 or earlier says nothing here, and reads version 1 only.
         accepts_schema_versions: K.SCHEMA_VERSIONS,
         expected,
@@ -51694,7 +51694,7 @@ var require_db = __commonJS({
         addColumn(d, "county_programmes", "on_suds", "INTEGER NOT NULL DEFAULT 1");
         if (tableExists(d, "county_submissions") && !tableCols(d, "county_submissions").includes("source")) rebuildTable(d, safeSchema(), "county_submissions");
       },
-      // 61: county publication releases (built for 1.21.0, not yet released; docs/COUNTY-VIEW.md "Publication"):
+      // 61: county publication releases (released in 1.21.0; docs/COUNTY-VIEW.md "Publication"):
       //     county_publications, each screened release of the combined figures a county published and each withdrawal,
       //     append-only (its triggers, as schema.sql declares them). A new table: nothing to backfill. Self-contained and
       //     idempotent, so it can be renumbered.
@@ -51703,7 +51703,7 @@ var require_db = __commonJS({
         createTablesFromSchema(d, text, ["county_publications"], 61);
         for (const m of text.matchAll(/CREATE TRIGGER IF NOT EXISTS county_publications_\w+ [\s\S]*?END;/g)) d.exec(m[0]);
       },
-      // 62: field devices and participant-code clients (built for 1.21.0, not yet released; server/field-scope.js,
+      // 62: field devices and participant-code clients (released in 1.21.0; server/field-scope.js,
       //     docs/PLATFORM.md "Field devices"). devices.sync_scope ('full' for every existing device: nothing a device
       //     holds changes on upgrade), scope_changed_at and field_applied_at; sessions.device_id, the device a sync
       //     sign-in came from (existing sessions predate it: NULL, and they end within hours); clients.participant_code_enc
@@ -51718,7 +51718,7 @@ var require_db = __commonJS({
         addColumn(d, "clients", "participant_code_idx", "TEXT");
         createIndexesFromSchema(d, safeSchema(), ["idx_clients_participant_code"]);
       },
-      // 63: the authenticator allow-list for passkeys (built for 1.21.0, not yet released; docs/FINGERPRINT.md
+      // 63: the authenticator allow-list for passkeys (released in 1.21.0; docs/FINGERPRINT.md
       //     "Authenticator allow-list"): passkeys.attestation (the attestation verified at enrolment under the list; NULL
       //     for every passkey added before, which is right: none was attested) and authenticator_metadata (what SUDS keeps
       //     of an uploaded FIDO Metadata Service BLOB). Office server only. Self-contained and idempotent, so it can be

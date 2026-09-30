@@ -1,7 +1,6 @@
 # Fingerprint sign-in, authorization and signing (passkeys)
 
-Released in 1.19.0. Office server only. The **authenticator allow-list** (below) is built for 1.21.0, not yet
-released.
+Released in 1.19.0. Office server only. The **authenticator allow-list** (below) is released in 1.21.0.
 
 Staff can sign in to SUDS, finish two-step verification, sign and countersign notes, approve time and spending, and
 download the key backup with their **fingerprint** — or with whatever else their device uses to unlock (Face ID, a
@@ -14,7 +13,7 @@ them with Node's built-in `node:crypto` only (`server/webauthn.js`), in keeping 
   `auth.verifySigner` / `auth.verifyApprover` (the signing and approval step), migration 58.
 - Browser: `public/passkey.js`; My profile → **Fingerprint sign-in**; the sign-in page; the second sign-in step;
   the signature and approval dialogs; Settings → Security policy.
-- The authenticator allow-list (built for 1.21.0, not yet released): `server/attestation.js` (attestation formats,
+- The authenticator allow-list (released in 1.21.0): `server/attestation.js` (attestation formats,
   certificate chains, the FIDO Metadata Service BLOB), `server/authenticator-allowlist.js` (the setting, the loaded
   metadata, enrolment and use under the list), Settings → **Authenticator allow-list**, migration 63;
   `test/attestation.test.js` with certificates made by `test/x509.js`.
@@ -152,7 +151,7 @@ assertion.
 
 ## Authenticator allow-list
 
-Built for 1.21.0, not yet released. **Off by default**; office server only (SUDS on this device has no passkeys, and
+Released in 1.21.0. **Off by default**; office server only (SUDS on this device has no passkeys, and
 none of this code is in its browser kernel). Settings → **Authenticator allow-list (passkeys)**, administrators only
 (`settings:manage`).
 
@@ -474,7 +473,7 @@ fingerprint is accepted there because each confirmation is a fresh, single-use c
 | --- | --- | --- |
 | **Allow fingerprint sign-in** (`passkey_signin`) | On | Sign in with a passkey, and count it as two-step verification |
 | **Allow fingerprint to confirm signatures and approvals** (`passkey_signing`) | On | "Confirm with fingerprint" in the signature and approval dialogs |
-| **Authenticator allow-list** (Settings → Authenticator allow-list; `authn_allowlist`, `authn_allowlist_models`; built for 1.21.0, not yet released) | Off | Only the listed authenticator models may hold a passkey, each proven by its attestation against the loaded FIDO Metadata Service file; passkeys it does not accept stop working at their next use (above). Changed only on its own card, with the password again |
+| **Authenticator allow-list** (Settings → Authenticator allow-list; `authn_allowlist`, `authn_allowlist_models`; released in 1.21.0) | Off | Only the listed authenticator models may hold a passkey, each proven by its attestation against the loaded FIDO Metadata Service file; passkeys it does not accept stop working at their next use (above). Changed only on its own card, with the password again |
 | **Require fingerprint or authenticator for signing** (`sign_strong_required`) | Off | Signing, countersigning, approving time or spending **and downloading the key backup** need a fingerprint or an authenticator code; the password alone is refused. A note signed on a device and synced lands as a draft. Staff with neither must set one up (the dialogs link to My profile). |
 
 Changing any of them is audited on its own line (`security.passkey_policy`). **Settings → Security status** shows
@@ -496,7 +495,7 @@ passkey adoption (accounts with one, sign-ins and confirmations in 30 days, flag
 - **Changing the password** and **turning two-step verification off** still take the password (and the code): a
   fingerprint does not replace them.
 - **Knowing it was a finger** (not the device PIN): not possible with WebAuthn (above).
-- **Attestation and an allow-list of authenticator models**: built for 1.21.0, not yet released (Authenticator
+- **Attestation and an allow-list of authenticator models**: released in 1.21.0 (Authenticator
   allow-list, above), off by default. Not covered: the `apple` and `android-safetynet` formats, ECDAA, revocation lists
   (the Metadata Service's statuses stand for them), and a fingerprint as the proof for changing the list.
 

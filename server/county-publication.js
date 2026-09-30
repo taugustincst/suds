@@ -1,5 +1,5 @@
 'use strict';
-// County publication releases (built for 1.21.0, not yet released; docs/COUNTY-VIEW.md "Publication"): the
+// County publication releases (released in 1.21.0; docs/COUNTY-VIEW.md "Publication"): the
 // publication screen over the combined county release. A county manager prepares a screened release of the combined
 // figures for a period that has ended, reads it, and publishes it; each release is recorded, immutable, and
 // withdrawn only by a record of its own.

@@ -19,10 +19,11 @@ Upgrade a county's server before its programmes send version 2 files (docs/COUNT
 
 ### Security: the county surface's threat model and fuzz tests
 
-Built for 1.21.0, not yet released. No migration.
+Released in 1.21.0. No migration.
 
-- **Threat model brought to the current release.** `docs/security/THREAT-MODEL.md` now describes 1.20.0 and models
-  the county surface in full (*The county surface*: its entry points, the signed-versus-entered trust model, the
+- **Threat model brought to the current release.** `docs/security/THREAT-MODEL.md` was brought to 1.20.0, the
+  release then current (at this stamp it is on 1.21.0, with the surfaces 1.21.0 adds), and models the county surface
+  in full (*The county surface*: its entry points, the signed-versus-entered trust model, the
   CSV import and its parser, correct, withdraw and reinstate, who sees the source document, how every view, file
   and the read API mark entered figures, the refusal throttle, the county connection and read API, the signed-file
   verifier) and SUDS Server (*SUDS Server: the installed host*: the installer's supply chain and checksum channels,
@@ -54,7 +55,7 @@ Built for 1.21.0, not yet released. No migration.
 
 ### Release-state check and the county evidence packet (tooling; no migration, permission or route)
 
-- **The release documents are checked against what is true** (built for 1.21.0, not yet released).
+- **The release documents are checked against what is true** (released in 1.21.0).
   `node scripts/release-state.js` compares what the questionnaire, the evidence index, docs/RELEASE.md (supported
   versions, records, the exceptions ledger, the tags owed), the tag hand-off, HANDOFF.md's *Release waiting* entry and
   the dated CHANGELOG sections say about the releases with the CHANGELOG, `main`'s history, `git ls-remote --tags
@@ -64,7 +65,7 @@ Built for 1.21.0, not yet released. No migration.
   section calling another minor "the latest minor". `--offline` and `--docs-only` say what they could not check. CI
   runs it as the advisory `release-state` job; docs/RELEASE.md's stamp checklist says when to run it. On 1.20.0's
   documents it finds five stale lines in the 1.20.0 CHANGELOG section and the evidence index calling 1.19.0 live.
-- **The county evidence packet** (built for 1.21.0, not yet released). `node scripts/county-packet.js --ref <commit>
+- **The county evidence packet** (released in 1.21.0). `node scripts/county-packet.js --ref <commit>
   [--zip <file>]` puts the questionnaire, the county kit, the RFI answers, the agreement drafts, the newest SBOM and
   drill evidence, SECURITY.md, the LICENSE, the accessibility report and the pen-test scope in one folder with a README
   (what each file is, which version it describes, the verify commands) and a SHA-256 manifest; the same commit gives
@@ -75,7 +76,7 @@ Built for 1.21.0, not yet released. No migration.
 
 ### County view: award amounts in the county file, and reminders when a county file is due
 
-Built for 1.21.0, not yet released (docs/COUNTY-VIEW.md, *Award amounts* and *Reminders on the programme's side*). No
+Released in 1.21.0 (docs/COUNTY-VIEW.md, *Award amounts* and *Reminders on the programme's side*). No
 migration.
 
 - **Schema version 2 of the county submission file**: each fund carries its award (the award or contract amount and
@@ -121,9 +122,9 @@ documents, and several still said 1.19.0 was current.
   the user guide's County view, SECURITY.md's scope and README's *What's new* (now 1.18.0 to 1.20.0).
 - **The decisions labelled:** docs/COUNTY-VIEW.md, *Owner-default decisions (D1–D5)*, each with its rule, code and
   test, so RELEASE.md's and HANDOFF.md's citations are true.
-- **Stale lines fixed:** the county kit's three "1.20.0, not yet released"; 1.20.0's CHANGELOG section's leftover
-  1.19.x lines (supported versions, the SBOM, "describe 1.19.0", "no change to what SUDS does" in a section with a
-  migration); HOSTING's *Current status* (no version now); EVALUATION-RESPONSE and STRATEGY to 1.20.0; the
+- **Stale lines fixed:** the county kit's three lines calling 1.20.0 unreleased; 1.20.0's CHANGELOG section's
+  leftover 1.19.x lines (supported versions, the SBOM, a line saying the documents were on 1.19.0, "no change to what
+  SUDS does" in a section with a migration); HOSTING's *Current status* (no version now); EVALUATION-RESPONSE and STRATEGY to 1.20.0; the
   authorship figures recounted at the 1.20.0 stamp (`66a616b`: 662 of 681 commits, 649 authored by the assistant and
   13 co-authored; QUESTIONNAIRE #36a, SDLC, BUYER-GUIDE-IT, the evidence index, EVALUATION-RESPONSE); the threat
   model's version line (1.20.0, saying what it does not yet model); PLATFORM's list of direct `gh-pages` pushes;
@@ -162,7 +163,7 @@ Evidence and tests only; no change to what SUDS does.
 
 ### Field devices and minimal personal information
 
-Built for 1.21.0, not yet released. Migration 62 (61 is kept for another 1.21.0 change). Both features are off unless
+Released in 1.21.0. Migration 62 (61 is kept for another 1.21.0 change). Both features are off unless
 an administrator turns them on.
 
 - **Field devices.** A device can be made a *field device* (Settings › Synced devices; its user may choose it when
@@ -186,7 +187,7 @@ an administrator turns them on.
   code in the client search and the duplicate check, counted as a client, and counted once in the syringe
   services summary when the same code is given at an anonymous contact.
 
-### Added: an authenticator allow-list for passkeys (office server; built for 1.21.0, not yet released)
+### Added: an authenticator allow-list for passkeys (office server; released in 1.21.0)
 
 The option FINGERPRINT.md described and left unbuilt. Settings → **Authenticator allow-list (passkeys)**, off by
 default, administrators only: with it on, a passkey can be added only on an authenticator model the programme lists
@@ -208,7 +209,7 @@ are held as no-ops on this branch for the other 1.21.0 migrations. Tests: `test/
 made by `test/x509.js`), `scripts/ui/fingerprint.mjs` part 7. Documents: FINGERPRINT.md ("Authenticator
 allow-list", with the owner's decisions), QUESTIONNAIRE #19a, DATA-INVENTORY.
 
-### County publication releases (built for 1.21.0, not yet released)
+### County publication releases (released in 1.21.0)
 
 The publication screen over the combined county release (docs/COUNTY-VIEW.md, *Publication*): County view › Publish
 makes a screened, publishable release of a county's combined figures for a period, records it, and never changes it.

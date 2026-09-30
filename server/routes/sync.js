@@ -487,7 +487,7 @@ function requireLocalMode() {
   if (!config.localModeEnabled && !config.local) throw forbidden('Local mode (offline copies on devices) is turned off on this server, so devices cannot sync. An administrator can turn it on in the server settings (LOCAL_MODE_ENABLED, or the setup answer saved in server.json).');
 }
 
-// ---- field devices (built for 1.21.0, not yet released; server/field-scope.js) ----
+// ---- field devices (released in 1.21.0; server/field-scope.js) ----
 const DEVICES = require('../devices');
 /** The field context of a pull from this device, or null when it syncs in the full scope. */
 function fieldContext(user, device) {

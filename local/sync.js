@@ -243,7 +243,7 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
   return counts;
 }
 
-// ---- field devices (built for 1.21.0, not yet released; server/field-scope.js) ----
+// ---- field devices (released in 1.21.0; server/field-scope.js) ----
 // The office decides what a field device holds and sends nothing else. What this device does is tidy up what it
 // already had: everything from before it became a field device (resetForField), and contacts that have since left the
 // window (pruneField). Never a row with changes made here that the office has not had: those stay until they are sent.

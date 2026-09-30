@@ -39,7 +39,7 @@ const TOTAL_FUND = 'All funds in the submission';
 const SPEND_CODES = ['spend_own_category', 'spend_other_categories', 'spend_approved', 'spend_pending'];
 const TOTAL_CODES = ['spend_approved', 'spend_pending', ...K.VALUE_KEYS];
 /**
- * A fund's award (schema version 2; built for 1.21.0, not yet released), optional: its amount, and the award period's
+ * A fund's award (schema version 2; released in 1.21.0), optional: its amount, and the award period's
  * first and last days. In the form, three fields per fund; in the long CSV, three measure codes per fund whose value is
  * the amount or a date (YYYY-MM-DD). All three, or none (an empty value is "not given").
  */

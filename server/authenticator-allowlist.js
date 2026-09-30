@@ -1,5 +1,5 @@
 'use strict';
-// The authenticator allow-list for passkeys (docs/FINGERPRINT.md, "Authenticator allow-list"): built for 1.21.0, not
+// The authenticator allow-list for passkeys (docs/FINGERPRINT.md, "Authenticator allow-list"): released in 1.21.0, not
 // yet released. Off by default. When an administrator turns it on, only the authenticator models on the programme's
 // list (by AAGUID) may be added as passkeys, and each new one must prove its model: SUDS asks for attestation
 // ('direct') and verifies it (server/attestation.js) against the root certificates the FIDO Metadata Service lists

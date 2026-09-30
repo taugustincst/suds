@@ -41,7 +41,59 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
-### 2026-09-30 — Claude: county publication releases (branch `feat/121-county-publication`, not pushed; built for 1.21.0, not yet released)
+### 2026-09-30 — Claude: 1.21.0 (publication releases, field devices, allow-list, award amounts and reminders)
+
+- **What shipped.** One feature release under a recorded policy exception (docs/RELEASE.md, *Record: 1.21.0*), on
+  the instruction "Implement all five, resolve all known issues and build out stump code. loop until complete.":
+  county publication releases (migration **61**, `county_publications`, append-only), field devices and participant
+  codes first (migration **62**), the authenticator allow-list for passkeys (migration **63**), award amounts in the
+  county file (schema version 2) and reminders when a county file is due; a threat model and fuzz tests for the
+  county surface and SUDS Server; `scripts/release-state.js` and the county evidence packet; the evidence re-run on
+  1.20.0; `test/doc-content-currency.test.js`. No new permission. Eight parallel streams, each reviewed, then an
+  integration review whose findings were fixed before the stamp (CHANGELOG 1.21.0, *Fixed: defects found by the
+  integration review*). The browser suite is **56 scripts**. Two-commit stamp: "Release 1.21.0", then its SBOM
+  (`docs/evidence/sbom-1.21.0.cdx.json`); `v1.21.0` goes on the second, in the one push of eight tags (*Release
+  waiting*, below). The authorship figures (708 of 727, QUESTIONNAIRE #36a) were counted at `69c9429`, before the
+  documentation pass and the stamp.
+- **Upgrade order and upgrades.** A county's server is upgraded before its programmes send version 2 county files
+  (a programme on 1.21 sends version 1 to a county that does not say it reads 2). `deploy/linux/upgrade.sh` now hands
+  over to the new release's own `upgrade.sh`, but the `upgrade.sh` of 1.19.0 and 1.20.0 cannot: an operator on those
+  runs the new release's `upgrade.sh` from its unpacked zip (docs/SELF-HOSTING.md, *Upgrading*).
+- **Owner decisions to confirm or change** (each taken with a conservative default and implemented that way):
+  - *Publication* (docs/COUNTY-VIEW.md, *Publication*, decisions 1–7): the reader is assumed to hold every
+    programme figure of 0 or at least T exactly; the threshold is the county's own (11), raised per release, never
+    lowered; no corrected release of a period (any overlap refused, withdrawn or not); whole period and totals only;
+    county-entered figures counted by default and named; publishing needs the review ticked and the hash reviewed,
+    the withdrawal reason kept encrypted and shown to `county:manage` only; independent of the programme's
+    publication switch.
+  - *Award amounts and reminders* (COUNTY-VIEW, *Award amounts*, *Reminders*): the programme always makes version 2
+    (null awards), version 1 only by the box or the connection's fallback; the award is the fund record's total for
+    its fiscal year; the percentage is the period's spending over the whole award, not pro-rated; reminders on Home,
+    not to-do items, kept as settings rather than a table.
+  - *Field devices* (docs/PLATFORM.md, *Field devices*): off everywhere unless turned on; the participant-code
+    default offered only to harm-reduction programmes, answered No; a 90-day window; a device's user may only narrow
+    its scope.
+  - *Authenticator allow-list* (docs/FINGERPRINT.md, *Authenticator allow-list*): attestation only when the list is
+    on; a model with a compromise or revocation status anywhere in its history refused; passkeys added before the
+    list stop at their next use (not deleted); with the metadata file out of date, no passkey can be added but those
+    already proven keep working.
+- **Found by the integration review and not fixed (for the owner to decide):**
+  - A field device's sync session is refused by every route but `/api/sync/` **and `/api/auth/`** (`server/auth.js`
+    `requireAuth`): it can reach its own account's routes (password, second factor, passkeys, sessions) for the
+    length of a sync run. Narrowing it to sync and sign-out would need the kernel's sync flow checked.
+  - The field scope is **not a boundary against the device's own user**: the same account in a browser reads what
+    its role allows (THREAT-MODEL residual risk 20). A programme that wants less narrows the role too.
+  - A CalOMS record for a client known only by a participant code gets the fatal `name_missing` issue and stays
+    out of the submission file, but **can still be saved**.
+  - Servers on **1.19.0 or 1.20.0 cannot hand over** to the new `upgrade.sh`: the documented upgrade from them runs
+    the new release's `upgrade.sh` by hand (above).
+- **Owner-only:** push the eight tags in one push and approve only `v1.21.0`'s `Web app` run
+  (docs/evidence/RELEASE-HANDOFF.md); record 1.21.0's zip SHA-256 on `main` once its release job has run; the
+  repository settings (docs/RELEASE.md, *Owner: repository settings*); an independent statistical review now covers
+  county publication releases too; the installer on real VMs (docs/evidence/INSTALLER-VM-RUN.md). The next feature
+  release waits 28 days from 1.21.0.
+
+### 2026-09-30 — Claude: county publication releases (branch `feat/121-county-publication`, not pushed; released in 1.21.0)
 
 - County view › Publish: the publication screen over the combined county release (docs/COUNTY-VIEW.md,
   *Publication*). Migration **61** (`county_publications`, append-only by triggers). No new permission
@@ -133,18 +185,19 @@ _(Append replies here, newest first.)_
 
 ### Release waiting
 
-- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0 and 1.20.0 are on `main`, and 1.20.0 is live, but none is tagged:
-  the owner tags all seven, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the seven
-  `git tag -a` commands and `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0`, what each tag's runs do
-  (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`, `v1.18.0`, `v1.19.0` and
-  `v1.20.0` each need *Run workflow* with a `policy_exception`; only `v1.20.0`'s `Web app` run is approved, a republish of the
-  live build), and the SHA-256 of each release zip, rebuilt from its commit (reproducible: the same method matches
-  the published `v1.15.4` and `v1.16.2` checksums). After the releases, the owner records each checksum in its release
-  notes and in the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh --release-sha256` needs. Push the
-  tags while `main` says 1.20.0, or add a newer stamped version's tag to the same push. `v1.20.0` goes on the commit
-  after `Release 1.20.0` that adds its SBOM. The assistant cannot push tags (its
-  environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the owner*). Never push tags from an
-  assistant's clone, and never an older tag alone.
+- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0 and 1.21.0 are on `main`, and 1.21.0 is live, but none is
+  tagged: the owner tags all eight, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks,
+  the eight `git tag -a` commands and `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0`,
+  what each tag's runs do (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`,
+  `v1.18.0`, `v1.19.0`, `v1.20.0` and `v1.21.0` each need *Run workflow* with a `policy_exception`; only `v1.21.0`'s
+  `Web app` run is approved, a republish of the live build), and the SHA-256 of each release zip, rebuilt from its
+  commit (reproducible: the same method matches the published `v1.15.4` and `v1.16.2` checksums; 1.21.0's is recorded
+  by a commit after its SBOM commit). After the releases, the owner records each checksum in its release notes and in
+  the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh --release-sha256` needs. Push the tags while
+  `main` says 1.21.0, or add a newer stamped version's tag to the same push. `v1.20.0` and `v1.21.0` each go on the
+  commit after their `Release X.Y.Z` that adds its SBOM. The assistant cannot push tags (its environment's proxy
+  refuses them; docs/RELEASE.md, *Handing a release to the owner*). Never push tags from an assistant's clone, and
+  never an older tag alone.
 - The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
   once its tag is pushed.
 

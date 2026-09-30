@@ -148,7 +148,7 @@ module.exports = {
   // the programmes it accepts submissions from and the submissions it imported. A device makes and imports none.
   server_only: ['breakglass_events', 'complaints', 'privacy_incidents', 'privacy_incident_clients', 'fhir_jwt_assertions', 'caloms_submissions', 'client_revisions', 'ai_usage', 'caloms_submission_events', 'referral_links',
     'county_signing_keys', 'county_programmes', 'county_programme_keys', 'county_submissions',
-    // county_publications (built for 1.21.0, not yet released): the county's published releases and their withdrawals.
+    // county_publications (released in 1.21.0): the county's published releases and their withdrawals.
     'county_publications',
     // county_connect_* and county_connection (the county connection, docs/COUNTY-VIEW.md "Connecting"): the machine
     // tokens a county issues, and on a programme's server the county it sends to and its send log. A device has none.

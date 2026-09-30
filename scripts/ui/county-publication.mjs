@@ -1,4 +1,4 @@
-// County publication releases (built for 1.21.0, not yet released; docs/COUNTY-VIEW.md "Publication"), in the
+// County publication releases (released in 1.21.0; docs/COUNTY-VIEW.md "Publication"), in the
 // browser: County view › Publish.
 //   1. The county's administrator prepares a release for a quarter with the keyboard (Enter in a date checks the
 //      figures): what would be published takes the focus, names the programs and marks the figures the county

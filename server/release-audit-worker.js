@@ -5,7 +5,7 @@
 const { parentPort } = require('node:worker_threads');
 const RA = require('./release-audit');
 
-// kind 'county': a county publication release (server/county-publication-audit.js, built for 1.21.0, not yet released).
+// kind 'county': a county publication release (server/county-publication-audit.js, released in 1.21.0).
 parentPort.on('message', ({ id, inputs, T, opts, kind }) => {
   let out;
   try { out = { id, result: (kind === 'county' ? require('./county-publication-audit').protectCounty : RA.protectFigures)(inputs, T, opts || {}) }; } catch (e) { out = { id, error: String((e && e.message) || e) }; }

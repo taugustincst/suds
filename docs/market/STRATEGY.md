@@ -130,7 +130,7 @@ programme, not unduplicated. Tier 1 has an API too: an optional county connectio
 CBO's server sends the same signed file and sees what is outstanding, and read tokens for the county's own systems
 (COUNTY-VIEW *Connecting*).
 
-**What is built for 1.21.0, not yet released.** The publication screen over the combined release: a screened,
+**What is released in 1.21.0.** The publication screen over the combined release: a screened,
 recorded release of a county's combined figures, audited against each programme's own published figures
 (COUNTY-VIEW *Publication*).
 
@@ -166,15 +166,15 @@ default ([docs/PLATFORM.md](../PLATFORM.md)).
 **What "real" would add.** An offline-first flow designed around a contact that takes a minute: minimal
 personal information by default (a participant code instead of a name, which is also the CDPH SSP norm: the
 code is released in 1.17.0; a programme setting that makes it the default for new clients, + Log and Street
-outreach is built for 1.21.0, not yet released), a device that holds only what the worker needs rather than
-everything the worker may see (the field device scope, built for 1.21.0, not yet released:
+outreach is released in 1.21.0), a device that holds only what the worker needs rather than
+everything the worker may see (the field device scope, released in 1.21.0:
 [docs/PLATFORM.md](../PLATFORM.md), *Field devices*), and a sync that tolerates days without signal.
 
 **Assessment.** It is the most differentiated of the three for harm-reduction buyers, and the one that fits the
 product's privacy stance best: the least data collected is the least data to protect. Two cautions. First, a
 device today holds every record its user may see, which under the 1.16.0 defaults is the whole programme; a
 real outreach mode needs the least-privilege default (released in 1.17.0: on for a new install, a setting an upgraded office turns on)
-or a device scope of its own (the field device scope, built for 1.21.0, not yet released; an administrator marks
+or a device scope of its own (the field device scope, released in 1.21.0; an administrator marks
 each device, or makes every new device one). Second,
 offline sync is the area where most 1.16.x security findings were; each change to it needs the same review.
 
@@ -325,7 +325,7 @@ until counsel and one pilot have looked at it.
 
 ## Built vs planned, exactly
 
-| Capability | State on 30 September 2026 (1.20.0) |
+| Capability | State on 30 September 2026 (1.21.0) |
 | --- | --- |
 | Outreach, anonymous contacts, supplies, funder reporting, settlement report and DHCS/county layouts | **Built** (layouts not checked against current official templates) |
 | Local mode (offline copy, office sync) | **Built**, off by default; the wizard recommends it for harm reduction |
@@ -336,13 +336,15 @@ until counsel and one pilot have looked at it.
 | AI documentation copilot | **Released in 1.17.0** ([docs/AI-COPILOT.md](../AI-COPILOT.md)); off by default |
 | Least-privilege default; client revision history | **Released in 1.17.0** |
 | SABG primary-prevention events and their summary; anonymous SSP participant code | **Released in 1.17.0**; no PPSDS file (the mapping awaits the DHCS data dictionary) |
-| Funder-facing outcome view across CBOs | **Released in 1.18.0**: the county view from signed, exact submissions, internal only ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)), sent as a file or over the optional county connection, with a read API for the county's systems; screened publication releases of the combined figures are built for 1.21.0, not yet released (COUNTY-VIEW *Publication*); a published dashboard is **planned** |
+| Funder-facing outcome view across CBOs | **Released in 1.18.0**: the county view from signed, exact submissions, internal only ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)), sent as a file or over the optional county connection, with a read API for the county's systems; from 1.21.0 each file carries its funds' award amounts (spending against the award) and the programme is reminded when its county file is due |
+| County publication releases (a screened, publishable release of the combined figures) | **Released in 1.21.0** ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md), *Publication*); office server only; the programme's own small-cell method, audited against every programme's own release; recorded and never changed; whole period and totals only (no corrected release, no quarters, no programme columns); a published dashboard is **planned**; no independent statistical review |
 | Street-outreach screen (one-handed anonymous contacts, offline, *My shift*) with the SSP participant code; settlement outcomes by fund | **Released in 1.17.0** |
 | SUDS Server: the Linux installer and its weekly signed compliance check | **Released in 1.18.0** ([docs/SELF-HOSTING.md](../SELF-HOSTING.md)); tested in a fake root with stub system commands and run for real on Ubuntu 24.04 in a systemd container ([docs/evidence/installer-container-run-2026-09-30/](../evidence/installer-container-run-2026-09-30/README.md)); 1.20.0 fixes the four problems that run found; not yet on a real VM, or on RHEL 9, by the project |
 | Fingerprint sign-in, authorization and signing with passkeys | **Released in 1.19.0** ([docs/FINGERPRINT.md](../FINGERPRINT.md)); office server only; no biometric data held |
 | Grantees not on SUDS in the county's combined view (county-entered figures) | **Released in 1.20.0** ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md), *County-entered figures*); office server only; marked as entered by the county, never as signed, always outranked by a signed file; owner-default decisions D1–D5 for the owner to confirm |
 | County-contract kit (pilot kit, RFI answers, data contribution agreement draft) | **Released in 1.20.0** ([COUNTY-KIT.md](COUNTY-KIT.md)); the agreement is a draft for counsel, not reviewed |
-| Minimal-PII defaults and a field device scope for street outreach | **Planned**, not scheduled |
+| Minimal-PII defaults (participant code first) and a field device scope for street outreach | **Released in 1.21.0** ([docs/PLATFORM.md](../PLATFORM.md), *Field devices*); both off until an administrator turns them on; the scope is enforced at the office on every sync |
+| Authenticator allow-list for passkeys (attestation against the FIDO Metadata Service) | **Released in 1.21.0** ([docs/FINGERPRINT.md](../FINGERPRINT.md), *Authenticator allow-list*); off by default; office server only |
 | One-time secure referral links to organisations not on SUDS, with an invitation | **Released in 1.17.0**; off by default; counsel reviews the design before a programme switches it on |
 | A cross-organisation referral network (organisations that join and accept referrals in SUDS) | **Planned**, not scheduled |
 | Inbound FHIR referrals | **Design placeholder** ([docs/integration/FHIR.md](../integration/FHIR.md)) |

@@ -62,6 +62,14 @@ process and one SQLite database per programme; a second process is refused
   signed, which an auditor re-verifies offline (`npm run verify-passkey-evidence`). Needs HTTPS and
   `WEBAUTHN_RP_ID` set before anyone enrols; each can be switched off in Settings → Security policy
   ([docs/FINGERPRINT.md](../FINGERPRINT.md)). Not on SUDS on this device.
+- **Authenticator allow-list (released in 1.21.0; office server only, off by default):** an administrator lists the
+  authenticator models passkeys may use (by AAGUID) and loads the FIDO Metadata Service file (`blob.jwt`, downloaded
+  by hand: SUDS makes no outbound call). Each new passkey must then prove its model by attestation (`packed`,
+  `fido-u2f`, `tpm` or `android-key`, verified with `node:crypto`) against the roots and statuses in that file;
+  synced passkeys (iCloud Keychain, Google Password Manager) give no attestation and are refused. Passkeys added
+  before it was on stop at their next use, and the sessions they opened end, after the administrator confirms how
+  many accounts that affects. Keep the file current: once it is past its `nextUpdate`, no passkey can be added
+  ([docs/FINGERPRINT.md](../FINGERPRINT.md), *Authenticator allow-list*).
 - **Role-based access** (navigator, clinician, supervisor, finance, readonly, admin). **Role defaults since
   1.16.0:** navigators and clinicians see every client, and navigators read clinical notes without writing
   them. From 1.16.1 SUD counseling notes are readable only by their author, the co-signer and staff who write clinical notes (clinicians, supervisors). Client records are shared: anyone who sees a client may update it, and the client's
@@ -115,7 +123,12 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
   [docs/PLATFORM.md](../PLATFORM.md)). A device holds every record its user may see: **under the 1.16.0 role
   defaults that is the whole programme, clinical notes included** (about 460 MB of JSON on first sync at
   20,000 clients). Deny *See every client* to anyone whose device should hold only their caseload, before it
-  first syncs; turn local mode off where no documented field-work need exists.
+  first syncs; turn local mode off where no documented field-work need exists. **From 1.21.0, field devices:** an
+  administrator can make a device (or every new device) a field device, which holds only its worker's own caseload
+  seen in the last 90 days, with contact, intake, legal and clinical columns blank and no notes, consents or
+  assessments. The office enforces it on every pull and push from its own record of the device, and the device's
+  sync session is refused by every route but sync and the account's own sign-in routes. It limits what the device
+  holds, not what the account can reach from a browser ([docs/PLATFORM.md](../PLATFORM.md), *Field devices*).
 - **Every PHI field and every flow**: [docs/security/DATA-INVENTORY.md](../security/DATA-INVENTORY.md) lists each
   encrypted column by table, whether devices receive it, every way data can leave the server (referrals,
   identified exports, EHR hand-off, CalOMS, SPARS, FHIR, publication, sync, backups) with its gate and record, and
@@ -168,6 +181,13 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
     connection never counts them as received, and the view, its files and the read API can leave them out
     (`entered=exclude`). Audited as `county.entry.*` without figures or typed text
     ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md), *County-entered figures*).
+  - **1.21.0 on the county side:** the county file's schema version 2 carries each fund's award amount (still
+    aggregates; **upgrade the county's server first**: a county on 1.20 reads version 1 only, and a CBO sends it
+    version 1 until it says otherwise), reminders on each CBO's Home when its county file is due, and **publication
+    releases**: County view › Publish screens the combined figures for a period for small cells against every CBO's
+    own publication release, records what was published (append-only, with its SHA-256) and offers it as CSV,
+    Excel, JSON and read-API `GET /api/county-connect/v1/publications`. No new permission, port or connection
+    ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md), *Publication*).
 - **Settlement outcomes and street outreach (1.17.0) add no data flow.** The settlement outcomes page and its
   Excel/CSV file are aggregate figures made in the browser session of the person who asks for them (audited);
   nothing is sent to the state or anyone else. A street outreach contact is an ordinary anonymous visit, saved on
@@ -187,7 +207,7 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
 | Backup and recovery | Scheduled encrypted backups, off-host copy, restore from the UI, pre-migration snapshots; DR drill with measured RTO/RPO | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Backups*; [docs/security/BACKUP-AND-DR.md](../security/BACKUP-AND-DR.md) |
 | Monitoring | `/api/health/live` and `/api/health/ready` probes, `/api/health` for alerting; Prometheus metrics; JSON logs; no PHI in logs | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Monitoring and logs* |
 | Hardening | Checklist for host, TLS, proxy, permissions, firewall, MFA, keys. On **SUDS Server** (released in 1.18.0) the installer applies the host hardening and `npm run compliance-check` reports on it weekly: each host and app check against the HIPAA Security Rule, 42 CFR §2.16 or CMIA rule it evidences, signed with the check's own Ed25519 key (which the SUDS service never holds) and verifiable anywhere with `npm run verify-compliance-report`. It records what it observed, not compliance: what it cannot see (encryption beneath the VM, perimeter firewalls, key escrow, people and premises) is listed in the report's scope. The installer has been run for real on Ubuntu 24.04 in a systemd container, and 1.20.0 fixes what that run found (both shares checked at once, the first backup and recovery drill run by the installer so day one is not red, `WEBAUTHN_RP_ID` set from `--domain`); a run on a real VM, and any run on RHEL 9, is still owed ([docs/evidence/INSTALLER-VM-RUN.md](../evidence/INSTALLER-VM-RUN.md)) | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Hardening checklist*; [docs/SELF-HOSTING.md](../SELF-HOSTING.md), *The compliance check* |
-| Supply chain and change control | Zero runtime packages on the server; seven small npm packages bundled into the browser kernel, and sql.js's WebAssembly, all listed with versions and hashes in a **CycloneDX SBOM** ([docs/evidence/sbom-1.20.0.cdx.json](../evidence/sbom-1.20.0.cdx.json), generated by `scripts/sbom.js` and checked by `test/sbom.test.js`), with the build and test tooling marked separately; release zips built reproducibly with `git archive`, with SHA-256 checksums (not yet signed); Dependabot for the browser-kernel build tools. The release gate, owner approval and tag rules are designed, but the repository settings that enforce them are **not yet turned on by the owner** ([docs/RELEASE.md](../RELEASE.md), *Owner: repository settings*). **Development is AI-assisted**: of the 681 commits up to 1.20.0, 662 were written with an AI coding assistant (649 authored by it, 13 more carrying it as co-author; method in [QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md) #36a) under the rules in `CLAUDE.md`, gated by automated tests and CI (API suite, browser suite with accessibility checks, drift checks) and reviewed and merged by the owner. There is no second human reviewer today. Branch protection and independent review of what you deploy are yours to configure ([ADOPTION.md](../ADOPTION.md) §1) | [docs/security/SDLC.md](../security/SDLC.md), [docs/security/VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md), [docs/RELEASE.md](../RELEASE.md), [docs/architecture/](../architecture/README.md) |
+| Supply chain and change control | Zero runtime packages on the server; seven small npm packages bundled into the browser kernel, and sql.js's WebAssembly, all listed with versions and hashes in a **CycloneDX SBOM** ([docs/evidence/sbom-1.21.0.cdx.json](../evidence/sbom-1.21.0.cdx.json), generated by `scripts/sbom.js` and checked by `test/sbom.test.js`), with the build and test tooling marked separately; release zips built reproducibly with `git archive`, with SHA-256 checksums (not yet signed); Dependabot for the browser-kernel build tools. The release gate, owner approval and tag rules are designed, but the repository settings that enforce them are **not yet turned on by the owner** ([docs/RELEASE.md](../RELEASE.md), *Owner: repository settings*). **Development is AI-assisted**: of the 727 commits up to 1.21.0's documentation pass, 708 were written with an AI coding assistant (695 authored by it, 13 more carrying it as co-author; method in [QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md) #36a) under the rules in `CLAUDE.md`, gated by automated tests and CI (API suite, browser suite with accessibility checks, drift checks) and reviewed and merged by the owner. There is no second human reviewer today. Branch protection and independent review of what you deploy are yours to configure ([ADOPTION.md](../ADOPTION.md) §1) | [docs/security/SDLC.md](../security/SDLC.md), [docs/security/VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md), [docs/RELEASE.md](../RELEASE.md), [docs/architecture/](../architecture/README.md) |
 | Threat model and residual risks | Attackers, threats and mitigations by area; the attack classes fixed from 1.15.4 to 1.16.4 with their tests; residual risks, including repository settings not yet on, one maintainer, no pen test, shared devices separating accounts by rule rather than by key, blind-index leakage, the shared index/audit key, single instance, experimental `node:sqlite` | [docs/security/THREAT-MODEL.md](../security/THREAT-MODEL.md), [docs/HIPAA.md](../HIPAA.md), *Risk register notes* |
 | Attestation | **SOC 2: readiness self-assessment only; no audit report yet. No third-party pen test yet.** | [docs/security/SOC2-READINESS.md](../security/SOC2-READINESS.md); timeline in [PROCUREMENT.md](PROCUREMENT.md) |
 
@@ -231,7 +251,7 @@ it from the same evidence and will not answer "yes" to a control that is not in 
 - **Contracted vendor support** exists only under a signed agreement; [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)
   is an **owner template** whose hours, contacts and response targets are `[owner to complete]`, for counsel review.
   The vendor is one person today; there is no 24×7 support and no vendor on-call.
-- **Releases**: tagged, checksummed, with release notes (1.16.3 to 1.20.0 are published but their tags wait for the owner: [docs/evidence/RELEASE-HANDOFF.md](../evidence/RELEASE-HANDOFF.md)); pilot-group-first rollout recommended
+- **Releases**: tagged, checksummed, with release notes (1.16.3 to 1.21.0 are published but their tags wait for the owner: [docs/evidence/RELEASE-HANDOFF.md](../evidence/RELEASE-HANDOFF.md)); pilot-group-first rollout recommended
   ([docs/ADOPTION.md](../ADOPTION.md), section 3). Security fixes expedited.
 - **Open source (MIT, [LICENSE](../../LICENSE))**: the county can inspect, build and maintain the code without the vendor; there is no
   licence lock-in. The adoption plan asks the county to name a code owner whether or not it buys support.

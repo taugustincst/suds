@@ -1,5 +1,5 @@
 'use strict';
-// Reporting-cadence reminders, the programme's side (built for 1.21.0, not yet released; docs/COUNTY-VIEW.md,
+// Reporting-cadence reminders, the programme's side (released in 1.21.0; docs/COUNTY-VIEW.md,
 // "Reminders on the programme's side").
 //
 // A programme sends its county a county submission file for each period the county expects (a quarter, usually). This

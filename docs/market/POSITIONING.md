@@ -16,7 +16,7 @@ Three leads, in this order, each stated no further than the software goes:
    from the van or site they left, and an offline copy that syncs with the office where the programme turns it on.
    The Street outreach screen and the SSP participant code are released in 1.17.0. A field device scope (a
    device that holds only its worker's recent caseload, contacts and to-dos) and a participant-code-first
-   default for new clients and contacts are built for 1.21.0, not yet released; both are off unless an
+   default for new clients and contacts are released in 1.21.0; both are off unless an
    administrator turns them on ([docs/PLATFORM.md](../PLATFORM.md), *Field devices*).
 3. **Funder outcomes.** Funder report, NDP log, settlement expenditure report by allowable use and the layouts for
    DHCS and county settlement reporting, as exact submissions or screened publication releases. Each layout is to
@@ -25,7 +25,7 @@ Three leads, in this order, each stated no further than the software goes:
    them, internal only, people counted as each CBO's own count, summed ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)).
    From 1.20.0 the county can add grantees that do not run SUDS by entering their figures, marked as entered by the
    county and never as signed.
-   The publication screen over the combined release is built for 1.21.0, not yet released: a screened release of the
+   The publication screen over the combined release is released in 1.21.0: a screened release of the
    combined figures, audited against each CBO's own published figures ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md#publication));
    a published county dashboard on top of it is planned, not built.
 

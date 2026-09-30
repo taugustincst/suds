@@ -1,5 +1,5 @@
 'use strict';
-// Field devices on the device itself (built for 1.21.0, not yet released): the browser kernel, run in Node
+// Field devices on the device itself (released in 1.21.0): the browser kernel, run in Node
 // (test/fixtures/kernel-harness.js), syncing with a real office. A device an administrator makes a field device first
 // sends what it recorded under the full scope, then removes everything a field device may not hold, then pulls again
 // under the field scope; made a full device again, it receives the rest. Nothing recorded on it is lost either way.

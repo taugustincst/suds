@@ -24,7 +24,7 @@
 //      signed by the program" on Submissions (Correct reopens the form), in the headline, the column, every figure
 //      and the total; left out by the switch (the headline, the page and the file name say so); axe on each dialog
 //      at 1280, 390 and 320 px, nothing sideways.
-//   6. Award amounts and reminders (built for 1.21.0, not yet released): the program's file is version 2 with each
+//   6. Award amounts and reminders (released in 1.21.0): the program's file is version 2 with each
 //      fund's award, version 1 when the box for a county on SUDS 1.20 is ticked; the county reads both, the combined
 //      view's Spending against the award says "award not in file" and "no award recorded" in words and how many
 //      programs each total is over, and so does its CSV; Enter figures offers the award, optional. The program records
@@ -140,7 +140,7 @@ try {
   await fin.click('[data-so-county-key] details > summary');
   const pem = (await fin.textContent('[data-so-county-pem]')).trim();
   ok(/^-----BEGIN PUBLIC KEY-----/.test(pem), 'the public key is on the page to give the county');
-  // Schema version 2 (built for 1.21.0): each fund's award, { amount, from, to }.
+  // Schema version 2 (released in 1.21.0): each fund's award, { amount, from, to }.
   eq(own.schema_version, 2, 'the file is version 2');
   ok(own.payload.funds[0].award && own.payload.funds[0].award.amount > 0, 'carrying the fund\'s award from its record', own.payload.funds[0].award);
   const allowed = new Set(['counts', 'funds', 'categories', 'generated_at', 'period', 'programme', 'recipient', 'county_code', 'county_name', 'schema_version', 'suds_version', 'total', 'from', 'to', 'category', 'grant_number', 'hiaa', 'name', 'spend', 'values', 'award', 'amount',
@@ -506,7 +506,7 @@ try {
     await nCtx.close();
   }
 
-  // ---------------- 6. award amounts and reporting reminders (built for 1.21.0, not yet released) ----------------
+  // ---------------- 6. award amounts and reporting reminders (released in 1.21.0) ----------------
   // The county reads version 1 and version 2 files side by side: Eastside's quarter again, as a SUDS before 1.21 made it.
   const tmpV1 = path.join(tmp, 'v1'); fs.mkdirSync(tmpV1);
   execFileSync(process.execPath, ['--no-warnings', path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'county-sample.js'), tmpV1, '--county-code', code.data.code_display, '--schema-version', '1'], { stdio: 'ignore' });

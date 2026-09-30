@@ -47,7 +47,7 @@ under its contract today:
 | Part | Holds |
 | --- | --- |
 | Header | Schema version, the programme's name (Settings › Program), the **recipient** (the county's code and name), the period, when it was made (`generated_at`), the SUDS version, `counts: "exact"` |
-| Each chosen settlement fund | Its name, grant or agreement number, Exhibit E allowable use and California High Impact Abatement Activity; spending under its own category, under other categories, approved and pending; its outcomes; and (schema version 2, built for 1.21.0, not yet released) its **award**: the award or contract amount and the award period, from its fund record, or none ([Award amounts](#award-amounts-schema-version-2)) |
+| Each chosen settlement fund | Its name, grant or agreement number, Exhibit E allowable use and California High Impact Abatement Activity; spending under its own category, under other categories, approved and pending; its outcomes; and (schema version 2, released in 1.21.0) its **award**: the award or contract amount and the award period, from its fund record, or none ([Award amounts](#award-amounts-schema-version-2)) |
 | Each allowable use of the chosen funds | Spending under it and its outcomes |
 | All the chosen funds | Spending (approved, pending) and outcomes, counted over those funds alone |
 
@@ -61,7 +61,7 @@ single event. The payload is an **allow-list** (`server/county.js` `PAYLOAD`): t
 it is made, and again when the county imports it, and anything else refuses it. `payloadFrom` refuses figures that
 lack a value the list expects (never a quiet 0). `test/county.test.js` walks a real file and fails on any key outside
 the list or any client's name, code or date of birth inside it, and **freezes** the list (the values included) for
-schema version 1: changing it is a new schema version. Version 2 (built for 1.21.0, not yet released) is version 1
+schema version 1: changing it is a new schema version. Version 2 (released in 1.21.0) is version 1
 with each fund's award (`PAYLOAD_V2`), frozen the same way by `test/county-award.test.js`.
 
 ### Which funds go in (data minimisation)
@@ -238,7 +238,7 @@ navigation still shows County view while any programme is registered, active or 
   to the list's heading. Which files count toward a chosen period is on the combined view, not here.
 - **Programs** (`#/county?tab=programmes`): this county's code; register, rename, add notes, deactivate (and keep
   counting); **Keys** for each programme's key history.
-- **Publish** (`#/county?tab=publish`; built for 1.21.0, not yet released): a screened publication release of the
+- **Publish** (`#/county?tab=publish`; released in 1.21.0): a screened publication release of the
   combined figures for a period, and the releases published ([Publication](#publication), below).
 
 Every read and write is audited: `county.view`, `county.export`, `county.code.create`, `county.programme.add`,
@@ -246,10 +246,9 @@ Every read and write is audited: `county.view`, `county.export`, `county.code.cr
 `county.programme.key.replace|compromised|trusted`, `county.submission.import` (with its status: imported,
 superseded or older) and `.duplicate`, `county.submission.refuse`, `county.submission.throttled`,
 `county.submission.withdraw` (with the reason), `county.submission.reinstate`; for figures the county entered (released in
-1.20.0), `county.entry.create|update|import|refuse|withdraw|reinstate`; for publication releases (built for 1.21.0, not
-yet released), `county.publication.prepare|publish|refuse|export|withdraw`. On the programme's side:
+1.20.0), `county.entry.create|update|import|refuse|withdraw|reinstate`; for publication releases (released in 1.21.0), `county.publication.prepare|publish|refuse|export|withdraw`. On the programme's side:
 `county_submission.key.create`, `county_submission.key.rotate`, `county_submission.export` (with the file's
-`schema_version`), and for the reminders (built for 1.21.0, not yet released) `county_submission.schedule.save|remove`.
+`schema_version`), and for the reminders (released in 1.21.0) `county_submission.schedule.save|remove`.
 The audit entries carry ids, periods, fingerprints and hashes, never figures.
 
 ### Which submissions count for a period
@@ -280,7 +279,7 @@ not withdrawn), signed by a key not marked compromised, from an active programme
 | Permission | Who holds it by default | What it allows |
 | --- | --- | --- |
 | `county:view` | Administrator, supervisor, finance | The combined view and its files (with `export:read`), the list of programmes and files, the county code |
-| `county:manage` (sensitive) | Administrator | Register, change, deactivate programmes and replace or distrust their keys (it decides whose figures the county accepts); import, withdraw and reinstate files; register a programme not on SUDS and enter or import its figures (released in 1.20.0); prepare, publish and withdraw publication releases (built for 1.21.0, not yet released) |
+| `county:manage` (sensitive) | Administrator | Register, change, deactivate programmes and replace or distrust their keys (it decides whose figures the county accepts); import, withdraw and reinstate files; register a programme not on SUDS and enter or import its figures (released in 1.20.0); prepare, publish and withdraw publication releases (released in 1.21.0) |
 
 Neither can be granted to a role that does not see exact aggregate counts (`reports:exact` or `reports:funder`):
 **read-only**, navigators and clinicians (`server/permissions.js` `grantProblem`). Read-only's reports are
@@ -491,7 +490,7 @@ by the program**.
   on every row it reads, at most 12 periods, 5,000 rows and 256 KB. Text is held to the signed files' rule
   (`cleanText`), and a cell the spreadsheet guard quoted (`'=…`) is read back as its text: the guard adds one quote
   to text that begins with quotes before a formula character too (`'=x` goes out as `''=x`), and the import takes
-  exactly one off, so every name SUDS exports reads back as itself (built for 1.21.0, not yet released;
+  exactly one off, so every name SUDS exports reads back as itself (released in 1.21.0;
   `test/county-fuzz.test.js`). A figure that is not a
   number is one problem, said at its cell, not also "has no …" for the same fund. Refused entries and imports are
   **throttled per person** as refused files are (20 in ten minutes, then `429`, audited once per window as
@@ -560,7 +559,7 @@ section 8).
 
 ## Award amounts (schema version 2)
 
-*Built for 1.21.0, not yet released.* A county that funds a programme wants to see what it spent **against the
+*Released in 1.21.0.* A county that funds a programme wants to see what it spent **against the
 award**, not only what it spent. The file now carries, for each chosen fund, its **award**: the award or contract
 amount and the award period, taken from the fund's own record (Funding & spending: the fund's total amount and its
 fiscal year start and end; `funding_sources.total_amount`, `fiscal_year_start`, `fiscal_year_end`), signed with the
@@ -605,7 +604,7 @@ exactly `{ amount, from, to }`).
 
 ## Reminders on the programme's side
 
-*Built for 1.21.0, not yet released* (`server/county-schedule.js`). A programme reports to its county on a cadence
+*Released in 1.21.0* (`server/county-schedule.js`). A programme reports to its county on a cadence
 (usually each quarter, within some days of its end). SUDS now reminds whoever makes the county file (`reports:funder`
 and `budget:read`, as the file itself) on **Home**: "County file to Sample County Behavioral Health for Jul – Sep
 2026 due by Oct 30, 2026 — not yet made" (red once the date has passed; three at most, then how many more), leading
@@ -636,7 +635,7 @@ to the **County reporting schedule** card on Settlement outcomes.
 
 ## Publication
 
-*Built for 1.21.0, not yet released. Office server only. Migration 61; `server/county-publication.js`,
+*Released in 1.21.0. Office server only. Migration 61; `server/county-publication.js`,
 `server/county-publication-audit.js`.*
 
 The combined view is internal: exact figures for authorised county staff. **County view › Publish**
@@ -696,7 +695,7 @@ release** of the combined figures for a period, records it, and never changes it
 - **Permissions.** `county:manage` prepares, publishes and withdraws; `county:view` lists and reads releases; the
   files need `export:read`. No new permission.
 
-**Owner decisions** (conservative defaults, built for 1.21.0, not yet released; each can be relaxed later):
+**Owner decisions** (conservative defaults, released in 1.21.0; each can be relaxed later):
 
 1. *The reader holds the most any program's own release could say*: every program figure of 0 or at least T is
    assumed published exactly. A county with one small program beside published big ones gets that measure's total
@@ -720,22 +719,13 @@ office-only too (`county-connect` in `LOCAL_ROUTE_MODULES`'s exclusions; `test/c
 
 ## Deferred
 
-- **Publication.** Nothing here publishes anything. Publishing combined figures needs **the publication screen
-  over the combined release** (planned): the small-cell method audited over the county total *and* every
-  programme's own releases it could be differenced against (DATA-NETWORK, *The basis*). The page and its files say
-  so.
-- ~~Award and contract amounts per fund~~: built for 1.21.0, not yet released ([Award amounts](#award-amounts-schema-version-2)).
-- ~~Reporting-cadence reminders on the programme's side~~: built for 1.21.0, not yet released ([Reminders on the
+- ~~Publication~~: released in 1.21.0 ([Publication](#publication), above): **the publication screen over the
+  combined release**, the small-cell method audited over the county total *and* every programme's own releases it
+  could be differenced against (DATA-NETWORK, *The basis*). Still deferred: a corrected release of a period already
+  published, a release by quarter, and program columns in a release.
+- ~~Award and contract amounts per fund~~: released in 1.21.0 ([Award amounts](#award-amounts-schema-version-2)).
+- ~~Reporting-cadence reminders on the programme's side~~: released in 1.21.0 ([Reminders on the
   programme's side](#reminders-on-the-programmes-side)).
-
-- **Publication** is built for 1.21.0, not yet released: **the publication screen over the combined release**
-  ([Publication](#publication), above), the small-cell method audited over the county total *and* every programme's
-  own releases it could be differenced against (DATA-NETWORK, *The basis*). Still deferred: a corrected release of a
-  period already published, a release by quarter, and program columns in a release.
-- **Award and contract amounts per fund** (spending against the award): needs the award in the file, so a schema
-  version 2 of the payload.
-- **Reporting-cadence reminders on the programme's side** (the quarter the county expects, and whether its file was
-  made).
 - **Benchmarks (Tier 2)**: distributions across programmes, rates per 100 people served, a minimum number of
   contributing programmes, an expert determination. Not built.
 - **Unduplication across programmes: never** (above).
@@ -762,7 +752,7 @@ County-entered figures (released in 1.20.0): `server/county-entry.js`, the entry
 database with signed submissions); the browser script `scripts/ui/county.mjs` (section 4) and the dialogs in
 `scripts/ui/accessibility.mjs`.
 
-Award amounts and reminders (built for 1.21.0, not yet released): `server/county.js` (`PAYLOAD_V2`, `awardFrom`, the
+Award amounts and reminders (released in 1.21.0): `server/county.js` (`PAYLOAD_V2`, `awardFrom`, the
 award rows of `combined()` and `byQuarter()`), `server/settlement-outcomes.js` (each fund's award), `server/county-entry.js`
 (`AWARD_MEASURES`), `server/county-schedule.js`, the reminder routes in `server/routes/county.js`, `statusFacts` and
 `versionForCounty` in `server/county-connect-client.js`, `due_days` in `server/county-connect.js`; the County reporting
@@ -770,7 +760,7 @@ schedule card in `public/views/settlement.js`, the reminders on Home (`public/vi
 `test/county-award.test.js` and the 1.21 tests at the end of `test/county-connect.test.js`; browser scripts
 `scripts/ui/county.mjs` (section 6) and `scripts/ui/county-connect.mjs`.
 
-Publication releases (built for 1.21.0, not yet released): `server/county-publication.js` (prepare, record, withdraw,
+Publication releases (released in 1.21.0): `server/county-publication.js` (prepare, record, withdraw,
 files), `server/county-publication-audit.js` (the model, over `server/sdc.js` with its `fixed` cells), the publication
 routes in `server/routes/county.js` and `/v1/publications` in `server/routes/county-connect.js`, the Publish tab in
 `public/views/county.js`; migration 61 (`county_publications`, append-only); tests `test/county-publication.test.js`

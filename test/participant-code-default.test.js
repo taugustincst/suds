@@ -1,5 +1,5 @@
 'use strict';
-// Minimal personal information by default (built for 1.21.0, not yet released): a programme setting,
+// Minimal personal information by default (released in 1.21.0): a programme setting,
 // participant_code_default (off unless an administrator turns it on), starts new clients and outreach contacts with a
 // syringe services participant code instead of a name. A client may be known by a code alone: stored encrypted,
 // found and counted by its blind index (the same domain as an anonymous visit's code), and counted as a client.

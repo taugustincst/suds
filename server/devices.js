@@ -32,7 +32,7 @@ function touch(user, deviceId, ctx) {
   return db.one(`SELECT * FROM devices WHERE id=?`, deviceId);
 }
 
-// ---- sync scope (built for 1.21.0, not yet released; server/field-scope.js) ----
+// ---- sync scope (released in 1.21.0; server/field-scope.js) ----
 const SCOPES = ['full', 'field'];
 /**
  * Change what a device's sync carries. `via`: 'admin' (Settings -> Synced devices) or 'enrolment' (its own user,

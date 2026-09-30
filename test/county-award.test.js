@@ -1,6 +1,6 @@
 'use strict';
 // Award amounts in the county submission file (schema version 2) and the programme's reporting-cadence reminders
-// (built for 1.21.0, not yet released; docs/COUNTY-VIEW.md, "Award amounts" and "Reminders on the programme's side").
+// (released in 1.21.0; docs/COUNTY-VIEW.md, "Award amounts" and "Reminders on the programme's side").
 // One test server plays both sides, as test/county.test.js does: it makes its own files as a programme, and as the
 // county imports them beside the sample programmes' (scripts/county-sample.js), version 1 and version 2.
 const { test, before, after } = require('node:test');

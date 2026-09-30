@@ -14,7 +14,7 @@
 //       (the signed files), made for the county whose code is given (County view › Programs shows it). Nothing
 //       here touches a database: the files are what three programs' own SUDS servers would have made. Register
 //       each key and import each file on the county's server (the browser suite does this through the API). Schema
-//       version 2 (each fund's award; built for 1.21.0, not yet released) unless --schema-version 1.
+//       version 2 (each fund's award; released in 1.21.0) unless --schema-version 1.
 //
 // `npm run seed` stays a program's data; this is the county's. Written to a directory, it needs no database, keys or
 // data directory of a server (signWithSeed signs with each sample program's own key): it loads SUDS's modules as

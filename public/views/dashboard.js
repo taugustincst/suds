@@ -14,7 +14,7 @@ async function drawHome(r) {
     security: can('settings:manage') && !state.local ? quiet('/api/admin/security/alerts').catch(() => null) : null,
     caseloads: can('assignments:manage') ? quiet('/api/users/caseloads').catch(() => null) : null,
     supplies: can('supplies:manage') ? import('./supplies.js').then(m => m.supplyHome()) : null,
-    // County files due (built for 1.21.0, not yet released; server/county-schedule.js): for whoever makes the county
+    // County files due (released in 1.21.0; server/county-schedule.js): for whoever makes the county
     // file, on an office server (SUDS on this device makes none).
     county: can('reports:funder') && can('budget:read') && can('export:read') && !state.local ? quiet('/api/county-submission/reminders').catch(() => null) : null,
     setup: can('settings:manage') && !state.local ? Promise.all([

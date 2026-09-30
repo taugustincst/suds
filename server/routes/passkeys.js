@@ -118,7 +118,7 @@ module.exports = (r) => {
     return { ok: true, removed };
   });
 
-  // ---- the authenticator allow-list (docs/FINGERPRINT.md, "Authenticator allow-list"; built for 1.21.0) ----
+  // ---- the authenticator allow-list (docs/FINGERPRINT.md, "Authenticator allow-list"; released in 1.21.0) ----
   // Administrators only (settings:manage). Reading it and previewing who a change would affect need nothing more;
   // changing it or loading a metadata file needs the password or authenticator code with the request, every time
   // (auth.verifySigner `fresh`, as for the key backup; a single sign-on account confirms with its provider).

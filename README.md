@@ -27,7 +27,28 @@ partner, or its county) runs; it is not a hosted service. Positioning, buyer gui
 and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
 [docs/architecture/README.md](docs/architecture/README.md).
 
-## What's new in 1.18.0 to 1.20.0
+## What's new in 1.18.0 to 1.21.0
+
+**1.21.0**
+
+* **County publication releases**: County view › Publish makes a screened, publishable release of a county's
+  combined figures for a period, with the programme's own small-cell method audited against every programme's own
+  release (so a county total cannot give a small programme's figure away by subtraction), shown for review first,
+  recorded with its SHA-256 and never changed; withdrawal is a record of its own. Office server only; no new
+  permission ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#publication)).
+* **Award amounts and reminders in the county file**: the county file (schema version 2) carries each fund's award,
+  and the combined view shows spending against the award; Home reminds whoever makes the county file which one is
+  due. **Upgrade a county's server before its programmes send version 2 files**
+  ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#award-amounts-schema-version-2)).
+* **Field devices and participant codes first**: a device can hold only its worker's own recent caseload, without
+  contact, intake, legal or clinical details, enforced by the office on every sync; outreach records can start from a
+  participant code, with the name behind *Add a name*. Both off until an administrator turns them on
+  ([docs/PLATFORM.md](docs/PLATFORM.md#field-devices)).
+* **An authenticator allow-list for passkeys**: a programme can accept only the authenticator models it lists, each
+  proven by its attestation against a FIDO Metadata Service file the administrator loads (no outbound call). Off by
+  default; office server only ([docs/FINGERPRINT.md](docs/FINGERPRINT.md#authenticator-allow-list)).
+* A threat model and fuzz tests for the county surface and SUDS Server, a check of the release documents against the
+  repository, and a county evidence packet. Upgrading runs migrations 61 to 63 on start.
 
 **1.20.0**
 
@@ -96,11 +117,14 @@ The sign-in page has two options, **Log in** and **Sign up** (link straight to e
 * **Data protection:** AES-256-GCM field-level encryption of client identifiers and free text (coded reporting fields rely on disk encryption — [docs/HIPAA.md](docs/HIPAA.md), *Data classification*), blind-index search, scrypt password hashing, TOTP MFA or a passkey (fingerprint, 1.19.0), role-based access (caseload scoping by per-user deny), 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
 * **AI documentation copilot (1.17.0, optional):** drafts for a person to review and sign (notes, six-dimension assessments, care plan and CalOMS suggestions). Office server only, never on SUDS on this device or an offline copy; off until an administrator records the programme's BAA with Part 2 QSOA terms and counsel's review, then switches it on; identifiers SUDS holds are replaced before sending (not de-identification); never for SUD counseling notes or a client with an agreed restriction; a monthly cap, each call audited without its text ([docs/AI-COPILOT.md](docs/AI-COPILOT.md)).
 * **Settlement outcomes (1.17.0):** per opioid-settlement fund, spending by Exhibit E category beside the outcomes recorded for it, with cost per outcome; counts of people suppressed by default, never a publication release.
-* **County view (released in 1.18.0):** a programme sends the county a signed quarterly file of its settlement outcomes' exact aggregates for the funds that county pays for (no client-level data), and a county running SUDS imports its programmes' files and sees them side by side, summed and by quarter. Internal and exact, never published, people counted as each programme's own count, summed; office server only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md)).
+* **County view (released in 1.18.0):** a programme sends the county a signed quarterly file of its settlement outcomes' exact aggregates for the funds that county pays for (no client-level data), and a county running SUDS imports its programmes' files and sees them side by side, summed and by quarter. Internal and exact (from 1.21.0 published only as a screened release, County view › Publish), people counted as each programme's own count, summed; office server only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md)).
 * **County connection (released in 1.18.0, optional):** off by default on both sides. The programme's server posts the same signed aggregate file to its county's SUDS server over HTTPS with a county-issued connection token (the file must still verify under the programme's registered key) and sees which periods are outstanding; the county's own systems read the combined view with read tokens that expire. Behind a proxy the county sets `TRUST_PROXY=1`; office servers only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#connecting)).
 * **SUDS Server (released in 1.18.0):** `deploy/linux/install.sh` for Ubuntu 24.04 or RHEL 9 (LUKS data disk, pinned Node and Caddy, a sandboxed service, keys as root-only credentials, firewall), upgrades that need the release zip's SHA-256 from a second channel, and a weekly compliance report signed with the check's own key (`npm run verify-compliance-report`). It shows what it observed; it does not make a programme compliant. Run for real on Ubuntu 24.04 in a systemd container ([docs/evidence/installer-container-run-2026-09-30/](docs/evidence/installer-container-run-2026-09-30/README.md); the installer fixes it led to are in 1.20.0) and in a fake root in CI; not yet on a real VM or on RHEL 9 by the project ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)).
 * **County-entered figures (released in 1.20.0):** a county enters or imports the figures of a grantee not on SUDS, marked as entered by the county, never signed, always outranked by a signed file, and possible to leave out; office server only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#county-entered-figures)).
 * **Fingerprint sign-in and signing (released in 1.19.0):** passkeys on the device's own authenticator for sign-in, two-step verification and confirming signatures and approvals; no biometric data held; signed evidence verifiable offline (`npm run verify-passkey-evidence`). Office server only, HTTPS and `WEBAUTHN_RP_ID` required ([docs/FINGERPRINT.md](docs/FINGERPRINT.md)).
+* **County publication releases (released in 1.21.0):** a screened, publishable release of the county's combined figures for a period, audited against every programme's own release, recorded and never changed; office server only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#publication)).
+* **Field devices and participant codes first (released in 1.21.0, optional):** a device that holds only its worker's own recent caseload without contact, intake, legal or clinical details, enforced at the office; outreach records that start from a participant code; both off until an administrator turns them on ([docs/PLATFORM.md](docs/PLATFORM.md#field-devices)).
+* **Authenticator allow-list (released in 1.21.0, optional):** passkeys only on the authenticator models the programme lists, proven by attestation against a FIDO Metadata Service file; off by default; office server only ([docs/FINGERPRINT.md](docs/FINGERPRINT.md#authenticator-allow-list)).
 * **Street outreach (1.17.0):** a one-handed phone screen for anonymous contacts that draws supplies from stock, works offline where offline copies are allowed, and counts the worker's shift.
 * **SSP participant code (1.17.0, optional):** an anonymous contact can carry the participant's self-built code, stored encrypted and counted by blind index, so the syringe services summary counts anonymous participants; no file prints a code ([docs/SUPPLIES.md](docs/SUPPLIES.md)).
 * **Secure referral links (1.17.0):** a one-time link, with a separate access code, to an organisation not on SUDS, carrying a minimal referral only under a Part 2 consent naming it. Office server only, **off by default**; counsel reviews the design before a programme switches it on ([docs/security/REFERRAL-LINKS.md](docs/security/REFERRAL-LINKS.md)).

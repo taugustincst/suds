@@ -1,5 +1,5 @@
 'use strict';
-// The authenticator allow-list for passkeys (docs/FINGERPRINT.md, "Authenticator allow-list"; built for 1.21.0, not
+// The authenticator allow-list for passkeys (docs/FINGERPRINT.md, "Authenticator allow-list"; released in 1.21.0, not
 // yet released): attestation verified with node:crypto alone (server/attestation.js) against root certificates from a
 // FIDO Metadata Service BLOB an administrator uploads (server/authenticator-allowlist.js). Every certificate here is
 // made fresh by the test helper test/x509.js (test keys only), and the BLOBs are signed under a test root that the

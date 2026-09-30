@@ -1,5 +1,5 @@
 'use strict';
-// The audit of a county publication release as a pure function of its figures (built for 1.21.0, not yet released;
+// The audit of a county publication release as a pure function of its figures (released in 1.21.0;
 // docs/COUNTY-VIEW.md "Publication"; server/county-publication.js reads the combined view and serves the result).
 // It runs in the publication audit's worker thread (server/release-audit-worker.js, kind 'county'), and inline in
 // the tests that call it directly.

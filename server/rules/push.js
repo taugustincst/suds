@@ -121,7 +121,7 @@ class RowContext {
   plain(col) { return this._raw[col] !== undefined ? this._raw[col] : this.was(col); }
 }
 
-// What a field device may write (built for 1.21.0, not yet released; server/field-scope.js). The reason is one of
+// What a field device may write (released in 1.21.0; server/field-scope.js). The reason is one of
 // sync-tables.js's permanent reasons: the office has ruled, and the device stops resending the row.
 const OUTSIDE_FIELD = 'outside this field device\'s scope';
 

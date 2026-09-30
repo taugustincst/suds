@@ -1,5 +1,5 @@
 'use strict';
-// The algorithm-aware differencing attacker on the county publication release (built for 1.21.0, not yet released;
+// The algorithm-aware differencing attacker on the county publication release (released in 1.21.0;
 // server/county-publication-audit.js; docs/COUNTY-VIEW.md "Publication"). One of the SDC attacker sweeps
 // (scripts/test-thorough.js SDC_SWEEPS: SUDS_THOROUGH=1 runs the full families in CI's thorough-sdc job; npm test
 // runs a sample).

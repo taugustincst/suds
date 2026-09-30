@@ -29,9 +29,17 @@ grantee that does not run SUDS, from that grantee's own report; they are marked 
 by the program* wherever the county sees them, and once you send a signed file for the same period, yours counts
 instead. If your county enters your figures before you start on SUDS, that is where they came from. Fingerprint
 sign-in (1.19.0) lets staff sign in and sign notes with the phone's or laptop's fingerprint reader on an office
-server. A field device scope for street outreach and a referral
-network partner organisations join (beyond the 1.17.0 one-time secure links) are planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS
-for what it does today.
+server. 1.21.0 adds, for your outreach staff, **field devices**: a phone that holds only its worker's own clients
+seen in the last 90 days, without their contact, intake, legal or clinical details, so a lost outreach phone
+carries much less; and **participant codes first**: new outreach records can start from the participant's code,
+with the name added later only if the person gives it ([docs/PLATFORM.md](../PLATFORM.md), *Field devices*). Both are
+off until your administrator turns them on. For your finance lead, the county file now carries each fund's award
+amount, so the county sees spending against the award, and Home reminds whoever makes the county file when it is
+due. For your county, a screened **publication release** of the combined figures: your programme's own small counts
+are protected against anyone who holds your own publication release and subtracts
+([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md), *Publication*). A referral network partner organisations join (beyond the
+1.17.0 one-time secure links) is planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS for what it does
+today.
 
 ## What it does for the work
 

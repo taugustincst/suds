@@ -1,5 +1,5 @@
 'use strict';
-// The field-device sync scope (built for 1.21.0, not yet released; docs/PLATFORM.md "Field devices").
+// The field-device sync scope (released in 1.21.0; docs/PLATFORM.md "Field devices").
 //
 // A device syncs in one of two scopes (devices.sync_scope). 'full' carries everything its user may read, as every
 // device did before. 'field' carries only what a field worker needs: the clients on the worker's OWN caseload who

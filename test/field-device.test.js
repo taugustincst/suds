@@ -1,5 +1,5 @@
 'use strict';
-// Field devices (built for 1.21.0, not yet released; server/field-scope.js, docs/PLATFORM.md "Field devices").
+// Field devices (released in 1.21.0; server/field-scope.js, docs/PLATFORM.md "Field devices").
 // A device an administrator marks as a field device syncs only what a field worker needs: their own recent caseload's
 // minimal record, their outreach contacts, supplies and lists, their own to-dos. The office enforces it on pull and on
 // push, from its own record of the device the sync session signed in from, never from what the device says.

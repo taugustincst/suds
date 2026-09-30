@@ -30,7 +30,7 @@ const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'progra
   // SUPRT-A (server/suprt.js): the SOR grant and site IDs every record carries, and whether the reassessment
   // is due at 3 or 6 months.
   'suprt_grant_id', 'suprt_site_id', 'suprt_reassessment_months',
-  // Minimal personal information (built for 1.21.0, not yet released): new clients and outreach contacts start with a
+  // Minimal personal information (released in 1.21.0): new clients and outreach contacts start with a
   // participant code instead of a name; new devices start as field devices, and the window a field device holds
   // (server/field-scope.js). All three are off (or 90 days) unless an administrator changes them.
   'participant_code_default', 'field_device_default', 'field_device_window_days',
@@ -352,7 +352,7 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'device.clear', entity: 'device', entityId: d.id, ip: ctx.ip, details: { device_user: d.user_id } });
     return { ok: true };
   });
-  // What a device's sync carries (built for 1.21.0, not yet released; server/field-scope.js): 'full' or 'field'. The
+  // What a device's sync carries (released in 1.21.0; server/field-scope.js): 'full' or 'field'. The
   // change reaches the device at its next sync (server/devices.js setScope); audited there as device.scope.
   r.post('/api/admin/devices/:id/scope', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
     const d = findDevice(ctx);
