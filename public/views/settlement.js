@@ -1,6 +1,6 @@
 import { h, route, get, state, fmt, can, pageHead, stat, table, kv, nav, toast, emptyState, loadingFor } from '../app.js';
-// Send to the county over the county connection (views/county-connect.js; built for 1.18.0), after the file card.
-import { countySendCard } from './county-connect.js';
+// Send to the county over the county connection (views/countyconnect.js; built for 1.18.0), after the file card.
+import { countySendCard } from './countyconnect.js';
 import { fetchDownload } from './reports.js';
 
 // Settlement outcomes (1.17.0; server/settlement-outcomes.js, server/settlement-outcome-map.js): each opioid

@@ -251,6 +251,8 @@ async function pagesFor(page) {
     if (out.includes('supervision') && a.can('audit:read')) out.push('supervision?tab=breakglass');
     // The county view's other sections (docs/COUNTY-VIEW.md).
     if (out.includes('county')) out.push('county?tab=submissions', 'county?tab=programmes');
+    // The county connection (docs/COUNTY-VIEW.md, "Connecting"): the County connections page, for county:view.
+    if (out.includes('county')) out.push('county-connect');
     if (a.state.local) out.push('sync');
     // State reporting (CalOMS Tx and the county EHR hand-off) is reached from Reports, not the navigation.
     if (a.can('episodes:read') || a.can('episodes:write') || a.can('export:identified')) out.push('caloms');
@@ -309,6 +311,13 @@ async function prepareOffice() {
     must(await api(page, 'POST', '/api/county/submissions', { text: fs.readFileSync(path.join(sampleDir, f), 'utf8') }), `county submission ${f}`);
   }
   fs.rmSync(sampleDir, { recursive: true, force: true });
+  // The county connection switched on, a connection token for one programme and a read token, so County connections and
+  // the Connection tokens card are audited with rows in them (Settlement outcomes' connection card is audited not yet
+  // connected, with its Connect dialog; county-connect.mjs audits it connected, with a send in its log).
+  must(await api(page, 'PUT', '/api/county-connect/settings', { enabled: true }), 'the county connection is on');
+  const ccProgs = (await api(page, 'GET', '/api/county/programmes')).data.rows;
+  must(await api(page, 'POST', '/api/county-connect/tokens', { scope: 'county.submit', programme_id: ccProgs[0].id }), 'a connection token');
+  must(await api(page, 'POST', '/api/county-connect/tokens', { scope: 'county.read', name: 'County data warehouse' }), 'a read token');
   // A supervisor (clients:all, care plan, assessments, Part 2 registers) records the clinical and Part 2 records.
   await as('jwalker', PW);
   const fresh = must(await api(page, 'POST', '/api/clients', { first_name: 'Ada', last_name: 'Audit', status: 'waitlist', confirm_duplicate: true }), 'a client with no episode');
@@ -465,6 +474,8 @@ const BUTTON_DIALOGS = [
   ['reports', 'Identified Excel workbook'], ['admin?tab=lists', '+ Add funding source'],
   // The county view: registering and editing a programme, and withdrawing an imported file.
   ['county?tab=programmes', 'Register a programme'], ['county?tab=programmes', 'Edit'], ['county?tab=submissions', 'Withdraw'],
+  // The county connection: issuing a connection or read token, and connecting this server to a county.
+  ['county?tab=programmes', 'Issue token'], ['county-connect', 'Issue a read token'], ['settlement', 'Connect to the county'],
   // The supervision queue: countersigning one note (the note's text, a comment, the signature step).
   ['supervision', 'Countersign'],
 ];

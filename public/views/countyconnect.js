@@ -41,7 +41,7 @@ export async function programmeConnections(programmes) {
     const conn = d.rows.filter(t => t.kind === 'connection');
     const rows = programmes.map(p => ({ ...p, tokens: conn.filter(t => t.programme_id === p.id && t.state === 'live') }));
     box.replaceChildren(
-      d.enabled ? null : h('p', { class: 'banner info small', 'data-cc-off': '1' }, 'The county connection is switched off, so no programme can send over it yet, whatever tokens are issued. Switch it on under ', h('a', { href: '#/county-connect' }, 'County connections'), '.'),
+      ...(d.enabled ? [] : [h('p', { class: 'banner info small', 'data-cc-off': '1' }, 'The county connection is switched off, so no programme can send over it yet, whatever tokens are issued. Switch it on under ', h('a', { href: '#/county-connect' }, 'County connections'), '.')]),
       table([{ label: 'Programme', render: p => p.name },
         { label: 'Connection token', render: p => (p.tokens.length ? p.tokens.map(t => h('div', {}, h('code', { class: 'small' }, `${t.prefix}…`), t.expires_at ? ` · expires ${when(t.expires_at)}` : ' · no expiry')) : h('span', { class: 'muted' }, 'None')) },
         { label: 'Last used', render: p => (p.tokens.length ? p.tokens.map(t => h('div', {}, t.last_used_at ? `${when(t.last_used_at)} from ${t.last_used_ip || 'an unknown address'}` : 'Not yet')) : '—') },
@@ -141,7 +141,7 @@ export function countySendCard(from, to) {
     result.setAttribute('role', ok ? 'status' : 'alert');
     result.className = `banner ${ok ? 'info' : 'danger'}`;
     result.setAttribute('data-cc-outcome', ok ? 'ok' : 'failed');
-    result.replaceChildren(...[].concat(content));
+    result.replaceChildren(...[].concat(content).filter(Boolean));
     result.focus();
   };
   const refresh = async () => {
