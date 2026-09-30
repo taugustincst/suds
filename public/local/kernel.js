@@ -14912,12 +14912,24 @@ var require_clients = __commonJS({
             if (!keep[col] && source[col]) fills[col] = source[col];
           }
           for (const col of M.PLAIN_FIELDS) if ((keep[col] === null || keep[col] === "" || keep[col] === void 0) && source[col]) fills[col] = source[col];
+          const K = M.decryptRow(keep);
+          const S = M.decryptRow(source);
+          const named = (x) => String(x.first_name || "").trim() !== "" || String(x.last_name || "").trim() !== "";
+          if (!named(K) && named(S)) {
+            fills.first_name_enc = source.first_name_enc;
+            fills.last_name_enc = source.last_name_enc;
+          }
+          if (!keep.participant_code_enc && source.participant_code_enc) {
+            fills.participant_code_enc = source.participant_code_enc;
+            fills.participant_code_idx = source.participant_code_idx;
+          }
           if (source.intake_date && (!keep.intake_date || source.intake_date < keep.intake_date)) fills.intake_date = source.intake_date;
           const keys = Object.keys(fills);
           if (keys.length) db3.run(`UPDATE clients SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => fills[k]), db3.now(), keep.id);
           if (keys.length) {
             const plainFills = M.decryptRow(Object.fromEntries(keys.map((k) => [k, fills[k]])));
             delete plainFills.display_name;
+            delete plainFills.participant_code_idx;
             mergeRevision = REV.record({ user: ctx.user, clientId: keep.id, changes: REV.diff(M.decryptRow(keep), plainFills), via: "merge", ip: ctx.ip });
           }
           const after = db3.one(`SELECT * FROM clients WHERE id=?`, keep.id);
@@ -14932,6 +14944,10 @@ var require_clients = __commonJS({
             db3.now(),
             keep.id
           );
+          if (fills.last_name_enc !== void 0 || fills.first_name_enc !== void 0) {
+            const ix = M.clientIndexes(plain);
+            db3.run(`UPDATE clients SET last_name_idx=?, full_name_idx=?, first_name_idx=?, first_name_prefix_idx=? WHERE id=?`, ix.last_name_idx, ix.full_name_idx, ix.first_name_idx, ix.first_name_prefix_idx, keep.id);
+          }
           const dupAssignments = db3.all(`SELECT a.id FROM assignments a WHERE a.client_id=? AND ${auth3.activeAssignment("a.")} AND a.id <> (
           SELECT b.id FROM assignments b WHERE b.client_id=a.client_id AND b.user_id=a.user_id AND ${auth3.activeAssignment("b.")} ORDER BY b.start_date, b.created_at, b.id LIMIT 1)`, keep.id);
           for (const a of dupAssignments) {
@@ -20347,7 +20363,7 @@ var require_compliance_rules = __commonJS({
       { id: "app.sso", item: "Single sign-on (OIDC)", rules: ["hipaa-312a2i", "hipaa-308a3iiC"], remediation: 'Configure OIDC against the county identity provider (docs/DEPLOYMENT.md, "Single sign-on").' },
       { id: "app.idp_mfa", item: "Identity provider's multi-factor sign-in", rules: ["hipaa-312d"], info: "pass", remediation: "Trust the provider's MFA only where it enforces MFA for this application (conditional access)." },
       { id: "app.deprovisioning", item: "Deprovisioning", rules: ["hipaa-308a3iiC", "hipaa-308a4iiC"], info: "warn", remediation: 'Create a SCIM token or set "Disable single sign-on accounts not seen for (days)".' },
-      { id: "app.passkeys", item: "Fingerprint sign-in (passkeys)", rules: ["hipaa-312d"], info: "pass", remediation: "Optional: staff add a passkey under My profile \u2192 Fingerprint sign-in (needs HTTPS and WEBAUTHN_RP_ID matching the server's name, docs/FINGERPRINT.md)." },
+      { id: "app.passkeys", item: "Fingerprint sign-in (passkeys)", rules: ["hipaa-312d"], info: "pass", remediation: "Optional: staff add a passkey under My profile \u2192 Fingerprint sign-in (needs HTTPS and WEBAUTHN_RP_ID matching the server's name, docs/FINGERPRINT.md). Failing on a SUDS Server upgraded with the upgrade.sh of 1.19.0 or older: add WEBAUTHN_RP_ID=<domain> and WEBAUTHN_ORIGINS=https://<domain> to /etc/suds/suds.env, then systemctl restart suds (the finding's detail names the domain; docs/SELF-HOSTING.md, Upgrading)." },
       { id: "app.authenticator_allowlist", item: "Authenticator allow-list (passkeys)", rules: ["hipaa-312d"], info: "pass", remediation: "Optional (off by default): Settings \u2192 Authenticator allow-list accepts only the authenticator models the programme lists, proven by attestation; keep its FIDO Metadata Service file current (docs/FINGERPRINT.md)." },
       { id: "app.password_signin", item: "Password sign-in", rules: ["hipaa-312d"], info: "pass", remediation: 'Settings \u2192 Security policy \u2192 "Require single sign-on" with named break-glass administrators.' },
       { id: "app.password_policy", item: "Password policy", rules: ["hipaa-308a5iiD"], info: "pass", remediation: "Enforced in code (server/auth.js); nothing to configure." },
@@ -20639,83 +20655,6 @@ ${rows}
       return null;
     }
     module.exports = { FORMAT: FORMAT2, FILE_RE, canonical, seal: seal2, verifyDoc, verifyHtml, renderHtml, renderText, extractFromHtml, latest, counts, overall, RESULT_LABEL };
-  }
-});
-
-// server/deprovision.js
-var require_deprovision = __commonJS({
-  "server/deprovision.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var config2 = require_config();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var DAY = 864e5;
-    function days() {
-      const v = Number(db3.getSetting("sso_deprovision_days", "0"));
-      return Number.isInteger(v) && v > 0 ? v : 0;
-    }
-    function emergency() {
-      return String(db3.getSetting("sso_emergency_accounts", "") || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
-    }
-    function applicable() {
-      return !config2.local && (!!(config2.oidc && config2.oidc.enabled) || !!db3.one(`SELECT 1 FROM api_keys WHERE scopes='scim' AND revoked_at IS NULL`));
-    }
-    var SEEN = `COALESCE(idp_seen_at, last_login_at, created_at)`;
-    function linked() {
-      const skip = emergency();
-      return db3.all(`SELECT id, username, display_name, role, ${SEEN} AS seen_at, oidc_subject IS NOT NULL AS sso, scim_external_id IS NOT NULL AS scim FROM users
-    WHERE is_active=1 AND (oidc_subject IS NOT NULL OR scim_external_id IS NOT NULL) ORDER BY ${SEEN}`).filter((u) => !skip.includes(String(u.username).toLowerCase()));
-    }
-    function disable(u, { by = { username: "system" }, n }) {
-      let devices = 0;
-      db3.transaction(() => {
-        db3.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=? AND is_active=1`, db3.now(), u.id);
-        devices = require_scim().cutOff(u.id, by);
-      });
-      audit3.log({ user: by, action: "user.deprovisioned", entity: "user", entityId: u.id, details: { username: u.username, reason: `not seen at the identity provider for ${n} days`, last_seen_at: u.seen_at, devices_revoked: devices } });
-    }
-    function run2({ now: now2 = Date.now(), by } = {}) {
-      const n = days();
-      if (!n || !applicable()) return { days: n, disabled: [] };
-      const cutoff = now2 - n * DAY;
-      const disabled = [];
-      for (const u of linked()) {
-        if (Date.parse(u.seen_at) >= cutoff) continue;
-        disable(u, { by, n });
-        disabled.push({ id: u.id, username: u.username, last_seen_at: u.seen_at });
-      }
-      if (disabled.length) console.warn(`[suds] deprovisioned ${disabled.length} account(s) not seen at the identity provider for ${n} days`);
-      db3.setSetting("sso_deprovision_ran_at", db3.now());
-      return { days: n, disabled };
-    }
-    function runIfDue(now2 = Date.now()) {
-      const last = db3.getSetting("sso_deprovision_ran_at", null);
-      if (last && now2 - Date.parse(last) < DAY) return null;
-      return run2({ now: now2 });
-    }
-    function report(now2 = Date.now()) {
-      const n = days();
-      const rows = linked().map((u) => ({ ...u, sso: !!u.sso, scim: !!u.scim, days_unseen: Math.floor((now2 - Date.parse(u.seen_at)) / DAY) }));
-      const recent = db3.all(`SELECT at, entity_id, details, username AS by_username, action FROM audit_log WHERE action IN ('user.deprovisioned','scim.user.deactivate') AND at >= ? ORDER BY id DESC LIMIT 200`, new Date(now2 - 90 * DAY).toISOString()).map((r) => {
-        let d = {};
-        try {
-          d = JSON.parse(r.details || "{}");
-        } catch {
-        }
-        return { at: r.at, user_id: r.entity_id, username: d.username || null, reason: r.action === "user.deprovisioned" ? d.reason : "deactivated by the identity provider (SCIM)", by: r.by_username };
-      });
-      return {
-        days: n,
-        applicable: applicable(),
-        last_run_at: db3.getSetting("sso_deprovision_ran_at", null),
-        due: n ? rows.filter((u) => u.days_unseen >= n) : [],
-        soon: n ? rows.filter((u) => u.days_unseen < n && u.days_unseen >= n - 7) : [],
-        linked_active: rows.length,
-        recent
-      };
-    }
-    module.exports = { run: run2, runIfDue, report, days };
   }
 });
 
@@ -21912,6 +21851,157 @@ var require_scheduled_backup = __commonJS({
   }
 });
 
+// server/startup-checks.js
+var require_startup_checks = __commonJS({
+  "server/startup-checks.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var config2 = require_config();
+    function backupProblem() {
+      if (!config2.isProd || config2.local) return null;
+      const s = require_scheduled_backup().settings();
+      if (s.hours > 0 || s.minutes > 0) return null;
+      return "Scheduled backups are off (backup_schedule_hours = 0): nothing is backing this database up. Turn them on under Settings \u2192 Scheduled backups (every 4 hours is the production default; docs/security/BACKUP-AND-DR.md).";
+    }
+    function keySeparationProblem(c = config2) {
+      if (!c.isProd || c.local) return null;
+      const same = (a, b) => a && b && import_buffer.Buffer.isBuffer(a) && import_buffer.Buffer.isBuffer(b) && a.equals(b);
+      if (same(c.encryptionKey, c.indexKey)) return 'SUDS_ENCRYPTION_KEY and SUDS_INDEX_KEY are the same value. Anyone holding the index key can then decrypt every record. Generate a separate index key (npm run gen-key) and rotate to it: NEW_INDEX_KEY=\u2026 npm run rotate-index-key (docs/DEPLOYMENT.md, "Key rotation runbook").';
+      if (same(c.backupKey, c.encryptionKey) || same(c.backupKey, c.indexKey)) return "SUDS_BACKUP_KEY is the same value as another SUDS key; give backups a key of their own (npm run gen-key).";
+      return null;
+    }
+    function installedDomain(confFile = proc.env.SUDS_SERVER_CONF || "/etc/suds/suds-server.conf") {
+      let text = "";
+      try {
+        text = (init_fs(), __toCommonJS(fs_exports)).readFileSync(confFile, "utf8");
+      } catch {
+        return "";
+      }
+      let dom = "";
+      for (const line of text.split("\n")) {
+        const m = /^SUDS_DOMAIN=(.*)$/.exec(line.trim());
+        if (m) dom = m[1].trim();
+      }
+      return /^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(dom) ? dom.toLowerCase() : "";
+    }
+    function passkeyRpProblem({ c = config2, policy = null, confFile } = {}) {
+      if (!c.isProd || c.local) return null;
+      const wc = c.webauthn || {};
+      if (wc.rpId || (wc.origins || []).length) return null;
+      const pol = policy || require_auth2().policy();
+      if (!pol.passkeySignin && !pol.passkeySigning) return null;
+      const dom = installedDomain(confFile);
+      if (dom) return `WEBAUTHN_RP_ID is not set, so no one can add or use a passkey (fingerprint sign-in) on this server. Add these two lines to /etc/suds/suds.env and run: systemctl restart suds
+  WEBAUTHN_RP_ID=${dom}
+  WEBAUTHN_ORIGINS=https://${dom}
+(an upgrade run with the upgrade.sh of SUDS 1.19.0 or older does not add them; docs/SELF-HOSTING.md, "Upgrading").`;
+      return "WEBAUTHN_RP_ID is not set, so no one can add or use a passkey (fingerprint sign-in) on this production server. Set WEBAUTHN_RP_ID to the server's name, as in the address staff open and on its certificate (and WEBAUTHN_ORIGINS=https://<that name>), and restart SUDS (docs/FINGERPRINT.md).";
+    }
+    function problems() {
+      const out2 = [];
+      try {
+        const p = require_audit_anchor().placementProblem();
+        if (p) out2.push(p);
+      } catch {
+      }
+      try {
+        const p = backupProblem();
+        if (p) out2.push(p);
+      } catch {
+      }
+      try {
+        const p = keySeparationProblem();
+        if (p) out2.push(p);
+      } catch {
+      }
+      try {
+        const p = passkeyRpProblem();
+        if (p) out2.push(p);
+      } catch {
+      }
+      return out2;
+    }
+    module.exports = { problems, backupProblem, keySeparationProblem, passkeyRpProblem, installedDomain };
+  }
+});
+
+// server/deprovision.js
+var require_deprovision = __commonJS({
+  "server/deprovision.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var config2 = require_config();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var DAY = 864e5;
+    function days() {
+      const v = Number(db3.getSetting("sso_deprovision_days", "0"));
+      return Number.isInteger(v) && v > 0 ? v : 0;
+    }
+    function emergency() {
+      return String(db3.getSetting("sso_emergency_accounts", "") || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+    }
+    function applicable() {
+      return !config2.local && (!!(config2.oidc && config2.oidc.enabled) || !!db3.one(`SELECT 1 FROM api_keys WHERE scopes='scim' AND revoked_at IS NULL`));
+    }
+    var SEEN = `COALESCE(idp_seen_at, last_login_at, created_at)`;
+    function linked() {
+      const skip = emergency();
+      return db3.all(`SELECT id, username, display_name, role, ${SEEN} AS seen_at, oidc_subject IS NOT NULL AS sso, scim_external_id IS NOT NULL AS scim FROM users
+    WHERE is_active=1 AND (oidc_subject IS NOT NULL OR scim_external_id IS NOT NULL) ORDER BY ${SEEN}`).filter((u) => !skip.includes(String(u.username).toLowerCase()));
+    }
+    function disable(u, { by = { username: "system" }, n }) {
+      let devices = 0;
+      db3.transaction(() => {
+        db3.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=? AND is_active=1`, db3.now(), u.id);
+        devices = require_scim().cutOff(u.id, by);
+      });
+      audit3.log({ user: by, action: "user.deprovisioned", entity: "user", entityId: u.id, details: { username: u.username, reason: `not seen at the identity provider for ${n} days`, last_seen_at: u.seen_at, devices_revoked: devices } });
+    }
+    function run2({ now: now2 = Date.now(), by } = {}) {
+      const n = days();
+      if (!n || !applicable()) return { days: n, disabled: [] };
+      const cutoff = now2 - n * DAY;
+      const disabled = [];
+      for (const u of linked()) {
+        if (Date.parse(u.seen_at) >= cutoff) continue;
+        disable(u, { by, n });
+        disabled.push({ id: u.id, username: u.username, last_seen_at: u.seen_at });
+      }
+      if (disabled.length) console.warn(`[suds] deprovisioned ${disabled.length} account(s) not seen at the identity provider for ${n} days`);
+      db3.setSetting("sso_deprovision_ran_at", db3.now());
+      return { days: n, disabled };
+    }
+    function runIfDue(now2 = Date.now()) {
+      const last = db3.getSetting("sso_deprovision_ran_at", null);
+      if (last && now2 - Date.parse(last) < DAY) return null;
+      return run2({ now: now2 });
+    }
+    function report(now2 = Date.now()) {
+      const n = days();
+      const rows = linked().map((u) => ({ ...u, sso: !!u.sso, scim: !!u.scim, days_unseen: Math.floor((now2 - Date.parse(u.seen_at)) / DAY) }));
+      const recent = db3.all(`SELECT at, entity_id, details, username AS by_username, action FROM audit_log WHERE action IN ('user.deprovisioned','scim.user.deactivate') AND at >= ? ORDER BY id DESC LIMIT 200`, new Date(now2 - 90 * DAY).toISOString()).map((r) => {
+        let d = {};
+        try {
+          d = JSON.parse(r.details || "{}");
+        } catch {
+        }
+        return { at: r.at, user_id: r.entity_id, username: d.username || null, reason: r.action === "user.deprovisioned" ? d.reason : "deactivated by the identity provider (SCIM)", by: r.by_username };
+      });
+      return {
+        days: n,
+        applicable: applicable(),
+        last_run_at: db3.getSetting("sso_deprovision_ran_at", null),
+        due: n ? rows.filter((u) => u.days_unseen >= n) : [],
+        soon: n ? rows.filter((u) => u.days_unseen < n && u.days_unseen >= n - 7) : [],
+        linked_active: rows.length,
+        recent
+      };
+    }
+    module.exports = { run: run2, runIfDue, report, days };
+  }
+});
+
 // server/dr-drill.js
 var require_dr_drill = __commonJS({
   "server/dr-drill.js"(exports, module) {
@@ -22549,7 +22639,7 @@ var require_security_status = __commonJS({
           [
             a.flagged ? `${a.flagged} passkey${a.flagged === 1 ? " was" : "s were"} disabled because a signature counter went backwards (a possible copy): see the audit log (auth.passkey.clone_suspected).` : "",
             `Sign-in ${pol.passkeySignin ? "on" : "off"}; signatures and approvals ${pol.passkeySigning ? "on" : "off"}; fingerprint or authenticator code required for signing: ${pol.signStrongRequired ? "yes" : "no"}.`,
-            rpId ? `Relying party ${rpId}.` : config2.isProd ? "WEBAUTHN_RP_ID is not set, so no one can add or use a passkey on this production server: set it to the server's name, as in the address staff open and on its certificate (docs/SELF-HOSTING.md), and restart." : "WEBAUTHN_RP_ID is not set: outside production, passkeys are made for the host name each request was addressed to (the Host header). Production requires it.",
+            rpId ? `Relying party ${rpId}.` : config2.isProd ? (require_startup_checks().passkeyRpProblem({ policy: { passkeySignin: true } }) || "WEBAUTHN_RP_ID is not set.").replace(/\n\s*/g, " ") : "WEBAUTHN_RP_ID is not set: outside production, passkeys are made for the host name each request was addressed to (the Host header). Production requires it.",
             httpsOk ? "" : "Passkeys need HTTPS, which is not on.",
             "SUDS stores no fingerprint: only each passkey's public key."
           ].filter(Boolean).join(" "),
@@ -25194,6 +25284,8 @@ var require_ai_copilot = __commonJS({
         for (const p of nameParts(pref)) add(p, "CLIENT_PREFERRED_NAME", "name", pref);
       }
       if (row.client_code) add(row.client_code, "CLIENT_CODE", "code");
+      const pc = require_participant_code().normalise(c.participant_code);
+      if (pc) add(pc, "CLIENT_CODE", "code", null, new RegExp(`(?<![\\p{L}\\p{N}])${[...pc].map(esc).join("[\\s.\\-]*")}(?![\\p{L}\\p{N}])`, "giu"));
       const dob = dobPattern(c.dob);
       if (dob) add(c.dob, "DOB", "dob", null, dob);
       for (const ph of [c.phone, c.alt_phone]) {
@@ -47017,48 +47109,6 @@ var require_scim2 = __commonJS({
         return { ok: true };
       });
     };
-  }
-});
-
-// server/startup-checks.js
-var require_startup_checks = __commonJS({
-  "server/startup-checks.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var config2 = require_config();
-    function backupProblem() {
-      if (!config2.isProd || config2.local) return null;
-      const s = require_scheduled_backup().settings();
-      if (s.hours > 0 || s.minutes > 0) return null;
-      return "Scheduled backups are off (backup_schedule_hours = 0): nothing is backing this database up. Turn them on under Settings \u2192 Scheduled backups (every 4 hours is the production default; docs/security/BACKUP-AND-DR.md).";
-    }
-    function keySeparationProblem(c = config2) {
-      if (!c.isProd || c.local) return null;
-      const same = (a, b) => a && b && import_buffer.Buffer.isBuffer(a) && import_buffer.Buffer.isBuffer(b) && a.equals(b);
-      if (same(c.encryptionKey, c.indexKey)) return 'SUDS_ENCRYPTION_KEY and SUDS_INDEX_KEY are the same value. Anyone holding the index key can then decrypt every record. Generate a separate index key (npm run gen-key) and rotate to it: NEW_INDEX_KEY=\u2026 npm run rotate-index-key (docs/DEPLOYMENT.md, "Key rotation runbook").';
-      if (same(c.backupKey, c.encryptionKey) || same(c.backupKey, c.indexKey)) return "SUDS_BACKUP_KEY is the same value as another SUDS key; give backups a key of their own (npm run gen-key).";
-      return null;
-    }
-    function problems() {
-      const out2 = [];
-      try {
-        const p = require_audit_anchor().placementProblem();
-        if (p) out2.push(p);
-      } catch {
-      }
-      try {
-        const p = backupProblem();
-        if (p) out2.push(p);
-      } catch {
-      }
-      try {
-        const p = keySeparationProblem();
-        if (p) out2.push(p);
-      } catch {
-      }
-      return out2;
-    }
-    module.exports = { problems, backupProblem, keySeparationProblem };
   }
 });
 
