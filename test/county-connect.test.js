@@ -17,7 +17,7 @@ const config = require('../server/config');
 const outbound = require('../server/outbound');
 
 let base; let admin; let fin; let sup; let nav;
-let samples; let progA; let progB; let own;
+let samples; let progA; let progB; let own; let fund;
 const Q1 = { from: '2026-01-01', to: '2026-03-31' }; const Q2 = { from: '2026-04-01', to: '2026-06-30' };
 const lastAudit = (action) => { const a = H.db.one(`SELECT * FROM audit_log WHERE action=? ORDER BY id DESC LIMIT 1`, action); return a ? { ...a, details: a.details ? JSON.parse(a.details) : null } : null; };
 const auditCount = (action) => H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action=?`, action).n;
@@ -49,7 +49,7 @@ before(async () => {
   const key = (await admin.post('/api/county-submission/key', {})).data.key;
   own = ok(await admin.post('/api/county/programmes', { name: 'Connected Test Programme', public_key: key.public_key }));
   // Some settlement work in Q2, so the file sent end to end has figures in it.
-  const fund = ok(await admin.post('/api/budget/funds', { name: 'Connected settlement share', grant_number: 'OSF-CC-1', source_type: 'opioid_settlement', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 50000, settlement_use: 'core_a', settlement_hiaa: 'hiaa_6' })).id;
+  fund = ok(await admin.post('/api/budget/funds', { name: 'Connected settlement share', grant_number: 'OSF-CC-1', source_type: 'opioid_settlement', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 50000, settlement_use: 'core_a', settlement_hiaa: 'hiaa_6' })).id;
   const e = ok(await admin.post('/api/budget/expenditures', { funding_source_id: fund, spent_at: '2026-05-05', amount: 777.25, category: 'naloxone_supplies' })).id;
   ok(await sup.post(`/api/budget/expenditures/${e}/approve`, { status: 'approved' }), 200);
 });
@@ -410,7 +410,9 @@ test('end to end: this programme\'s server sends its real signed file to the cou
     // Only whoever may make the county file may send it.
     assert.equal((await nav.post('/api/county-connect/send', Q2)).status, 403);
     assert.equal((await fin.post('/api/county-connect/send', { from: Q2.from, to: '2099-01-01' })).status, 400, 'a period that has not ended');
-    const s = ok(await fin.post('/api/county-connect/send', Q2), 200);
+    // The funds that go in: settlement funds only (as the file route checks), remembered per county code.
+    assert.equal((await fin.post('/api/county-connect/send', { ...Q2, funds: [fund, 'not-a-fund'] })).status, 400, 'a fund that is not a settlement fund here');
+    const s = ok(await fin.post('/api/county-connect/send', { ...Q2, funds: [fund] }), 200);
     assert.equal(s.status, 'imported', JSON.stringify(s));
     // The same file the download route makes (the same payload hash).
     const dl = await fin.get(`/api/county-submission/file?from=${Q2.from}&to=${Q2.to}`);

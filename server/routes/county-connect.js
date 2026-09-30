@@ -19,7 +19,7 @@
 //     PUT    /api/county-connect/connection        save the address and token (settings:manage); the token is never returned
 //     DELETE /api/county-connect/connection        disconnect (settings:manage)
 //     POST   /api/county-connect/connection/test   ask the county what it expects (settings:manage, or reports:funder with budget:read)
-//     POST   /api/county-connect/send              send the county file for { from, to } (reports:funder, budget:read, export:read)
+//     POST   /api/county-connect/send              send the county file for { from, to[, funds] } (reports:funder, budget:read, export:read)
 // Everything is audited; the machine routes' refusals are throttled in the audit log (county-connect.js logRefusal).
 const db = require('../db');
 const auth = require('../auth');
@@ -231,11 +231,13 @@ module.exports = (r) => {
   });
   r.post('/api/county-connect/send', auth.requireAuth, auth.requirePerm('reports:funder'), auth.requirePerm('budget:read'), auth.requirePerm('export:read'), async (ctx) => {
     const v = validate(ctx.body, { from: { type: 'string', required: true, maxLen: 10 }, to: { type: 'string', required: true, maxLen: 10 } });
+    const funds = Array.isArray(ctx.body.funds) ? ctx.body.funds.slice(0, 201) : undefined;
+    if (funds && (funds.length > 200 || funds.some(x => typeof x !== 'string' || x.length > 64))) throw badRequest('funds must be a list of fund ids.');
     const { from, to } = period(v.from, v.to);
-    if (to > CC.today()) throw badRequest(`The period ends in the future (${to}). A county submission reports a period that has happened: choose an end date of today or earlier.`);
+    if (to >= CC.today()) throw badRequest(`The period is not over yet (it ends ${to}). A county file reports a period that has ended.`);
     if (!CL.describe().connected) throw badRequest('This server is not connected to a county. An administrator saves the county\'s address and token under Send to the county › Connect to the county.');
     const K = require('../county');
-    try { return await CL.send({ from, to, user: ctx.user, ip: ctx.ip }); }
+    try { return await CL.send({ from, to, user: ctx.user, ip: ctx.ip, funds }); }
     catch (e) {
       if (e instanceof K.SubmissionError) throw badRequest(`The county file could not be made: ${e.message}`);
       if (e instanceof CL.ConnectError) throw badRequest(e.message);

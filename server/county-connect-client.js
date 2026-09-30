@@ -174,20 +174,39 @@ async function test() {
 }
 
 // ---- the file ---------------------------------------------------------------------------------------------------------
+const IS_FUND = `(source_type='opioid_settlement' OR settlement_use IS NOT NULL OR settlement_hiaa IS NOT NULL)`;
+/** The counties this server made files for, as the file route remembers them: { CODE: { name, fund_ids, used_at } }. */
+function recipients() { try { const o = JSON.parse(db.getSetting('county_submission_recipients', '{}')); return o && typeof o === 'object' ? o : {}; } catch { return {}; } }
+/**
+ * Which settlement funds go into the file for this county: those given (each must be a settlement fund here), else
+ * the ones last chosen for this county's code on the Send to the county card, else null (every fund: SUDS before the
+ * card let a programme choose).
+ */
+function fundsFor(code, given) {
+  const remembered = code && recipients()[code] && Array.isArray(recipients()[code].fund_ids) ? recipients()[code].fund_ids : null;
+  const ids = Array.isArray(given) ? given.map(String).filter(Boolean).slice(0, 200) : remembered;
+  if (!ids) return null;
+  const known = new Set(db.all(`SELECT id FROM funding_sources WHERE ${IS_FUND} AND id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)).map(x => x.id));
+  if (ids.some(id => !known.has(id))) throw new ConnectError('One of the funds chosen is not an opioid settlement fund here. Reload the page and choose again.', { reason: 'funds' });
+  if (!known.size) throw new ConnectError('Choose the settlement funds this county pays for: only they go into the file.', { reason: 'funds' });
+  return [...known];
+}
 /**
  * The signed county submission file for [from, to]: the same as GET /api/county-submission/file makes (the
- * Settlement outcomes figures, county.js payloadFrom and signFile). `recipient` is the county's { county_code,
- * county_name } from its status, for the file's recipient field (fix/county-view-r1). Throws county.js's
+ * Settlement outcomes figures, for the chosen funds, then county.js payloadFrom and signFile). `recipient` is the
+ * county's { county_code, county_name } from its status, for the file's signed recipient field. Throws county.js's
  * SubmissionError when the allow-list refuses the figures. Returns { file, sha256, fingerprint, payload, keyCreated }.
  */
-async function buildFile({ from, to, user, recipient }) {
+async function buildFile({ from, to, user, recipient, fundIds = null }) {
   const K = require('./county');
   const SO = require('./settlement-outcomes');
   const range = require('./routes/reports').range({ query: new URLSearchParams({ from, to }) });
-  const raw = await db.readSnapshot(async () => SO.figures(range));
+  const raw = await db.readSnapshot(async () => SO.figures(range, fundIds ? { fundIds } : undefined));
   const payload = K.payloadFrom(raw, { programme: db.getSetting('org_name', ''), recipient });
   const { key, created } = K.ensureKey(user);
   const { file, sha256, fingerprint } = K.signFile(payload);
+  // Remembered for this county, as the file route does: the card offers the same funds next time.
+  if (recipient && recipient.county_code && fundIds) { const rec = recipients(); rec[recipient.county_code] = { name: recipient.county_name || '', fund_ids: fundIds, used_at: db.now() }; db.setSetting('county_submission_recipients', JSON.stringify(rec)); }
   return { file, sha256, fingerprint, payload, keyCreated: created ? key : null };
 }
 
@@ -202,14 +221,14 @@ const WORDS = {
  * (county_connect_sends) and audits it (county_submission.send: the period, the payload's SHA-256, the key's
  * fingerprint, the county's answer; never a figure). Returns { status, reason, message, receipt, send }.
  */
-async function send({ from, to, user = null, ip = null, automatic = false }) {
+async function send({ from, to, user = null, ip = null, automatic = false, funds }) {
   const c = row();
   if (!c) throw new ConnectError('This server is not connected to a county. Save the county\'s address and token first.', { reason: 'not_connected' });
   // The county's code, for the file's recipient: from the last status, or asked for now.
   if (!c.county_code) await test();
   const cur = row();
   const recipient = cur.county_code ? { county_code: cur.county_code, county_name: cur.county_name || '' } : undefined;
-  const made = await buildFile({ from, to, user, recipient });
+  const made = await buildFile({ from, to, user, recipient, fundIds: fundsFor(cur.county_code, funds) });
   if (made.keyCreated) audit.log({ user, action: 'county_submission.key.create', ip, details: { fingerprint: made.keyCreated.fingerprint } });
   const host = new URL(c.base_url).host;
   let status; let reason = null; let message; let receipt = null;

@@ -33130,14 +33130,37 @@ var require_county_connect_client = __commonJS({
         return { ok: false, error: e.message, reason: e.reason || null };
       }
     }
-    async function buildFile({ from, to, user, recipient }) {
+    var IS_FUND = `(source_type='opioid_settlement' OR settlement_use IS NOT NULL OR settlement_hiaa IS NOT NULL)`;
+    function recipients() {
+      try {
+        const o = JSON.parse(db3.getSetting("county_submission_recipients", "{}"));
+        return o && typeof o === "object" ? o : {};
+      } catch {
+        return {};
+      }
+    }
+    function fundsFor(code, given) {
+      const remembered = code && recipients()[code] && Array.isArray(recipients()[code].fund_ids) ? recipients()[code].fund_ids : null;
+      const ids = Array.isArray(given) ? given.map(String).filter(Boolean).slice(0, 200) : remembered;
+      if (!ids) return null;
+      const known = new Set(db3.all(`SELECT id FROM funding_sources WHERE ${IS_FUND} AND id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)).map((x) => x.id));
+      if (ids.some((id) => !known.has(id))) throw new ConnectError("One of the funds chosen is not an opioid settlement fund here. Reload the page and choose again.", { reason: "funds" });
+      if (!known.size) throw new ConnectError("Choose the settlement funds this county pays for: only they go into the file.", { reason: "funds" });
+      return [...known];
+    }
+    async function buildFile({ from, to, user, recipient, fundIds = null }) {
       const K = require_county();
       const SO = require_settlement_outcomes();
       const range = require_reports().range({ query: new URLSearchParams({ from, to }) });
-      const raw = await db3.readSnapshot(async () => SO.figures(range));
+      const raw = await db3.readSnapshot(async () => SO.figures(range, fundIds ? { fundIds } : void 0));
       const payload = K.payloadFrom(raw, { programme: db3.getSetting("org_name", ""), recipient });
       const { key, created } = K.ensureKey(user);
       const { file, sha256: sha2562, fingerprint } = K.signFile(payload);
+      if (recipient && recipient.county_code && fundIds) {
+        const rec = recipients();
+        rec[recipient.county_code] = { name: recipient.county_name || "", fund_ids: fundIds, used_at: db3.now() };
+        db3.setSetting("county_submission_recipients", JSON.stringify(rec));
+      }
       return { file, sha256: sha2562, fingerprint, payload, keyCreated: created ? key : null };
     }
     var WORDS = {
@@ -33146,13 +33169,13 @@ var require_county_connect_client = __commonJS({
       older: "The county kept the file, but a newer one it already has for the same period is the one that counts.",
       duplicate: "The county already had this file; nothing changed."
     };
-    async function send({ from, to, user = null, ip = null, automatic = false }) {
+    async function send({ from, to, user = null, ip = null, automatic = false, funds }) {
       const c = row();
       if (!c) throw new ConnectError("This server is not connected to a county. Save the county's address and token first.", { reason: "not_connected" });
       if (!c.county_code) await test();
       const cur = row();
       const recipient = cur.county_code ? { county_code: cur.county_code, county_name: cur.county_name || "" } : void 0;
-      const made = await buildFile({ from, to, user, recipient });
+      const made = await buildFile({ from, to, user, recipient, fundIds: fundsFor(cur.county_code, funds) });
       if (made.keyCreated) audit3.log({ user, action: "county_submission.key.create", ip, details: { fingerprint: made.keyCreated.fingerprint } });
       const host = new URL(c.base_url).host;
       let status;
@@ -33465,12 +33488,14 @@ var require_county_connect2 = __commonJS({
       });
       r.post("/api/county-connect/send", auth3.requireAuth, auth3.requirePerm("reports:funder"), auth3.requirePerm("budget:read"), auth3.requirePerm("export:read"), async (ctx) => {
         const v = validate(ctx.body, { from: { type: "string", required: true, maxLen: 10 }, to: { type: "string", required: true, maxLen: 10 } });
+        const funds = Array.isArray(ctx.body.funds) ? ctx.body.funds.slice(0, 201) : void 0;
+        if (funds && (funds.length > 200 || funds.some((x) => typeof x !== "string" || x.length > 64))) throw badRequest("funds must be a list of fund ids.");
         const { from, to } = period(v.from, v.to);
-        if (to > CC.today()) throw badRequest(`The period ends in the future (${to}). A county submission reports a period that has happened: choose an end date of today or earlier.`);
+        if (to >= CC.today()) throw badRequest(`The period is not over yet (it ends ${to}). A county file reports a period that has ended.`);
         if (!CL.describe().connected) throw badRequest("This server is not connected to a county. An administrator saves the county's address and token under Send to the county \u203A Connect to the county.");
         const K = require_county();
         try {
-          return await CL.send({ from, to, user: ctx.user, ip: ctx.ip });
+          return await CL.send({ from, to, user: ctx.user, ip: ctx.ip, funds });
         } catch (e) {
           if (e instanceof K.SubmissionError) throw badRequest(`The county file could not be made: ${e.message}`);
           if (e instanceof CL.ConnectError) throw badRequest(e.message);
