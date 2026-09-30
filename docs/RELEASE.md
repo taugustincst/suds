@@ -3,7 +3,7 @@
 ## Production readiness checklist (per release)
 - [ ] CI is green for the exact commit being released: `npm test`, the browser suite (`scripts/ui/run-all.sh`, 54 scripts including the first-run wizard, local mode, sync, device encryption and recovery, the static build, accessibility and the QA-regression script `a11y-round4`), Node 24 and the recovery drill. The release workflow enforces this (see *Release gate* below); the box is here so nobody tags a commit they have not seen pass
 - [ ] `CHANGELOG.md` has a section for the version, `package.json` version matches
-- [ ] Docs updated (`README.md`, `docs/INSTALL.md`, `docs/DEPLOYMENT.md`, `docs/HIPAA.md`)
+- [ ] Docs updated (`README.md`, `docs/INSTALL.md`, `docs/DEPLOYMENT.md`, `docs/HIPAA.md`), and the documents that name a release moved to this one: the questionnaire's *Checked against*, the evidence index's *Version.*, a new SBOM for a new minor (*Stamp checklist: the documents that name a release*, below; `test/doc-currency.test.js`)
 - [ ] No secrets, databases or `data/` contents in the tree (`git status`, `.gitignore`)
 - [ ] Upgrade path: schema migrations in `server/db.js` run on start; take a backup before upgrading
 - [ ] Nothing native: no APK, launcher or mobile step is part of the release (removed in 1.9.3; docs/PLATFORM.md)
@@ -39,9 +39,9 @@ Rules for every release:
 
 | Line | Gets | For how long |
 | --- | --- | --- |
-| **The latest minor** (today 1.17.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
-| **The previous minor** (today 1.16.x, until 30 days after 1.17.0's release date: the date of its tag) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below) | **30 days** after the next minor's release date, then none |
-| Anything older (today 1.15.x and before: once 1.17.0 was released, 1.15.x stopped being the previous minor, whatever was left of its 30 days after 1.16.0) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
+| **The latest minor** (today 1.19.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
+| **The previous minor** (today 1.18.x, until 30 days after 1.19.0's release date: the date of its tag. `v1.19.0` is not pushed yet (*Record: 1.19.0*; [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), so its 30 days have not started; 1.19.0 was published to GitHub Pages on 2026-09-30, and a programme should plan as if they run from then, to 2026-10-30) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.18` is made from `v1.18.0`'s line once the tags exist) | **30 days** after the next minor's release date, then none |
+| Anything older (today 1.17.x and before: once 1.19.0 was released, 1.17.x stopped being the previous minor, whatever was left of its 30 days after 1.18.0; 1.16.x stopped when 1.18.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
@@ -227,6 +227,14 @@ change: 1.16.0 is the previous feature release) and for any 1.16.x patch (whose 
 `v1.16.2`: 1.16.3 and 1.16.4 alone count 1,137 of the 1,500 lines), `scripts/migration-order.js`'s baseline, and
 *Backports* step B, whose `git rev-parse 'v1.16.4^{commit}'` fails without the tag.
 
+**Now six tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.19.1). 1.17.1, 1.18.0 and
+1.19.0 were published the same way, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`, `v1.17.1`, `v1.18.0` and
+`v1.19.0`, pushed together while `main` says 1.19.0. The hand-off has the checks, the tag commands, the one push,
+what each tag's runs do (the 1.16.x gates refuse, the other four need a *Run workflow* with `policy_exception`, and
+only `v1.19.0`'s `Web app` run is approved: it republishes the build already live), and the SHA-256 each release
+zip will have, rebuilt from each commit. The paragraphs below are the reasoning of 1.17.0's time, for three tags;
+the rule they set, never an older tag alone, is unchanged.
+
 **Tag 1.16.3, 1.16.4 and 1.17.0 in one push, never 1.16.x alone** (engineering review of 1.17.0, H1). 1.17.0 is on
 `gh-pages` with no tag, so a `v1.16.4` pushed on its own is the newest release tag there is. Its own `release.yml`
 (the copy at the tag is what runs) makes its GitHub Release, which GitHub marks Latest, and dispatches its own
@@ -306,6 +314,18 @@ heading while any document still says that version is not yet released, or still
 it (say "released in X.Y.Z" or "available from X.Y.Z"), and it refuses other spellings of the same thing, so there
 is one phrase to search for.
 
+**Stamp checklist: the documents that name a release.** When stamping X.Y.Z, the documents that say which release they
+describe move to it: `docs/security/QUESTIONNAIRE.md`'s **Checked against** line and `docs/evidence/README.md`'s
+**Version.** line, and for a new minor an SBOM of the stamp commit (`node scripts/sbom.js --ref <stamp sha> --out
+docs/evidence/sbom-X.Y.Z.cdx.json`, with every link to the old one outside the evidence index moved to it; older SBOMs
+stay as history). The rule `test/doc-currency.test.js` enforces: once `package.json`'s version X.Y.Z has a dated
+CHANGELOG heading, each of the three names a version on the X.Y line, no later than X.Y.Z (a patch may keep its
+minor's documents and SBOM; a new minor may not), and every SBOM link outside the evidence index names the newest
+SBOM. While a version is being prepared (no date yet), the rule applies to the last stamped version. Re-read the
+answers those documents give for what the release changed, not only the version line (the review of 1.19.0 found
+them two releases behind: the county connection and passkeys missing from the questionnaire, "planned" for a
+released county view).
+
 #### Handing a release to the owner
 Whoever prepares a release (a maintainer, or the maintaining assistant) stamps it on `main` and then hands it over;
 the owner tags it. **The maintaining assistant cannot push tags at all** (its environment's proxy refuses a tag
@@ -345,7 +365,7 @@ and **refuses** a tag that is not `v<package.json version>` (until 1.16.2 only t
 owner's approval, checked the tag). The warning is also written to the run's summary (1.16.3), on the page where
 the owner approves the `release` environment, since an annotation in the log is easily missed. A warning, not a
 refusal, so that a reviewed exception stays possible: the owner decides, and says so in the notes.
-**The zip's SHA-256 in two places.** SUDS Server's `install.sh` and `upgrade.sh` need `--release-sha256` from a channel other than the download (docs/SELF-HOSTING.md, *Upgrading*), so once the release job has published `suds-vX.Y.Z.zip.sha256`, the owner copies that SHA-256 into the GitHub release notes **and** into the version's CHANGELOG entry on `main` (a line `SHA-256 of suds-vX.Y.Z.zip: <hex>`, committed and pushed as its own commit). An operator compares the two; a zip swapped on the release page cannot also change the repository's history.
+**The zip's SHA-256 in two places.** SUDS Server's `install.sh` and `upgrade.sh` need `--release-sha256` from a channel other than the download (docs/SELF-HOSTING.md, *Upgrading*), so once the release job has published `suds-vX.Y.Z.zip.sha256`, the owner copies that SHA-256 into the GitHub release notes **and** into the version's CHANGELOG entry on `main` (a line `SHA-256 of suds-vX.Y.Z.zip: <hex>`, committed and pushed as its own commit). An operator compares the two; a zip swapped on the release page cannot also change the repository's history. The CHANGELOG line is on `main`, never at the tag: a zip's checksum cannot be inside the commit it is built from. Because `git archive` is reproducible, the value can be known before the release: `git archive --format=zip --prefix=suds-vX.Y.Z/ <stamp sha> | sha256sum` gives what the job will publish (checked against the published `v1.15.4` and `v1.16.2`), and the hand-off for the untagged 1.16.3 to 1.19.0 lists each ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); compare it with the published file before recording it.
 
 Pushing the tag runs `.github/workflows/release.yml`, which first passes the release gate (below), then re-runs the tests in the `verify` job (read-only token, no environment), and, after the owner's approval, the `release` job packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release for the tag with the zip attached. Since 1.16.4 (engineering review of 1.16.3, M5) the `release` job is the only one with a write token and runs no npm and none of the released commit's code: `npm ci` and `npm test` ran in `verify`, where a dependency could once reach the packaging step through `$GITHUB_ENV`, `$GITHUB_PATH` or a replaced `git`, `sha256sum` or `gh`. As its last step it starts the web-app (GitHub Pages) workflow for the tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. That dispatch is the web-app workflow's only trigger (since 1.16.1 a tag push or a `release` event no longer starts it): it runs only on a `v*` tag whose GitHub Release exists at that commit, and its `publish` job waits in the `release` environment, so the owner approves it too. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses a marketplace action; the only actions used are GitHub's own `actions/upload-artifact` and `actions/download-artifact`, pinned to a commit, in `web-app.yml` (they run under the Actions policy *Allow actions created by GitHub*).
 
@@ -692,9 +712,13 @@ opens a fresh one) — and the `release/v*` branches, which are no longer made (
 and tick Settings → General → **Automatically delete head branches**. Steps 1, 5 and 6 already stop what those
 branches' workflows could publish; deleting them removes the rest.
 
-**8. Code scanning (optional).** Settings → **Code security** → *Code scanning* → **Set up** → **Default** →
-languages *JavaScript/TypeScript* and *GitHub Actions* → **Enable CodeQL**; on the same page turn on **Secret
-scanning** and **Push protection**. None of these changes what SUDS ships; they report.
+**8. Code scanning and private vulnerability reporting.** Settings → **Code security** → *Code scanning* → **Set up** → **Default** →
+languages *JavaScript/TypeScript* and *GitHub Actions* → **Enable CodeQL** (optional); on the same page turn on **Secret
+scanning** and **Push protection**. None of these changes what SUDS ships; they report. **Not optional:** on the same
+page turn on **Private vulnerability reporting**. `SECURITY.md` (1.19.1) tells reporters to use it (**Security** →
+**Report a vulnerability**), and until it is on that button does not exist. Check: the repository's Security tab shows
+*Report a vulnerability* to a signed-in account that is not a collaborator. Then confirm the response targets
+`SECURITY.md` marks `[owner to confirm]`.
 
 **9. The weekly settings check, and the token that lets it read everything (1.17.0).**
 `.github/workflows/settings-check.yml` runs every Monday (and on *Run workflow*) and runs

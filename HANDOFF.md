@@ -41,6 +41,23 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-09-30 — Claude: the 1.19.1 documentation pass (branch `docs/1191-stamp-pass`, not pushed)
+
+- Documentation, evidence, a test of documentation and repository metadata only: no migration, route, permission or
+  behaviour change, no version bump (`## Unreleased` in CHANGELOG.md). The questionnaire, the evidence index, the
+  buyer guides, the market README, the security documents and the SBOM (`docs/evidence/sbom-1.19.0.cdx.json`, from
+  `3dc20dc`) now describe 1.19.0. `test/doc-currency.test.js` fails when they fall behind a stamped minor again.
+- **LICENSE** (MIT) names "The SUDS contributors" as the copyright holder, because `package.json` names no author.
+  **Owner:** replace the holder with the legal entity once one exists (or confirm it as is).
+- **SECURITY.md** sends reporters to GitHub's private vulnerability reporting. **Owner:** turn it on (Settings →
+  Code security → *Private vulnerability reporting*; docs/RELEASE.md, *Owner: repository settings*, step 8) and
+  confirm the response targets it marks `[owner to confirm]`.
+- **Follow-up for a code change (not done here):** three strings still tell operators to take the zip's checksum
+  from "the CHANGELOG entry at the release tag", which cannot hold it (the zip is built from that commit):
+  `deploy/linux/lib.sh` `stage_release`'s refusal (pinned by `test/deploy-linux.test.js`) and `host.release_integrity`'s
+  remediation in `server/compliance-rules.js` (and so `public/local/kernel.js`). The documents now say "the CHANGELOG
+  on `main`" (docs/SELF-HOSTING.md, docs/RELEASE.md).
+
 ### 2026-09-30 — Claude: the fingerprint review's second pass (branch `fix/fingerprint-r1`, not pushed)
 
 - N1–N7 (docs/FINGERPRINT.md, *Second review*). **Migration 59** adds `sessions.sync_client` (a device's sync
@@ -87,29 +104,17 @@ _(Append replies here, newest first.)_
 
 ### Release waiting
 
-- **1.16.3, 1.16.4 and 1.17.0 are on `main`, and 1.17.0 is live, but none is tagged: the owner tags all three,
-  in one push.** The assistant cannot push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing a
-  release to the owner*). Until the tags exist, every "previous release" computation still starts at `v1.16.2`: the
-  release policy for any 1.16.x backport and 1.17.x patch, the migration-order baseline, and *Backports* step B's
-  `git rev-parse 'v1.16.4^{commit}'`, which fails outright. **Never push `v1.16.3` or `v1.16.4` without
-  `v1.17.0`** (engineering review of 1.17.0, H1): their own workflows would make 1.16.4 the Latest release and
-  publish its web app over 1.17.0, and the 1.16.4 kernel refuses the schema-55 databases 1.17.0 made. The commands (the
-  owner, from any clone, once 1.17.1's fixes are on `main`):
-
-  ```bash
-  git fetch origin
-  for c in fc5e9d7 6491308 485548c; do git merge-base --is-ancestor $c origin/main || echo "$c is NOT on main"; done
-  git show -s --format='%H %s' fc5e9d7 6491308 485548c   # "Release 1.16.3", "Release 1.16.4", "Release 1.17.0"
-  git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3"
-  git tag -a v1.16.4 6491308 -m "SUDS 1.16.4"
-  git tag -a v1.17.0 485548c -m "SUDS 1.17.0"
-  git push origin v1.16.3 v1.16.4 v1.17.0
-  ```
-
-  What each run then does, and what to approve or reject, is in docs/RELEASE.md (*Record: 1.16.4 published without
-  a tag*): the 1.16.x runs stop at the gate, and a `Web app` run for `v1.16.3` or `v1.16.4` is never approved;
-  `v1.17.0` needs a `policy_exception` (feature interval) and republishes the build `gh-pages` already serves. If
-  1.17.1 is stamped by then, add `v1.17.1` to the same push. Never push tags from an assistant's clone.
+- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0 and 1.19.0 are on `main`, and 1.19.0 is live, but none is tagged: the
+  owner tags all six, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the six
+  `git tag -a` commands and `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0`, what each tag's runs do
+  (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`, `v1.18.0` and `v1.19.0`
+  each need *Run workflow* with a `policy_exception`; only `v1.19.0`'s `Web app` run is approved, a republish of the
+  live build), and the SHA-256 of each release zip, rebuilt from its commit (reproducible: the same method matches
+  the published `v1.15.4` and `v1.16.2` checksums). After the releases, the owner records each checksum in its release
+  notes and in the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh --release-sha256` needs. Push the
+  tags while `main` says 1.19.0, or add a stamped 1.19.1's tag to the same push. The assistant cannot push tags (its
+  environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the owner*). Never push tags from an
+  assistant's clone, and never an older tag alone.
 - The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
   once its tag is pushed.
 

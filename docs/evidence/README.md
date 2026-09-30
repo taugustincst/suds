@@ -9,7 +9,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.17.0, the stamp commit `485548c` ("Release 1.17.0", on `main`, and published to GitHub Pages by a direct `gh-pages` push at the owner's request); the owner has not tagged it yet ([../RELEASE.md](../RELEASE.md), *Record: 1.17.0*). The SBOM for 1.16.4 (`6491308`) stays in this folder for that release. (Until the review of the 1.17.0 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed, and that was never published.)
+**Version.** It describes 1.19.0, the stamp commit `3dc20dc` ("Release 1.19.0", on `main`, and published to GitHub Pages by a direct `gh-pages` push at the owner's request); the owner has not tagged it yet ([../RELEASE.md](../RELEASE.md), *Record: 1.19.0*; the tag hand-off is [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). The SBOMs for 1.17.0 (`485548c`) and 1.16.4 (`6491308`) stay in this folder as history; none was made for 1.17.1 or 1.18.0. `test/doc-currency.test.js` fails when this line, the questionnaire's *Checked against* or the newest SBOM falls behind the minor line of the version `package.json` stamps. (Until the review of the 1.17.0 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed, and that was never published.)
 
 **Other ways in.** The same ground is covered question by question in [../security/QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md), and for buyers in [../market/BUYER-GUIDE-IT.md](../market/BUYER-GUIDE-IT.md).
 
@@ -17,8 +17,10 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 | File | What it is | How to check it |
 | --- | --- | --- |
-| [sbom-1.17.0.cdx.json](sbom-1.17.0.cdx.json) | CycloneDX 1.5 software bill of materials for 1.17.0. See *The SBOM*, below. Generated from the stamp commit, since the tag is not pushed yet | `node scripts/sbom.js --ref 485548c7b076954cdbf1ec4445335d7459662048` prints the same bytes, and `test/sbom.test.js` checks it |
-| [sbom-1.16.4.cdx.json](sbom-1.16.4.cdx.json) | The SBOM for 1.16.4 | `node scripts/sbom.js --ref 6491308` prints the same bytes |
+| [sbom-1.19.0.cdx.json](sbom-1.19.0.cdx.json) | CycloneDX 1.5 software bill of materials for 1.19.0. See *The SBOM*, below. Generated from the stamp commit, since the tag is not pushed yet | `node scripts/sbom.js --ref 3dc20dcfa27cefce0d7e715ac1229892d887f4fe` prints the same bytes, and `test/sbom.test.js` checks it |
+| [sbom-1.17.0.cdx.json](sbom-1.17.0.cdx.json) | The SBOM for 1.17.0 (history) | `node scripts/sbom.js --ref 485548c7b076954cdbf1ec4445335d7459662048` prints the same bytes |
+| [sbom-1.16.4.cdx.json](sbom-1.16.4.cdx.json) | The SBOM for 1.16.4 (history) | `node scripts/sbom.js --ref 6491308` prints the same bytes |
+| [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md) | The tag hand-off for 1.16.3 to 1.19.0: the tag commands, the SHA-256 of each release zip the release workflow will build (rebuilt here from each commit, reproducibly), the one push, and what each tag's workflow runs will do | Rebuild a zip with `git archive --format=zip --prefix=suds-vX.Y.Z/ <commit>` and `sha256sum` it |
 | [dr-drill-2026-09-29.md](dr-drill-2026-09-29.md) and [its folder](dr-drill-2026-09-29/) | Recovery drill on the released 1.16.2 at 20,000 fictional clients: 11 of 11 checks, drill RTO 3.8 s. A signed JSON report, the text report and the public key | `npm run verify-dr-report -- dr-drill-2026-09-29/<report>.json --public-key dr-drill-2026-09-29/suds-signing-key.pem` |
 | [dr-drill-2026-09-25.md](dr-drill-2026-09-25.md) and [its folder](dr-drill-2026-09-25/) | The earlier drill (1.11.0 branch, schema 37) | As above |
 
@@ -58,8 +60,8 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 ### Access control, MFA and SSO
 
 - **Documents:** [IDENTITY.md](../security/IDENTITY.md); [QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md) #17–#24.
-- **Tests:** `auth-permissions`, `role-expansion`, `user-permissions`, `deidentified-roles`, `mfa-grace`, `mfa-enrol-hardening`, `in-session-guessing`, `signer-hardening`, `oidc`, `oidc-reauth`, `idp-lifecycle`, `scim`, `security-1154` to `security-1164`, `security-1170`.
-- **CI:** `test`; `browser` (`permissions-admin`, `signup`).
+- **Tests:** `auth-permissions`, `role-expansion`, `user-permissions`, `deidentified-roles`, `mfa-grace`, `mfa-enrol-hardening`, `in-session-guessing`, `signer-hardening`, `oidc`, `oidc-reauth`, `idp-lifecycle`, `scim`, `security-1154` to `security-1164`, `security-1170`; passkeys (1.19.0): `fingerprint`, `fingerprint-review`, `fingerprint-r2`, `fingerprint-sso`, `fingerprint-regression`.
+- **CI:** `test`; `browser` (`permissions-admin`, `signup`, `fingerprint`).
 - **Status:** In place, with caveats. Least privilege is the default for a new install and a setting an upgraded office turns on (*New navigators and clinicians start held to their caseload*, 1.17.0; `least-privilege-default`, `least-privilege-sso`, `least-privilege-device`); an upgraded office that leaves it off keeps navigators and clinicians seeing every client. The client record keeps a revision history with revert from 1.17.0 (`client-revisions`), at the office only.
 
 ### Authorisation on the sync door (local mode)
@@ -87,17 +89,17 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 ### Vulnerability management and supply chain
 
-- **Documents:** [VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md); the SBOM ([sbom-1.17.0.cdx.json](sbom-1.17.0.cdx.json)); `.github/dependabot.yml`.
+- **Documents:** [VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md); [`SECURITY.md`](../../SECURITY.md) (how to report); the SBOM ([sbom-1.19.0.cdx.json](sbom-1.19.0.cdx.json)); `.github/dependabot.yml`.
 - **Tests:** `sbom` (the server requires only Node built-ins; the committed SBOM equals a fresh run), `kernel-parity`.
 - **CI:** `test` (the kernel and schema must match their sources); Node pinned by SHA-256.
-- **Status:** The server has zero runtime npm packages, and the SBOM is published. **Owner-pending:** CodeQL and secret scanning (repository settings), private vulnerability reporting and a `SECURITY.md`, and a penetration test. SAST and DAST are not in CI.
+- **Status:** The server has zero runtime npm packages, and the SBOM is published. The security policy is `SECURITY.md`. **Owner-pending:** CodeQL and secret scanning (repository settings), turning on private vulnerability reporting and confirming `SECURITY.md`'s response targets, and a penetration test. SAST and DAST are not in CI.
 
 ### Secure development, change control and releases
 
 - **Documents:** [SDLC.md](../security/SDLC.md); [../RELEASE.md](../RELEASE.md) (the gate, the policy, the owner settings); `.github/CODEOWNERS`.
-- **Tests:** `release-gate`, `release-policy`, `release-existing`, `release-site-check`, `migrations`, `migration-order`.
+- **Tests:** `release-gate`, `release-policy`, `release-existing`, `release-site-check`, `migrations`, `migration-order`, `release-wording` and `doc-currency` (the documents keep up with a stamped release).
 - **CI:** Every push: `test`, `thorough`, `thorough-sdc`, `browser`, `node24` and `dr-drill` (the gate's `REQUIRED_JOBS`); `webkit` is advisory.
-- **Status:** The gate is designed and enforced by the workflow. **Owner-pending:** the repository settings that make the approval and the tag rules binding (not in force); an independent reviewer (480 of 512 commits are AI-assisted); signed releases.
+- **Status:** The gate is designed and enforced by the workflow. **Owner-pending:** the repository settings that make the approval and the tag rules binding (not in force); an independent reviewer (643 of the 662 commits up to 1.19.0 were written with an AI assistant; method in [QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md) #36a); signed releases.
 
 ### Threat model and penetration testing
 
@@ -126,6 +128,30 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 - **CI:** `test`; `browser` (`r10-ai`).
 - **Status:** Released in 1.17.0; off by default, and office server only. **Programme-pending:** a BAA with Part 2 QSOA terms with the AI provider, and counsel's review, before it is switched on.
 
+### The county view and the county connection (1.18.0; office servers only)
+
+- **Documents:** [../COUNTY-VIEW.md](../COUNTY-VIEW.md) (what the file holds, the trust model, *Connecting*); [DATA-INVENTORY.md](../security/DATA-INVENTORY.md) section 5; [THREAT-MODEL.md](../security/THREAT-MODEL.md); [ARCHITECTURE.md](../security/ARCHITECTURE.md) (the diagram and trust boundary 7); [PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md) (both sides of the connection).
+- **Tests:** `county` (the allow-list, signing, import checks, supersession, withdraw and reinstate, key history), `county-periods`, `county-connect` (tokens, scopes, a programme's token with another's file, limits, the body caps, the programme's outbound checks, automatic sending), `county-device` and `county-connect-device` (none of it on SUDS on this device), `ssrf`.
+- **CI:** `test`; `browser` (`county`, `county-connect`).
+- **Artefact:** A county submission file verifies on import under the programme's registered Ed25519 key; every import, refusal, send and read is in the audit log without figures ([LOGGING-AND-AUDIT.md](../security/LOGGING-AND-AUDIT.md), *Audit actions added in 1.18.0 and 1.19.0*).
+- **Status:** Released in 1.18.0. The file carries aggregates only; the connection is off by default on both sides and, behind a proxy, needs `TRUST_PROXY=1` on the county's server. **County:** exposing `/api/county-connect/v1/` through its TLS proxy or a VPN, and data stewardship for the combined figures (internal, not for publication). **Owner-pending:** counsel's review of the stewardship ([../market/DATA-NETWORK.md](../market/DATA-NETWORK.md)).
+
+### SUDS Server's signed compliance report (1.18.0)
+
+- **Documents:** [../SELF-HOSTING.md](../SELF-HOSTING.md) (*The compliance check*, *Compliance boundary*, the operator checklist); [`deploy/linux/`](../../deploy/linux/README.md).
+- **Tests:** `compliance-check` (every host check against fixtures, TLS against local servers, the signed report and tamper detection), `compliance-safety` (the root-run check never follows a path the `suds` user controls), `compliance-report-route`, `compliance`, `deploy-linux`, `deploy-linux-real` (the installer in a fake root with stub system commands).
+- **CI:** `test`.
+- **Artefact:** `/var/lib/suds-compliance/compliance-<stamp>.json` and `.html`, signed with the compliance check's own Ed25519 key (root only; the SUDS service never holds it). Verify away from the server with the public half alone: `npm run verify-compliance-report -- compliance-<stamp>.html --public-key /etc/suds/compliance-signing-key.pub.pem` (`scripts/verify-compliance-report.js`; the HTML is re-rendered and compared, so an edit to what it shows fails). A report from a wizard or Docker install is signed with the server's evidence key instead (`report.host.signed_with` says which).
+- **Status:** Released in 1.18.0. A report records what the check observed; it is not an attestation, and it lists what it cannot see. **Owner-pending:** a run of the installer and an upgrade on a real Ubuntu 24.04 and RHEL 9 VM. **County:** everything in *Compliance boundary*.
+
+### Fingerprint signature evidence (1.19.0; office server only)
+
+- **Documents:** [../FINGERPRINT.md](../FINGERPRINT.md) (the design, no biometric data, the evidence, the reviews); [IDENTITY.md](../security/IDENTITY.md); [DATA-INVENTORY.md](../security/DATA-INVENTORY.md) (`passkeys`, `webauthn_challenges`, `signature_evidence`).
+- **Tests:** `fingerprint` (a software authenticator: ES256, EdDSA, RS256; registration, assertion, replay, cross-record and counter checks), `fingerprint-review`, `fingerprint-r2`, `fingerprint-sso`, `fingerprint-regression` (people without passkeys get what 1.18.0 gave them).
+- **CI:** `test`; `browser` (`fingerprint`, with Chromium's virtual authenticator, and the accessibility audit of its dialogs).
+- **Artefact:** For a signature or approval confirmed with a fingerprint, the evidence (the statement of exactly what was signed, the device's assertion and the passkey's public key) from `GET /api/admin/signature-evidence?record_type=note&record_id=<id>` (`audit:read`), verified offline, after the passkey is removed too: `npm run verify-passkey-evidence -- evidence.json --audit audit-export.ndjson --public-key suds-signing-key.pem` (`scripts/verify-passkey-evidence.js`; `--content <hash>` also checks the note's content hash). It checks the statement against the challenge, the origin and relying party, user verification, the signature, and that the key is the one enrolled (the SHA-256s in the enrolment's audit entry).
+- **Status:** Released in 1.19.0. **County:** HTTPS and `WEBAUTHN_RP_ID` before anyone enrols; the policy switches; counsel on the biometric-law position (FINGERPRINT.md). Not on SUDS on this device.
+
 ### De-identification and publication
 
 - **Documents:** [../HIPAA.md](../HIPAA.md), *Small cells*; [ADR-0009](../architecture/ADR-0009-publication-release.md); [../PERFORMANCE.md](../PERFORMANCE.md).
@@ -150,15 +176,15 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 ### Container and host hardening
 
 - **Documents:** [../SELF-HOSTING.md](../SELF-HOSTING.md) (SUDS Server: the hardened Linux install and its compliance boundary); [`deploy/linux/`](../../deploy/linux/README.md); [`deploy/docker/`](../../deploy/docker/README.md); `Dockerfile`, `docker-compose.yml`; [../DEPLOYMENT.md](../DEPLOYMENT.md), *Hardening checklist*.
-- **Tests:** `deploy-linux` (the installer's plan and refusals for both distribution families, the unit's single source, the Node pin matching CI), `compliance-check` (every host check against fixtures, TLS against local servers, the signed report and tamper detection), `compliance-report-route`, `secret-files`.
+- **Tests:** `deploy-linux` (the installer's plan and refusals for both distribution families, the unit's single source, the Node pin matching CI), `deploy-linux-real`, `compliance-check` (every host check against fixtures, TLS against local servers, the signed report and tamper detection), `compliance-report-route`, `secret-files`. The compliance report has its own section above.
 - **CI:** `test` (packaging).
 - **Artefact — the compliance report.** On SUDS Server, `scripts/compliance-check.js` runs weekly (`suds-compliance.timer`) and writes `/var/lib/suds-compliance/compliance-<stamp>.json` and `.html` (root-owned, readable by the `suds` group): every host and app-level check with the HIPAA Security Rule, 42 CFR §2.16 or CMIA rule it produces evidence for, what was observed and the remediation, signed with the compliance check's own Ed25519 key (`/etc/suds/compliance-signing-key`, root only, never given to the SUDS service). Verify it with that key's public half alone, taken on the server: `npm run verify-compliance-report -- <file> --public-key /etc/suds/compliance-signing-key.pub.pem` (the HTML is also re-rendered and compared, so an edit to what it shows fails). Download the last one from Settings → Security status (`GET /api/admin/security/compliance-report`, audited). Keep them with the audit evidence for six years. "Could not check" is never counted as a pass, and an accepted risk (an unencrypted data disk) is printed on every report.
 - **Status:** A non-root, read-only container; on a VM, the installer's hardening, checked weekly. **County:** what the check cannot see — encryption beneath the VM, perimeter firewalls, the WORM property of the anchor share, key escrow — and everything in *Compliance boundary*.
 
 ### Support and vulnerability reporting
 
-- **Documents:** [../SUPPORT.md](../SUPPORT.md); [../market/templates/SUPPORT-SLA.md](../market/templates/SUPPORT-SLA.md) (an owner template).
-- **Status:** Channels today: the public issue tracker and private vulnerability reports. **Owner-pending:** a signed support agreement, contacts and a security address.
+- **Documents:** [../SUPPORT.md](../SUPPORT.md); [`SECURITY.md`](../../SECURITY.md) (vulnerability reports: how, what to include, scope); [../market/templates/SUPPORT-SLA.md](../market/templates/SUPPORT-SLA.md) (an owner template).
+- **Status:** Channels today: the public issue tracker and private vulnerability reports. **Owner-pending:** turning on private vulnerability reporting, confirming `SECURITY.md`'s response targets, a signed support agreement and contacts.
 
 ## Owner-pending: what only the owner can do
 
@@ -172,9 +198,9 @@ These close review questions that software cannot. The status of each is on the 
    - immutable releases, with older releases' checksums recorded;
    - stale branches deleted;
    - CodeQL, secret scanning and push protection.
-2. **Tag the released versions.** 1.16.3 (`fc5e9d7`), 1.16.4 (`6491308`) and 1.17.0 (`485548c`, live on GitHub Pages) are released but not tagged (HANDOFF.md, *Release waiting*; docs/RELEASE.md, *Record: 1.16.4 published without a tag*). All three go in **one** push, never 1.16.x alone, which would publish 1.16.4 over 1.17.0: `git fetch origin && git tag -a v1.16.3 fc5e9d7 -m "SUDS 1.16.3" && git tag -a v1.16.4 6491308 -m "SUDS 1.16.4" && git tag -a v1.17.0 485548c -m "SUDS 1.17.0" && git push origin v1.16.3 v1.16.4 v1.17.0`, then follow what RELEASE.md says each run does. The 1.16.4 SBOM describes `6491308`; the 1.17.0 SBOM describes `485548c`.
-3. **Vulnerability disclosure.** Turn on private vulnerability reporting, add a `SECURITY.md`, and name a security contact `[owner to complete]`.
-4. **Licence file.** `package.json` says MIT; add the `LICENSE` file `[owner to complete]`.
+2. **Tag the released versions, in one push.** 1.16.3 (`fc5e9d7`), 1.16.4 (`6491308`), 1.17.0 (`485548c`), 1.17.1 (`ab90c2f`), 1.18.0 (`39e397e`) and 1.19.0 (`3dc20dc`, live on GitHub Pages) are released but not tagged. All six go in **one** push (`git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0`), never an older one alone. [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md) has the checks, the tag commands, the SHA-256 each release zip will have, what each tag's workflow runs will do, which runs to re-run with a `policy_exception`, and which `Web app` runs to approve or reject (only `v1.19.0`'s, which republishes the build already live, while `main` still says 1.19.0; reject any other). Then record each zip's SHA-256 in its release notes and in the CHANGELOG on `main`, the second channel SUDS Server's upgrades need. The SBOMs here describe `6491308`, `485548c` and `3dc20dc`.
+3. **Vulnerability disclosure.** `SECURITY.md` is in the repository. Turn on private vulnerability reporting (Settings → Code security → *Private vulnerability reporting*), and confirm the response targets it marks `[owner to confirm]`.
+4. **Licence file.** `LICENSE` (MIT, "Copyright (c) 2026 The SUDS contributors") is in the repository; once a legal entity exists (item 5), the owner may name it as the holder.
 5. **Organisation** `[owner to complete]`:
    - a legal entity, W-9 or Payee Data Record, and vendor registration;
    - insurance: general liability, tech E&O, cyber;
@@ -202,9 +228,12 @@ These close review questions that software cannot. The status of each is on the 
 
 | Evidence | Command |
 | --- | --- |
-| SBOM for a release | After the owner tags it: `node scripts/sbom.js --ref v<version> --out docs/evidence/sbom-<version>.cdx.json` (while a released version is untagged, as 1.16.4 and 1.17.0 are, `--ref <stamp commit>`; the file records the full commit either way). Commit the file on `main`: evidence follows the release, as the drill reports do. `test/sbom.test.js` checks the newest SBOM against its recorded commit wherever that commit is in the clone. In CI, that is once the tag exists, since the `test` job fetches the release tags |
+| SBOM for a release | After the owner tags it: `node scripts/sbom.js --ref v<version> --out docs/evidence/sbom-<version>.cdx.json` (while a released version is untagged, as 1.16.4, 1.17.0 and 1.19.0 are, `--ref <stamp commit>`; the file records the full commit either way). One per minor line at least: `test/doc-currency.test.js` fails once a new minor is stamped without one. Commit the file on `main`: evidence follows the release, as the drill reports do. `test/sbom.test.js` checks the newest SBOM against its recorded commit wherever that commit is in the clone. In CI, that is once the tag exists, since the `test` job fetches the release tags |
 | Recovery drill (development) | `node --no-warnings=ExperimentalWarning scripts/dr-exercise.js --clients 20000 --out docs/evidence/dr-drill-<date>`, from the released tree |
 | Recovery drill (production, by the operator) | Settings → System & backups → *Run a recovery drill now*, or `npm run dr-drill -- --offsite --keys-file <escrowed keys.json>` |
 | Audit export | Settings → Security status → *Download audit export*; verify with `npm run verify-audit-export -- <file> --public-key <key>.pem` |
 | Live control status | Settings → Security status, or `GET /api/admin/security/status` |
 | Test results for a commit | The CI run for that commit (`gh run list --workflow ci.yml --commit <sha>`) |
+| A release zip's SHA-256, independently of the release page | `git archive --format=zip --prefix=suds-v<version>/ <tag or commit> -o suds-v<version>.zip && sha256sum suds-v<version>.zip` (what `release.yml` runs; [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)) |
+| A compliance report (SUDS Server) | `sudo systemctl start suds-compliance`; verify with `npm run verify-compliance-report -- <report> --public-key /etc/suds/compliance-signing-key.pub.pem` |
+| Fingerprint signature evidence | `GET /api/admin/signature-evidence?record_type=<type>&record_id=<id>`; verify with `npm run verify-passkey-evidence -- <file> --audit <audit export> --public-key <key>.pem` |
