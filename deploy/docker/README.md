@@ -29,11 +29,19 @@ sudo install -d -m 0700 /etc/suds/credentials
 for k in suds_encryption_key suds_index_key suds_backup_key suds_signing_key; do
   sudo sh -c "umask 077; od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > /etc/suds/credentials/$k"
 done
-# Compose (without Swarm) bind-mounts file secrets with the host file's owner and mode: let the image's suds user read them.
-uid=$(docker compose run --rm --no-deps --entrypoint id suds -u); gid=$(docker compose run --rm --no-deps --entrypoint id suds -g)
-sudo chown "$uid:$gid" /etc/suds/credentials/suds_*; sudo chmod 0400 /etc/suds/credentials/suds_*
+# Compose (without Swarm) bind-mounts file secrets with the host file's owner and mode. The image runs SUDS as
+# uid/gid 10001 (Dockerfile), a number reserved for it that is no account on the host: only it can read them.
+getent passwd 10001 && echo "uid 10001 is taken on this host: pick another and rebuild with it" >&2
+sudo chown 10001:10001 /etc/suds/credentials/suds_*; sudo chmod 0400 /etc/suds/credentials/suds_*
 docker compose -f docker-compose.yml -f deploy/docker/docker-compose.secrets.yml up -d
 ```
 
-and remove the keys from `.env`. Escrow the key files with your key custodian, as on a VM. Under Docker Swarm or
+and remove the keys from `.env`. Never hand the key files to the uid a `docker compose run ... id -u` happens to
+print (Alpine's system users are small numbers, and 1000 is usually the first person's account on the host): that
+host account could then read every key. 10001 is fixed in the `Dockerfile` for this reason; if it is taken on your
+host, change it there and here, and keep it unused on the host.
+
+**Upgrading an existing Docker install to the image with uid 10001** (earlier images used whatever uid Alpine's
+`adduser -S` chose): the volumes still belong to the old uid, so hand them over once, with SUDS stopped:
+`docker compose run --rm --no-deps --user root --entrypoint chown suds -R 10001:10001 /data /anchors`. Escrow the key files with your key custodian, as on a VM. Under Docker Swarm or
 Kubernetes, use the platform's secrets (mounted under `/run/secrets/...`) with the same `*_FILE` variables.

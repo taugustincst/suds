@@ -4,7 +4,27 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
-### SUDS Server: a hardened self-hosted install, and a compliance check that proves it
+### SUDS Server: a hardened self-hosted install, and a compliance check that records it
+
+- **Review fixes (before release).** The compliance check, run as root, no longer follows any path the `suds` user
+  controls: reports are created `O_EXCL|O_NOFOLLOW` in a checked directory and handed over by descriptor, the database
+  is read from a private copy (no root-owned `-wal`/`-shm`), the drill report named in the database must be a bare
+  file name, and errors never carry file content. Reports go to `/var/lib/suds-compliance` (root:suds 0750) signed with
+  the check's own root-only key (`/etc/suds/compliance-signing-key`), which SUDS verifies but never holds. The
+  installer makes every directory with an explicit mode (under umask 077 the Node and Caddy directories were 0700), and
+  is now tested for real into a fake root (`test/deploy-linux-real.test.js`). An upgrade's rollback restores with
+  `scripts/backup.js --restore-in-place`, which never opens the (possibly migrated) live database; `--restore` only
+  decrypts to a separate file. The SSH lock-out guard works under `sudo` (`who -m`, parent processes, `ss`) and refuses
+  when it cannot tell. A release zip needs `--release-sha256` from another channel (or `--trust-release-checksum`,
+  reported by `host.release_integrity`), is copied before hashing, and is staged via `<version>.partial` with a
+  manifest. Installer input is whitelisted; `provision.json` may only tighten settings; chrony is kept on Ubuntu,
+  `--ntp-server`; the offsite share's outage no longer stops SUDS; `upgrade.sh` updates and restarts Caddy; journal
+  size cap `--journal-max-use` and the oldest entry as evidence; `--ca-file`, `--connect-host`, and
+  `suds-server.conf` keeps unknown lines; a new server's first backup and drill are *pending first run*, not failures.
+  Also: `cipher_null` fails, `app.index_key` is *could not check* without the key, unknown compliance-check options are
+  an error, the compliance unit has a capability bounding set, the Docker image runs as uid/gid 10001 (existing
+  volumes: `chown -R 10001:10001 /data /anchors` once, deploy/docker/README.md), and SELF-HOSTING.md's compliance
+  boundary names a check for every *Implements* row, with an operator checklist.
 
 - **One-command install on a Linux VM** (`deploy/linux/install.sh`; Ubuntu 24.04 LTS, RHEL/Rocky/Alma 9). Idempotent,
   `--dry-run` prints every action. Installs the Node.js release CI tests on and a static Caddy, each checked against a
@@ -30,7 +50,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   now — plus every line of Settings → Security status, read through the same code on a read-only database
   connection. Each check names the HIPAA Security Rule, 42 CFR §2.16 or CMIA §56.101 rule it evidences
   (`server/compliance-rules.js`), what it observed and how to fix it. "Could not check" is never a pass; exit 1 on
-  any failure. JSON and self-contained HTML reports signed with the evidence signing key;
+  any failure. JSON and self-contained HTML reports signed with the compliance check's own key;
   `npm run verify-compliance-report` checks either with the public key alone (the HTML is re-rendered and compared).
 - **Settings → Security status** shows the rule each control evidences and a *Host (last compliance check)* section
   from the latest report, with its date and whether its signature verifies. New route

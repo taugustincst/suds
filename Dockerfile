@@ -16,7 +16,9 @@ COPY scripts ./scripts
 COPY docs ./docs
 # The application files belong to root and are read-only to the service user: a compromised process cannot
 # rewrite the code it runs. Only /data and /anchors are writable by it.
-RUN addgroup -S suds && adduser -S suds -G suds && mkdir -p /data /anchors && chown suds:suds /data /anchors && chmod 700 /data /anchors \
+# A fixed, dedicated uid/gid (10001) that belongs to no account on the host: key files bind-mounted as Compose
+# secrets are owned by it on the host (deploy/docker/README.md), and a container escape as it is no host user.
+RUN addgroup -S -g 10001 suds && adduser -S -u 10001 -G suds suds && mkdir -p /data /anchors && chown suds:suds /data /anchors && chmod 700 /data /anchors \
  && chmod -R a-w /app
 USER suds
 VOLUME ["/data", "/anchors"]

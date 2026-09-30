@@ -413,3 +413,17 @@ test('npm run compliance-check: exit 1 on any failed check, 0 when none failed, 
   assert.equal(r.status, 1, r.stdout);
   assert.match(r.stdout, /\[FAIL\s+\] host\.data_dir/);
 });
+
+test('docs/SELF-HOSTING.md: every "Implements" row names a check in the catalogue; every check id the guide names exists', () => {
+  const doc = fs.readFileSync(path.join(REPO, 'docs/SELF-HOSTING.md'), 'utf8');
+  const ids = new Set([...rules.HOST_CHECKS, ...rules.APP_CHECKS].map((c) => c.id));
+  const rows = doc.split('\n').filter((l) => /^\|[^|]*\| Implements \|/.test(l));
+  assert.ok(rows.length >= 5, 'the boundary tables have Implements rows');
+  for (const row of rows) {
+    const named = [...row.matchAll(/`((?:host|app)\.[a-z_]+)`/g)].map((m) => m[1]);
+    assert.ok(named.some((id) => ids.has(id)), `an Implements row without a check id: ${row}`);
+  }
+  for (const m of doc.matchAll(/`((?:host|app)\.[a-z_]+)`/g)) if (m[1] !== 'app.other') assert.ok(ids.has(m[1]) || m[1] === 'host.report', `${m[1]} is in server/compliance-rules.js`);
+  assert.ok(!/check[^.]*\bproves\b/i.test(doc.split('\n').slice(0, 5).join('\n')), 'the report records; it does not prove');
+  assert.match(doc, /## Operator checklist/);
+});
