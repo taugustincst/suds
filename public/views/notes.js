@@ -274,7 +274,9 @@ export async function signatureDialog({ title, intro, submitText, send, done, fi
     const identity = st.recent ? []
       : st.method === 'totp' || (strong && st.totp) ? [{ name: 'code', label: 'Code from your authenticator app', required: true, autocomplete: 'one-time-code', pattern: '[0-9]{6}', help: why2 }]
       : strong || viaSso ? []
-      : [{ name: 'password', label: `Your password`, type: 'password', required: true, autocomplete: 'current-password', help: why2 }];
+      // Under the fingerprint the field sits beneath "Or use your password:", so its own label is short; without a
+      // fingerprint it reads as it did before fingerprints existed (1.18.0).
+      : [{ name: 'password', label: fp ? 'Your password' : `Re-enter your password to ${verb}`, type: 'password', required: true, autocomplete: 'current-password', help: why2 }];
     // Required and impossible: a fingerprint or a code is needed and the person has neither (here). No button that
     // cannot work: the reason, and where to set one up.
     const noWay = strong && !identity.length && !fp;
