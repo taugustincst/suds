@@ -539,3 +539,44 @@ test('key rotation re-encrypts the signature evidence like any other _enc column
   const back = JSON.parse(decrypt(rotated, newKey));
   assert.equal(W.verifyEvidence(back).ok, true, 'and it still verifies after a rotation');
 });
+
+test('the key backup download accepts a fingerprint: fresh by nature, and bound to that download', async () => {
+  const fs = require('node:fs');
+  const a = key(); await enrol(admin, a, { password: APW });
+  const was = config.keySource;
+  try {
+    config.keySource = 'file';
+    fs.writeFileSync(config.keysJsonPath, JSON.stringify({ SUDS_ENCRYPTION_KEY: 'c'.repeat(64) }));
+    // A note-signing confirmation is not a key-backup one.
+    const n = (await admin.post('/api/notes', { client_id: clientId, kind: 'admin', content: 'x', occurred_at: new Date().toISOString() })).data.id;
+    const forNote = await confirmWith(admin, a, 'note.sign', { note_id: n });
+    assert.equal((await admin.post('/api/admin/keys-backup', { passkey: forNote })).status, 403);
+    const r = await admin.post('/api/admin/keys-backup', { passkey: await confirmWith(admin, a, 'keys.download') });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const au = JSON.parse(H.db.one(`SELECT details FROM audit_log WHERE action='keys.download' ORDER BY id DESC LIMIT 1`).details);
+    assert.equal(au.method, 'passkey'); assert.ok(au.evidence);
+    assert.equal((await admin.post('/api/admin/keys-backup', { confirm: true })).status, 403, 'and the next download asks again');
+    assert.equal((await H.client().post('/api/auth/passkeys/challenge', { purpose: 'keys.download' })).status, 401);
+    const nav = await person('fp_nokeys');
+    await enrol(nav.c, key());
+    assert.equal((await nav.c.post('/api/auth/passkeys/challenge', { purpose: 'keys.download' })).status, 403, 'no challenge without settings:manage');
+  } finally { config.keySource = was; fs.rmSync(config.keysJsonPath, { force: true }); }
+});
+
+test('an auditor exports the evidence and verifies it offline with scripts/verify-passkey-evidence.js', async () => {
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+  const note = H.db.one(`SELECT n.id, n.signature_hash FROM notes n JOIN signature_evidence e ON e.record_ids LIKE '%' || n.id || '%' WHERE e.purpose='note.sign' LIMIT 1`);
+  const exp = (await admin.get(`/api/admin/signature-evidence?record_type=note&record_id=${note.id}`)).data;
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='signature_evidence.view' AND entity_id=?`, note.id), 'the export is audited');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-fp-'));
+  const file = path.join(dir, 'evidence.json');
+  fs.writeFileSync(file, JSON.stringify(exp));
+  const { run } = require('../scripts/verify-passkey-evidence');
+  const good = run([file, '--content', note.signature_hash]);
+  assert.equal(good.code, 0, good.lines.join('\n')); assert.match(good.lines.join('\n'), /All 1 verified/);
+  assert.equal(run([file, '--content', 'f'.repeat(64)]).code, 1, 'a different content hash does not match');
+  exp.rows[0].evidence.statement.record_ids = ['someone-else'];
+  fs.writeFileSync(file, JSON.stringify(exp));
+  assert.equal(run([file]).code, 1, 'an edited statement does not verify');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

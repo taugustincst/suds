@@ -22,6 +22,7 @@
     "dr-drill": "node --no-warnings=ExperimentalWarning scripts/dr-drill.js",
     "dr-exercise": "node --no-warnings=ExperimentalWarning scripts/dr-exercise.js",
     "verify-audit-export": "node scripts/verify-audit-export.js",
+    "verify-passkey-evidence": "node scripts/verify-passkey-evidence.js",
     "verify-dr-report": "node scripts/verify-dr-report.js",
     "compliance-check": "node --no-warnings=ExperimentalWarning scripts/compliance-check.js",
     "verify-compliance-report": "node scripts/verify-compliance-report.js",
