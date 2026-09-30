@@ -34,10 +34,12 @@ outbound HTTPS to that host if you use it.
 
 The optional **county connection** (off by default; built for 1.18.0, not yet released; `docs/COUNTY-VIEW.md`,
 *Connecting*): a programme's server that an administrator connects to its county posts its county submission file
-to the county's SUDS over HTTPS, to that one configured host only (no redirects, 15-second timeout). Allow outbound
-HTTPS to the county's host. The county's address must be public HTTPS; a county reached over a VPN on a private
-address is allowed only when the service is started with `SUDS_COUNTY_ALLOW_PRIVATE=1`, and a county certificate
-issued by its own CA is trusted with `NODE_EXTRA_CA_CERTS=/path/to/county-ca.pem`.
+to the county's SUDS over HTTPS, to that one configured host only (no redirects, one 15-second deadline for the
+whole exchange). Allow outbound HTTPS to the county's host. The county's address must be public HTTPS; a county
+reached over a VPN or split DNS on a private address (RFC 1918 or IPv6 unique local) is allowed only when the service
+is started with `SUDS_COUNTY_ALLOW_PRIVATE=1` — the name is then resolved, checked and the connection pinned to the
+checked address, never through `HTTPS_PROXY`, and this machine, link-local and cloud metadata addresses stay refused.
+A county certificate issued by its own CA is trusted with `NODE_EXTRA_CA_CERTS=/path/to/county-ca.pem`.
 
 ### Inbound from the internet: secure referral links
 
@@ -52,8 +54,10 @@ setting on.
 
 A **county** that switches on the county connection (off by default; `docs/COUNTY-VIEW.md`, *Connecting*) must let
 its programmes' servers reach `https://<county SUDS>/api/county-connect/v1/` — through its TLS reverse proxy on the
-internet, or over a VPN. Set `TRUST_PROXY=1` behind the proxy so the per-address limits and each token's recorded
-last-use address are the caller's. The routes need a bearer token (hashed at rest, revocable) and answer 404 while
+internet, or over a VPN. **`TRUST_PROXY=1` is required** when `county_connect_enabled` is on behind a proxy:
+without it every programme is counted as the proxy's one address, so one programme's calls (or a flood of made-up
+tokens) count against all of them, and each token's recorded last-use address is the proxy's. County connections
+shows a warning when the connection is on, `TRUST_PROXY` is unset and calls arrive carrying `X-Forwarded-For`. The routes need a bearer token (hashed at rest, revocable) and answer 404 while
 the switch is off; a county may also allow-list its programmes' addresses at the proxy or WAF for that path only.
 Nothing else in SUDS needs inbound access from outside the office.
 

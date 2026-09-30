@@ -315,9 +315,16 @@ that one programme. Never a figure back, never another programme's anything, nev
   time and address of its last use recorded. Issued, revoked and every use audited.
 - The token only says **which programme is calling**. The file must still verify through `county.js`'s own import
   path (`parseFile`, then `importParsed`: the allow-list, the period, this county's code, the current key of a
-  registered and active programme, the signature, and which of the programme's files for the period counts). If the
-  key that signed the file belongs to a different programme than the token, the import is rolled back and refused
-  (`wrong_programme`): a token never makes a file count, and programme A's token cannot carry programme B's file.
+  registered and active programme, the signature, and which of the programme's files for the period counts). Before
+  that import looks further, the key that signed the file must be one registered for the token's programme: an
+  unknown key and another programme's key are refused with **one** reason to the caller (`not_this_programme`, the
+  same words for both), so a token holder learns nothing about other programmes' keys, names or files; the county's
+  audit log keeps which it was (`unknown_key` or `wrong_programme`). A token never makes a file count, and programme
+  A's token cannot carry programme B's file.
+- A connection token of a programme the county **deactivates** stops working at once (refused as
+  `inactive_programme`), and deactivating the programme on County view › Programs revokes its live tokens, each
+  audited (`county_connect.token.revoke`, `reason: programme_deactivated`), so reactivating it does not bring an old
+  token back.
 - Neither kind of token is ever a session: a county token presented anywhere else is not a sign-in, and a signed-in
   session (cookie or its token) does not open the machine routes.
 
@@ -329,8 +336,9 @@ that one programme. Never a figure back, never another programme's anything, nev
 - `POST /api/county-connect/v1/submissions` with `Authorization: Bearer sudscc_…` and the file as the JSON body.
   Answers `201 { status: "imported" | "superseded" | "older", reason: null, message, period, receipt }`,
   `200 { status: "duplicate", … }` or `422` (`413` over 256 KB) `{ status: "refused", reason, message, receipt }`,
-  `reason` being `county.js`'s own refusal code (`recipient` for a file made for another county, `unknown_key`,
-  `inactive`, `signature`, `retired_key` for a new file signed with a replaced key, …) or `wrong_programme`, and
+  `reason` being `county.js`'s own refusal code (`recipient` for a file made for another county, `signature`,
+  `retired_key` for a new file signed with a replaced key, …) or `not_this_programme` (an unknown key or another
+  programme's; the audit log says which), and
   `message` the county view's own words (`county.js` `importMessage`; an `older` file is kept and does not count, as on
   import). The body is capped at **256 KB before it is read**,
   and only for a live connection token while the switch is on (`server/app.js` `bodyLimitFor`); anything else
@@ -354,10 +362,17 @@ that one programme. Never a figure back, never another programme's anything, nev
   `GET /api/county-connect/v1/programs`: names, active, the current key's fingerprint and the key history
   (fingerprints, when added, replaced or marked compromised), last received, the periods of the files that count, by
   the same rule (no public or private keys). Audited `county.api.read`, never with figures.
-- **Rate limits** (per 10 minutes, on top of the global API limit): 120 per address across the machine routes, 2,000
-  from all addresses together, 20 wrong tokens per address (then the address waits), per token 30 sends, 60 status
-  calls, 120 reads, and 20 refused files. Refusals of callers without a good token are written to the audit log ten
-  an hour per token (or for unknown tokens together) and then summarised, as secure referral links do.
+- **Rate limits** (per 10 minutes, on top of the global API limit). Calls **without a good token** (none, unknown,
+  expired, revoked, an inactive programme's) have limits of their own, checked first: 20 per address (then the address
+  waits, good token or not) and 1,000 from all addresses together; they never count towards the limits of calls with
+  a good token, so a flood of made-up tokens from many addresses cannot make a programme's real token wait. Calls
+  with a good token: 120 per address across the machine routes, 2,000 from all addresses together, and per token 30
+  sends, 60 status calls, 120 reads and 20 refused files. Refusals are written to the audit log ten an hour per token
+  (or for unknown tokens together) and then counted; the hourly housekeeping writes the summary of every window whose
+  hour is over (`county-connect.js` `sweepRefusals`), as does stopping the server.
+- **Behind a proxy**, `TRUST_PROXY=1` is required: without it every programme is counted as the proxy's one address.
+  County connections warns when the connection is on, `TRUST_PROXY` is unset and calls arrive with
+  `X-Forwarded-For`.
 
 ### The programme's side
 
@@ -371,26 +386,45 @@ that one programme. Never a figure back, never another programme's anything, nev
   period, the county's name and the settlement funds ticked (with none ticked, it says so at the card, as the download
   does). The file names the county's code from its `/status` (asked for when not yet known; a county that gives no
   code gets no file); a code typed on the card must be that county's, or nothing is sent. The name and funds are
-  remembered per county code, as the download remembers them, and an automatic send uses them; nothing is ever sent
-  for "every fund". The county's receipt is shown. Each send is kept in a **send
+  remembered per county code, as the download remembers them (a person's send remembers; an automatic send only uses
+  what a person chose, and never rewrites another code's choice); nothing is ever sent for "every fund". The
+  county's code and name from `/status` are held to a file recipient's rules (`county.js`: a code of eight letters
+  and digits, a name of at most 200 characters with no control characters or extra spaces) before they are stored
+  or signed; anything else is a bad answer and nothing of it is kept. The county's receipt is shown. Each send is kept in a **send
   log** (`county_connect_sends`: period, payload SHA-256, the county's answer, when, who; never figures) and audited
   `county_submission.send` (period, county code, fingerprint, payload SHA-256, host, answer).
 - **Automatic sending**, off by default (a checkbox beside the address): the hourly housekeeping, once a day at
-  most, asks `/status` what is outstanding and sends those periods (four at most a day), each logged and audited as
-  automatic (`county_submission.auto` for the run).
+  most, asks `/status` what is outstanding and sends those periods (four at most a day, oldest first), each logged
+  and audited as automatic (`county_submission.auto` for the run). The county's list is checked, not trusted: each
+  period must pass the checks a person's send passes (real dates, the start on or before the end, ended before today,
+  at most a year) **and** be one of the periods of the county's cadence that ended in the last two years (8 quarters
+  or 24 months, worked out here by `county-periods.js`); any other is skipped and audited
+  (`county_submission.auto_skip`, with the reason and never a figure) and the rest are still sent. Nothing is sent
+  automatically until a person has chosen the funds for this county's code (by sending or downloading once).
+- **A county code that changes**: if `/status` gives a different county code from the one saved, SUDS does not take
+  it. Automatic sending switches itself off, nothing is sent (by hand or automatically), both are audited
+  (`county_connect.county_code.changed`), and the card asks an administrator to check with the county and confirm
+  the new code (`PUT /api/county-connect/connection { confirm_county_code: true }`, audited
+  `county_connect.county_code.confirm`); automatic sending can be switched on again only after that.
 - **Outbound safety**: https only (plain http only to this machine, never in production); no redirect is ever
-  followed (the token goes only to the configured host); a 15-second timeout; the answer read to 64 KB at most. A
-  public address goes through `server/outbound.js` (checked, resolved, and connected to the address that passed the
-  check; a name resolving to a private address is refused). An address on this machine or a private network is
-  refused in production unless the server is started with `SUDS_COUNTY_ALLOW_PRIVATE=1` (a county reached over a
-  VPN). Certificates are verified; a county whose certificate comes from its own CA is trusted with
-  `NODE_EXTRA_CA_CERTS`.
+  followed (the token goes only to the configured host); one 15-second deadline for the whole exchange, the answer
+  included (a county that drips its answer a byte at a time is cut off); the answer read to 64 KB at most. A public
+  address goes through `server/outbound.js` (checked, resolved, and connected to the address that passed the check;
+  a name resolving to a private address is refused). An address on a private network is refused in production
+  unless the server is started with `SUDS_COUNTY_ALLOW_PRIVATE=1` (a county reached over a VPN or split DNS). Under
+  that flag the name is resolved, every address checked and the connection pinned to a checked address
+  (`outbound.privateNetworkFetch`): RFC 1918 (10/8, 172.16/12, 192.168/16) and IPv6 unique local (fc00::/7)
+  addresses are allowed, so a normal name that resolves to one works; this machine (loopback), link-local
+  (169.254/16, fe80::/10), the cloud metadata addresses, 0.0.0.0 and `::`, and the IPv4-mapped forms of all of them
+  stay refused, and the request never goes through a proxy. Certificates are verified against the county's host
+  name; a county whose certificate comes from its own CA is trusted with `NODE_EXTRA_CA_CERTS`.
 
 ### Exposure
 
 The county's endpoint must be reachable from the programmes' servers: through the county's TLS reverse proxy on the
-internet, or a VPN between them ([DEPLOYMENT.md](DEPLOYMENT.md), *Inbound from the internet*). Behind a proxy set
-`TRUST_PROXY=1`, so the per-address limits and the recorded last-use address are the caller's. A county may also
+internet, or a VPN between them ([DEPLOYMENT.md](DEPLOYMENT.md), *Inbound from the internet*). Behind a proxy
+`TRUST_PROXY=1` is **required**, so the per-address limits and the recorded last-use address are the caller's
+(County connections warns when it sees proxied calls without it). A county may also
 allow-list its programmes' addresses at its proxy or WAF (only `/api/county-connect/v1/` needs to be reachable).
 Nothing else changes: the connection carries what the emailed file carried.
 

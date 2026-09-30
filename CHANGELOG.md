@@ -52,6 +52,35 @@ refuses 1.18.0 before about **2026-10-27 21:08 UTC** without the owner's `policy
 - Docs: COUNTY-VIEW *Connecting*, API.md, DEPLOYMENT (outbound to the county; inbound on the county's server),
   THREAT-MODEL, DATA-INVENTORY, PEN-TEST-SCOPE, DATA-NETWORK and STRATEGY (Tier 1 has an API), USER_GUIDE.
 
+### Security: the county connection API review (r1; before release)
+
+- **No lockout by made-up tokens (Medium).** Calls without a good token are checked against their own limits first
+  (20 per address, 1,000 from all addresses per 10 minutes) and never count towards the limits of calls with a good
+  token (per address, all addresses, per token), so a flood of garbage tokens from many addresses can no longer make
+  a programme's real token wait (`server/routes/county-connect.js` `machine`).
+- **Automatic sending checks the county's `outstanding` periods (Medium).** Each must be real dates, start on or
+  before its end, have ended, span at most a year, and be one of the periods the county's cadence produces in the
+  last two years (`server/county-periods.js`); any other is skipped and audited (`county_submission.auto_skip`, no
+  figures) and never stops the rest; an error making one period's file is caught for that period.
+- **The county's code and name are not trusted (Medium).** They must pass a file recipient's checks (length, control
+  characters) before they are stored or signed. A `/status` giving a different county code from the saved one is not
+  taken: automatic sending switches itself off, nothing is sent, it is audited (`county_connect.county_code.changed`)
+  and the card asks an administrator to confirm the new code (`confirm_county_code`, audited
+  `county_connect.county_code.confirm`). Automatic sending refuses without a person's fund choice for that county
+  code, and never rewrites a remembered choice.
+- **`SUDS_COUNTY_ALLOW_PRIVATE` resolves and pins (Medium).** Under the flag a county's name is resolved, every
+  address checked and the connection pinned to a checked one (`server/outbound.js` `privateNetworkFetch`): RFC 1918
+  and IPv6 unique-local addresses are allowed (a normal name through split DNS works), loopback, link-local,
+  metadata, `0.0.0.0`/`::` and their IPv4-mapped forms are refused, and TLS verifies the county's host name.
+- **One deadline for the whole exchange (Low/Medium).** Requests to the county end at 15 seconds even when the answer
+  is dripped a byte at a time (`AbortSignal.timeout`); the automatic run is always released.
+- **Low:** a deactivated programme's connection tokens are refused and deactivation revokes them, audited; an unknown
+  key and another programme's key are one refusal reason to the token holder (`not_this_programme`), the county's
+  audit keeping which; the hourly housekeeping writes the summary of throttled refusals whose hour is over.
+- **Docs:** PEN-TEST-SCOPE (the programme's server facing a hostile county), THREAT-MODEL, DEPLOYMENT (`TRUST_PROXY`
+  is required for the county connection behind a proxy; County connections warns when calls arrive with
+  `X-Forwarded-For` and it is unset), COUNTY-VIEW *Connecting*.
+
 ### Added: the county view (docs/COUNTY-VIEW.md; DATA-NETWORK Tier 1)
 
 - **Send to the county** (Settlement outcomes; office server only). Whoever files the funder submission
