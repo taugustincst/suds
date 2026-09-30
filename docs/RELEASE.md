@@ -327,7 +327,7 @@ heading while any document still says that version is not yet released, or still
 it (say "released in X.Y.Z" or "available from X.Y.Z"), and it refuses other spellings of the same thing, so there
 is one phrase to search for. Since the market review of 1.20.0 it also fails on any "X.Y.Z, not yet released" (or
 "not available until X.Y.Z is released") for a stamped X.Y.Z, however the line introduces the version: that review
-found "(1.20.0, not yet released)" three times in the county kit after the stamp.
+found the county kit still calling a 1.20.0 feature unreleased, three times, after the stamp.
 
 **Stamp checklist: the documents that name a release.** When stamping X.Y.Z, the documents that say which release they
 describe move to it: `docs/security/QUESTIONNAIRE.md`'s **Checked against** line and `docs/evidence/README.md`'s
