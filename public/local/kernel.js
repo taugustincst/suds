@@ -32415,7 +32415,13 @@ var require_county2 = __commonJS({
         if (to > today()) throw badRequest(`The period ends in the future (${to}). A county submission reports a period that has happened: choose an end date of today or earlier.`);
         const range = require_reports().range(ctx);
         const raw = await db3.readSnapshot(async () => SO.figures(range));
-        const payload = K.payloadFrom(raw, { programme: db3.getSetting("org_name", "") });
+        let payload;
+        try {
+          payload = K.payloadFrom(raw, { programme: db3.getSetting("org_name", "") });
+        } catch (e) {
+          if (e instanceof K.SubmissionError) throw badRequest(`The county file could not be made: ${e.message}`);
+          throw e;
+        }
         const { key, created } = K.ensureKey(ctx.user);
         if (created) audit3.log({ user: ctx.user, action: "county_submission.key.create", ip: ctx.ip, details: { fingerprint: key.fingerprint } });
         const { file, sha256: sha2562, fingerprint } = K.signFile(payload);

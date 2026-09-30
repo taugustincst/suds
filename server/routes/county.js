@@ -55,7 +55,10 @@ module.exports = (r) => {
     if (to > today()) throw badRequest(`The period ends in the future (${to}). A county submission reports a period that has happened: choose an end date of today or earlier.`);
     const range = require('./reports').range(ctx);
     const raw = await db.readSnapshot(async () => SO.figures(range));
-    const payload = K.payloadFrom(raw, { programme: db.getSetting('org_name', '') });
+    // The allow-list is checked here too: a figure it does not expect is said, never sent.
+    let payload;
+    try { payload = K.payloadFrom(raw, { programme: db.getSetting('org_name', '') }); }
+    catch (e) { if (e instanceof K.SubmissionError) throw badRequest(`The county file could not be made: ${e.message}`); throw e; }
     const { key, created } = K.ensureKey(ctx.user);
     if (created) audit.log({ user: ctx.user, action: 'county_submission.key.create', ip: ctx.ip, details: { fingerprint: key.fingerprint } });
     const { file, sha256, fingerprint } = K.signFile(payload);
