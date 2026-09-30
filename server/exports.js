@@ -212,7 +212,9 @@ function datasets(ctx, { from, to, ts, tsP, identified }) {
   // An anonymous contact's participant code goes out as a reference random for this file, identified or not:
   // the code is built from personal details, and a count of unique participants needs only the reference.
   const participantRef = pseudonymizer('P');
-  const idCols = identified ? ['last_name', 'first_name', 'dob', 'phone', 'email', 'address'] : ['age_band'];
+  // participant_code (1.21.0): a client's syringe services participant code, identifying like a name (an identified
+  // export only; a de-identified one never carries it).
+  const idCols = identified ? ['last_name', 'first_name', 'participant_code', 'dob', 'phone', 'email', 'address'] : ['age_band'];
   const strip = (cols) => (identified ? cols : cols.filter(c => c !== 'city'));
   const D = {
     clients: { label: 'Clients', columns: strip(['client_code', ...idCols, 'status', 'intake_date', 'discharge_date', 'discharge_reason', 'referral_source', 'referral_date', 'engagement_date', 'days_to_engagement', 'primary_substance', 'secondary_substances', 'asam_level', 'mat_status', 'mat_medication', 'risk_level', 'housing_status', 'insurance', 'overdose_history', 'naloxone_provided', 'naloxone_last_date', 'co_occurring_mh', 'justice_involved', 'pregnant_or_parenting', 'city', 'zip', 'gender', 'preferred_language', 'goals', 'flags']),
