@@ -2,7 +2,7 @@
 
 This document covers who might attack SUDS, how, what stops them, and what is left. It is for a county security reviewer, a penetration tester, and the next maintainer.
 
-**Version.** It describes 1.19.0; what changed in 1.17.0, 1.18.0 (the county view and the county connection) and 1.19.0 (passkeys) is marked with the release. SUDS Server's installer and compliance check (1.18.0) are not modelled here yet: their controls and limits are in [../SELF-HOSTING.md](../SELF-HOSTING.md), and [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md) puts them in scope.
+**Version.** It describes 1.20.0, with a gap it states: what 1.20.0 added, county-entered figures, is not modelled here yet, and neither are SUDS Server's installer and compliance check (1.18.0, with 1.20.0's installer fixes). Their controls and limits are in [../COUNTY-VIEW.md](../COUNTY-VIEW.md) (*County-entered figures*) and [../SELF-HOSTING.md](../SELF-HOSTING.md), and [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md) puts them in scope. What changed in 1.17.0, 1.18.0 (the county view and the county connection) and 1.19.0 (passkeys) is marked with the release.
 
 **Who wrote it.** The SUDS project wrote it, from the code and from its own review rounds. **It is not an independent assessment.** No third-party penetration test or audit has been done (see [Residual risks](#residual-risks)).
 

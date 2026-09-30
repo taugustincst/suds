@@ -24,7 +24,12 @@ whether that is possible.
 (below: office server only, off unless your administrator turns it on after a BAA and QSOA with the AI
 provider). A county view of its grantees' outcomes is released in 1.18.0: your finance lead makes a
 signed file of the Settlement outcomes page's figures for the county, and a county running SUDS combines its
-grantees' files ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)). A field device scope for street outreach and a referral
+grantees' files ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)). From 1.20.0 the county can also enter the figures of a
+grantee that does not run SUDS, from that grantee's own report; they are marked *entered by the county — not signed
+by the program* wherever the county sees them, and once you send a signed file for the same period, yours counts
+instead. If your county enters your figures before you start on SUDS, that is where they came from. Fingerprint
+sign-in (1.19.0) lets staff sign in and sign notes with the phone's or laptop's fingerprint reader on an office
+server. A field device scope for street outreach and a referral
 network partner organisations join (beyond the 1.17.0 one-time secure links) are planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS
 for what it does today.
 

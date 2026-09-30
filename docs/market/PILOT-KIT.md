@@ -232,6 +232,11 @@ before it is proposed.
   figures as **quarterly signed files**, one per CBO per quarter, made for the county (its county code) from only
   the settlement funds the county pays for, and imported into the county's own SUDS server, where they are
   combined per CBO, in total and by quarter. The county's server holds no client data (a county-only install).
+- Its grantees that are **not** in the pilot and do not run SUDS in the same view (released in 1.20.0;
+  [../COUNTY-VIEW.md](../COUNTY-VIEW.md), *County-entered figures*): county staff enter or import their figures from
+  the reports they already send, marked *entered by the county — not signed by the program* everywhere, outranked by
+  a signed file when a CBO starts sending them, and possible to leave out of any view or file. What the county may
+  enter is for the data contribution agreement ([templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md), section 8).
 - One security and privacy review covering every CBO's instance ([BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md)).
 - A measured answer to "does this reduce our grantees' reporting burden and improve what we receive?"
 - The information it needs to decide whether to act as data steward for pooled outcomes later
@@ -265,6 +270,7 @@ compromised if its files should stop counting).
 | Funder submissions from SUDS accepted by the county without rework | Count per CBO per reporting period | Every CBO, at least one period |
 | Quarterly county files received and imported on time (county view builds) | County view › Submissions: a *Current* file per CBO per quarter; the headline for the quarter | Every CBO, every pilot quarter, within the time the contract sets |
 | County staff hours to combine its CBOs' figures (county view builds) | The same method as the compile-hours baseline, with the combined view and its Excel | Recorded; compared with the baseline |
+| Grantees not on SUDS in the combined view (1.20.0) | County view › Submissions: entries marked *entered by the county*, each with its source document; how long an entry takes | Recorded; every non-pilot grantee the county chooses to include, with a named source document per period |
 | County staff hours to compile its grantees' figures | Baseline from the last period; same method in the pilot | Recorded; target agreed with the county |
 | Settlement spending recorded with an allowable use | Settlement report, per CBO | All settlement spending categorised |
 | Implementation hours per CBO against the estimate | Vendor time log | Recorded — feeds [PRICING-OPTIONS.md](PRICING-OPTIONS.md) |

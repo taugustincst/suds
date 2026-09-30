@@ -58,7 +58,8 @@ In scope, in the code of this repository:
 - **the SUDS Server installer** (`deploy/linux/`) and its compliance check (`scripts/compliance-check.js`,
   `scripts/verify-compliance-report.js`);
 - **the county view and county connection** (`server/county*.js`, `server/routes/county*.js`), on both the
-  programme's and the county's server;
+  programme's and the county's server, including county-entered figures and their CSV import
+  (`server/county-entry.js`);
 - **passkeys** (fingerprint sign-in, authorization and signing: `server/webauthn.js`, `server/passkeys.js`,
   `scripts/verify-passkey-evidence.js`);
 - the release machinery (`.github/workflows/`, `scripts/release-*.js`).

@@ -531,6 +531,20 @@ by the program**.
   `county.entry.template` (the period and the number of funds), `county.entry.throttled`, and `county.view` with
   `what: "entry"` for the correction form.
 
+### Owner-default decisions (D1–D5)
+
+The reviews of county-entered figures left five questions for the owner. Each was answered with the conservative
+default below, which 1.20.0 ships and a test pins; the owner may confirm or change any of them (a change is a code
+change, not a setting).
+
+| | Decision (default) | Rule above | Code | Test (`test/county-entry.test.js`) |
+| --- | --- | --- | --- | --- |
+| **D1** | A signed file outranks county-entered figures: for one period whatever either's `generated_at`, and across periods an entered figure never pushes a signed file out as an overlap | *Signed outranks entered* | `server/county.js` `resettle` (signed first), `choose` (signed first; `why: "signed_covers"`) | the two tests named "D1: …" |
+| **D2** | The county connection's status counts only signed files as received; entered figures never take a period off the outstanding list | *The county connection* | `server/county-connect.js` `statusFor` | "D2: …" |
+| **D3** | An entry's source document is shown to `county:manage` only: not to someone who may only view, never in the read API | *Stored* | `server/routes/county.js` (the Submissions list adds `source_ref` only for `county:manage`), `server/county-entry.js` `sourceRefs` | "figures entered in the form: …" (marked D3 in the test) |
+| **D4** | Two programmes of one name are refused (`409`, `duplicate_name`), whatever the case or spacing, on registering either kind and on renaming | *Registering* | `server/routes/county.js` `uniqueName` | "D4: …" |
+| **D5** | Once a programme joins SUDS, its entered figures can be withdrawn and reinstated but not corrected, and no more are entered or imported (`409`, `on_suds`) | *Registering* | `server/county-entry.js` (`EntryError('on_suds')`), `server/routes/county.js` (`programme_on_suds` on the Submissions list) | "D5: …" |
+
 What it is not: a way to make a programme's figures look signed. Nothing about an entered figure is signed; the
 county's staff are accountable for it through the audit log and the source document, and the data contribution
 agreement says what the county may enter ([market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md),

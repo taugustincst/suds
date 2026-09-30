@@ -147,10 +147,13 @@ remediation.** A scope for a county-commissioned test, including the county view
 endpoint, is in [../../security/PEN-TEST-SCOPE.md](../../security/PEN-TEST-SCOPE.md). The project's own reviews
 and the attack classes fixed are in [../../security/THREAT-MODEL.md](../../security/THREAT-MODEL.md).
 
-**Q. How are vulnerabilities reported and fixed?** Privately through GitHub's vulnerability reporting; fixed in a
+**Q. How are vulnerabilities reported and fixed?** Privately through GitHub's private vulnerability reporting on
+the repository, as [SECURITY.md](../../../SECURITY.md) says (how to report, what to include, what to expect and
+the scope; a programme with a signed support agreement may also use the security contact it names); fixed in a
 security release with an advisory; the latest minor line gets every fix
 ([../../SUPPORT.md](../../SUPPORT.md); [../../RELEASE.md](../../RELEASE.md), *Supported versions*).
-**[owner to complete]: a named security contact address.**
+**[owner to complete]: turn on private vulnerability reporting (RELEASE.md, *Owner: repository settings*, step 8),
+confirm SECURITY.md's response targets, and name a security contact address for the agreement.**
 
 ## Incident response
 

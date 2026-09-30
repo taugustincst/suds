@@ -113,6 +113,10 @@ cloud security groups; RHEL 9 entirely. These are what [../INSTALLER-VM-RUN.md](
 
 ## Findings for the owner (no change made here)
 
+**Status: all four are fixed in 1.20.0** (CHANGELOG.md, 1.20.0, *Fixed: installer and day-one problems found by a
+real install in a systemd container*), each with a test that failed before the fix. The transcripts in this folder
+are 1.19.0's and are kept as they were recorded; they show the behaviour before the fixes.
+
 1. **A first run that stops after staging loses the release-checksum record.** `stage_release` records
    `RELEASE_CHECKSUM_SOURCE=operator` when it checks the zip (deploy/linux/lib.sh:318), but a later run finds the
    stage complete and keeps only what it already had (lib.sh:304), which install.sh reads back from

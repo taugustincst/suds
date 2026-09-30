@@ -27,7 +27,21 @@ partner, or its county) runs; it is not a hosted service. Positioning, buyer gui
 and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
 [docs/architecture/README.md](docs/architecture/README.md).
 
-## What's new in 1.18.0 and 1.19.0
+## What's new in 1.18.0 to 1.20.0
+
+**1.20.0**
+
+* **County-entered figures for grantees not on SUDS**: a county registers a grantee that does not run SUDS and
+  enters its figures for a period, or imports them from a CSV in the combined view's own layout, with the source
+  document they came from. They are marked *entered by the county — not signed by the program* in every view, file
+  and read-API answer, a signed file from the programme always outranks them, and the county can leave them out.
+  Office server only; no new permission ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#county-entered-figures)).
+* **SUDS Server's installer and first day**, fixed after a real install in a systemd container: both shares checked
+  in one refusal, the first backup and recovery drill run by the installer, `/api/health` not red while the first
+  scheduled backup is pending, passkeys' `WEBAUTHN_RP_ID` set from `--domain`, and the release-checksum record kept
+  across an interrupted run ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)).
+* **The county-contract kit** for a county that funds several programmes: a pilot kit, answers to a county's IT and
+  privacy RFI, and a data contribution agreement draft for counsel ([docs/market/COUNTY-KIT.md](docs/market/COUNTY-KIT.md)).
 
 **1.19.0**
 
@@ -51,8 +65,9 @@ and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How
   ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#connecting)).
 * **SUDS Server**: a one-command hardened install on an Ubuntu 24.04 or RHEL 9 VM, with a weekly compliance check
   whose signed report shows what it observed against the HIPAA Security Rule and 42 CFR §2.16, and lists what it
-  cannot see. Evidence, not a certification; the installer has been tested in a fake root with stub system
-  commands, not yet on a real VM by the project, so try it on a staging VM first
+  cannot see. Evidence, not a certification; the installer has been run for real on Ubuntu 24.04 in a systemd
+  container (1.20.0 fixes what that run found), but not yet on a real VM or on RHEL 9 by the project, so try it on a
+  staging VM first
   ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)).
 
 1.17.0 and 1.17.1 added the AI documentation copilot (Anthropic, and from 1.17.1 Amazon Bedrock or Google Vertex AI;
@@ -83,7 +98,8 @@ The sign-in page has two options, **Log in** and **Sign up** (link straight to e
 * **Settlement outcomes (1.17.0):** per opioid-settlement fund, spending by Exhibit E category beside the outcomes recorded for it, with cost per outcome; counts of people suppressed by default, never a publication release.
 * **County view (released in 1.18.0):** a programme sends the county a signed quarterly file of its settlement outcomes' exact aggregates for the funds that county pays for (no client-level data), and a county running SUDS imports its programmes' files and sees them side by side, summed and by quarter. Internal and exact, never published, people counted as each programme's own count, summed; office server only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md)).
 * **County connection (released in 1.18.0, optional):** off by default on both sides. The programme's server posts the same signed aggregate file to its county's SUDS server over HTTPS with a county-issued connection token (the file must still verify under the programme's registered key) and sees which periods are outstanding; the county's own systems read the combined view with read tokens that expire. Behind a proxy the county sets `TRUST_PROXY=1`; office servers only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#connecting)).
-* **SUDS Server (released in 1.18.0):** `deploy/linux/install.sh` for Ubuntu 24.04 or RHEL 9 (LUKS data disk, pinned Node and Caddy, a sandboxed service, keys as root-only credentials, firewall), upgrades that need the release zip's SHA-256 from a second channel, and a weekly compliance report signed with the check's own key (`npm run verify-compliance-report`). It shows what it observed; it does not make a programme compliant. Tested in a fake root, not yet on a real VM by the project ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)).
+* **SUDS Server (released in 1.18.0):** `deploy/linux/install.sh` for Ubuntu 24.04 or RHEL 9 (LUKS data disk, pinned Node and Caddy, a sandboxed service, keys as root-only credentials, firewall), upgrades that need the release zip's SHA-256 from a second channel, and a weekly compliance report signed with the check's own key (`npm run verify-compliance-report`). It shows what it observed; it does not make a programme compliant. Run for real on Ubuntu 24.04 in a systemd container ([docs/evidence/installer-container-run-2026-09-30/](docs/evidence/installer-container-run-2026-09-30/README.md); the installer fixes it led to are in 1.20.0) and in a fake root in CI; not yet on a real VM or on RHEL 9 by the project ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)).
+* **County-entered figures (released in 1.20.0):** a county enters or imports the figures of a grantee not on SUDS, marked as entered by the county, never signed, always outranked by a signed file, and possible to leave out; office server only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#county-entered-figures)).
 * **Fingerprint sign-in and signing (released in 1.19.0):** passkeys on the device's own authenticator for sign-in, two-step verification and confirming signatures and approvals; no biometric data held; signed evidence verifiable offline (`npm run verify-passkey-evidence`). Office server only, HTTPS and `WEBAUTHN_RP_ID` required ([docs/FINGERPRINT.md](docs/FINGERPRINT.md)).
 * **Street outreach (1.17.0):** a one-handed phone screen for anonymous contacts that draws supplies from stock, works offline where offline copies are allowed, and counts the worker's shift.
 * **SSP participant code (1.17.0, optional):** an anonymous contact can carry the participant's self-built code, stored encrypted and counted by blind index, so the syringe services summary counts anonymous participants; no file prints a code ([docs/SUPPLIES.md](docs/SUPPLIES.md)).
