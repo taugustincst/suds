@@ -1,0 +1,122 @@
+$ grep -E 'WEBAUTHN|TRUST_PROXY' /etc/suds/suds.env   (before)
++ /opt/suds/current/deploy/linux/upgrade.sh 1.20.0 --source=/root/suds-v1.20.0.zip --release-sha256=048e928499fa3569dfcfc59af86633ad4f8176d3bba1c0dd2fe61b62c35fb9ff --node-tarball=/root/node-v22.23.3-linux-x64.tar.xz --caddy-tarball=/root/caddy_2.10.2_linux_amd64.tar.gz
+TRUST_PROXY=1
+SUDS Server upgrade: 1.19.0 -> 1.20.0
+
+== 1. Stage 1.20.0 ==
+  - suds-v1.20.0.zip: sha256 matches the pinned checksum
+  - Node.js v22.23.3 already installed
+  - Caddy 2.10.2 already installed
+  - Caddy answers v2.10.2
+
+== 2-3. Stop SUDS and take a backup ==
+Encrypted backup written: /var/lib/suds/backups/pre-upgrade-20260930T212440Z/suds-2026-09-30T21-24-40-849Z.db.enc (1324 KB)
+  - backup: /var/lib/suds/backups/pre-upgrade-20260930T212440Z/suds-2026-09-30T21-24-40-849Z.db.enc
+
+== 4. Switch to 1.20.0 ==
+
+== 5. Start and check ==
+  - SUDS 1.20.0 is ready
+
+== Compliance check ==
+SUDS compliance check — suds121b — 2026-09-30T21:24:43.489Z
+Result: FAIL  (30 pass, 3 fail, 11 warning, 2 could not check)
+  [FAIL           ] host.time_sync         Clock synchronised (audit timestamps)
+      observed: the clock is not synchronised (NTP=no, NTPSynchronized=no); audit timestamps depend on it
+      fix: Enable chrony (RHEL) or systemd-timesyncd/chrony (Ubuntu) against the county time source: timedatectl set-ntp true.
+  [FAIL           ] app.passkeys           Identity: Fingerprint sign-in (passkeys)
+      observed: not working: WEBAUTHN_RP_ID is not set — Sign-in on; signatures and approvals on; fingerprint or authenticator code required for signing: no. WEBAUTHN_RP_ID is not set, so no one can add or use a passkey on this production server: set it to the server's name, as in the address staff open and on its certificate (docs/SELF-HOSTING.md), and restart. Passkeys need HTTPS, which is not on. SUDS stores no fingerprint: only each passkey's public key.
+      fix: Optional: staff add a passkey under My profile → Fingerprint sign-in (needs HTTPS and WEBAUTHN_RP_ID matching the server's name, docs/FINGERPRINT.md).
+  [FAIL           ] app.https              Platform: HTTPS
+      observed: not configured — Enable HTTPS under Network & devices, or run behind a TLS proxy.
+      fix: Run behind the TLS proxy with TRUST_PROXY=1, or give SUDS a certificate.
+  [COULD NOT CHECK] host.disk_encryption   Data on an encrypted block device
+      observed: /var/lib/suds is on overlay filesystem from overlay: encryption at rest belongs to that storage and cannot be seen from this host
+      fix: Put the data directory on a LUKS (dm-crypt) volume. This cannot be done in place: attach a new encrypted disk, stop SUDS, move /var/lib/suds onto it and start SUDS again (docs/SELF-HOSTING.md, "Prerequisites").
+  [COULD NOT CHECK] host.suds_version      SUDS release is supported
+      observed: SUDS 1.20.0, released 2026-09-30; no release feed to compare with (set UPDATE_FEED_URL, or pass --latest-version)
+      fix: Upgrade to the latest minor release (docs/RELEASE.md, "Supported versions") with deploy/linux/upgrade.sh.
+  [WARNING        ] host.auditd            Linux audit daemon (recommended)
+      observed: auditd is inactive (recommended, not required)
+      fix: Recommended, not required: install and enable auditd so logins, sudo and changes to /etc/suds are recorded by the OS as well.
+  [WARNING        ] host.backup_files      Latest backup is recent and the offsite copy exists
+      observed: pending first run (expected on day one): installed 0.0 h ago, the first scheduled backup is due within 4 h [no backup file in the backups directory; no backup on the offsite share /mnt/suds-offsite]
+      fix: Scheduled backups (Settings → Scheduled backups) with the offsite directory on the mounted offsite share; check the share is mounted.
+  [WARNING        ] host.dr_evidence       Recovery drill within 90 days, signed report verifies
+      observed: pending first run (expected on day one): installed 0 days ago, no recovery drill yet; the monthly drill runs within a month, or run one now (Settings → System & backups)
+      fix: Run a recovery drill with the escrowed key file against the offsite copy (Settings → System & backups, or npm run dr-drill); turn the monthly drill on.
+  [WARNING        ] host.audit_verify      Audit chain and external anchors verify now
+      observed: chain: 1 entries verify; anchors in /mnt/worm/suds-anchors: 0 (0 matched); no anchor written yet
+      fix: A failure is a possible incident: follow docs/security/INCIDENT-RESPONSE.md. "Could not check" means the check ran without the index key (run it as root, or from suds-compliance.service).
+  [WARNING        ] app.mfa_coverage       Identity: Two-step verification coverage
+      observed: 0% (0 of 1 active accounts) — 1 without it — see "Accounts without two-step verification" below.
+      fix: Have every active account enrol in two-step verification (Settings → Security status lists who has not).
+  [WARNING        ] app.sso                Identity: Single sign-on (OIDC)
+      observed: not configured — Set OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and OIDC_REDIRECT_URI to sign in through the county identity provider (docs/DEPLOYMENT.md).
+      fix: Configure OIDC against the county identity provider (docs/DEPLOYMENT.md, "Single sign-on").
+  [WARNING        ] app.deprovisioning     Identity: Deprovisioning
+      observed: no SCIM provisioning; accounts not seen at the identity provider are not disabled automatically — 0 active accounts linked to the identity provider. Create a SCIM token (Provisioning below) or set "Disable single sign-on accounts not seen for (days)".
+      fix: Create a SCIM token or set "Disable single sign-on accounts not seen for (days)".
+  [WARNING        ] app.backups            Backups and recovery: Scheduled encrypted backups
+      observed: every 4 h; last never: pending first run (expected on day one) — Scheduled since 2026-09-30T21:24:32.432Z: the first backup runs at the next hourly check. Until 2026-10-01T05:24:32.432Z (twice the interval) "never" is expected; after that it is a failure. Or back up now from System & backups.
+      fix: Settings → Scheduled backups: every 4 hours or less.
+  [WARNING        ] app.dr_drill           Backups and recovery: Last recovery drill
+      observed: never run: pending first run (expected on day one) — The monthly drill is on (since 2026-09-30T21:24:32.440Z) and runs once there is a backup; until 2026-10-31T21:24:32.440Z "never" is expected, after that it is a failure. Or run one now from System & backups, or npm run dr-drill.
+      fix: Run a recovery drill (Settings → System & backups).
+  [WARNING        ] app.audit_chain        Audit: Audit chain verification
+      observed: not yet verified — Hash chain keyed with the index key; verified daily (incremental) and weekly (full).
+      fix: A failure is a possible incident (docs/security/INCIDENT-RESPONSE.md).
+  [WARNING        ] app.audit_anchors      Audit: Audit anchors outside the database
+      observed: 0 anchors in /mnt/worm/suds-anchors; every 1 h and at each backup — Not yet checked (runs with the daily audit verification).
+      fix: AUDIT_ANCHOR_DIR on write-once storage outside the data directory (install.sh --anchors).
+  [PASS           ] host.os                Supported operating system
+  [PASS           ] host.data_dir          Data directory and database file permissions
+  [PASS           ] host.keys              Keys kept out of readable files and the environment
+  [PASS           ] host.service           Service sandboxing (systemd unit)
+  [PASS           ] host.tls               HTTPS: TLS 1.2 or newer, valid certificate, HSTS
+  [PASS           ] host.http_redirect     Plain HTTP only redirects to HTTPS
+  [PASS           ] host.bind              SUDS listens on this machine only (127.0.0.1)
+  [PASS           ] host.firewall          Host firewall active with only the expected ports
+  [PASS           ] host.security_updates  Automatic security updates
+  [PASS           ] host.journald          System journal persistent and retained
+  [PASS           ] host.node              Node.js is the pinned, checksum-verified release
+  [PASS           ] host.release_integrity SUDS release checked against an independently published checksum
+  [PASS           ] app.mfa_required       Identity: Two-step verification required for
+  [PASS           ] app.password_signin    Identity: Password sign-in
+  [PASS           ] app.password_policy    Identity: Password policy
+  [PASS           ] app.session_timeout    Identity: Session timeouts
+  [PASS           ] app.snapshots          Backups and recovery: Frequent online snapshots
+  [PASS           ] app.rpo                Backups and recovery: Recovery point objective (worst case)
+  [PASS           ] app.offsite            Backups and recovery: Offsite copy
+  [PASS           ] app.dr_monthly         Backups and recovery: Monthly recovery drill
+  [PASS           ] app.plaintext_copies   Backups and recovery: Unencrypted database copies
+  [PASS           ] app.backup_key         Backups and recovery: Backup encryption key
+  [PASS           ] app.audit_retention    Audit: Audit retention
+  [PASS           ] app.phi_key            Encryption and keys: PHI encryption key
+  [PASS           ] app.signing_key        Encryption and keys: Evidence signing key (Ed25519)
+  [PASS           ] app.index_key          Encryption and keys: Index key (blind indexes, audit chain)
+  [PASS           ] app.client_retention   Data lifecycle: Client record retention
+  [PASS           ] app.local_mode         Platform: Local mode (offline copies on devices)
+  [PASS           ] app.version            Platform: Version
+  [PASS           ] app.monitoring         Platform: Monitoring
+Signed (Ed25519, the compliance check's own key (root-only), key id 9a492f86d70163af).
+Wrote /var/lib/suds-compliance/compliance-2026-09-30T21-24-43-489Z.json
+Wrote /var/lib/suds-compliance/compliance-2026-09-30T21-24-43-489Z.html
+WARNING: the compliance check reported failures (above): fix them, then run: systemctl start suds-compliance. On a new server the first backup and the first recovery drill show as "pending first run (expected on day one)".
+
+Upgraded to 1.20.0. The previous release stays in /opt/suds/1.19.0 until you remove it; the pre-upgrade backup is /var/lib/suds/backups/pre-upgrade-20260930T212440Z.
+upgrade.sh exit 0
+$ readlink /opt/suds/current
++ rc=0
++ set +x
+1.20.0
+$ grep -E 'SUDS_VERSION|RELEASE_CHECKSUM' /etc/suds/suds-server.conf
+SUDS_VERSION=1.20.0
+SUDS_RELEASE_CHECKSUM_SOURCE=operator
+$ grep -E 'WEBAUTHN|TRUST_PROXY' /etc/suds/suds.env   (after)
+TRUST_PROXY=1
+$ curl https://suds.county.test/api/health
+{"ok":true,"uptime_seconds":18,"database":"ok","warnings":["Scheduled backups are set for every 4 hours and the first has not run yet: pending first run (expected on day one). It is overdue after 2026-10-01T05:24:32.432Z."]}
+HTTP 200
+$ ls /var/lib/suds/pre-migration
+suds.db.v59.2026-09-30T21-24-41-540Z.db.enc
