@@ -2,6 +2,49 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+For the fix release 1.19.1: documentation, evidence, a test of documentation and repository metadata only. No
+migration, route, permission or behaviour change; nothing for an administrator to do.
+
+- **Buyer and security documents describe 1.19.0.** The market-readiness review of 1.19.0 found them two releases
+  behind. The IT buyer guide no longer says the county view is "one file, carried by people, not a connection": it
+  describes the optional county connection (off by default; the CBO's push with a county-issued token *and* the
+  file's Ed25519 signature; status; the county's read API with expiring read tokens; `TRUST_PROXY=1`; only the
+  aggregate file leaves), SUDS Server and its compliance report, and fingerprint sign-in. The security
+  questionnaire is checked against 1.19.0 (`3dc20dc`): #5 names the county connection (outbound from a CBO) and the
+  county server's inbound push and read endpoints, and the AI copilot's Bedrock and Vertex AI providers; #6 the
+  `LICENSE`; #7, #8, #29, #39 and #48 what 1.18.0 and 1.19.0 changed; #36a the AI-authorship figures recounted
+  from git (643 of 662 commits written with the assistant: 630 as author, 13 as co-author; the method is stated).
+  ARCHITECTURE (components, a county data-flow diagram, flows, trust boundaries 7 to 9), DATA-LIFECYCLE (what a
+  county receives; retention of passkeys, challenges, signature evidence, county data and compliance reports) and
+  LOGGING-AND-AUDIT (the audit actions added in 1.18.0 and 1.19.0; signature evidence and compliance reports as
+  signed evidence) cover the county view, the county connection, SUDS Server's compliance reports and passkeys.
+  The market README's rules no longer call the county view planned, and its scorecard has rows for the county view,
+  the county connection, SUDS Server and fingerprint sign-in; STRATEGY's *Built vs planned* has SUDS Server and
+  passkeys. README.md's *What's new* covers 1.18.0 and 1.19.0. EVALUATION-RESPONSE (through 1.19.0), HOSTING
+  (current status 1.19.0), THREAT-MODEL's version line and SDLC's authorship figures follow.
+- **Supported versions** (docs/RELEASE.md): 1.19.x is the latest minor, 1.18.x the previous (security fixes for 30
+  days from 1.19.0's tag, not yet pushed), 1.17.x and older get nothing.
+- **Evidence.** A CycloneDX SBOM for 1.19.0 from the release commit (`docs/evidence/sbom-1.19.0.cdx.json`; the
+  1.16.4 and 1.17.0 SBOMs stay as history), linked everywhere the 1.17.0 one was. The evidence index describes
+  1.19.0, with sections for the county view and connection, SUDS Server's signed compliance report
+  (`npm run verify-compliance-report`) and fingerprint signature evidence (`npm run verify-passkey-evidence`).
+- **Tag hand-off** (`docs/evidence/RELEASE-HANDOFF.md`): the six untagged releases 1.16.3 to 1.19.0, their tag
+  commands and one push, what each tag's workflow runs will do (which need a `policy_exception`, which `Web app` run
+  to approve), and the SHA-256 of each release zip, rebuilt from its commit as `release.yml` builds it (the same
+  method reproduces the published `v1.15.4` and `v1.16.2` checksums), for the release notes and the CHANGELOG on
+  `main`: the second channel SUDS Server's upgrades need. SELF-HOSTING and RELEASE no longer say that checksum is in
+  the CHANGELOG *at the tag*, which cannot hold it.
+- **LICENSE** (MIT, "Copyright (c) 2026 The SUDS contributors") and **SECURITY.md** (supported versions, private
+  vulnerability reporting, what to include, never real PHI, response targets for the owner to confirm, the scope:
+  office server, SUDS on this device, the SUDS Server installer, the county connection, passkeys). SUPPORT.md points
+  to it instead of an `[owner to complete]` contact. The owner turns on private vulnerability reporting
+  (docs/RELEASE.md, *Owner: repository settings*, step 8).
+- **Test:** `test/doc-currency.test.js` fails once `package.json`'s version is stamped while the questionnaire's
+  *Checked against*, the evidence index's *Version.* or the newest SBOM is not on that version's minor line, or a
+  document outside the evidence index links an older SBOM (docs/RELEASE.md, stamp checklist). It fails on `3dc20dc`.
+
 ## 1.19.0 — 2026-09-30
 
 A feature release (migrations 58 and 59 and the passkey routes), released under a policy exception inside 1.18.0's
