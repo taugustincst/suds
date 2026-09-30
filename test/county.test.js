@@ -736,8 +736,8 @@ test('M11: county-sample.js --register sets up a development server\'s county vi
     assert.ok(!fs.existsSync(path.join(dir, 'prod')), 'nothing written, not even keys');
     const dev = { SUDS_ENV: 'development', SUDS_DATA_DIR: path.join(dir, 'dev'), SUDS_ADMIN_PASSWORD: 'AdminPassw0rd!x', SUDS_ADMIN_USERNAME: 'admin' };
     r = run(dev);
-    assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /registered 3 sample program\(s\) and imported 6 file\(s\)/);
+    assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /registered 3 sample program\(s\) and imported 6 file\(s\); added 1 program\(s\) not on SUDS with 2 period\(s\) of figures entered by the county/);
     r = run(dev);
-    assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /registered 0 sample program\(s\) and imported 0 file\(s\)/, 'run again, it changes nothing');
+    assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /registered 0 sample program\(s\) and imported 0 file\(s\); added 0 program\(s\) not on SUDS with 0 period\(s\)/, 'run again, it changes nothing');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

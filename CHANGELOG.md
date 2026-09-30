@@ -29,6 +29,8 @@ For the feature release after 1.19.0: migration 60 and new routes; no new permis
   `&entered=exclude` on the view, its files and `/v1/combined`) takes exactly them away.
 - **Audited without figures or typed text:** `county.entry.create`, `.update`, `.import`, `.refuse`, `.withdraw`,
   `.reinstate`.
+- `node scripts/county-sample.js --register` adds a fourth sample programme, not on SUDS, with entered figures for the
+  same two quarters.
 - The penetration test scope has a row for the CSV import parser; the pricing options say the feature is built for
   1.20.0, not yet released.
 

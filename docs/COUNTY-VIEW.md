@@ -35,6 +35,8 @@ The screens say "program" (US spelling, as Settings › Program does); this docu
 - `node scripts/county-sample.js <dir> --county-code ABCD-EFGH` writes the programmes' public keys
   (`programmes.json`) and their files, made for the county whose code is given, to register and import by hand (or
   through the API, as the browser suite does). Nothing touches a database.
+- `--register` also registers a fourth programme **not on SUDS** (Canyon Mobile Outreach) with figures entered by the
+  county for the same two quarters (built for 1.20.0, not yet released; *County-entered figures*, below).
 
 ## What the file holds
 

@@ -5,8 +5,10 @@
 //
 //   node scripts/county-sample.js --register
 //       Development only: registers the three sample programs in this machine's development database (the one
-//       `npm run dev` serves) and imports their files, made for that database's own county code. A presenter is
-//       set up in under a minute: open County view. Refuses to run against a production server's data.
+//       `npm run dev` serves) and imports their files, made for that database's own county code; and registers a
+//       fourth, "not on SUDS" (NOT_ON_SUDS), with figures entered by the county for the same quarters (built for
+//       1.20.0; server/county-entry.js). A presenter is set up in under a minute: open County view. Refuses to run
+//       against a production server's data.
 //   node scripts/county-sample.js <dir> --county-code ABCD-EFGH
 //       Writes <dir>/programmes.json (name, public key, fingerprint of each) and <dir>/<program>-<from>_<to>.json
 //       (the signed files), made for the county whose code is given (County view › Programs shows it). Nothing
@@ -34,6 +36,9 @@ const PROGRAMMES = [
   { slug: 'hillview', name: 'Hillview Youth Prevention Project', scale: 0.3,
     funds: [{ name: 'Settlement prevention fund', grant_number: 'OSF-HV-2', category: 'core_g', hiaa: 'hiaa_5' }] },
 ];
+/** A fictional grantee that does not run SUDS: the county enters its figures (--register only). */
+const NOT_ON_SUDS = { slug: 'canyon', name: 'Canyon Mobile Outreach', scale: 0.4,
+  funds: [{ name: 'County settlement share', grant_number: 'OSF-CM-3', category: 'core_h', hiaa: 'hiaa_4' }] };
 const seedOf = (slug) => crypto.createHash('sha256').update(`suds-county-sample:${slug}`).digest();
 /** The county the sample files are made for when a test does not say (a fixed, valid county code). */
 const SAMPLE_COUNTY = { county_code: 'SAMP1E00', county_name: 'Sample County Behavioral Health' };
@@ -109,7 +114,28 @@ function register() {
       if (out.status !== 'duplicate') { imported++; audit.log({ user: admin, action: 'county.submission.import', entity: 'county_submission', entityId: out.submission.id, details: { programme_id: out.programme.id, fingerprint: f.fingerprint, from: f.period.from, to: f.period.to, sha256: f.sha256, status: out.status, sample: true } }); }
     }
   }
-  console.log(`County code ${K.formatCode(code)}: registered ${added} sample program(s) and imported ${imported} file(s). Open County view.`);
+  // The grantee not on SUDS: registered with no key, and its figures for each quarter entered as the county's staff
+  // would in the Enter figures form (county-entry.js enter: the same checks and the same audit action).
+  const E = require('../server/county-entry');
+  let prog = db.one(`SELECT * FROM county_programmes WHERE name=? AND on_suds=0`, NOT_ON_SUDS.name);
+  let addedOff = 0; let entered = 0;
+  if (!prog) {
+    const id = crypto.randomUUID(); const now = db.now();
+    db.run(`INSERT INTO county_programmes(id,name,active,keep_files,notes,created_at,created_by,updated_at,on_suds) VALUES(?,?,1,0,?,?,?,?,0)`, id, NOT_ON_SUDS.name, 'Fictional sample program not on SUDS (scripts/county-sample.js)', now, admin ? admin.id : null, now);
+    audit.log({ user: admin, action: 'county.programme.add', entity: 'county_programme', entityId: id, details: { on_suds: false, sample: true } });
+    prog = db.one(`SELECT * FROM county_programmes WHERE id=?`, id); addedOff++;
+  }
+  const today = require('../server/routes/budget').localDate();
+  lastQuarters(today).forEach((period, i) => {
+    if (db.one(`SELECT 1 x FROM county_submissions WHERE programme_id=? AND period_from=? AND period_to=? AND source='county_entered'`, prog.id, period.from, period.to)) return;
+    const pl = payloadFor(NOT_ON_SUDS, period, 1 + i * 0.1, { recipient });
+    const funds = pl.funds.map(f => ({ name: f.name, grant_number: f.grant_number, category: f.category, hiaa: f.hiaa, spend_own_category: String(f.spend.own_category), spend_other_categories: String(f.spend.other_categories), spend_pending: String(f.spend.pending),
+      ...Object.fromEntries(Object.entries(f.values).map(([k, v]) => [k, String(k === 'staff_training_hours' ? Math.round(v * 10) / 10 : Math.round(v))])) }));
+    const out = E.enter(prog.id, { ...period, source_ref: `Sample quarterly report (fictional), ${period.from} to ${period.to}`, funds }, admin, { today });
+    audit.log({ user: admin, action: 'county.entry.create', entity: 'county_submission', entityId: out.submission.id, details: { programme_id: prog.id, from: period.from, to: period.to, sha256: out.submission.sha256, via: 'form', status: out.status, sample: true } });
+    entered++;
+  });
+  console.log(`County code ${K.formatCode(code)}: registered ${added} sample program(s) and imported ${imported} file(s); added ${addedOff} program(s) not on SUDS with ${entered} period(s) of figures entered by the county. Open County view.`);
   db.close();
 }
 
@@ -129,4 +155,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { PROGRAMMES, SAMPLE_COUNTY, sample, payloadFor, lastQuarters, seedOf };
+module.exports = { PROGRAMMES, NOT_ON_SUDS, SAMPLE_COUNTY, sample, payloadFor, lastQuarters, seedOf };
