@@ -29,11 +29,37 @@ const keysJsonPath = path.join(dataDir, 'keys.json');
 let fileKeys = {};
 try { if (fs.existsSync(keysJsonPath)) fileKeys = JSON.parse(fs.readFileSync(keysJsonPath, 'utf8')); } catch (e) { console.warn('[suds] could not read keys.json:', e.message); }
 
+// Secrets from files: each secret below can be given as <NAME>_FILE, the path of a file holding it,
+// instead of <NAME> itself -- how Docker/Kubernetes secrets (/run/secrets/...) and systemd credentials
+// (LoadCredential=, then <NAME>_FILE=%d/<name>; deploy/linux/suds.service) hand a secret to a process
+// without putting it in an environment a `ps e`, a core dump or a child process could read. The value is
+// read here, trimmed, and kept in this module: never copied into process.env. <NAME> itself, when set, wins.
+const SECRET_FILE_VARS = ['SUDS_ENCRYPTION_KEY', 'SUDS_INDEX_KEY', 'SUDS_BACKUP_KEY', 'SUDS_SIGNING_KEY', 'METRICS_TOKEN', 'OIDC_CLIENT_SECRET', 'MS_CLIENT_SECRET', 'ANTHROPIC_API_KEY'];
+const secretFromFileCache = new Map();
+function envSecret(name) {
+  const direct = process.env[name];
+  if (direct !== undefined && direct !== '') return direct;
+  let file = process.env[`${name}_FILE`];
+  // A systemd credential named after the variable in lower case (suds_encryption_key), when the process was
+  // started with LoadCredential= and no *_FILE names it (a transient `systemd-run -p LoadCredential=` job).
+  if (!file && process.env.CREDENTIALS_DIRECTORY) {
+    const cred = path.join(process.env.CREDENTIALS_DIRECTORY, name.toLowerCase());
+    if (fs.existsSync(cred)) file = cred;
+  }
+  if (!file) return direct;
+  if (secretFromFileCache.has(file)) return secretFromFileCache.get(file);
+  let v;
+  try { v = fs.readFileSync(file, 'utf8').trim(); }
+  catch (e) { throw new Error(`${name}_FILE names ${file}, which cannot be read (${e.code || e.message}). Check the path and that the service user may read it.`); }
+  secretFromFileCache.set(file, v);
+  return v;
+}
+
 // Key management: in production keys MUST be provided. In development we generate and persist
 // keys under data/ so that a developer database stays readable across restarts.
 const keySourceHolder = { value: 'env' };
 function loadKey(envName, fileName) {
-  let hex = process.env[envName];
+  let hex = envSecret(envName);
   if (hex && /^[0-9a-fA-F]{64}$/.test(hex)) return Buffer.from(hex, 'hex');
   if (hex) throw new Error(`${envName} must be 64 hex characters (32 bytes). Generate with: npm run gen-key`);
   // keys.json (created by the setup wizard, mode 0600)
@@ -73,7 +99,7 @@ function loadKey(envName, fileName) {
 // Never in the database. 64 hex characters: the 32-byte Ed25519 private key (seed).
 const signingSourceHolder = { value: 'env' };
 function loadSigningKey() {
-  const hex = process.env.SUDS_SIGNING_KEY;
+  const hex = envSecret('SUDS_SIGNING_KEY');
   if (hex && /^[0-9a-fA-F]{64}$/.test(hex)) return Buffer.from(hex, 'hex');
   if (hex) throw new Error('SUDS_SIGNING_KEY must be 64 hex characters (the 32-byte Ed25519 private key). Generate with: npm run gen-key');
   const fk = fileKeys.SUDS_SIGNING_KEY;
@@ -166,7 +192,7 @@ const config = {
   msGraph: {
     tenantId: process.env.MS_TENANT_ID || '',
     clientId: process.env.MS_CLIENT_ID || '',
-    clientSecret: process.env.MS_CLIENT_SECRET || '',
+    clientSecret: envSecret('MS_CLIENT_SECRET') || '',
     user: process.env.MS_ONENOTE_USER || '',
   },
   // Optional OIDC single sign-on against the county's identity provider (Entra ID, Okta, Keycloak, ...).
@@ -175,7 +201,7 @@ const config = {
   oidc: {
     issuer: (process.env.OIDC_ISSUER || '').replace(/\/$/, ''),
     clientId: process.env.OIDC_CLIENT_ID || '',
-    clientSecret: process.env.OIDC_CLIENT_SECRET || '',
+    clientSecret: envSecret('OIDC_CLIENT_SECRET') || '',
     redirectUri: process.env.OIDC_REDIRECT_URI || '',
     label: process.env.OIDC_LABEL || 'Sign in with county SSO',
   },
@@ -194,7 +220,7 @@ const config = {
   // changed key needs no restart. SUDS_AI_BASE_URL points at another endpoint speaking the same Messages API
   // (a test double, or a county's own gateway to the provider); it must be https unless it is this machine.
   ai: {
-    get apiKey() { return process.env.ANTHROPIC_API_KEY || ''; },
+    get apiKey() { return envSecret('ANTHROPIC_API_KEY') || ''; },
     get baseUrl() { return (process.env.SUDS_AI_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, ''); },
     // 180 s (1.17.0; 90 s until the engineering review of its candidate, M4): the request is not streamed, asks for
     // up to 16,000 output tokens (server/ai-copilot.js MAX_TOKENS) and the default model always thinks, so a long
@@ -204,7 +230,7 @@ const config = {
   // Off by default: GET /api/metrics answers 404 unless this is set, and requires it as a bearer token
   // when it is (no PHI in it, but row counts and session activity are not for just anyone who can reach the
   // server). Lets a county's existing Prometheus/Grafana/etc. stack scrape SUDS without a new dependency.
-  metricsToken: process.env.METRICS_TOKEN || '',
+  metricsToken: envSecret('METRICS_TOKEN') || '',
   // 'json' emits newline-delimited JSON to both stdout and the log file (server/log.js), for a log
   // collector (Loki, CloudWatch, ELK); the default is the existing human-readable text.
   logFormat: process.env.LOG_FORMAT === 'json' ? 'json' : 'text',
@@ -236,7 +262,7 @@ const config = {
   // Backups are encrypted with a key derived from SUDS_ENCRYPTION_KEY unless SUDS_BACKUP_KEY is set,
   // which makes the backup set independent of PHI-key rotation (docs/DEPLOYMENT.md, "Key rotation runbook").
   backupKey: (() => {
-    const hex = process.env.SUDS_BACKUP_KEY;
+    const hex = envSecret('SUDS_BACKUP_KEY');
     if (!hex) return null;
     if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error('SUDS_BACKUP_KEY must be 64 hex characters (32 bytes). Generate with: npm run gen-key');
     return Buffer.from(hex, 'hex');
@@ -283,6 +309,8 @@ config.oidc.enabled = !!(config.oidc.issuer && config.oidc.clientId && config.oi
 config.keySource = keySourceHolder.value;
 config.localModeFromEnv = !!process.env.LOCAL_MODE_ENABLED;
 config.parseLocalMode = parseLocalMode;
+config.envSecret = envSecret;
+config.SECRET_FILE_VARS = SECRET_FILE_VARS;
 config.AUDIT_RETENTION_MIN_DAYS = AUDIT_RETENTION_MIN_DAYS;
 config.saveServerJson = (patch) => { Object.assign(fileCfg, patch); fs.writeFileSync(serverJsonPath, JSON.stringify(fileCfg, null, 2), { mode: 0o600 }); config.setupComplete = !!fileCfg.setupComplete; };
 module.exports = config;

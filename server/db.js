@@ -27,6 +27,18 @@ function open(dbPath = config.dbPath) {
   return db;
 }
 
+// A read-only handle on an existing database, for tools that inspect a live server's database from outside
+// it (scripts/compliance-check.js): no schema initialisation, no migration, no chmod, no sealing -- nothing
+// is written, so the server that owns the file (and holds its instance lock) is not disturbed. A database
+// that is not at this build's schema is still opened; the caller reads what is there.
+function openReadOnly(dbPath = config.dbPath) {
+  if (db) return db;
+  db = new DatabaseSync(dbPath, { readOnly: true });
+  try { db.exec('PRAGMA busy_timeout = 5000'); } catch {}
+  openedPath = dbPath;
+  return db;
+}
+
 // Used by the local (in-browser) kernel: open from serialized bytes instead of a file path. Always opens
 // what it is given: a copy already open is closed first (the browser shim drops it unsaved), because the
 // caller has just read these bytes as the current database and a page that kept its earlier in-memory copy
@@ -1152,4 +1164,4 @@ function setSetting(key, value) {
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, plaintextCopies, sealPlaintextCopies, noteSealError, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
+module.exports = { open, openReadOnly, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, plaintextCopies, sealPlaintextCopies, noteSealError, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
