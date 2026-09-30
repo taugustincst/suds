@@ -164,7 +164,9 @@ async function test() {
     const r = await call('GET', '/api/county-connect/v1/status');
     if (r.status !== 200 || !r.data.programme || !Array.isArray(r.data.expected)) throw new ConnectError(`The county's server answered ${r.status}: ${String(r.data.error || 'not a status').slice(0, 200)}`, { reason: 'bad_answer' });
     const county = r.data.county || {};
-    db.run(`UPDATE county_connection SET last_checked_at=?, last_check_ok=1, last_check_error=NULL, county_code=?, county_name=? WHERE id='county'`, db.now(), county.code ? String(county.code).slice(0, 40) : null, county.name ? String(county.name).slice(0, 200) : null);
+    // The county's code as county.js reads one (eight characters); anything else is no code.
+    const K = require('./county');
+    db.run(`UPDATE county_connection SET last_checked_at=?, last_check_ok=1, last_check_error=NULL, county_code=?, county_name=? WHERE id='county'`, db.now(), K.normaliseCode(county.code), county.name ? K.cleanText(county.name, K.TEXT_MAX.county_name) || null : null);
     return { ok: true, status: r.data };
   } catch (e) {
     if (!(e instanceof ConnectError)) throw e;
@@ -178,35 +180,38 @@ const IS_FUND = `(source_type='opioid_settlement' OR settlement_use IS NOT NULL 
 /** The counties this server made files for, as the file route remembers them: { CODE: { name, fund_ids, used_at } }. */
 function recipients() { try { const o = JSON.parse(db.getSetting('county_submission_recipients', '{}')); return o && typeof o === 'object' ? o : {}; } catch { return {}; } }
 /**
- * Which settlement funds go into the file for this county: those given (each must be a settlement fund here), else
- * the ones last chosen for this county's code on the Send to the county card, else null (every fund: SUDS before the
- * card let a programme choose).
+ * Which settlement funds go into the file for this county: those given (the boxes ticked on the Send to the county
+ * card; each must be a settlement fund here), else the ones last chosen for this county's code there (the file route
+ * remembers them, and so does a send). Never "every fund": as on the card, a county's file holds only the funds that
+ * county pays for, so with none chosen nothing is sent.
  */
 function fundsFor(code, given) {
   const remembered = code && recipients()[code] && Array.isArray(recipients()[code].fund_ids) ? recipients()[code].fund_ids : null;
   const ids = Array.isArray(given) ? given.map(String).filter(Boolean).slice(0, 200) : remembered;
-  if (!ids) return null;
+  if (!ids || !ids.length) throw new ConnectError('Choose the settlement funds this county pays for (tick them on the Send to the county card): only they go into the file.', { reason: 'funds' });
   const known = new Set(db.all(`SELECT id FROM funding_sources WHERE ${IS_FUND} AND id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)).map(x => x.id));
   if (ids.some(id => !known.has(id))) throw new ConnectError('One of the funds chosen is not an opioid settlement fund here. Reload the page and choose again.', { reason: 'funds' });
   if (!known.size) throw new ConnectError('Choose the settlement funds this county pays for: only they go into the file.', { reason: 'funds' });
   return [...known];
 }
 /**
- * The signed county submission file for [from, to]: the same as GET /api/county-submission/file makes (the
- * Settlement outcomes figures, for the chosen funds, then county.js payloadFrom and signFile). `recipient` is the
- * county's { county_code, county_name } from its status, for the file's signed recipient field. Throws county.js's
+ * The signed county submission file for [from, to]: the same as GET /api/county-submission/file makes for the same
+ * choices (the Settlement outcomes figures for the chosen funds, then county.js payloadFrom and signFile).
+ * `recipient` is { county_code, county_name }: the county's code from its /status, for the file's signed recipient
+ * field. `fundIds`: the settlement funds that county pays for (fundsFor), never none. Throws county.js's
  * SubmissionError when the allow-list refuses the figures. Returns { file, sha256, fingerprint, payload, keyCreated }.
  */
-async function buildFile({ from, to, user, recipient, fundIds = null }) {
+async function buildFile({ from, to, user, recipient, fundIds }) {
+  if (!Array.isArray(fundIds) || !fundIds.length) throw new ConnectError('Choose the settlement funds this county pays for: only they go into the file.', { reason: 'funds' });
   const K = require('./county');
   const SO = require('./settlement-outcomes');
   const range = require('./routes/reports').range({ query: new URLSearchParams({ from, to }) });
-  const raw = await db.readSnapshot(async () => SO.figures(range, fundIds ? { fundIds } : undefined));
+  const raw = await db.readSnapshot(async () => SO.figures(range, { fundIds }));
   const payload = K.payloadFrom(raw, { programme: db.getSetting('org_name', ''), recipient });
   const { key, created } = K.ensureKey(user);
   const { file, sha256, fingerprint } = K.signFile(payload);
-  // Remembered for this county, as the file route does: the card offers the same funds next time.
-  if (recipient && recipient.county_code && fundIds) { const rec = recipients(); rec[recipient.county_code] = { name: recipient.county_name || '', fund_ids: fundIds, used_at: db.now() }; db.setSetting('county_submission_recipients', JSON.stringify(rec)); }
+  // Remembered for this county, as the file route does: the card offers the same name and funds next time.
+  const rec = recipients(); rec[payload.recipient.county_code] = { name: payload.recipient.county_name, fund_ids: fundIds, used_at: db.now() }; db.setSetting('county_submission_recipients', JSON.stringify(rec));
   return { file, sha256, fingerprint, payload, keyCreated: created ? key : null };
 }
 
@@ -221,14 +226,28 @@ const WORDS = {
  * (county_connect_sends) and audits it (county_submission.send: the period, the payload's SHA-256, the key's
  * fingerprint, the county's answer; never a figure). Returns { status, reason, message, receipt, send }.
  */
-async function send({ from, to, user = null, ip = null, automatic = false, funds }) {
+async function send({ from, to, user = null, ip = null, automatic = false, funds, countyCode = null, countyName = null }) {
+  const K = require('./county');
   const c = row();
   if (!c) throw new ConnectError('This server is not connected to a county. Save the county\'s address and token first.', { reason: 'not_connected' });
-  // The county's code, for the file's recipient: from the last status, or asked for now.
-  if (!c.county_code) await test();
+  // The file names its recipient: the county's code from its /status (the last Test connection, or asked for now).
+  if (!c.county_code) {
+    const t = await test();
+    if (!t.ok) throw new ConnectError(`The county file was not sent: SUDS could not ask the county for its county code. ${t.error}`, { reason: t.reason || 'network' });
+  }
   const cur = row();
-  const recipient = cur.county_code ? { county_code: cur.county_code, county_name: cur.county_name || '' } : undefined;
-  const made = await buildFile({ from, to, user, recipient, fundIds: fundsFor(cur.county_code, funds) });
+  if (!cur.county_code) throw new ConnectError('The county\'s server did not say its county code, so SUDS cannot address the file to it (a county refuses a file made for another county). Ask the county to update its SUDS, then Test connection again.', { reason: 'no_county_code' });
+  // What the Send to the county card has chosen, so Send sends what Download would: the code typed there must be this
+  // county's, and the name typed there is the one in the file (else the county's own, else the one last used).
+  if (countyCode !== null && countyCode !== undefined && String(countyCode).trim()) {
+    const typed = K.normaliseCode(countyCode);
+    if (typed !== cur.county_code) throw new ConnectError(`The county code on the Send to the county card (${typed ? K.formatCode(typed) : String(countyCode).slice(0, 20)}) is not the code of the county this server is connected to (${K.formatCode(cur.county_code)}${cur.county_name ? `, ${cur.county_name}` : ''}). Correct the code on the card, or download the file for the other county.`, { reason: 'recipient' });
+  }
+  const remembered = recipients()[cur.county_code];
+  const name = K.cleanText(countyName, K.TEXT_MAX.county_name) || cur.county_name || (remembered && K.cleanText(remembered.name, K.TEXT_MAX.county_name)) || '';
+  if (!name) throw new ConnectError('Type the county\'s name on the Send to the county card, as the file should show it.', { reason: 'recipient' });
+  const recipient = { county_code: cur.county_code, county_name: name };
+  const made = await buildFile({ from, to, user, recipient, fundIds: fundsFor(recipient.county_code, funds) });
   if (made.keyCreated) audit.log({ user, action: 'county_submission.key.create', ip, details: { fingerprint: made.keyCreated.fingerprint } });
   const host = new URL(c.base_url).host;
   let status; let reason = null; let message; let receipt = null;
@@ -248,7 +267,7 @@ async function send({ from, to, user = null, ip = null, automatic = false, funds
   db.run(`INSERT INTO county_connect_sends(id,period_from,period_to,sha256,status,reason,county_received_at,base_url,automatic,sent_at,sent_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
     id, from, to, made.sha256, status, reason ? String(reason).slice(0, 60) : null, receipt ? receipt.received_at : null, c.base_url, automatic ? 1 : 0, db.now(), user ? user.id : null);
   audit.log({ user: user || { username: 'system' }, action: 'county_submission.send', entity: 'county_connect_send', entityId: id, ip, success: !['failed', 'refused'].includes(status),
-    details: { from, to, fingerprint: made.fingerprint, sha256: made.sha256, host, status, reason: reason || undefined, automatic, funds: made.payload.funds.length, leaves_programme: status !== 'failed', content: 'aggregate counts and money; no client-level data' } });
+    details: { from, to, county_code: recipient.county_code, fingerprint: made.fingerprint, sha256: made.sha256, host, status, reason: reason || undefined, automatic, funds: made.payload.funds.length, leaves_programme: status !== 'failed', content: 'aggregate counts and money; no client-level data' } });
   return { status, reason, message, receipt, send: sendOut(db.one(`SELECT s.*, u.display_name sent_by_name FROM county_connect_sends s LEFT JOIN users u ON u.id=s.sent_by WHERE s.id=?`, id)) };
 }
 function sendOut(s) { return { id: s.id, period_from: s.period_from, period_to: s.period_to, sha256: s.sha256, status: s.status, reason: s.reason, county_received_at: s.county_received_at, host: (() => { try { return new URL(s.base_url).host; } catch { return null; } })(), automatic: !!s.automatic, sent_at: s.sent_at, sent_by_name: s.sent_by_name || (s.automatic ? 'Automatic' : null) }; }
@@ -273,7 +292,15 @@ async function autoSendIfDue({ force = false } = {}) {
     const done = new Set(db.all(`SELECT period_from, period_to FROM county_connect_sends WHERE status IN ('imported','superseded','duplicate','older')`).map(s => `${s.period_from}|${s.period_to}`));
     const todo = (t.status.outstanding || []).filter(p => /^\d{4}-\d{2}-\d{2}$/.test(p.from) && /^\d{4}-\d{2}-\d{2}$/.test(p.to) && !done.has(`${p.from}|${p.to}`)).slice(0, AUTO_MAX_PERIODS);
     const sent = [];
-    for (const p of todo) sent.push({ from: p.from, to: p.to, ...(await send({ from: p.from, to: p.to, automatic: true })) });
+    for (const p of todo) {
+      // A file that cannot be made (no funds chosen for this county yet, no county code) is said once and stops the run.
+      try { sent.push({ from: p.from, to: p.to, ...(await send({ from: p.from, to: p.to, automatic: true })) }); }
+      catch (e) {
+        if (!(e instanceof ConnectError) && !(e instanceof require('./county').SubmissionError)) throw e;
+        sent.push({ from: p.from, to: p.to, status: 'failed', reason: e.reason || e.code || 'failed', message: e.message });
+        break;
+      }
+    }
     audit.log({ user: { username: 'system' }, action: 'county_submission.auto', details: { host: new URL(c.base_url).host, outstanding: (t.status.outstanding || []).length, sent: sent.length } });
     return { sent };
   } finally { autoRunning = false; }

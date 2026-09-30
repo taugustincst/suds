@@ -22,14 +22,19 @@
 // not exist. Office server only (LOCAL_ROUTE_MODULES in server/app.js leaves the routes out of the device kernel).
 const db = require('./db');
 const audit = require('./audit');
+const K = require('./county');
+const P = require('./county-periods');
 const { sha256, randomToken, uuid } = require('./crypto');
 
 const SETTING_ENABLED = 'county_connect_enabled';
 const SETTING_CADENCE = 'county_connect_cadence';
 const SETTING_START = 'county_connect_start';
+// A calendar quarter and a California fiscal quarter cover the same months; the two quarterly cadences differ only in
+// which name comes first in a period's label (county-periods.js describe() names both, as the Send to the county
+// card does).
 const CADENCES = {
   quarterly_calendar: 'Quarterly (calendar quarters: January to March, …)',
-  quarterly_fiscal: 'Quarterly (state fiscal year from July 1: Q1 is July to September)',
+  quarterly_fiscal: 'Quarterly (California fiscal year from July 1: Q1 is July to September)',
   monthly: 'Monthly',
 };
 const SCOPES = { submit: 'county.submit', read: 'county.read' };
@@ -62,20 +67,20 @@ function startDate() { const s = db.getSetting(SETTING_START, ''); return /^\d{4
 const today = () => require('./routes/budget').localDate();
 
 /**
- * The county's code, which a programme's file names as its recipient (fix/county-view-r1 adds it: county.js
- * countyCode()). Before that change there is none, and the status says null.
+ * The county's code (county.js countyCode(): settings.county_code, made the first time it is asked for, and
+ * audited then as the county view's own route does), which a programme's file must name as its recipient.
  */
-function countyCode() {
-  const K = require('./county');
-  if (typeof K.countyCode !== 'function') return null;
+function countyCode({ user = null, ip = null } = {}) {
   const c = K.countyCode();
-  return c && typeof c === 'object' ? c.code : c || null;
+  if (c.created) audit.log({ user, action: 'county.code.create', ip, details: { county_code: c.code, via: 'county-connect' } });
+  return c.code;
 }
 
 // ---- settings ------------------------------------------------------------------------------------------------------
-function settings() {
+function settings(who = {}) {
+  const code = countyCode(who);
   return { enabled: enabled(), cadence: cadence(), cadences: Object.entries(CADENCES).map(([value, label]) => ({ value, label })), start: startDate(),
-    county_code: countyCode(), county_name: db.getSetting('org_name', '') || null,
+    county_code: code, county_code_display: K.formatCode(code), county_name: db.getSetting('org_name', '') || null,
     endpoints: { submissions: '/api/county-connect/v1/submissions', status: '/api/county-connect/v1/status', combined: '/api/county-connect/v1/combined', programs: '/api/county-connect/v1/programs' },
     limits: { max_file_bytes: MAX_PUSH_BYTES, read_default_days: READ_DEFAULT_DAYS, read_max_days: READ_MAX_DAYS, connection_max_days: CONNECTION_MAX_DAYS } };
 }
@@ -109,15 +114,15 @@ function issue({ scope, programmeId = null, name = '', expiresDays, user }) {
   let expiresAt = null; let label = String(name || '').trim().slice(0, 120);
   if (scope === SCOPES.submit) {
     const p = programmeId ? db.one(`SELECT * FROM county_programmes WHERE id=?`, programmeId) : null;
-    if (!p) throw new Error('Choose the programme this connection token is for.');
-    if (!p.active) throw new Error(`${p.name} is not an active programme here. Reactivate it before connecting it.`);
+    if (!p) throw new Error('Choose the program this connection token is for.');
+    if (!p.active) throw new Error(`${p.name} is not an active program here. Reactivate it before connecting it.`);
     if (expiresDays !== undefined && expiresDays !== null) {
       if (!Number.isInteger(expiresDays) || expiresDays < 1 || expiresDays > CONNECTION_MAX_DAYS) throw new Error(`A connection token expires after 1 to ${CONNECTION_MAX_DAYS} days, or never.`);
       expiresAt = addDays(expiresDays);
     }
     if (!label) label = `Connection for ${p.name}`;
   } else {
-    if (programmeId) throw new Error('A read token is the county\'s own and belongs to no programme.');
+    if (programmeId) throw new Error('A read token is the county\'s own and belongs to no program.');
     const d = expiresDays === undefined || expiresDays === null ? READ_DEFAULT_DAYS : expiresDays;
     if (!Number.isInteger(d) || d < 1 || d > READ_MAX_DAYS) throw new Error(`A read token expires after 1 to ${READ_MAX_DAYS} days (${READ_DEFAULT_DAYS} unless you choose).`);
     expiresAt = addDays(d);
@@ -196,51 +201,46 @@ function logRefusal({ action, token = null, ip, reason, details = {} }) {
 }
 
 // ---- periods ------------------------------------------------------------------------------------------------------
-const pad = (n) => String(n).padStart(2, '0');
-const monthEnd = (y, m) => new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); // m is 1-based
 /**
- * The complete periods the county expects, newest last: for the cadence, those that ended before `day`, at most a
- * year of them, none starting before the county's start date. A fiscal quarter covers the same months as a calendar
- * one; only its name differs (FY 2025–26 Q1 is July to September 2025).
+ * The complete periods the county expects, oldest first: for the cadence, those that ended before `day`, at most a
+ * year of them, none starting before the county's start date. Built and named by county-periods.js, the helpers the
+ * county view and the Send to the county card use, so a period reads the same everywhere ("Apr – Jun 2026 (calendar
+ * Q2 2026 · FY 2025-26 Q4)", "Feb 2026"). A fiscal quarter covers the same months as a calendar one; the fiscal
+ * cadence puts the fiscal name first ("FY 2025-26 Q4 (Apr – Jun 2026)").
  */
 function expectedPeriods(c = cadence(), day = today(), start = startDate()) {
-  const out = [];
-  let y = Number(day.slice(0, 4)); let m = Number(day.slice(5, 7));
-  if (c === 'monthly') {
-    for (let i = 0; i < EXPECTED_MONTHS; i++) {
-      m--; if (m < 1) { m = 12; y--; }
-      out.unshift({ from: `${y}-${pad(m)}-01`, to: monthEnd(y, m), label: `${new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' })} ${y}` });
-    }
-  } else {
-    let q = Math.floor((m - 1) / 3); // the current quarter, 0-based
-    for (let i = 0; i < EXPECTED_QUARTERS; i++) {
-      q--; if (q < 0) { q = 3; y--; }
-      const m1 = q * 3 + 1; const from = `${y}-${pad(m1)}-01`; const to = monthEnd(y, m1 + 2);
-      let label = `${y} Q${q + 1}`;
-      if (c === 'quarterly_fiscal') { const fyStart = m1 >= 7 ? y : y - 1; const fq = m1 >= 7 ? (m1 - 7) / 3 + 1 : (m1 + 5) / 3 + 1; label = `FY ${fyStart}–${String(fyStart + 1).slice(2)} Q${fq}`; }
-      out.unshift({ from, to, label });
-    }
+  let out;
+  if (c === 'monthly') out = P.completeMonths(day, EXPECTED_MONTHS).map(m => ({ from: m.from, to: m.to, label: P.monthsLabel(m.from, m.to) }));
+  else {
+    out = P.completeQuarters(day, EXPECTED_QUARTERS).map((q) => {
+      const both = P.describe(q.from, q.to); // "calendar Q2 2026 · FY 2025-26 Q4"
+      const fiscal = both.split(' · ')[1];
+      return { from: q.from, to: q.to, label: c === 'quarterly_fiscal' ? `${fiscal} (${P.monthsLabel(q.from, q.to)})` : `${P.monthsLabel(q.from, q.to)} (${both})` };
+    });
   }
+  out.reverse();
   return start ? out.filter(p => p.from >= start) : out;
 }
 
 /**
  * What the county tells one programme through /status: the county's code and name, the cadence and the periods it
- * expects, which of them it has a counting file for and which are outstanding, and the programme's own files'
- * periods and receipts. Nothing of any other programme, and no figures.
+ * expects, which of them are covered and which are outstanding, and the programme's own files with their receipts.
+ * Nothing of any other programme, and no figures. Counted as the combined view counts (county.js countingSubs and
+ * coverage): a replaced or withdrawn file, or one signed by a key the county marked compromised, does not count, nor
+ * does any file of an inactive programme whose files the county stopped counting; a period is received when the
+ * programme's counting files cover all of it.
  */
-function statusFor(t) {
-  const prog = db.one(`SELECT id, name, active FROM county_programmes WHERE id=?`, t.programme_id);
-  const subs = db.all(`SELECT period_from, period_to, sha256, received_at, superseded_by, withdrawn_at FROM county_submissions WHERE programme_id=? ORDER BY received_at DESC LIMIT 200`, t.programme_id);
-  const counting = subs.filter(s => !s.superseded_by && !s.withdrawn_at);
-  const has = (p) => counting.some(s => s.period_from === p.from && s.period_to === p.to);
-  const expected = expectedPeriods().map(p => ({ ...p, received: has(p) }));
+function statusFor(t, who = {}) {
+  const prog = db.one(`SELECT id, name, active, keep_files FROM county_programmes WHERE id=?`, t.programme_id);
+  const counting = K.filesCount(prog) ? K.countingSubs(prog.id) : [];
+  const expected = expectedPeriods().map(p => { const cov = K.coverage(counting, p.from, p.to); return { ...p, received: cov.status === 'whole', coverage: cov.status }; });
+  const files = db.all(`${K.SUBS} WHERE s.programme_id=? ORDER BY s.received_at DESC, s.id LIMIT 40`, prog.id).map(K.summary);
   return {
-    county: { code: countyCode(), name: db.getSetting('org_name', '') || null },
-    programme: { id: prog.id, name: prog.name, active: !!prog.active },
+    county: { code: countyCode(who), name: db.getSetting('org_name', '') || null },
+    programme: { id: prog.id, name: prog.name, active: !!prog.active, files_count: K.filesCount(prog) },
     cadence: cadence(), cadence_label: CADENCES[cadence()], start: startDate(), today: today(),
     expected, outstanding: expected.filter(p => !p.received).map(({ received, ...p }) => p), // eslint-disable-line no-unused-vars
-    received: subs.slice(0, 40).map(s => ({ from: s.period_from, to: s.period_to, sha256: s.sha256, received_at: s.received_at, status: s.withdrawn_at ? 'withdrawn' : s.superseded_by ? 'superseded' : 'current' })),
+    received: files.map(s => ({ from: s.period_from, to: s.period_to, sha256: s.sha256, received_at: s.received_at, generated_at: s.generated_at, status: s.status })),
     max_file_bytes: MAX_PUSH_BYTES,
   };
 }

@@ -28450,6 +28450,18 @@ var require_county = __commonJS({
       const status = winner !== id ? "older" : before ? "superseded" : "imported";
       return { status, submission: summary(subById(id)), programme: prog, replaced: status === "superseded" ? before : null, counting: status === "older" ? summary(subById(winner)) : null };
     }
+    function importMessage(out2, { audience = "county" } = {}) {
+      const s = out2.submission;
+      const who = out2.programme.name;
+      const period = humanPeriod(s.period_from, s.period_to);
+      if (out2.status === "duplicate") {
+        if (s.status !== "withdrawn") return `This file was already imported on ${humanDay(s.received_at)}; nothing changed.`;
+        return audience === "county" ? `This file was already imported on ${humanDay(s.received_at)} and withdrawn on ${humanDay(s.withdrawn_at)}; nothing changed. To count it again, Reinstate it under Files received.` : `The county already had this file (imported on ${humanDay(s.received_at)}) and withdrew it on ${humanDay(s.withdrawn_at)}; nothing changed. Ask the county whether it should count.`;
+      }
+      if (out2.status === "superseded") return `Imported ${who}'s submission for ${period}. It replaces the one made earlier for the same period, which is kept but no longer counts.`;
+      if (out2.status === "older") return `Imported ${who}'s submission for ${period}, but it does not count: it was made on ${humanDay(s.generated_at)}, before the one that counts for that period (made on ${humanDay(out2.counting.generated_at)}). It is kept as replaced.${audience === "county" ? " If the older file is the right one, withdraw the newer one." : ""}`;
+      return `Imported ${who}'s submission for ${period}.`;
+    }
     function withdraw(id, user) {
       const s = subById(id);
       if (!s) return null;
@@ -28540,6 +28552,16 @@ var require_county = __commonJS({
       used.sort((a, b) => a.period_from.localeCompare(b.period_from));
       return { used, overlapped, outside };
     }
+    function countingSubs(programmeId = null) {
+      const where = "s.superseded_by IS NULL AND s.withdrawn_at IS NULL AND k.compromised_at IS NULL";
+      return programmeId ? db3.all(`${SUBS} WHERE s.programme_id=? AND ${where} ORDER BY s.period_from, s.received_at`, programmeId) : db3.all(`${SUBS} WHERE ${where} ORDER BY s.period_from, s.received_at`);
+    }
+    var filesCount = (p) => !!p.active || !!p.keep_files;
+    function coverage(subs, from, to) {
+      const c = choose(subs, from, to);
+      const covered = c.used.reduce((n, s) => n + daysIn(s.period_from, s.period_to), 0);
+      return { ...c, days_covered: covered, status: !c.used.length ? "none" : covered >= daysIn(from, to) ? "whole" : "part" };
+    }
     var PEOPLE_LABELS = {
       people_served: "People served (each program's own count, summed)",
       referrals_made: "Referrals made for the people served (each program's own count, summed)",
@@ -28556,15 +28578,15 @@ var require_county = __commonJS({
     var HIAA_ROWS = () => [...C.SETTLEMENT_HIAA.map((x) => ({ code: x.code, label: x.label })), { code: "none", label: "No High Impact Abatement Activity recorded" }];
     function combined(from, to) {
       const programmes = db3.all(`SELECT * FROM county_programmes ORDER BY name COLLATE NOCASE, id`);
-      const subs = db3.all(`${SUBS} WHERE s.superseded_by IS NULL AND s.withdrawn_at IS NULL AND k.compromised_at IS NULL ORDER BY s.period_from, s.received_at`);
+      const subs = countingSubs();
       const byProg = new Map(programmes.map((p) => [p.id, []]));
       for (const s of subs) if (byProg.has(s.programme_id)) byProg.get(s.programme_id).push(s);
       const period = daysIn(from, to);
       const cols2 = [];
       const inactiveLeftOut = [];
       for (const p of programmes) {
-        const { used, overlapped, outside } = choose(byProg.get(p.id), from, to);
-        if (!p.active && !p.keep_files) {
+        const { used, overlapped, outside, days_covered: covered, status } = coverage(byProg.get(p.id), from, to);
+        if (!filesCount(p)) {
           if (used.length) inactiveLeftOut.push({ id: p.id, name: p.name, files: used.length });
           continue;
         }
@@ -28581,13 +28603,12 @@ var require_county = __commonJS({
             agg.hiaa[h] = (agg.hiaa[h] || 0) + f.spend.approved;
           }
         }
-        const covered = used.reduce((n, s) => n + daysIn(s.period_from, s.period_to), 0);
         cols2.push({
           id: p.id,
           name: p.name,
           active: !!p.active,
           keep_files: !!p.keep_files,
-          status: !used.length ? "none" : covered >= period ? "whole" : "part",
+          status,
           days_covered: covered,
           days_in_period: period,
           submissions: used.map(summary),
@@ -28677,6 +28698,7 @@ var require_county = __commonJS({
       PERIOD_RULE,
       PUBLICATION_NOTE,
       SubmissionError,
+      SUBS,
       canonical,
       cleanText,
       fingerprintOf,
@@ -28700,6 +28722,10 @@ var require_county = __commonJS({
       reinstate,
       resettle,
       resettleProgramme,
+      importMessage,
+      countingSubs,
+      filesCount,
+      coverage,
       summary,
       programmeOut,
       programmeKeys,
@@ -28719,6 +28745,124 @@ var require_county = __commonJS({
   }
 });
 
+// server/county-periods.js
+var require_county_periods = __commonJS({
+  "server/county-periods.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var pad = (n) => String(n).padStart(2, "0");
+    var lastDay = (y, m) => new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+    var ym = (s) => [Number(s.slice(0, 4)), Number(s.slice(5, 7))];
+    function calendarQuarter(y, q) {
+      const m = (q - 1) * 3 + 1;
+      return { from: `${y}-${pad(m)}-01`, to: lastDay(y, m + 2) };
+    }
+    function lastCompleteQuarter(today) {
+      const [y, m] = ym(today);
+      let q = Math.floor((m - 1) / 3);
+      let yy = y;
+      if (q === 0) {
+        q = 4;
+        yy = y - 1;
+      }
+      return calendarQuarter(yy, q);
+    }
+    function completeQuarters(today, n = 8) {
+      const out2 = [];
+      let { from } = lastCompleteQuarter(today);
+      for (let i = 0; i < n; i++) {
+        const [y, m] = ym(from);
+        const q = Math.floor((m - 1) / 3) + 1;
+        out2.push({ ...calendarQuarter(y, q), y, q });
+        from = q === 1 ? calendarQuarter(y - 1, 4).from : calendarQuarter(y, q - 1).from;
+      }
+      return out2;
+    }
+    function completeMonths(today, n = 12) {
+      const out2 = [];
+      let [y, m] = ym(today);
+      for (let i = 0; i < n; i++) {
+        m--;
+        if (m < 1) {
+          m = 12;
+          y--;
+        }
+        out2.push({ from: `${y}-${pad(m)}-01`, to: lastDay(y, m), y, m });
+      }
+      return out2;
+    }
+    var fiscalYearOf = (day) => {
+      const [y, m] = ym(day);
+      return m >= 7 ? y : y - 1;
+    };
+    var fyLabel = (sy) => `FY ${sy}-${pad((sy + 1) % 100)}`;
+    var fiscalYear = (sy) => ({ from: `${sy}-07-01`, to: `${sy + 1}-06-30` });
+    var fiscalQuarter = (sy, n) => n <= 2 ? calendarQuarter(sy, n + 2) : calendarQuarter(sy + 1, n - 2);
+    function monthsLabel(from, to) {
+      const [fy, fm] = ym(from);
+      const [ty, tm] = ym(to);
+      const whole = from.slice(8) === "01" && to === lastDay(ty, tm);
+      if (!whole) return `${MON[fm - 1]} ${Number(from.slice(8))}${fy !== ty ? `, ${fy}` : ""} \u2013 ${fm === tm && fy === ty ? "" : `${MON[tm - 1]} `}${Number(to.slice(8))}, ${ty}`;
+      if (fy === ty && fm === tm) return `${MON[fm - 1]} ${fy}`;
+      return fy === ty ? `${MON[fm - 1]} \u2013 ${MON[tm - 1]} ${ty}` : `${MON[fm - 1]} ${fy} \u2013 ${MON[tm - 1]} ${ty}`;
+    }
+    function describe2(from, to) {
+      const [y, m] = ym(from);
+      if (from.slice(5) === "01-01" && to === `${y}-12-31`) return `calendar year ${y}`;
+      if (from.slice(5) === "07-01" && to === `${y + 1}-06-30`) return fyLabel(y);
+      if ((m - 1) % 3 === 0 && from.slice(8) === "01") {
+        const q = Math.floor((m - 1) / 3) + 1;
+        const cq = calendarQuarter(y, q);
+        if (cq.to === to) {
+          const sy = fiscalYearOf(from);
+          const fq = q >= 3 ? q - 2 : q + 2;
+          return `calendar Q${q} ${y} \xB7 ${fyLabel(sy)} Q${fq}`;
+        }
+      }
+      return null;
+    }
+    var isQuarter = (from, to) => {
+      const d = describe2(from, to);
+      return !!d && d.startsWith("calendar Q");
+    };
+    function presets(today) {
+      const out2 = [];
+      const lq = lastCompleteQuarter(today);
+      out2.push({ key: "lq", label: `Last quarter (${monthsLabel(lq.from, lq.to)})`, ...lq });
+      const cur = fiscalYearOf(today);
+      for (const sy of [cur, cur - 1]) {
+        const fy = fiscalYear(sy);
+        if (fy.to < today) out2.push({ key: `fy${sy}`, label: `${fyLabel(sy)} (${monthsLabel(fy.from, fy.to)})`, ...fy });
+        else if (fy.from < today) {
+          const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 864e5).toISOString().slice(0, 10);
+          out2.push({ key: `fy${sy}td`, label: `${fyLabel(sy)} to date`, from: fy.from, to: yesterday < fy.from ? fy.from : yesterday });
+        }
+        for (let n = 1; n <= 4; n++) {
+          const q = fiscalQuarter(sy, n);
+          if (q.to < today) out2.push({ key: `fy${sy}q${n}`, label: `${fyLabel(sy)} Q${n} (${monthsLabel(q.from, q.to)})`, ...q });
+        }
+      }
+      const y = Number(today.slice(0, 4));
+      out2.push({ key: `cy${y - 1}`, label: `Calendar year ${y - 1}`, from: `${y - 1}-01-01`, to: `${y - 1}-12-31` });
+      out2.push({ key: "ytd", label: `Year to date (${y})`, from: `${y}-01-01`, to: today });
+      return out2;
+    }
+    function submissionPeriods(today) {
+      const out2 = completeQuarters(today, 8).map((q, i) => ({ key: `q${q.y}${q.q}`, label: `${monthsLabel(q.from, q.to)} (${describe2(q.from, q.to)})`, from: q.from, to: q.to, default: i === 0 }));
+      const cur = fiscalYearOf(today);
+      for (const sy of [cur - 1, cur - 2]) {
+        const fy = fiscalYear(sy);
+        if (fy.to < today) out2.push({ key: `fy${sy}`, label: `${fyLabel(sy)}, the whole fiscal year (${monthsLabel(fy.from, fy.to)})`, ...fy });
+      }
+      const y = Number(today.slice(0, 4));
+      out2.push({ key: `cy${y - 1}`, label: `Calendar year ${y - 1}`, from: `${y - 1}-01-01`, to: `${y - 1}-12-31` });
+      return out2;
+    }
+    module.exports = { calendarQuarter, lastCompleteQuarter, completeQuarters, completeMonths, fiscalYearOf, fyLabel, fiscalYear, fiscalQuarter, monthsLabel, describe: describe2, isQuarter, presets, submissionPeriods };
+  }
+});
+
 // server/county-connect.js
 var require_county_connect = __commonJS({
   "server/county-connect.js"(exports, module) {
@@ -28726,13 +28870,15 @@ var require_county_connect = __commonJS({
     init_globals_inject();
     var db3 = require_db();
     var audit3 = require_audit();
+    var K = require_county();
+    var P2 = require_county_periods();
     var { sha256: sha2562, randomToken, uuid: uuid2 } = require_crypto();
     var SETTING_ENABLED = "county_connect_enabled";
     var SETTING_CADENCE = "county_connect_cadence";
     var SETTING_START = "county_connect_start";
     var CADENCES = {
       quarterly_calendar: "Quarterly (calendar quarters: January to March, \u2026)",
-      quarterly_fiscal: "Quarterly (state fiscal year from July 1: Q1 is July to September)",
+      quarterly_fiscal: "Quarterly (California fiscal year from July 1: Q1 is July to September)",
       monthly: "Monthly"
     };
     var SCOPES = { submit: "county.submit", read: "county.read" };
@@ -28767,19 +28913,20 @@ var require_county_connect = __commonJS({
       return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
     }
     var today = () => require_budget().localDate();
-    function countyCode() {
-      const K = require_county();
-      if (typeof K.countyCode !== "function") return null;
+    function countyCode({ user = null, ip = null } = {}) {
       const c = K.countyCode();
-      return c && typeof c === "object" ? c.code : c || null;
+      if (c.created) audit3.log({ user, action: "county.code.create", ip, details: { county_code: c.code, via: "county-connect" } });
+      return c.code;
     }
-    function settings() {
+    function settings(who = {}) {
+      const code = countyCode(who);
       return {
         enabled: enabled(),
         cadence: cadence(),
         cadences: Object.entries(CADENCES).map(([value, label]) => ({ value, label })),
         start: startDate(),
-        county_code: countyCode(),
+        county_code: code,
+        county_code_display: K.formatCode(code),
         county_name: db3.getSetting("org_name", "") || null,
         endpoints: { submissions: "/api/county-connect/v1/submissions", status: "/api/county-connect/v1/status", combined: "/api/county-connect/v1/combined", programs: "/api/county-connect/v1/programs" },
         limits: { max_file_bytes: MAX_PUSH_BYTES, read_default_days: READ_DEFAULT_DAYS, read_max_days: READ_MAX_DAYS, connection_max_days: CONNECTION_MAX_DAYS }
@@ -28835,15 +28982,15 @@ var require_county_connect = __commonJS({
       let label = String(name || "").trim().slice(0, 120);
       if (scope === SCOPES.submit) {
         const p = programmeId ? db3.one(`SELECT * FROM county_programmes WHERE id=?`, programmeId) : null;
-        if (!p) throw new Error("Choose the programme this connection token is for.");
-        if (!p.active) throw new Error(`${p.name} is not an active programme here. Reactivate it before connecting it.`);
+        if (!p) throw new Error("Choose the program this connection token is for.");
+        if (!p.active) throw new Error(`${p.name} is not an active program here. Reactivate it before connecting it.`);
         if (expiresDays !== void 0 && expiresDays !== null) {
           if (!Number.isInteger(expiresDays) || expiresDays < 1 || expiresDays > CONNECTION_MAX_DAYS) throw new Error(`A connection token expires after 1 to ${CONNECTION_MAX_DAYS} days, or never.`);
           expiresAt = addDays(expiresDays);
         }
         if (!label) label = `Connection for ${p.name}`;
       } else {
-        if (programmeId) throw new Error("A read token is the county's own and belongs to no programme.");
+        if (programmeId) throw new Error("A read token is the county's own and belongs to no program.");
         const d = expiresDays === void 0 || expiresDays === null ? READ_DEFAULT_DAYS : expiresDays;
         if (!Number.isInteger(d) || d < 1 || d > READ_MAX_DAYS) throw new Error(`A read token expires after 1 to ${READ_MAX_DAYS} days (${READ_DEFAULT_DAYS} unless you choose).`);
         expiresAt = addDays(d);
@@ -28936,52 +29083,30 @@ var require_county_connect = __commonJS({
       w.byIp.set(ip || "?", (w.byIp.get(ip || "?") || 0) + 1);
       if (refusals.size > 5e3) flushRefusals();
     }
-    var pad = (n) => String(n).padStart(2, "0");
-    var monthEnd = (y, m) => new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
     function expectedPeriods(c = cadence(), day = today(), start2 = startDate()) {
-      const out2 = [];
-      let y = Number(day.slice(0, 4));
-      let m = Number(day.slice(5, 7));
-      if (c === "monthly") {
-        for (let i = 0; i < EXPECTED_MONTHS; i++) {
-          m--;
-          if (m < 1) {
-            m = 12;
-            y--;
-          }
-          out2.unshift({ from: `${y}-${pad(m)}-01`, to: monthEnd(y, m), label: `${new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-US", { month: "long", timeZone: "UTC" })} ${y}` });
-        }
-      } else {
-        let q = Math.floor((m - 1) / 3);
-        for (let i = 0; i < EXPECTED_QUARTERS; i++) {
-          q--;
-          if (q < 0) {
-            q = 3;
-            y--;
-          }
-          const m1 = q * 3 + 1;
-          const from = `${y}-${pad(m1)}-01`;
-          const to = monthEnd(y, m1 + 2);
-          let label = `${y} Q${q + 1}`;
-          if (c === "quarterly_fiscal") {
-            const fyStart = m1 >= 7 ? y : y - 1;
-            const fq = m1 >= 7 ? (m1 - 7) / 3 + 1 : (m1 + 5) / 3 + 1;
-            label = `FY ${fyStart}\u2013${String(fyStart + 1).slice(2)} Q${fq}`;
-          }
-          out2.unshift({ from, to, label });
-        }
+      let out2;
+      if (c === "monthly") out2 = P2.completeMonths(day, EXPECTED_MONTHS).map((m) => ({ from: m.from, to: m.to, label: P2.monthsLabel(m.from, m.to) }));
+      else {
+        out2 = P2.completeQuarters(day, EXPECTED_QUARTERS).map((q) => {
+          const both = P2.describe(q.from, q.to);
+          const fiscal = both.split(" \xB7 ")[1];
+          return { from: q.from, to: q.to, label: c === "quarterly_fiscal" ? `${fiscal} (${P2.monthsLabel(q.from, q.to)})` : `${P2.monthsLabel(q.from, q.to)} (${both})` };
+        });
       }
+      out2.reverse();
       return start2 ? out2.filter((p) => p.from >= start2) : out2;
     }
-    function statusFor(t) {
-      const prog = db3.one(`SELECT id, name, active FROM county_programmes WHERE id=?`, t.programme_id);
-      const subs = db3.all(`SELECT period_from, period_to, sha256, received_at, superseded_by, withdrawn_at FROM county_submissions WHERE programme_id=? ORDER BY received_at DESC LIMIT 200`, t.programme_id);
-      const counting = subs.filter((s) => !s.superseded_by && !s.withdrawn_at);
-      const has = (p) => counting.some((s) => s.period_from === p.from && s.period_to === p.to);
-      const expected = expectedPeriods().map((p) => ({ ...p, received: has(p) }));
+    function statusFor(t, who = {}) {
+      const prog = db3.one(`SELECT id, name, active, keep_files FROM county_programmes WHERE id=?`, t.programme_id);
+      const counting = K.filesCount(prog) ? K.countingSubs(prog.id) : [];
+      const expected = expectedPeriods().map((p) => {
+        const cov = K.coverage(counting, p.from, p.to);
+        return { ...p, received: cov.status === "whole", coverage: cov.status };
+      });
+      const files = db3.all(`${K.SUBS} WHERE s.programme_id=? ORDER BY s.received_at DESC, s.id LIMIT 40`, prog.id).map(K.summary);
       return {
-        county: { code: countyCode(), name: db3.getSetting("org_name", "") || null },
-        programme: { id: prog.id, name: prog.name, active: !!prog.active },
+        county: { code: countyCode(who), name: db3.getSetting("org_name", "") || null },
+        programme: { id: prog.id, name: prog.name, active: !!prog.active, files_count: K.filesCount(prog) },
         cadence: cadence(),
         cadence_label: CADENCES[cadence()],
         start: startDate(),
@@ -28989,7 +29114,7 @@ var require_county_connect = __commonJS({
         expected,
         outstanding: expected.filter((p) => !p.received).map(({ received, ...p }) => p),
         // eslint-disable-line no-unused-vars
-        received: subs.slice(0, 40).map((s) => ({ from: s.period_from, to: s.period_to, sha256: s.sha256, received_at: s.received_at, status: s.withdrawn_at ? "withdrawn" : s.superseded_by ? "superseded" : "current" })),
+        received: files.map((s) => ({ from: s.period_from, to: s.period_to, sha256: s.sha256, received_at: s.received_at, generated_at: s.generated_at, status: s.status })),
         max_file_bytes: MAX_PUSH_BYTES
       };
     }
@@ -33390,7 +33515,8 @@ var require_county_connect_client = __commonJS({
         const r = await call2("GET", "/api/county-connect/v1/status");
         if (r.status !== 200 || !r.data.programme || !Array.isArray(r.data.expected)) throw new ConnectError(`The county's server answered ${r.status}: ${String(r.data.error || "not a status").slice(0, 200)}`, { reason: "bad_answer" });
         const county = r.data.county || {};
-        db3.run(`UPDATE county_connection SET last_checked_at=?, last_check_ok=1, last_check_error=NULL, county_code=?, county_name=? WHERE id='county'`, db3.now(), county.code ? String(county.code).slice(0, 40) : null, county.name ? String(county.name).slice(0, 200) : null);
+        const K = require_county();
+        db3.run(`UPDATE county_connection SET last_checked_at=?, last_check_ok=1, last_check_error=NULL, county_code=?, county_name=? WHERE id='county'`, db3.now(), K.normaliseCode(county.code), county.name ? K.cleanText(county.name, K.TEXT_MAX.county_name) || null : null);
         return { ok: true, status: r.data };
       } catch (e) {
         if (!(e instanceof ConnectError)) throw e;
@@ -33410,25 +33536,24 @@ var require_county_connect_client = __commonJS({
     function fundsFor(code, given) {
       const remembered = code && recipients()[code] && Array.isArray(recipients()[code].fund_ids) ? recipients()[code].fund_ids : null;
       const ids = Array.isArray(given) ? given.map(String).filter(Boolean).slice(0, 200) : remembered;
-      if (!ids) return null;
+      if (!ids || !ids.length) throw new ConnectError("Choose the settlement funds this county pays for (tick them on the Send to the county card): only they go into the file.", { reason: "funds" });
       const known = new Set(db3.all(`SELECT id FROM funding_sources WHERE ${IS_FUND} AND id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)).map((x) => x.id));
       if (ids.some((id) => !known.has(id))) throw new ConnectError("One of the funds chosen is not an opioid settlement fund here. Reload the page and choose again.", { reason: "funds" });
       if (!known.size) throw new ConnectError("Choose the settlement funds this county pays for: only they go into the file.", { reason: "funds" });
       return [...known];
     }
-    async function buildFile({ from, to, user, recipient, fundIds = null }) {
+    async function buildFile({ from, to, user, recipient, fundIds }) {
+      if (!Array.isArray(fundIds) || !fundIds.length) throw new ConnectError("Choose the settlement funds this county pays for: only they go into the file.", { reason: "funds" });
       const K = require_county();
       const SO = require_settlement_outcomes();
       const range = require_reports().range({ query: new URLSearchParams({ from, to }) });
-      const raw = await db3.readSnapshot(async () => SO.figures(range, fundIds ? { fundIds } : void 0));
+      const raw = await db3.readSnapshot(async () => SO.figures(range, { fundIds }));
       const payload = K.payloadFrom(raw, { programme: db3.getSetting("org_name", ""), recipient });
       const { key, created } = K.ensureKey(user);
       const { file, sha256: sha2562, fingerprint } = K.signFile(payload);
-      if (recipient && recipient.county_code && fundIds) {
-        const rec = recipients();
-        rec[recipient.county_code] = { name: recipient.county_name || "", fund_ids: fundIds, used_at: db3.now() };
-        db3.setSetting("county_submission_recipients", JSON.stringify(rec));
-      }
+      const rec = recipients();
+      rec[payload.recipient.county_code] = { name: payload.recipient.county_name, fund_ids: fundIds, used_at: db3.now() };
+      db3.setSetting("county_submission_recipients", JSON.stringify(rec));
       return { file, sha256: sha2562, fingerprint, payload, keyCreated: created ? key : null };
     }
     var WORDS = {
@@ -33437,13 +33562,25 @@ var require_county_connect_client = __commonJS({
       older: "The county kept the file, but a newer one it already has for the same period is the one that counts.",
       duplicate: "The county already had this file; nothing changed."
     };
-    async function send({ from, to, user = null, ip = null, automatic = false, funds }) {
+    async function send({ from, to, user = null, ip = null, automatic = false, funds, countyCode = null, countyName = null }) {
+      const K = require_county();
       const c = row();
       if (!c) throw new ConnectError("This server is not connected to a county. Save the county's address and token first.", { reason: "not_connected" });
-      if (!c.county_code) await test();
+      if (!c.county_code) {
+        const t = await test();
+        if (!t.ok) throw new ConnectError(`The county file was not sent: SUDS could not ask the county for its county code. ${t.error}`, { reason: t.reason || "network" });
+      }
       const cur = row();
-      const recipient = cur.county_code ? { county_code: cur.county_code, county_name: cur.county_name || "" } : void 0;
-      const made = await buildFile({ from, to, user, recipient, fundIds: fundsFor(cur.county_code, funds) });
+      if (!cur.county_code) throw new ConnectError("The county's server did not say its county code, so SUDS cannot address the file to it (a county refuses a file made for another county). Ask the county to update its SUDS, then Test connection again.", { reason: "no_county_code" });
+      if (countyCode !== null && countyCode !== void 0 && String(countyCode).trim()) {
+        const typed = K.normaliseCode(countyCode);
+        if (typed !== cur.county_code) throw new ConnectError(`The county code on the Send to the county card (${typed ? K.formatCode(typed) : String(countyCode).slice(0, 20)}) is not the code of the county this server is connected to (${K.formatCode(cur.county_code)}${cur.county_name ? `, ${cur.county_name}` : ""}). Correct the code on the card, or download the file for the other county.`, { reason: "recipient" });
+      }
+      const remembered = recipients()[cur.county_code];
+      const name = K.cleanText(countyName, K.TEXT_MAX.county_name) || cur.county_name || remembered && K.cleanText(remembered.name, K.TEXT_MAX.county_name) || "";
+      if (!name) throw new ConnectError("Type the county's name on the Send to the county card, as the file should show it.", { reason: "recipient" });
+      const recipient = { county_code: cur.county_code, county_name: name };
+      const made = await buildFile({ from, to, user, recipient, fundIds: fundsFor(recipient.county_code, funds) });
       if (made.keyCreated) audit3.log({ user, action: "county_submission.key.create", ip, details: { fingerprint: made.keyCreated.fingerprint } });
       const host = new URL(c.base_url).host;
       let status;
@@ -33488,7 +33625,7 @@ var require_county_connect_client = __commonJS({
         entityId: id,
         ip,
         success: !["failed", "refused"].includes(status),
-        details: { from, to, fingerprint: made.fingerprint, sha256: made.sha256, host, status, reason: reason || void 0, automatic, funds: made.payload.funds.length, leaves_programme: status !== "failed", content: "aggregate counts and money; no client-level data" }
+        details: { from, to, county_code: recipient.county_code, fingerprint: made.fingerprint, sha256: made.sha256, host, status, reason: reason || void 0, automatic, funds: made.payload.funds.length, leaves_programme: status !== "failed", content: "aggregate counts and money; no client-level data" }
       });
       return { status, reason, message, receipt, send: sendOut(db3.one(`SELECT s.*, u.display_name sent_by_name FROM county_connect_sends s LEFT JOIN users u ON u.id=s.sent_by WHERE s.id=?`, id)) };
     }
@@ -33521,7 +33658,15 @@ var require_county_connect_client = __commonJS({
         const done = new Set(db3.all(`SELECT period_from, period_to FROM county_connect_sends WHERE status IN ('imported','superseded','duplicate','older')`).map((s) => `${s.period_from}|${s.period_to}`));
         const todo = (t.status.outstanding || []).filter((p) => /^\d{4}-\d{2}-\d{2}$/.test(p.from) && /^\d{4}-\d{2}-\d{2}$/.test(p.to) && !done.has(`${p.from}|${p.to}`)).slice(0, AUTO_MAX_PERIODS);
         const sent = [];
-        for (const p of todo) sent.push({ from: p.from, to: p.to, ...await send({ from: p.from, to: p.to, automatic: true }) });
+        for (const p of todo) {
+          try {
+            sent.push({ from: p.from, to: p.to, ...await send({ from: p.from, to: p.to, automatic: true }) });
+          } catch (e) {
+            if (!(e instanceof ConnectError) && !(e instanceof require_county().SubmissionError)) throw e;
+            sent.push({ from: p.from, to: p.to, status: "failed", reason: e.reason || e.code || "failed", message: e.message });
+            break;
+          }
+        }
         audit3.log({ user: { username: "system" }, action: "county_submission.auto", details: { host: new URL(c.base_url).host, outstanding: (t.status.outstanding || []).length, sent: sent.length } });
         return { sent };
       } finally {
@@ -33544,11 +33689,11 @@ var require_county_connect2 = __commonJS({
     var CL = require_county_connect_client();
     var { validate } = require_validate();
     var { badRequest, notFound, forbidden, unauthorized, HttpError: HttpError3 } = require_http();
-    var DAY = /^\d{4}-\d{2}-\d{2}$/;
-    var isDay = (s) => typeof s === "string" && DAY.test(s) && Number.isFinite(Date.parse(s)) && new Date(Date.parse(s)).toISOString().slice(0, 10) === s;
+    var K = require_county();
+    var isDay = K.isDay;
     function period(from, to) {
-      if (!isDay(from) || !isDay(to)) throw badRequest("Choose a period: from and to must be dates (YYYY-MM-DD).");
-      if (from > to) throw badRequest(`The start date (${from}) is after the end date (${to}).`);
+      if (!isDay(from) || !isDay(to)) throw badRequest("Choose a period: from and to must be real dates (YYYY-MM-DD).");
+      if (from > to) throw badRequest(`The start date (${K.humanDay(from)}) is after the end date (${K.humanDay(to)}). Choose a start date on or before the end date.`);
       return { from, to };
     }
     function machine(ctx, scope, perToken) {
@@ -33569,7 +33714,7 @@ var require_county_connect2 = __commonJS({
       const t = r.token;
       if (t.scope !== scope) {
         CC.logRefusal({ action: "county_connect.refuse", token: t, ip: ctx.ip, reason: "wrong_scope", details: { path: ctx.path, scope: t.scope } });
-        throw forbidden(scope === CC.SCOPES.read ? "A connection token cannot read the combined view: use a read token." : "A read token cannot send or ask for a programme's status: use the programme's connection token.");
+        throw forbidden(scope === CC.SCOPES.read ? "A connection token cannot read the combined view: use a read token." : "A read token cannot send or ask for a program's status: use the program's connection token.");
       }
       if (!rateLimit(`county-connect-token:${t.id}`, perToken, CC.WINDOW_MS)) throw new HttpError3(429, "Too many requests with this token. Wait ten minutes.");
       CC.touch(t, ctx.ip);
@@ -33588,7 +33733,6 @@ var require_county_connect2 = __commonJS({
       require_app2().bodyLimitFor("/api/county-connect/v1/submissions", CC.pushBodyLimit);
       r.post("/api/county-connect/v1/submissions", async (ctx) => {
         const t = machine(ctx, CC.SCOPES.submit, CC.LIMITS.pushPerToken);
-        const K = require_county();
         const { rateLimit, rateLimited } = require_app2();
         const refusedKey = `county-connect-refused:${t.id}`;
         if (rateLimited(refusedKey, CC.LIMITS.refusedPerToken)) throw new HttpError3(429, "Too many files were refused under this token in the last few minutes. Wait ten minutes, and check the file is the one SUDS made.");
@@ -33597,9 +33741,10 @@ var require_county_connect2 = __commonJS({
         const receivedAt = db3.now();
         try {
           const parsed = K.parseFile(textIn, { today: CC.today(), now: (/* @__PURE__ */ new Date()).toISOString() });
+          const here = CC.countyCode({ user: CC.actor(t), ip: ctx.ip });
           const out2 = db3.transaction(() => {
-            const o = K.importParsed(parsed, null);
-            if (o.programme.id !== t.programme_id) throw new K.SubmissionError("wrong_programme", "The file was not signed with the key the county registered for the programme this token belongs to. Send your own programme's file, with your own token.");
+            const o = K.importParsed(parsed, null, { countyCode: here });
+            if (o.programme.id !== t.programme_id) throw new K.SubmissionError("wrong_programme", "The file was not signed with the key the county registered for the program this token belongs to. Send your own program's file, with your own token.");
             return o;
           });
           const s = out2.submission;
@@ -33616,7 +33761,7 @@ var require_county_connect2 = __commonJS({
             status: out2.status,
             reason: null,
             period: { from: s.period_from, to: s.period_to },
-            message: out2.status === "duplicate" ? `The county already had this file (received ${String(s.received_at).slice(0, 10)}); nothing changed.` : out2.status === "superseded" ? "Imported. It replaces the file the county had for the same period." : out2.status === "older" ? "Kept, but a newer file the county already has for the same period is the one that counts." : "Imported.",
+            message: K.importMessage(out2, { audience: "programme" }),
             receipt: { sha256: s.sha256, received_at: s.received_at }
           };
         } catch (e) {
@@ -33629,7 +33774,7 @@ var require_county_connect2 = __commonJS({
       });
       r.get("/api/county-connect/v1/status", (ctx) => {
         const t = machine(ctx, CC.SCOPES.submit, CC.LIMITS.statusPerToken);
-        const s = CC.statusFor(t);
+        const s = CC.statusFor(t, { user: CC.actor(t), ip: ctx.ip });
         audit3.log({ user: CC.actor(t), action: "county_connect.status", entity: "county_programme", entityId: t.programme_id, ip: ctx.ip, details: { token_id: t.id, outstanding: s.outstanding.length } });
         return s;
       });
@@ -33638,7 +33783,6 @@ var require_county_connect2 = __commonJS({
         const { from, to } = period(ctx.query.get("from") || "", ctx.query.get("to") || "");
         const format = ctx.query.get("format") || "json";
         if (!["json", "tidy-csv"].includes(format)) throw badRequest("format must be json or tidy-csv");
-        const K = require_county();
         const d = K.combined(from, to);
         audit3.log({ user: CC.actor(t), action: "county.api.read", ip: ctx.ip, details: { what: "combined", token_id: t.id, from, to, format, programmes: d.programmes.length, submitted: d.submitted } });
         const notes = {
@@ -33646,7 +33790,7 @@ var require_county_connect2 = __commonJS({
           purpose: "internal",
           classification: "Exact, internal, not for publication: for authorised county staff and systems only.",
           unduplicated: false,
-          not_unduplicated: "People are counted by each programme and summed: a person served by two programmes counts twice. Not unduplicated across programmes.",
+          not_unduplicated: "People are counted by each program and summed: a person served by two programs counts twice. Not unduplicated across programs.",
           caveats: d.caveats,
           rule: d.rule,
           publication_note: d.publication_note
@@ -33668,39 +33812,41 @@ var require_county_connect2 = __commonJS({
           "Content-Disposition": `attachment; filename="suds-county-combined-${from}_${to}-internal-exact.csv"`,
           "X-SUDS-Report-Counts": "exact",
           "X-SUDS-Report-Purpose": "internal",
-          "X-SUDS-Export": "County view: exact aggregate figures from programmes' signed submissions, for authorised county staff; not for publication; summed, not unduplicated. No client-level data."
+          "X-SUDS-Export": "County view: exact aggregate figures from programs' signed submissions, for authorised county staff; not for publication; summed, not unduplicated. No client-level data."
         });
         ctx.res.end(S.toCsv(rows, cols2));
       });
       r.get("/api/county-connect/v1/programs", (ctx) => {
         const t = machine(ctx, CC.SCOPES.read, CC.LIMITS.readPerToken);
-        const K = require_county();
         const progs = db3.all(`SELECT * FROM county_programmes ORDER BY name COLLATE NOCASE, id`);
-        const subs = db3.all(`SELECT programme_id, period_from, period_to, received_at, sha256 FROM county_submissions WHERE superseded_by IS NULL AND withdrawn_at IS NULL ORDER BY period_from, received_at`);
+        const subs = K.countingSubs();
         const rows = progs.map((p) => {
           const out2 = K.programmeOut(p);
-          const mine = subs.filter((s) => s.programme_id === p.id);
+          const mine = K.filesCount(p) ? subs.filter((s) => s.programme_id === p.id) : [];
           return {
             id: p.id,
             name: p.name,
             active: !!p.active,
+            keep_files: !!p.keep_files,
+            files_count: K.filesCount(p),
             fingerprint: out2.fingerprint,
             fingerprint_display: out2.fingerprint_display,
+            keys: out2.keys.map((k) => ({ fingerprint: k.fingerprint, added_at: k.added_at, replaced_at: k.replaced_at, compromised_at: k.compromised_at, current: k.current })),
             last_received: mine.reduce((m, s) => s.received_at > m ? s.received_at : m, "") || null,
-            periods: mine.map((s) => ({ from: s.period_from, to: s.period_to, received_at: s.received_at, sha256: s.sha256 }))
+            periods: mine.map((s) => ({ from: s.period_from, to: s.period_to, generated_at: s.generated_at, received_at: s.received_at, sha256: s.sha256, key_fingerprint: s.key_fingerprint }))
           };
         });
         audit3.log({ user: CC.actor(t), action: "county.api.read", ip: ctx.ip, details: { what: "programs", token_id: t.id, programmes: rows.length } });
         return { rows, notes: { classification: "Internal: for authorised county staff and systems only." } };
       });
-      r.get("/api/county-connect/settings", auth3.requireAuth, auth3.requirePerm("county:view"), () => CC.settings());
+      r.get("/api/county-connect/settings", auth3.requireAuth, auth3.requirePerm("county:view"), (ctx) => CC.settings({ user: ctx.user, ip: ctx.ip }));
       r.put("/api/county-connect/settings", auth3.requireAuth, auth3.requirePerm("county:manage"), auth3.requirePerm("settings:manage"), (ctx) => {
         const v = validate(ctx.body, { enabled: { type: "boolean" }, cadence: { type: "string", enum: Object.keys(CC.CADENCES) }, start: { type: "string", maxLen: 10 } }, { partial: true });
         if (v.start && !isDay(v.start)) throw badRequest("The first period expected must start on a date (YYYY-MM-DD).", { fields: { start: "must be a date" } });
         const was = CC.enabled();
         const changed = CC.saveSettings({ enabled: v.enabled === void 0 || v.enabled === null ? void 0 : !!v.enabled, cadence: v.cadence, start: ctx.body && "start" in ctx.body ? v.start || null : void 0 });
         audit3.log({ user: ctx.user, action: "county_connect.settings", ip: ctx.ip, details: { changed, enabled: CC.enabled(), was_enabled: was, cadence: CC.cadence() } });
-        return CC.settings();
+        return CC.settings({ user: ctx.user, ip: ctx.ip });
       });
       r.get("/api/county-connect/tokens", auth3.requireAuth, auth3.requirePerm("county:manage"), (ctx) => {
         const rows = CC.listTokens();
@@ -33755,15 +33901,14 @@ var require_county_connect2 = __commonJS({
         return { ...out2, connection: CL.describe() };
       });
       r.post("/api/county-connect/send", auth3.requireAuth, auth3.requirePerm("reports:funder"), auth3.requirePerm("budget:read"), auth3.requirePerm("export:read"), async (ctx) => {
-        const v = validate(ctx.body, { from: { type: "string", required: true, maxLen: 10 }, to: { type: "string", required: true, maxLen: 10 } });
+        const v = validate(ctx.body, { from: { type: "string", required: true, maxLen: 10 }, to: { type: "string", required: true, maxLen: 10 }, county_code: { type: "string", maxLen: 20 }, county_name: { type: "string", maxLen: 400 } });
         const funds = Array.isArray(ctx.body.funds) ? ctx.body.funds.slice(0, 201) : void 0;
         if (funds && (funds.length > 200 || funds.some((x) => typeof x !== "string" || x.length > 64))) throw badRequest("funds must be a list of fund ids.");
         const { from, to } = period(v.from, v.to);
         if (to >= CC.today()) throw badRequest(`The period is not over yet (it ends ${to}). A county file reports a period that has ended.`);
         if (!CL.describe().connected) throw badRequest("This server is not connected to a county. An administrator saves the county's address and token under Send to the county \u203A Connect to the county.");
-        const K = require_county();
         try {
-          return await CL.send({ from, to, user: ctx.user, ip: ctx.ip, funds });
+          return await CL.send({ from, to, user: ctx.user, ip: ctx.ip, funds, countyCode: v.county_code || null, countyName: v.county_name || null });
         } catch (e) {
           if (e instanceof K.SubmissionError) throw badRequest(`The county file could not be made: ${e.message}`);
           if (e instanceof CL.ConnectError) throw badRequest(e.message);
@@ -33994,11 +34139,10 @@ var require_county2 = __commonJS({
           const out2 = K.importParsed(parsed, ctx.user, { countyCode: code(ctx) });
           const s = out2.submission;
           const who = out2.programme.name;
-          const period = K.humanPeriod(s.period_from, s.period_to);
           const action = out2.status === "duplicate" ? "county.submission.duplicate" : "county.submission.import";
           audit3.log({ user: ctx.user, action, entity: "county_submission", entityId: s.id, ip: ctx.ip, details: { programme_id: out2.programme.id, fingerprint: parsed.fingerprint, from: s.period_from, to: s.period_to, sha256: s.sha256, status: out2.status, superseded: out2.replaced || void 0 } });
           ctx.status = out2.status === "duplicate" ? 200 : 201;
-          const said = out2.status === "duplicate" ? s.status === "withdrawn" ? `This file was already imported on ${K.humanDay(s.received_at)} and withdrawn on ${K.humanDay(s.withdrawn_at)}; nothing changed. To count it again, Reinstate it under Files received.` : `This file was already imported on ${K.humanDay(s.received_at)}; nothing changed.` : out2.status === "superseded" ? `Imported ${who}'s submission for ${period}. It replaces the one made earlier for the same period, which is kept but no longer counts.` : out2.status === "older" ? `Imported ${who}'s submission for ${period}, but it does not count: it was made on ${K.humanDay(s.generated_at)}, before the one that counts for that period (made on ${K.humanDay(out2.counting.generated_at)}). It is kept as replaced. If the older file is the right one, withdraw the newer one.` : `Imported ${who}'s submission for ${period}.`;
+          const said = K.importMessage(out2);
           return { status: out2.status, message: said, submission: { ...s, programme: who }, replaced: out2.replaced, counting: out2.counting };
         } catch (e) {
           if (!(e instanceof K.SubmissionError)) throw e;

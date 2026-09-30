@@ -17,7 +17,7 @@ const config = require('../server/config');
 const outbound = require('../server/outbound');
 
 let base; let admin; let fin; let sup; let nav;
-let samples; let progA; let progB; let own; let fund;
+let samples; let progA; let progB; let own; let fund; let COUNTY;
 const Q1 = { from: '2026-01-01', to: '2026-03-31' }; const Q2 = { from: '2026-04-01', to: '2026-06-30' };
 const lastAudit = (action) => { const a = H.db.one(`SELECT * FROM audit_log WHERE action=? ORDER BY id DESC LIMIT 1`, action); return a ? { ...a, details: a.details ? JSON.parse(a.details) : null } : null; };
 const auditCount = (action) => H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action=?`, action).n;
@@ -42,12 +42,18 @@ before(async () => {
   fin = H.client(); await fin.login('ccfin', 'StaffPassw0rd!x');
   sup = H.client(); await sup.login('ccsup', 'StaffPassw0rd!x');
   nav = H.client(); await nav.login('ccnav', 'StaffPassw0rd!x');
-  samples = SAMPLE.sample({ periods: [Q1, Q2] });
-  progA = ok(await admin.post('/api/county/programmes', { name: samples[0].name, public_key: samples[0].public_key }));
-  progB = ok(await admin.post('/api/county/programmes', { name: samples[1].name, public_key: samples[1].public_key }));
+  // The sample programmes' files are made for this server's own county code (county.js countyCode), as a real
+  // programme's are for the code its county gave it; the county refuses a file made for another county.
+  const code = ok(await admin.get('/api/county/code'), 200);
+  COUNTY = { county_code: code.code, county_name: 'Connected Test County' };
+  samples = SAMPLE.sample({ periods: [Q1, Q2], recipient: COUNTY });
+  // Registered as the county view's register route requires (fix/county-view-r1): the fingerprint the programme read
+  // out typed (and checked against the key), or the person's word that they compared it.
+  progA = ok(await admin.post('/api/county/programmes', { name: samples[0].name, public_key: samples[0].public_key, fingerprint: samples[0].fingerprint_display }));
+  progB = ok(await admin.post('/api/county/programmes', { name: samples[1].name, public_key: samples[1].public_key, compared: true }));
   // This server's own county signing key, registered as a programme: the end-to-end test sends its own file.
   const key = (await admin.post('/api/county-submission/key', {})).data.key;
-  own = ok(await admin.post('/api/county/programmes', { name: 'Connected Test Programme', public_key: key.public_key }));
+  own = ok(await admin.post('/api/county/programmes', { name: 'Connected Test Programme', public_key: key.public_key, fingerprint: key.fingerprint }));
   // Some settlement work in Q2, so the file sent end to end has figures in it.
   fund = ok(await admin.post('/api/budget/funds', { name: 'Connected settlement share', grant_number: 'OSF-CC-1', source_type: 'opioid_settlement', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 50000, settlement_use: 'core_a', settlement_hiaa: 'hiaa_6' })).id;
   const e = ok(await admin.post('/api/budget/expenditures', { funding_source_id: fund, spent_at: '2026-05-05', amount: 777.25, category: 'naloxone_supplies' })).id;
@@ -141,6 +147,26 @@ test('push: the programme\'s own file under its own token is imported, with a re
   // A body sent as text rather than JSON is read the same way.
   const t2 = await bearer('POST', '/api/county-connect/v1/submissions', t.token, JSON.stringify(samples[0].files[1].file), { contentType: 'text/plain' });
   assert.equal(t2.status, 201, JSON.stringify(t2.data)); assert.equal(t2.data.status, 'imported');
+  assert.equal(t2.data.message, K.importMessage({ status: 'imported', programme: { name: samples[0].name }, submission: { period_from: Q2.from, period_to: Q2.to } }), 'county.js\'s own words');
+  // A file made before the one the county has for the period is kept, and does not count (county.js: the one made
+  // last counts, whatever order they arrive in); the programme is told so in the county view's words.
+  const earlier = K.signWithSeed(SAMPLE.payloadFor(SAMPLE.PROGRAMMES[0], Q1, 1.5, { recipient: COUNTY, generatedAt: `${Q1.to}T12:00:00.000Z` }), samples[0].seed);
+  const old = await bearer('POST', '/api/county-connect/v1/submissions', t.token, JSON.stringify(earlier.file));
+  assert.equal(old.status, 201, JSON.stringify(old.data)); assert.equal(old.data.status, 'older'); assert.equal(old.data.reason, null);
+  assert.match(old.data.message, /does not count/); assert.doesNotMatch(old.data.message, /withdraw/, 'the county\'s own advice is for the county');
+  assert.equal(K.countingSubs(progA.id).find(x => x.period_from === Q1.from).sha256, f.sha256, 'the later-made file still counts');
+});
+
+test('push: county.js\'s refusals pass through with their reasons: a file for another county, an unknown key', async () => {
+  const t = ok(await issue(admin, { scope: 'county.submit', programme_id: progA.id }));
+  const other = SAMPLE.sample({ periods: [Q1], recipient: SAMPLE.SAMPLE_COUNTY })[0].files[0];
+  const r = await bearer('POST', '/api/county-connect/v1/submissions', t.token, JSON.stringify(other.file));
+  assert.equal(r.status, 422); assert.equal(r.data.status, 'refused'); assert.equal(r.data.reason, 'recipient');
+  assert.match(r.data.message, new RegExp(`This county's code is ${K.formatCode(COUNTY.county_code)}`));
+  const stranger = K.signWithSeed(SAMPLE.payloadFor(SAMPLE.PROGRAMMES[2], Q1, 1, { recipient: COUNTY }), crypto.randomBytes(32));
+  const u = await bearer('POST', '/api/county-connect/v1/submissions', t.token, JSON.stringify(stranger.file));
+  assert.equal(u.status, 422); assert.equal(u.data.reason, 'unknown_key');
+  assert.equal(lastAudit('county.submission.refuse').details.reason, 'unknown_key');
 });
 
 test('push: a file signed by another programme is refused under this token, and nothing is kept', async () => {
@@ -246,6 +272,8 @@ test('status: what the county expects of this programme, and only this programme
   assert.equal(r.status, 200);
   assert.equal(r.headers.get('cache-control'), 'no-store');
   assert.equal(r.data.programme.id, progA.id); assert.equal(r.data.cadence, 'quarterly_calendar');
+  assert.equal(r.data.county.code, COUNTY.county_code, 'the county code a programme\'s file must name (county.js countyCode)');
+  assert.match(r.data.county.code, /^[0-9A-HJKMNP-TV-Z]{8}$/);
   assert.deepEqual(r.data.expected.map(p => [p.from, p.to]), CC.expectedPeriods().map(p => [p.from, p.to]));
   const q1 = r.data.expected.find(p => p.from === Q1.from); assert.ok(q1 && q1.received, 'A\'s Q1 file was received');
   assert.ok(r.data.outstanding.every(p => !r.data.received.some(x => x.from === p.from && x.to === p.to && x.status === 'current')));
@@ -260,16 +288,23 @@ test('status: what the county expects of this programme, and only this programme
   assert.equal(m.expected.length, 12); assert.ok(m.expected.every(p => p.from.endsWith('-01')));
   ok(await admin.put('/api/county-connect/settings', { cadence: 'quarterly_fiscal', start: Q1.from }), 200);
   const f = (await bearer('GET', '/api/county-connect/v1/status', t.token)).data;
-  assert.ok(f.expected.every(p => p.from >= Q1.from)); assert.ok(f.expected.some(p => /^FY 2025–26 Q[34]$/.test(p.label)), JSON.stringify(f.expected));
+  assert.ok(f.expected.every(p => p.from >= Q1.from)); assert.ok(f.expected.some(p => /^FY 2025-26 Q[34] \((Jan – Mar|Apr – Jun) 2026\)$/.test(p.label)), JSON.stringify(f.expected));
   ok(await admin.put('/api/county-connect/settings', { cadence: 'quarterly_calendar', start: null }), 200);
 });
 
-test('the period arithmetic: calendar and fiscal quarters, months, and a start date', () => {
-  assert.deepEqual(CC.expectedPeriods('quarterly_calendar', '2026-09-30', null).map(p => `${p.from}/${p.to}/${p.label}`),
-    ['2025-07-01/2025-09-30/2025 Q3', '2025-10-01/2025-12-31/2025 Q4', '2026-01-01/2026-03-31/2026 Q1', '2026-04-01/2026-06-30/2026 Q2']);
-  assert.deepEqual(CC.expectedPeriods('quarterly_fiscal', '2026-10-01', null).map(p => p.label), ['FY 2025–26 Q2', 'FY 2025–26 Q3', 'FY 2025–26 Q4', 'FY 2026–27 Q1']);
+test('the period arithmetic: calendar and fiscal quarters, months, and a start date, named as the county view names them', () => {
+  const cal = CC.expectedPeriods('quarterly_calendar', '2026-09-30', null);
+  assert.deepEqual(cal.map(p => `${p.from}/${p.to}/${p.label}`),
+    ['2025-07-01/2025-09-30/Jul – Sep 2025 (calendar Q3 2025 · FY 2025-26 Q1)', '2025-10-01/2025-12-31/Oct – Dec 2025 (calendar Q4 2025 · FY 2025-26 Q2)',
+      '2026-01-01/2026-03-31/Jan – Mar 2026 (calendar Q1 2026 · FY 2025-26 Q3)', '2026-04-01/2026-06-30/Apr – Jun 2026 (calendar Q2 2026 · FY 2025-26 Q4)']);
+  // Word for word what the Send to the county card offers for the same quarters (county-periods.js submissionPeriods).
+  const card = require('../server/county-periods').submissionPeriods('2026-09-30');
+  for (const p of cal) assert.equal(card.find(x => x.from === p.from && x.to === p.to).label, p.label);
+  assert.deepEqual(CC.expectedPeriods('quarterly_fiscal', '2026-10-01', null).map(p => p.label), ['FY 2025-26 Q2 (Oct – Dec 2025)', 'FY 2025-26 Q3 (Jan – Mar 2026)', 'FY 2025-26 Q4 (Apr – Jun 2026)', 'FY 2026-27 Q1 (Jul – Sep 2026)']);
   const months = CC.expectedPeriods('monthly', '2026-03-15', '2025-12-01');
   assert.deepEqual(months.map(p => p.from), ['2025-12-01', '2026-01-01', '2026-02-01']); assert.equal(months[2].to, '2026-02-28');
+  assert.deepEqual(months.map(p => p.label), ['Dec 2025', 'Jan 2026', 'Feb 2026']);
+  assert.equal(CC.expectedPeriods('monthly', '2026-03-15', null).length, 12);
 });
 
 // ---------------------------------------------------------------- the read API
@@ -297,6 +332,33 @@ test('read API: the combined view with its notes, as JSON or tidy CSV, and the p
   assert.equal(a1.fingerprint, samples[0].fingerprint); assert.ok(a1.periods.some(x => x.from === Q1.from)); assert.ok(a1.last_received);
   assert.ok(!JSON.stringify(p.data).includes('PRIVATE') && !JSON.stringify(p.data).includes('BEGIN PUBLIC KEY'));
   assert.equal(lastAudit('county.api.read').details.what, 'programs');
+  // B makes a new key and says the old one was compromised (county view › Keys): /v1/programs gives the current
+  // key's fingerprint and the history, and B's old files stop counting there, in the combined view and in B's status,
+  // by the county view's own rule. A file its old key signed that the county does not have yet is refused.
+  const tB = ok(await issue(admin, { scope: 'county.submit', programme_id: progB.id }));
+  assert.ok((await bearer('GET', '/api/county-connect/v1/status', tB.token)).data.expected.find(x => x.from === Q1.from).received, 'B\'s Q1 file counts');
+  const fresh = crypto.generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' });
+  ok(await admin.post(`/api/county/programmes/${progB.id}/keys`, { public_key: fresh, compared: true, old_compromised: true }));
+  const p2 = (await bearer('GET', '/api/county-connect/v1/programs', rt.token)).data.rows.find(x => x.id === progB.id);
+  assert.equal(p2.fingerprint, K.fingerprintOf(fresh)); assert.equal(p2.keys.length, 2);
+  assert.deepEqual(p2.keys.map(k => [k.current, !!k.compromised_at, k.fingerprint]), [[true, false, K.fingerprintOf(fresh)], [false, true, samples[1].fingerprint]]);
+  assert.deepEqual(p2.periods, [], 'files a compromised key signed do not count');
+  const c2 = (await bearer('GET', `/api/county-connect/v1/combined?from=${Q1.from}&to=${Q1.to}`, rt.token)).data;
+  assert.equal(c2.programmes.find(x => x.id === progB.id).status, 'none');
+  const sB = (await bearer('GET', '/api/county-connect/v1/status', tB.token)).data;
+  assert.equal(sB.expected.find(x => x.from === Q1.from).received, false);
+  assert.ok(sB.received.length && sB.received.every(x => x.status === 'key_compromised'), JSON.stringify(sB.received));
+  const retired = await bearer('POST', '/api/county-connect/v1/submissions', tB.token, JSON.stringify(samples[1].files[1].file));
+  assert.equal(retired.status, 422); assert.equal(retired.data.reason, 'retired_key');
+  // A's withdrawn file stops counting the same way.
+  const tA = ok(await issue(admin, { scope: 'county.submit', programme_id: progA.id }));
+  const aQ2 = H.db.one(`SELECT id FROM county_submissions WHERE programme_id=? AND period_from=? AND superseded_by IS NULL AND withdrawn_at IS NULL`, progA.id, Q2.from);
+  ok(await admin.post(`/api/county/submissions/${aQ2.id}/withdraw`, { reason: 'Sent in error' }), 200);
+  const sA = (await bearer('GET', '/api/county-connect/v1/status', tA.token)).data;
+  assert.equal(sA.expected.find(x => x.from === Q2.from).received, false);
+  assert.equal(sA.received.find(x => x.from === Q2.from && x.status === 'withdrawn').from, Q2.from);
+  ok(await admin.post(`/api/county/submissions/${aQ2.id}/reinstate`, {}), 200);
+  assert.equal((await bearer('GET', '/api/county-connect/v1/status', tA.token)).data.expected.find(x => x.from === Q2.from).received, true);
 });
 
 // ---------------------------------------------------------------- the programme's side
@@ -381,9 +443,21 @@ test('outbound over this machine: a 307 from the county is not followed, and a c
     const r = ok(await admin.post('/api/county-connect/connection/test', {}), 200);
     assert.equal(r.ok, false); assert.equal(r.reason, 'redirect'); assert.match(r.error, /redirect/);
     assert.equal(redirecting.hits.length, 1); assert.equal(target.hits.length, 0, 'the redirect was not followed');
-    const s = ok(await fin.post('/api/county-connect/send', Q2), 200);
-    assert.equal(s.status, 'failed'); assert.equal(s.reason, 'redirect'); assert.equal(target.hits.length, 0);
+    // Send asks the county for its county code first (the file must name it): refused at that step, and never followed.
+    const s = await fin.post('/api/county-connect/send', { ...Q2, funds: [fund] });
+    assert.equal(s.status, 400); assert.match(s.data.error, /county code.*redirect/s); assert.equal(target.hits.length, 0);
   } finally { await redirecting.close(); await target.close(); }
+  // A county whose status names no county code: nothing is sent, and the programme is told why.
+  const noCode = await fakeCounty((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ county: { code: null, name: 'Old County' }, programme: { id: own.id, name: 'x', active: true }, cadence: 'quarterly_calendar', expected: [], outstanding: [], received: [] }));
+  });
+  try {
+    ok(await admin.put('/api/county-connect/connection', { base_url: noCode.url }), 200);
+    const s = await fin.post('/api/county-connect/send', { ...Q2, funds: [fund] });
+    assert.equal(s.status, 400); assert.match(s.data.error, /did not say its county code/);
+    assert.ok(noCode.hits.every(h => h === '/api/county-connect/v1/status'), 'no file was posted');
+  } finally { await noCode.close(); }
   const silent = await fakeCounty(() => { /* never answers */ });
   CL._setTimeoutForTests(300);
   try {
@@ -410,21 +484,33 @@ test('end to end: this programme\'s server sends its real signed file to the cou
     // Only whoever may make the county file may send it.
     assert.equal((await nav.post('/api/county-connect/send', Q2)).status, 403);
     assert.equal((await fin.post('/api/county-connect/send', { from: Q2.from, to: '2099-01-01' })).status, 400, 'a period that has not ended');
-    // The funds that go in: settlement funds only (as the file route checks), remembered per county code.
+    assert.equal(t.status.county.code, COUNTY.county_code);
+    // The funds that go in: settlement funds only (as the file route checks); none chosen and none remembered for
+    // this county is refused, never "every fund".
     assert.equal((await fin.post('/api/county-connect/send', { ...Q2, funds: [fund, 'not-a-fund'] })).status, 400, 'a fund that is not a settlement fund here');
-    const s = ok(await fin.post('/api/county-connect/send', { ...Q2, funds: [fund] }), 200);
+    const none = await fin.post('/api/county-connect/send', Q2);
+    assert.equal(none.status, 400); assert.match(none.data.error, /settlement funds this county pays for/);
+    // The Send to the county card's choices: a county code that is not the connected county's is refused.
+    const wrong = await fin.post('/api/county-connect/send', { ...Q2, funds: [fund], county_code: 'SAMP-1E00', county_name: 'Elsewhere' });
+    assert.equal(wrong.status, 400); assert.match(wrong.data.error, /not the code of the county this server is connected to/);
+    const card = { county_code: K.formatCode(COUNTY.county_code).toLowerCase(), county_name: 'Connected Test County' };
+    const s = ok(await fin.post('/api/county-connect/send', { ...Q2, funds: [fund], ...card }), 200);
     assert.equal(s.status, 'imported', JSON.stringify(s));
-    // The same file the download route makes (the same payload hash).
-    const dl = await fin.get(`/api/county-submission/file?from=${Q2.from}&to=${Q2.to}`);
+    // The same file the card's download makes for the same choices (the same payload but for generated_at).
+    const dl = await fin.get(`/api/county-submission/file?from=${Q2.from}&to=${Q2.to}&county_code=${card.county_code}&county_name=${encodeURIComponent(card.county_name)}&funds=${fund}`);
+    assert.equal(dl.status, 200, JSON.stringify(dl.data));
     const dlFile = typeof dl.data === 'string' ? JSON.parse(dl.data) : dl.data;
-    // generated_at differs between the two; everything else is the same.
     const sent = H.db.one(`SELECT * FROM county_submissions WHERE sha256=?`, s.receipt.sha256);
     assert.ok(sent, 'the county has it'); assert.equal(sent.programme_id, own.id);
     const sentPayload = JSON.parse(require('../server/crypto').decrypt(sent.payload_enc));
+    assert.deepEqual(sentPayload.recipient, COUNTY);
     assert.deepEqual({ ...sentPayload, generated_at: null }, { ...dlFile.payload, generated_at: null });
+    // Both remember the county's name and funds for the card (county_submission_recipients), keyed by its code.
+    assert.deepEqual(JSON.parse(H.db.getSetting('county_submission_recipients'))[COUNTY.county_code].fund_ids, [fund]);
     assert.equal(s.send.status, 'imported'); assert.equal(s.send.sha256, s.receipt.sha256); assert.equal(s.send.automatic, false);
     const audit = lastAudit('county_submission.send');
     assert.equal(audit.details.status, 'imported'); assert.equal(audit.details.leaves_programme, true); assert.equal(audit.details.sha256, s.receipt.sha256);
+    assert.equal(audit.details.county_code, COUNTY.county_code);
     assert.ok(!/naloxone|values|777/.test(JSON.stringify(audit.details)), 'no figures in the audit');
     // The county's combined view counts it.
     const rt = ok(await issue(admin, { scope: 'county.read', name: 'E2E' }));
@@ -432,7 +518,7 @@ test('end to end: this programme\'s server sends its real signed file to the cou
     const col = comb.programmes.find(p => p.id === own.id);
     assert.equal(col.status, 'whole');
     assert.equal(comb.rows.find(x => x.key === 'spend_approved').by[own.id], 777.25);
-    // The send log, and sending again is a duplicate at the county.
+    // The send log, and sending again (the remembered funds, the county's own name) is a duplicate or a newer file.
     const again = ok(await fin.post('/api/county-connect/send', Q2), 200);
     assert.ok(['duplicate', 'superseded'].includes(again.status), again.status);
     const log = ok(await fin.get('/api/county-connect/connection'), 200).sends;

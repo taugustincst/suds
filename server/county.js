@@ -435,6 +435,22 @@ function importParsed(parsed, user, { countyCode: here } = {}) {
 }
 
 /**
+ * What an import did, in words: for the county's person who imported the file (routes/county.js), or for the
+ * programme whose server sent it over the county connection (routes/county-connect.js). `out` is importParsed's.
+ */
+function importMessage(out, { audience = 'county' } = {}) {
+  const s = out.submission; const who = out.programme.name; const period = humanPeriod(s.period_from, s.period_to);
+  if (out.status === 'duplicate') {
+    if (s.status !== 'withdrawn') return `This file was already imported on ${humanDay(s.received_at)}; nothing changed.`;
+    return audience === 'county' ? `This file was already imported on ${humanDay(s.received_at)} and withdrawn on ${humanDay(s.withdrawn_at)}; nothing changed. To count it again, Reinstate it under Files received.`
+      : `The county already had this file (imported on ${humanDay(s.received_at)}) and withdrew it on ${humanDay(s.withdrawn_at)}; nothing changed. Ask the county whether it should count.`;
+  }
+  if (out.status === 'superseded') return `Imported ${who}'s submission for ${period}. It replaces the one made earlier for the same period, which is kept but no longer counts.`;
+  if (out.status === 'older') return `Imported ${who}'s submission for ${period}, but it does not count: it was made on ${humanDay(s.generated_at)}, before the one that counts for that period (made on ${humanDay(out.counting.generated_at)}). It is kept as replaced.${audience === 'county' ? ' If the older file is the right one, withdraw the newer one.' : ''}`;
+  return `Imported ${who}'s submission for ${period}.`;
+}
+
+/**
  * Withdraw a file: it is kept, counts for nothing, and whatever it had replaced for the same period counts
  * again (resettle). A file that was itself replaced does not count already, so it cannot be withdrawn (withdraw
  * the one that replaced it). Returns { submission, restored } (restored: the file that counts again, or null).
@@ -508,6 +524,27 @@ function choose(subs, from, to) {
   used.sort((a, b) => a.period_from.localeCompare(b.period_from));
   return { used, overlapped, outside };
 }
+/**
+ * The submissions that can count (SUBS): not replaced, not withdrawn, and not signed by a key marked compromised;
+ * one programme's, or every programme's. What the combined view adds up, and what the county connection tells a
+ * programme it has received (server/county-connect.js statusFor): one rule for both.
+ */
+function countingSubs(programmeId = null) {
+  const where = 's.superseded_by IS NULL AND s.withdrawn_at IS NULL AND k.compromised_at IS NULL';
+  return programmeId ? db.all(`${SUBS} WHERE s.programme_id=? AND ${where} ORDER BY s.period_from, s.received_at`, programmeId)
+    : db.all(`${SUBS} WHERE ${where} ORDER BY s.period_from, s.received_at`);
+}
+/** Whether a programme's files count at all: it is active, or inactive and the county keeps counting its files. */
+const filesCount = (p) => !!p.active || !!p.keep_files;
+/**
+ * How one programme's counting submissions cover [from, to] (choose()): the files used, those left out, the days
+ * they cover, and the status: 'whole' (every day of the period), 'part' or 'none'.
+ */
+function coverage(subs, from, to) {
+  const c = choose(subs, from, to);
+  const covered = c.used.reduce((n, s) => n + daysIn(s.period_from, s.period_to), 0);
+  return { ...c, days_covered: covered, status: !c.used.length ? 'none' : covered >= daysIn(from, to) ? 'whole' : 'part' };
+}
 
 /**
  * How each measure is labelled on the county view and in its files. A count of people is each program's own
@@ -537,14 +574,14 @@ const HIAA_ROWS = () => [...C.SETTLEMENT_HIAA.map(x => ({ code: x.code, label: x
  */
 function combined(from, to) {
   const programmes = db.all(`SELECT * FROM county_programmes ORDER BY name COLLATE NOCASE, id`);
-  const subs = db.all(`${SUBS} WHERE s.superseded_by IS NULL AND s.withdrawn_at IS NULL AND k.compromised_at IS NULL ORDER BY s.period_from, s.received_at`);
+  const subs = countingSubs();
   const byProg = new Map(programmes.map(p => [p.id, []]));
   for (const s of subs) if (byProg.has(s.programme_id)) byProg.get(s.programme_id).push(s);
   const period = daysIn(from, to);
   const cols = []; const inactiveLeftOut = [];
   for (const p of programmes) {
-    const { used, overlapped, outside } = choose(byProg.get(p.id), from, to);
-    if (!p.active && !p.keep_files) { if (used.length) inactiveLeftOut.push({ id: p.id, name: p.name, files: used.length }); continue; }
+    const { used, overlapped, outside, days_covered: covered, status } = coverage(byProg.get(p.id), from, to);
+    if (!filesCount(p)) { if (used.length) inactiveLeftOut.push({ id: p.id, name: p.name, files: used.length }); continue; }
     if (!p.active && !used.length) continue;
     const agg = { spend_approved: 0, spend_pending: 0, use: {}, hiaa: {}, values: Object.fromEntries(VALUE_KEYS.map(k => [k, 0])) };
     for (const s of used) {
@@ -554,10 +591,9 @@ function combined(from, to) {
       for (const c of pl.categories) agg.use[c.key] = (agg.use[c.key] || 0) + c.spend_own_category;
       for (const f of pl.funds) { const h = f.hiaa || 'none'; agg.hiaa[h] = (agg.hiaa[h] || 0) + f.spend.approved; }
     }
-    const covered = used.reduce((n, s) => n + daysIn(s.period_from, s.period_to), 0);
     cols.push({
       id: p.id, name: p.name, active: !!p.active, keep_files: !!p.keep_files,
-      status: !used.length ? 'none' : covered >= period ? 'whole' : 'part', days_covered: covered, days_in_period: period,
+      status, days_covered: covered, days_in_period: period,
       submissions: used.map(summary), left_out: [...overlapped.map(s => ({ ...summary(s), why: 'overlaps' })), ...outside.filter(s => s.period_from <= to && s.period_to >= from).map(s => ({ ...summary(s), why: 'outside' }))],
       agg: used.length ? agg : null,
     });
@@ -624,7 +660,7 @@ const PUBLICATION_NOTE = 'Publishing these figures needs the publication screen 
 
 module.exports = {
   FORMAT, SCHEMA_VERSION, ALGORITHM, MAX_FILE_BYTES, MAX_QUARTERS, VALUE_KEYS, PAYLOAD, TEXT_MAX, CAVEATS, CAVEAT_SUMMARY, PERIOD_RULE, PUBLICATION_NOTE, SubmissionError,
-  canonical, cleanText, fingerprintOf, formatFingerprint, normaliseFingerprint, parsePublicKey, normaliseCode, formatCode, countyCode,
+  SUBS, canonical, cleanText, fingerprintOf, formatFingerprint, normaliseFingerprint, parsePublicKey, normaliseCode, formatCode, countyCode,
   currentKey, retiredKeys, ensureKey, rotateKey, payloadFrom, signFile, signWithSeed, checkPayload, parseFile, importParsed, withdraw, reinstate, resettle, resettleProgramme,
-  summary, programmeOut, programmeKeys, choose, combined, byQuarter, headline, measureLabel, quartersIn, daysIn, isDay, isInstant, humanDay, humanPeriod, slug,
+  importMessage, countingSubs, filesCount, coverage, summary, programmeOut, programmeKeys, choose, combined, byQuarter, headline, measureLabel, quartersIn, daysIn, isDay, isInstant, humanDay, humanPeriod, slug,
 };

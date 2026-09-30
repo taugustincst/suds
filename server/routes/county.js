@@ -226,15 +226,11 @@ module.exports = (r) => {
     try {
       const parsed = K.parseFile(textIn, { today: today(), now: db.now() });
       const out = K.importParsed(parsed, ctx.user, { countyCode: code(ctx) });
-      const s = out.submission; const who = out.programme.name; const period = K.humanPeriod(s.period_from, s.period_to);
+      const s = out.submission; const who = out.programme.name;
       const action = out.status === 'duplicate' ? 'county.submission.duplicate' : 'county.submission.import';
       audit.log({ user: ctx.user, action, entity: 'county_submission', entityId: s.id, ip: ctx.ip, details: { programme_id: out.programme.id, fingerprint: parsed.fingerprint, from: s.period_from, to: s.period_to, sha256: s.sha256, status: out.status, superseded: out.replaced || undefined } });
       ctx.status = out.status === 'duplicate' ? 200 : 201;
-      const said = out.status === 'duplicate'
-        ? (s.status === 'withdrawn' ? `This file was already imported on ${K.humanDay(s.received_at)} and withdrawn on ${K.humanDay(s.withdrawn_at)}; nothing changed. To count it again, Reinstate it under Files received.` : `This file was already imported on ${K.humanDay(s.received_at)}; nothing changed.`)
-        : out.status === 'superseded' ? `Imported ${who}'s submission for ${period}. It replaces the one made earlier for the same period, which is kept but no longer counts.`
-          : out.status === 'older' ? `Imported ${who}'s submission for ${period}, but it does not count: it was made on ${K.humanDay(s.generated_at)}, before the one that counts for that period (made on ${K.humanDay(out.counting.generated_at)}). It is kept as replaced. If the older file is the right one, withdraw the newer one.`
-            : `Imported ${who}'s submission for ${period}.`;
+      const said = K.importMessage(out);
       return { status: out.status, message: said, submission: { ...s, programme: who }, replaced: out.replaced, counting: out.counting };
     } catch (e) {
       if (!(e instanceof K.SubmissionError)) throw e;
