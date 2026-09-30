@@ -1,6 +1,6 @@
 'use strict';
 // The county connection (server/county-connect.js, server/county-connect-client.js; docs/COUNTY-VIEW.md,
-// "Connecting"). Built for 1.18.0, not yet released. Office server only (LOCAL_ROUTE_MODULES in server/app.js).
+// "Connecting"). Released in 1.18.0. Office server only (LOCAL_ROUTE_MODULES in server/app.js).
 //
 //   The county's machine routes: a bearer token, never a session, and 404 while the county has not switched the
 //   connection on (county_connect_enabled):

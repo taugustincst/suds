@@ -1,6 +1,6 @@
 # The outcomes dataset and the referral network: design and legal analysis
 
-**Status: a design, with Tier 1 built for 1.18.0, not yet released.** The county view — county aggregates from
+**Status: a design, with Tier 1 released in 1.18.0.** The county view — county aggregates from
 exact, signed submissions — is built ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)); Tiers 2 and 3 and the referral
 network beyond the one-time links are not. This document describes how two of the moats in
 [STRATEGY.md](STRATEGY.md) could work: a de-identified outcomes and benchmarking dataset across organisations,
@@ -91,13 +91,13 @@ people reached, naloxone distributed, reversals, referrals closed. The county se
 one place. **Nothing is published by this tier.** Anything the county publishes from it goes through the
 publication screen, audited over the combined release.
 
-*Built for 1.18.0, not yet released: [docs/COUNTY-VIEW.md](../COUNTY-VIEW.md).* The CBO makes a **county submission
+*Released in 1.18.0: [docs/COUNTY-VIEW.md](../COUNTY-VIEW.md).* The CBO makes a **county submission
 file** from its Settlement outcomes page (the page's own exact figures by settlement fund, allowable use and in
 total; an allow-list of aggregate fields, no identifiers), signed with an Ed25519 key of its office server. The
 county registers each CBO's public key, exchanged out of band with a fingerprint read out, imports the signed
 files on its own SUDS server and sees them per programme and summed, labelled internal and exact, "people served
 per programme, summed" and never unduplicated. By default the file is the transport and there is no link between
-servers. Tier 1 now also has an **API** (built for 1.18.0, not yet released; COUNTY-VIEW *Connecting*): an optional
+servers. Tier 1 now also has an **API** (released in 1.18.0; COUNTY-VIEW *Connecting*): an optional
 county connection, **off by default**, over which a CBO's server posts the **same signed aggregate file** with a
 connection token the county issued it (the token says who is calling; the file must still verify under that CBO's
 registered key), sees which periods the county still expects, and over which the county's own systems read the

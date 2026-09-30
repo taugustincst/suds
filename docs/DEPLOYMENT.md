@@ -32,7 +32,7 @@ The optional **AI documentation copilot** (off by default; `docs/AI-COPILOT.md`)
 `docs/AI-COPILOT.md`, *Providers*), only after an administrator records the programme's BAA/QSOA with the provider and switches it on. Allow
 outbound HTTPS to that host if you use it.
 
-The optional **county connection** (off by default; built for 1.18.0, not yet released; `docs/COUNTY-VIEW.md`,
+The optional **county connection** (off by default; released in 1.18.0; `docs/COUNTY-VIEW.md`,
 *Connecting*): a programme's server that an administrator connects to its county posts its county submission file
 to the county's SUDS over HTTPS, to that one configured host only (no redirects, one 15-second deadline for the
 whole exchange). Allow outbound HTTPS to the county's host. The county's address must be public HTTPS; a county

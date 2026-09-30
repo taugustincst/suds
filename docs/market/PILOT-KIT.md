@@ -220,13 +220,13 @@ before it is proposed.
 | **Hosting** | County-hosted (one server per CBO, on county infrastructure) or each CBO's IT partner. Vendor hosting is not offered |
 | **Length** | 2–4 weeks of county discovery, then each CBO's 90-day pilot, staggered by 2–4 weeks so the vendor is not deploying three at once |
 | **Paid work (FDE packages)** | Discovery (county and each CBO), deployment, data migration, training, reporting setup against each funder's template, county programme management ([PRICING-OPTIONS.md](PRICING-OPTIONS.md), model D) |
-| **Out of scope** | Everything section 1 excludes; the AI copilot (1.17.0) for any CBO that has not recorded its BAA and Part 2 QSOA with the AI provider under Settings → AI copilot, after county counsel has reviewed its data flow (where a CBO has, the copilot is in scope for that CBO and section 5's copilot arm applies; never for SUD counseling notes, never on SUDS on this device); secure referral links (1.17.0; off by default) unless counsel has reviewed the link design as built and the pilot server is reachable from the internet; pooled benchmarks across CBOs, which are not built; the county view (built for 1.18.0, not yet released) is in scope only on a build that has it |
+| **Out of scope** | Everything section 1 excludes; the AI copilot (1.17.0) for any CBO that has not recorded its BAA and Part 2 QSOA with the AI provider under Settings → AI copilot, after county counsel has reviewed its data flow (where a CBO has, the copilot is in scope for that CBO and section 5's copilot arm applies; never for SUD counseling notes, never on SUDS on this device); secure referral links (1.17.0; off by default) unless counsel has reviewed the link design as built and the pilot server is reachable from the internet; pooled benchmarks across CBOs, which are not built; the county view (released in 1.18.0) is in scope only on a build that has it |
 
 ### What the county gets
 
 - Its CBOs' funder submissions for the pilot period produced from SUDS: exact aggregate counts, no client-level
   data, as its funding contracts already provide for.
-- On a build with the county view (built for 1.18.0, not yet released; [../COUNTY-VIEW.md](../COUNTY-VIEW.md)): those
+- On a build with the county view (released in 1.18.0; [../COUNTY-VIEW.md](../COUNTY-VIEW.md)): those
   figures as **quarterly signed files**, one per CBO per quarter, made for the county (its county code) from only
   the settlement funds the county pays for, and imported into the county's own SUDS server, where they are
   combined per CBO, in total and by quarter. The county's server holds no client data (a county-only install).

@@ -22,7 +22,7 @@ whether that is possible.
 
 **What is available, and what is planned.** The AI documentation copilot is available from 1.17.0
 (below: office server only, off unless your administrator turns it on after a BAA and QSOA with the AI
-provider). A county view of its grantees' outcomes is built for 1.18.0, not yet released: your finance lead makes a
+provider). A county view of its grantees' outcomes is released in 1.18.0: your finance lead makes a
 signed file of the Settlement outcomes page's figures for the county, and a county running SUDS combines its
 grantees' files ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)). A field device scope for street outreach and a referral
 network partner organisations join (beyond the 1.17.0 one-time secure links) are planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS

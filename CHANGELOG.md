@@ -4,11 +4,11 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
-A feature release (two migrations, two permissions and new routes): built for 1.18.0, not yet released. The version is
+A feature release (two migrations, two permissions and new routes): released in 1.18.0. The version is
 not stamped. The release policy's feature interval runs 28 days from 1.17.0's stamp (2026-09-29 21:08 UTC), so it
 refuses 1.18.0 before about **2026-10-27 21:08 UTC** without the owner's `policy_exception` (HANDOFF.md).
 
-### Added: the county connection (docs/COUNTY-VIEW.md, *Connecting*; built for 1.18.0, not yet released)
+### Added: the county connection (docs/COUNTY-VIEW.md, *Connecting*; released in 1.18.0)
 
 - **Optional, off by default on both sides.** A county that runs the county view can switch on a connection
   (`county_connect_enabled`, County connections, `county:manage` and `settings:manage`); while off its routes answer

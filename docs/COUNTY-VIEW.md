@@ -1,6 +1,6 @@
 # The county view
 
-*Built for 1.18.0, not yet released. Tier 1 of [market/DATA-NETWORK.md](market/DATA-NETWORK.md): county aggregates from
+*Released in 1.18.0. Tier 1 of [market/DATA-NETWORK.md](market/DATA-NETWORK.md): county aggregates from
 exact submissions.*
 
 A county that funds harm-reduction and treatment programmes with opioid settlement money needs to see, in one
@@ -293,7 +293,7 @@ A county that runs SUDS only for the county view (it serves no clients itself) i
   record is ever on it.
 ## Connecting
 
-*Built for 1.18.0, not yet released. Optional, and off by default on both sides.*
+*Released in 1.18.0. Optional, and off by default on both sides.*
 
 Emailing the file works, and stays. Where the county runs SUDS and wants it, the programme's server can post the file
 to the county's server directly, the county's own systems can read the combined view, and the programme can see which

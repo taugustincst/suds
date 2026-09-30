@@ -1,5 +1,5 @@
 'use strict';
-// The county connection, the county's side (docs/COUNTY-VIEW.md, "Connecting"). Built for 1.18.0, not yet released.
+// The county connection, the county's side (docs/COUNTY-VIEW.md, "Connecting"). Released in 1.18.0.
 //
 // A county that runs the county view (server/county.js) may let the programmes it funds post their signed county
 // submission file to it, instead of emailing it, and let its own systems read the combined view. Both are machine

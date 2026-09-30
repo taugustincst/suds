@@ -176,6 +176,17 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.16.4 | released without a tag, a GitHub Release or the `release` environment's approval: published to GitHub Pages by a direct push to `gh-pages` | the owner asked for it to be live at once; the commit (`6491308`) had passed CI in full | owner (a request, no workflow record; *Record: 1.16.4 published without a tag*, below) |
 | 1.17.0 | monthly limit (a feature release inside 1.16.0's 28 days); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner approved shipping 1.17.0 with an exception once green, and asked for it to be deployed to Pages; the stamp commit passed `npm test`, the full browser suite in both orders and CI | owner (a request, no workflow record; *Record: 1.17.0*, below) |
 | 1.17.1 | new behaviour in a patch (AI providers Bedrock and Vertex AI, and the copilot's estimated cost and spending limit) and more than the patch line limit; released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner asked for Bedrock/Vertex and the dollar cost to ship in 1.17.1 with the review-of-1.17.0 fixes, and for it to be deployed to Pages when green; no migration, permission or route | owner (a request, no workflow record; *Record: 1.17.1*, below) |
+| 1.18.0 | monthly limit (a feature release inside 1.17.0's 28 days: migrations 56 and 57, the `county:view` and `county:manage` permissions, the county view, county connection and compliance-report routes); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner asked for the cross-CBO funder view, the county connection API and a self-hosted compliant server, and to cut the release once they were complete and working; each was reviewed (security, UX, engineering, market) and its findings fixed before the stamp | owner (a request, no workflow record; *Record: 1.18.0*, below) |
+
+**Record: 1.18.0 ships under a policy exception, published without a tag.** 1.18.0 is a feature release inside
+1.17.0's 28 days: the county view (Tier 1 of docs/market/DATA-NETWORK.md), the optional county connection API and
+read API, and SUDS Server (the Linux installer and the signed compliance check). It adds migrations 56 and 57 and
+the `county:view` and `county:manage` permissions. Each part had security, UX, engineering and (for the county
+work) market reviews, and their findings were fixed before the stamp. It is published only once `npm test`, the
+browser suite and CI pass on its stamp commit: to `main`, then to `gh-pages` by a direct push, as 1.17.x was. The
+next feature release waits 28 days from 1.18.0. The installer has been exercised in a fake root with stub system
+commands, not on a real VM: a run on a real Ubuntu 24.04 and RHEL 9 VM is owed before any production install
+(docs/SELF-HOSTING.md, operator checklist). Its tag goes in the same push as the others, after 1.18.0 is on `main`.
 
 **Record: 1.17.1 ships under a policy exception, published without a tag.** 1.17.1 is the review of 1.17.0's
 fixes (security, UX, engineering, market) together with two things the owner asked to ship in it: the AI copilot

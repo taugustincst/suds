@@ -120,7 +120,7 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
   enabled until the programme records a BAA and a Part 2 QSOA with the provider; the remaining free text may still
   identify someone, so treat the provider as receiving PHI; the result is a draft a person edits and signs. Review
   it in your risk register before enabling it ([STRATEGY.md](STRATEGY.md), *Create 1*).
-- **The county view (built for 1.18.0, not yet released) adds one file, carried by people, not a connection.** A
+- **The county view (released in 1.18.0) adds one file, carried by people, not a connection.** A
   CBO's finance lead makes a **county submission file** for a quarter: aggregate counts and money for the settlement
   funds they tick, addressed to one county by its county code and signed with the CBO server's own Ed25519 key; no
   client, code, name, date of birth or single event (an allow-list, checked when made and on import). SUDS sends it

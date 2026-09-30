@@ -1,5 +1,5 @@
 'use strict';
-// The county connection, the programme's side (docs/COUNTY-VIEW.md, "Connecting"). Built for 1.18.0, not yet released.
+// The county connection, the programme's side (docs/COUNTY-VIEW.md, "Connecting"). Released in 1.18.0.
 //
 // A programme whose county runs SUDS with the connection switched on can send its county submission file straight to
 // the county's server, instead of downloading it and emailing it. What is sent is exactly the file the download makes

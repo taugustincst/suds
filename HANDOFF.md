@@ -41,7 +41,7 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
-### 2026-09-30 — Claude: the county view (built for 1.18.0, not yet released) and its feature interval
+### 2026-09-30 — Claude: the county view (released in 1.18.0) and its feature interval
 
 - The county view (docs/COUNTY-VIEW.md) is on `feat/county-view` and its review fixes on `fix/county-view-r1`:
   migration 56, two permissions, new routes. It is a feature release. The release policy's feature interval runs

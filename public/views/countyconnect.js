@@ -2,7 +2,7 @@ import { h, route, get, post, put, del, fmt, can, state, pageHead, table, kv, na
 import { monthsLabel } from '../county-periods.js';
 
 // The county connection (server/county-connect.js, server/county-connect-client.js; docs/COUNTY-VIEW.md, "Connecting").
-// Built for 1.18.0, not yet released. Optional and off by default on both sides; office server only.
+// Released in 1.18.0. Optional and off by default on both sides; office server only.
 //   The county's side:  #/county-connect (settings, programmes' connection tokens, read tokens for the county's own
 //                       systems), and programmeConnections(), the Connection tokens card on County view › Programmes.
 //   The programme's side: countySendCard(), under Send to the county on Settlement outcomes: the county's address and
@@ -125,7 +125,7 @@ route('county-connect', async () => {
   }
   const progs = manage ? await programmeConnections((await get('/api/county/programmes')).rows) : null;
   return h('div', { 'data-county-connect': '1' }, pageHead('County connections'),
-    h('p', { class: 'small' }, h('a', { href: '#/county?tab=programmes' }, 'County view › Programs'), ' · Built for 1.18.0, not yet released.'),
+    h('p', { class: 'small' }, h('a', { href: '#/county?tab=programmes' }, 'County view › Programs'), ' · Released in 1.18.0.'),
     settingsCard, progs, readBox);
 });
 
