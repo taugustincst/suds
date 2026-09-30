@@ -19,7 +19,7 @@ runs the server. Who does what, including at 2am: [HOSTING.md](HOSTING.md).
 
 | Option | Who runs it | System of record | Good for | Status |
 | --- | --- | --- | --- | --- |
-| **Self-hosted by the programme's IT partner** | The CBO's managed-IT provider or its own staff, on a VM, office server or container (`Dockerfile`, `docker-compose.yml` with a Caddy TLS proxy), or in the programme's own cloud account | The programme's server | CBOs with an IT partner | Available ([docs/INSTALL.md](../INSTALL.md), [docs/DEPLOYMENT.md](../DEPLOYMENT.md)) |
+| **Self-hosted by the programme's IT partner** | The CBO's managed-IT provider or its own staff, on a VM, office server or container (`Dockerfile`, `docker-compose.yml` with a Caddy TLS proxy), or in the programme's own cloud account | The programme's server | CBOs with an IT partner | Available ([docs/INSTALL.md](../INSTALL.md), [docs/DEPLOYMENT.md](../DEPLOYMENT.md)). **SUDS Server** (released in 1.18.0): `deploy/linux/install.sh` sets up a hardened Ubuntu 24.04 or RHEL 9 VM (LUKS data disk, pinned Node and Caddy, sandboxed service, keys as root-only credentials, firewall) and a weekly signed compliance report ([docs/SELF-HOSTING.md](../SELF-HOSTING.md)). The installer is tested in a fake root with stub system commands; a run on a real VM of each distribution is still owed, so run it on a staging VM first |
 | **County-hosted** | County IT, for a county programme or a CBO the county sponsors | The county's server | County-sponsored pilots; data never leaves county infrastructure | Available (same) |
 | **Vendor-hosted, single-tenant** | The vendor, one isolated instance per programme in a US cloud region under a BAA with the cloud provider | The vendor-hosted instance | CBOs with no IT capacity | **Planned — not offered.** Requires the checklist in [HOSTING.md](HOSTING.md) (cloud BAA, offsite backups, monitoring, on-call, insurance, pen test) |
 | **SUDS on this device** | Nobody — runs in one browser | That browser | A single navigator with no server; not recommended for county programmes that share records | Available ([docs/WEB_APP.md](../WEB_APP.md)) |
@@ -54,6 +54,14 @@ process and one SQLite database per programme; a second process is refused
   has linked; it never creates or promotes accounts ([docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Single sign-on*).
 - **Local accounts** where SSO is not used: scrypt password hashing, 12-character policy, lockout, rate limiting.
 - **MFA** (TOTP) required for every role by default, with a configurable grace period.
+- **Fingerprint sign-in and signing (released in 1.19.0; office server only):** WebAuthn passkeys on the device's
+  own authenticator (Touch ID, Windows Hello, an Android fingerprint, or the screen lock), verified with
+  `node:crypto` alone. User verification is required, so a passkey counts as two-step verification (NIST SP 800-63B
+  AAL2). **No biometric data reaches SUDS**: the device matches the finger; the server keeps each passkey's public
+  key, id, counter and a name. A signature or approval confirmed this way keeps signed evidence of exactly what was
+  signed, which an auditor re-verifies offline (`npm run verify-passkey-evidence`). Needs HTTPS and
+  `WEBAUTHN_RP_ID` set before anyone enrols; each can be switched off in Settings → Security policy
+  ([docs/FINGERPRINT.md](../FINGERPRINT.md)). Not on SUDS on this device.
 - **Role-based access** (navigator, clinician, supervisor, finance, readonly, admin). **Role defaults since
   1.16.0:** navigators and clinicians see every client, and navigators read clinical notes without writing
   them. From 1.16.1 SUD counseling notes are readable only by their author, the co-signer and staff who write clinical notes (clinicians, supervisors). Client records are shared: anyone who sees a client may update it, and the client's
@@ -86,6 +94,7 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
                                         ├──> Encounter hand-off / CalOMS extract (files) ──> county EHR / DHCS via county
                                         ├──> Microsoft Graph (OneNote import)                [optional, needs BAA]
                                         ├──> County submission file (signed, aggregate) ──> a person sends it to the county [optional]
+                                        ├──> County connection: the same signed file ──HTTPS──> the county's SUDS server [optional, off by default]
                                         └──> Provider websites (resource pictures only, no PHI) [optional]
 ```
 
@@ -94,7 +103,7 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
 - **Optional AI documentation copilot (1.17.0, off by default):** when the programme records its BAA/QSOA with
   the AI provider and switches it on, the office server (never the browser) sends session text a worker gives,
   with that client's known identifiers replaced, to the provider's API over HTTPS (`api.anthropic.com`, or a
-  gateway set in `SUDS_AI_BASE_URL`). The key is `ANTHROPIC_API_KEY` in the server environment only; no SDK or
+  gateway set in `SUDS_AI_BASE_URL`; from 1.17.1 also Amazon Bedrock or Google Cloud Vertex AI, `SUDS_AI_PROVIDER`). The key (`ANTHROPIC_API_KEY`, or the cloud provider's credentials) is in the server environment only; no SDK or
   other package is added; each call is audited without its text and counted against a monthly cap. This is PHI
   to a business associate: see [docs/AI-COPILOT.md](../AI-COPILOT.md) for exactly what is sent and the residual
   risk.
@@ -120,14 +129,35 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
   enabled until the programme records a BAA and a Part 2 QSOA with the provider; the remaining free text may still
   identify someone, so treat the provider as receiving PHI; the result is a draft a person edits and signs. Review
   it in your risk register before enabling it ([STRATEGY.md](STRATEGY.md), *Create 1*).
-- **The county view (released in 1.18.0) adds one file, carried by people, not a connection.** A
-  CBO's finance lead makes a **county submission file** for a quarter: aggregate counts and money for the settlement
-  funds they tick, addressed to one county by its county code and signed with the CBO server's own Ed25519 key; no
-  client, code, name, date of birth or single event (an allow-list, checked when made and on import). SUDS sends it
-  nowhere: the CBO emails or uploads it as the county asks. The county's own SUDS server (which can be a county-only
-  install with no client data) imports it after checking the county code, the signature under the key the CBO read
-  out, and the file's shape. Keys are exchanged once, out of band, and can be replaced. Both ends audit every step
-  without the figures ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)).
+- **The county view (released in 1.18.0) adds one aggregate file; the county connection (released in 1.18.0,
+  optional, off by default) can carry it.** A CBO's finance lead makes a **county submission file** for a quarter:
+  aggregate counts and money for the settlement funds they tick, addressed to one county by its county code and
+  signed with the CBO server's own Ed25519 key; no client, code, name, date of birth or single event (an allow-list,
+  checked when made and on import). By default SUDS sends it nowhere: the CBO emails or uploads it as the county
+  asks. The county's own SUDS server (which can be a county-only install with no client data) imports it after
+  checking the county code, the signature under the key the CBO read out, and the file's shape. Keys are exchanged
+  once, out of band, and can be replaced. Both ends audit every step without the figures
+  ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)).
+  - **The county connection** replaces the email when both sides switch it on. The county issues each CBO a
+    **connection token** (`sudscc_…`, shown once, stored only as its SHA-256, optionally expiring, revocable); the
+    CBO's server posts **the same signed file** to `POST /api/county-connect/v1/submissions` over HTTPS. The token
+    only says which programme is calling: the file must still pass the county's import checks **and** be signed by a
+    key registered for that programme, so a token cannot make another programme's file count. Back come only the
+    county's receipt and its **status** for that programme (`GET /api/county-connect/v1/status`: the periods it
+    expects and which are outstanding), never figures or anything about other programmes. Optional automatic sending
+    (off by default) sends outstanding periods once a day, only for funds a person already chose. Outbound from the
+    CBO: https only, no redirects, a 15-second deadline, no private or metadata addresses unless
+    `SUDS_COUNTY_ALLOW_PRIVATE=1` (a county over a VPN).
+  - **The county's read API**, for its own BI tools: **read tokens** (`sudscr_…`) that always expire (90 days unless
+    chosen, at most a year) and are revocable, for `GET /api/county-connect/v1/combined` (the combined view, JSON or
+    tidy CSV, labelled summed not unduplicated, exact, internal, not for publication) and `/v1/programs` (names,
+    key fingerprints, periods received; no keys). Every call is audited without figures and rate-limited per token
+    and per address.
+  - **What leaves a CBO** is only that aggregate file, as with email. **What the county exposes** is
+    `/api/county-connect/v1/` on its server, reachable from the CBOs (its TLS proxy or a VPN); behind a proxy
+    `TRUST_PROXY=1` is **required**, or every CBO counts as the proxy's one address for the rate limits and the audit
+    log's addresses. The switch is off by default on both sides; while it is off, the county's machine routes answer
+    404 ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md), *Connecting*).
 - **Settlement outcomes and street outreach (1.17.0) add no data flow.** The settlement outcomes page and its
   Excel/CSV file are aggregate figures made in the browser session of the person who asks for them (audited);
   nothing is sent to the state or anyone else. A street outreach contact is an ordinary anonymous visit, saved on
@@ -146,8 +176,8 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
 | De-identification | Safe Harbor exports by default (year-only dates, 90+, ZIP3 with restricted areas as 000, no free text, random per-export record ids); small-cell suppression in the funder report, naloxone log and settlement report, labelled *Publication release — small cells screened; review before sharing* only for whole-programme, standard-period runs, whose export needs a recorded review confirmation (a conservative screen, not an expert determination). A release the check cannot finish or confirm is refused whole (nothing published, always safe), and no size is guaranteed to publish. Since 1.17.0 a release gives overdose events as period totals and reversals by month, not the events by month, and in the project's sweeps 4 of 114 scaled fiscal years and 11 of 72 seeded quarters were refused (1.16.4: 34 and 28); the funder submission is unaffected. The audit log records each release's withheld tables and a refused release's reason; on a device the check runs in a Web Worker, off the page ([PERFORMANCE.md](../PERFORMANCE.md), *Which programmes are refused*) | [docs/HIPAA.md](../HIPAA.md) |
 | Backup and recovery | Scheduled encrypted backups, off-host copy, restore from the UI, pre-migration snapshots; DR drill with measured RTO/RPO | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Backups*; [docs/security/BACKUP-AND-DR.md](../security/BACKUP-AND-DR.md) |
 | Monitoring | `/api/health/live` and `/api/health/ready` probes, `/api/health` for alerting; Prometheus metrics; JSON logs; no PHI in logs | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Monitoring and logs* |
-| Hardening | Checklist for host, TLS, proxy, permissions, firewall, MFA, keys | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Hardening checklist* |
-| Supply chain and change control | Zero runtime packages on the server; seven small npm packages bundled into the browser kernel, and sql.js's WebAssembly, all listed with versions and hashes in a **CycloneDX SBOM** ([docs/evidence/sbom-1.17.0.cdx.json](../evidence/sbom-1.17.0.cdx.json), generated by `scripts/sbom.js` and checked by `test/sbom.test.js`), with the build and test tooling marked separately; release zips built reproducibly with `git archive`, with SHA-256 checksums (not yet signed); Dependabot for the browser-kernel build tools. The release gate, owner approval and tag rules are designed, but the repository settings that enforce them are **not yet turned on by the owner** ([docs/RELEASE.md](../RELEASE.md), *Owner: repository settings*). **Development is AI-assisted**: 480 of the 512 commits up to 1.16.4 were written with an AI coding assistant under the rules in `CLAUDE.md`, gated by automated tests and CI (API suite, browser suite with accessibility checks, drift checks) and reviewed and merged by the owner. There is no second human reviewer today. Branch protection and independent review of what you deploy are yours to configure ([ADOPTION.md](../ADOPTION.md) §1) | [docs/security/SDLC.md](../security/SDLC.md), [docs/security/VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md), [docs/RELEASE.md](../RELEASE.md), [docs/architecture/](../architecture/README.md) |
+| Hardening | Checklist for host, TLS, proxy, permissions, firewall, MFA, keys. On **SUDS Server** (released in 1.18.0) the installer applies the host hardening and `npm run compliance-check` reports on it weekly: each host and app check against the HIPAA Security Rule, 42 CFR §2.16 or CMIA rule it evidences, signed with the check's own Ed25519 key (which the SUDS service never holds) and verifiable anywhere with `npm run verify-compliance-report`. It records what it observed, not compliance: what it cannot see (encryption beneath the VM, perimeter firewalls, key escrow, people and premises) is listed in the report's scope | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Hardening checklist*; [docs/SELF-HOSTING.md](../SELF-HOSTING.md), *The compliance check* |
+| Supply chain and change control | Zero runtime packages on the server; seven small npm packages bundled into the browser kernel, and sql.js's WebAssembly, all listed with versions and hashes in a **CycloneDX SBOM** ([docs/evidence/sbom-1.19.0.cdx.json](../evidence/sbom-1.19.0.cdx.json), generated by `scripts/sbom.js` and checked by `test/sbom.test.js`), with the build and test tooling marked separately; release zips built reproducibly with `git archive`, with SHA-256 checksums (not yet signed); Dependabot for the browser-kernel build tools. The release gate, owner approval and tag rules are designed, but the repository settings that enforce them are **not yet turned on by the owner** ([docs/RELEASE.md](../RELEASE.md), *Owner: repository settings*). **Development is AI-assisted**: of the 662 commits up to 1.19.0, 643 were written with an AI coding assistant (630 authored by it, 13 more carrying it as co-author; method in [QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md) #36a) under the rules in `CLAUDE.md`, gated by automated tests and CI (API suite, browser suite with accessibility checks, drift checks) and reviewed and merged by the owner. There is no second human reviewer today. Branch protection and independent review of what you deploy are yours to configure ([ADOPTION.md](../ADOPTION.md) §1) | [docs/security/SDLC.md](../security/SDLC.md), [docs/security/VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md), [docs/RELEASE.md](../RELEASE.md), [docs/architecture/](../architecture/README.md) |
 | Threat model and residual risks | Attackers, threats and mitigations by area; the attack classes fixed from 1.15.4 to 1.16.4 with their tests; residual risks, including repository settings not yet on, one maintainer, no pen test, shared devices separating accounts by rule rather than by key, blind-index leakage, the shared index/audit key, single instance, experimental `node:sqlite` | [docs/security/THREAT-MODEL.md](../security/THREAT-MODEL.md), [docs/HIPAA.md](../HIPAA.md), *Risk register notes* |
 | Attestation | **SOC 2: readiness self-assessment only; no audit report yet. No third-party pen test yet.** | [docs/security/SOC2-READINESS.md](../security/SOC2-READINESS.md); timeline in [PROCUREMENT.md](PROCUREMENT.md) |
 
@@ -186,14 +216,14 @@ it from the same evidence and will not answer "yes" to a control that is not in 
 - **What exists today** ([docs/SUPPORT.md](../SUPPORT.md)): the programme's own administrator, then whoever runs
   the server (IT partner or county), then the SUDS project's public issue tracker,
   <https://github.com/taugustincst/suds/issues> (defects, questions, accessibility barriers; never client
-  information), and private vulnerability reports for security issues. Accessibility reports have published
+  information), and private vulnerability reports for security issues ([SECURITY.md](../../SECURITY.md)). Accessibility reports have published
   targets ([docs/accessibility/STATEMENT.md](../accessibility/STATEMENT.md)); everything else is best effort.
 - **Contracted vendor support** exists only under a signed agreement; [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)
   is an **owner template** whose hours, contacts and response targets are `[owner to complete]`, for counsel review.
   The vendor is one person today; there is no 24×7 support and no vendor on-call.
-- **Releases**: tagged, checksummed, with release notes; pilot-group-first rollout recommended
+- **Releases**: tagged, checksummed, with release notes (1.16.3 to 1.19.0 are published but their tags wait for the owner: [docs/evidence/RELEASE-HANDOFF.md](../evidence/RELEASE-HANDOFF.md)); pilot-group-first rollout recommended
   ([docs/ADOPTION.md](../ADOPTION.md), section 3). Security fixes expedited.
-- **Open source (MIT)**: the county can inspect, build and maintain the code without the vendor; there is no
+- **Open source (MIT, [LICENSE](../../LICENSE))**: the county can inspect, build and maintain the code without the vendor; there is no
   licence lock-in. The adoption plan asks the county to name a code owner whether or not it buys support.
 - **Operator staffing** for a self-hosted or county-hosted install: 0.25–0.5 FTE system administrator, a key custodian, a
   monthly audit reviewer ([docs/ADOPTION.md](../ADOPTION.md), section 7).

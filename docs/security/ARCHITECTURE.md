@@ -15,6 +15,10 @@
 | Identity provider (optional) | The county's OIDC IdP (Entra ID, Okta, Keycloak…). | `server/oidc.js`, `server/routes/oidc.js` |
 | Local mode (optional, off by default) | A copy of the server logic running in a browser (sql.js/WebAssembly) that syncs with the office server. | `local/`, `public/local/kernel.js`, `server/routes/sync.js`; policy in `../PLATFORM.md` |
 | SUDS on this device | The same browser kernel published as a static site (GitHub Pages); records stay in that browser and never sync. | `scripts/build-static-site.js`, `../WEB_APP.md` |
+| County view (released in 1.18.0; office server only) | On a programme's server: the signed, aggregate **county submission file** (Ed25519 county signing key). On a county's server (which may hold no client data at all): the programmes it accepts, their public keys, the imported submissions and the combined view. | `server/county.js`, `server/routes/county.js`, `../COUNTY-VIEW.md` |
+| County connection (released in 1.18.0; optional, off by default on both sides) | The programme's server posts the same signed file to the county's server over HTTPS with a county-issued connection token, and reads what the county expects; the county's own systems read the combined view with expiring read tokens. | `server/county-connect.js` (county side), `server/county-connect-client.js` (programme side), `server/routes/county-connect.js` |
+| Passkeys (released in 1.19.0; office server only) | WebAuthn sign-in, second step and signature/approval confirmation, verified with `node:crypto`; the device's authenticator matches the finger and signs, and the server stores public keys and signed evidence only. | `server/webauthn.js`, `server/passkeys.js`, `server/routes/passkeys.js`, `../FINGERPRINT.md` |
+| SUDS Server (released in 1.18.0; optional) | The Linux installer for Ubuntu 24.04 / RHEL 9 (LUKS data disk, pinned Node and Caddy, sandboxed systemd unit on 127.0.0.1, keys as root-only credentials, firewall), and a weekly compliance check that runs as root, separately from the SUDS service, and writes a report signed with its own key. | `deploy/linux/`, `scripts/compliance-check.js`, `server/compliance-report.js`, `server/compliance-rules.js`, `../SELF-HOSTING.md` |
 
 ## Data flow diagram (office server)
 
@@ -40,6 +44,22 @@
    AUDIT_ANCHOR_DIR is write-once only when the county points it at WORM storage; unset, anchors go to <data>/audit-anchors.
 ```
 
+**The county view and the county connection (1.18.0; aggregates only, office servers only):**
+
+```
+ programme (CBO) server                                                  county's SUDS server (may hold no client data)
+ ┌────────────────────────────────┐                                      ┌──────────────────────────────────────────────┐
+ │ Settlement outcomes (aggregate)│  county submission file, signed      │ /api/county/submissions  (import, a person)  │
+ │  └─▶ county.js payloadFrom     │  with the CBO's Ed25519 key          │   checks: county code, registered key,       │
+ │      allow-list, signFile ─────┼─ by email / upload (default) ──────▶ │   signature, allow-list, period              │
+ │                                │                                      │                                              │
+ │ county-connect-client.js ──────┼─ HTTPS, Bearer sudscc_… (optional) ▶ │ /api/county-connect/v1/submissions, /status  │
+ │  (https only, no redirects,    │ ◀── receipt, expected periods ────── │   (the same import path; 256 KB cap; limits) │
+ │   15 s, no private addresses)  │                                      │ /api/county-connect/v1/combined, /programs   │
+ └────────────────────────────────┘                                      │   ◀── county BI tools, Bearer sudscr_… (exp.)│
+                                                                         └──────────────────────────────────────────────┘
+```
+
 ## Where PHI goes
 
 | Flow | PHI? | Protection | Code |
@@ -56,6 +76,11 @@
 | Server ⇄ local-mode device | Yes | HTTPS; scoped to what the user may see (the whole programme under the 1.16.0 role defaults, a caseload after a deny of `clients:all`); audited; revocable/wipeable device registry; off by default | `server/routes/sync.js`, `server/devices.js` |
 | Optional outbound: AI documentation copilot (off by default) | Yes: the session text a worker gives for one client, with that client's known identifiers replaced | Only after an administrator records the BAA/QSOA and switches it on; HTTPS from the server (never the browser); key only in the server environment; audited per call, never the text; monthly cap | `server/ai-copilot.js`, `server/routes/ai.js`, `docs/AI-COPILOT.md` |
 | Optional outbound: OneNote (Graph), update check, provider pictures | Graph: note text the user imports; others: no | Admin-configured only | `server/importers/`, `server/update.js`, `server/region-pictures.js` |
+| County submission file (1.18.0) | No: aggregate counts and money for the funds a person ticks, no client, code, name, date of birth or single event | An allow-list checked when made and on import; signed (Ed25519); addressed to one county code; audited without the figures; carried by a person by default | `server/county.js`, `server/routes/county.js` |
+| Optional outbound: county connection, programme → county (1.18.0; off by default) | No: the same signed file; back, the county's receipt and expected periods | HTTPS only, certificate checked against the county's host, no redirects, one 15-second deadline, answer read to 64 KB, public addresses through `server/outbound.js` (private ones only with `SUDS_COUNTY_ALLOW_PRIVATE=1`, never loopback, link-local or metadata); the token stored encrypted and never shown again; every send logged and audited | `server/county-connect-client.js` |
+| Inbound on a county's server: county connection and read API (1.18.0; off by default) | No: aggregate submissions in, the combined view out | 404 while off; connection tokens per programme and expiring read tokens, SHA-256 at rest, revocable; a file still verifies under the calling programme's registered key; rate limits per token, per address and globally; `TRUST_PROXY=1` required behind a proxy; audited without figures | `server/county-connect.js`, `server/routes/county-connect.js` |
+| Browser authenticator ⇄ server: passkeys (1.19.0) | No, and no biometric data: a public key at enrolment, then signatures over server challenges | HTTPS and the server's own host (`WEBAUTHN_RP_ID`); origin checked, `crossOrigin` refused, user verification required; challenges hashed, single-use, two minutes, bound to purpose, user and session (and, for signing, to a statement of exactly what is signed); the evidence stored encrypted | `server/webauthn.js`, `server/passkeys.js` |
+| SUDS Server compliance check → report files (1.18.0) | No: settings, file modes, service state and results; no records | Runs as root from its own timer, reads a private copy of the database, signs with a key the SUDS service never holds; reports created new, never through a path the `suds` user controls | `scripts/compliance-check.js`, `server/compliance-report.js` |
 
 ## Trust boundaries
 
@@ -65,7 +90,10 @@
 4. **Database administrator → audit evidence.** Someone with the database and the index key could rebuild the audit chain. Anchors on write-once storage outside the host (`AUDIT_ANCHOR_DIR`) and the log collector are the boundary that person cannot cross ([LOGGING-AND-AUDIT.md](LOGGING-AND-AUDIT.md)).
 5. **Office server → device (local mode).** A device holds what its user may see — the whole programme under the 1.16.0 role defaults, or a caseload for a person denied `clients:all` — and its keys in the browser profile; the county decides whether local mode is allowed (off by default) and on which devices ([../PLATFORM.md](../PLATFORM.md)).
 6. **Recovery drill.** The drill's child process gets a temporary directory and the keys over IPC; it is never given the live database's path (`server/dr-drill.js` `runChild`).
+7. **Programme ⇄ county (1.18.0).** The county's server trusts a submission only for its signature under a key it registered for that programme out of band, never for the channel: a connection token only says which programme is calling, and a file signed by another programme's key is refused with the same words as an unknown key. The programme's server treats the county as untrusted input: its county code, name and list of outstanding periods are checked before anything is stored, signed or sent, and a changed county code stops all sending until an administrator confirms it ([../COUNTY-VIEW.md](../COUNTY-VIEW.md), *The trust model*).
+8. **Authenticator → server (1.19.0).** The server trusts a passkey assertion only for its signature over a challenge it issued, from its own origin and relying party, with user verification; a counter that goes backwards disables the passkey. It never sees the finger ([../FINGERPRINT.md](../FINGERPRINT.md)).
+9. **SUDS service → compliance evidence (SUDS Server, 1.18.0).** The SUDS service cannot sign a compliance report about itself: the check's signing key is root-only and the check never follows a path the `suds` user controls ([../SELF-HOSTING.md](../SELF-HOSTING.md), *The compliance check*).
 
 ## Deployment shapes
 
-County VM (systemd), container (Dockerfile, docker-compose with a read-only root filesystem), or the county's own cloud tenant; a warm standby for site failure. See `../DEPLOYMENT.md`, "County hosting options and single-site risk". There is no vendor-hosted (SaaS) SUDS: the county is the operator.
+County VM (systemd), SUDS Server (`deploy/linux/install.sh` on Ubuntu 24.04 or RHEL 9, 1.18.0; tested against a fake root with stub system commands, a run on a real VM still owed), container (Dockerfile, docker-compose with a read-only root filesystem), or the county's own cloud tenant; a warm standby for site failure. A county that only receives its programmes' county submissions can run a county-only install with no client data ([../COUNTY-VIEW.md](../COUNTY-VIEW.md), *A county-only install*). See `../DEPLOYMENT.md`, "County hosting options and single-site risk". There is no vendor-hosted (SaaS) SUDS: the county is the operator.

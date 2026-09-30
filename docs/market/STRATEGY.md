@@ -318,7 +318,7 @@ until counsel and one pilot have looked at it.
 
 ## Built vs planned, exactly
 
-| Capability | State on 29 September 2026 |
+| Capability | State on 30 September 2026 (1.19.0) |
 | --- | --- |
 | Outreach, anonymous contacts, supplies, funder reporting, settlement report and DHCS/county layouts | **Built** (layouts not checked against current official templates) |
 | Local mode (offline copy, office sync) | **Built**, off by default; the wizard recommends it for harm reduction |
@@ -331,6 +331,8 @@ until counsel and one pilot have looked at it.
 | SABG primary-prevention events and their summary; anonymous SSP participant code | **Released in 1.17.0**; no PPSDS file (the mapping awaits the DHCS data dictionary) |
 | Funder-facing outcome view across CBOs | **Released in 1.18.0**: the county view from signed, exact submissions, internal only ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)), sent as a file or over the optional county connection, with a read API for the county's systems; a published view needs the publication screen over the combined release (**planned**) |
 | Street-outreach screen (one-handed anonymous contacts, offline, *My shift*) with the SSP participant code; settlement outcomes by fund | **Released in 1.17.0** |
+| SUDS Server: the Linux installer and its weekly signed compliance check | **Released in 1.18.0** ([docs/SELF-HOSTING.md](../SELF-HOSTING.md)); tested in a fake root with stub system commands, not yet on a real VM by the project |
+| Fingerprint sign-in, authorization and signing with passkeys | **Released in 1.19.0** ([docs/FINGERPRINT.md](../FINGERPRINT.md)); office server only; no biometric data held |
 | Minimal-PII defaults and a field device scope for street outreach | **Planned**, not scheduled |
 | One-time secure referral links to organisations not on SUDS, with an invitation | **Released in 1.17.0**; off by default; counsel reviews the design before a programme switches it on |
 | A cross-organisation referral network (organisations that join and accept referrals in SUDS) | **Planned**, not scheduled |

@@ -27,20 +27,37 @@ partner, or its county) runs; it is not a hosted service. Positioning, buyer gui
 and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
 [docs/architecture/README.md](docs/architecture/README.md).
 
-## What's new in 1.17.0
+## What's new in 1.18.0 and 1.19.0
 
-* **AI documentation copilot** (optional): drafts notes, assessments, care plan and CalOMS suggestions for a
-  person to review and sign. Office server only, off by default, and it cannot be switched on until an
-  administrator records the programme's BAA and Part 2 QSOA with the AI provider; never for SUD counseling notes
-  ([docs/AI-COPILOT.md](docs/AI-COPILOT.md)).
-* **Street outreach** screen and **My shift** for one-handed anonymous contacts, with an optional, encrypted
-  **SSP participant code**; **Prevention** events (SABG primary prevention) and their summary.
-* **Settlement outcomes**: what each opioid-settlement fund spent beside the work charged to it, suppressed by default.
-* **Part 2 layer beside an EHR**: patients and encounters imported from a FHIR file the EHR exports; **secure
-  referral links** to organisations not on SUDS (off by default); **CalOMS Tx** files prepared on a schedule.
-* **Least privilege by default** for new installs, and a client record **History** with revert.
+**1.19.0**
 
-Everything in it: [CHANGELOG.md](CHANGELOG.md).
+* **Fingerprint sign-in, authorization and signing** with passkeys (WebAuthn): sign in, finish two-step
+  verification, and confirm note signatures, countersignatures and time and spending approvals with the device's own
+  fingerprint reader, face unlock or screen lock. No biometric data reaches SUDS (the device matches the finger); a
+  passkey with user verification counts as two-step verification; each fingerprint-confirmed signature keeps signed
+  evidence an auditor re-verifies offline. Office server only, not SUDS on this device; needs HTTPS and
+  `WEBAUTHN_RP_ID` set before anyone enrols; each use can be switched off in Settings → Security policy
+  ([docs/FINGERPRINT.md](docs/FINGERPRINT.md)).
+
+**1.18.0**
+
+* **County view**: a programme sends its county a signed, aggregate quarterly file of its settlement outcomes (no
+  client-level data), and a county running SUDS, even a county-only install with no client records, sees its
+  programmes side by side. Internal and exact, not for publication; office server only
+  ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md)).
+* **County connection** (optional, off by default on both sides): the programme's server posts the same signed file
+  to the county's with a county-issued token and sees which periods the county still expects; the county's own
+  reporting tools read the combined view with expiring read tokens
+  ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#connecting)).
+* **SUDS Server**: a one-command hardened install on an Ubuntu 24.04 or RHEL 9 VM, with a weekly compliance check
+  whose signed report shows what it observed against the HIPAA Security Rule and 42 CFR §2.16, and lists what it
+  cannot see. Evidence, not a certification; the installer has been tested in a fake root with stub system
+  commands, not yet on a real VM by the project, so try it on a staging VM first
+  ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)).
+
+1.17.0 and 1.17.1 added the AI documentation copilot (Anthropic, and from 1.17.1 Amazon Bedrock or Google Vertex AI;
+off by default), the street outreach screen, settlement outcomes, the Part 2 layer beside an EHR and least
+privilege by default for new installs. Everything, release by release: [CHANGELOG.md](CHANGELOG.md).
 
 ## Two ways to run it
 
@@ -61,10 +78,13 @@ The sign-in page has two options, **Log in** and **Sign up** (link straight to e
 
 * **Platform:** the web application — served by an office SUDS server (the system of record for its programme), or published as SUDS on this device. It also imports field notes from **Pocket AI** and **Microsoft OneNote**. The native phone apps and the desktop launchers were removed in 1.9.3 (their source remains in git history) — see [docs/PLATFORM.md](docs/PLATFORM.md).
 * **Runtime:** Node.js ≥ 22.13 only (built-in SQLite, crypto, HTTP). No npm packages to install or audit on the office server. (The browser's local-mode kernel is a separate, committed bundle that does vendor a few pinned libraries in place of Node's built-ins — see [docs/WEB_APP.md](docs/WEB_APP.md#what-the-browser-kernel-is-built-from).)
-* **Data protection:** AES-256-GCM field-level encryption of client identifiers and free text (coded reporting fields rely on disk encryption — [docs/HIPAA.md](docs/HIPAA.md), *Data classification*), blind-index search, scrypt password hashing, TOTP MFA, role-based access (caseload scoping by per-user deny), 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
+* **Data protection:** AES-256-GCM field-level encryption of client identifiers and free text (coded reporting fields rely on disk encryption — [docs/HIPAA.md](docs/HIPAA.md), *Data classification*), blind-index search, scrypt password hashing, TOTP MFA or a passkey (fingerprint, 1.19.0), role-based access (caseload scoping by per-user deny), 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
 * **AI documentation copilot (1.17.0, optional):** drafts for a person to review and sign (notes, six-dimension assessments, care plan and CalOMS suggestions). Office server only, never on SUDS on this device or an offline copy; off until an administrator records the programme's BAA with Part 2 QSOA terms and counsel's review, then switches it on; identifiers SUDS holds are replaced before sending (not de-identification); never for SUD counseling notes or a client with an agreed restriction; a monthly cap, each call audited without its text ([docs/AI-COPILOT.md](docs/AI-COPILOT.md)).
 * **Settlement outcomes (1.17.0):** per opioid-settlement fund, spending by Exhibit E category beside the outcomes recorded for it, with cost per outcome; counts of people suppressed by default, never a publication release.
 * **County view (released in 1.18.0):** a programme sends the county a signed quarterly file of its settlement outcomes' exact aggregates for the funds that county pays for (no client-level data), and a county running SUDS imports its programmes' files and sees them side by side, summed and by quarter. Internal and exact, never published, people counted as each programme's own count, summed; office server only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md)).
+* **County connection (released in 1.18.0, optional):** off by default on both sides. The programme's server posts the same signed aggregate file to its county's SUDS server over HTTPS with a county-issued connection token (the file must still verify under the programme's registered key) and sees which periods are outstanding; the county's own systems read the combined view with read tokens that expire. Behind a proxy the county sets `TRUST_PROXY=1`; office servers only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#connecting)).
+* **SUDS Server (released in 1.18.0):** `deploy/linux/install.sh` for Ubuntu 24.04 or RHEL 9 (LUKS data disk, pinned Node and Caddy, a sandboxed service, keys as root-only credentials, firewall), upgrades that need the release zip's SHA-256 from a second channel, and a weekly compliance report signed with the check's own key (`npm run verify-compliance-report`). It shows what it observed; it does not make a programme compliant. Tested in a fake root, not yet on a real VM by the project ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)).
+* **Fingerprint sign-in and signing (released in 1.19.0):** passkeys on the device's own authenticator for sign-in, two-step verification and confirming signatures and approvals; no biometric data held; signed evidence verifiable offline (`npm run verify-passkey-evidence`). Office server only, HTTPS and `WEBAUTHN_RP_ID` required ([docs/FINGERPRINT.md](docs/FINGERPRINT.md)).
 * **Street outreach (1.17.0):** a one-handed phone screen for anonymous contacts that draws supplies from stock, works offline where offline copies are allowed, and counts the worker's shift.
 * **SSP participant code (1.17.0, optional):** an anonymous contact can carry the participant's self-built code, stored encrypted and counted by blind index, so the syringe services summary counts anonymous participants; no file prints a code ([docs/SUPPLIES.md](docs/SUPPLIES.md)).
 * **Secure referral links (1.17.0):** a one-time link, with a separate access code, to an organisation not on SUDS, carrying a minimal referral only under a Part 2 consent naming it. Office server only, **off by default**; counsel reviews the design before a programme switches it on ([docs/security/REFERRAL-LINKS.md](docs/security/REFERRAL-LINKS.md)).
@@ -166,4 +186,4 @@ The browser regression suite (`scripts/ui/run-all.sh`) seeds a throwaway server 
 
 ## License
 
-MIT. This software supports but does not by itself provide HIPAA compliance; see [docs/HIPAA.md](docs/HIPAA.md) for the shared-responsibility model.
+MIT: see [LICENSE](LICENSE). Report security vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes. This software supports but does not by itself provide HIPAA compliance; see [docs/HIPAA.md](docs/HIPAA.md) for the shared-responsibility model.

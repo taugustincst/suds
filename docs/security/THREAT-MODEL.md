@@ -2,7 +2,7 @@
 
 This document covers who might attack SUDS, how, what stops them, and what is left. It is for a county security reviewer, a penetration tester, and the next maintainer.
 
-**Version.** It describes 1.17.0; what changed in 1.17.0 is marked "(1.17.0)".
+**Version.** It describes 1.19.0; what changed in 1.17.0, 1.18.0 (the county view and the county connection) and 1.19.0 (passkeys) is marked with the release. SUDS Server's installer and compliance check (1.18.0) are not modelled here yet: their controls and limits are in [../SELF-HOSTING.md](../SELF-HOSTING.md), and [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md) puts them in scope.
 
 **Who wrote it.** The SUDS project wrote it, from the code and from its own review rounds. **It is not an independent assessment.** No third-party penetration test or audit has been done (see [Residual risks](#residual-risks)).
 
@@ -132,7 +132,7 @@ Related documents:
 
 | Threat | Mitigation | Code / test |
 | --- | --- | --- |
-| A malicious npm package in the server | There are none: the server uses Node built-ins only, which the SBOM script checks ([../evidence/sbom-1.17.0.cdx.json](../evidence/sbom-1.17.0.cdx.json)) | `scripts/sbom.js`; `test/sbom.test.js` |
+| A malicious npm package in the server | There are none: the server uses Node built-ins only, which the SBOM script checks ([../evidence/sbom-1.19.0.cdx.json](../evidence/sbom-1.19.0.cdx.json)) | `scripts/sbom.js`; `test/sbom.test.js` |
 | A malicious build tool changes the kernel | Few build tools, pinned by lockfile. The kernel is committed and CI rebuilds and compares it. esbuild and sql.js are updated by hand | `ci.yml` drift step, `scripts/kernel-build-options.js`; `test/kernel-parity.test.js` |
 | Releasing untested or unapproved code | The gate requires every required job to be green on the exact commit, on `main`, from a `v*` tag matching the version, and runs `main`'s copy of the gate scripts. The owner approves the `release` environment | `scripts/release-gate.js`, `scripts/release-policy.js`; `test/release-gate.test.js`, `test/release-policy.test.js` |
 | A backport released from the wrong line (1.17.0) | The gate accepts a commit on `origin/maint/X.Y` only for a patch of a minor older than `main`'s, measures it against the previous tag on its own line, and does not mark it Latest or publish the web app | `scripts/release-gate.js`, `scripts/release-policy.js`, `web-app.yml`; `test/release-gate.test.js`, `test/release-policy.test.js` |

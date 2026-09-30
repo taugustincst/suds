@@ -8,7 +8,8 @@ For county IT, security and privacy reviewers. Everything here describes control
 
 | If you are asked about… | Read |
 | --- | --- |
-| What the system is, where PHI flows, trust boundaries | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| What the system is, where PHI flows, trust boundaries (the county view and connection, passkeys and SUDS Server included) | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| How to report a vulnerability | [../../SECURITY.md](../../SECURITY.md) |
 | Every encrypted field, where each kind of data can flow, retention (test-checked) | [DATA-INVENTORY.md](DATA-INVENTORY.md) |
 | Attackers, threats, mitigations, the attack classes fixed in 1.15.4–1.16.4, residual risks | [THREAT-MODEL.md](THREAT-MODEL.md) |
 | Encryption at rest and in transit, keys, rotation, customer-managed keys | [ENCRYPTION-AND-KEYS.md](ENCRYPTION-AND-KEYS.md) |
@@ -16,7 +17,7 @@ For county IT, security and privacy reviewers. Everything here describes control
 | Audit logging, immutability, log collection, auditor export | [LOGGING-AND-AUDIT.md](LOGGING-AND-AUDIT.md) |
 | Backups, RPO/RTO, tested recovery, standby | [BACKUP-AND-DR.md](BACKUP-AND-DR.md) |
 | Retention, deletion, purge, data residency, subprocessors | [DATA-LIFECYCLE.md](DATA-LIFECYCLE.md) |
-| Dependencies, patching, scanning, the software bill of materials | [VULNERABILITY-MANAGEMENT.md](VULNERABILITY-MANAGEMENT.md), [../evidence/sbom-1.17.0.cdx.json](../evidence/sbom-1.17.0.cdx.json) |
+| Dependencies, patching, scanning, the software bill of materials | [VULNERABILITY-MANAGEMENT.md](VULNERABILITY-MANAGEMENT.md), [../evidence/sbom-1.19.0.cdx.json](../evidence/sbom-1.19.0.cdx.json) |
 | How changes are made, tested and released | [SDLC.md](SDLC.md) |
 | Breach / incident handling | [INCIDENT-RESPONSE.md](INCIDENT-RESPONSE.md) |
 | SOC 2 Trust Services Criteria mapping and gaps | [SOC2-READINESS.md](SOC2-READINESS.md) |

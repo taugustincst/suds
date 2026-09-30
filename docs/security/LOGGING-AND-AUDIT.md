@@ -8,6 +8,19 @@ Every PHI read (client view, lists, timeline, note view, exports, accounting of 
 
 Administrators and supervisors (`audit:read`) search it under Settings → Audit log, with shortcuts for break-glass events, access denials and exports.
 
+### Audit actions added in 1.18.0 and 1.19.0
+
+None of these entries carries a figure, a token, a key's private half, a passkey's signature or anything biometric; where a file or a statement matters, the entry names its SHA-256 or fingerprint.
+
+| Area | Actions | What the entry records |
+| --- | --- | --- |
+| County submission file, programme side (1.18.0; [../COUNTY-VIEW.md](../COUNTY-VIEW.md)) | `county_submission.export`, `county_submission.key.create`, `county_submission.key.rotate` | The period, county code, key fingerprint and payload SHA-256 of each file made; key creation and replacement |
+| County view, county side (1.18.0) | `county.submission.import`, `.duplicate`, `.refuse`, `.throttled`, `.withdraw`, `.reinstate`; `county.programme.add`, `.update`, `.deactivate`, `.reactivate`, `.key.replace`, `.key.compromised`, `.key.trusted`; `county.code.create`; `county.view`, `county.export` | Every import and refusal (with the refusal code), withdrawal (the reason and which file counts again), programme and key change, view and export of the combined figures |
+| County connection, county side (1.18.0; off by default) | `county_connect.settings`, `county_connect.token.issue`, `.token.list`, `.token.revoke`, `county_connect.status`, `county_connect.refuse`, `county.api.read`; imports over the connection as `county.submission.*` with `via: "county-connect"` and the token's id | The token's id and prefix as the actor (never a user, never the token); refused calls ten an hour per token, then a count in a summary entry each hour (`sweepRefusals`) |
+| County connection, programme side (1.18.0) | `county_connect.connection.save`, `.view`, `.test`, `.remove`; `county_submission.send`, `county_submission.auto`, `county_submission.auto_skip`; `county_connect.county_code.changed`, `.confirm` | Each send's period, county code, fingerprint, payload SHA-256, host and the county's answer (a send log keeps the same, `county_connect_sends`); a skipped automatic period with its reason |
+| Passkeys (1.19.0; [../FINGERPRINT.md](../FINGERPRINT.md)) | `auth.passkey.enrolled` (with the SHA-256 of the public key and of the credential id, which `npm run verify-passkey-evidence` checks evidence against), `auth.passkey.enrol.failed`, `.renamed`, `.removed`, `.remove.failed`, `auth.passkey.clone_suspected`; `user.passkeys.revoked`; `security.passkey_policy`; `auth.login` with `method: "passkey"`; signatures and approvals with `identity`/`method: "passkey"` and the evidence id; `signature_evidence.view` | Enrolment, removal, a counter that went backwards, an administrator's revocation, policy changes, and which signatures a fingerprint confirmed |
+| SUDS Server compliance reports (1.18.0; [../SELF-HOSTING.md](../SELF-HOSTING.md)) | `security.compliance_report.generated`, `security.compliance_report.view` | A new report the server found (its time and result) and each view or download |
+
 ## Tamper evidence, in layers
 
 | Layer | What it catches | Who could still defeat it | Code |
@@ -42,6 +55,8 @@ Honest limit: until the first anchor exists, and for entries written after the n
 3. a manifest line: entry count, first `prev_hash` and last hash, the SHA-256 of all preceding lines, the index-key identifier, **the anchors that fall inside the range**, the sealed head, an HMAC of the manifest under the index key, and an **Ed25519 signature** of the manifest (with the signing key's id and public key).
 
 **Signed, not only MACed.** The HMACs (chain, head, anchors, manifest) are keyed with the index key, which whoever runs the database necessarily holds, so they prove nothing to an auditor about *who* produced a file. The manifest is therefore also signed with an Ed25519 key (`server/signing.js`) that lives with the other keys — `SUDS_SIGNING_KEY`, or `keys.json`, where it is generated on first start if absent — and never in the database. Its public key is published at `GET /api/admin/security/signing-key` (JSON, or `?format=pem`; also *Download signing public key* on Security status). The auditor records that key (or its key id) once, from the server, and verifies every export against it with no secret at all. A manifest edited and re-MACed by someone holding the index key fails the signature. The same key signs recovery-drill reports (BACKUP-AND-DR.md).
+
+**Other signed evidence (1.18.0, 1.19.0).** Two more kinds of evidence verify offline with a public key alone. *Fingerprint-confirmed signatures and approvals*: `GET /api/admin/signature-evidence` (`audit:read`, audited `signature_evidence.view`) exports the statement signed, the device's assertion and the passkey's public key, and `npm run verify-passkey-evidence -- evidence.json --audit export.ndjson --public-key suds-signing-key.pem` checks each against the enrolment entry in a verified audit export. *SUDS Server compliance reports*: signed by the compliance check's own key, not this one (`/etc/suds/compliance-signing-key`, root only, never given to the SUDS service); verify with `npm run verify-compliance-report -- <report> --public-key /etc/suds/compliance-signing-key.pub.pem`. A report from a wizard or Docker install is signed with the evidence key above.
 
 Verify it anywhere with only Node installed:
 
