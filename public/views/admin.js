@@ -433,14 +433,15 @@ async function allowlistCard(refresh) {
   });
   function showPreview(pv, bad = []) {
     const a = pv.affected;
-    result.replaceChildren(
+    // replaceChildren writes a null as the text "null": the parts that may be absent are filtered out.
+    result.replaceChildren(...[
       h('h3', { class: 'eyebrow' }, 'Who would be affected'),
       bad.length ? h('p', { class: 'err' }, `No AAGUID on ${bad.length} line${bad.length === 1 ? '' : 's'}: ${bad.slice(0, 3).join(' | ')}`) : null,
       pv.models.length ? table([{ label: 'Model', render: m => m.name }, { label: 'AAGUID', render: m => h('code', {}, m.aaguid) }, { label: 'Metadata', render: standingBadge }], pv.models) : null,
       h('p', { 'data-affected-count': String(a.passkey_count) }, a.passkey_count ? `${a.passkey_count} passkey${a.passkey_count === 1 ? '' : 's'} of ${a.account_count} account${a.account_count === 1 ? '' : 's'} would stop working for sign-in and signing at their next use. Their owners sign in with the password (and code) and add a passkey on an accepted authenticator.` : 'No one\'s passkeys would stop working.'),
       a.accounts.length ? table([{ label: 'Person', render: x => h('span', {}, h('b', {}, x.display_name), ' ', h('span', { class: 'small muted' }, x.username)) },
         { label: 'Passkeys that stop', render: x => x.passkeys.map(p => h('div', { class: 'small' }, `${p.name} — ${REASON_TEXT[p.reason] || p.reason}`)) },
-        { label: 'Other second factor', render: x => x.other_factor ? badge('Authenticator app', 'ok') : flag('None', true, 'asked to set one up at their next sign-in if their role requires it', 'warn') }], a.accounts) : null);
+        { label: 'Other second factor', render: x => x.other_factor ? badge('Authenticator app', 'ok') : flag('None', true, 'asked to set one up at their next sign-in if their role requires it', 'warn') }], a.accounts) : null].filter(Boolean));
   }
   if (s.enabled && s.affected && s.affected.passkey_count) showPreview({ models: s.models, affected: s.affected });
   return h('div', { class: 'card', 'data-allowlist-card': '1' }, h('h2', {}, 'Authenticator allow-list (passkeys)'),

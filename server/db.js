@@ -767,9 +767,10 @@ const migrations = [
     addColumn(d, 'county_programmes', 'on_suds', 'INTEGER NOT NULL DEFAULT 1');
     if (tableExists(d, 'county_submissions') && !tableCols(d, 'county_submissions').includes('source')) rebuildTable(d, safeSchema(), 'county_submissions');
   },
-  // 61, 62: numbers held for the other 1.21.0 streams' migrations (the release's integration puts theirs here). A
-  //     documented no-op on this branch, so the authenticator allow-list's migration keeps the number 63 it was given.
+  // 61: a number held for another 1.21.0 stream's migration (the release's integration puts it here). A documented
+  //     no-op on this branch, so the authenticator allow-list's migration keeps the number 63 it was given.
   (d) => { void d; },
+  // 62: likewise held for another 1.21.0 stream's migration; a documented no-op on this branch.
   (d) => { void d; },
   // 63: the authenticator allow-list for passkeys (built for 1.21.0, not yet released; docs/FINGERPRINT.md
   //     "Authenticator allow-list"): passkeys.attestation (the attestation verified at enrolment under the list; NULL
