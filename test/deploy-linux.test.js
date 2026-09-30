@@ -36,14 +36,18 @@ function fixture({ os: osName = 'ubuntu', lsblk = 'suds-data crypt\nsda3 part\ns
   stub('lsblk', `printf '%s\\n' ${lsblk.split('\n').map((l) => `'${l}'`).join(' ')}`);
   stub('mountpoint', mountpoints ? 'exit 0' : 'exit 1');
   stub('id', 'exit 1');
+  // Who is connected (lib.sh ssh_lockout_guard): who -m and ss answer from the environment the test sets.
+  stub('who', '[ -n "$WHO_M" ] && echo "$WHO_M"; exit 0');
+  stub('ss', '[ -n "$SS_FAIL" ] && exit 1; [ -n "$SS_OUT" ] && printf "%s\\n" "$SS_OUT"; exit 0');
+  // systemctl may be asked (is-active: is chrony running?), never told.
+  stub('systemctl', 'case "$1" in is-active|is-enabled) exit 3 ;; esac; echo "STUB $0 WAS RUN" >&2; exit 99');
   // Anything that would change the host must never be reached in a dry run.
-  for (const c of ['apt-get', 'dnf', 'useradd', 'ufw', 'firewall-cmd', 'systemctl', 'systemd-run', 'curl', 'runuser', 'timedatectl']) stub(c, `echo "STUB $0 WAS RUN" >&2; exit 99`);
+  for (const c of ['apt-get', 'dnf', 'useradd', 'ufw', 'firewall-cmd', 'systemd-run', 'curl', 'runuser', 'timedatectl', 'restorecon']) stub(c, `echo "STUB $0 WAS RUN" >&2; exit 99`);
   return { dir, root, bin };
 }
 function run(script, args, fx, env = {}) {
   const e = { ...process.env, PATH: `${fx.bin}:${process.env.PATH}`, SUDS_INSTALL_ROOT: fx.root, ...env };
-  delete e.SSH_CONNECTION;
-  if (env.SSH_CONNECTION) e.SSH_CONNECTION = env.SSH_CONNECTION;
+  for (const k of ['SSH_CONNECTION', 'WHO_M', 'SS_OUT', 'SS_FAIL']) { delete e[k]; if (env[k]) e[k] = env[k]; }
   const r = spawnSync('bash', [path.join(LINUX, script), ...args], { env: e, encoding: 'utf8', timeout: 60000 });
   return { code: r.status, out: r.stdout, err: r.stderr, all: r.stdout + r.stderr };
 }
@@ -103,14 +107,18 @@ test('Ubuntu 24.04: the plan installs the unit, generates each key root-only 060
   assert.ok(r.out.includes(`sha512sum -c <<< "${pins.CADDY_SHA512_LINUX_AMD64}  caddy_${pins.CADDY_VERSION}_linux_amd64.tar.gz"`), 'Caddy by its pinned SHA-512');
   assert.ok(!/curl[^\n]*\|\s*(ba)?sh/.test(r.out), 'never curl | sh');
   // Code root-owned and read-only; data 0700 for the service user.
-  assert.ok(r.out.includes(`+ copy ${REPO} into ${R}/opt/suds/${VERSION}`));
-  assert.ok(r.out.includes(`+ chmod -R a-w ${R}/opt/suds/${VERSION}`));
-  assert.ok(r.out.includes(`+ ln -sfn /opt/suds/${VERSION} ${R}/opt/suds/current.new`));
+  assert.ok(r.out.includes(`+ copy ${REPO} into ${R}/opt/suds/${VERSION}.partial`), 'staged beside, then renamed');
+  assert.ok(r.out.includes(`+ chmod -R a-w ${R}/opt/suds/${VERSION}.partial`));
+  assert.ok(r.out.includes(`+ mv -T ${R}/opt/suds/${VERSION}.partial ${R}/opt/suds/${VERSION}`));
+  assert.ok(r.out.includes(`+ ln -sfn ${VERSION} ${R}/opt/suds/current.new`), 'a relative symlink');
+  assert.ok(r.out.includes(`+ install -d -m 0755 -o root -g root ${R}/opt/suds ${R}/opt/suds/node-${pins.NODE_VERSION}`), 'the Node directory is made 0755, whatever the umask');
   assert.ok(r.out.includes(`+ install -d -m 0700 -o suds -g suds ${R}/var/lib/suds`));
   assert.ok(r.out.includes('+ useradd --system --user-group --home-dir /var/lib/suds --no-create-home --shell /usr/sbin/nologin suds'));
   // Keys: a 0700 root directory, each key 0600 root, loaded by systemd.
   assert.ok(r.out.includes(`+ install -d -m 0700 -o root -g root ${R}/etc/suds/credentials`));
   for (const k of ['suds_encryption_key', 'suds_index_key', 'suds_backup_key', 'suds_signing_key']) assert.ok(r.out.includes(`+ generate 32 random bytes as hex into ${R}/etc/suds/credentials/${k} (mode 0600, owner root:root)`), k);
+  assert.ok(r.out.includes(`+ generate 32 random bytes as hex into ${R}/etc/suds/compliance-signing-key (mode 0600, owner root:root)`), 'the compliance check\'s own key, outside the service\'s credentials');
+  assert.ok(r.out.includes(`+ install -d -m 0750 -o root -g suds ${R}/var/lib/suds-compliance`));
   assert.match(r.out, /KEY ESCROW — YOUR STEP, NOW/);
   assert.ok(!/[0-9a-f]{64}/.test(r.out.replace(pins.NODE_SHA256_LINUX_X64, '').replace(pins.CADDY_SHA512_LINUX_AMD64, '')), 'no key-like value is printed');
   // The unit and the weekly compliance timer, installed unchanged from the tree.
@@ -125,6 +133,7 @@ test('Ubuntu 24.04: the plan installs the unit, generates each key root-only 060
     "+ ufw allow proto tcp from 10.20.0.0/16 to any port 22 comment SUDS\\ Server:\\ SSH\\ from\\ the\\ administration\\ network", "+ ufw allow 443/tcp comment SUDS\\ Server:\\ HTTPS",
     "+ ufw allow 80/tcp comment SUDS\\ Server:\\ redirect\\ and\\ ACME", '+ ufw --force enable']);
   assert.ok(r.out.indexOf('from 10.20.0.0/16 to any port 22') < r.out.indexOf('+ ufw --force enable'), 'the admin SSH rule exists before the firewall is enabled');
+  for (const d of ['+ ufw delete allow OpenSSH', '+ ufw delete allow 22/tcp', '+ ufw delete allow 22']) assert.ok(r.out.includes(`${d}\n`), `the dry run shows ${d}`);
   assert.ok(r.out.includes('+ systemctl enable --now systemd-timesyncd') && r.out.includes('+ timedatectl set-ntp true'), 'time sync');
   assert.ok(r.out.includes('+ systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'), 'unattended security updates');
   assert.ok(r.out.includes('compliance-check.js'), 'finishes with the compliance check');
@@ -136,7 +145,7 @@ test('Rocky 9: firewalld with https/http, SSH only through a rich rule from the 
   const r = run('install.sh', [...BASE, '--admin-cidr=192.168.10.0/24'], fx);
   assert.equal(r.code, 0, r.all);
   assert.match(r.out, /Rocky Linux 9\.4 \(Blue Onyx\) \(rhel family\)/);
-  assert.ok(r.out.includes('+ dnf install -y -q ca-certificates curl xz unzip tar firewalld chrony dnf-automatic'));
+  assert.ok(r.out.includes('+ dnf install -y -q ca-certificates xz unzip tar firewalld chrony dnf-automatic'), 'curl is there (curl-minimal on RHEL): not installed over it');
   for (const l of ['+ firewall-cmd --permanent --zone=public --add-service=https', '+ firewall-cmd --permanent --zone=public --add-service=http',
     '+ firewall-cmd --permanent --zone=public --add-rich-rule=rule\\ family=\\"ipv4\\"\\ source\\ address=\\"192.168.10.0/24\\"\\ service\\ name=\\"ssh\\"\\ accept',
     '+ firewall-cmd --permanent --zone=public --remove-service=ssh', '+ firewall-cmd --permanent --zone=public --remove-service=cockpit', '+ firewall-cmd --reload',
@@ -220,11 +229,88 @@ test('upgrade.sh: stages and verifies, stops, backs up with the service keys, sw
   const fx = fixture({ current: '1.16.0' });
   const r = run('upgrade.sh', ['--dry-run', VERSION], fx);
   assert.equal(r.code, 0, r.all);
-  const order = ['+ systemctl stop suds.service', '+ systemd-run', 'scripts/backup.js', `+ ln -sfn /opt/suds/${VERSION}`, '+ systemctl start suds.service', '+ wait up to'];
+  const order = ['+ systemctl stop suds.service', '+ systemd-run', 'scripts/backup.js', `+ ln -sfn ${VERSION} `, '+ systemctl start suds.service', '+ wait up to'];
   let at = -1;
   for (const s of order) { const i = r.out.indexOf(s, at + 1); assert.ok(i > at, `${s} comes next:\n${r.out}`); at = i; }
   assert.ok(r.out.includes('-p LoadCredential=suds_encryption_key:/etc/suds/credentials/suds_encryption_key'), 'the backup runs with the keys as credentials');
   const down = run('upgrade.sh', ['--dry-run', '1.2.0'], fx);
   assert.match(down.err, /REFUSED: 1\.2\.0 is older than the running 1\.16\.0/);
   fs.rmSync(fx.dir, { recursive: true, force: true });
+});
+
+
+test('SSH lock-out: under sudo (no SSH_CONNECTION) the session is found through who -m, a parent process or ss; unknown refuses without --console-access', () => {
+  const fx = fixture();
+  // who -m: the terminal's utmp entry.
+  let r = run('install.sh', BASE, fx, { WHO_M: 'admin    pts/0        2026-09-30 10:00 (203.0.113.9)' });
+  assert.match(r.err, /REFUSED: this SSH session comes from 203\.0\.113\.9, outside --admin-cidr=10\.20\.0\.0\/16/);
+  r = run('install.sh', BASE, fx, { WHO_M: 'admin    pts/0        2026-09-30 10:00 (10.20.9.9)' });
+  assert.equal(r.code, 0, r.all); assert.match(r.out, /this session comes from 10\.20\.9\.9, inside/);
+  // A parent process's environment (sudo dropped SSH_CONNECTION; the login shell above it still has it).
+  const penv = path.join(fx.root, 'proc', String(process.pid)); fs.mkdirSync(penv, { recursive: true });
+  fs.writeFileSync(path.join(penv, 'environ'), 'USER=admin\0SSH_CONNECTION=198.51.100.4 50022 10.20.1.5 22\0');
+  r = run('install.sh', BASE, fx);
+  assert.match(r.err, /REFUSED: this SSH session comes from 198\.51\.100\.4/);
+  fs.rmSync(path.join(fx.root, 'proc'), { recursive: true, force: true });
+  // Any established SSH session outside the network, not only this one.
+  r = run('install.sh', BASE, fx, { SS_OUT: '0      0      10.20.1.5:22      10.20.3.3:50000\n0      0      10.20.1.5:22      192.0.2.77:41000' });
+  assert.match(r.err, /REFUSED: an established SSH session comes from 192\.0\.2\.77, outside --admin-cidr/);
+  r = run('install.sh', BASE, fx, { SS_OUT: '0      0      10.20.1.5:22      10.20.3.3:50000\n0      0      [::ffff:10.20.4.4]:22      [::ffff:10.20.4.5]:41000' });
+  assert.equal(r.code, 0, r.all);
+  r = run('install.sh', BASE, fx, { SS_OUT: '0      0      [2001:db8::5]:22      [2001:db8::9]:41000' });
+  assert.match(r.err, /cannot be compared with --admin-cidr/);
+  // Nothing can say where the administrator is: refused, unless they are at the console.
+  r = run('install.sh', BASE, fx, { SS_FAIL: '1' });
+  assert.match(r.err, /REFUSED: could not tell where this session comes from/);
+  r = run('install.sh', [...BASE, '--console-access'], fx, { SS_FAIL: '1' });
+  assert.equal(r.code, 0, r.all); assert.match(r.out, /--console-access: the SSH lock-out check is skipped/);
+  fs.rmSync(fx.dir, { recursive: true, force: true });
+});
+
+test('a release zip needs a checksum from another channel: refused without --release-sha256, a warning with --trust-release-checksum, the --source file copied before it is hashed', () => {
+  const fx = fixture();
+  let r = run('install.sh', [...BASE, '--version=9.9.9'], fx);
+  assert.notEqual(r.code, 0);
+  assert.match(r.err, /REFUSED: no independent checksum for suds-v9\.9\.9\.zip\. Pass --release-sha256=<hex>, taken from a channel other than the download \(the release notes AND the CHANGELOG entry at tag v9\.9\.9/);
+  r = run('install.sh', [...BASE, '--version=9.9.9', '--trust-release-checksum'], fx);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.err, /checked only against the \.sha256 published beside it \(--trust-release-checksum\)/);
+  assert.ok(r.out.includes('https://github.com/taugustincst/suds/releases/download/v9.9.9/suds-v9.9.9.zip.sha256'));
+  // --source: the operator's zip, with its checksum.
+  const zip = path.join(fx.dir, 'suds-v9.9.9.zip'); fs.writeFileSync(zip, 'PK fake zip');
+  const good = require('node:crypto').createHash('sha256').update(fs.readFileSync(zip)).digest('hex');
+  r = run('install.sh', [...BASE, '--version=9.9.9', `--source=${zip}`, `--release-sha256=${'0'.repeat(64)}`], fx);
+  assert.match(r.err, /REFUSED: checksum mismatch for suds-v9\.9\.9\.zip/);
+  r = run('install.sh', [...BASE, '--version=9.9.9', `--source=${zip}`, `--release-sha256=${good.toUpperCase()}`], fx);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.out, /suds-v9\.9\.9\.zip: sha256 matches/);
+  assert.ok(!r.out.includes(`unzip -q ${zip}`), 'the copy is unpacked, never the operator\'s file in place');
+  // upgrade.sh the same.
+  const up = fixture({ current: '1.16.0' });
+  r = run('upgrade.sh', ['--dry-run', '9.9.9'], up);
+  assert.match(r.err, /REFUSED: no independent checksum/);
+  fs.rmSync(fx.dir, { recursive: true, force: true }); fs.rmSync(up.dir, { recursive: true, force: true });
+});
+
+test('installer input is whitelisted: paths, e-mail, host names, numbers; JSON is escaped by construction', () => {
+  const fx = fixture();
+  const bad = (flag, re) => { const r = run('install.sh', [...BASE.filter((a) => !a.startsWith(flag.split('=')[0] + '=')), flag], fx); assert.notEqual(r.code, 0, flag); assert.match(r.err, re, flag); assert.ok(!r.out.includes('+ '), `${flag}: refused before any action`); };
+  bad('--offsite=/mnt/off site', /--offsite must be an absolute path of letters, digits/);
+  bad('--anchors=/mnt/$(reboot)', /--anchors must be an absolute path/);
+  bad('--offsite=relative/dir', /--offsite must be an absolute path/);
+  bad('--acme-email=it@county.gov;rm -rf /', /--acme-email must be an e-mail address/);
+  bad('--log-retention-days=400d', /--log-retention-days must be a number of days \(digits\)/);
+  bad('--journal-max-use=8GB', /--journal-max-use must be a size such as 8G/);
+  bad('--connect-host=10.0.0.1 evil', /--connect-host must be a host name or IP address/);
+  bad('--ntp-server=ntp.county.gov;id', /--ntp-server must be host names or IP addresses/);
+  bad('--release-sha256=xyz', /--release-sha256 must be 64 hex characters/);
+  bad('--node-tarball=node.tar.xz', /--node-tarball must be an absolute path/);
+  const up = fixture({ current: '1.16.0' });
+  const r = run('upgrade.sh', ['--dry-run', VERSION, '--ready-timeout=5m'], up);
+  assert.match(r.err, /--ready-timeout must be a number of seconds \(digits\)/);
+  // json_str: quotes, backslashes and control characters come out as valid JSON for the same string.
+  const tricky = 'a"b\\c\td\ne';
+  const j = spawnSync('bash', ['-c', `. "${path.join(LINUX, 'lib.sh')}"; json_str "$1"`, 'x', tricky], { encoding: 'utf8' });
+  assert.equal(JSON.parse(j.stdout), tricky);
+  fs.rmSync(fx.dir, { recursive: true, force: true }); fs.rmSync(up.dir, { recursive: true, force: true });
 });

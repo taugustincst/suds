@@ -11,7 +11,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=deploy/linux/lib.sh
 . "$HERE/lib.sh"
 for arg in "$@"; do case "$arg" in --dry-run) DRY=1 ;; *) die "unknown option $arg" ;; esac; done
-(( DRY )) || [[ $EUID -eq 0 ]] || die "run as root"
+require_root
 
 act systemctl disable --now suds-compliance.timer suds.service caddy.service
 for u in suds.service suds-compliance.service suds-compliance.timer caddy.service; do act rm -f "$(P "/etc/systemd/system/$u")"; done
@@ -20,8 +20,9 @@ act systemctl daemon-reload
 act rm -rf "$(P "$CODE_BASE")" "$(P /opt/caddy)"
 say ""
 say "SUDS Server is stopped and its software removed. Left in place, deliberately:"
-say "  $DATA_DIR            the database, backups and compliance reports (PHI)"
-say "  $CRED_DIR   the keys that decrypt them"
+say "  $DATA_DIR            the database and backups (PHI)"
+say "  $COMPLIANCE_DIR  the signed compliance reports (evidence: keep six years)"
+say "  $CRED_DIR   the keys that decrypt them; $COMPLIANCE_KEY (and .pub.pem)"
 say "  /etc/suds/*.env, provision.json, suds-server.conf; /etc/caddy; the firewall rules; the anchor and offsite shares"
 say "Keep them for the retention period your policy sets, or sanitise the media under that policy. To reinstall,"
 say "run deploy/linux/install.sh again: it finds the database and the keys and carries on with them."
