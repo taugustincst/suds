@@ -157,9 +157,10 @@ module.exports = (r) => {
     if (aff.passkey_count && v.acknowledge_affected !== aff.passkey_count) throw new HttpError(409, `${aff.passkey_count} passkey${aff.passkey_count === 1 ? '' : 's'} of ${aff.account_count} account${aff.account_count === 1 ? '' : 's'} would stop working. Review them and confirm.`, { affected: aff });
     await auth.verifySigner(ctx, v, { action: 'security.authenticator_allowlist.failed', purpose: 'change the authenticator allow-list', fresh: true });
     const before = L.status();
-    db.transaction(() => { db.setSetting('authn_allowlist', on ? '1' : '0'); db.setSetting('authn_allowlist_models', JSON.stringify(list)); });
+    let ended = 0;
+    db.transaction(() => { db.setSetting('authn_allowlist', on ? '1' : '0'); db.setSetting('authn_allowlist_models', JSON.stringify(list)); ended = L.endRefusedSessions({ keepSession: ctx.session && ctx.session.id }); });
     audit.log({ user: ctx.user, action: 'security.authenticator_allowlist', ip: ctx.ip, details: { enabled: on, was_enabled: before.enabled, models: list.map((m) => m.aaguid),
-      affected_accounts: aff.account_count, affected_passkeys: aff.passkey_count, affected_users: aff.accounts.slice(0, 200).map((a) => a.user_id), mds_no: (L.metadataInfo() || {}).no ?? null } });
+      affected_accounts: aff.account_count, affected_passkeys: aff.passkey_count, affected_users: aff.accounts.slice(0, 200).map((a) => a.user_id), sessions_ended: ended || undefined, mds_no: (L.metadataInfo() || {}).no ?? null } });
     return { ...L.status(), affected: aff };
   });
   // The FIDO Metadata Service BLOB (blob.jwt, a few megabytes), which the administrator downloads from
@@ -177,7 +178,10 @@ module.exports = (r) => {
       audit.log({ user: ctx.user, action: 'security.authenticator_metadata.refused', ip: ctx.ip, success: false, details: { reason: e.code } });
       throw badRequest(`The metadata file was not loaded: ${e.message}`, { metadataError: e.code });
     }
-    audit.log({ user: ctx.user, action: 'security.authenticator_metadata', ip: ctx.ip, details: { no: info.no, next_update: info.next_update, entries: info.entries, sha256: info.sha256, test_root: info.test_root || undefined } });
+    // A model the new file reports compromised or revoked (or no longer lists) refuses its passkeys from now on: the
+    // sessions they opened end too.
+    const ended = L.endRefusedSessions({ keepSession: ctx.session && ctx.session.id });
+    audit.log({ user: ctx.user, action: 'security.authenticator_metadata', ip: ctx.ip, details: { no: info.no, next_update: info.next_update, entries: info.entries, sha256: info.sha256, test_root: info.test_root || undefined, sessions_ended: ended || undefined } });
     const st = L.status();
     return { metadata: info, models: st.models, affected: L.affected({ on: st.enabled, list: L.models() }) };
   });

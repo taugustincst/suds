@@ -189,6 +189,19 @@ function affected({ on, list }) {
   return { accounts, account_count: accounts.length, passkey_count: accounts.reduce((n, a) => n + a.passkeys.length, 0) };
 }
 
+/**
+ * The sessions a passkey the list now refuses had opened (sessions.passkey_id) end with the change: "refused at its next
+ * use" must not leave a browser signed in on it for the rest of its session (up to the absolute session lifetime),
+ * as removing a passkey does not (server/passkeys.js remove). `keepSession`: the administrator's own session, which
+ * has just given the password or code for the change. Returns how many ended.
+ */
+function endRefusedSessions({ keepSession = null } = {}) {
+  if (!enabled()) return 0;
+  const ids = affected({ on: true, list: models() }).accounts.flatMap((a) => a.passkeys.map((p) => p.id));
+  if (!ids.length) return 0;
+  return db.run(`UPDATE sessions SET revoked_at=? WHERE revoked_at IS NULL AND passkey_id IN (SELECT value FROM json_each(?)) AND id IS NOT ?`, db.now(), JSON.stringify(ids), keepSession).changes;
+}
+
 /** Settings → Security status's line, and the settings card's summary. */
 function status() {
   const meta = metadataInfo();
@@ -196,4 +209,4 @@ function status() {
   return { enabled: enabled(), models: list.map((m) => ({ ...m, ...modelStanding(m.aaguid) })), metadata: meta };
 }
 
-module.exports = { MAX_MODELS, trustRoots, enabled, models, metadataInfo, normaliseModels, entryFor, catalog, modelStanding, loadMetadata, checkRegistration, passkeyAllowed, refusalMessage, affected, status };
+module.exports = { MAX_MODELS, trustRoots, enabled, models, metadataInfo, normaliseModels, entryFor, catalog, modelStanding, loadMetadata, checkRegistration, passkeyAllowed, refusalMessage, affected, endRefusedSessions, status };

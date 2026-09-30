@@ -215,7 +215,9 @@ sign-in step and signing at its next use**: refused (`403`, `passkeyError: "not_
 and what to do (sign in with the password, remove it, add one on an accepted authenticator), audited as
 `auth.passkey.not_allowed` (with the reason: `unattested`, `not listed`, `status`, `not in metadata`) beside the usual
 `auth.login.failed`. It is checked after the signature verifies, so only the passkey's holder learns why, and it does
-not count toward the lockout (nothing was guessed). It no longer counts as the account's second factor
+not count toward the lockout (nothing was guessed). A session such a passkey had already opened ends when the list is
+saved (or when a metadata file is loaded that refuses its model), as a removed passkey's does, audited as
+`sessions_ended` on the change; the administrator's own session is kept. It no longer counts as the account's second factor
 (`auth.passkeyCount`), is not offered for the second step or for "Confirm with fingerprint", and My profile marks it
 "Not accepted" and names the accepted models. The passkey is not deleted: turning the list off, or listing its model
 and adding it again with attestation, brings it back. A person whose role requires two-step verification and whose

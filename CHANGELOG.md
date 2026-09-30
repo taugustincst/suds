@@ -234,6 +234,10 @@ makes a screened, publishable release of a county's combined figures for a perio
 - **Authenticator allow-list: a malformed TPM certificate crashed enrolment** (a 500): a subject alternative name
   whose AttributeTypeAndValue had no type or value threw a TypeError before the chain was checked; it is now refused
   as not understood (`attestation_cert`). Test: test/attestation.test.js.
+- **Authenticator allow-list: a session opened by a passkey the list now refuses stayed signed in** until it expired
+  (its passkey was refused only "at its next use"). Saving the list, or loading a metadata file that refuses a model,
+  now ends the sessions those passkeys opened (`sessions_ended` in the audit entry), as removing a passkey does; the
+  administrator's own session is kept. Test: test/attestation.test.js.
 
 ## 1.20.0 — 2026-09-30
 

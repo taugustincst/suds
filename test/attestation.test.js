@@ -426,6 +426,40 @@ test('turning it off: every passkey works again as before, and the list is kept 
   assert.deepEqual(require('../server/passkeys').allowlist.models().map((m) => m.aaguid), [AAGUID]);
 });
 
+test('turning it on, or a metadata file that refuses a model, ends the sessions the refused passkeys opened (review fix)', async () => {
+  const models = [{ name: 'Test key', aaguid: AAGUID }];
+  assert.equal((await admin.post('/api/admin/authenticator-metadata', { blob: blob(), password: APW })).status, 200);
+  const p = await person('al_session');
+  const old = key();
+  assert.equal((await enrol(p.c, old)).status, 201, 'added while the list is off (never attested)');
+  const app = require('../server/app'); for (const k of ['passkey-options:127.0.0.1', 'login:127.0.0.1']) app.rateLimitReset(k);
+  const byKey = H.client();
+  const o = await byKey.post('/api/auth/passkeys/login/options', {});
+  assert.equal((await byKey.post('/api/auth/passkeys/login', { credential: old.get(o.data.publicKey) })).status, 200);
+  assert.equal((await byKey.get('/api/clients')).status, 200, 'signed in by the passkey');
+  const n = (await admin.post('/api/admin/authenticator-allowlist/preview', { enabled: true, models })).data.affected.passkey_count;
+  assert.equal((await setList({ enabled: true, models, acknowledge_affected: n })).status, 200);
+  assert.ok(lastAudit('security.authenticator_allowlist').details.sessions_ended >= 1, 'audited');
+  assert.equal((await byKey.get('/api/clients')).status, 401, 'the session the refused passkey opened has ended');
+  assert.equal((await p.c.get('/api/clients')).status, 200, 'a password session of the same person is not a passkey\'s');
+  assert.equal((await admin.get('/api/admin/authenticator-allowlist')).status, 200, 'nor the administrator\'s own');
+  // An attested passkey's session, then a metadata file reporting its model compromised: that session ends too.
+  const good = key();
+  const withInter = (ad, cdh, x) => { const m = packedFull(makerCa)(ad, cdh, x); m.attStmt.set('x5c', [...m.attStmt.get('x5c'), makerCa.der]); return m; };
+  assert.equal((await enrol(p.c, good, { attest: withInter })).status, 201);
+  for (const k of ['passkey-options:127.0.0.1', 'login:127.0.0.1']) app.rateLimitReset(k);
+  const byGood = H.client();
+  const o2 = await byGood.post('/api/auth/passkeys/login/options', {});
+  assert.equal((await byGood.post('/api/auth/passkeys/login', { credential: good.get(o2.data.publicKey) })).status, 200);
+  assert.equal((await byGood.get('/api/clients')).status, 200);
+  assert.equal((await admin.post('/api/admin/authenticator-metadata', { blob: blob({ statuses: [{ status: 'ATTESTATION_KEY_COMPROMISE', effectiveDate: '2026-01-01' }] }), password: APW })).status, 200);
+  assert.equal((await byGood.get('/api/clients')).status, 401, 'ended with the model\'s standing');
+  assert.ok(lastAudit('security.authenticator_metadata').details.sessions_ended >= 1);
+  assert.equal((await admin.post('/api/admin/authenticator-metadata', { blob: blob(), password: APW })).status, 200);
+  const n2 = (await admin.post('/api/admin/authenticator-allowlist/preview', { enabled: false, models })).data.affected.passkey_count;
+  assert.equal((await setList({ enabled: false, models, acknowledge_affected: n2 })).status, 200);
+});
+
 test('office server only: none of the attestation or allow-list code is in the browser kernel, and its routes are not mounted there', () => {
   const app = require('../server/app');
   assert.ok(!app.LOCAL_ROUTE_MODULES.includes('passkeys'), 'the passkey routes (the allow-list\'s too) are not in local mode');
