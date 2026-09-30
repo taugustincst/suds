@@ -72,6 +72,7 @@ only against a figure the buyer has given.
 | **For** | "Sell to the money": one buyer, one procurement, many programmes; CBOs without IT capacity get a sponsor; the county gets consistent outcome data |
 | **Against** | Long procurement; the county may expect hosting, which is not offered; one contract concentrates revenue; the county, not the vendor, must be the data steward for any benchmarking ([DATA-NETWORK.md](DATA-NETWORK.md)) |
 | **Note** | "Licence" is the buyer's word; the contract is for services. Say so in the proposal, to avoid a county expecting rights it already has under MIT |
+| **The package** | What the county runs, what each CBO does, a 3-CBO timeline and the documents a county asks for: [COUNTY-KIT.md](COUNTY-KIT.md). Price nothing from it: every number here is [owner to decide] |
 
 ### D. Implementation and FDE services, packaged separately
 
