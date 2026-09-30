@@ -494,7 +494,9 @@ test('signed county file: hostile payloads signed with the programme\'s own key 
     const collect = (o) => { for (const [k, v] of Object.entries(o)) { if (typeof v === 'number') amounts.push([k, v]); else if (v && typeof v === 'object') collect(v); } };
     collect({ total: p.total, funds: p.funds, categories: p.categories });
     for (const [k, v] of amounts) assert.ok(Number.isFinite(v) && v >= 0 && v <= 1e12, `${k} = ${v}`);
-    for (const f of p.funds) { assert.deepEqual(Object.keys(f).sort(), K.PAYLOAD.fund); assert.deepEqual(Object.keys(f.values).sort(), K.PAYLOAD.values); assert.ok(typeof f.name === 'string' && f.name === K.cleanText(f.name, 200) && f.name); }
+    // The shape of the version the file claims (1.21.0: version 2 adds each fund's award, null or { amount, from, to }).
+    const shape = p.schema_version >= 2 ? K.PAYLOAD_V2 : K.PAYLOAD;
+    for (const f of p.funds) { assert.deepEqual(Object.keys(f).sort(), shape.fund); if (f.award !== undefined && f.award !== null) { assert.deepEqual(Object.keys(f.award).sort(), shape.award); assert.ok(Number.isFinite(f.award.amount) && f.award.amount > 0); } assert.deepEqual(Object.keys(f.values).sort(), K.PAYLOAD.values); assert.ok(typeof f.name === 'string' && f.name === K.cleanText(f.name, 200) && f.name); }
     assert.ok(['imported', 'superseded', 'older', 'duplicate'].includes(out.status));
   });
   assert.ok(refused > 0, `refused ${refused}, taken ${taken}`);
