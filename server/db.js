@@ -767,6 +767,25 @@ const migrations = [
     addColumn(d, 'county_programmes', 'on_suds', 'INTEGER NOT NULL DEFAULT 1');
     if (tableExists(d, 'county_submissions') && !tableCols(d, 'county_submissions').includes('source')) rebuildTable(d, safeSchema(), 'county_submissions');
   },
+  // 61: reserved for another 1.21.0 change (numbers are assigned per change so parallel work merges cleanly). A
+  //     documented no-op on this branch, kept so the field-device migration below keeps number 62; when the change
+  //     that owns 61 is merged, its migration replaces this line.
+  (d) => { void d; },
+  // 62: field devices and participant-code clients (built for 1.21.0, not yet released; server/field-scope.js,
+  //     docs/PLATFORM.md "Field devices"). devices.sync_scope ('full' for every existing device: nothing a device
+  //     holds changes on upgrade), scope_changed_at and field_applied_at; sessions.device_id, the device a sync
+  //     sign-in came from (existing sessions predate it: NULL, and they end within hours); clients.participant_code_enc
+  //     and participant_code_idx with their index (no client has a code yet). Self-contained and idempotent, so it can
+  //     be renumbered.
+  (d) => {
+    addColumn(d, 'devices', 'sync_scope', "TEXT NOT NULL DEFAULT 'full' CHECK (sync_scope IN ('full','field'))");
+    addColumn(d, 'devices', 'scope_changed_at', 'TEXT');
+    addColumn(d, 'devices', 'field_applied_at', 'TEXT');
+    addColumn(d, 'sessions', 'device_id', 'TEXT');
+    addColumn(d, 'clients', 'participant_code_enc', 'TEXT');
+    addColumn(d, 'clients', 'participant_code_idx', 'TEXT');
+    createIndexesFromSchema(d, safeSchema(), ['idx_clients_participant_code']);
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

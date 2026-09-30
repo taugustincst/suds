@@ -23,8 +23,38 @@ function touch(user, deviceId, ctx) {
   const label = labelFrom(ctx.headers['user-agent']);
   const now = db.now();
   if (existing) db.run(`UPDATE devices SET user_id=?, last_seen_at=?, last_ip=?, sync_count=sync_count+1, label=COALESCE(label, ?) WHERE id=?`, user.id, now, ctx.ip, label, deviceId);
-  else db.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count) VALUES(?,?,?,?,?,?,1)`, deviceId, user.id, label, now, now, ctx.ip);
+  else {
+    // A new device starts in the programme's default scope (field_device_default, off unless an administrator
+    // turned it on): a programme that wants every phone to be a field device does not have to catch each one.
+    const scope = db.getSetting('field_device_default', '0') === '1' ? 'field' : 'full';
+    db.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count,sync_scope,scope_changed_at) VALUES(?,?,?,?,?,?,1,?,?)`, deviceId, user.id, label, now, now, ctx.ip, scope, scope === 'field' ? now : null);
+  }
   return db.one(`SELECT * FROM devices WHERE id=?`, deviceId);
+}
+
+// ---- sync scope (built for 1.21.0, not yet released; server/field-scope.js) ----
+const SCOPES = ['full', 'field'];
+/**
+ * Change what a device's sync carries. `via`: 'admin' (Settings -> Synced devices) or 'enrolment' (its own user,
+ * who may only narrow it to 'field': widening what a phone holds is an administrator's decision). A change to
+ * 'field' reaches the device at its next sync: it sends what it has not sent yet, then removes what is out of scope
+ * (local/sync.js). Until the office has answered a pull under the field scope, field_applied_at stays empty and the
+ * device's pushes are judged as before, so nothing recorded under the old scope is refused on the way in. Audited
+ * by the caller's action. Returns the device row, or null when nothing changed.
+ */
+function setScope(deviceId, scope, { actor, ip, via = 'admin' } = {}) {
+  if (!SCOPES.includes(scope)) throw new Error(`setScope: unknown scope ${scope}`);
+  const d = db.one(`SELECT * FROM devices WHERE id=?`, deviceId);
+  if (!d || d.sync_scope === scope) return null;
+  if (via !== 'admin' && scope !== 'field') throw new Error('Only an administrator can widen what a device holds');
+  db.run(`UPDATE devices SET sync_scope=?, scope_changed_at=? WHERE id=?`, scope, db.now(), deviceId);
+  require('./audit').log({ user: actor, action: 'device.scope', entity: 'device', entityId: deviceId, ip, details: { from: d.sync_scope, to: scope, via, device_user: d.user_id } });
+  return db.one(`SELECT * FROM devices WHERE id=?`, deviceId);
+}
+/** The device a request's session was signed in from (sessions.device_id), or null for a browser's session. */
+function ofSession(ctx) {
+  const id = ctx && ctx.session && ctx.session.device_id;
+  return id ? db.one(`SELECT * FROM devices WHERE id=?`, id) : null;
 }
 
 /**
@@ -82,4 +112,4 @@ function requestWipeForUser(userId, { actor, ip, reason } = {}) {
   return rows.map(d => d.id);
 }
 
-module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe };
+module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe, setScope, ofSession, SCOPES };

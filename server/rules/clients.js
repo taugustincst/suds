@@ -3,13 +3,15 @@
 // right, and the columns only the office's own actions change (a legal hold, a removal, a merge).
 const db = require('../db');
 const auth = require('../auth');
-const { define, flag } = require('./core');
+const { define, flag, refuse } = require('./core');
 
 // discharge_reason is a code from the DISCHARGE_REASONS list, like an episode's. A reason typed in before it
 // became a list stays on the record and does not block editing it (validate's `existing`); only a new value is
 // checked. A de-identified export writes anything outside the list as "other" (server/exports.js).
 const FIELDS = {
-  first_name: { type: 'string', required: true, maxLen: 100 }, last_name: { type: 'string', required: true, maxLen: 100 },
+  // A name is required unless the client is known by a participant code instead (1.21.0; check below).
+  first_name: { type: 'string', maxLen: 100 }, last_name: { type: 'string', maxLen: 100 },
+  participant_code: { type: 'string', maxLen: 40 },
   preferred_name: { type: 'string', maxLen: 100 }, dob: { type: 'date' }, phone: { type: 'string', maxLen: 40 }, alt_phone: { type: 'string', maxLen: 40 },
   email: { type: 'string', maxLen: 200 }, address: { type: 'string', maxLen: 300 }, city: { type: 'string', maxLen: 100 }, zip: { type: 'string', maxLen: 12 },
   gender: { type: 'string', maxLen: 40 }, pronouns: { type: 'string', maxLen: 40 }, race_ethnicity: { type: 'string', maxLen: 100 }, preferred_language: { type: 'string', maxLen: 60 },
@@ -91,6 +93,18 @@ module.exports = define({
     const e = c.existing || {};
     const out = [];
     // Only what this write changes: an old record's unchanged phone number is not held to today's rule.
+    // Who the person is: a first and last name, or a syringe services participant code in their place (1.21.0,
+    // server/participant-code.js; the programme setting participant_code_default starts new clients that way).
+    const PC = require('../participant-code');
+    if (row.participant_code_enc !== undefined && row.participant_code_enc !== null && String(row.participant_code_enc).trim() !== '') {
+      const why = PC.problem(row.participant_code_enc);
+      if (why) out.push(refuse(`its participant code ${why}`, { message: `The participant code ${why}.`, fields: { participant_code: why } }));
+    }
+    const has = (col) => String(c.plain(col) ?? '').trim() !== '';
+    if (!has('participant_code_enc') && (!has('first_name_enc') || !has('last_name_enc'))) {
+      const fields = {}; for (const f of ['first_name', 'last_name']) if (!has(`${f}_enc`)) fields[f] = 'is required (or give a participant code instead of a name)';
+      out.push(refuse('is missing a required field: a name, or a participant code', { message: 'Enter a first and last name, or a participant code instead of a name.', fields }));
+    }
     const touched = Object.fromEntries(['dob_enc', 'email_enc', 'phone_enc', 'alt_phone_enc'].map(k => [k, row[k] !== undefined && (!c.existing || String(row[k] ?? '') !== String(c.was(k) ?? '')) ? row[k] : undefined]));
     const fields = contactProblems(touched);
     if (Object.keys(fields).length) out.push(flag(`was accepted, but its ${Object.keys(fields).map(f => f.replace('_', ' ')).join(' and ')} ${Object.keys(fields).length === 1 ? 'does' : 'do'} not look right (${Object.entries(fields).map(([k, m]) => `${k.replace('_', ' ')} ${m}`).join('; ')}); the office will review it`, { message: 'Validation failed', fields, code: 'contact' }));
@@ -106,6 +120,10 @@ module.exports = define({
     return out;
   },
   normalise(row, c) {
+    // A participant code is stored as normalised, however the device typed it (its index is importRow's).
+    if (row.participant_code_enc !== undefined) row.participant_code_enc = require('../participant-code').normalise(row.participant_code_enc);
+    // A coded client with no name yet holds empty names (the columns are NOT NULL).
+    if (!c.existing) for (const col of ['first_name_enc', 'last_name_enc']) if (row[col] === undefined || row[col] === null) row[col] = '';
     // Not sent means not written: the office's value (or, on a new record, the column's default) stands.
     for (const [cols, may] of GUARDED) if (!may(c.user)) for (const col of cols) row[col] = c.existing ? undefined : DEFAULTS[col];
     // A new client that does not answer a yes/no question somebody has to ask (veteran, overdose history…) has

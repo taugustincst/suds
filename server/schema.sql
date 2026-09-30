@@ -92,7 +92,16 @@ CREATE TABLE IF NOT EXISTS devices (
   last_ip TEXT,
   sync_count INTEGER NOT NULL DEFAULT 0,
   wipe_requested_at TEXT,
-  revoked_at TEXT
+  revoked_at TEXT,
+  -- What this device's sync carries (1.21.0, server/field-scope.js; migration 62): 'full', everything its user may
+  -- read, or 'field', only what a field worker needs (their own recent caseload's minimal record, their outreach
+  -- contacts, supplies, their own to-dos). Set by an administrator, or narrowed to 'field' by its user when enrolling.
+  sync_scope TEXT NOT NULL DEFAULT 'full' CHECK (sync_scope IN ('full','field')),
+  scope_changed_at TEXT,
+  -- When the office first answered this device's pull under the field scope: from then on its pushes are held to
+  -- that scope and its field-shaped rows (blanked columns) never overwrite the office's values. NULL while a change
+  -- to 'field' has not reached the device yet, and again once a full-scope pull has completed after it.
+  field_applied_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id);
 
@@ -123,7 +132,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- 1 for a device's sync sign-in (X-Sync-Client): a device signs in with the password and, with two-step verification
   -- on, the authenticator code; it cannot give a fingerprint, so a passkey does not count as its second factor
   -- (server/auth.js login and requireAuth; docs/FINGERPRINT.md; migration 59).
-  sync_client INTEGER NOT NULL DEFAULT 0
+  sync_client INTEGER NOT NULL DEFAULT 0,
+  -- The device (devices.id) a sync sign-in was made from, bound when the session was created (1.21.0, migration 62):
+  -- a field device's scope is looked up from it on every pull and push, never taken from a header the device sends.
+  device_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
@@ -280,7 +292,13 @@ CREATE TABLE IF NOT EXISTS clients (
   removed_reason_enc TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  deleted_at TEXT
+  deleted_at TEXT,
+  -- A client known by a syringe services participant code instead of a name (1.21.0, migration 62; the programme
+  -- setting participant_code_default): encrypted like the visit's code (server/participant-code.js), and counted
+  -- and found by its blind index in the same domain, so a code on an anonymous visit and on a client match.
+  -- A coded client's first_name_enc and last_name_enc hold an empty string until someone adds a name.
+  participant_code_enc TEXT,
+  participant_code_idx TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_clients_last_name ON clients(last_name_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone_idx);
@@ -934,6 +952,7 @@ CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_id
 CREATE INDEX IF NOT EXISTS idx_clients_first_name ON clients(first_name_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_first_name_prefix ON clients(first_name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_preferred_name ON clients(preferred_name_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_participant_code ON clients(participant_code_idx) WHERE participant_code_idx IS NOT NULL;
 -- The duplicates merged into a caseload's clients travel with them (sync pull; migration 47).
 CREATE INDEX IF NOT EXISTS idx_clients_merged ON clients(merged_into) WHERE merged_into IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);

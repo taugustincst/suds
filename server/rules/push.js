@@ -19,6 +19,7 @@ const auth = require('../auth');
 const audit = require('../audit');
 const { decrypt } = require('../crypto');
 const SYNC = require('../sync-tables');
+const FS = require('../field-scope');
 const rules = require('./index');
 const { refusals, checkFields, flag } = require('./core');
 
@@ -120,9 +121,17 @@ class RowContext {
   plain(col) { return this._raw[col] !== undefined ? this._raw[col] : this.was(col); }
 }
 
+// What a field device may write (built for 1.21.0, not yet released; server/field-scope.js). The reason is one of
+// sync-tables.js's permanent reasons: the office has ruled, and the device stops resending the row.
+const OUTSIDE_FIELD = 'outside this field device\'s scope';
+
 class PushSession {
-  constructor(user, payload) {
-    this.user = user; this.payload = payload;
+  // field: null for a device in the full scope (or a browser); otherwise { scope, blank } from server/routes/sync.js
+  // pushField: `scope`, the field context its writes are held to; `blank`, that a column the device was sent blank and
+  // sends back blank is the device not having it, never an instruction to clear the office's value.
+  constructor(user, payload, field = null) {
+    this.user = user; this.payload = payload; this.field = field;
+    this.fieldNew = new Set(); this.fieldIn = new Map();
     this.tables = payload.tables || {};
     this.applied = {}; this.rejected = []; this.conflicts = []; this.warnings = [];
     this.rejectedIds = new Map(); // `${table}:${id}` -> permanent?
@@ -159,6 +168,38 @@ class PushSession {
     return Number.isFinite(t) ? new Date(t + this.offsetMs).toISOString() : ts;
   }
   cols(table) { if (!this.colsByTable.has(table)) this.colsByTable.set(table, cols(table)); return this.colsByTable.get(table); }
+  /** Whether a client is in this field device's set: created by this very push, or on the worker's recent caseload. */
+  fieldHas(clientId) {
+    if (this.fieldNew.has(clientId)) return true;
+    let v = this.fieldIn.get(clientId);
+    if (v === undefined) {
+      const set = FS.clientSetSql(this.field.scope, auth.activeAssignment('a.'));
+      this.fieldIn.set(clientId, v = !!db.one(`SELECT 1 FROM (${set.sql}) s WHERE s.client_id=?`, ...set.params, clientId));
+    }
+    return v;
+  }
+  /** Whether a stored row is one this field device holds (its table's field rule, server/field-scope.js). */
+  fieldHolds(t, row) {
+    const rule = FS.rowSql(t.name, 'x', this.field.scope, auth.activeAssignment('a.'));
+    if (!rule) return true;
+    return !!db.one(`SELECT 1 FROM ${t.name} x WHERE x.id=? AND ${rule.sql}`, row.id, ...rule.params);
+  }
+  /**
+   * A field device writes within its scope only: never to a table it is not sent, never to a stored row it does not
+   * hold (another worker's to-do, a client off its set, a contact older than the window), and a new row only about a
+   * client in its set or one this push creates (a person the worker met in the field). Asked after the shared
+   * authorise stage, so a row for a merged-away client is judged by the record that was kept.
+   */
+  fieldRefusal(t, raw, c) {
+    const f = this.field && this.field.scope;
+    if (!f) return null;
+    if (FS.excluded(t.name)) return { reason: OUTSIDE_FIELD };
+    if (c.existing && !this.fieldHolds(t, c.existing)) return { reason: OUTSIDE_FIELD };
+    if (t.name === 'clients') return null;
+    const clientId = t.clientCol ? raw[t.clientCol] : null;
+    if (clientId && !this.fieldHas(clientId)) return { reason: OUTSIDE_FIELD };
+    return null;
+  }
   // permanent: the office has ruled and a retry can never succeed, so the device stops resending the row.
   reject(table, id, reason, permanent = SYNC.isPermanentReason(reason)) { this.rejected.push({ table, id, reason, permanent }); }
 
@@ -192,6 +233,11 @@ class PushSession {
     if (t.selfParent) rows = selfParentOrder(rows, t.selfParent);
     if (R.pushable === false) return; // users: never overwritten from devices
     this.applied[t.name] = this.applied[t.name] || 0;
+    // A table a field device is never sent is not one it writes to.
+    if (this.field && this.field.scope && FS.excluded(t.name)) {
+      for (const raw of rows) if (raw && typeof raw.id === 'string') { this.reject(t.name, raw.id, OUTSIDE_FIELD); this.rejectedIds.set(`${t.name}:${raw.id}`, true); }
+      return;
+    }
     if (R.order) rows = R.order(rows, this);
     // Shared program state the office alone keeps (supply counts): a device's copy is never the truth.
     if (t.serverOwned) {
@@ -245,6 +291,8 @@ class PushSession {
     // The device's own idea of when it last touched the row, in server time: for the comparison only.
     const incomingAt = this.shift(raw.updated_at || raw.created_at) || NEVER;
     const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
+    // A column a field device was sent blank, sent back blank, is the device not having it (server/field-scope.js).
+    if (this.field && this.field.blank && existing) for (const col of FS.blankColumns(t.name)) if (raw[col] === null || raw[col] === '') delete raw[col];
     // created_at is shifted once, when the office first sees the row; re-shifting it on every round trip
     // from a differently-skewed device walked it away from the truth.
     if (existing) delete raw.created_at; else if (raw.created_at) raw.created_at = this.shift(raw.created_at);
@@ -259,6 +307,7 @@ class PushSession {
 
     // ---- authorise ----
     if (refused(this.authorise(R, t, raw, c))) return false;
+    if (refused(this.fieldRefusal(t, raw, c))) return false;
     if (R.authorise && refused(R.authorise(raw, c))) return false;
     // ---- validate ----
     if (refused(this.validate(R, t, raw, c))) return false;
@@ -301,7 +350,8 @@ class PushSession {
     // to delete a row that is alive here.
     db.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, t.name, raw.id);
     if (R.afterApply) R.afterApply(raw, o, c);
-    if (t.name === 'assignments' || t.name === 'clients') this.memo.access.clear(); // who may reach whom may have changed
+    if (t.name === 'assignments' || t.name === 'clients') { this.memo.access.clear(); this.fieldIn.clear(); } // who may reach whom may have changed
+    if (t.name === 'clients' && !existing) this.fieldNew.add(raw.id);
     // Flagged: the row stands, and the device (sync screen) and the audit trail say what the office noticed.
     for (const f of c.flags) {
       this.warnings.push({ table: t.name, id: raw.id, reason: f.reason, flagged: true });
@@ -437,9 +487,11 @@ class PushSession {
     ts.deleted_at = this.shift(ts.deleted_at);
     if (t.serverOwned) { this.reject(t.name, ts.id, 'server-owned'); return; }
     if (t.writePerm && !auth.hasPerm(user, t.writePerm)) { this.reject(t.name, ts.id, `your role cannot delete ${t.name}`); return; }
+    if (this.field && this.field.scope && FS.excluded(t.name)) { this.reject(t.name, ts.id, OUTSIDE_FIELD); return; }
     const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
     if (!existing) return;
     if (R.tombstone === 'never') return; // never hard-deleted through sync (the legal record)
+    if (this.field && this.field.scope && !this.fieldHolds(t, existing)) { this.reject(t.name, ts.id, OUTSIDE_FIELD); return; }
     const clientId = t.clientCol ? existing[t.clientCol] : null;
     if (clientId && !auth.canAccessClient(user, clientId)) { this.reject(t.name, ts.id, 'not on caseload'); return; }
     // Shared reference data is not deleted from devices, unless the table's rules say whose a row is (a photo).
@@ -467,7 +519,7 @@ class PushSession {
   }
 }
 
-/** Apply a device's push as `user`. */
-function push(user, payload) { return new PushSession(user, payload).run(); }
+/** Apply a device's push as `user`; `field` as server/routes/sync.js pushField, or null. */
+function push(user, payload, field = null) { return new PushSession(user, payload, field).run(); }
 
 module.exports = { push, PushSession, changedColumns, describeError, keeperOf, NEVER };

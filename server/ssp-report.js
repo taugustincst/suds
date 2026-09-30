@@ -56,7 +56,7 @@ function figures(ctx, { ts, tsP }) {
   const cf = funderOnly(ctx.user) ? { sql: '1=1', params: [] } : auth.caseloadFilter(ctx.user, 'c.id');
   const scope = `(i.client_id IS NULL OR ${cf.sql})`;
   const activity = `(EXISTS (SELECT 1 FROM intervention_supplies l WHERE l.intervention_id=i.id) OR i.syringes_returned > 0 OR i.naloxone_kits > 0 OR i.fentanyl_strips > 0)`;
-  const visits = db.all(`SELECT i.id, i.client_id, i.occurred_at, i.supply_site_id, i.naloxone_kits, i.fentanyl_strips, i.syringes_returned, i.returns_estimated, i.participant_code_idx, c.deleted_at
+  const visits = db.all(`SELECT i.id, i.client_id, i.occurred_at, i.supply_site_id, i.naloxone_kits, i.fentanyl_strips, i.syringes_returned, i.returns_estimated, i.participant_code_idx, c.deleted_at, c.participant_code_idx AS client_code_idx
     FROM interventions i LEFT JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${activity} AND ${scope}`, ...tsP, ...cf.params);
   const lines = db.all(`SELECT l.intervention_id, l.quantity, l.untracked, it.id AS item_id, it.name, it.category, it.product, it.unit FROM intervention_supplies l
     JOIN supply_items it ON it.id=l.item_id JOIN interventions i ON i.id=l.intervention_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${scope}`, ...tsP, ...cf.params);
@@ -67,7 +67,10 @@ function figures(ctx, { ts, tsP }) {
   // Anonymous participants: the different participant codes given at the period's anonymous contacts, told apart
   // by their blind index alone (server/participant-code.js); no code is decrypted to count them.
   const coded = visits.filter(v => !v.client_id && v.participant_code_idx);
-  const codes = new Set(coded.map(v => v.participant_code_idx));
+  // A client known by a participant code (1.21.0) is a participant served like any client; the same code given at an
+  // anonymous contact is the same person, counted once, as a participant served.
+  const clientCodes = new Set(visits.filter(v => v.client_id && !v.deleted_at && v.client_code_idx).map(v => v.client_code_idx));
+  const codes = new Set(coded.map(v => v.participant_code_idx).filter(x => !clientCodes.has(x)));
   const month = new Map(); const site = new Map();
   const bucket = () => ({ contacts: 0, anonymous_contacts: 0, syringes_distributed: 0, syringes_returned: 0, naloxone_kits: 0 });
   const t = { contacts: 0, anonymous_contacts: 0, syringes_distributed: 0, syringes_returned: 0, syringes_returned_estimated: 0, sharps_containers: 0, naloxone_kits: 0, fentanyl_strips: 0, xylazine_strips: 0 };

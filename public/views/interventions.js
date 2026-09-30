@@ -165,6 +165,9 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   // Outreach and community naloxone distribution can be recorded with no client (a kit handed to someone who
   // gives no name); every other service needs one. The server enforces the same list.
   const clientless = (type) => (C.CLIENTLESS_INTERVENTION_TYPES || ['outreach', 'naloxone_distribution']).includes(type);
+  // Participant-code mode (1.21.0, the programme's "Outreach records use a participant code by default"): a new
+  // visit with no client chosen yet starts with the participant code open, for a contact who gives no name.
+  const codeFirst = isNew && !clientId && !!(state.programme && state.programme.participant_code_default);
   const clientField = { name: 'client_id', label: 'Client', type: 'client', required: !clientless(seed.type), value: clientId || values?.client_id, display: clientDisplay,
     help: 'Optional for outreach and community naloxone distribution (someone who gives no name); required for everything else.' };
   const noteKinds = isNew ? NOTE_KINDS() : [];
@@ -178,7 +181,7 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
     // have no client, and only when it has none. Shown for outreach and community distribution (syncCodeField),
     // folded under its own heading right below Client, so a new visit still shows at most seven fields at 390 px
     // (scripts/ui/ux13.mjs); it opens by itself when the visit or a resumed draft has a code, or for an error.
-    section('participant', 'Participant code (optional)'),
+    section('participant', codeFirst ? 'Participant code' : 'Participant code (optional)'),
     { name: 'participant_code', label: 'Participant code (no client record)', maxLen: 20,
       help: 'Only for someone who gives no name: the code they build the same way every time, by your program\'s recipe (for example the first two letters of their mother\'s first name, their birth month and the last two digits of their birth year: MA0785). The SSP report counts different people by it without naming anyone. Stored encrypted.' },
     { type: 'section', end: true },
@@ -318,6 +321,7 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
   };
   f.inputs.type.addEventListener('change', syncCodeField);
   syncCodeField();
+  if (codeFirst && f.sections.participant && !f.sections.participant.hidden) { f.sections.participant.open = true; f.sections.participant.dataset.codeFirst = '1'; }
   // A resumed draft that holds a code (form() puts the fields back, then fires change): its section opens, once.
   f.addEventListener('change', () => {
     const sec = f.sections.participant; const i = f.inputs.participant_code;

@@ -38,6 +38,8 @@ function decryptRow(row, { deidentify = false } = {}) {
   }
   if (deidentify) { out.display_name = row.client_code; }
   else out.display_name = `${out.last_name || ''}, ${out.first_name || ''}`.trim().replace(/^,\s*|,\s*$/g, '');
+  // A client known by a participant code and no name yet (1.21.0) is shown by the code, never as a blank.
+  if (!deidentify && !out.display_name) out.display_name = out.participant_code ? `Participant ${out.participant_code}` : (row.client_code || '');
   return out;
 }
 
@@ -53,6 +55,14 @@ function encryptFields(v) {
   if (v.preferred_name !== undefined) cols.preferred_name_idx = preferredNameIndex(v.preferred_name);
   if (v.dob !== undefined) cols.dob_idx = blindIndex(v.dob);
   if (v.phone !== undefined) cols.phone_idx = blindIndex(String(v.phone || '').replace(/\D/g, ''));
+  // A client known by an SSP participant code (1.21.0): stored as normalised (server/participant-code.js), encrypted,
+  // and found and counted by its blind index in the same domain as an anonymous visit's code.
+  if (v.participant_code !== undefined) {
+    const PC = require('./participant-code');
+    const code = PC.normalise(v.participant_code);
+    cols.participant_code_enc = code ? encrypt(code) : null;
+    cols.participant_code_idx = code ? PC.index(code) : null;
+  }
   return cols;
 }
 
@@ -169,7 +179,7 @@ function nextClientCode() {
   return code;
 }
 
-const SUMMARY_KEEP = ['id', 'client_code', 'display_name', 'first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'status', 'risk_level', 'primary_substance', 'mat_status', 'intake_date', 'referral_date', 'engagement_date', 'city', 'flags', 'ok_to_text', 'ok_to_voicemail', 'updated_at'];
+const SUMMARY_KEEP = ['id', 'client_code', 'display_name', 'first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'status', 'risk_level', 'primary_substance', 'mat_status', 'intake_date', 'referral_date', 'engagement_date', 'city', 'flags', 'ok_to_text', 'ok_to_voicemail', 'updated_at', 'participant_code'];
 const SUMMARY_READS = new Set([...SUMMARY_KEEP, 'deleted_at', 'merged_into'].flatMap(k => [k, `${k}_enc`]));
 function summary(row, opts) {
   // Only the encrypted fields a summary shows are decrypted: a client list decrypted all sixteen (the address,

@@ -123,7 +123,7 @@ database once a sync has run:
 
 - Every synchronised table, scoped to the account: clients on the caseload (all clients for anyone holding `clients:all`: from 1.16.0 navigators and clinicians by default),
   their visits, calls, notes, referrals, consents, tasks, funding and budget rows, the resource directory,
-  programme settings.
+  programme settings. On a field device (built for 1.21.0, not yet released), only what *Field devices* below lists.
 - **The whole `users` table** — every staff account's id, username, display name, title, role, active flag
   and supervisor, not only the syncing person's. The device needs them to name who did what on records it
   holds. Every *other* user's password hash is blanked before it leaves the office (`scrypt$0$…`, unusable);
@@ -132,6 +132,54 @@ database once a sync has run:
 - The device's own audit trail (uploaded to the office at each sync), the sync cursor per user, its stable
   device id and the office server address.
 - Credentials are never stored: the sync session is created and destroyed within a single run.
+
+## Field devices
+
+Built for 1.21.0, not yet released. A device holds everything its user may see unless it is a **field device**,
+which holds only what a field worker needs. What each synchronised table contributes to a field device is
+declared once, as data, in `server/field-scope.js` (include, exclude, or reduced rows and blank columns), and
+`test/field-device.test.js` fails when a table has no decision there, so a new table never reaches a field device
+by default. In short, a field device holds:
+
+- the clients on the worker's **own** caseload (an active assignment to them, whatever else their role may read)
+  who were assigned or seen in the last *N* days (**Settings › Program › Minimal personal information**, 90 by
+  default, 7 to 365): their name, participant code, status, risk and safety flags, never their date of birth,
+  phone, email, address, Medicaid ID, emergency contact, goals, safe-contact notes, legal or removal reasons, or
+  intake, insurance and clinical details (those columns travel blank);
+- those clients' visits and overdose reports within the window, the worker's own anonymous contacts and overdose
+  reports within it, and the items handed out on them;
+- the worker's own to-dos (assigned to them, or made by them for nobody), about those clients or no client;
+- supplies, sites and the stock ledger, the programme's lists, the resource directory, funds (redacted as for any
+  role without `budget:read`) and the staff list.
+
+Never: notes and addenda, episodes, CalOMS records, calls, time, consents, court orders, Part 2 notices,
+referrals, disclosures, imports, forms and their files, patient requests, the care plan and problem list,
+assessments, SUPRT-A records, spending, disclosure agreements, prevention events, office policies.
+
+**Enforced at the office, never by the device.** The sync session is bound at sign-in to the device it came from
+(`sessions.device_id`), and every pull and push reads that device's scope from the office's own record
+(`server/routes/sync.js`). A pull sends nothing else; a push from a field device is refused, permanently, for a table
+it is not sent, a stored row it does not hold (another worker's to-do, a client off its set, a contact older than
+the window) or a new row about a client outside its set (a client created in the same push is in it). A column it
+was sent blank and sends back blank never clears the office's value (`server/rules/push.js`). Its sync session
+reaches the sync routes and nothing else (`server/auth.js` requireAuth), and it fetches no attachment of a table it
+is not sent. A client leaves the device when it leaves the set (its assignment ends, a caseload transfer, no
+contact in the window, a merge into a record outside the set).
+
+**Changing scope.** An administrator changes it under **Settings › Synced devices** (*Make field device* / *Hold
+everything*); a device's user may make it a field device as they enrol it (*Keep only what I need in the field*
+on This device), never the reverse; **Settings › Program › New devices start as field devices** makes every new
+device one. Each change is audited (`device.scope`). At its next sync the device sends everything it recorded
+first, under the scope it was recorded in (the office holds its pushes to the field scope only from its first
+field-scope pull, `devices.field_applied_at`), then removes everything a field device does not hold (unless it has
+changes not yet sent) and pulls again under the field scope. Made a full device again, it sends first and then
+receives the rest; nothing is deleted at the office either way. This device shows *Field device: holds only …*.
+
+**Owner decisions, conservative defaults (1.21.0).** Field devices and the participant-code default are **off**
+everywhere unless an administrator turns them on; the setup wizard offers the participant-code default only to a
+harm-reduction programme, answered *No* unless changed. The window is 90 days. A device's user may only narrow its
+scope; widening is an administrator's. The scope limits what a device **holds**, not what its account may reach:
+the same account in a browser at the office sees what its role allows.
 
 ## Lost or stolen devices, and offboarding
 

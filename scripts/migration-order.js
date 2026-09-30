@@ -100,6 +100,14 @@ function compareMigrations(prev, next) {
  */
 const DEPENDENCY_CHANGES = [
   {
+    dependency: 'schema.sql:table:clients', fingerprint: '8e14a1accad7079b',
+    reason: '1.21.0 (migration 62, field devices and participant-code clients) adds two nullable columns, '
+      + 'participant_code_enc and participant_code_idx, and the partial index idx_clients_participant_code. Additive: a '
+      + 'database that runs migrations 5, 6, 18 or 20 now builds clients with the two columns already there (every row '
+      + 'NULL), migration 62 adds each only when missing (addColumn) and creates the index IF NOT EXISTS, and '
+      + 'test/migrations.test.js upgrades the 1.6.1 fixture to the same structure as a fresh install.',
+  },
+  {
     dependency: 'schema.sql:table:interventions', fingerprint: 'd780d1abc3b41803',
     reason: '1.17.0 (migration 51) adds two nullable columns, participant_code_enc and participant_code_idx, and the index '
       + 'idx_interventions_participant. Additive: a database that runs migration 5 now rebuilds interventions with the two '
