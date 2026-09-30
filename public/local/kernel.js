@@ -35525,7 +35525,7 @@ var require_county_publication = __commonJS({
         throw e;
       }
       const screened = new Set(CPA.SCREENED);
-      const rows = d.rows.map((x) => {
+      const rows = d.rows.filter((x) => SECTION[x.group]).map((x) => {
         const out2 = { section: SECTION[x.group], group: x.group, key: x.key, label: x.label, money: !!x.money };
         if (x.group === "outcome" && screened.has(x.key)) {
           out2.value = r.shown[x.key];

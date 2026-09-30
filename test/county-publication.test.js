@@ -95,6 +95,10 @@ before(async () => {
 after(async () => { await H.stop(); });
 beforeEach(() => { freshCounty(); for (const u of H.db.all(`SELECT id FROM users`)) rateLimitReset(`county-entry-refuse:${u.id}`); rateLimitReset('county-connect:127.0.0.1'); rateLimitReset('county-connect-bad:127.0.0.1'); });
 
+// Hashes and ids are hex and can contain a figure's digits by chance: look for a figure outside them.
+const noHex = (t) => String(t).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '').replace(/[0-9a-f]{16,}/gi, '');
+const hasFigure = (t, n) => new RegExp(`(^|[^0-9A-Za-z])${n}([^0-9A-Za-z]|$)`).test(noHex(t));
+
 test('permissions: county:manage prepares, publishes and withdraws; county:view reads; export:read downloads; the rest are refused', async () => {
   const q = Q(2021, 1);
   await programme('Harbor Outreach', [[q, 200]]); await programme('Ridge Recovery', [[q, 150]]);
@@ -137,7 +141,7 @@ test('the release screens counts of people by the programme method, keeps money 
   assert.equal(p.sha256, K.sha256Hex(K.canonical(c)));
   const a = lastAudit('county.publication.prepare');
   assert.equal(a.details.sha256, p.sha256); assert.equal(a.details.threshold, T); assert.deepEqual(a.details.suppressed, []);
-  assert.ok(!JSON.stringify(a.details).includes('350'), 'no figure in the audit entry');
+  assert.ok(!hasFigure(JSON.stringify(a.details), 350), 'no figure in the audit entry');
   // Nothing is recorded by preparing.
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM county_publications WHERE period_from=?`, q.from).n, 0);
 });
@@ -151,7 +155,7 @@ test('a differencing attack: a small programme beside others that publish their 
     // 357 - 200 - 150 = 7: the total cannot be printed beside the other programmes' own releases.
     assert.equal(r.value, 'suppressed', m); assert.equal(r.suppressed, 'complementary');
   }
-  assert.ok(!JSON.stringify(c).includes('357'), 'the suppressed total is never given');
+  assert.ok(!hasFigure(JSON.stringify(c), 357), 'the suppressed total is never given');
   const s = c.suppressed.find(x => x.key === 'people_served');
   assert.equal(s.shown, 'suppressed'); assert.match(s.why, /subtracting the other programs' own published figures/);
   assert.deepEqual(differencingLeaks([{}, {}, {}].map((_, i) => Object.fromEntries(CPA.SCREENED.map(m => [m, [200, 7, 150][i]]))), c, T), []);
@@ -292,14 +296,14 @@ test('files: CSV and Excel with a Notes sheet that says what was suppressed and 
   assert.match(csv.headers.get('content-disposition'), new RegExp(`suds-county-publication-${q.from}_${q.to}\\.csv`));
   assert.equal(csv.headers.get('x-suds-report-purpose'), 'publication');
   const text = await csv.text();
-  assert.ok(text.includes(rec.sha256)); assert.ok(text.includes('Suppressed or withheld')); assert.ok(!text.includes('207'), 'the suppressed total is not in the file');
+  assert.ok(text.includes(rec.sha256)); assert.ok(text.includes('Suppressed or withheld')); assert.ok(!hasFigure(text, 207), 'the suppressed total is not in the file');
   const xl = await admin.raw(`/api/county/publications/${rec.id}/export?format=xlsx`);
   assert.equal(xl.status, 200);
   const sheets = require('../server/spreadsheet').readWorkbook(Buffer.from(await xl.arrayBuffer()));
   assert.deepEqual(sheets.map(s => s.name), ['About', 'Figures', 'Notes']);
   const notes = sheets.find(s => s.name === 'Notes').rows;
   assert.ok(notes.some(r => r.some(c => /People served/.test(String(c)))) && notes.some(r => r.some(c => /subtracting/.test(String(c)))));
-  assert.ok(!JSON.stringify(sheets).includes('207'));
+  assert.ok(!hasFigure(JSON.stringify(sheets), 207));
   const js = await admin.raw(`/api/county/publications/${rec.id}/export?format=json`);
   const j = await js.json(); assert.equal(j.sha256, rec.sha256); assert.equal(K.sha256Hex(K.canonical(j.release)), rec.sha256, 'the JSON carries exactly the release hashed');
   const a = lastAudit('county.publication.export'); assert.equal(a.details.format, 'json'); assert.equal(a.details.sha256, rec.sha256);

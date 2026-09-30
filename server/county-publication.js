@@ -80,7 +80,10 @@ async function prepare({ from, to, entered = true, threshold = null }, { today }
     throw e;
   }
   const screened = new Set(CPA.SCREENED);
-  const rows = d.rows.map(x => {
+  // The release publishes spending and the outcomes (SECTION). The award rows (1.21.0, county file version 2) are
+  // contract amounts the county already holds, over only the programmes whose files carry one: not part of a
+  // publication release.
+  const rows = d.rows.filter(x => SECTION[x.group]).map(x => {
     const out = { section: SECTION[x.group], group: x.group, key: x.key, label: x.label, money: !!x.money };
     if (x.group === 'outcome' && screened.has(x.key)) {
       out.value = r.shown[x.key]; out.screened = true;
