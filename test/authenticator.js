@@ -36,8 +36,9 @@ class SoftAuthenticator {
    * `uv`/`up`: whether the fingerprint (user verification) and presence flags are set. `counter`: the starting
    * signature counter; `step`: how much each use adds (0 = a device that does not count, as many passkeys do).
    */
-  constructor({ alg = 'ES256', origin, rpId, uv = true, up = true, counter = 0, step = 1, aaguid = Buffer.alloc(16, 0xab) } = {}) {
-    this.alg = alg; this.origin = origin; this.rpId = rpId || (origin ? new URL(origin).hostname : 'localhost');
+  // `coseAlg`: the algorithm number the key is reported with (-19 for an Ed25519 key named "fully specified").
+  constructor({ alg = 'ES256', coseAlg, origin, rpId, uv = true, up = true, counter = 0, step = 1, aaguid = Buffer.alloc(16, 0xab) } = {}) {
+    this.alg = alg; this.coseAlg = coseAlg; this.origin = origin; this.rpId = rpId || (origin ? new URL(origin).hostname : 'localhost');
     this.uv = uv; this.up = up; this.counter = counter; this.step = step; this.aaguid = aaguid;
     this.credentialId = crypto.randomBytes(32);
     if (alg === 'ES256') this.keys = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -50,18 +51,18 @@ class SoftAuthenticator {
   coseKey() {
     const jwk = this.keys.publicKey.export({ format: 'jwk' });
     if (this.alg === 'ES256') return new Map([[1, 2], [3, -7], [-1, 1], [-2, fromB64url(jwk.x)], [-3, fromB64url(jwk.y)]]);
-    if (this.alg === 'EdDSA') return new Map([[1, 1], [3, -8], [-1, 6], [-2, fromB64url(jwk.x)]]);
+    if (this.alg === 'EdDSA') return new Map([[1, 1], [3, this.coseAlg || -8], [-1, 6], [-2, fromB64url(jwk.x)]]);
     return new Map([[1, 3], [3, -257], [-1, fromB64url(jwk.n)], [-2, fromB64url(jwk.e)]]);
   }
-  flags({ at = false, uv = this.uv, up = this.up } = {}) { return (up ? 0x01 : 0) | (uv ? 0x04 : 0) | (at ? 0x40 : 0); }
+  flags({ at = false, uv = this.uv, up = this.up, be = false, bs = false } = {}) { return (up ? 0x01 : 0) | (uv ? 0x04 : 0) | (be ? 0x08 : 0) | (bs ? 0x10 : 0) | (at ? 0x40 : 0); }
   authData({ rpId = this.rpId, flags, counter, attested = false }) {
     const c = Buffer.alloc(4); c.writeUInt32BE(counter >>> 0);
     const parts = [sha256(Buffer.from(rpId, 'utf8')), Buffer.from([flags]), c];
     if (attested) { const len = Buffer.alloc(2); len.writeUInt16BE(this.credentialId.length); parts.push(this.aaguid, len, this.credentialId, cbor(this.coseKey())); }
     return Buffer.concat(parts);
   }
-  clientData({ type, challenge, origin = this.origin, crossOrigin }) {
-    return Buffer.from(JSON.stringify({ type, challenge, origin, ...(crossOrigin !== undefined ? { crossOrigin } : {}) }), 'utf8');
+  clientData({ type, challenge, origin = this.origin, crossOrigin, topOrigin }) {
+    return Buffer.from(JSON.stringify({ type, challenge, origin, ...(crossOrigin !== undefined ? { crossOrigin } : {}), ...(topOrigin !== undefined ? { topOrigin } : {}) }), 'utf8');
   }
   sign(data) {
     if (this.alg === 'ES256') return crypto.sign('sha256', data, { key: this.keys.privateKey, dsaEncoding: 'der' });
@@ -71,8 +72,8 @@ class SoftAuthenticator {
   /** navigator.credentials.create(), answered: `options` is the server's publicKey (JSON), `o` bends the answer. */
   create(options, o = {}) {
     if (options && options.user) this.userHandle = options.user.id;
-    const clientDataJSON = this.clientData({ type: o.type || 'webauthn.create', challenge: o.challenge || options.challenge, origin: o.origin || this.origin, crossOrigin: o.crossOrigin });
-    const ad = this.authData({ rpId: o.rpId || this.rpId, flags: this.flags({ at: true, uv: o.uv ?? this.uv, up: o.up ?? this.up }), counter: this.counter, attested: true });
+    const clientDataJSON = this.clientData({ type: o.type || 'webauthn.create', challenge: o.challenge || options.challenge, origin: o.origin || this.origin, crossOrigin: o.crossOrigin, topOrigin: o.topOrigin });
+    const ad = this.authData({ rpId: o.rpId || this.rpId, flags: this.flags({ at: true, uv: o.uv ?? this.uv, up: o.up ?? this.up, be: o.be, bs: o.bs }), counter: this.counter, attested: true });
     const attestationObject = cbor(new Map([['fmt', o.fmt || 'none'], ['attStmt', new Map()], ['authData', ad]]));
     return { id: this.id, rawId: this.id, type: 'public-key', authenticatorAttachment: 'platform',
       response: { clientDataJSON: b64url(clientDataJSON), attestationObject: b64url(attestationObject), transports: ['internal'] } };
@@ -81,8 +82,9 @@ class SoftAuthenticator {
   get(options, o = {}) {
     this.counter += o.counterStep ?? this.step;
     const counter = o.counter ?? this.counter;
-    const clientDataJSON = this.clientData({ type: o.type || 'webauthn.get', challenge: o.challenge || options.challenge, origin: o.origin || this.origin, crossOrigin: o.crossOrigin });
-    const ad = this.authData({ rpId: o.rpId || this.rpId, flags: this.flags({ uv: o.uv ?? this.uv, up: o.up ?? this.up }), counter });
+    const clientDataJSON = this.clientData({ type: o.type || 'webauthn.get', challenge: o.challenge || options.challenge, origin: o.origin || this.origin, crossOrigin: o.crossOrigin, topOrigin: o.topOrigin });
+    // `at`: a (wrong) assertion that carries attested credential data, as only a registration may.
+    const ad = this.authData({ rpId: o.rpId || this.rpId, flags: this.flags({ uv: o.uv ?? this.uv, up: o.up ?? this.up, be: o.be, bs: o.bs, at: o.at }), counter, attested: !!o.at });
     let signature = this.sign(Buffer.concat([ad, sha256(clientDataJSON)]));
     if (o.badSignature) { signature = Buffer.from(signature); signature[signature.length - 1] ^= 0x01; }
     return { id: this.id, rawId: this.id, type: 'public-key',

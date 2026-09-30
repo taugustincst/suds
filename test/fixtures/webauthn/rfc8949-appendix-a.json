@@ -1,0 +1,487 @@
+{
+  "source": "RFC 8949 (Concise Binary Object Representation), Appendix A, \"Examples of Encoded CBOR Data Items\" (Table 6), the same examples as RFC 7049 Appendix A. Each example as its hex encoding; `decoded` is the value in JSON where JSON can say it (byte strings as {\"hex\": ...}, maps with integer keys as [[k, v], ...] pairs). `accept`: whether SUDS's decoder (server/webauthn.js, the WebAuthn subset: definite lengths, no tags, no floating point, integers up to 2^53-1, simple values false/true/null/undefined only) accepts it; `reason` is the start of its message when it does not.",
+  "vectors": [
+    {
+      "hex": "00",
+      "accept": true,
+      "decoded": 0
+    },
+    {
+      "hex": "01",
+      "accept": true,
+      "decoded": 1
+    },
+    {
+      "hex": "0a",
+      "accept": true,
+      "decoded": 10
+    },
+    {
+      "hex": "17",
+      "accept": true,
+      "decoded": 23
+    },
+    {
+      "hex": "1818",
+      "accept": true,
+      "decoded": 24
+    },
+    {
+      "hex": "1819",
+      "accept": true,
+      "decoded": 25
+    },
+    {
+      "hex": "1864",
+      "accept": true,
+      "decoded": 100
+    },
+    {
+      "hex": "1903e8",
+      "accept": true,
+      "decoded": 1000
+    },
+    {
+      "hex": "1a000f4240",
+      "accept": true,
+      "decoded": 1000000
+    },
+    {
+      "hex": "1b000000e8d4a51000",
+      "accept": true,
+      "decoded": 1000000000000
+    },
+    {
+      "hex": "1bffffffffffffffff",
+      "accept": false,
+      "reason": "CBOR integer too large"
+    },
+    {
+      "hex": "c249010000000000000000",
+      "accept": false,
+      "reason": "CBOR tags"
+    },
+    {
+      "hex": "3bffffffffffffffff",
+      "accept": false,
+      "reason": "CBOR integer too large"
+    },
+    {
+      "hex": "c349010000000000000000",
+      "accept": false,
+      "reason": "CBOR tags"
+    },
+    {
+      "hex": "20",
+      "accept": true,
+      "decoded": -1
+    },
+    {
+      "hex": "29",
+      "accept": true,
+      "decoded": -10
+    },
+    {
+      "hex": "3863",
+      "accept": true,
+      "decoded": -100
+    },
+    {
+      "hex": "3903e7",
+      "accept": true,
+      "decoded": -1000
+    },
+    {
+      "hex": "f90000",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "f98000",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "f93c00",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "fb3ff199999999999a",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "f93e00",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "f97bff",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "fa47c35000",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "fa7f7fffff",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "fb7e37e43c8800759c",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "f90001",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "f90400",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "f9c400",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "fbc010666666666666",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "f97c00",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "f97e00",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "f9fc00",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "fa7f800000",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "fa7fc00000",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "faff800000",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "fb7ff0000000000000",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "fb7ff8000000000000",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "fbfff0000000000000",
+      "accept": false,
+      "reason": "CBOR floating-point"
+    },
+    {
+      "hex": "f4",
+      "accept": true,
+      "decoded": false
+    },
+    {
+      "hex": "f5",
+      "accept": true,
+      "decoded": true
+    },
+    {
+      "hex": "f6",
+      "accept": true,
+      "decoded": null
+    },
+    {
+      "hex": "f7",
+      "accept": true,
+      "decoded": null
+    },
+    {
+      "hex": "f0",
+      "accept": false,
+      "reason": "CBOR floating-point and simple values"
+    },
+    {
+      "hex": "f818",
+      "accept": false,
+      "reason": "CBOR floating-point and simple values"
+    },
+    {
+      "hex": "f8ff",
+      "accept": false,
+      "reason": "CBOR floating-point and simple values"
+    },
+    {
+      "hex": "c074323031332d30332d32315432303a30343a30305a",
+      "accept": false,
+      "reason": "CBOR tags"
+    },
+    {
+      "hex": "c11a514b67b0",
+      "accept": false,
+      "reason": "CBOR tags"
+    },
+    {
+      "hex": "c1fb41d452d9ec200000",
+      "accept": false,
+      "reason": "CBOR tags"
+    },
+    {
+      "hex": "d74401020304",
+      "accept": false,
+      "reason": "CBOR tags"
+    },
+    {
+      "hex": "d818456449455446",
+      "accept": false,
+      "reason": "CBOR tags"
+    },
+    {
+      "hex": "d82076687474703a2f2f7777772e6578616d706c652e636f6d",
+      "accept": false,
+      "reason": "CBOR tags"
+    },
+    {
+      "hex": "40",
+      "accept": true,
+      "decoded": {
+        "hex": ""
+      }
+    },
+    {
+      "hex": "4401020304",
+      "accept": true,
+      "decoded": {
+        "hex": "01020304"
+      }
+    },
+    {
+      "hex": "60",
+      "accept": true,
+      "decoded": ""
+    },
+    {
+      "hex": "6161",
+      "accept": true,
+      "decoded": "a"
+    },
+    {
+      "hex": "6449455446",
+      "accept": true,
+      "decoded": "IETF"
+    },
+    {
+      "hex": "62225c",
+      "accept": true,
+      "decoded": "\"\\"
+    },
+    {
+      "hex": "62c3bc",
+      "accept": true,
+      "decoded": "ü"
+    },
+    {
+      "hex": "63e6b0b4",
+      "accept": true,
+      "decoded": "水"
+    },
+    {
+      "hex": "64f0908591",
+      "accept": true,
+      "decoded": "𐅑"
+    },
+    {
+      "hex": "80",
+      "accept": true,
+      "decoded": []
+    },
+    {
+      "hex": "83010203",
+      "accept": true,
+      "decoded": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "hex": "8301820203820405",
+      "accept": true,
+      "decoded": [
+        1,
+        [
+          2,
+          3
+        ],
+        [
+          4,
+          5
+        ]
+      ]
+    },
+    {
+      "hex": "98190102030405060708090a0b0c0d0e0f101112131415161718181819",
+      "accept": true,
+      "decoded": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25
+      ]
+    },
+    {
+      "hex": "a0",
+      "accept": true,
+      "decoded": {}
+    },
+    {
+      "hex": "a201020304",
+      "accept": true,
+      "decoded": {
+        "map": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "hex": "a26161016162820203",
+      "accept": true,
+      "decoded": {
+        "a": 1,
+        "b": [
+          2,
+          3
+        ]
+      }
+    },
+    {
+      "hex": "826161a161626163",
+      "accept": true,
+      "decoded": [
+        "a",
+        {
+          "b": "c"
+        }
+      ]
+    },
+    {
+      "hex": "a56161614161626142616361436164614461656145",
+      "accept": true,
+      "decoded": {
+        "a": "A",
+        "b": "B",
+        "c": "C",
+        "d": "D",
+        "e": "E"
+      }
+    },
+    {
+      "hex": "5f42010243030405ff",
+      "accept": false,
+      "reason": "CBOR indefinite"
+    },
+    {
+      "hex": "7f657374726561646d696e67ff",
+      "accept": false,
+      "reason": "CBOR indefinite"
+    },
+    {
+      "hex": "9fff",
+      "accept": false,
+      "reason": "CBOR indefinite"
+    },
+    {
+      "hex": "9f018202039f0405ffff",
+      "accept": false,
+      "reason": "CBOR indefinite"
+    },
+    {
+      "hex": "9f01820203820405ff",
+      "accept": false,
+      "reason": "CBOR indefinite"
+    },
+    {
+      "hex": "83018202039f0405ff",
+      "accept": false,
+      "reason": "CBOR indefinite"
+    },
+    {
+      "hex": "83019f0203ff820405",
+      "accept": false,
+      "reason": "CBOR indefinite"
+    },
+    {
+      "hex": "9f0102030405060708090a0b0c0d0e0f101112131415161718181819ff",
+      "accept": false,
+      "reason": "CBOR indefinite"
+    },
+    {
+      "hex": "bf61610161629f0203ffff",
+      "accept": false,
+      "reason": "CBOR indefinite"
+    },
+    {
+      "hex": "826161bf61626163ff",
+      "accept": false,
+      "reason": "CBOR indefinite"
+    },
+    {
+      "hex": "bf6346756ef563416d7421ff",
+      "accept": false,
+      "reason": "CBOR indefinite"
+    }
+  ]
+}
