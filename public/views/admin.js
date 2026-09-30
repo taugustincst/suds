@@ -13,7 +13,7 @@ import { aiSettingsTab } from './ai.js';
  */
 export async function downloadKeyBackup(done) {
   const { signatureDialog } = await import('./notes.js');
-  return signatureDialog({ title: 'Download the key backup', submitText: 'Download the key backup', verb: 'download the key backup', returnTo: '#/admin', fresh: true,
+  return signatureDialog({ title: 'Download the key backup', submitText: 'Download the key backup', verb: 'download the key backup', returnTo: '#/admin', fresh: true, passkey: { purpose: 'keys.download', params: {} },
     intro: h('p', {}, 'This file opens every backup of this database. Keep it somewhere separate from this computer, such as the county password manager, and never email it.'),
     send: async (body) => {
       const keys = await post('/api/admin/keys-backup', body);
@@ -48,6 +48,9 @@ async function openUserForm(values, onDone) {
     { name: 'password', label: isNew ? 'Temporary password (blank = generate)' : 'Reset password (blank = keep)', type: 'password', autocomplete: 'new-password', help: '12+ chars with upper, lower, number, symbol. User must change at next login.' },
     !isNew ? { name: 'wipe_devices', label: `Also wipe this person's synced devices when deactivating or resetting the password (${deviceCount} device${deviceCount === 1 ? '' : 's'})`, type: 'checkbox', value: true, span: true, help: 'Each device they sync from in local mode is told to erase its local copy of client records the next time it connects.' } : null,
     !isNew ? { name: 'unlock', label: 'Unlock account', type: 'checkbox' } : null, !isNew && values.mfa_enabled ? { name: 'reset_mfa', label: 'Reset MFA (user re-enrolls)', type: 'checkbox' } : null,
+    // Fingerprint sign-in (docs/FINGERPRINT.md): how many passkeys the person has, and taking them away (audited).
+    // Deactivating the account removes them anyway.
+    !isNew && values.passkey_count ? { name: 'revoke_passkeys', label: `Revoke this person's passkeys (${values.passkey_count})`, type: 'checkbox', span: true, help: 'For a lost or replaced phone. They sign in with their password and can add a passkey again. SUDS holds no fingerprint, only each passkey\'s public key.' } : null,
     oidcStatus.enabled ? { name: 'oidc_subject', label: `Single sign-on identity (${oidcStatus.label})`, span: true, help: values && values.oidc_subject ? 'Linked. Clear this field to unlink — the user can still sign in with their SUDS password.' : 'Paste the "sub" claim from the identity provider to let this user sign in with SSO instead of a SUDS password. Leave blank if they should only use their SUDS password.' } : null,
   ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Create user' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
     if (isNew) {
@@ -82,6 +85,8 @@ async function openUserForm(values, onDone) {
         if (!answer) return;
         moveTo = answer.moveTo;
       }
+      const revoke = !!d.revoke_passkeys; delete d.revoke_passkeys;
+      if (revoke) await del(`/api/users/${values.id}/passkeys`);
       const saved = await put(`/api/users/${values.id}`, d); m.close();
       toast(saved && saved.caseload_default === 'held' ? 'User updated. As a new navigator or clinician they are held to their caseload (program default).' : saved && saved.caseload_default === 'lifted' ? 'User updated. The program default\'s caseload hold was lifted with the new role.' : 'User updated', 'ok');
       // The caseload moves through the same audited transfer as Settings -> Move a caseload. If that fails the
@@ -371,7 +376,7 @@ route('admin', async (r) => {
     async users() {
       const { users } = await get('/api/users');
       return h('div', {}, state.local ? null : await accessRequestsCard(refresh), await caseloadDefaultCard(refresh), h('div', { class: 'row mb' }, h('button', { class: 'btn primary', onClick: () => openUserForm(null, refresh) }, '+ New user')),
-        table([{ label: 'Name', render: u => h('div', {}, h('b', {}, u.display_name), h('div', { class: 'small muted' }, u.username, u.title ? ` · ${u.title}` : '')) }, { label: 'Role', render: u => badge(fmt.label(u.role), u.role === 'admin' ? 'purple' : 'info') }, { label: 'Email', key: 'email' }, { label: 'MFA', render: u => u.mfa_enabled ? badge('On', 'ok') : badge('Off', 'warn') }, { label: 'Status', render: u => [u.is_active ? badge('Active', 'ok') : u.access_status === 'declined' ? badge('Request declined') : badge('Inactive'), u.locked_until && Date.parse(u.locked_until) > Date.now() ? [' ', badge('Locked', 'danger')] : null] }, { label: 'Last login', render: u => u.last_login_at ? fmt.dt(u.last_login_at) : 'never' },
+        table([{ label: 'Name', render: u => h('div', {}, h('b', {}, u.display_name), h('div', { class: 'small muted' }, u.username, u.title ? ` · ${u.title}` : '')) }, { label: 'Role', render: u => badge(fmt.label(u.role), u.role === 'admin' ? 'purple' : 'info') }, { label: 'Email', key: 'email' }, { label: 'MFA', render: u => u.mfa_enabled ? [badge('On', 'ok'), u.passkey_count ? [' ', h('span', { 'data-passkey-count': String(u.passkey_count) }, badge(`${u.passkey_count} passkey${u.passkey_count === 1 ? '' : 's'}`, 'info'))] : null] : u.passkey_count ? h('span', { 'data-passkey-count': String(u.passkey_count) }, badge(`Passkey (${u.passkey_count})`, 'ok')) : badge('Off', 'warn') }, { label: 'Status', render: u => [u.is_active ? badge('Active', 'ok') : u.access_status === 'declined' ? badge('Request declined') : badge('Inactive'), u.locked_until && Date.parse(u.locked_until) > Date.now() ? [' ', badge('Locked', 'danger')] : null] }, { label: 'Last login', render: u => u.last_login_at ? fmt.dt(u.last_login_at) : 'never' },
           // Which clients the person reaches (1.17.0): held to their caseload shows at a glance, and whether the
           // programme default did it (server/caseload-default.js).
           { label: 'Clients', render: clientScopeCell },
@@ -390,7 +395,7 @@ route('admin', async (r) => {
         timezoneField(s),
         // The rest of the page is folded into sections, each opened when it is needed: the whole form used to be
         // one page over 4,000px tall on a phone.
-        { type: 'section', label: 'Security policy', hint: 'sign-out, passwords, two-step verification, sign-up', collapsible: true, heading: true },
+        { type: 'section', label: 'Security policy', hint: 'sign-out, passwords, two-step verification, fingerprint, sign-up', collapsible: true, heading: true },
         { name: 'session_idle_minutes', label: 'Auto sign-out after inactivity (minutes, max 60)', type: 'number', min: 1, max: 60, step: 1, value: s.policy.idleMinutes }, { name: 'session_absolute_hours', label: 'Maximum session length (hours)', type: 'number', min: 1, max: 24, step: 1, value: s.policy.absoluteHours },
         { name: 'password_max_age_days', label: 'Password expires after (days)', type: 'number', min: 1, step: 1, value: s.policy.passwordMaxAgeDays },
         { name: 'sign_reauth_minutes', label: 'Sign notes without the password for (minutes after signing in or confirming it, 0–60)', type: 'number', min: 0, max: 60, step: 1, value: s.policy.signReauthMinutes, help: 'Within this time a signature needs only the signer\'s confirmation of the attestation; after it, the password (or the authenticator code, with two-step verification on). 0 asks every time.' },
@@ -399,6 +404,17 @@ route('admin', async (r) => {
           { name: 'mfa_require_all', label: 'Require two-step verification for every role', type: 'select', noBlank: true, value: s.mfa_require_all === '1' ? '1' : '0', options: [{ value: '1', label: 'On — every role, whatever the list above says (recommended)' }, { value: '0', label: 'Off — the roles listed above' }], span: true },
         ]),
         { name: 'mfa_grace_days', label: 'Days a new account has to set up MFA', type: 'number', min: 0, step: 1, value: s.policy.mfaGraceDays, help: 'Counted from when the account is created (or its access request approved). 0 = at first sign-in.' },
+        // Fingerprint sign-in and signing with passkeys (docs/FINGERPRINT.md): office server only.
+        ...(state.local ? [] : [
+          { name: 'passkey_signin', label: 'Allow fingerprint sign-in', type: 'select', noBlank: true, value: s.passkey_signin === '0' ? '0' : '1', span: true,
+            options: [{ value: '1', label: 'On — staff may sign in with a passkey (fingerprint or screen lock); it counts as two-step verification' }, { value: '0', label: 'Off — passwords (and single sign-on) only' }],
+            help: 'Staff add a passkey under My profile. SUDS never receives a fingerprint: the device checks it and SUDS keeps only a public key. Needs HTTPS at the server\'s name.' },
+          { name: 'passkey_signing', label: 'Allow fingerprint to confirm signatures and approvals', type: 'select', noBlank: true, value: s.passkey_signing === '0' ? '0' : '1', span: true,
+            options: [{ value: '1', label: 'On — "Confirm with fingerprint" beside the password or code' }, { value: '0', label: 'Off — the password or authenticator code only' }] },
+          { name: 'sign_strong_required', label: 'Require fingerprint or authenticator for signing', type: 'select', noBlank: true, value: s.sign_strong_required === '1' ? '1' : '0', span: true,
+            options: [{ value: '0', label: 'Off — the password is enough to sign and approve' }, { value: '1', label: 'On — signing notes and approving time or spending need a fingerprint or an authenticator code' }],
+            help: 'With this on, the quick-signing window counts only when a fingerprint or code opened it. Staff with neither must set one up first.' },
+        ]),
         { name: 'self_signup', label: 'Sign up on the sign-in page', type: 'select', noBlank: true, value: s.self_signup === '0' ? '0' : '1', options: [{ value: '1', label: 'On — people can request an account; an administrator approves each one' }, { value: '0', label: 'Off — the sign-in page says to ask an administrator' }], span: true },
         ...(state.local ? [] : [
           { type: 'section', label: 'Single sign-on & provisioning', hint: 'identity provider, SCIM', collapsible: true, heading: true },

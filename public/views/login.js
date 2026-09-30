@@ -1,5 +1,6 @@
-import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, startPage, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions, roleSummary } from '../app.js';
+import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, startPage, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions, roleSummary, announce } from '../app.js';
 import { restoreBackupButton, requestPersistentStorage, showRecoveryCode, resetRecoveryPrompt } from './local.js';
+import { passkeysPossible, conditionalAvailable, getPasskey, signInWithPasskey, passkeyErrorMessage } from '../passkey.js';
 
 const OIDC_ERRORS = {
   provider_denied: 'The identity provider declined the sign-in.',
@@ -101,6 +102,7 @@ async function loginPanel(r, noAccount, back = '', status = {}) {
     { name: 'password', label: 'Password', type: 'password', required: true },
     ...(state.local ? SPONSOR_FIELDS : []),
   ], { submitText: 'Log in', onSubmit: async (d) => {
+    stopConditional();
     if (!d.sponsor_username) { delete d.sponsor_username; delete d.sponsor_password; }
     let r2;
     // A device account with no key to the encrypted records yet (one made before they were encrypted, or
@@ -122,16 +124,70 @@ async function loginPanel(r, noAccount, back = '', status = {}) {
   // offered there — only the office server, where /api/auth/oidc/status can actually mean something.
   const oidc = state.local ? { enabled: false } : await get('/api/auth/oidc/status', { quiet: true }).catch(() => ({ enabled: false }));
   const oidcError = r.query.get('oidc_error');
+  // Sign in with fingerprint (passkeys, docs/FINGERPRINT.md): office server only, and only where this browser can
+  // use one and the programme allows it. Never on SUDS on this device.
+  const fp = !state.local && passkeysPossible() ? await get('/api/auth/passkeys/status', { quiet: true }).catch(() => ({ signin: false })) : { signin: false };
+  const fpBox = fp.signin ? fingerprintSignIn(f, back) : null;
   return h('div', {},
     oidcError ? h('div', { class: 'banner danger', role: 'alert' }, OIDC_ERRORS[oidcError] || 'Single sign-on failed.') : null,
     oidc.enabled ? h('div', { class: 'btn-row mb' }, h('a', { class: 'btn primary', href: '/api/auth/oidc/start', style: { width: '100%', textAlign: 'center' } }, oidc.label)) : null,
     oidc.enabled ? h('div', { class: 'small muted center mb' }, '— or —') : null,
     f,
+    fpBox,
     // A device with no office server behind it has no administrator to ask for a password reset — "ask
     // your supervisor" is not an answer there, so it gets the ways back in that exist on a device instead.
     state.local
       ? cantSignIn(status)
       : h('p', { class: 'small muted center mt' }, 'Forgot your password or locked out? Ask your supervisor or the SUDS administrator to reset it.'));
+}
+
+// ---- office server: sign in with fingerprint ----
+// One button, after the password form: the browser offers this device's passkeys for SUDS (a discoverable
+// credential), or, when a username is typed, that account's. Where the browser supports it the username field also
+// suggests the passkeys as you type (conditional UI, autocomplete="username webauthn"); that request is stopped
+// before the button's own starts, and when the page changes.
+let conditional = null;
+function stopConditional() { if (conditional) { try { conditional.abort(); } catch {} conditional = null; } }
+async function afterPasskeySignIn(back) {
+  stopConditional();
+  await loadSession(); resetRecoveryPrompt();
+  navAndRender(back || startPage());
+}
+function fingerprintSignIn(f, back) {
+  const status = h('div', { class: 'small', role: 'status', 'aria-live': 'polite', 'data-fingerprint-status': '1' });
+  const btn = h('button', { type: 'button', class: 'btn fingerprint-btn', 'data-fingerprint-signin': '1', style: { width: '100%' }, onClick: async () => {
+    stopConditional();
+    btn.disabled = true; status.textContent = 'Waiting for your fingerprint (or your device’s screen lock)…'; delete status.dataset.error;
+    try {
+      const username = (f.inputs.username.value || '').trim();
+      await signInWithPasskey({ username });
+      status.textContent = 'Signed in.';
+      await afterPasskeySignIn(back);
+    } catch (e) {
+      const msg = e && e.name ? passkeyErrorMessage(e) : (e && e.message) || 'Sign-in with fingerprint did not work.';
+      status.textContent = msg; status.dataset.error = '1'; announce(msg); btn.disabled = false; btn.focus();
+    }
+  } }, h('span', { 'aria-hidden': 'true' }, '☝ '), 'Sign in with fingerprint');
+  // The username field's suggestions (conditional UI), where the browser has them.
+  f.inputs.username.setAttribute('autocomplete', 'username webauthn');
+  conditionalAvailable().then(async (yes) => {
+    if (!yes) return;
+    stopConditional();
+    const ctl = new AbortController(); conditional = ctl;
+    const leave = () => { if (conditional === ctl) stopConditional(); window.removeEventListener('hashchange', leave); };
+    window.addEventListener('hashchange', leave);
+    try {
+      const o = await post('/api/auth/passkeys/login/options', {}, { quiet: true, background: true });
+      const credential = await getPasskey(o.publicKey, { mediation: 'conditional', signal: ctl.signal });
+      if (conditional !== ctl) return;
+      await post('/api/auth/passkeys/login', { credential }, { quiet: true });
+      await afterPasskeySignIn(back);
+    } catch (e) { if (conditional === ctl && e && e.name !== 'AbortError' && e.name !== 'NotAllowedError') { status.textContent = e.name ? passkeyErrorMessage(e) : e.message; status.dataset.error = '1'; } }
+  }).catch(() => {});
+  return h('div', { class: 'mt', 'data-fingerprint-login': '1' },
+    h('div', { class: 'small muted center mb' }, '— or —'), btn,
+    h('p', { class: 'small muted center' }, 'Uses a passkey on this device: your fingerprint, or its screen lock. Add one under My profile after signing in. SUDS never receives your fingerprint.'),
+    status);
 }
 
 // ---- a device: "Can't sign in?" — every way back in, and what each does to the records ----
@@ -301,10 +357,28 @@ route('login', accountPage);
 route('localsetup', accountPage);
 
 route('mfa', async () => {
-  const f = form([{ name: 'code', label: 'Authenticator code', required: true, placeholder: '123456', autocomplete: 'one-time-code', pattern: '[0-9]{6}' }], { submitText: 'Verify', onSubmit: async (d) => {
+  // The second step: the authenticator code, or the fingerprint (a passkey, docs/FINGERPRINT.md), whichever this
+  // account has (GET /api/auth/me mfa_methods).
+  const me = await get('/api/auth/me', { quiet: true }).catch(() => ({}));
+  const methods = me.mfa_methods || ['totp'];
+  const withPasskey = methods.includes('passkey') && passkeysPossible();
+  const withCode = methods.includes('totp') || !withPasskey;
+  const done = async () => { state.mfaPending = false; await loadSession(); await loadRefData(); navAndRender(startPage()); };
+  const f = withCode ? form([{ name: 'code', label: 'Authenticator code', required: true, placeholder: '123456', autocomplete: 'one-time-code', pattern: '[0-9]{6}' }], { submitText: 'Verify', onSubmit: async (d) => {
     await post('/api/auth/mfa/verify', d);
-    state.mfaPending = false; await loadRefData(); navAndRender('dashboard');
-  } });
-  return h('main', { class: 'login-wrap', id: 'main', tabindex: '-1' }, h('div', { class: 'card login' }, h('h1', {}, '2-step verification'), h('p', { class: 'muted' }, 'Enter the 6-digit code from your authenticator app.'), f,
+    await done();
+  } }) : null;
+  let fpBox = null;
+  if (withPasskey) {
+    const status = h('div', { class: 'small', role: 'status', 'aria-live': 'polite', 'data-fingerprint-status': '1' });
+    const btn = h('button', { type: 'button', class: `btn ${withCode ? '' : 'primary'} fingerprint-btn`, 'data-fingerprint-mfa': '1', onClick: async () => {
+      btn.disabled = true; status.textContent = 'Waiting for your fingerprint (or your device’s screen lock)…';
+      try { await signInWithPasskey(); await done(); }
+      catch (e) { const msg = e && e.name ? passkeyErrorMessage(e) : e.message; status.textContent = msg; announce(msg); btn.disabled = false; btn.focus(); }
+    } }, h('span', { 'aria-hidden': 'true' }, '☝ '), 'Use your fingerprint');
+    fpBox = h('div', { class: 'mt', 'data-fingerprint-mfa-box': '1' }, withCode ? h('div', { class: 'small muted center mb' }, '— or —') : null, btn, status);
+  }
+  const intro = withCode && withPasskey ? 'Enter the 6-digit code from your authenticator app, or use your fingerprint.' : withPasskey ? 'Finish signing in with your fingerprint (or your device’s screen lock).' : 'Enter the 6-digit code from your authenticator app.';
+  return h('main', { class: 'login-wrap', id: 'main', tabindex: '-1' }, h('div', { class: 'card login' }, h('h1', {}, '2-step verification'), h('p', { class: 'muted' }, intro), f, fpBox,
     h('p', { class: 'small center mt' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); await post('/api/auth/logout', {}); state.user = null; state.mfaPending = false; nav('login'); render(); } }, 'Cancel and sign out'))));
 });

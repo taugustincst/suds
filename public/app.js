@@ -487,6 +487,9 @@ export function modal(title, content, { wide = false, onClose = null } = {}) {
     if (onClose) onClose();
   }
   function onKey(e) {
+    // Only the top dialog answers the keyboard: one opened over this one (the signature dialog over a note) makes
+    // this one inert, and its Tab and Escape are the top one's (a Tab here used to pull the focus back down).
+    if (bg.inert) return;
     if (e.key === 'Escape') { close(); return; }
     // Keep Tab inside the dialog: a keyboard user must not tab out into the page behind it.
     if (e.key !== 'Tab') return;
@@ -2165,7 +2168,8 @@ export async function loadSession() {
     // the server refuses every request until it is done -- so say when that is, and where to do it, instead of
     // a vague "please enroll" that reads as advisory right up until the day everything stops working.
     state.mfaDue = null;
-    if (state.user.mfa_required && !state.user.mfa_enabled && !state.mfaPending && !state.local) {
+    // A passkey (fingerprint sign-in, docs/FINGERPRINT.md) is two-step verification of its own.
+    if (state.user.mfa_required && !state.user.mfa_enabled && !state.user.passkeys && !state.mfaPending && !state.local) {
       const due = state.user.mfa_setup_deadline ? fmt.parse(state.user.mfa_setup_deadline) : null;
       const when = due ? (due.getTime() < Date.now() ? 'now' : `by ${fmt.date(state.user.mfa_setup_deadline)}`) : 'now';
       // One line on every screen (a paragraph took a third of a phone's screen above every page): the

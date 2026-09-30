@@ -1,4 +1,5 @@
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, bars, downloadCsv, loadRefData, pageTabs, flag, loadingFor } from '../app.js';
+import { approvalProof } from '../passkey.js';
 
 export function openExpenditureForm(values, { clientId, clientDisplay, onDone } = {}) {
   const C = state.constants; const isNew = !values;
@@ -35,10 +36,18 @@ export function expenditureTable(rows, { showClient = true, onChange } = {}) {
   // Approving is one click but confirmed; rejecting asks for the reason the submitter will see. Neither has
   // an undo, and county money deserves at least the same care as deleting a to-do gets.
   const approve = async (r, status) => {
-    let note;
+    let note; let proof = { body: {} };
     if (status === 'rejected') { note = await confirmDialog('Reject this expenditure', `Reject ${fmt.money(r.amount)}${r.vendor ? ` to ${r.vendor}` : ''} submitted by ${r.worker}? They will see your reason.`, { danger: true, okText: 'Reject', requireReason: true }); if (!note) return; }
-    else if (status === 'approved') { if (!await confirmDialog('Approve this expenditure', `Approve ${fmt.money(r.amount)}${r.vendor ? ` to ${r.vendor}` : ''} against ${r.fund}?`, { okText: 'Approve' })) return; }
-    try { await post(`/api/budget/expenditures/${r.id}/approve`, { status, note }); }
+    else {
+      // With a passkey here the approval can be confirmed with a fingerprint (docs/FINGERPRINT.md), in the same
+      // dialog that asks "Approve?"; without one, the plain confirmation as before.
+      const approving = status === 'approved';
+      const message = approving ? `Approve ${fmt.money(r.amount)}${r.vendor ? ` to ${r.vendor}` : ''} against ${r.fund}?` : `Mark ${fmt.money(r.amount)}${r.vendor ? ` to ${r.vendor}` : ''} as reimbursed?`;
+      proof = await approvalProof({ title: approving ? 'Approve this expenditure' : 'Mark reimbursed', message, okText: approving ? 'Approve' : 'Mark reimbursed', bind: { purpose: 'expenditure.approve', params: { id: r.id, status } } });
+      if (!proof) return;
+      if (!proof.asked && approving && !await confirmDialog('Approve this expenditure', message, { okText: 'Approve' })) return;
+    }
+    try { await post(`/api/budget/expenditures/${r.id}/approve`, { status, note, ...proof.body }); }
     catch (e) {
       // Approving would overspend the budget line: the server says by how much and whether this person
       // may override. A supervisor confirms with a reason, which goes on the record; anyone else is told.
@@ -46,7 +55,7 @@ export function expenditureTable(rows, { showClient = true, onChange } = {}) {
       if (!e.data.force_allowed) { toast(e.message, 'error'); return; }
       const why = await confirmDialog('This overspends the budget line', `${r.line_label || fmt.label(r.line_category)} has ${fmt.money(e.data.available)} available; approving ${fmt.money(r.amount)} would go ${fmt.money(e.data.over)} over. Approve it anyway? Say why — it is recorded with the approval.`, { danger: true, okText: 'Approve anyway', requireReason: true });
       if (!why) return;
-      await post(`/api/budget/expenditures/${r.id}/approve`, { status, note: why, force: true });
+      await post(`/api/budget/expenditures/${r.id}/approve`, { status, note: why, force: true, ...proof.body });
     }
     toast(`Marked ${status}`, 'ok'); onChange && onChange();
   };

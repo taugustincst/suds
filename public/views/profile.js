@@ -1,5 +1,73 @@
-import { h, route, get, post, state, form, modal, toast, table, badge, fmt, pageHead, loadSession, nav, render, kv, confirmDialog, prefs, can, refreshPermissions, shortcutsOn, openShortcutsHelp } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, pageHead, loadSession, nav, render, kv, confirmDialog, prefs, can, refreshPermissions, shortcutsOn, openShortcutsHelp } from '../app.js';
 import { qrSvg } from '../qr.js';
+import { passkeysPossible, platformAvailable, createPasskey, passkeyErrorMessage } from '../passkey.js';
+
+// ---- Fingerprint sign-in (passkeys, docs/FINGERPRINT.md) ----
+// This person's passkeys: add one (the password again, and the authenticator code with two-step verification on,
+// then the device's own prompt), rename, remove (the password again). Office server only; the card says plainly
+// when this device or address cannot make one rather than offering a button that cannot work.
+const guessName = () => { const ua = navigator.userAgent || ''; const dev = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android phone' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows computer' : 'computer'; const first = ((state.user && state.user.display_name) || '').split(' ')[0]; return first ? `${first}’s ${dev}` : `My ${dev}`; };
+/** "Add a passkey": the password again (and the code with two-step verification on), then the device's prompt. */
+export function openAddPasskeyDialog({ totp = false, onDone = null } = {}) {
+  const f = form([
+    { name: 'name', label: 'Name for this passkey', required: true, value: guessName(), help: 'So you can tell your devices apart, for example “Maria’s iPhone”.' },
+    { name: 'password', label: 'Your password', type: 'password', required: true, autocomplete: 'current-password', help: 'Asked again before a new way to sign in is added.' },
+    ...(totp ? [{ name: 'code', label: 'Code from your authenticator app', required: true, autocomplete: 'one-time-code', pattern: '[0-9]{6}' }] : []),
+  ], { submitText: 'Continue to fingerprint', onCancel: () => m.close(), onSubmit: async (v) => {
+    // quiet: a wrong password is this form's answer (401), not the session ending.
+    const o = await post('/api/auth/passkeys/register/options', { password: v.password, code: v.code || undefined }, { quiet: true });
+    let credential;
+    try { credential = await createPasskey(o.publicKey); }
+    catch (e) { const err = new Error(passkeyErrorMessage(e)); err.labelled = true; throw err; }
+    await post('/api/auth/passkeys/register', { credential, name: v.name });
+    m.close(); toast('Passkey added. You can sign in, sign and approve with your fingerprint on this device.', 'ok');
+    await loadSession(); if (onDone) onDone();
+  } });
+  const m = modal('Add a passkey', h('div', { 'data-passkey-add': '1' },
+    h('p', {}, 'Your device will ask for your fingerprint (or its screen lock) to make a passkey for SUDS. SUDS keeps only the passkey’s public key — never your fingerprint.'), f));
+  return m;
+}
+/** "Remove passkey": the password again. */
+export function openRemovePasskeyDialog(p, onDone = null) {
+  const f = form([{ name: 'password', label: 'Your password', type: 'password', required: true, autocomplete: 'current-password' }], { submitText: 'Remove passkey', onCancel: () => m.close(), onSubmit: async (v) => {
+    await del(`/api/auth/passkeys/${p.id}`, { password: v.password }, { quiet: true }); m.close(); toast(`Removed ${p.name}`, 'ok'); await loadSession(); if (onDone) onDone();
+  } });
+  const m = modal('Remove passkey', h('div', { 'data-passkey-remove': '1' }, h('p', {}, `“${p.name}” will no longer sign you in or confirm signatures. Enter your password to remove it.`), f));
+  return m;
+}
+async function passkeysCard() {
+  if (state.local) return null;
+  let d; try { d = await get('/api/auth/passkeys', { quiet: true }); } catch { return null; }
+  if (!d.signin && !d.signing) return null;
+  const card = h('div', { class: 'card', 'data-passkeys-card': '1' });
+  const draw = async () => {
+    try { d = await get('/api/auth/passkeys', { quiet: true }); } catch { /* keep the last */ }
+    const possible = passkeysPossible() && d.available && await platformAvailable();
+    const rows = d.passkeys;
+    const add = () => openAddPasskeyDialog({ totp: d.totp, onDone: draw });
+    const rename = (p) => {
+      const f = form([{ name: 'name', label: 'Name', required: true, value: p.name }], { submitText: 'Rename', onCancel: () => m.close(), onSubmit: async (v) => { await put(`/api/auth/passkeys/${p.id}`, { name: v.name }); m.close(); toast('Passkey renamed', 'ok'); draw(); } });
+      const m = modal('Rename passkey', f);
+    };
+    const remove = (p) => openRemovePasskeyDialog(p, draw);
+    // replaceChildren writes a null as the text "null": the parts that may be absent are filtered out.
+    card.replaceChildren(...[h('h2', {}, 'Fingerprint sign-in'),
+      h('p', { class: 'small' }, 'Sign in, sign notes and approve with your fingerprint (or your device’s screen lock) instead of typing your password. A passkey counts as two-step verification. SUDS never receives or stores your fingerprint: your device checks it and SUDS keeps only a public key.'),
+      rows.length ? table([
+        { label: 'Name', render: p => h('span', {}, p.name, p.flagged ? [' ', badge('Disabled: possible copy', 'danger')] : null) },
+        { label: 'Added', render: p => fmt.date(p.created_at) },
+        { label: 'Last used', render: p => (p.last_used_at ? fmt.dt(p.last_used_at) : 'never') },
+        { label: '', render: p => h('div', { class: 'row nowrap' },
+          h('button', { class: 'btn sm', type: 'button', 'data-passkey-rename': p.id, 'aria-label': `Rename ${p.name}`, onClick: () => rename(p) }, 'Rename'),
+          h('button', { class: 'btn sm danger', type: 'button', 'data-passkey-remove': p.id, 'aria-label': `Remove ${p.name}`, onClick: () => remove(p) }, 'Remove')) },
+      ], rows) : h('p', { class: 'small muted', 'data-passkeys-none': '1' }, 'No passkeys yet.'),
+      possible ? (rows.length < d.max ? h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', 'data-passkey-add-open': '1', onClick: add }, 'Add a passkey on this device')) : h('p', { class: 'small muted' }, `You have ${d.max} passkeys, the most an account may have. Remove one to add another.`))
+        : h('p', { class: 'small muted', 'data-passkeys-unavailable': '1' }, d.available ? 'This device or browser cannot make a passkey (it needs a fingerprint reader, face recognition or a screen lock that the browser can use). You can add one from another device.' : (d.reason || 'Passkeys cannot be used at this address.')),
+      d.strong_required ? h('p', { class: 'small' }, 'Your programme asks for a fingerprint or an authenticator code (not the password alone) to sign notes and approve.') : null].filter(Boolean));
+  };
+  await draw();
+  return card;
+}
 
 route('profile', async (r) => {
   const force = r.query.get('force') === '1'; const mfaPrompt = r.query.get('mfa') === '1';
@@ -12,7 +80,8 @@ route('profile', async (r) => {
     if (u.mfa_enabled) mfaBox.append(...[badge('2-step verification is on', 'ok'), h('p', { class: 'small muted mt' }, 'Your account requires an authenticator code at sign-in.'), !u.mfa_required ? h('button', { class: 'btn sm danger', onClick: async () => { const f = form([{ name: 'password', label: 'Confirm password', type: 'password', required: true },
       // Both factors: a password on its own must not be able to remove the second one.
       { name: 'code', label: 'Code from your authenticator app', required: true, pattern: '[0-9]{6}', autocomplete: 'one-time-code', help: 'The 6-digit code the app shows now. If you have lost the app, ask an administrator to reset two-step verification for you.' }], { submitText: 'Turn off 2-step', onCancel: () => m.close(), onSubmit: async (d) => { await post('/api/auth/mfa/disable', d); m.close(); await loadSession(); render(); } }); const m = modal('Turn off 2-step verification', f); } }, 'Turn off 2-step') : null].filter(Boolean));
-    else mfaBox.append(...[u.mfa_required ? h('div', { class: 'banner warn' }, u.mfa_setup_deadline ? `Your role requires two-step verification. Set it up by ${fmt.date(u.mfa_setup_deadline)} — after that SUDS will not let you in until it is done.` : 'Your role requires two-step verification. Set it up now to keep using SUDS.') : null, h('button', { class: 'btn primary', onClick: enroll }, 'Set up 2-step verification')].filter(Boolean));
+    else mfaBox.append(...[u.mfa_required && !u.passkeys ? h('div', { class: 'banner warn' }, u.mfa_setup_deadline ? `Your role requires two-step verification. Set it up by ${fmt.date(u.mfa_setup_deadline)} — after that SUDS will not let you in until it is done. A passkey (Fingerprint sign-in) counts too.` : 'Your role requires two-step verification. Set it up now to keep using SUDS. A passkey (Fingerprint sign-in) counts too.') : null,
+      u.passkeys ? h('p', { class: 'small muted', 'data-mfa-by-passkey': '1' }, 'Your passkey counts as two-step verification. An authenticator app is optional.') : null, h('button', { class: 'btn primary', onClick: enroll }, 'Set up 2-step verification')].filter(Boolean));
   };
   async function enroll() {
     const s = await post('/api/auth/mfa/setup', {});
@@ -21,6 +90,7 @@ route('profile', async (r) => {
   }
   renderMfa();
   if (mfaPrompt && !u.mfa_enabled) setTimeout(enroll, 0);
+  const passkeys = await passkeysCard();
   const sessions = await get('/api/auth/sessions');
   // Desktop/browser notifications for reminders coming due, off unless this person switches it on here.
   const notifySupported = typeof Notification !== 'undefined';
@@ -53,6 +123,7 @@ route('profile', async (r) => {
         h('p', { class: 'small mt' }, h('button', { class: 'btn sm', 'data-refresh-permissions': '1', onClick: async (e) => { e.target.disabled = true; await refreshPermissions(); toast('Permissions refreshed', 'ok'); } }, 'Refresh permissions'), ' ',
           h('span', { class: 'muted' }, 'If an administrator changed what you can do, pick it up without signing out.'))),
       h('div', { class: 'card' }, h('h2', {}, '2-step verification'), mfaBox),
+      passkeys,
       h('div', { class: 'card' }, h('h2', {}, 'Change password'), pw),
       reminders,
       shortcuts,

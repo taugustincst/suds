@@ -1,6 +1,7 @@
 import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv } from '../app.js';
 import { problemPicker } from './clinical.js';
 import { noteCopilot, aiDraftBanner, putDraft } from './ai.js';
+import { passkeysPossible, fingerprintFor, fingerprintButton } from '../passkey.js';
 
 export const SECTIONS = { SOAP: [['S', 'Subjective'], ['O', 'Objective'], ['A', 'Assessment'], ['P', 'Plan']], DAP: [['D', 'Data'], ['A', 'Assessment'], ['P', 'Plan']], BIRP: [['B', 'Behavior'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']], GIRP: [['G', 'Goal'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']],
   // Stanley-Brown style safety plan, as a structured note so it prints and reads the same for everyone.
@@ -182,7 +183,10 @@ function verifyPanel(n, breakGlass) {
       const v = await get(`/api/notes/${n.id}/verify`, breakGlass ? { headers: { 'X-Break-Glass-Reason': breakGlass } } : undefined);
       out.replaceChildren(...[
         line(v.intact, v.intact ? `The note is exactly as ${v.signer || 'the signer'} signed it${v.signed_at ? ` on ${fmt.dt(v.signed_at)}` : ''}.` : 'The stored note no longer matches its signature. Report this to your privacy officer.'),
-        v.cosignature_intact === undefined ? null : line(v.cosignature_intact, v.cosignature_intact ? `Countersignature by ${v.cosigner || 'the supervisor'} also matches.` : 'The countersignature no longer matches.')].filter(Boolean));
+        v.cosignature_intact === undefined ? null : line(v.cosignature_intact, v.cosignature_intact ? `Countersignature by ${v.cosigner || 'the supervisor'} also matches.` : 'The countersignature no longer matches.'),
+        // Signed with a fingerprint (docs/FINGERPRINT.md): the stored evidence checked again, in words.
+        v.fingerprint ? h('div', { class: 'small', 'data-fingerprint-verified': v.fingerprint.verified ? '1' : '0' }, badge(v.fingerprint.verified ? 'Fingerprint confirmation verified' : 'Fingerprint evidence does not verify', v.fingerprint.verified ? 'ok' : 'danger'), ' Signed with a passkey: the device’s signature over this note’s signature hash checks out.') : null,
+        v.cosign_fingerprint ? h('div', { class: 'small' }, badge(v.cosign_fingerprint.verified ? 'Countersignature fingerprint verified' : 'Countersignature fingerprint does not verify', v.cosign_fingerprint.verified ? 'ok' : 'danger')) : null].filter(Boolean));
     } catch (e) { out.replaceChildren(h('span', { class: 'err' }, e.message || 'Could not check the signature')); }
     finally { btn.disabled = false; }
   } }, 'Verify signature');
@@ -241,10 +245,16 @@ export async function openNote(id, { onChange } = {}) {
  */
 // fresh: no "you confirmed a few minutes ago" (the key backup, POST /api/admin/keys-backup): the password or
 // code is asked for every time; only a single sign-on confirmation just completed (sso_fresh) stands in for it.
-export async function signatureDialog({ title, intro, submitText, send, done, fields = [], returnTo, verb = 'sign', fresh = false, onCancel = null }) {
+// passkey: { purpose, params } — "Confirm with fingerprint" is offered beside the password or code (1.19.0,
+// docs/FINGERPRINT.md) when the person has a passkey on this server and the device can use it: a challenge bound
+// to exactly this signature (the purpose and its records), answered by the device and sent as `passkey`. Where the
+// programme requires a fingerprint or an authenticator code (strong_required), the password is not asked for.
+// preview: open with this /api/auth/reauth state, as if the device could use a passkey (the accessibility audit).
+export async function signatureDialog({ title, intro, submitText, send, done, fields = [], returnTo, verb = 'sign', fresh = false, onCancel = null, passkey = null, preview = null }) {
   let finished = false; // signed, or asking again: not a cancel
   let st = { recent: false, method: 'password' };
-  try { st = await get('/api/auth/reauth', { quiet: true }); } catch { /* ask for the password */ }
+  if (preview) st = preview;
+  else { try { st = await get('/api/auth/reauth', { quiet: true }); } catch { /* ask for the password */ } }
   if (fresh) st = { ...st, recent: !!st.sso_fresh };
   const ssoButton = (label, primary) => {
     const status = h('div', { class: 'small', role: 'status', 'aria-live': 'polite' });
@@ -256,23 +266,39 @@ export async function signatureDialog({ title, intro, submitText, send, done, fi
     return [btn, status];
   };
   const open = (st, why) => {
-    const viaSso = !st.recent && st.method === 'sso';
+    const strong = !!st.strong_required && !st.recent;
+    // "Confirm with fingerprint", when this person has a passkey here and this device can use it.
+    const fp = !!(passkey && st.passkey && (preview || passkeysPossible()));
+    const viaSso = !st.recent && st.method === 'sso' && !strong;
     const why2 = fresh ? 'Asked for every time, however recently you signed in.' : 'It has been a while since you confirmed it is you.';
     const identity = st.recent ? []
-      : st.method === 'totp' ? [{ name: 'code', label: 'Code from your authenticator app', required: true, autocomplete: 'one-time-code', pattern: '[0-9]{6}', help: why2 }]
-      : [{ name: 'password', label: `Re-enter your password to ${verb}`, type: 'password', required: true, autocomplete: 'current-password', help: why2 }];
-    const f = viaSso ? null : form([...fields, ...identity], { submitText, onCancel: () => m.close(), onSubmit: async (d) => {
-      try { await send(st.recent ? { ...d, confirm: true } : d); }
+      : st.method === 'totp' || (strong && st.totp) ? [{ name: 'code', label: fp ? 'Or the code from your authenticator app' : 'Code from your authenticator app', required: true, autocomplete: 'one-time-code', pattern: '[0-9]{6}', help: why2 }]
+      : strong ? []
+      : [{ name: 'password', label: fp ? `Or re-enter your password to ${verb}` : `Re-enter your password to ${verb}`, type: 'password', required: true, autocomplete: 'current-password', help: why2 }];
+    const submit = async (d) => {
+      try { await send(d); }
       catch (e) {
         // The few minutes ran out while the dialog was open: ask again, keeping what was typed.
-        if (e.data && e.data.reauthRequired && st.recent) { finished = true; m.close(); finished = false; open({ recent: false, method: e.data.method || 'password', sso: !!e.data.sso }, e.message); return; }
+        if (e.data && e.data.reauthRequired && st.recent) { finished = true; m.close(); finished = false; open({ ...st, recent: false, method: e.data.method || 'password', sso: !!e.data.sso, passkey: e.data.passkey ?? st.passkey, strong_required: !!e.data.strongRequired || st.strong_required }, e.message); return; }
         throw e;
       }
       finished = true; m.close(); done && done();
-    } });
-    const m = modal(title, h('div', { 'data-signature-dialog': st.recent ? 'confirm' : st.method },
+    };
+    // The fingerprint goes with the dialog's other fields (a comment, the AI-review statement), read as they are now.
+    const fingerprint = fp && !st.recent ? fingerprintButton(async () => {
+      const d = f ? f.read(true) : {};
+      for (const x of identity) delete d[x.name];
+      const assertion = await fingerprintFor(passkey.purpose, passkey.params);
+      await submit({ ...d, passkey: assertion });
+    }, { label: `Confirm with fingerprint and ${verb === 'sign' ? 'sign' : 'continue'}` }) : null;
+    const f = viaSso ? null : form([...fields, ...identity], { submitText, onCancel: () => m.close(), extra: fingerprint, onSubmit: async (d) => submit(st.recent ? { ...d, confirm: true } : d) });
+    // Nothing to type and the fingerprint is the way: its button is the action, not the form's own.
+    if (f && fingerprint && !identity.length) { const sb = f.querySelector('button[type=submit]'); if (sb) sb.hidden = true; }
+    const noWay = strong && !identity.length && !fp;
+    const m = modal(title, h('div', { 'data-signature-dialog': st.recent ? 'confirm' : strong ? 'strong' : st.method, 'data-fingerprint-offered': fingerprint ? '1' : null },
       why ? h('div', { class: 'banner warn', role: 'status' }, why) : null,
       intro,
+      noWay ? h('div', { class: 'banner warn', role: 'status', 'data-strong-required': '1' }, `Your programme requires your fingerprint or an authenticator code to ${verb}. Set up fingerprint sign-in or two-step verification under My profile, then come back.`) : null,
       st.recent ? h('p', { class: 'small muted' }, fresh ? 'You have just confirmed it is you with single sign-on.' : st.method === 'sso' ? 'You confirmed it is you a few minutes ago, so you do not need to sign in again.' : 'You confirmed it is you a few minutes ago, so your password is not needed again.') : null,
       viaSso ? (() => {
         const [btn, status] = ssoButton('Confirm with single sign-on', true);
@@ -306,7 +332,7 @@ function signNote(n, done, { onCancel = null } = {}) {
     send: (body) => {
       if (ai && !body.ai_reviewed) { const e = new Error('Confirm you have reviewed the AI-drafted text before signing.'); e.data = { fields: { ai_reviewed: 'Tick to confirm you reviewed the AI-drafted text.' } }; throw e; }
       return post(`/api/notes/${n.id}/sign`, body);
-    }, returnTo: `#/notes/${n.id}`,
+    }, returnTo: `#/notes/${n.id}`, passkey: { purpose: 'note.sign', params: { note_id: n.id } },
     done: () => { toast('Note signed and locked', 'ok'); done(); }, onCancel });
 }
 function addAddendum(n, done) {

@@ -4,6 +4,7 @@
 import { h, route, get, post, state, toast, table, badge, fmt, can, pageHead, nav, emptyState, modal, form, announce, confirmDialog, pageTabs } from '../app.js';
 import { openNote, signatureDialog, ssoReauthNotice } from './notes.js';
 import { openOutcomeForm } from './referrals.js';
+import { approvalProof } from '../passkey.js';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 // The line in a reminder to-do's details that says which draft it is about (a record id, nothing about the
@@ -96,6 +97,7 @@ route('supervision', async (r) => {
         toast(`${plural(r.cosigned.length, 'note', 'notes')} countersigned`, 'ok');
         if (r.skipped.length) toast(`${r.skipped.length} not countersigned: ${r.skipped[0].reason}`, 'warn');
       },
+      passkey: one ? { purpose: 'note.cosign', params: { note_id: notes[0].row.id } } : { purpose: 'note.cosign-batch', params: { ids: notes.map(x => x.row.id) } },
       done: refresh });
   };
 
@@ -203,8 +205,17 @@ route('supervision', async (r) => {
         note = await confirmDialog(ids.length === 1 ? 'Return this entry' : `Return ${ids.length} entries`, `Send ${ids.length === 1 ? 'it' : 'them'} back to be corrected? The worker will see your reason.`, { okText: 'Return', requireReason: true });
         if (!note) return;
       }
+      // Approving may be confirmed with a fingerprint (docs/FINGERPRINT.md): offered when this person has a passkey
+      // here, and required (a fingerprint or an authenticator code) when the programme says so.
+      let proof = { body: {} };
+      if (decision === 'approved') {
+        proof = await approvalProof({ title: ids.length === 1 ? 'Approve this time' : `Approve ${ids.length} entries`, okText: 'Approve',
+          message: ids.length === 1 ? `Approve ${what(rows.find(r => r.id === ids[0]) || { minutes: 0, work_date: '', worker: '' })}?` : `Approve ${ids.length} time entries?`,
+          bind: { purpose: 'time.approve', params: { ids, decision } } });
+        if (!proof) return;
+      }
       try {
-        const r = await post('/api/time/approve-batch', { ids, decision, note });
+        const r = await post('/api/time/approve-batch', { ids, decision, note, ...proof.body });
         toast(`${plural(r[decision] || 0, 'entry', 'entries')} ${decision}`, 'ok');
         if (r.skipped && r.skipped.length) toast(`${r.skipped.length} skipped (${r.skipped[0].reason})`, 'warn');
         refresh();

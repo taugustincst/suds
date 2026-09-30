@@ -646,3 +646,8 @@ details.more-menu > summary::after { content: " ▾" / ""; } details.more-menu[o
 details.more-menu[open] { flex-basis: 100%; } details.more-menu > a { margin-top: .4rem; }
 /* A table wider than its card (r9 L4): said above it, in words. */
 .scroll-hint { margin: 0 0 .3rem; }
+/* "Confirm with fingerprint" in a signature or approval dialog, and "Sign in with fingerprint" (docs/FINGERPRINT.md). */
+.fingerprint-confirm { margin: .75rem 0; padding: .6rem .75rem; border: 1px solid var(--border); border-radius: 8px; }
+.fingerprint-confirm p { margin: .35rem 0 0; }
+.fingerprint-btn { min-height: 44px; }
+[data-fingerprint-status]:empty { display: none; }
