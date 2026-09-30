@@ -100,7 +100,7 @@ Each step, the control it implements, and where the compliance check verifies it
    production** (without it nobody can add or use a passkey, and Security status shows it in red):
    `WEBAUTHN_RP_ID`, the **same name as on the certificate and in the address staff open**. Since 1.20.0 the
    installer sets it from `--domain` in `/etc/suds/suds.env` (`WEBAUTHN_RP_ID=<domain>` and
-   `WEBAUTHN_ORIGINS=https://<domain>`), and `upgrade.sh` adds both to a server installed before that; neither
+   `WEBAUTHN_ORIGINS=https://<domain>`), and the 1.20.0 (and later) `upgrade.sh` adds both to a server installed before that (run the new release's own `upgrade.sh`: *Upgrading* below); neither
    replaces a `WEBAUTHN_RP_ID` or `WEBAUTHN_ORIGINS` you set yourself (a re-run of the installer keeps yours). Change
    it only before anyone enrols if staff use another name (a passkey made for another name, or at an IP address,
    never works; one made before a rename must be added again), and then `systemctl restart suds`. Behind a proxy
@@ -113,10 +113,21 @@ Each step, the control it implements, and where the compliance check verifies it
 
 ## Upgrading
 
+Run the **new release's own** `upgrade.sh`, from its zip unpacked (after checking the zip's SHA-256 as below): it
+knows what that release needs, which the one installed with the running release may not.
+
 ```bash
-sudo /opt/suds/current/deploy/linux/upgrade.sh 1.18.0 --release-sha256=<hex>        # downloaded from the GitHub release
-sudo /opt/suds/current/deploy/linux/upgrade.sh 1.18.0 --source=/root/suds-v1.18.0.zip --release-sha256=<hex>
+cd /root && unzip -q suds-v1.21.0.zip                   # the release you are upgrading TO
+sudo /root/suds-v1.21.0/deploy/linux/upgrade.sh 1.21.0 --source=/root/suds-v1.21.0.zip --release-sha256=<hex>
 ```
+
+From 1.21.0, the installed one (`sudo /opt/suds/current/deploy/linux/upgrade.sh <version> --release-sha256=<hex>
+[--source=<zip>]`) does this itself: once the new release is staged and its checksum checked, it hands over to that
+release's `upgrade.sh` with the same arguments, before anything is stopped. The upgrade.sh of 1.20.0 and older does
+not: an upgrade **from 1.19.0** run that way does not add `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGINS` (step 5 of *After
+the install*), and runs its compliance check without `/etc/suds/suds.env`, so its report fails `app.passkeys` and
+`app.https` (the weekly check passes `app.https`). SUDS 1.21.0 says so at every start and on Security status, with
+the two lines to add to `/etc/suds/suds.env` from the installed domain, then `systemctl restart suds`.
 
 `--release-sha256` is required: take it from a channel other than the download — the release notes of the GitHub Release **and** that version's section of `CHANGELOG.md` on the `main` branch (`git show origin/main:CHANGELOG.md`, or the file on GitHub), which must agree; the maintainer publishes it in both after the release job has built the zip (docs/RELEASE.md, *The zip's SHA-256 in two places*; for 1.16.3 to 1.20.0, [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)). The tagged commit's own CHANGELOG cannot have it: the zip is built from that commit. The staged release records how its zip was checked (`/opt/suds/<version>/.suds-release-checksum`, covered by its manifest), so a run that stops after staging and is run again still reports it (`host.release_integrity`). `--trust-release-checksum` accepts the `.sha256` file from the same release instead, with a warning, and every compliance report then says so (`host.release_integrity`). A `--source` zip is copied before it is hashed and unpacked.
 

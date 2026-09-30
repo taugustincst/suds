@@ -2,7 +2,10 @@
 # SUDS Server: upgrade to another release, with the scripts/update.js sequence made safe for a packaged install
 # (docs/SELF-HOSTING.md, "Upgrading"):
 #
-#   sudo /opt/suds/current/deploy/linux/upgrade.sh 1.18.0 --release-sha256=HEX [--source=suds-v1.18.0.zip] [--dry-run]
+#   sudo /root/suds-v1.21.0/deploy/linux/upgrade.sh 1.21.0 --source=/root/suds-v1.21.0.zip --release-sha256=HEX [--dry-run]
+#
+# the NEW release's own script, from its zip unpacked. Run as installed (/opt/suds/current/deploy/linux/upgrade.sh),
+# it stages and checks the new release and then hands over to that release's upgrade.sh (from 1.21.0).
 #
 #  1. stage   the release at /opt/suds/<version>, checked against the SHA-256 you give (--release-sha256, from a
 #             channel other than the download), and its pinned Node.js and Caddy, by checksum
@@ -65,6 +68,21 @@ say "SUDS Server upgrade: $CUR -> $VERSION"
 
 say ""; say "== 1. Stage $VERSION =="
 stage_release "$VERSION"
+# The upgrade is the new release's to run: it knows what that release needs (1.20.0's adds WEBAUTHN_RP_ID, which the
+# 1.19.0 upgrade.sh installed under /opt/suds/current did not). Once the release is staged and checked, a different
+# upgrade.sh or lib.sh in it takes over from here, with the same arguments; it finds the stage complete and goes on
+# from step 1. Nothing has been stopped or changed yet. SUDS_UPGRADER_HANDOVER marks the hand-over, so it happens once.
+staged_upgrader="$STAGED_TREE/deploy/linux/upgrade.sh"
+if [[ -z "${SUDS_UPGRADER_HANDOVER:-}" && -f "$staged_upgrader" && -f "$STAGED_TREE/deploy/linux/lib.sh" ]] \
+  && ! { cmp -s "$HERE/upgrade.sh" "$staged_upgrader" && cmp -s "$HERE/lib.sh" "$STAGED_TREE/deploy/linux/lib.sh"; }; then
+  if (( DRY )); then
+    printf '+ hand over to SUDS %s'"'"'s own upgrade.sh (%s) with the same arguments\n' "$VERSION" "$CODE_BASE/$VERSION/deploy/linux/upgrade.sh"
+  else
+    note "SUDS $VERSION has its own upgrade.sh: handing over to it ($CODE_BASE/$VERSION/deploy/linux/upgrade.sh)"
+    export SUDS_UPGRADER_HANDOVER=1
+    exec bash "$staged_upgrader" "$@"
+  fi
+fi
 PIN_TREE=$STAGED_TREE; [[ -f "$PIN_TREE/deploy/linux/pins" ]] || PIN_TREE=$SRC
 old_node=$(readlink "$(P "$CODE_BASE/node")" 2>/dev/null || true)
 install_node "$PIN_TREE"

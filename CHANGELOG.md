@@ -221,6 +221,20 @@ makes a screened, publishable release of a county's combined figures for a perio
   `test/county-publication-sdc.test.js`, one of the SDC sweeps. Browser script `scripts/ui/county-publication.mjs`
   (the suite is now 56 scripts, with `field-device.mjs`), and the Publish tab and its dialogs in `scripts/ui/accessibility.mjs`.
 
+### Review fixes (1.21 integration review)
+
+- **Upgrading from 1.19.0 left passkeys unconfigured** (the finding of the 1.20.0 installer run): the documented
+  command ran the installed 1.19.0 `upgrade.sh`, which does not add `WEBAUTHN_RP_ID`/`WEBAUTHN_ORIGINS`.
+  `deploy/linux/upgrade.sh` now hands over to the new release's own `upgrade.sh` once that release is staged and its
+  checksum checked (same arguments, before anything is stopped; the upgrade.sh of 1.20.0 and older cannot, so
+  docs/SELF-HOSTING.md *Upgrading* now says to run the new release's `upgrade.sh` from its unpacked zip). A production
+  server with passkeys on and no relying party says so at every start and on Security status (so in the compliance
+  report's `app.passkeys`), with the two exact lines for `/etc/suds/suds.env` from the installer's domain
+  (`server/startup-checks.js` passkeyRpProblem). Tests: test/deploy-linux-real.test.js, test/passkey-rp-startup.test.js.
+- **Authenticator allow-list: a malformed TPM certificate crashed enrolment** (a 500): a subject alternative name
+  whose AttributeTypeAndValue had no type or value threw a TypeError before the chain was checked; it is now refused
+  as not understood (`attestation_cert`). Test: test/attestation.test.js.
+
 ## 1.20.0 — 2026-09-30
 
 A feature release (migration 60 and the county-entered figures routes), released under a policy exception inside

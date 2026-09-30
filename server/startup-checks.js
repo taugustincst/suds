@@ -25,13 +25,44 @@ function keySeparationProblem(c = config) {
   return null;
 }
 
+/**
+ * The installer's domain (SUDS_DOMAIN in /etc/suds/suds-server.conf, which deploy/linux/install.sh writes world-readable),
+ * or '' when this is not a SUDS Server install or the file does not name one.
+ */
+function installedDomain(confFile = process.env.SUDS_SERVER_CONF || '/etc/suds/suds-server.conf') {
+  let text = '';
+  try { text = require('node:fs').readFileSync(confFile, 'utf8'); } catch { return ''; }
+  let dom = '';
+  for (const line of text.split('\n')) { const m = /^SUDS_DOMAIN=(.*)$/.exec(line.trim()); if (m) dom = m[1].trim(); }
+  return /^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(dom) ? dom.toLowerCase() : '';
+}
+
+/**
+ * Passkeys (docs/FINGERPRINT.md) switched on in production with no relying party configured: no one can add or use
+ * one. deploy/linux/upgrade.sh adds WEBAUTHN_RP_ID and WEBAUTHN_ORIGINS from 1.20.0, but a server upgraded with an
+ * older release's upgrade.sh (the one installed under /opt/suds/current) was not given them, and nothing said so
+ * until the compliance report. On a SUDS Server install the sentence names the exact lines, from the installer's
+ * domain. `policy`: { passkeySignin, passkeySigning } (auth.policy()); both off, nothing is missing.
+ */
+function passkeyRpProblem({ c = config, policy = null, confFile } = {}) {
+  if (!c.isProd || c.local) return null;
+  const wc = c.webauthn || {};
+  if (wc.rpId || (wc.origins || []).length) return null;
+  const pol = policy || require('./auth').policy();
+  if (!pol.passkeySignin && !pol.passkeySigning) return null;
+  const dom = installedDomain(confFile);
+  if (dom) return `WEBAUTHN_RP_ID is not set, so no one can add or use a passkey (fingerprint sign-in) on this server. Add these two lines to /etc/suds/suds.env and run: systemctl restart suds\n  WEBAUTHN_RP_ID=${dom}\n  WEBAUTHN_ORIGINS=https://${dom}\n(an upgrade run with the upgrade.sh of SUDS 1.19.0 or older does not add them; docs/SELF-HOSTING.md, "Upgrading").`;
+  return 'WEBAUTHN_RP_ID is not set, so no one can add or use a passkey (fingerprint sign-in) on this production server. Set WEBAUTHN_RP_ID to the server\'s name, as in the address staff open and on its certificate (and WEBAUTHN_ORIGINS=https://<that name>), and restart SUDS (docs/FINGERPRINT.md).';
+}
+
 /** Every production problem that applies right now. */
 function problems() {
   const out = [];
   try { const p = require('./audit-anchor').placementProblem(); if (p) out.push(p); } catch {}
   try { const p = backupProblem(); if (p) out.push(p); } catch {}
   try { const p = keySeparationProblem(); if (p) out.push(p); } catch {}
+  try { const p = passkeyRpProblem(); if (p) out.push(p); } catch {}
   return out;
 }
 
-module.exports = { problems, backupProblem, keySeparationProblem };
+module.exports = { problems, backupProblem, keySeparationProblem, passkeyRpProblem, installedDomain };

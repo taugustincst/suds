@@ -365,6 +365,29 @@ test('upgrade.sh for real: a successful upgrade swaps the code, installs the new
   assert.match(env, /^TRUST_PROXY=1$/m, 'and keeps the rest of the file');
 });
 
+test('upgrade.sh for real, run as installed (/opt/suds/current): once the new release is staged and checked, its own upgrade.sh takes over (the 1.19.0 one did not add WEBAUTHN_RP_ID)', { skip: !(canRun && has('zip')) && 'xz, unzip, zip or tar missing' }, () => {
+  const { h, R } = installedOld();
+  const next = tree(VERSION, { caddy: CADDY_V2 });
+  // The new release's upgrade.sh differs from the installed one: it says so when it runs, and what it was given.
+  const up = path.join(next, 'deploy/linux/upgrade.sh');
+  fs.writeFileSync(up, fs.readFileSync(up, 'utf8').replace('say "SUDS Server upgrade: $CUR -> $VERSION"', 'say "SUDS Server upgrade: $CUR -> $VERSION"; say "NEW UPGRADER RUNNING (handover=${SUDS_UPGRADER_HANDOVER:-}) args: $*"'));
+  const z = releaseZip(next, VERSION);
+  const envFile = path.join(R, 'etc/suds/suds.env');
+  fs.writeFileSync(envFile, fs.readFileSync(envFile, 'utf8').replace(/^WEBAUTHN_.*\n/mg, ''));
+  fs.writeFileSync(h.log, '');
+  // The documented command: the upgrade.sh installed with the running release.
+  const installed = path.join(R, 'opt/suds', OLD);
+  const r = run(h, 'upgrade.sh', installed, [VERSION, `--source=${z.file}`, `--release-sha256=${z.sha}`, '--ready-timeout=2', '--skip-compliance-check'], { HARNESS_HEALTHY: `${OLD},${VERSION}` });
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.out, /handing over to it/, 'the installed upgrade.sh hands over');
+  assert.match(r.out, new RegExp(`NEW UPGRADER RUNNING \\(handover=1\\) args: ${VERSION.replace(/\./g, '\\.')} --source=`), 'the staged release\'s upgrade.sh ran, with the same arguments');
+  assert.equal((r.out.match(/NEW UPGRADER RUNNING/g) || []).length, 1, 'once: the new one does not hand over again');
+  assert.equal((h.commands().match(/systemctl stop suds\.service/g) || []).length, 1, 'SUDS stopped once, by the new upgrader only');
+  assert.equal(fs.readlinkSync(path.join(R, 'opt/suds/current')), VERSION);
+  assert.match(fs.readFileSync(path.join(R, 'etc/suds/suds-server.conf'), 'utf8'), /^SUDS_RELEASE_CHECKSUM_SOURCE=operator$/m, 'the zip\'s checksum source is kept across the hand-over');
+  assert.match(fs.readFileSync(envFile, 'utf8'), /^WEBAUTHN_RP_ID=suds\.county\.example\.gov$/m);
+});
+
 // ---- Found by the installer run in a systemd container (docs/evidence/installer-container-run-2026-09-30, 1.19.0) ----
 
 /** A tree as a release zip, the way release.yml builds it: one top directory, suds-v<version>/. */
