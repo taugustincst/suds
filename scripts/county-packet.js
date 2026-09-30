@@ -30,12 +30,19 @@ const PACKET_FILES = [
   { path: 'SECURITY.md', what: 'Security policy: supported versions and how to report a vulnerability' },
   { path: 'LICENSE', what: 'The licence (MIT)' },
 ];
-const DATED = /-(\d{4}-\d{2}-\d{2})$/;
+// A dated evidence folder, and the release it was re-run on when there was more than one that day (the 1.20.0 re-runs
+// are "<kind>-2026-09-30-v1.20.0" beside the 1.19.0 "<kind>-2026-09-30"). Newest: the latest date, then the latest
+// release on that date (a folder without a release suffix is the older one).
+const DATED = /-(\d{4}-\d{2}-\d{2})(?:-v(\d+)\.(\d+)\.(\d+))?$/;
+const pad = (n) => String(Number(n || 0)).padStart(6, '0');
+const datedKey = (root) => { const m = root.match(DATED); return `${m[1]}|${pad(m[2])}.${pad(m[3])}.${pad(m[4])}`; };
+const evidenceDir = (prefix) => new RegExp(`^(docs/evidence/${prefix}-\\d{4}-\\d{2}-\\d{2}(?:-v\\d+\\.\\d+\\.\\d+)?)/`);
+const DR_DIR = evidenceDir('dr-drill'); const UPGRADE_DIR = evidenceDir('upgrade-drill'); const INSTALLER_DIR = evidenceDir('installer-[a-z0-9-]+?-run');
 const PACKET_NEWEST = [
   { kind: 'sbom', what: 'Software bill of materials (CycloneDX 1.5), the newest one', match: (p) => { const m = /^docs\/evidence\/sbom-(\d+\.\d+\.\d+)\.cdx\.json$/.exec(p); return m ? { key: m[1], root: p } : null; } },
-  { kind: 'dr', what: 'Recovery drill evidence (backup, restore, signed report), the newest', match: (p) => { const m = /^(docs\/evidence\/dr-drill-\d{4}-\d{2}-\d{2})\//.exec(p); return m ? { key: m[1].match(DATED)[1], root: m[1] } : null; } },
-  { kind: 'upgrade', what: 'Upgrade drill evidence (older releases\' databases opened by a newer one), the newest', match: (p) => { const m = /^(docs\/evidence\/upgrade-drill-\d{4}-\d{2}-\d{2})\//.exec(p); return m ? { key: m[1].match(DATED)[1], root: m[1] } : null; } },
-  { kind: 'installer', what: 'Installer run evidence (SUDS Server\'s installer and upgrader run for real), the newest', match: (p) => { const m = /^(docs\/evidence\/installer-[a-z0-9-]+-run-\d{4}-\d{2}-\d{2})\//.exec(p); return m ? { key: m[1].match(DATED)[1], root: m[1] } : null; } },
+  { kind: 'dr', what: 'Recovery drill evidence (backup, restore, signed report), the newest', match: (p) => { const m = DR_DIR.exec(p); return m ? { key: datedKey(m[1]), root: m[1] } : null; } },
+  { kind: 'upgrade', what: 'Upgrade drill evidence (older releases\' databases opened by a newer one), the newest', match: (p) => { const m = UPGRADE_DIR.exec(p); return m ? { key: datedKey(m[1]), root: m[1] } : null; } },
+  { kind: 'installer', what: 'Installer run evidence (SUDS Server\'s installer and upgrader run for real), the newest', match: (p) => { const m = INSTALLER_DIR.exec(p); return m ? { key: datedKey(m[1]), root: m[1] } : null; } },
 ];
 
 function git(root, args, encoding = 'utf8') {

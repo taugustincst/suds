@@ -85,3 +85,25 @@ test('the zip: stored entries under one folder, readable by its own central dire
     at += 46 + n;
   }
 });
+
+test('the newest evidence: the latest date, then the latest release re-run on that date (a -vX.Y.Z folder beside the plain one)', () => {
+  // The 1.20.0 re-runs are "<kind>-2026-09-30-v1.20.0" beside the 1.19.0 "<kind>-2026-09-30"; the packet shipped the
+  // 1.19.0 ones because the match wanted the date at the end of the folder's name.
+  const dr = CP.PACKET_NEWEST.find((n) => n.kind === 'dr');
+  const inst = CP.PACKET_NEWEST.find((n) => n.kind === 'installer');
+  const plain = dr.match('docs/evidence/dr-drill-2026-09-30/a.json'); const rerun = dr.match('docs/evidence/dr-drill-2026-09-30-v1.20.0/a.json');
+  assert.equal(rerun.root, 'docs/evidence/dr-drill-2026-09-30-v1.20.0');
+  assert.ok(rerun.key > plain.key, 'a re-run on the same day is newer than the plain folder');
+  assert.ok(dr.match('docs/evidence/dr-drill-2026-10-01/a.json').key > rerun.key, 'a later day is newer still');
+  assert.ok(dr.match('docs/evidence/dr-drill-2026-09-30-v1.20.10/a.json').key > dr.match('docs/evidence/dr-drill-2026-09-30-v1.20.9/a.json').key, 'releases compare as numbers');
+  assert.equal(inst.match('docs/evidence/installer-container-run-2026-09-30-v1.20.0/x/y.txt').root, 'docs/evidence/installer-container-run-2026-09-30-v1.20.0');
+  assert.equal(dr.match('docs/evidence/dr-drill-2026-09-30.md'), null, 'the summary page beside a folder is not the folder');
+  // In the repository: each kind's folder is the newest there is.
+  const p = CP.buildPacket(ROOT, HEAD);
+  const tree = execFileSync('git', ['ls-tree', '-r', '--name-only', '--full-tree', HEAD], { cwd: ROOT, encoding: 'utf8' }).split('\n').filter(Boolean);
+  for (const n of CP.PACKET_NEWEST.filter((x) => x.kind !== 'sbom')) {
+    const keys = tree.map((f) => n.match(f)).filter(Boolean).map((m) => m.key).sort();
+    const e = p.entries.find((x) => x.kind === n.kind);
+    assert.equal(n.match(`${e.root}/x`).key, keys[keys.length - 1], `${n.kind}: ${e.root}`);
+  }
+});
