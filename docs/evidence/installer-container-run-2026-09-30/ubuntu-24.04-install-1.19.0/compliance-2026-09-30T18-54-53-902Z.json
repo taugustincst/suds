@@ -1,0 +1,906 @@
+{
+  "report": {
+    "format": "suds-compliance-report",
+    "version": 1,
+    "report_id": "compliance-2026-09-30T18-54-53-902Z",
+    "generated_at": "2026-09-30T18:54:53.902Z",
+    "host": {
+      "hostname": "suds-vm",
+      "os": "Ubuntu 24.04.5 LTS",
+      "suds_version": "1.19.0",
+      "node_version": "v22.23.3",
+      "run_as": "root",
+      "signed_with": "the compliance check's own key (root-only)"
+    },
+    "config": {
+      "config_file": "/etc/suds/suds-server.conf",
+      "domain": "suds.county.test",
+      "tls_mode": "county-cert",
+      "data_dir": "/var/lib/suds",
+      "anchor_dir": "/mnt/worm/suds-anchors",
+      "offsite_dir": "/mnt/suds-offsite",
+      "admin_cidr": "10.20.0.0/16",
+      "log_retention_days": 400,
+      "keys_available": {
+        "SUDS_ENCRYPTION_KEY": "yes",
+        "SUDS_INDEX_KEY": "yes",
+        "SUDS_SIGNING_KEY": "yes",
+        "SUDS_BACKUP_KEY": "yes"
+      }
+    },
+    "risk_accepted": [],
+    "checks": [
+      {
+        "id": "host.os",
+        "title": "Supported operating system",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-308a1iiB",
+            "cite": "45 CFR §164.308(a)(1)(ii)(B)",
+            "title": "Risk management (R)"
+          }
+        ],
+        "evidence": "Ubuntu 24.04.5 LTS",
+        "remediation": "Run SUDS Server on Ubuntu 24.04 LTS or RHEL/Rocky/Alma 9, which receive security updates and which the installer supports."
+      },
+      {
+        "id": "host.data_dir",
+        "title": "Data directory and database file permissions",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312a1",
+            "cite": "45 CFR §164.312(a)(1)",
+            "title": "Access control"
+          },
+          {
+            "key": "part2-16a2iii",
+            "cite": "42 CFR §2.16(a)(2)(iii)",
+            "title": "Electronic records: using and accessing"
+          },
+          {
+            "key": "cmia-56101a",
+            "cite": "Cal. Civ. Code §56.101(a)",
+            "title": "Preserve confidentiality in creating, maintaining, storing and destroying medical information"
+          }
+        ],
+        "evidence": "/var/lib/suds 0700 suds(996), suds.db 0600, suds.db-wal 0600, suds.db-shm 0600",
+        "remediation": "chown -R suds:suds /var/lib/suds; chmod 0700 /var/lib/suds; chmod 0600 /var/lib/suds/suds.db* (deploy/linux/install.sh does this)."
+      },
+      {
+        "id": "host.disk_encryption",
+        "title": "Data on an encrypted block device",
+        "result": "not-checked",
+        "rules": [
+          {
+            "key": "hipaa-312a2iv",
+            "cite": "45 CFR §164.312(a)(2)(iv)",
+            "title": "Encryption and decryption (A)"
+          },
+          {
+            "key": "hipaa-310d1",
+            "cite": "45 CFR §164.310(d)(1)",
+            "title": "Device and media controls"
+          },
+          {
+            "key": "part2-16a2i",
+            "cite": "42 CFR §2.16(a)(2)(i)",
+            "title": "Electronic records: creating, receiving, maintaining and transmitting"
+          },
+          {
+            "key": "cmia-56101a",
+            "cite": "Cal. Civ. Code §56.101(a)",
+            "title": "Preserve confidentiality in creating, maintaining, storing and destroying medical information"
+          }
+        ],
+        "evidence": "/var/lib/suds is on overlay filesystem from overlay: encryption at rest belongs to that storage and cannot be seen from this host",
+        "remediation": "Put the data directory on a LUKS (dm-crypt) volume. This cannot be done in place: attach a new encrypted disk, stop SUDS, move /var/lib/suds onto it and start SUDS again (docs/SELF-HOSTING.md, \"Prerequisites\")."
+      },
+      {
+        "id": "host.keys",
+        "title": "Keys kept out of readable files and the environment",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312a2iv",
+            "cite": "45 CFR §164.312(a)(2)(iv)",
+            "title": "Encryption and decryption (A)"
+          },
+          {
+            "key": "hipaa-312a1",
+            "cite": "45 CFR §164.312(a)(1)",
+            "title": "Access control"
+          }
+        ],
+        "evidence": "/etc/suds/credentials 0700 root(0), suds_encryption_key 0600, suds_index_key 0600, suds_backup_key 0600, suds_signing_key 0600, no secret in the running process environment; 4 LoadCredential= lines; no secret in Environment= or environment files",
+        "remediation": "Keep each key in /etc/suds/credentials/<name> (root, 0600, directory 0700) loaded with LoadCredential= (deploy/linux/suds.service); remove any SUDS_*_KEY from Environment= and from environment files."
+      },
+      {
+        "id": "host.service",
+        "title": "Service sandboxing (systemd unit)",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312a1",
+            "cite": "45 CFR §164.312(a)(1)",
+            "title": "Access control"
+          },
+          {
+            "key": "hipaa-308a1iiB",
+            "cite": "45 CFR §164.308(a)(1)(ii)(B)",
+            "title": "Risk management (R)"
+          }
+        ],
+        "evidence": "suds.service active, enabled; 15 sandboxing settings as shipped",
+        "remediation": "Install deploy/linux/suds.service unchanged (deploy/linux/install.sh) and keep local changes in a drop-in that does not weaken it."
+      },
+      {
+        "id": "host.tls",
+        "title": "HTTPS: TLS 1.2 or newer, valid certificate, HSTS",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312e1",
+            "cite": "45 CFR §164.312(e)(1)",
+            "title": "Transmission security"
+          },
+          {
+            "key": "hipaa-312e2ii",
+            "cite": "45 CFR §164.312(e)(2)(ii)",
+            "title": "Encryption in transmission (A)"
+          },
+          {
+            "key": "part2-16a2i",
+            "cite": "42 CFR §2.16(a)(2)(i)",
+            "title": "Electronic records: creating, receiving, maintaining and transmitting"
+          }
+        ],
+        "evidence": "suds.county.test:443 negotiated TLSv1.3; certificate valid 2026-09-30 to 2026-10-30 (29 days left), issuer CN=Drill County CA; HSTS max-age=31536000; includeSubDomains; TLS 1.0/1.1 refused (ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION)",
+        "remediation": "Terminate TLS with Caddy (the repository's Caddyfile, installed as /etc/caddy/Caddyfile: TLS 1.2+ only, HSTS) or a county certificate; renew the certificate before it has 14 days left."
+      },
+      {
+        "id": "host.http_redirect",
+        "title": "Plain HTTP only redirects to HTTPS",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312e1",
+            "cite": "45 CFR §164.312(e)(1)",
+            "title": "Transmission security"
+          }
+        ],
+        "evidence": "http://suds.county.test:80/ answers 308 to https://suds.county.test/",
+        "remediation": "Serve nothing but a redirect (and ACME challenges) on port 80; close it when the certificate is county-issued."
+      },
+      {
+        "id": "host.bind",
+        "title": "SUDS listens on this machine only (127.0.0.1)",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312e1",
+            "cite": "45 CFR §164.312(e)(1)",
+            "title": "Transmission security"
+          },
+          {
+            "key": "hipaa-312a1",
+            "cite": "45 CFR §164.312(a)(1)",
+            "title": "Access control"
+          }
+        ],
+        "evidence": "port 8080 on 127.0.0.1",
+        "remediation": "Set HOST=127.0.0.1 in the unit (deploy/linux/suds.service) so only the TLS proxy on this host can reach SUDS."
+      },
+      {
+        "id": "host.firewall",
+        "title": "Host firewall active with only the expected ports",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312e1",
+            "cite": "45 CFR §164.312(e)(1)",
+            "title": "Transmission security"
+          },
+          {
+            "key": "hipaa-308a1iiB",
+            "cite": "45 CFR §164.308(a)(1)(ii)(B)",
+            "title": "Risk management (R)"
+          }
+        ],
+        "evidence": "ufw active, default deny incoming; allowed: 22/tcp from 10.20.0.0/16, 443/tcp from Anywhere",
+        "remediation": "ufw (Ubuntu) or firewalld (RHEL): deny incoming by default, allow 443 (and 80 while it only redirects), SSH only from the administration network (deploy/linux/install.sh --admin-cidr)."
+      },
+      {
+        "id": "host.time_sync",
+        "title": "Clock synchronised (audit timestamps)",
+        "result": "fail",
+        "rules": [
+          {
+            "key": "hipaa-312b",
+            "cite": "45 CFR §164.312(b)",
+            "title": "Audit controls"
+          },
+          {
+            "key": "cmia-56101b1B",
+            "cite": "Cal. Civ. Code §56.101(b)(1)(B)",
+            "title": "Electronic record system records every change or deletion"
+          }
+        ],
+        "evidence": "the clock is not synchronised (NTP=no, NTPSynchronized=no); audit timestamps depend on it",
+        "remediation": "Enable chrony (RHEL) or systemd-timesyncd/chrony (Ubuntu) against the county time source: timedatectl set-ntp true."
+      },
+      {
+        "id": "host.security_updates",
+        "title": "Automatic security updates",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-308a5iiB",
+            "cite": "45 CFR §164.308(a)(5)(ii)(B)",
+            "title": "Protection from malicious software (A)"
+          },
+          {
+            "key": "hipaa-308a1iiB",
+            "cite": "45 CFR §164.308(a)(1)(ii)(B)",
+            "title": "Risk management (R)"
+          }
+        ],
+        "evidence": "unattended-upgrades on, -security origin only, apt-daily-upgrade.timer enabled",
+        "remediation": "Ubuntu: unattended-upgrades with the -security origin and apt-daily-upgrade.timer; RHEL: dnf-automatic with upgrade_type = security, apply_updates = yes and dnf-automatic.timer (as deploy/linux/install.sh sets it)."
+      },
+      {
+        "id": "host.journald",
+        "title": "System journal persistent and retained",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312b",
+            "cite": "45 CFR §164.312(b)",
+            "title": "Audit controls"
+          },
+          {
+            "key": "hipaa-308a1iiD",
+            "cite": "45 CFR §164.308(a)(1)(ii)(D)",
+            "title": "Information system activity review (R)"
+          }
+        ],
+        "evidence": "Storage=persistent; MaxRetentionSec=400d; SystemMaxUse=8G; oldest entry 2026-09-30 (0 days ago); policy 400 days",
+        "remediation": "Storage=persistent and MaxRetentionSec at least the log retention policy (default 400 days) in /etc/systemd/journald.conf.d/suds.conf; forward to the county SIEM for longer."
+      },
+      {
+        "id": "host.auditd",
+        "title": "Linux audit daemon (recommended)",
+        "result": "warn",
+        "rules": [
+          {
+            "key": "hipaa-312b",
+            "cite": "45 CFR §164.312(b)",
+            "title": "Audit controls"
+          },
+          {
+            "key": "hipaa-308a1iiD",
+            "cite": "45 CFR §164.308(a)(1)(ii)(D)",
+            "title": "Information system activity review (R)"
+          }
+        ],
+        "evidence": "auditd is inactive (recommended, not required)",
+        "remediation": "Recommended, not required: install and enable auditd so logins, sudo and changes to /etc/suds are recorded by the OS as well."
+      },
+      {
+        "id": "host.node",
+        "title": "Node.js is the pinned, checksum-verified release",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-308a1iiB",
+            "cite": "45 CFR §164.308(a)(1)(ii)(B)",
+            "title": "Risk management (R)"
+          }
+        ],
+        "evidence": "/opt/suds/node/bin/node is v22.23.3, the pinned release",
+        "remediation": "Install the release pinned in deploy/linux/pins (the one CI tests) with deploy/linux/install.sh or upgrade.sh."
+      },
+      {
+        "id": "host.suds_version",
+        "title": "SUDS release is supported",
+        "result": "not-checked",
+        "rules": [
+          {
+            "key": "hipaa-308a1iiB",
+            "cite": "45 CFR §164.308(a)(1)(ii)(B)",
+            "title": "Risk management (R)"
+          },
+          {
+            "key": "hipaa-308a5iiB",
+            "cite": "45 CFR §164.308(a)(5)(ii)(B)",
+            "title": "Protection from malicious software (A)"
+          }
+        ],
+        "evidence": "SUDS 1.19.0, released 2026-09-30; no release feed to compare with (set UPDATE_FEED_URL, or pass --latest-version)",
+        "remediation": "Upgrade to the latest minor release (docs/RELEASE.md, \"Supported versions\") with deploy/linux/upgrade.sh."
+      },
+      {
+        "id": "host.release_integrity",
+        "title": "SUDS release checked against an independently published checksum",
+        "result": "not-checked",
+        "rules": [
+          {
+            "key": "hipaa-308a1iiB",
+            "cite": "45 CFR §164.308(a)(1)(ii)(B)",
+            "title": "Risk management (R)"
+          },
+          {
+            "key": "hipaa-308a5iiB",
+            "cite": "45 CFR §164.308(a)(5)(ii)(B)",
+            "title": "Protection from malicious software (A)"
+          }
+        ],
+        "evidence": "no SUDS_RELEASE_CHECKSUM_SOURCE in suds-server.conf (not installed or upgraded by deploy/linux/install.sh or upgrade.sh of this version)",
+        "remediation": "Upgrade with --release-sha256=<hex> taken from a channel other than the download (the release notes and the CHANGELOG entry at the release tag: docs/SELF-HOSTING.md, Upgrading), not --trust-release-checksum."
+      },
+      {
+        "id": "host.backup_files",
+        "title": "Latest backup is recent and the offsite copy exists",
+        "result": "warn",
+        "rules": [
+          {
+            "key": "hipaa-308a7iiA",
+            "cite": "45 CFR §164.308(a)(7)(ii)(A)",
+            "title": "Data backup plan (R)"
+          },
+          {
+            "key": "hipaa-310d2iv",
+            "cite": "45 CFR §164.310(d)(2)(iv)",
+            "title": "Data backup and storage (A)"
+          }
+        ],
+        "evidence": "pending first run (expected on day one): installed 0.1 h ago, the first scheduled backup is due within 4 h [there is no backups directory: no backup has ever been taken; no backup on the offsite share /mnt/suds-offsite]",
+        "remediation": "Scheduled backups (Settings → Scheduled backups) with the offsite directory on the mounted offsite share; check the share is mounted."
+      },
+      {
+        "id": "host.dr_evidence",
+        "title": "Recovery drill within 90 days, signed report verifies",
+        "result": "warn",
+        "rules": [
+          {
+            "key": "hipaa-308a7iiD",
+            "cite": "45 CFR §164.308(a)(7)(ii)(D)",
+            "title": "Testing and revision procedures (A)"
+          },
+          {
+            "key": "hipaa-308a7iiB",
+            "cite": "45 CFR §164.308(a)(7)(ii)(B)",
+            "title": "Disaster recovery plan (R)"
+          }
+        ],
+        "evidence": "pending first run (expected on day one): installed 0 days ago, no recovery drill yet; the monthly drill runs within a month, or run one now (Settings → System & backups)",
+        "remediation": "Run a recovery drill with the escrowed key file against the offsite copy (Settings → System & backups, or npm run dr-drill); turn the monthly drill on."
+      },
+      {
+        "id": "host.audit_verify",
+        "title": "Audit chain and external anchors verify now",
+        "result": "warn",
+        "rules": [
+          {
+            "key": "hipaa-312b",
+            "cite": "45 CFR §164.312(b)",
+            "title": "Audit controls"
+          },
+          {
+            "key": "hipaa-312c1",
+            "cite": "45 CFR §164.312(c)(1)",
+            "title": "Integrity"
+          },
+          {
+            "key": "hipaa-312c2",
+            "cite": "45 CFR §164.312(c)(2)",
+            "title": "Mechanism to authenticate electronic PHI (A)"
+          },
+          {
+            "key": "cmia-56101b1B",
+            "cite": "Cal. Civ. Code §56.101(b)(1)(B)",
+            "title": "Electronic record system records every change or deletion"
+          },
+          {
+            "key": "part2-16a2iii",
+            "cite": "42 CFR §2.16(a)(2)(iii)",
+            "title": "Electronic records: using and accessing"
+          }
+        ],
+        "evidence": "chain: 1 entries verify; anchors in /mnt/worm/suds-anchors: 0 (0 matched); no anchor written yet",
+        "remediation": "A failure is a possible incident: follow docs/security/INCIDENT-RESPONSE.md. \"Could not check\" means the check ran without the index key (run it as root, or from suds-compliance.service)."
+      },
+      {
+        "id": "app.mfa_coverage",
+        "title": "Identity: Two-step verification coverage",
+        "result": "warn",
+        "rules": [
+          {
+            "key": "hipaa-312d",
+            "cite": "45 CFR §164.312(d)",
+            "title": "Person or entity authentication"
+          },
+          {
+            "key": "hipaa-308a5iiD",
+            "cite": "45 CFR §164.308(a)(5)(ii)(D)",
+            "title": "Password management (A)"
+          }
+        ],
+        "evidence": "0% (0 of 1 active accounts) — 1 without it — see \"Accounts without two-step verification\" below.",
+        "remediation": "Have every active account enrol in two-step verification (Settings → Security status lists who has not)."
+      },
+      {
+        "id": "app.mfa_required",
+        "title": "Identity: Two-step verification required for",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312d",
+            "cite": "45 CFR §164.312(d)",
+            "title": "Person or entity authentication"
+          }
+        ],
+        "evidence": "every role (enforced by the \"all roles\" switch) — New accounts have 3 days to enrol, then are blocked until they do.",
+        "remediation": "Settings → Security policy → \"Require two-step verification for every role\" (or MFA_REQUIRED_ROLES naming every role)."
+      },
+      {
+        "id": "app.sso",
+        "title": "Identity: Single sign-on (OIDC)",
+        "result": "warn",
+        "rules": [
+          {
+            "key": "hipaa-312a2i",
+            "cite": "45 CFR §164.312(a)(2)(i)",
+            "title": "Unique user identification (R)"
+          },
+          {
+            "key": "hipaa-308a3iiC",
+            "cite": "45 CFR §164.308(a)(3)(ii)(C)",
+            "title": "Termination procedures (A)"
+          }
+        ],
+        "evidence": "not configured — Set OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and OIDC_REDIRECT_URI to sign in through the county identity provider (docs/DEPLOYMENT.md).",
+        "remediation": "Configure OIDC against the county identity provider (docs/DEPLOYMENT.md, \"Single sign-on\")."
+      },
+      {
+        "id": "app.passkeys",
+        "title": "Identity: Fingerprint sign-in (passkeys)",
+        "result": "fail",
+        "rules": [
+          {
+            "key": "hipaa-312d",
+            "cite": "45 CFR §164.312(d)",
+            "title": "Person or entity authentication"
+          }
+        ],
+        "evidence": "not working: WEBAUTHN_RP_ID is not set — Sign-in on; signatures and approvals on; fingerprint or authenticator code required for signing: no. WEBAUTHN_RP_ID is not set, so no one can add or use a passkey on this production server: set it to the server's name, as in the address staff open and on its certificate (docs/SELF-HOSTING.md), and restart. Passkeys need HTTPS, which is not on. SUDS stores no fingerprint: only each passkey's public key.",
+        "remediation": "Optional: staff add a passkey under My profile → Fingerprint sign-in (needs HTTPS and WEBAUTHN_RP_ID matching the server's name, docs/FINGERPRINT.md)."
+      },
+      {
+        "id": "app.deprovisioning",
+        "title": "Identity: Deprovisioning",
+        "result": "warn",
+        "rules": [
+          {
+            "key": "hipaa-308a3iiC",
+            "cite": "45 CFR §164.308(a)(3)(ii)(C)",
+            "title": "Termination procedures (A)"
+          },
+          {
+            "key": "hipaa-308a4iiC",
+            "cite": "45 CFR §164.308(a)(4)(ii)(C)",
+            "title": "Access establishment and modification (A)"
+          }
+        ],
+        "evidence": "no SCIM provisioning; accounts not seen at the identity provider are not disabled automatically — 0 active accounts linked to the identity provider. Create a SCIM token (Provisioning below) or set \"Disable single sign-on accounts not seen for (days)\".",
+        "remediation": "Create a SCIM token or set \"Disable single sign-on accounts not seen for (days)\"."
+      },
+      {
+        "id": "app.password_signin",
+        "title": "Identity: Password sign-in",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312d",
+            "cite": "45 CFR §164.312(d)",
+            "title": "Person or entity authentication"
+          }
+        ],
+        "evidence": "allowed for every account — Settings → Security policy → \"Require single sign-on\" turns password sign-in off for everyone but named break-glass administrators.",
+        "remediation": "Settings → Security policy → \"Require single sign-on\" with named break-glass administrators."
+      },
+      {
+        "id": "app.password_policy",
+        "title": "Identity: Password policy",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-308a5iiD",
+            "cite": "45 CFR §164.308(a)(5)(ii)(D)",
+            "title": "Password management (A)"
+          }
+        ],
+        "evidence": "12+ characters with upper, lower, digit and symbol; expires after 90 days; locked for 15 min after 5 failures — Hashed with scrypt (N=32768).",
+        "remediation": "Enforced in code (server/auth.js); nothing to configure."
+      },
+      {
+        "id": "app.session_timeout",
+        "title": "Identity: Session timeouts",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312a2iii",
+            "cite": "45 CFR §164.312(a)(2)(iii)",
+            "title": "Automatic logoff (A)"
+          }
+        ],
+        "evidence": "signed out after 15 min idle; 12 h maximum",
+        "remediation": "Settings → Security policy: idle timeout 15 minutes or less."
+      },
+      {
+        "id": "app.backups",
+        "title": "Backups and recovery: Scheduled encrypted backups",
+        "result": "fail",
+        "rules": [
+          {
+            "key": "hipaa-308a7iiA",
+            "cite": "45 CFR §164.308(a)(7)(ii)(A)",
+            "title": "Data backup plan (R)"
+          },
+          {
+            "key": "hipaa-310d2iv",
+            "cite": "45 CFR §164.310(d)(2)(iv)",
+            "title": "Data backup and storage (A)"
+          }
+        ],
+        "evidence": "every 4 h; last never",
+        "remediation": "Settings → Scheduled backups: every 4 hours or less."
+      },
+      {
+        "id": "app.snapshots",
+        "title": "Backups and recovery: Frequent online snapshots",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-308a7iiA",
+            "cite": "45 CFR §164.308(a)(7)(ii)(A)",
+            "title": "Data backup plan (R)"
+          }
+        ],
+        "evidence": "off — Turn on under Settings → Scheduled backups to bring the recovery point down to minutes (SQLite online backup; measured cost in docs/security/BACKUP-AND-DR.md).",
+        "remediation": "Optional: Settings → Scheduled backups → \"Also snapshot every (minutes)\" for a recovery point in minutes."
+      },
+      {
+        "id": "app.rpo",
+        "title": "Backups and recovery: Recovery point objective (worst case)",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-308a7iiA",
+            "cite": "45 CFR §164.308(a)(7)(ii)(A)",
+            "title": "Data backup plan (R)"
+          },
+          {
+            "key": "hipaa-308a7iiB",
+            "cite": "45 CFR §164.308(a)(7)(ii)(B)",
+            "title": "Disaster recovery plan (R)"
+          }
+        ],
+        "evidence": "4 h (scheduled backups); target 4 h — A loss just before the next copy runs costs one whole interval. The last recovery drill measures the age of the copy it restored.",
+        "remediation": "Shorten the backup interval, or add snapshots, until the worst case is within the target."
+      },
+      {
+        "id": "app.offsite",
+        "title": "Backups and recovery: Offsite copy",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-308a7iiA",
+            "cite": "45 CFR §164.308(a)(7)(ii)(A)",
+            "title": "Data backup plan (R)"
+          },
+          {
+            "key": "hipaa-310d2iv",
+            "cite": "45 CFR §164.310(d)(2)(iv)",
+            "title": "Data backup and storage (A)"
+          }
+        ],
+        "evidence": "/mnt/suds-offsite — Each scheduled backup is copied here after it is verified.",
+        "remediation": "Set the offsite directory to the mounted offsite share (Settings → Scheduled backups)."
+      },
+      {
+        "id": "app.dr_drill",
+        "title": "Backups and recovery: Last recovery drill",
+        "result": "fail",
+        "rules": [
+          {
+            "key": "hipaa-308a7iiD",
+            "cite": "45 CFR §164.308(a)(7)(ii)(D)",
+            "title": "Testing and revision procedures (A)"
+          },
+          {
+            "key": "hipaa-308a7iiB",
+            "cite": "45 CFR §164.308(a)(7)(ii)(B)",
+            "title": "Disaster recovery plan (R)"
+          }
+        ],
+        "evidence": "never run — Run one from System & backups, or npm run dr-drill.",
+        "remediation": "Run a recovery drill (Settings → System & backups)."
+      },
+      {
+        "id": "app.dr_monthly",
+        "title": "Backups and recovery: Monthly recovery drill",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-308a7iiD",
+            "cite": "45 CFR §164.308(a)(7)(ii)(D)",
+            "title": "Testing and revision procedures (A)"
+          }
+        ],
+        "evidence": "on — Settings → Scheduled backups.",
+        "remediation": "Settings → Scheduled backups → \"Recovery drill every month\"."
+      },
+      {
+        "id": "app.plaintext_copies",
+        "title": "Backups and recovery: Unencrypted database copies",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312a2iv",
+            "cite": "45 CFR §164.312(a)(2)(iv)",
+            "title": "Encryption and decryption (A)"
+          },
+          {
+            "key": "part2-16a2ii",
+            "cite": "42 CFR §2.16(a)(2)(ii)",
+            "title": "Electronic records: destroying, and sanitising media"
+          }
+        ],
+        "evidence": "none: restore undo copies and pre-migration snapshots are sealed — A restore's undo copy and an upgrade's snapshot are encrypted with the backup key as soon as they are no longer needed in plaintext; a failure is retried every hour.",
+        "remediation": "Free disk space so SUDS can seal them, or delete them securely."
+      },
+      {
+        "id": "app.backup_key",
+        "title": "Backups and recovery: Backup encryption key",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312a2iv",
+            "cite": "45 CFR §164.312(a)(2)(iv)",
+            "title": "Encryption and decryption (A)"
+          },
+          {
+            "key": "hipaa-308a7iiA",
+            "cite": "45 CFR §164.308(a)(7)(ii)(A)",
+            "title": "Data backup plan (R)"
+          }
+        ],
+        "evidence": "separate SUDS_BACKUP_KEY",
+        "remediation": "Set SUDS_BACKUP_KEY (deploy/linux/install.sh generates it) so the PHI key can rotate without re-keying the backups."
+      },
+      {
+        "id": "app.audit_chain",
+        "title": "Audit: Audit chain verification",
+        "result": "warn",
+        "rules": [
+          {
+            "key": "hipaa-312b",
+            "cite": "45 CFR §164.312(b)",
+            "title": "Audit controls"
+          },
+          {
+            "key": "hipaa-312c1",
+            "cite": "45 CFR §164.312(c)(1)",
+            "title": "Integrity"
+          },
+          {
+            "key": "cmia-56101b1B",
+            "cite": "Cal. Civ. Code §56.101(b)(1)(B)",
+            "title": "Electronic record system records every change or deletion"
+          }
+        ],
+        "evidence": "not yet verified — Hash chain keyed with the index key; verified daily (incremental) and weekly (full).",
+        "remediation": "A failure is a possible incident (docs/security/INCIDENT-RESPONSE.md)."
+      },
+      {
+        "id": "app.audit_anchors",
+        "title": "Audit: Audit anchors outside the database",
+        "result": "warn",
+        "rules": [
+          {
+            "key": "hipaa-312b",
+            "cite": "45 CFR §164.312(b)",
+            "title": "Audit controls"
+          },
+          {
+            "key": "hipaa-312c2",
+            "cite": "45 CFR §164.312(c)(2)",
+            "title": "Mechanism to authenticate electronic PHI (A)"
+          },
+          {
+            "key": "cmia-56101b1A",
+            "cite": "Cal. Civ. Code §56.101(b)(1)(A)",
+            "title": "Electronic record system protects and preserves integrity"
+          }
+        ],
+        "evidence": "0 anchors in /mnt/worm/suds-anchors; every 1 h and at each backup — Not yet checked (runs with the daily audit verification).",
+        "remediation": "AUDIT_ANCHOR_DIR on write-once storage outside the data directory (install.sh --anchors)."
+      },
+      {
+        "id": "app.audit_retention",
+        "title": "Audit: Audit retention",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-316b2i",
+            "cite": "45 CFR §164.316(b)(2)(i)",
+            "title": "Documentation time limit (six years)"
+          },
+          {
+            "key": "hipaa-312b",
+            "cite": "45 CFR §164.312(b)",
+            "title": "Audit controls"
+          }
+        ],
+        "evidence": "7 years (2555 days) — No audit entries old enough to purge yet.",
+        "remediation": "Remove AUDIT_RETENTION_DAYS or set it to 2190 or more."
+      },
+      {
+        "id": "app.phi_key",
+        "title": "Encryption and keys: PHI encryption key",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312a2iv",
+            "cite": "45 CFR §164.312(a)(2)(iv)",
+            "title": "Encryption and decryption (A)"
+          },
+          {
+            "key": "part2-16a2i",
+            "cite": "42 CFR §2.16(a)(2)(i)",
+            "title": "Electronic records: creating, receiving, maintaining and transmitting"
+          },
+          {
+            "key": "cmia-56101a",
+            "cite": "Cal. Civ. Code §56.101(a)",
+            "title": "Preserve confidentiality in creating, maintaining, storing and destroying medical information"
+          }
+        ],
+        "evidence": "AES-256-GCM; keys from the environment / secrets manager — In use since 2026-09-30T18:54:37.628Z (0 days). Rotate annually: npm run rotate-key.",
+        "remediation": "Rotate annually (npm run rotate-key) and keep the key in the credential store."
+      },
+      {
+        "id": "app.signing_key",
+        "title": "Encryption and keys: Evidence signing key (Ed25519)",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312c2",
+            "cite": "45 CFR §164.312(c)(2)",
+            "title": "Mechanism to authenticate electronic PHI (A)"
+          }
+        ],
+        "evidence": "key id 4a9d1f7c8fcaf8a9; private key in the environment (SUDS_SIGNING_KEY), never in the database — Signs recovery-drill reports and audit-export manifests; anyone with the public key (GET /api/admin/security/signing-key) can verify them: npm run verify-dr-report, npm run verify-audit-export -- --public-key.",
+        "remediation": "Provide SUDS_SIGNING_KEY (install.sh generates it) and give its public key to the auditor."
+      },
+      {
+        "id": "app.index_key",
+        "title": "Encryption and keys: Index key (blind indexes, audit chain)",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-312c1",
+            "cite": "45 CFR §164.312(c)(1)",
+            "title": "Integrity"
+          }
+        ],
+        "evidence": "not rotated since install — npm run rotate-index-key re-derives the indexes and re-signs the audit chain.",
+        "remediation": "Rotate on custodian change or suspected exposure (npm run rotate-index-key)."
+      },
+      {
+        "id": "app.client_retention",
+        "title": "Data lifecycle: Client record retention",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "part2-16a2ii",
+            "cite": "42 CFR §2.16(a)(2)(ii)",
+            "title": "Electronic records: destroying, and sanitising media"
+          },
+          {
+            "key": "cmia-56101a",
+            "cite": "Cal. Civ. Code §56.101(a)",
+            "title": "Preserve confidentiality in creating, maintaining, storing and destroying medical information"
+          }
+        ],
+        "evidence": "7 years after last activity, then deleted from every table (legal hold exempts) — The retention job has not run yet.",
+        "remediation": "Set the retention period the programme's policy requires (never below 6 years)."
+      },
+      {
+        "id": "app.https",
+        "title": "Platform: HTTPS",
+        "result": "fail",
+        "rules": [
+          {
+            "key": "hipaa-312e1",
+            "cite": "45 CFR §164.312(e)(1)",
+            "title": "Transmission security"
+          },
+          {
+            "key": "hipaa-312e2ii",
+            "cite": "45 CFR §164.312(e)(2)(ii)",
+            "title": "Encryption in transmission (A)"
+          }
+        ],
+        "evidence": "not configured — Enable HTTPS under Network & devices, or run behind a TLS proxy.",
+        "remediation": "Run behind the TLS proxy with TRUST_PROXY=1, or give SUDS a certificate."
+      },
+      {
+        "id": "app.local_mode",
+        "title": "Platform: Local mode (offline copies on devices)",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-310d1",
+            "cite": "45 CFR §164.310(d)(1)",
+            "title": "Device and media controls"
+          },
+          {
+            "key": "hipaa-312a1",
+            "cite": "45 CFR §164.312(a)(1)",
+            "title": "Access control"
+          }
+        ],
+        "evidence": "off — The office server is the only copy.",
+        "remediation": "Leave LOCAL_MODE_ENABLED off unless a field-work need is documented (docs/PLATFORM.md)."
+      },
+      {
+        "id": "app.version",
+        "title": "Platform: Version",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-308a1iiB",
+            "cite": "45 CFR §164.308(a)(1)(ii)(B)",
+            "title": "Risk management (R)"
+          }
+        ],
+        "evidence": "SUDS 1.19.0, schema 59, Node 22.23.3 — UPDATE_FEED_URL is not set, so this server cannot check for updates itself.",
+        "remediation": "See host.suds_version."
+      },
+      {
+        "id": "app.monitoring",
+        "title": "Platform: Monitoring",
+        "result": "pass",
+        "rules": [
+          {
+            "key": "hipaa-308a1iiD",
+            "cite": "45 CFR §164.308(a)(1)(ii)(D)",
+            "title": "Information system activity review (R)"
+          }
+        ],
+        "evidence": "metrics off; logs text — /api/health answers 503 on a failed audit check, stale backups or an expiring certificate.",
+        "remediation": "Point the county monitoring at /api/health; set METRICS_TOKEN for Prometheus."
+      }
+    ],
+    "summary": {
+      "counts": {
+        "pass": 29,
+        "fail": 5,
+        "warn": 9,
+        "not-checked": 3
+      },
+      "overall": "fail"
+    },
+    "scope": "This report covers the technical safeguards SUDS Server can observe on this host and in this installation. It does not, and no software can, show that the organisation is compliant: the risk analysis (45 CFR §164.308(a)(1)(ii)(A)), workforce training and sanctions, contingency-plan approval, business associate agreements, facility access, workstation and media controls, incident-response procedures and policy documentation are the organisation's (docs/SELF-HOSTING.md, \"Compliance boundary\"). \"Could not check\" is never counted as a pass."
+  },
+  "integrity": {
+    "sha256": "e2e4be7405e5a1bf041e5f3f3cdfc24522207610747223d6ee577073a452f2bf",
+    "ed25519_signature": "Fh3E3CAy6DcGdqPiy/2xhte4qduor0ZymfKfpF5hp0NiZ2UiqYMKzCtJq9jFpqRzJDgwY6BMzzSbWXW8JhxoCA==",
+    "signing_key_id": "1e42ef21cade8790",
+    "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAZ0Bkwek5GrYLgrkw73BYvyW9Fv2kyb0EgtNmmFbnYT0=\n-----END PUBLIC KEY-----\n",
+    "algorithm": "SHA-256 and an Ed25519 signature (report.host.signed_with names the key) over the canonical JSON of \"report\" (keys sorted)"
+  }
+}
