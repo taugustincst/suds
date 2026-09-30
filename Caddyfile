@@ -1,7 +1,18 @@
-# Reverse proxy in front of SUDS for docker-compose.yml (and a template for a county's own Caddy).
-# Caddy obtains and renews the certificate itself for the name in SUDS_DOMAIN, or use a county-issued
-# certificate with `tls /path/cert.pem /path/key.pem` inside the site block instead.
+# Reverse proxy in front of SUDS: used as is by docker-compose.yml, and by SUDS Server on a Linux VM
+# (deploy/linux/install.sh copies it to /etc/caddy/Caddyfile and sets the variables below in /etc/caddy/suds.env).
+# Caddy obtains and renews the certificate itself for the name in SUDS_DOMAIN. For a county-issued certificate,
+# SUDS_CADDY_TLS names a file holding `tls /path/cert.pem /path/key.pem { protocols tls1.2 tls1.3 }`
+# (install.sh --tls=county-cert writes it); unset, the import reads nothing.
+#   SUDS_DOMAIN       the site's name (default suds.example.gov)
+#   SUDS_UPSTREAM     where SUDS listens (default suds:8080, the compose service; 127.0.0.1:8080 on a VM)
+#   SUDS_CADDY_TLS    a file of tls directives (default /dev/null: automatic certificates, TLS 1.2+)
+#   SUDS_CADDY_ADMIN  Caddy's admin endpoint (default localhost:2019; "off" on a VM, where a restart reloads)
+{
+	admin {$SUDS_CADDY_ADMIN:localhost:2019}
+}
+
 {$SUDS_DOMAIN:suds.example.gov} {
+	import {$SUDS_CADDY_TLS:/dev/null}
 	encode gzip
 
 	header {
@@ -20,7 +31,7 @@
 	# a client-supplied X-Forwarded-For with the address it actually saw, and only appends to one that
 	# came from a `trusted_proxies` entry; either way the rightmost entry is the one Caddy vouches for.
 	# Do not configure it to pass the header through untouched.
-	reverse_proxy suds:8080 {
+	reverse_proxy {$SUDS_UPSTREAM:suds:8080} {
 		header_up X-Forwarded-Proto {scheme}
 	}
 }

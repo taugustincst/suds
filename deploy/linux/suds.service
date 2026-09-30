@@ -1,0 +1,74 @@
+# SUDS Server: the systemd unit for SUDS on Linux. This file is the one copy — docs/DEPLOYMENT.md refers to it
+# rather than repeating it, and deploy/linux/install.sh installs it unchanged as /etc/systemd/system/suds.service.
+# What differs per site (the audit-anchor and offsite mounts, an optional metrics token) is in the drop-in the
+# installer writes, /etc/systemd/system/suds.service.d/10-site.conf; keep local changes in a drop-in too, and
+# never weaken the sandboxing below in one (scripts/compliance-check.js reads the effective settings).
+#
+# Paths: code /opt/suds/current (a symlink to /opt/suds/<version>, root-owned and read-only), Node
+# /opt/suds/node (the pinned release, deploy/linux/pins), data /var/lib/suds (0700, the suds user).
+[Unit]
+Description=SUDS SUD Navigator Services Tracker
+Documentation=file:///opt/suds/current/docs/SELF-HOSTING.md
+After=network-online.target remote-fs.target time-sync.target
+Wants=network-online.target
+# The data volume must be mounted (and unlocked) before SUDS starts; the drop-in adds the anchor and offsite mounts.
+RequiresMountsFor=/var/lib/suds
+
+[Service]
+User=suds
+Group=suds
+WorkingDirectory=/opt/suds/current
+# Non-secret settings only (TRUST_PROXY, LOCAL_MODE_ENABLED, MFA_REQUIRED_ROLES, AUDIT_ANCHOR_DIR, ...): root-owned,
+# written by the installer. Never put a key in it: scripts/compliance-check.js fails the host if one is there.
+EnvironmentFile=/etc/suds/suds.env
+Environment=SUDS_ENV=production SUDS_DATA_DIR=/var/lib/suds HOST=127.0.0.1 PORT=8080
+# Keys: root-only files (0600, in a 0700 directory) that systemd hands to this service alone, in a private
+# in-memory directory ($CREDENTIALS_DIRECTORY, %d). server/config.js reads each through its *_FILE variable, so
+# no key is ever in this process's environment, on its command line, or readable by the suds user on disk.
+LoadCredential=suds_encryption_key:/etc/suds/credentials/suds_encryption_key
+LoadCredential=suds_index_key:/etc/suds/credentials/suds_index_key
+LoadCredential=suds_backup_key:/etc/suds/credentials/suds_backup_key
+LoadCredential=suds_signing_key:/etc/suds/credentials/suds_signing_key
+Environment=SUDS_ENCRYPTION_KEY_FILE=%d/suds_encryption_key SUDS_INDEX_KEY_FILE=%d/suds_index_key SUDS_BACKUP_KEY_FILE=%d/suds_backup_key SUDS_SIGNING_KEY_FILE=%d/suds_signing_key
+ExecStart=/opt/suds/node/bin/node --no-warnings=ExperimentalWarning server/index.js
+Restart=always
+RestartSec=5
+UMask=0077
+# Logs go to the journal (persistent; deploy/linux/install.sh sets its retention) as well as <data>/logs.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=suds
+
+# Filesystem: the OS and the code read-only; only the data directory (and, from the drop-in, the anchor and
+# offsite directories) writable.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/suds
+ReadOnlyPaths=/opt/suds
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+# Privileges: nothing to escalate to, no capabilities (SUDS listens above 1024; the TLS proxy has 443).
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Kernel and process isolation.
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug
+# V8's JIT needs writable+executable memory, so MemoryDenyWriteExecute stays off for Node.
+
+[Install]
+WantedBy=multi-user.target

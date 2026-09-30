@@ -1,6 +1,6 @@
 # Deployment guide
 
-> **First install?** See [INSTALL.md](INSTALL.md): start the server and finish setup in the browser wizard. The platform policy — web app on the office server as the system of record; the native apps and launchers were removed in 1.9.3 — is [PLATFORM.md](PLATFORM.md). For the governance side of adopting SUDS (code owner, pilot, release cadence, drills, staffing), see [ADOPTION.md](ADOPTION.md). This document covers the environment-variable / service deployment that IT departments typically prefer. Both can be mixed: environment variables override anything the wizard wrote to `data/server.json` and `data/keys.json`.
+> **First install?** See [INSTALL.md](INSTALL.md): start the server and finish setup in the browser wizard. The platform policy — web app on the office server as the system of record; the native apps and launchers were removed in 1.9.3 — is [PLATFORM.md](PLATFORM.md). For the governance side of adopting SUDS (code owner, pilot, release cadence, drills, staffing), see [ADOPTION.md](ADOPTION.md). **On a Linux VM, SUDS Server does this for you**: [SELF-HOSTING.md](SELF-HOSTING.md) and [`deploy/linux/`](../deploy/linux/README.md) install SUDS hardened in one command (Ubuntu 24.04, RHEL/Rocky/Alma 9) and `npm run compliance-check` proves the host matches §6 below, weekly, in a signed report; containers: [`deploy/docker/`](../deploy/docker/README.md). This document covers the environment-variable / service deployment that IT departments typically prefer, and is the reference for everything the installer sets. Both can be mixed: environment variables override anything the wizard wrote to `data/server.json` and `data/keys.json`.
 
 ## Requirements
 
@@ -131,7 +131,7 @@ Copy `.env.example` to `.env` and set:
 
 Settings that live in the database (Administration → Settings) rather than the environment and matter for this guide: `backup_schedule_hours` (a production install made with the setup wizard starts at **4**; one configured by environment variables starts at 0, which production reports as a problem), `backup_schedule_minutes` / `backup_snapshot_retain` (frequent online snapshots), `sso_trust_idp_mfa` / `sso_mfa_acr_values` (accept the identity provider's MFA), `sso_deprovision_days` (disable SSO accounts the provider has stopped vouching for), `scim_group_roles` / `scim_default_role` (SCIM provisioning).
 
-Store the keys in a secrets manager (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault) or at minimum in a root-only file; back them up separately from the database.
+Store the keys in a secrets manager (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault) or at minimum in a root-only file; back them up separately from the database. **Every secret can be given as a file instead of a value**: `<NAME>_FILE` names a file holding it (`SUDS_ENCRYPTION_KEY_FILE`, `SUDS_INDEX_KEY_FILE`, `SUDS_BACKUP_KEY_FILE`, `SUDS_SIGNING_KEY_FILE`, `METRICS_TOKEN_FILE`, `OIDC_CLIENT_SECRET_FILE`, `MS_CLIENT_SECRET_FILE`, `ANTHROPIC_API_KEY_FILE`) — a systemd credential (`LoadCredential=`, as `deploy/linux/suds.service` does; a credential named after the variable in lower case is also found in `$CREDENTIALS_DIRECTORY` without one), a Docker or Kubernetes secret under `/run/secrets` ([deploy/docker/README.md](../deploy/docker/README.md)). The value is read once and never copied into the process environment; `<NAME>` itself, when set, wins.
 
 ### Single sign-on (OIDC)
 
@@ -154,61 +154,11 @@ The ID token is verified against the provider's published signing keys (RS256 on
 
 ### systemd (Linux)
 
-```ini
-[Unit]
-Description=SUDS SUD Navigator Services Tracker
-After=network-online.target remote-fs.target
-Wants=network-online.target
-# The anchor share must be mounted before SUDS starts writing to it.
-RequiresMountsFor=/opt/suds/data /mnt/worm/suds-anchors
+**On a Linux VM, use SUDS Server** ([SELF-HOSTING.md](SELF-HOSTING.md)): `deploy/linux/install.sh` does everything in this section and the hardening checklist (§6) in one command on Ubuntu 24.04 or RHEL/Rocky/Alma 9, and `npm run compliance-check` proves the host still matches.
 
-[Service]
-User=suds
-Group=suds
-WorkingDirectory=/opt/suds
-# 0600, root-owned; or LoadCredential= from the county secrets manager integration.
-EnvironmentFile=/etc/suds/suds.env
-Environment=SUDS_ENV=production SUDS_DATA_DIR=/opt/suds/data AUDIT_ANCHOR_DIR=/mnt/worm/suds-anchors
-ExecStart=/usr/bin/node --no-warnings=ExperimentalWarning server/index.js
-Restart=always
-RestartSec=5
-UMask=0077
+The unit is [`deploy/linux/suds.service`](../deploy/linux/suds.service) — the one copy, which the installer installs unchanged and `test/deploy-linux.test.js` checks (this guide carried a second copy until 1.17.1). It runs SUDS as the `suds` user from the read-only `/opt/suds/current` with the pinned Node in `/opt/suds/node`, bound to `127.0.0.1:8080`, with the full systemd sandbox: `ProtectSystem=strict` with only the data directory writable, `NoNewPrivileges`, an empty capability set, the kernel/proc/namespace protections and a `@system-service` system-call filter. The keys are not in its environment: each is a root-only file in `/etc/suds/credentials` handed to the service by `LoadCredential=` and read through `SUDS_*_KEY_FILE` (server/config.js supports a `*_FILE` variable for every secret). Non-secret settings are in `/etc/suds/suds.env`; what differs per site (the anchor and offsite mounts, which it adds to `ReadWritePaths` and `RequiresMountsFor`) is in the drop-in `/etc/systemd/system/suds.service.d/10-site.conf`.
 
-# Filesystem: the OS and the code read-only; only the data and anchor directories writable.
-ProtectSystem=strict
-ReadWritePaths=/opt/suds/data /mnt/worm/suds-anchors
-ReadOnlyPaths=/opt/suds
-ProtectHome=true
-PrivateTmp=true
-PrivateDevices=true
-# Privileges: nothing to escalate to, no capabilities (SUDS listens above 1024; the TLS proxy has 443).
-NoNewPrivileges=true
-CapabilityBoundingSet=
-AmbientCapabilities=
-# Kernel and process isolation.
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectKernelLogs=true
-ProtectControlGroups=true
-ProtectClock=true
-ProtectHostname=true
-ProtectProc=invisible
-RestrictNamespaces=true
-RestrictRealtime=true
-RestrictSUIDSGID=true
-LockPersonality=true
-RemoveIPC=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-SystemCallArchitectures=native
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources @mount @debug
-# V8's JIT needs writable+executable memory, so MemoryDenyWriteExecute stays off for Node.
-
-[Install]
-WantedBy=multi-user.target
-```
-
-`ReadWritePaths` must cover `SUDS_DATA_DIR` (which holds the offsite directory too, if you point it at a subdirectory) and `AUDIT_ANCHOR_DIR`; add the offsite share's mount point when it lives elsewhere. `systemd-analyze security suds` scores the unit. The recovery drill (`npm run dr-drill`, or the button in Settings) forks a second Node process inside the same unit, which these settings allow. Test the unit on a staging host before production: `SystemCallFilter` sets differ slightly between systemd versions.
+Installing it by hand on another distribution: copy the unit, create the paths it names, and put site changes in a drop-in rather than editing it. `ReadWritePaths` must cover `SUDS_DATA_DIR` and `AUDIT_ANCHOR_DIR`, and the offsite share's mount point when it lives elsewhere. `systemd-analyze security suds` scores the unit. The recovery drill (`npm run dr-drill`, or the button in Settings) forks a second Node process inside the same unit, which these settings allow. Test the unit on a staging host before production: `SystemCallFilter` sets differ slightly between systemd versions.
 
 ### Docker
 
@@ -405,6 +355,8 @@ Administration → System & backups can also check whether a newer release exist
 Schema migrations run automatically at startup (`server/db.js`), each inside a transaction with its version stamp and with `PRAGMA foreign_key_check` before it commits, so a crash midway cannot leave a half-applied schema. Before the first migration of a start-up runs, SUDS takes its own consistent snapshot of the database into `data/pre-migration/suds.db.v<version>.<timestamp>.db` (the last five are kept) and logs where it went; if the snapshot cannot be written — no disk space, no permission — the upgrade stops rather than proceeding unprotected. Once the upgrade has succeeded, the snapshot is sealed with the backup key (`suds.db.v<version>.<timestamp>.db.enc`, the same format as a backup: `node scripts/backup.js --restore <file>.enc` turns it back into a database) and the plaintext copy is overwritten and removed; sealed snapshots are deleted after 14 days. If an upgrade stops with an error, its snapshot stays unsealed for you to put back, and is sealed at the next successful start. An upgrade that encrypted a column finishes with a `VACUUM` (and a 1.13.0 database is vacuumed once, on the first start of 1.14.0), which needs free disk space about the size of the database and takes about a second per hundred megabytes (0.6 s for 103 MB measured); the server logs `db.free_pages_scrubbed`. That snapshot is a convenience, not a substitute for the off-host backup above: it sits on the same disk. SUDS refuses to open a database written by a *newer* build rather than running against a schema it does not understand — so a rollback means restoring the backup that matches the version you are rolling back to.
 
 ## 6. Hardening checklist
+
+On SUDS Server every line below that can be checked on the host is checked by `npm run compliance-check` (weekly, signed; [SELF-HOSTING.md](SELF-HOSTING.md), *The compliance check*) and shown on Settings → Security status; the rest are the organisation's ([SELF-HOSTING.md](SELF-HOSTING.md), *Compliance boundary*).
 
 - [ ] TLS 1.2+ only; HSTS enabled (automatic when the app serves TLS; `Caddyfile` sets it when the proxy does).
 - [ ] Behind a proxy: `TRUST_PROXY=1` only if the proxy appends to `X-Forwarded-For`; verify a sign-in failure is audited with the real client address.

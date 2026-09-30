@@ -1,0 +1,29 @@
+# The weekly SUDS compliance check (scripts/compliance-check.js), started by suds-compliance.timer. Runs as root:
+# the disk-encryption, firewall and credential checks need it. It only reads: the database through a read-only
+# connection, the host through its own tools; the one thing it writes is the signed report, into
+# /var/lib/suds/compliance (handed to the suds user, so Settings → Security status can show it). A failed check
+# makes the run exit 1, so `systemctl status suds-compliance` and the county's monitoring see it.
+[Unit]
+Description=SUDS compliance check (weekly signed evidence report)
+Documentation=file:///opt/suds/current/docs/SELF-HOSTING.md
+After=suds.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/suds/current
+EnvironmentFile=/etc/suds/suds.env
+Environment=SUDS_ENV=production SUDS_DATA_DIR=/var/lib/suds
+ExecStart=/opt/suds/node/bin/node --no-warnings=ExperimentalWarning scripts/compliance-check.js
+UMask=0077
+StandardOutput=journal
+SyslogIdentifier=suds-compliance
+ProtectSystem=strict
+ReadWritePaths=/var/lib/suds
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
