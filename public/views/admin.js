@@ -47,10 +47,11 @@ async function openUserForm(values, onDone) {
     { name: 'requires_cosign', label: 'Notes need a supervisor\'s countersignature (trainee or unlicensed staff)', type: 'checkbox', span: true },
     { name: 'password', label: isNew ? 'Temporary password (blank = generate)' : 'Reset password (blank = keep)', type: 'password', autocomplete: 'new-password', help: '12+ chars with upper, lower, number, symbol. User must change at next login.' },
     !isNew ? { name: 'wipe_devices', label: `Also wipe this person's synced devices when deactivating or resetting the password (${deviceCount} device${deviceCount === 1 ? '' : 's'})`, type: 'checkbox', value: true, span: true, help: 'Each device they sync from in local mode is told to erase its local copy of client records the next time it connects.' } : null,
-    !isNew ? { name: 'unlock', label: 'Unlock account', type: 'checkbox' } : null, !isNew && values.mfa_enabled ? { name: 'reset_mfa', label: 'Reset MFA (user re-enrolls)', type: 'checkbox' } : null,
+    !isNew ? { name: 'unlock', label: 'Unlock account', type: 'checkbox' } : null, !isNew && (values.mfa_enabled || values.passkey_count) ? { name: 'reset_mfa', label: 'Reset two-step verification (user re-enrolls)', type: 'checkbox', help: values.passkey_count ? 'Turns off their authenticator app and removes their fingerprint sign-in (passkeys), and signs out the sessions a passkey opened. Resetting the password removes the passkeys too.' : 'Resetting the password also removes any fingerprint sign-in (passkeys) they have.' } : null,
     // Fingerprint sign-in (docs/FINGERPRINT.md): how many passkeys the person has, and taking them away (audited).
     // Deactivating the account removes them anyway.
-    !isNew && values.passkey_count ? { name: 'revoke_passkeys', label: `Revoke this person's passkeys (${values.passkey_count})`, type: 'checkbox', span: true, help: 'For a lost or replaced phone. They sign in with their password and can add a passkey again. SUDS holds no fingerprint, only each passkey\'s public key.' } : null,
+    // A passkey is the credential behind fingerprint sign-in: a key on the person's device, of which SUDS keeps the public half.
+    !isNew && values.passkey_count ? { name: 'revoke_passkeys', label: `Revoke this person's passkeys — fingerprint sign-in (${values.passkey_count})`, type: 'checkbox', span: true, help: 'A passkey is the key behind fingerprint sign-in, held on their device. For a lost or replaced phone: the sessions a passkey opened are signed out, and they sign in with their password and can add fingerprint sign-in again. SUDS holds no fingerprint, only each passkey\'s public key.' } : null,
     oidcStatus.enabled ? { name: 'oidc_subject', label: `Single sign-on identity (${oidcStatus.label})`, span: true, help: values && values.oidc_subject ? 'Linked. Clear this field to unlink — the user can still sign in with their SUDS password.' : 'Paste the "sub" claim from the identity provider to let this user sign in with SSO instead of a SUDS password. Leave blank if they should only use their SUDS password.' } : null,
   ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Create user' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
     if (isNew) {
@@ -86,7 +87,10 @@ async function openUserForm(values, onDone) {
         moveTo = answer.moveTo;
       }
       const revoke = !!d.revoke_passkeys; delete d.revoke_passkeys;
-      if (revoke) await del(`/api/users/${values.id}/passkeys`);
+      if (revoke) {
+        const r = await del(`/api/users/${values.id}/passkeys`);
+        toast(`Revoked ${r.removed} passkey${r.removed === 1 ? '' : 's'} (fingerprint sign-in) for ${values.display_name}. Any session a passkey opened is signed out; they sign in with their password.`, 'ok');
+      }
       const saved = await put(`/api/users/${values.id}`, d); m.close();
       toast(saved && saved.caseload_default === 'held' ? 'User updated. As a new navigator or clinician they are held to their caseload (program default).' : saved && saved.caseload_default === 'lifted' ? 'User updated. The program default\'s caseload hold was lifted with the new role.' : 'User updated', 'ok');
       // The caseload moves through the same audited transfer as Settings -> Move a caseload. If that fails the

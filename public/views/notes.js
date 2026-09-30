@@ -1,7 +1,7 @@
 import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv } from '../app.js';
 import { problemPicker } from './clinical.js';
 import { noteCopilot, aiDraftBanner, putDraft } from './ai.js';
-import { passkeysPossible, fingerprintFor, fingerprintButton } from '../passkey.js';
+import { passkeysPossible, fingerprintFor, fingerprintButton, strongSetupNotice } from '../passkey.js';
 
 export const SECTIONS = { SOAP: [['S', 'Subjective'], ['O', 'Objective'], ['A', 'Assessment'], ['P', 'Plan']], DAP: [['D', 'Data'], ['A', 'Assessment'], ['P', 'Plan']], BIRP: [['B', 'Behavior'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']], GIRP: [['G', 'Goal'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']],
   // Stanley-Brown style safety plan, as a structured note so it prints and reads the same for everyone.
@@ -272,9 +272,12 @@ export async function signatureDialog({ title, intro, submitText, send, done, fi
     const viaSso = !st.recent && st.method === 'sso' && !strong;
     const why2 = fresh ? 'Asked for every time, however recently you signed in.' : 'It has been a while since you confirmed it is you.';
     const identity = st.recent ? []
-      : st.method === 'totp' || (strong && st.totp) ? [{ name: 'code', label: fp ? 'Or the code from your authenticator app' : 'Code from your authenticator app', required: true, autocomplete: 'one-time-code', pattern: '[0-9]{6}', help: why2 }]
-      : strong ? []
-      : [{ name: 'password', label: fp ? `Or re-enter your password to ${verb}` : `Re-enter your password to ${verb}`, type: 'password', required: true, autocomplete: 'current-password', help: why2 }];
+      : st.method === 'totp' || (strong && st.totp) ? [{ name: 'code', label: 'Code from your authenticator app', required: true, autocomplete: 'one-time-code', pattern: '[0-9]{6}', help: why2 }]
+      : strong || viaSso ? []
+      : [{ name: 'password', label: `Your password`, type: 'password', required: true, autocomplete: 'current-password', help: why2 }];
+    // Required and impossible: a fingerprint or a code is needed and the person has neither (here). No button that
+    // cannot work: the reason, and where to set one up.
+    const noWay = strong && !identity.length && !fp;
     const submit = async (d) => {
       try { await send(d); }
       catch (e) {
@@ -291,22 +294,37 @@ export async function signatureDialog({ title, intro, submitText, send, done, fi
       const assertion = await fingerprintFor(passkey.purpose, passkey.params);
       await submit({ ...d, passkey: assertion });
     }, { label: `Confirm with fingerprint and ${verb === 'sign' ? 'sign' : 'continue'}` }) : null;
-    const f = viaSso ? null : form([...fields, ...identity], { submitText, onCancel: () => m.close(), extra: fingerprint, onSubmit: async (d) => submit(st.recent ? { ...d, confirm: true } : d) });
-    // Nothing to type and the fingerprint is the way: its button is the action, not the form's own.
-    if (f && fingerprint && !identity.length) { const sb = f.querySelector('button[type=submit]'); if (sb) sb.hidden = true; }
-    const noWay = strong && !identity.length && !fp;
+    const f = noWay || (viaSso && !fp) ? null : form([...fields, ...identity], { submitText, onCancel: () => m.close(), extra: fingerprint, onSubmit: async (d) => submit(st.recent ? { ...d, confirm: true } : d) });
+    if (f && fingerprint) {
+      // The fingerprint first, as the one primary action; the password or code after it, under "Or use …", with a
+      // plain button. The identity field is moved below the fingerprint inside the same form, so it still submits.
+      const sb = f.querySelector('button[type=submit]');
+      if (!identity.length || viaSso) { if (sb) sb.hidden = true; }
+      else {
+        if (sb) sb.classList.remove('primary');
+        const moved = identity.map(x => f.querySelector(`[data-field="${x.name}"]`)).filter(Boolean);
+        const or = h('div', { class: 'or-use', 'data-or-use': '1' }, h('p', { class: 'small muted' }, identity[0].name === 'code' ? 'Or use the code from your authenticator app:' : 'Or use your password:'), ...moved);
+        fingerprint.after(or);
+      }
+    }
+    const ssoParts = viaSso ? (() => {
+      const [btn, status] = ssoButton('Confirm with single sign-on', !fingerprint);
+      return [h('p', {}, `${fresh ? 'This needs you to confirm it is you each time.' : 'It has been a while since you confirmed it is you.'} Your account signs in through single sign-on, so confirm with the county sign-in${fingerprint ? ' or with your fingerprint' : ''}. You will come back here and ` + (verb === 'sign' ? 'sign' : 'continue') + ' with one click.'),
+        status, h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', onClick: () => m.close() }, 'Cancel'), btn)];
+    })() : null;
     const m = modal(title, h('div', { 'data-signature-dialog': st.recent ? 'confirm' : strong ? 'strong' : st.method, 'data-fingerprint-offered': fingerprint ? '1' : null },
       why ? h('div', { class: 'banner warn', role: 'status' }, why) : null,
       intro,
-      noWay ? h('div', { class: 'banner warn', role: 'status', 'data-strong-required': '1' }, `Your programme requires your fingerprint or an authenticator code to ${verb}. Set up fingerprint sign-in or two-step verification under My profile, then come back.`) : null,
+      noWay ? strongSetupNotice(verb) : null,
+      noWay ? h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', 'data-signature-close': '1', onClick: () => m.close() }, 'Close')) : null,
       st.recent ? h('p', { class: 'small muted' }, fresh ? 'You have just confirmed it is you with single sign-on.' : st.method === 'sso' ? 'You confirmed it is you a few minutes ago, so you do not need to sign in again.' : 'You confirmed it is you a few minutes ago, so your password is not needed again.') : null,
-      viaSso ? (() => {
-        const [btn, status] = ssoButton('Confirm with single sign-on', true);
-        return [h('p', {}, `${fresh ? 'This needs you to confirm it is you each time.' : 'It has been a while since you confirmed it is you.'} Your account signs in through single sign-on, so confirm with the county sign-in. You will come back here and ` + (verb === 'sign' ? 'sign' : 'continue') + ' with one click.'),
-          status, h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', onClick: () => m.close() }, 'Cancel'), btn)];
-      })() : f,
-      !viaSso && !st.recent && st.sso && st.method === 'password' ? h('div', { class: 'mt' }, ...ssoButton('Confirm with single sign-on instead', false)) : null),
+      // Single sign-on: the fingerprint (with any fields) beside "Confirm with single sign-on", not instead of it.
+      f,
+      ssoParts,
+      !viaSso && !noWay && !st.recent && st.sso && st.method === 'password' ? h('div', { class: 'mt' }, ...ssoButton('Confirm with single sign-on instead', false)) : null),
       { onClose: () => { if (!finished && onCancel) onCancel(); } });
+    // The fingerprint has the focus when nothing is to be filled in before it.
+    if (fingerprint && !fields.length) fingerprint.button.focus();
   };
   open(st);
 }

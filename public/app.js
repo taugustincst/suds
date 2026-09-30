@@ -2168,8 +2168,9 @@ export async function loadSession() {
     // the server refuses every request until it is done -- so say when that is, and where to do it, instead of
     // a vague "please enroll" that reads as advisory right up until the day everything stops working.
     state.mfaDue = null;
-    // A passkey (fingerprint sign-in, docs/FINGERPRINT.md) is two-step verification of its own.
-    if (state.user.mfa_required && !state.user.mfa_enabled && !state.user.passkeys && !state.mfaPending && !state.local) {
+    // A passkey (fingerprint sign-in, docs/FINGERPRINT.md) is two-step verification of its own, while fingerprint
+    // sign-in is allowed (passkey_mfa, the server's own rule: auth.mfaDeadline); switched off, it no longer counts.
+    if (state.user.mfa_required && !state.user.mfa_enabled && !state.user.passkey_mfa && !state.mfaPending && !state.local) {
       const due = state.user.mfa_setup_deadline ? fmt.parse(state.user.mfa_setup_deadline) : null;
       const when = due ? (due.getTime() < Date.now() ? 'now' : `by ${fmt.date(state.user.mfa_setup_deadline)}`) : 'now';
       // One line on every screen (a paragraph took a third of a phone's screen above every page): the

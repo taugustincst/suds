@@ -650,4 +650,7 @@ details.more-menu[open] { flex-basis: 100%; } details.more-menu > a { margin-top
 .fingerprint-confirm { margin: .75rem 0; padding: .6rem .75rem; border: 1px solid var(--border); border-radius: 8px; }
 .fingerprint-confirm p { margin: .35rem 0 0; }
 .fingerprint-btn { min-height: 44px; }
+.fingerprint-btn[aria-disabled="true"] { cursor: progress; }
+.fp-icon { vertical-align: -4px; }
+.or-use { margin: .25rem 0 .5rem; }
 [data-fingerprint-status]:empty { display: none; }

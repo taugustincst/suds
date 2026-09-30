@@ -57,6 +57,10 @@ start_office() {
 }
 start_office || exit 2
 export SUDS_URL="http://127.0.0.1:$PORT"
+# Every script opens the office server at 127.0.0.1 except fingerprint.mjs, which opens http://localhost:$PORT: a
+# passkey belongs to a host name (a browser refuses an IP address as a relying party ID), and plain http is accepted
+# only on localhost outside production (server/passkeys.js relyingParty). SUDS_ENV=development above is what lets the
+# dev server fall back to the Host header for the relying party: production requires WEBAUTHN_RP_ID.
 # A second, unconfigured production server for the first-run wizard, in its own data directory. The
 # wizard restarts it on SETUP_PORT with a self-signed certificate, so that port must be free too.
 export SETUP_PORT=${SETUP_PORT:-8496}
