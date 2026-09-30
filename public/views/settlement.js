@@ -107,7 +107,10 @@ route('settlement', async (r) => {
       table(trendCols, f.months, { empty: 'No months in this period.' }));
   };
 
-  return h('div', { 'data-settlement-outcomes': '1' }, ...head, totalCard, catCard, ...d.funds.map(fundCard), countyCard(from, to), countySendCard(from, to),
+  // The county card's choices (period, county code and name, funds), shared with the connection's Send so that Send
+  // now sends exactly the file Download makes.
+  const countyChoice = {};
+  return h('div', { 'data-settlement-outcomes': '1' }, ...head, totalCard, catCard, ...d.funds.map(fundCard), countyCard(from, to, countyChoice), countySendCard(countyChoice),
     h('details', { class: 'small muted' }, h('summary', {}, 'How the counts were made'), h('p', {}, d.counting_statement)));
 });
 
@@ -115,7 +118,7 @@ route('settlement', async (r) => {
 // county pays for, as a signed file for that county, for whoever files the program's funder submission. It has its
 // own period (a quarter that has ended, by default the last one), apart from the dates the page shows. Office server
 // only: SUDS on this device has no county relationship, and its kernel has no such route.
-function countyCard(pageFrom, pageTo) {
+function countyCard(pageFrom, pageTo, choice = {}) {
   if (state.local || !can('reports:funder') || !can('budget:read') || !can('export:read')) return null;
   const today = fmt.today();
   const body = h('div', { 'data-so-county-body': '1' }, h('p', { class: 'small muted' }, 'Loading…'));
@@ -125,11 +128,11 @@ function countyCard(pageFrom, pageTo) {
     h('p', { class: 'small', 'data-so-county-leaves': '1' }, h('b', {}, 'It leaves the program. '), 'It is for the county under your funding contract, not for publication or sharing. Making it is recorded in the audit log. SUDS sends nothing itself: you send the file the way the county asks.'),
     body);
   Promise.all([get('/api/county-submission/key', { quiet: true }), get('/api/county-submission/options', { quiet: true })])
-    .then(([k, o]) => body.replaceChildren(countyForm(k, o, today, pageFrom, pageTo)))
+    .then(([k, o]) => body.replaceChildren(countyForm(k, o, today, pageFrom, pageTo, choice)))
     .catch(e => body.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)));
   return card;
 }
-function countyForm(k, o, today, pageFrom, pageTo) {
+function countyForm(k, o, today, pageFrom, pageTo, choice) {
   const last = o.counties[0] || null;
   // The period: the quarters that have ended (the last one first, and chosen), fiscal years, the last calendar year,
   // and the dates on this page when they have ended and are not already offered.
@@ -146,7 +149,7 @@ function countyForm(k, o, today, pageFrom, pageTo) {
     makeBtn.textContent = `Make the county file for ${monthsLabel(p.from, p.to)}`;
     warn.textContent = isQuarter(p.from, p.to) ? '' : '⚠ This is not a single quarter. The county counts a file only when its whole period lies inside the period it looks at, so a longer file never counts toward one quarter. Send quarters unless the county asked for this period.';
   };
-  periodSel.addEventListener('change', showPeriod);
+  periodSel.addEventListener('change', () => { showPeriod(); if (choice.onChange) choice.onChange(); });
   const codeI = h('input', { id: 'so-county-code', name: 'county_code', value: last ? last.code_display : '', autocomplete: 'off', 'aria-describedby': 'so-county-code-help', 'data-so-county-code': '1' });
   const nameI = h('input', { id: 'so-county-name', name: 'county_name', value: last ? last.name : '', autocomplete: 'off', maxlength: 200, 'data-so-county-name': '1' });
   const picked = new Set(last ? last.fund_ids : []);
@@ -180,15 +183,26 @@ function countyForm(k, o, today, pageFrom, pageTo) {
   }
   showKey(k.key, k.retired);
   showPeriod();
-  const f = h('form', { noValidate: true, 'data-so-county-form': '1', onSubmit: (e) => {
-    e.preventDefault();
-    const ids = fundBoxes.map(l => l.querySelector('input')).filter(i => i.checked).map(i => i.value);
+  const tickedFunds = () => fundBoxes.map(l => l.querySelector('input')).filter(i => i.checked).map(i => i.value);
+  /** The choices checked as Make the county file checks them: null, with the problem said and focused, if one is missing. */
+  const checked = () => {
+    const ids = tickedFunds();
     const problem = !codeI.value.trim() ? [codeI, 'Type the county code the county gave you (County view › Programs on its SUDS shows it).']
       : !nameI.value.trim() ? [nameI, 'Type the county\'s name.'] : !ids.length ? [funds.querySelector('input') || funds, 'Tick the settlement funds this county pays for.'] : null;
     for (const i of [codeI, nameI]) i.removeAttribute('aria-invalid');
-    if (problem) { err.textContent = problem[1]; if (problem[0].tagName === 'INPUT' && problem[0].type !== 'checkbox') problem[0].setAttribute('aria-invalid', 'true'); problem[0].focus(); return; }
+    if (problem) { err.textContent = problem[1]; if (problem[0].tagName === 'INPUT' && problem[0].type !== 'checkbox') problem[0].setAttribute('aria-invalid', 'true'); problem[0].focus(); return null; }
     err.textContent = '';
     const p = chosen();
+    return { from: p.from, to: p.to, funds: ids, county_code: codeI.value.trim(), county_name: nameI.value.trim() };
+  };
+  // For the county connection's Send (views/countyconnect.js): the same choices, the same checks.
+  choice.checked = checked;
+  choice.period = () => chosen();
+  if (choice.onChange) choice.onChange();
+  const f = h('form', { noValidate: true, 'data-so-county-form': '1', onSubmit: (e) => {
+    e.preventDefault();
+    const c = checked(); if (!c) return;
+    const ids = c.funds; const p = chosen();
     makeBtn.disabled = true;
     fetchDownload(`/api/county-submission/file?from=${p.from}&to=${p.to}&county_code=${encodeURIComponent(codeI.value.trim())}&county_name=${encodeURIComponent(nameI.value.trim())}&funds=${ids.map(encodeURIComponent).join(',')}`)
       .then(async () => { toast(`County file for ${monthsLabel(p.from, p.to)} made and downloaded. Send it to the county as your contract says; it holds exact counts and is not for publication.`, 'ok'); try { const x = await get('/api/county-submission/key', { quiet: true }); showKey(x.key, x.retired); } catch { /* the file is made */ } })

@@ -6,8 +6,10 @@
 //      focus, with a Copy button that says what it did; closing gives the focus back; the token is never on the
 //      page again.
 //   3. Settlement outcomes: an administrator connects (address and token), Test connection says what the county
-//      expects (a status that takes the focus), finance sends the period and sees the county's receipt and the
-//      send log; finance cannot change the connection.
+//      expects (a status that takes the focus), and names the periods as the Send to the county card does; finance
+//      sends what the card has chosen (its period, county code and name, and the funds ticked: with none ticked,
+//      Send says so at the card, as Make the county file does) and sees the county's receipt and the send log;
+//      finance cannot change the connection.
 //   4. The county sees the file in its combined view; a read token (shown once) reads the same over the API.
 //   5. axe (WCAG 2.1 A/AA) on the pages and dialogs at 1280, 390 and 320 px, and nothing scrolls sideways.
 import { chromium } from 'playwright';
@@ -60,10 +62,16 @@ const active = (page) => page.evaluate(() => { const a = document.activeElement;
 
 try {
   const { ctx: admCtx, page: adm } = await signIn('admin', 'AdminPassw0rd!x');
-  // This server's own county key, registered as a programme (as county.mjs does), so it can send to itself.
+  // This server's own county key, registered as a program (as county.mjs does), so it can send to itself; the
+  // fingerprint typed, as the county view's register route requires (or "compared").
   const key = (await api(adm, 'POST', '/api/county-submission/key', {})).data.key;
-  const prog = await api(adm, 'POST', '/api/county/programmes', { name: 'Our own programme', public_key: key.public_key });
-  eq(prog.status, 201, 'the programme is registered with its own key');
+  const prog = await api(adm, 'POST', '/api/county/programmes', { name: 'Our own program', public_key: key.public_key, fingerprint: key.fingerprint_display });
+  eq(prog.status, 201, 'the program is registered with its own key');
+  const code = (await api(adm, 'GET', '/api/county/code')).data;
+  ok(code && /^[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(code.code_display), 'this county has a code', code);
+  // A settlement fund the county pays for, with money spent in the period, so the file has figures in it.
+  const fund = await api(adm, 'POST', '/api/budget/funds', { name: 'County connection settlement share', grant_number: 'OSF-CC-UI', source_type: 'opioid_settlement', fiscal_year_start: `${lq.from.slice(0, 4)}-01-01`, fiscal_year_end: `${lq.from.slice(0, 4)}-12-31`, total_amount: 40000, settlement_use: 'core_a', settlement_hiaa: 'hiaa_6' });
+  eq(fund.status, 201, 'a settlement fund', fund.data);
 
   // ---------------- 1. the switch ----------------
   await go(adm, 'county-connect');
@@ -124,6 +132,9 @@ try {
   eq(tested && tested.o, 'ok', 'Test connection connects', tested && tested.text);
   ok(/Connected/.test(tested.text) && /Outstanding|Nothing outstanding/.test(tested.text), 'and says what the county expects', tested.text);
   eq(tested.role, 'status', 'as a status message');
+  await until(() => adm.$('[data-so-county-period-select]'));
+  const lqLabel = await adm.$eval('[data-so-county-period-select]', s => s.options[0].text);
+  ok(!/Outstanding/.test(tested.text) || tested.text.includes(lqLabel), 'the outstanding periods are named as the Send to the county card names them', [lqLabel, tested.text]);
   eq(await active(adm), 'data-cc-result', 'which takes the focus');
   await axe(adm, 'settlement, connected (1280)');
   await adm.click('[data-cc-disconnect]').catch(() => {}); // the confirmation, then keep it
@@ -136,11 +147,27 @@ try {
   const finConn = await api(fin, 'GET', '/api/county-connect/connection');
   eq(finConn.data && finConn.data.can_send, true, 'finance may send', JSON.stringify(finConn.data).slice(0, 300));
   await fin.waitForSelector('[data-cc-send]');
+  await until(() => fin.$('[data-so-county-form]'));
+  const sendLabel = (await fin.textContent('[data-cc-send]')).trim();
+  const makeLabel = (await fin.textContent('[data-so-county-file]')).trim();
+  eq(sendLabel.replace(/^Send (.*) to the county now$/, '$1'), makeLabel.replace(/^Make the county file for /, ''), 'Send names the period chosen on the Send to the county card', [sendLabel, makeLabel]);
+  // Nothing ticked on the card: Send says so there, and puts the focus on the funds, as Make the county file does.
+  await fin.fill('[data-so-county-code]', code.code_display.toLowerCase());
+  await fin.fill('[data-so-county-name]', 'Sample County Behavioral Health');
+  await fin.click('[data-cc-send]');
+  ok(/Tick the settlement funds/.test(await fin.textContent('[data-so-county-error]')), 'Send with no fund ticked: said at the card');
+  ok(await fin.evaluate(() => document.activeElement && document.activeElement.hasAttribute('data-so-county-fund')), 'and the focus goes to the funds');
+  eq((await api(fin, 'GET', '/api/county-connect/connection')).data.sends.length, 0, 'and nothing was sent');
+  await fin.check(`[data-so-county-fund="${fund.data.id}"]`);
   await fin.click('[data-cc-send]');
   const sent = await until(async () => { const o = await fin.getAttribute('[data-cc-result]', 'data-cc-outcome'); return o ? { o, text: await fin.textContent('[data-cc-result]') } : null; }, { timeout: 20000 });
   eq(sent && sent.o, 'ok', 'finance sends the period to the county', sent && sent.text);
   ok(/Sent\./.test(sent.text) && /receipt/.test(sent.text), 'and sees the county\'s receipt', sent.text);
   ok(await until(async () => /Imported/.test(await fin.textContent('[data-cc-send-card] table'))), 'the send log says the county imported it');
+  // What was sent is what the card chose: the funds ticked are remembered for this county's code, as Download does.
+  const opts = (await api(fin, 'GET', '/api/county-submission/options')).data;
+  const mine = opts.counties.find(c => c.code === code.code);
+  ok(mine && mine.name === 'Sample County Behavioral Health' && mine.fund_ids.length === 1 && mine.fund_ids[0] === fund.data.id, 'the county\'s name and the fund ticked went into the file', mine);
   await axe(fin, 'settlement with the send log (1280)');
 
   // ---------------- 4. the county sees it; a read token ----------------

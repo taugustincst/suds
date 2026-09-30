@@ -1,4 +1,5 @@
 import { h, route, get, post, put, del, fmt, can, state, pageHead, table, kv, nav, toast, modal, form, confirmDialog, badge } from '../app.js';
+import { monthsLabel } from '../county-periods.js';
 
 // The county connection (server/county-connect.js, server/county-connect-client.js; docs/COUNTY-VIEW.md, "Connecting").
 // Built for 1.18.0, not yet released. Optional and off by default on both sides; office server only.
@@ -41,31 +42,31 @@ export async function programmeConnections(programmes) {
     const conn = d.rows.filter(t => t.kind === 'connection');
     const rows = programmes.map(p => ({ ...p, tokens: conn.filter(t => t.programme_id === p.id && t.state === 'live') }));
     box.replaceChildren(
-      ...(d.enabled ? [] : [h('p', { class: 'banner info small', 'data-cc-off': '1' }, 'The county connection is switched off, so no programme can send over it yet, whatever tokens are issued. Switch it on under ', h('a', { href: '#/county-connect' }, 'County connections'), '.')]),
-      table([{ label: 'Programme', render: p => p.name },
+      ...(d.enabled ? [] : [h('p', { class: 'banner info small', 'data-cc-off': '1' }, 'The county connection is switched off, so no program can send over it yet, whatever tokens are issued. Switch it on under ', h('a', { href: '#/county-connect' }, 'County connections'), '.')]),
+      table([{ label: 'Program', render: p => p.name },
         { label: 'Connection token', render: p => (p.tokens.length ? p.tokens.map(t => h('div', {}, h('code', { class: 'small' }, `${t.prefix}…`), t.expires_at ? ` · expires ${when(t.expires_at)}` : ' · no expiry')) : h('span', { class: 'muted' }, 'None')) },
         { label: 'Last used', render: p => (p.tokens.length ? p.tokens.map(t => h('div', {}, t.last_used_at ? `${when(t.last_used_at)} from ${t.last_used_ip || 'an unknown address'}` : 'Not yet')) : '—') },
         { label: '', srLabel: 'Actions', render: p => h('div', { class: 'btn-row' },
           p.active ? h('button', { class: 'btn sm', type: 'button', 'data-cc-issue': p.id, 'aria-label': `Issue token for ${p.name}`, onClick: () => issueConnection(p, refresh) }, 'Issue token') : h('span', { class: 'small muted' }, 'Inactive'),
           ...p.tokens.map(t => h('button', { class: 'btn sm ghost', type: 'button', 'data-cc-revoke': t.id, 'aria-label': `Revoke ${p.name}'s token ${t.prefix}`, onClick: () => revokeToken(t, `${p.name}'s connection token`, refresh) }, 'Revoke'))) }],
-      rows, { empty: 'No programmes registered yet.' }));
+      rows, { empty: 'No programs registered yet.' }));
   };
   await refresh();
   return h('section', { class: 'card mb', 'aria-labelledby': 'cc-prog-h', 'data-cc-programmes-card': '1' },
     h('div', { class: 'card-head' }, h('h2', { id: 'cc-prog-h' }, 'Connection tokens')),
-    h('p', { class: 'small' }, 'A programme whose SUDS connects to the county sends its county file here over the internet instead of by email, with the token you issue it. The file must still be signed with the programme\'s registered key: the token only says which programme is calling. ',
+    h('p', { class: 'small' }, 'A program whose SUDS connects to the county sends its county file here over the internet instead of by email, with the token you issue it. The file must still be signed with the program\'s registered key: the token only says which program is calling. ',
       h('a', { href: '#/county-connect', 'data-cc-page-link': '1' }, 'County connections and API access')),
     box);
 }
 
 function issueConnection(p, refresh) {
   const f = form([{ name: 'expires', label: 'Expires', type: 'select', noBlank: true, value: '365', options: [{ value: '90', label: 'After 90 days' }, { value: '365', label: 'After a year' }, { value: '730', label: 'After two years' }, { value: 'never', label: 'Never (revoke it by hand)' }], span: true,
-    help: 'When it expires the programme\'s sends are refused until you issue a new one.' }], {
+    help: 'When it expires the program\'s sends are refused until you issue a new one.' }], {
     submitText: 'Issue token', onCancel: () => m.close(),
     onSubmit: async (d) => {
       const t = await post('/api/county-connect/tokens', { scope: 'county.submit', programme_id: p.id, ...(d.expires === 'never' ? {} : { expires_days: Number(d.expires) }) });
       m.close();
-      showToken(`Connection token for ${p.name}`, t, [['Programme', p.name], ['County SUDS address', location.origin], ['Expires', t.expires_at ? fmt.date(t.expires_at) : 'Never']], refresh);
+      showToken(`Connection token for ${p.name}`, t, [['Program', p.name], ['County SUDS address', location.origin], ['Expires', t.expires_at ? fmt.date(t.expires_at) : 'Never']], refresh);
     } });
   const m = modal(`Issue a connection token for ${p.name}`, h('div', {}, h('p', { class: 'small' }, `Give ${p.name} this server's address and the token. Its administrator saves them under Settlement outcomes › Send to the county › Connect to the county.`), f));
 }
@@ -81,12 +82,12 @@ route('county-connect', async () => {
   const manage = can('county:manage'); const configure = manage && can('settings:manage');
   const settingsCard = h('section', { class: 'card mb', 'aria-labelledby': 'cc-set-h', 'data-cc-settings': '1' },
     h('div', { class: 'card-head' }, h('h2', { id: 'cc-set-h' }, 'The connection')),
-    h('p', { class: 'small' }, 'Off by default. Switched on, programmes the county has issued a connection token to can send their signed county file to this server over the internet, and see which periods the county still expects. The address must be reachable from the programmes\' servers: through the county\'s TLS proxy, or a VPN (docs/DEPLOYMENT.md).'),
-    kv([['Status', s.enabled ? badge('On: accepting connections', 'ok') : badge('Off', '')], ['County code', s.county_code || '—'],
+    h('p', { class: 'small' }, 'Off by default. Switched on, programs the county has issued a connection token to can send their signed county file to this server over the internet, and see which periods the county still expects. The address must be reachable from the programs\' servers: through the county\'s TLS proxy, or a VPN (docs/DEPLOYMENT.md).'),
+    kv([['Status', s.enabled ? badge('On: accepting connections', 'ok') : badge('Off', '')], ['County code', s.county_code_display || s.county_code || '—'],
       ['Send address', h('code', { class: 'small' }, `${location.origin}${s.endpoints.submissions}`)], ['Status address', h('code', { class: 'small' }, `${location.origin}${s.endpoints.status}`)]]),
     configure ? form([
-      { name: 'enabled', label: 'Accept connections from programmes', type: 'checkbox', value: s.enabled, span: true },
-      { name: 'cadence', label: 'Periods the county expects', type: 'select', noBlank: true, value: s.cadence, options: s.cadences, span: true, help: 'What a programme\'s Test connection shows as expected and outstanding (the last year of them).' },
+      { name: 'enabled', label: 'Accept connections from programs', type: 'checkbox', value: s.enabled, span: true },
+      { name: 'cadence', label: 'Periods the county expects', type: 'select', noBlank: true, value: s.cadence, options: s.cadences, span: true, help: 'What a program\'s Test connection shows as expected and outstanding (the last year of them).' },
       { name: 'start', label: 'Expect no period that starts before (optional)', type: 'date', value: s.start || '', span: true },
     ], { submitText: 'Save', onSubmit: async (d) => {
       await put('/api/county-connect/settings', { enabled: !!d.enabled, cadence: d.cadence, start: d.start || null });
@@ -112,9 +113,9 @@ route('county-connect', async () => {
         onSubmit: async (d) => {
           const t = await post('/api/county-connect/tokens', { scope: 'county.read', name: d.name, expires_days: Number(d.expires_days) || undefined });
           m.close();
-          showToken(`Read token: ${t.name}`, t, [['Combined view', `${location.origin}${s.endpoints.combined}?from=YYYY-MM-DD&to=YYYY-MM-DD`], ['Programmes', `${location.origin}${s.endpoints.programs}`], ['Expires', fmt.date(t.expires_at)]], refresh);
+          showToken(`Read token: ${t.name}`, t, [['Combined view', `${location.origin}${s.endpoints.combined}?from=YYYY-MM-DD&to=YYYY-MM-DD`], ['Programs', `${location.origin}${s.endpoints.programs}`], ['Expires', fmt.date(t.expires_at)]], refresh);
         } });
-      const m = modal('Issue a read token', h('div', {}, h('p', { class: 'small' }, 'For the county\'s own systems (a data warehouse, a dashboard): it reads the combined view and the list of programmes, as JSON or tidy CSV, and nothing else. Exact figures, internal, not for publication.'), f));
+      const m = modal('Issue a read token', h('div', {}, h('p', { class: 'small' }, 'For the county\'s own systems (a data warehouse, a dashboard): it reads the combined view and the list of programs, as JSON or tidy CSV, and nothing else. Exact figures, internal, not for publication.'), f));
     };
     readBox = h('section', { class: 'card mb', 'aria-labelledby': 'cc-read-h', 'data-cc-read': '1' },
       h('div', { class: 'card-head' }, h('h2', { id: 'cc-read-h' }, 'API access: read tokens')),
@@ -123,16 +124,18 @@ route('county-connect', async () => {
   }
   const progs = manage ? await programmeConnections((await get('/api/county/programmes')).rows) : null;
   return h('div', { 'data-county-connect': '1' }, pageHead('County connections'),
-    h('p', { class: 'small' }, h('a', { href: '#/county?tab=programmes' }, 'County view › Programmes'), ' · Built for 1.18.0, not yet released.'),
+    h('p', { class: 'small' }, h('a', { href: '#/county?tab=programmes' }, 'County view › Programs'), ' · Built for 1.18.0, not yet released.'),
     settingsCard, progs, readBox);
 });
 
 // ---------------------------------------------------------------- the programme's side
 /**
  * The county connection, under Send to the county on Settlement outcomes: for whoever may make the county file (to
- * test and send) and administrators (to connect). Office server only.
+ * test and send) and administrators (to connect). Office server only. `choice` is the Send to the county card's
+ * (views/settlement.js countyForm): its period, county code and name and ticked funds, checked as its Make the county
+ * file checks them, so Send now sends exactly the file Download makes.
  */
-export function countySendCard(from, to) {
+export function countySendCard(choice = {}) {
   if (state.local || !(can('settings:manage') || (can('reports:funder') && can('budget:read')))) return null;
   const body = h('div', { 'data-cc-connection': '1' }, h('p', { class: 'small muted' }, 'Loading the county connection…'));
   // What the last Test or Send did: said where the person is (focus moves to it), left until the next.
@@ -166,16 +169,22 @@ export function countySendCard(from, to) {
       finally { btn.disabled = false; await refresh(); }
     };
     const send = async (btn) => {
+      if (!choice.checked) { say('The Send to the county card above has not finished loading. Try again in a moment.', false); return; }
+      const c2 = choice.checked(); // says what is missing on that card, and puts the focus there
+      if (!c2) return;
       btn.disabled = true;
       try {
-        const r = await post('/api/county-connect/send', { from, to }, { quiet: true });
+        const r = await post('/api/county-connect/send', c2, { quiet: true });
         const ok = !['refused', 'failed'].includes(r.status);
         say([h('p', {}, h('b', {}, ok ? 'Sent. ' : 'Not accepted. '), r.message), r.receipt && r.receipt.sha256 ? h('p', { class: 'small' }, `County's receipt: file ${r.receipt.sha256.slice(0, 16)}…, received ${r.receipt.received_at ? fmt.date(r.receipt.received_at) : ''}.`) : null], ok);
       } catch (e) { say(e.message, false); }
       finally { btn.disabled = false; await refresh(); }
     };
     const testBtn = h('button', { class: 'btn', type: 'button', 'data-cc-test': '1', onClick: (e) => test(e.currentTarget) }, 'Test connection');
-    const sendBtn = c.can_send ? h('button', { class: 'btn primary', type: 'button', 'data-cc-send': '1', onClick: (e) => send(e.currentTarget) }, `Send ${fmt.date(from)} – ${fmt.date(to)} to the county now`) : null;
+    const sendBtn = c.can_send ? h('button', { class: 'btn primary', type: 'button', 'data-cc-send': '1', onClick: (e) => send(e.currentTarget) }) : null;
+    // The button names the period chosen on the Send to the county card, and follows it when it changes.
+    const label = () => { if (!sendBtn) return; const p = choice.period ? choice.period() : null; sendBtn.textContent = p ? `Send ${monthsLabel(p.from, p.to)} to the county now` : 'Send to the county now'; };
+    choice.onChange = label; label();
     const disconnect = c.can_configure ? h('button', { class: 'btn ghost', type: 'button', 'data-cc-disconnect': '1', onClick: async () => {
       if (!await confirmDialog('Disconnect from the county?', 'The county\'s address and token are removed from this server. The county keeps what it received; the send log stays here.', { danger: true, okText: 'Disconnect' })) return;
       try { await del('/api/county-connect/connection'); toast('Disconnected.', 'ok'); await refresh(); } catch (e) { toast(e.message, 'error'); }
@@ -194,7 +203,7 @@ export function countySendCard(from, to) {
   refresh();
   return h('section', { class: 'card mb', 'aria-labelledby': 'cc-send-h', 'data-cc-send-card': '1' },
     h('div', { class: 'card-head' }, h('h2', { id: 'cc-send-h' }, 'Send to the county over the connection')),
-    h('p', { class: 'small' }, 'The same signed file as Make the county file, sent over an encrypted connection to the county\'s SUDS, which checks the signature against the key it registered for your program and answers with a receipt. Sending is recorded in the audit log; the log below keeps each receipt, never the figures.'),
+    h('p', { class: 'small' }, 'The same signed file as Make the county file, for the period, county and funds chosen on the Send to the county card above, sent over an encrypted connection to the county\'s SUDS, which checks the signature against the key it registered for your program and answers with a receipt. Sending is recorded in the audit log; the log below keeps each receipt, never the figures.'),
     result, body);
 }
 
