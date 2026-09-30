@@ -4,6 +4,27 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Release-state check and the county evidence packet (tooling; no migration, permission or route)
+
+- **The release documents are checked against what is true** (built for 1.21.0, not yet released).
+  `node scripts/release-state.js` compares what the questionnaire, the evidence index, docs/RELEASE.md (supported
+  versions, records, the exceptions ledger, the tags owed), the tag hand-off, HANDOFF.md's *Release waiting* entry and
+  the dated CHANGELOG sections say about the releases with the CHANGELOG, `main`'s history, `git ls-remote --tags
+  origin` and the `version.json` `gh-pages` serves, and prints each finding as `file:line` with a fix: a hand-off commit
+  that is missing, not on `main` or not "Release X.Y.Z" (or the SBOM commit after it); a tag the documents call pending
+  that is pushed; a stamped version nobody will tag; "live on GitHub Pages" for a version that is not; a dated CHANGELOG
+  section calling another minor "the latest minor". `--offline` and `--docs-only` say what they could not check. CI
+  runs it as the advisory `release-state` job; docs/RELEASE.md's stamp checklist says when to run it. On 1.20.0's
+  documents it finds five stale lines in the 1.20.0 CHANGELOG section and the evidence index calling 1.19.0 live.
+- **The county evidence packet** (built for 1.21.0, not yet released). `node scripts/county-packet.js --ref <commit>
+  [--zip <file>]` puts the questionnaire, the county kit, the RFI answers, the agreement drafts, the newest SBOM and
+  drill evidence, SECURITY.md, the LICENSE, the accessibility report and the pen-test scope in one folder with a README
+  (what each file is, which version it describes, the verify commands) and a SHA-256 manifest; the same commit gives
+  the same bytes, zip included (docs/market/COUNTY-KIT.md, *The evidence packet*).
+- **Tests:** `test/release-state.test.js` (the checks on synthetic documents and git facts; the repository's own
+  documents raise no finding but the known ones) and `test/county-packet.test.js` (two runs, identical bytes; every
+  listed file present; the manifest and the zip's directory right).
+
 ## 1.20.0 — 2026-09-30
 
 A feature release (migration 60 and the county-entered figures routes), released under a policy exception inside

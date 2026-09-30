@@ -340,7 +340,7 @@ answers those documents give for what the release changed, not only the version 
 them two releases behind: the county connection and passkeys missing from the questionnaire, "planned" for a
 released county view).
 
-**Stamp checklist: the release state** (since 1.21.0). `node scripts/release-state.js` compares what the release
+**Stamp checklist: the release state** (built for 1.21.0, not yet released). `node scripts/release-state.js` compares what the release
 documents say with what is true: the questionnaire's *Checked against* and the evidence index's *Version.*; the
 *Supported versions* rows, the *Record* references and the exceptions ledger above, against the dated CHANGELOG
 sections; [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)'s table (each commit exists, is on `main`, and is
