@@ -38,6 +38,15 @@
 //     GET  /api/county/view                the combined view for ?from&to, or by quarter (&by=quarter) (county:view)
 //     GET  /api/county/view/export         the same as Excel (format=xlsx), CSV, or a long "tidy" CSV (format=tidy)
 //                                          (county:view and export:read)
+//   Publication releases of the combined figures (built for 1.21.0, not yet released; server/county-publication.js):
+//     POST /api/county/publications/prepare  screen a period's combined figures: { from, to, entered, threshold } ->
+//                                          the content and its SHA-256, nothing recorded (county:manage)
+//     POST /api/county/publications        publish it: the same choices, the SHA-256 reviewed and reviewed: true
+//                                          (county:manage)
+//     GET  /api/county/publications        the releases published, and withdrawn (county:view)
+//     GET  /api/county/publications/:id    one, as published (county:view; the withdrawal's reason for county:manage)
+//     GET  /api/county/publications/:id/export  as CSV, Excel (with a Notes sheet) or JSON (county:view, export:read)
+//     POST /api/county/publications/:id/withdraw  withdraw one, with a reason: a record of its own (county:manage)
 // Every read and write is audited; a refused import is audited with why, refusals are throttled per person, and
 // a throttled attempt is audited once per window.
 const db = require('../db');
@@ -480,5 +489,86 @@ module.exports = (r) => {
       ? S.writeWorkbook([{ name: 'About', columns: [{ key: 'k', label: 'Field' }, { key: 'v', label: 'Value' }], rows: about }, { name: 'Combined', columns: matrixCols, rows: matrix }, { name: 'Submissions', columns: subCols, rows: subs }, { name: 'Tidy', columns: tidyCols, rows: tidy }])
       : format === 'tidy' ? S.toCsv(tidy, tidyCols)
         : S.toCsv([...about.map(a => ({ group: 'About', measure: a.k, total: a.v })), ...matrix], matrixCols));
+  });
+
+  // ---- publication releases of the combined figures (built for 1.21.0, not yet released; server/county-publication.js) ----
+  const PUB = require('../county-publication');
+  /** The period and choices of a release to prepare or publish, from a JSON body. */
+  const pubChoices = (body) => {
+    const v = validate(body || {}, { from: { type: 'string', required: true, maxLen: 10 }, to: { type: 'string', required: true, maxLen: 10 }, entered: { type: 'string', maxLen: 10 }, threshold: { type: 'number', integer: true } });
+    if (v.entered !== undefined && v.entered !== null && v.entered !== '' && !['include', 'exclude'].includes(v.entered)) throw badRequest('entered must be include or exclude.', { fields: { entered: 'must be include or exclude' } });
+    return { from: v.from, to: v.to, entered: v.entered !== 'exclude', threshold: v.threshold === undefined || v.threshold === null ? null : v.threshold };
+  };
+  /** Prepare a release, or say why not: a refusal is audited with why (never a figure). */
+  const preparePub = async (ctx, c, action) => {
+    code(ctx);
+    try { return await PUB.prepare(c, { today: today() }); } catch (e) {
+      if (!(e instanceof PUB.PublicationError)) throw e;
+      audit.log({ user: ctx.user, action: 'county.publication.refuse', ip: ctx.ip, success: false, details: { step: action, from: c.from, to: c.to, entered: c.entered ? 'include' : 'exclude', threshold: c.threshold || undefined, reason: e.code, ...(e.refusal || {}) } });
+      throw new HttpError(e.status, e.message, { reason: e.code });
+    }
+  };
+  const pubDetails = (c, p) => ({ from: c.from, to: c.to, threshold: p.T, entered: c.entered ? 'include' : 'exclude', sha256: p.sha256, release_id: p.content.release_id, programmes: p.content.programmes.length,
+    entered_programmes: p.content.figures_entered_by_the_county.programmes.length || undefined, suppressed: p.content.suppressed.map(x => `${x.key}:${x.reason}`), withheld: p.content.withheld.map(x => x.key) });
+  r.post('/api/county/publications/prepare', ...manage, async (ctx) => {
+    const c = pubChoices(ctx.body);
+    const p = await preparePub(ctx, c, 'prepare');
+    audit.log({ user: ctx.user, action: 'county.publication.prepare', ip: ctx.ip, details: pubDetails(c, p) });
+    return { content: p.content, sha256: p.sha256, threshold: p.T, county_threshold: PUB.countyThreshold(), max_threshold: PUB.MAX_THRESHOLD, review_confirmation: PUB.REVIEW_CONFIRMATION };
+  });
+  r.post('/api/county/publications', ...manage, async (ctx) => {
+    const c = pubChoices(ctx.body);
+    const v = validate(ctx.body || {}, { sha256: { type: 'string', required: true, maxLen: 64 } });
+    if (!ctx.body || ctx.body.reviewed !== true) throw new HttpError(428, `Before publishing, review the release and confirm it: "${PUB.REVIEW_CONFIRMATION}" (reviewed: true). Small figures are screened automatically, which is a conservative default, not a guarantee or an expert determination.`, { reason: 'review_required' });
+    const p = await preparePub(ctx, c, 'publish');
+    // What is published is exactly what the person reviewed: a file that came or went since is a new release to review.
+    if (p.sha256 !== v.sha256) {
+      audit.log({ user: ctx.user, action: 'county.publication.refuse', ip: ctx.ip, success: false, details: { step: 'publish', from: c.from, to: c.to, reason: 'changed', reviewed_sha256: v.sha256, sha256: p.sha256 } });
+      throw new HttpError(409, 'The figures changed since you prepared this release (a file was imported, withdrawn or reinstated, or figures were entered). Prepare it again and review what would be published.', { reason: 'changed' });
+    }
+    let rec;
+    try { rec = PUB.record(p, c, ctx.user); } catch (e) { if (e instanceof PUB.PublicationError) throw new HttpError(e.status, e.message, { reason: e.code }); throw e; }
+    audit.log({ user: ctx.user, action: 'county.publication.publish', entity: 'county_publication', entityId: rec.id, ip: ctx.ip, details: { ...pubDetails(c, p), method: p.content.method.name, confirmation: PUB.REVIEW_CONFIRMATION } });
+    ctx.status = 201;
+    return rec;
+  });
+  r.get('/api/county/publications', ...view, (ctx) => {
+    const rows = PUB.list();
+    audit.log({ user: ctx.user, action: 'county.view', ip: ctx.ip, details: { what: 'publications', count: rows.length } });
+    return { rows };
+  });
+  r.get('/api/county/publications/:id', ...view, (ctx) => {
+    const rec = PUB.get(ctx.params.id, { reasons: auth.hasPerm(ctx.user, 'county:manage') });
+    if (!rec) throw notFound('Publication release not found');
+    audit.log({ user: ctx.user, action: 'county.view', entity: 'county_publication', entityId: rec.id, ip: ctx.ip, details: { what: 'publication', from: rec.period_from, to: rec.period_to } });
+    return rec;
+  });
+  r.get('/api/county/publications/:id/export', ...view, auth.requirePerm('export:read'), (ctx) => {
+    const rec = PUB.get(ctx.params.id);
+    if (!rec) throw notFound('Publication release not found');
+    const format = ['xlsx', 'json'].includes(ctx.query.get('format')) ? ctx.query.get('format') : 'csv';
+    audit.log({ user: ctx.user, action: 'county.publication.export', entity: 'county_publication', entityId: rec.id, ip: ctx.ip, details: { from: rec.period_from, to: rec.period_to, format, sha256: rec.sha256, status: rec.status } });
+    const S = require('../spreadsheet');
+    const x = PUB.sheets(rec);
+    const name = `suds-county-publication-${rec.period_from}_${rec.period_to}${rec.status === 'withdrawn' ? '-WITHDRAWN' : ''}`;
+    const type = format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : format === 'json' ? 'application/json; charset=utf-8' : 'text/csv; charset=utf-8';
+    ctx.res.writeHead(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename="${name}.${format}"`,
+      'X-SUDS-Export': `County publication release ${rec.id}: combined figures screened for small cells, for publication${rec.status === 'withdrawn' ? ' (WITHDRAWN: do not use)' : ''}. No client-level data.`,
+      'X-SUDS-Report-Counts': `suppressed (threshold ${rec.threshold})`, 'X-SUDS-Report-Purpose': 'publication' });
+    if (format === 'json') { ctx.res.end(JSON.stringify({ id: rec.id, sha256: rec.sha256, status: rec.status, published_at: rec.published_at, withdrawn_at: rec.withdrawal ? rec.withdrawal.at : null, release: rec.content }, null, 2) + '\n'); return; }
+    ctx.res.end(format === 'xlsx'
+      ? S.writeWorkbook([{ name: 'About', columns: x.aboutCols, rows: x.about }, { name: 'Figures', columns: x.figureCols, rows: x.figures }, { name: 'Notes', columns: x.noteCols, rows: x.notes }])
+      : S.toCsv([...x.about.map(a => ({ section: 'About', measure: a.k, value: a.v })), ...x.figures, ...x.notes.map(n => ({ section: 'Suppressed or withheld', measure: n.measure, value: n.shown, note: n.why }))], x.figureCols));
+  });
+  r.post('/api/county/publications/:id/withdraw', ...manage, (ctx) => {
+    const v = validate(ctx.body || {}, { reason: { type: 'string', required: true, maxLen: 500 } });
+    const reason = K.cleanText(v.reason, 500);
+    if (reason.length < 3) throw badRequest('Say why the release is withdrawn.', { fields: { reason: 'required' } });
+    let rec;
+    try { rec = PUB.withdraw(ctx.params.id, reason, ctx.user); } catch (e) { if (e instanceof PUB.PublicationError) throw new HttpError(e.status, e.message, { reason: e.code }); throw e; }
+    if (!rec) throw notFound('Publication release not found');
+    // The reason is kept encrypted with the withdrawal (typed text), not in the audit log.
+    audit.log({ user: ctx.user, action: 'county.publication.withdraw', entity: 'county_publication', entityId: rec.id, ip: ctx.ip, details: { from: rec.period_from, to: rec.period_to, sha256: rec.sha256, withdrawal_id: rec.withdrawal.id } });
+    return rec;
   });
 };

@@ -21,7 +21,9 @@ Three leads, in this order, each stated no further than the software goes:
    be checked against the funder's current template. A county view across the CBOs a county funds is released in 1.18.0:
    each CBO sends a signed file of its exact aggregates and a county running SUDS combines
    them, internal only, people counted as each CBO's own count, summed ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)).
-   A published county dashboard is planned, not built: it needs the publication screen over the combined release.
+   The publication screen over the combined release is built for 1.21.0, not yet released: a screened release of the
+   combined figures, audited against each CBO's own published figures ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md#publication));
+   a published county dashboard on top of it is planned, not built.
 
 What comes next, and what is only planned, is in [STRATEGY.md](STRATEGY.md): the AI documentation copilot is
 **released in 1.17.0** (office server only, off by default, gated on a BAA and QSOA, identifiers removed before

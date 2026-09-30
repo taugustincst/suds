@@ -8448,6 +8448,35 @@ CREATE TABLE IF NOT EXISTS county_submissions (
   CHECK ((source = 'signed' AND key_id IS NOT NULL AND signature IS NOT NULL AND entered_via IS NULL) OR (source = 'county_entered' AND key_id IS NULL AND signature IS NULL AND entered_via IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_county_submissions_programme ON county_submissions(programme_id, period_from, period_to);
+-- County publication releases (migration 61; built for 1.21.0, not yet released; docs/COUNTY-VIEW.md "Publication";
+-- server/county-publication.js). On a county's server: each screened release of the combined figures it published,
+-- and each withdrawal of one. A release row holds exactly what was published (content: the canonical JSON of
+-- screened aggregates, never an exact small count, no client-level data: it is public) and its SHA-256, with who
+-- published it, when, the period and the method's parameters (threshold, whether figures the county entered were
+-- counted). A withdrawal is a row of its own (kind 'withdrawal', release_id the release, its reason encrypted: typed
+-- text); nothing is ever changed or deleted (the triggers below; reason_enc stays re-encryptable by key rotation).
+CREATE TABLE IF NOT EXISTS county_publications (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('release','withdrawal')),
+  release_id TEXT REFERENCES county_publications(id),
+  period_from TEXT NOT NULL,
+  period_to TEXT NOT NULL,
+  threshold INTEGER NOT NULL,
+  entered TEXT NOT NULL CHECK (entered IN ('include','exclude')),
+  method TEXT NOT NULL,                -- JSON: the method and its parameters
+  content TEXT,                        -- a release: the canonical JSON of what was published
+  sha256 TEXT NOT NULL,                -- of the release's content (a withdrawal: of the release it withdraws)
+  reason_enc TEXT,                     -- a withdrawal: why, AES-256-GCM
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  created_by TEXT REFERENCES users(id),
+  CHECK ((kind = 'release' AND release_id IS NULL AND content IS NOT NULL AND reason_enc IS NULL) OR (kind = 'withdrawal' AND release_id IS NOT NULL AND content IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_county_publications_period ON county_publications(period_from, period_to);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_county_publications_withdrawal ON county_publications(release_id);
+CREATE TRIGGER IF NOT EXISTS county_publications_no_update BEFORE UPDATE OF id, kind, release_id, period_from, period_to, threshold, entered, method, content, sha256, created_at, created_by ON county_publications
+  BEGIN SELECT RAISE(ABORT, 'county_publications is append-only: a published release is never changed (withdraw it: a new row)'); END;
+CREATE TRIGGER IF NOT EXISTS county_publications_no_delete BEFORE DELETE ON county_publications
+  BEGIN SELECT RAISE(ABORT, 'county_publications is append-only: a published release is never deleted'); END;
 
 -- The county connection (docs/COUNTY-VIEW.md, "Connecting"; server/county-connect.js, server/county-connect-client.js).
 -- Office server only, never synchronised (server/sync-tables.js server_only). Optional and off by default on both sides.
@@ -12491,6 +12520,8 @@ var require_sync_tables = __commonJS({
         "county_programmes",
         "county_programme_keys",
         "county_submissions",
+        // county_publications (built for 1.21.0, not yet released): the county's published releases and their withdrawals.
+        "county_publications",
         // county_connect_* and county_connection (the county connection, docs/COUNTY-VIEW.md "Connecting"): the machine
         // tokens a county issues, and on a programme's server the county it sends to and its send log. A device has none.
         "county_connect_tokens",
@@ -12520,6 +12551,7 @@ var require_sync_tables = __commonJS({
         county_programmes: [],
         county_programme_keys: [],
         county_submissions: ["payload_enc", "source_ref_enc"],
+        county_publications: ["reason_enc"],
         county_connect_tokens: [],
         county_connection: ["token_enc"],
         county_connect_sends: [],
@@ -12621,6 +12653,7 @@ var require_sync_tables = __commonJS({
         ["county_programme_keys", "compromised_by"],
         ["county_submissions", "received_by"],
         ["county_submissions", "withdrawn_by"],
+        ["county_publications", "created_by"],
         ["county_connect_tokens", "created_by"],
         ["county_connect_tokens", "revoked_by"],
         ["county_connection", "updated_by"],
@@ -29432,7 +29465,7 @@ var require_county = __commonJS({
       "Each figure is what the program recorded in SUDS for the work charged to the opioid settlement funds it chose to report to the county, from its own Settlement outcomes page. Money is exact; a cost per outcome is not calculated across programs."
     ];
     var PERIOD_RULE = `A program's submission counts when its whole period lies inside the period chosen here; nothing is pro-rated. Where two of one program's submissions overlap (a quarter and a month inside it), the longer one counts, except that a signed file always counts over figures the county entered. A program whose submissions cover only part of the period is marked "part of the period". An inactive program's files count only if the county chose to keep counting them.`;
-    var PUBLICATION_NOTE = "Publishing these figures needs the publication screen over the combined release (planned). Until then nothing here is for publication.";
+    var PUBLICATION_NOTE = "To publish combined figures, use Publish (built for 1.21.0, not yet released): it screens the totals of a period with SUDS's small-cell method, checked against each program's own published figures, and records what was published. Nothing on the combined view or in its files is for publication.";
     module.exports = {
       FORMAT: FORMAT2,
       SCHEMA_VERSION,
@@ -30883,7 +30916,7 @@ var require_sdc = __commonJS({
       function run2(values, forced = []) {
         const w = world(values);
         const withheldTables = new Set(forced);
-        const hideable = (s2, i) => s2[i] === "vis" && vars[i].published && values[i] > 0 && !withheldTables.has(vars[i].table);
+        const hideable = (s2, i) => s2[i] === "vis" && vars[i].published && !vars[i].fixed && values[i] > 0 && !withheldTables.has(vars[i].table);
         const withStatus = (s2, i, x) => {
           const t = s2.slice();
           t[i] = x;
@@ -30892,7 +30925,7 @@ var require_sdc = __commonJS({
         };
         const withTable = (s2, table) => {
           const t = s2.slice();
-          for (const i of tableOf.get(table)) if (vars[i].published) t[i] = "withheld";
+          for (const i of tableOf.get(table)) if (vars[i].published && !vars[i].fixed) t[i] = "withheld";
           w.applyMirror(t);
           return t;
         };
@@ -30919,7 +30952,7 @@ var require_sdc = __commonJS({
           if (k.op !== "<=" || k.rhs !== 0 || k.terms.length !== 2) continue;
           const [[a, ca], [b, cb]] = k.terms;
           const [sub, tot] = ca === 1 && cb === -1 ? [a, b] : ca === -1 && cb === 1 ? [b, a] : [null, null];
-          if (sub !== null && hiddenTotals.has(tot) && vars[sub].people && s[sub] === "vis" && values[sub] >= T) s[sub] = "sec";
+          if (sub !== null && hiddenTotals.has(tot) && vars[sub].people && !vars[sub].fixed && s[sub] === "vis" && values[sub] >= T) s[sub] = "sec";
         }
         w.applyMirror(s);
         const watch = model.watch || {};
@@ -30973,7 +31006,7 @@ var require_sdc = __commonJS({
           const hl = model.headlineVar;
           if (hl === void 0 || st[hl] === "vis") return st;
           let t = null;
-          for (const i of model.companions || []) if (st[i] === "vis" && vars[i].published && values[i] >= T) {
+          for (const i of model.companions || []) if (st[i] === "vis" && vars[i].published && !vars[i].fixed && values[i] >= T) {
             t = t || st.slice();
             t[i] = "sec";
           }
@@ -31029,7 +31062,7 @@ var require_sdc = __commonJS({
           const seen2 = /* @__PURE__ */ new Set();
           for (const i of [...level.keys()].sort((a, b) => level.get(a) - level.get(b) || a - b)) {
             const t2 = vars[i].table;
-            if (seen2.has(t2) || withheldTables.has(t2) || !vars[i].published) continue;
+            if (seen2.has(t2) || withheldTables.has(t2) || !vars[i].published || vars[i].fixed) continue;
             seen2.add(t2);
             tables.push(t2);
           }
@@ -31271,9 +31304,10 @@ var require_sdc = __commonJS({
         return out3;
       };
       const tablesFor = (id) => {
+        const own = (i) => model.vars[i].published && !model.vars[i].fixed;
         let idx = byId.has(id) ? [byId.get(id)] : (derivedById.get(id)?.terms || []).map(([j]) => j);
-        if (idx.some((i) => !model.vars[i].published)) idx = [...idx.filter((i) => model.vars[i].published), ...idx.filter((i) => !model.vars[i].published).flatMap(neighbours)];
-        const t = [...new Set(idx.filter((i) => model.vars[i].published).map((i) => model.vars[i].table))];
+        if (idx.some((i) => !own(i))) idx = [...idx.filter(own), ...idx.filter((i) => !own(i)).flatMap(neighbours)];
+        const t = [...new Set(idx.filter(own).map((i) => model.vars[i].table))];
         const other = t.filter((x) => !keep.has(x));
         return other.length ? other : t;
       };
@@ -31678,6 +31712,101 @@ var require_release_audit = __commonJS({
       return { funder, uses, ndp, withheld_tables: withheldTables, withheld_reasons: withheldReasons(withheldTables, audit3.degraded), id, status, model, audit: stats };
     }
     module.exports = { protectFigures, buildModel, prepare, digest, monthsOf, withheldReasons, refusalMessage, TABLE_LABEL, NOT_PUBLISHED, HEADLINE, AUDIT_BACKSTOP_MS };
+  }
+});
+
+// server/county-publication-audit.js
+var require_county_publication_audit = __commonJS({
+  "server/county-publication-audit.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var SDC = require_sdc();
+    var SC = require_small_cells();
+    var MAP = require_settlement_outcome_map();
+    var SCREENED = Object.keys(MAP.INDICATORS).filter((k) => MAP.INDICATORS[k].kind !== "count");
+    var WITHIN = [["moud_linked", "people_linked"], ["people_linked", "people_served"]];
+    var AUDIT_BACKSTOP_MS = 6e4;
+    var GROUPS = (() => {
+      const parent = new Map(SCREENED.map((m) => [m, m]));
+      const find = (m) => parent.get(m) === m ? m : find(parent.get(m));
+      for (const [a, b] of WITHIN) parent.set(find(a), find(b));
+      const out2 = /* @__PURE__ */ new Map();
+      for (const m of SCREENED) {
+        const r = find(m);
+        if (!out2.has(r)) out2.set(r, []);
+        out2.get(r).push(m);
+      }
+      return [...out2.values()];
+    })();
+    function buildModel({ programmes }, T, measures = SCREENED) {
+      const vars = [];
+      const cons = [];
+      const v = (id, value, o = {}) => {
+        vars.push({ id, value, people: true, total: !!o.total, table: o.table, published: true, ...o.fixed ? { fixed: true } : {} });
+        return vars.length - 1;
+      };
+      const h = { x: programmes.map(() => ({})), X: {} };
+      for (const m of measures) {
+        const parts = programmes.map((p, i) => {
+          const j = v(`programme.${i}.${m}`, p.values[m], { fixed: true, table: `programme.${i}.${m}` });
+          h.x[i][m] = j;
+          return j;
+        });
+        const X = h.X[m] = v(`total.${m}`, programmes.reduce((n, p) => n + p.values[m], 0), { total: true, table: `total.${m}` });
+        if (parts.length) cons.push({ terms: [...parts.map((j) => [j, 1]), [X, -1]], op: "=", rhs: 0 });
+      }
+      const within = WITHIN.filter(([a, b]) => measures.includes(a) && measures.includes(b));
+      programmes.forEach((p, i) => {
+        for (const [a, b] of within) cons.push({ terms: [[h.x[i][a], 1], [h.x[i][b], -1]], op: "<=", rhs: 0, soft: true });
+      });
+      return { model: { vars, cons, derived: [], mirror: [], keep: [] }, h };
+    }
+    var { digest } = require_release_audit();
+    var WITHHELD_WHY = {
+      protect: "Too few people to show it without giving someone away, once each program's own figures are subtracted.",
+      check: "The automatic check could not confirm that the programs' small figures are protected beside it, so it was left out and the rest was checked again without it."
+    };
+    function refusalMessage(r) {
+      const why = r.backstop ? "the check of these figures ran past the server's time limit" : r.outOfBudget ? "the check of these figures reached its limit before it could finish" : "the check could not confirm that every program's small figures are protected";
+      return `These figures cannot be published: ${why}, so no publication release was made. Try a longer period (a quarter or a year), or leave out the figures entered by the county. The combined view, for authorised county staff, is unaffected.`;
+    }
+    function protectCounty(inputs, T, { budget, stepLimit, timeLimitMs = AUDIT_BACKSTOP_MS, degrade = true } = {}) {
+      const started = Date.now();
+      const shown = {};
+      const reason = {};
+      const withheldTables = [];
+      const withheldReasons = [];
+      const parts = [];
+      const stats = { steps: 0, rounds: 1, degraded: [] };
+      for (const measures of GROUPS) {
+        const { model, h } = buildModel(inputs, T, measures);
+        const left = Math.max(1, timeLimitMs - (Date.now() - started));
+        const audit3 = SDC.protect(model, T, { ...budget === void 0 ? {} : { budget }, ...stepLimit === void 0 ? {} : { stepLimit }, timeLimitMs: left, degrade });
+        stats.steps += audit3.steps;
+        stats.rounds = Math.max(stats.rounds, audit3.rounds);
+        stats.degraded.push(...audit3.degraded || []);
+        parts.push({ measures, model, status: audit3.status });
+        if (!audit3.verified) {
+          return { refused: { out_of_budget: !!audit3.outOfBudget, backstop: !!audit3.backstop, unprotected: (audit3.unprotected || []).length, message: refusalMessage(audit3) }, parts, audit: stats };
+        }
+        const { status } = audit3;
+        const show = (i) => status[i] === "vis" ? model.vars[i].value : status[i] === "pri" ? SC.primary(T) : status[i] === "sec" ? SC.SECONDARY : SC.WITHHELD;
+        const why = (i) => status[i] === "vis" ? null : status[i] === "pri" ? "small" : status[i] === "sec" ? "complementary" : "withheld";
+        for (const m of measures) {
+          shown[m] = show(h.X[m]);
+          const r = why(h.X[m]);
+          if (r) reason[m] = r;
+        }
+        const degraded = new Set(audit3.degraded || []);
+        for (const t of [...audit3.withheldTables].sort()) {
+          withheldTables.push(t);
+          withheldReasons.push({ table: t, measure: t.replace(/^total\./, ""), reason: degraded.has(t) ? "check" : "protect", why: WITHHELD_WHY[degraded.has(t) ? "check" : "protect"] });
+        }
+      }
+      const id = digest(JSON.stringify(SCREENED.map((m) => [m, shown[m]])));
+      return { shown, reason, withheld_tables: withheldTables, withheld_reasons: withheldReasons, id, parts, audit: stats };
+    }
+    module.exports = { protectCounty, buildModel, SCREENED, WITHIN, GROUPS, refusalMessage, WITHHELD_WHY, AUDIT_BACKSTOP_MS };
   }
 });
 
@@ -32285,12 +32414,21 @@ var require_publication_release = __commonJS({
       deviceRunner = typeof fn === "function" ? fn : null;
       clearCache();
     }
-    function inlineAudit(inputs, T, opts) {
+    function inlineAudit(inputs, T, opts, kind) {
       auditStats.inline++;
-      return new Promise((resolve2) => require_spreadsheet().defer(resolve2)).then(() => RA.protectFigures(inputs, T, opts));
+      return new Promise((resolve2) => require_spreadsheet().defer(resolve2)).then(() => (kind === "county" ? require_county_publication_audit().protectCounty : RA.protectFigures)(inputs, T, opts));
     }
-    function runAudit(inputs, T) {
+    function runAudit(inputs, T, { kind } = {}) {
       const opts = { ...auditOptions };
+      if (kind === "county") {
+        if (inline()) return inlineAudit(inputs, T, opts, kind);
+        auditStats.worker++;
+        return new Promise((resolve2, reject) => {
+          const id = ++seq;
+          pending.set(id, { resolve: resolve2, reject, timer: null, w: null, msg: { id, inputs, T, opts, kind } });
+          dispatch(id);
+        });
+      }
       if (inline()) {
         if (!deviceRunner) return inlineAudit(inputs, T, opts);
         auditStats.device++;
@@ -34655,6 +34793,275 @@ var require_county_connect_client = __commonJS({
   }
 });
 
+// server/county-publication.js
+var require_county_publication = __commonJS({
+  "server/county-publication.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var K = require_county();
+    var MAP = require_settlement_outcome_map();
+    var SC = require_small_cells();
+    var CPA = require_county_publication_audit();
+    var config2 = require_config();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var FORMAT2 = "suds-county-publication";
+    var SCHEMA_VERSION = 1;
+    var METHOD_NAME = "SUDS small-cell method (server/sdc.js), county release audited against each program's own release";
+    var MAX_THRESHOLD = 50;
+    var DEFAULT_THRESHOLD = 11;
+    var REVIEW_CONFIRMATION = "I have reviewed the suppressed figures and the programs named before publishing";
+    var SECTION = { spending: "Spending", use: "Spent by allowable use (Exhibit E)", hiaa: "Spent by High Impact Abatement Activity", outcome: "Outcomes" };
+    var PublicationError = class extends Error {
+      constructor(code, message, status = 422) {
+        super(message);
+        this.code = code;
+        this.status = status;
+      }
+    };
+    var refuse = (code, message, status) => {
+      throw new PublicationError(code, message, status);
+    };
+    var countyThreshold = () => Math.max(3, Number(db3.getSetting("small_cell_threshold", "")) || DEFAULT_THRESHOLD);
+    function suppressedWhy(reason, T) {
+      if (reason === "small") return `Shown as "<${T}": the county total is from 1 to ${T - 1}.`;
+      if (reason === "complementary") return `Hidden ("suppressed") so that no program's small figure can be worked out by subtracting the other programs' own published figures from the county total.`;
+      return CPA.WITHHELD_WHY.protect;
+    }
+    function overlapping(from, to) {
+      return db3.all(`SELECT id, period_from, period_to, created_at FROM county_publications WHERE kind='release' AND period_from<=? AND period_to>=? ORDER BY period_from, created_at`, to, from);
+    }
+    async function prepare({ from, to, entered = true, threshold = null }, { today }) {
+      if (!K.isDay(from) || !K.isDay(to)) refuse("period", "Choose a period: from and to must be real dates (YYYY-MM-DD).", 400);
+      if (from > to) refuse("period", `The start date (${K.humanDay(from)}) is after the end date (${K.humanDay(to)}).`, 400);
+      if (to >= today) refuse("period", `The period is not over yet: it ends ${K.humanDay(to)}. A publication release covers a period that has ended.`, 400);
+      const floor = countyThreshold();
+      const T = threshold === null || threshold === void 0 ? floor : Number(threshold);
+      if (!Number.isInteger(T) || T < floor || T > MAX_THRESHOLD) refuse("threshold", `The threshold must be a whole number from ${floor} (the county's own) to ${MAX_THRESHOLD}.`, 400);
+      const over = overlapping(from, to);
+      if (over.length) {
+        const o = over[0];
+        refuse("overlap", `A release for ${K.humanPeriod(o.period_from, o.period_to)} was already published (${K.humanDay(o.created_at)}). Two releases whose periods overlap could be subtracted from each other, so this period cannot be published${over.length > 1 ? ` (${over.length} releases overlap it)` : ""}. A withdrawn release still counts: it was seen.`, 409);
+      }
+      const d = K.combined(from, to, { entered });
+      const counted = d.programmes.filter((p) => p.status !== "none");
+      if (!counted.length) refuse("no_figures", `No program has figures for ${K.humanPeriod(from, to)}${entered ? "" : " once figures entered by the county are left out"}: there is nothing to publish.`);
+      const rowOf = (g, k) => d.rows.find((r2) => r2.group === g && r2.key === k);
+      const inputs = { programmes: counted.map((p) => ({ values: Object.fromEntries(CPA.SCREENED.map((m) => [m, rowOf("outcome", m).by[p.id] || 0])) })) };
+      const r = await require_publication_release().runAudit(inputs, T, { kind: "county" });
+      if (r.refused) {
+        const e = new PublicationError("refused", r.refused.backstop ? CPA.refusalMessage({ backstop: true }) : r.refused.message);
+        e.refusal = { reason: r.refused.backstop ? "backstop" : r.refused.out_of_budget ? "budget" : "unprotected", unprotected: r.refused.unprotected || 0, ...r.audit ? { steps: r.audit.steps, rounds: r.audit.rounds } : {} };
+        throw e;
+      }
+      const screened = new Set(CPA.SCREENED);
+      const rows = d.rows.map((x) => {
+        const out2 = { section: SECTION[x.group], group: x.group, key: x.key, label: x.label, money: !!x.money };
+        if (x.group === "outcome" && screened.has(x.key)) {
+          out2.value = r.shown[x.key];
+          out2.screened = true;
+          if (r.reason[x.key]) {
+            out2.suppressed = r.reason[x.key];
+          }
+        } else out2.value = x.total;
+        return out2;
+      });
+      const suppressed = rows.filter((x) => x.suppressed).map((x) => ({ key: x.key, label: x.label, shown: x.value, reason: x.suppressed, why: suppressedWhy(x.suppressed, T) }));
+      const enteredProgs = counted.filter((p) => p.source === K.ENTERED || p.source === "mixed");
+      const content = {
+        format: FORMAT2,
+        schema_version: SCHEMA_VERSION,
+        county: { code: K.formatCode(K.countyCode().code), name: db3.getSetting("org_name", "") || "" },
+        period: { from, to },
+        method: methodOf(T, entered),
+        release_id: r.id,
+        programmes: counted.map((p) => ({ name: p.name, coverage: p.status, source: p.source })),
+        figures_entered_by_the_county: { counted: entered, programmes: enteredProgs.map((p) => p.name), left_out: (d.entered_left_out || []).map((p) => p.name) },
+        rows,
+        suppressed,
+        withheld: (r.withheld_reasons || []).map((w) => ({ key: w.measure, reason: w.reason, why: w.why })),
+        notes: notesOf(T, entered, enteredProgs, d)
+      };
+      checkAggregate(content);
+      return { content, sha256: K.sha256Hex(K.canonical(content)), audit: r.audit, T };
+    }
+    function methodOf(T, entered) {
+      return {
+        name: METHOD_NAME,
+        threshold: T,
+        screened_measures: CPA.SCREENED,
+        exact: "money and the outcomes that are not counts of people",
+        differencing: "audited against the county totals and every program's own publication release (each program's figure as its own release would show it at most)",
+        entered: entered ? "include" : "exclude",
+        suds_version: config2.version
+      };
+    }
+    function notesOf(T, entered, enteredProgs, d) {
+      const n = [
+        `Combined figures of the programs listed, for the whole period. ${K.PERIOD_RULE}`,
+        "Counts of people are each program's own count, added up: a person served by two programs counts twice. They are not unduplicated.",
+        `Counts of people and of events are screened: a total from 1 to ${T - 1} is shown as "<${T}", and a total that could be subtracted with the programs' own published figures to reveal a small one is "suppressed". Zero is shown as 0. Money, contacts, kits, test strips, syringes, education sessions and staff training hours are not counts of people and are exact.`,
+        "Suppressed and withheld figures are listed with why, never with their values. Screened automatically by SUDS's method; not an expert determination."
+      ];
+      if (!entered) n.push(`Figures entered by the county were left out${d.entered_left_out && d.entered_left_out.length ? ` (${d.entered_left_out.map((p) => p.name).join("; ")})` : ""}: only files the programs signed are counted.`);
+      else if (enteredProgs.length) n.push(`Figures of ${enteredProgs.map((p) => p.name).join("; ")} were ${K.ENTERED_LABEL}: typed or imported by the county's staff from a document the program sent.`);
+      return n;
+    }
+    var ALLOWED = /* @__PURE__ */ new Set([
+      "format",
+      "schema_version",
+      "county",
+      "code",
+      "name",
+      "period",
+      "from",
+      "to",
+      "method",
+      "threshold",
+      "screened_measures",
+      "exact",
+      "differencing",
+      "entered",
+      "suds_version",
+      "release_id",
+      "programmes",
+      "coverage",
+      "source",
+      "figures_entered_by_the_county",
+      "counted",
+      "left_out",
+      "rows",
+      "section",
+      "group",
+      "key",
+      "label",
+      "money",
+      "value",
+      "screened",
+      "suppressed",
+      "shown",
+      "reason",
+      "why",
+      "withheld",
+      "notes"
+    ]);
+    function checkAggregate(v) {
+      if (Array.isArray(v)) {
+        v.forEach(checkAggregate);
+        return;
+      }
+      if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) {
+        if (!ALLOWED.has(k)) throw new Error(`a county publication release may not carry ${k}`);
+        checkAggregate(x);
+      }
+    }
+    function record(prep, { from, to, entered }, user) {
+      const id = uuid2();
+      db3.transaction(() => {
+        const o = overlapping(from, to)[0];
+        if (o) refuse("overlap", `A release for ${K.humanPeriod(o.period_from, o.period_to)} was published while this one was being prepared: two releases whose periods overlap could be subtracted from each other.`, 409);
+        db3.run(
+          `INSERT INTO county_publications(id,kind,period_from,period_to,threshold,entered,method,content,sha256,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+          id,
+          "release",
+          from,
+          to,
+          prep.T,
+          entered ? "include" : "exclude",
+          JSON.stringify(prep.content.method),
+          K.canonical(prep.content),
+          prep.sha256,
+          user ? user.id : null
+        );
+      });
+      return get(id);
+    }
+    function withdraw(id, reason, user) {
+      const rel = db3.one(`SELECT * FROM county_publications WHERE id=? AND kind='release'`, id);
+      if (!rel) return null;
+      if (db3.one(`SELECT 1 x FROM county_publications WHERE release_id=?`, id)) refuse("withdrawn", "This release was already withdrawn.", 409);
+      const wid = uuid2();
+      db3.run(
+        `INSERT INTO county_publications(id,kind,release_id,period_from,period_to,threshold,entered,method,sha256,reason_enc,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+        wid,
+        "withdrawal",
+        id,
+        rel.period_from,
+        rel.period_to,
+        rel.threshold,
+        rel.entered,
+        rel.method,
+        rel.sha256,
+        encrypt3(reason),
+        user ? user.id : null
+      );
+      return get(id);
+    }
+    var userName = (id) => {
+      if (!id) return null;
+      const u = db3.one(`SELECT display_name, username FROM users WHERE id=?`, id);
+      return u ? u.display_name || u.username : null;
+    };
+    function get(id, { reasons = false, content = true } = {}) {
+      const r = db3.one(`SELECT * FROM county_publications WHERE id=? AND kind='release'`, id);
+      if (!r) return null;
+      const w = db3.one(`SELECT * FROM county_publications WHERE release_id=?`, id);
+      const c = JSON.parse(r.content);
+      return {
+        id: r.id,
+        period_from: r.period_from,
+        period_to: r.period_to,
+        threshold: r.threshold,
+        entered: r.entered,
+        method: JSON.parse(r.method),
+        sha256: r.sha256,
+        published_at: r.created_at,
+        published_by: userName(r.created_by),
+        release_id: c.release_id,
+        status: w ? "withdrawn" : "published",
+        withdrawal: w ? { id: w.id, at: w.created_at, by: userName(w.created_by), ...reasons ? { reason: decrypt3(w.reason_enc) } : {} } : null,
+        ...content ? { content: c } : { programmes: c.programmes.length, suppressed: c.suppressed.length, withheld: c.withheld.length }
+      };
+    }
+    function list({ reasons = false } = {}) {
+      return db3.all(`SELECT id FROM county_publications WHERE kind='release' ORDER BY period_from DESC, created_at DESC`).map((r) => get(r.id, { reasons, content: false }));
+    }
+    var cell = (v) => v;
+    function sheets(rec) {
+      const c = rec.content;
+      const about = [
+        { k: "Report", v: `County publication release: combined settlement spending and outcomes of ${c.programmes.length} program${c.programmes.length === 1 ? "" : "s"}` },
+        { k: "County", v: c.county.name },
+        { k: "Period", v: `${c.period.from} to ${c.period.to}` },
+        { k: "Classification", v: "Publication release: screened for small cells; for publication." },
+        { k: "Release", v: rec.id },
+        { k: "SHA-256 of the release", v: rec.sha256 },
+        { k: "Published", v: rec.published_at },
+        { k: "Published by", v: rec.published_by || "" },
+        ...rec.status === "withdrawn" ? [{ k: "Status", v: `WITHDRAWN on ${rec.withdrawal.at}: do not use these figures.` }] : [{ k: "Status", v: "Published" }],
+        { k: "Method", v: c.method.name },
+        { k: "Threshold", v: String(c.method.threshold) },
+        { k: "Differencing", v: c.method.differencing },
+        { k: "Programs", v: c.programmes.map((p) => `${p.name}${p.coverage === "part" ? " (part of the period)" : ""}${p.source === K.ENTERED ? ` (${K.ENTERED_LABEL})` : p.source === "mixed" ? ` (some figures ${K.ENTERED_LABEL})` : ""}`).join("; ") },
+        { k: "Figures entered by the county", v: c.figures_entered_by_the_county.counted ? c.figures_entered_by_the_county.programmes.length ? `Counted: ${c.figures_entered_by_the_county.programmes.join("; ")}` : "Counted (none in this period)" : `Left out${c.figures_entered_by_the_county.left_out.length ? `: ${c.figures_entered_by_the_county.left_out.join("; ")}` : ""}` },
+        ...c.notes.map((n, i) => ({ k: `Note ${i + 1}`, v: n }))
+      ];
+      const figures = c.rows.map((x) => ({ section: x.section, measure: x.label, value: cell(x.value), note: x.suppressed ? { small: "small", complementary: "suppressed", withheld: "withheld" }[x.suppressed] : "" }));
+      const notes = [...c.suppressed.map((s) => ({ measure: s.label, shown: s.shown, why: s.why })), ...c.withheld.map((w) => ({ measure: MAP.INDICATORS[w.key] ? K.measureLabel(w.key) : w.key, shown: SC.WITHHELD, why: w.why }))];
+      if (!notes.length) notes.push({ measure: "Nothing", shown: "", why: "No figure of this release was suppressed or withheld." });
+      return {
+        about,
+        figures,
+        notes,
+        aboutCols: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }],
+        figureCols: [{ key: "section", label: "Section" }, { key: "measure", label: "Measure" }, { key: "value", label: "County total" }, { key: "note", label: "Screened" }],
+        noteCols: [{ key: "measure", label: "Measure" }, { key: "shown", label: "Shown as" }, { key: "why", label: "Why (the value is never given)" }]
+      };
+    }
+    module.exports = { prepare, record, withdraw, get, list, sheets, overlapping, countyThreshold, checkAggregate, PublicationError, FORMAT: FORMAT2, SCHEMA_VERSION, METHOD_NAME, MAX_THRESHOLD, REVIEW_CONFIRMATION };
+  }
+});
+
 // server/routes/county-connect.js
 var require_county_connect2 = __commonJS({
   "server/routes/county-connect.js"(exports, module) {
@@ -34835,6 +35242,16 @@ var require_county_connect2 = __commonJS({
         });
         audit3.log({ user: CC.actor(t), action: "county.api.read", ip: ctx.ip, details: { what: "programs", token_id: t.id, programmes: rows.length } });
         return { rows, notes: { classification: "Internal: for authorised county staff and systems only.", source: `A programme's source is "signed" (it runs SUDS and signs its files) or "county_entered" (not on SUDS: ${K.ENTERED_LABEL}); each period's source says which its figures are.` } };
+      });
+      r.get("/api/county-connect/v1/publications", (ctx) => {
+        const t = machine(ctx, CC.SCOPES.read, CC.LIMITS.readPerToken);
+        const PUB = require_county_publication();
+        const rows = PUB.list().map((x) => {
+          const rec = PUB.get(x.id);
+          return { id: rec.id, period: { from: rec.period_from, to: rec.period_to }, status: rec.status, published_at: rec.published_at, withdrawn_at: rec.withdrawal ? rec.withdrawal.at : null, sha256: rec.sha256, release: rec.content };
+        });
+        audit3.log({ user: CC.actor(t), action: "county.api.read", ip: ctx.ip, details: { what: "publications", token_id: t.id, releases: rows.length } });
+        return { rows, notes: { classification: "Publication releases: screened for small cells, for publication. A withdrawn release must not be used.", hash: "sha256 is of the release's canonical JSON (keys sorted, no whitespace), as recorded when it was published." } };
       });
       r.get("/api/county-connect/settings", auth3.requireAuth, auth3.requirePerm("county:view"), (ctx) => CC.settings({ user: ctx.user, ip: ctx.ip }));
       r.put("/api/county-connect/settings", auth3.requireAuth, auth3.requirePerm("county:manage"), auth3.requirePerm("settings:manage"), (ctx) => {
@@ -35831,6 +36248,108 @@ var require_county2 = __commonJS({
           "X-SUDS-Report-Purpose": "internal"
         });
         ctx.res.end(format === "xlsx" ? S.writeWorkbook([{ name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: about }, { name: "Combined", columns: matrixCols, rows: matrix }, { name: "Submissions", columns: subCols, rows: subs }, { name: "Tidy", columns: tidyCols, rows: tidy }]) : format === "tidy" ? S.toCsv(tidy, tidyCols) : S.toCsv([...about.map((a) => ({ group: "About", measure: a.k, total: a.v })), ...matrix], matrixCols));
+      });
+      const PUB = require_county_publication();
+      const pubChoices = (body) => {
+        const v = validate(body || {}, { from: { type: "string", required: true, maxLen: 10 }, to: { type: "string", required: true, maxLen: 10 }, entered: { type: "string", maxLen: 10 }, threshold: { type: "number", integer: true } });
+        if (v.entered !== void 0 && v.entered !== null && v.entered !== "" && !["include", "exclude"].includes(v.entered)) throw badRequest("entered must be include or exclude.", { fields: { entered: "must be include or exclude" } });
+        return { from: v.from, to: v.to, entered: v.entered !== "exclude", threshold: v.threshold === void 0 || v.threshold === null ? null : v.threshold };
+      };
+      const preparePub = async (ctx, c, action) => {
+        code(ctx);
+        try {
+          return await PUB.prepare(c, { today: today() });
+        } catch (e) {
+          if (!(e instanceof PUB.PublicationError)) throw e;
+          audit3.log({ user: ctx.user, action: "county.publication.refuse", ip: ctx.ip, success: false, details: { step: action, from: c.from, to: c.to, entered: c.entered ? "include" : "exclude", threshold: c.threshold || void 0, reason: e.code, ...e.refusal || {} } });
+          throw new HttpError3(e.status, e.message, { reason: e.code });
+        }
+      };
+      const pubDetails = (c, p) => ({
+        from: c.from,
+        to: c.to,
+        threshold: p.T,
+        entered: c.entered ? "include" : "exclude",
+        sha256: p.sha256,
+        release_id: p.content.release_id,
+        programmes: p.content.programmes.length,
+        entered_programmes: p.content.figures_entered_by_the_county.programmes.length || void 0,
+        suppressed: p.content.suppressed.map((x) => `${x.key}:${x.reason}`),
+        withheld: p.content.withheld.map((x) => x.key)
+      });
+      r.post("/api/county/publications/prepare", ...manage, async (ctx) => {
+        const c = pubChoices(ctx.body);
+        const p = await preparePub(ctx, c, "prepare");
+        audit3.log({ user: ctx.user, action: "county.publication.prepare", ip: ctx.ip, details: pubDetails(c, p) });
+        return { content: p.content, sha256: p.sha256, threshold: p.T, county_threshold: PUB.countyThreshold(), max_threshold: PUB.MAX_THRESHOLD, review_confirmation: PUB.REVIEW_CONFIRMATION };
+      });
+      r.post("/api/county/publications", ...manage, async (ctx) => {
+        const c = pubChoices(ctx.body);
+        const v = validate(ctx.body || {}, { sha256: { type: "string", required: true, maxLen: 64 } });
+        if (!ctx.body || ctx.body.reviewed !== true) throw new HttpError3(428, `Before publishing, review the release and confirm it: "${PUB.REVIEW_CONFIRMATION}" (reviewed: true). Small figures are screened automatically, which is a conservative default, not a guarantee or an expert determination.`, { reason: "review_required" });
+        const p = await preparePub(ctx, c, "publish");
+        if (p.sha256 !== v.sha256) {
+          audit3.log({ user: ctx.user, action: "county.publication.refuse", ip: ctx.ip, success: false, details: { step: "publish", from: c.from, to: c.to, reason: "changed", reviewed_sha256: v.sha256, sha256: p.sha256 } });
+          throw new HttpError3(409, "The figures changed since you prepared this release (a file was imported, withdrawn or reinstated, or figures were entered). Prepare it again and review what would be published.", { reason: "changed" });
+        }
+        let rec;
+        try {
+          rec = PUB.record(p, c, ctx.user);
+        } catch (e) {
+          if (e instanceof PUB.PublicationError) throw new HttpError3(e.status, e.message, { reason: e.code });
+          throw e;
+        }
+        audit3.log({ user: ctx.user, action: "county.publication.publish", entity: "county_publication", entityId: rec.id, ip: ctx.ip, details: { ...pubDetails(c, p), method: p.content.method.name, confirmation: PUB.REVIEW_CONFIRMATION } });
+        ctx.status = 201;
+        return rec;
+      });
+      r.get("/api/county/publications", ...view, (ctx) => {
+        const rows = PUB.list();
+        audit3.log({ user: ctx.user, action: "county.view", ip: ctx.ip, details: { what: "publications", count: rows.length } });
+        return { rows };
+      });
+      r.get("/api/county/publications/:id", ...view, (ctx) => {
+        const rec = PUB.get(ctx.params.id, { reasons: auth3.hasPerm(ctx.user, "county:manage") });
+        if (!rec) throw notFound("Publication release not found");
+        audit3.log({ user: ctx.user, action: "county.view", entity: "county_publication", entityId: rec.id, ip: ctx.ip, details: { what: "publication", from: rec.period_from, to: rec.period_to } });
+        return rec;
+      });
+      r.get("/api/county/publications/:id/export", ...view, auth3.requirePerm("export:read"), (ctx) => {
+        const rec = PUB.get(ctx.params.id);
+        if (!rec) throw notFound("Publication release not found");
+        const format = ["xlsx", "json"].includes(ctx.query.get("format")) ? ctx.query.get("format") : "csv";
+        audit3.log({ user: ctx.user, action: "county.publication.export", entity: "county_publication", entityId: rec.id, ip: ctx.ip, details: { from: rec.period_from, to: rec.period_to, format, sha256: rec.sha256, status: rec.status } });
+        const S = require_spreadsheet();
+        const x = PUB.sheets(rec);
+        const name = `suds-county-publication-${rec.period_from}_${rec.period_to}${rec.status === "withdrawn" ? "-WITHDRAWN" : ""}`;
+        const type = format === "xlsx" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : format === "json" ? "application/json; charset=utf-8" : "text/csv; charset=utf-8";
+        ctx.res.writeHead(200, {
+          "Content-Type": type,
+          "Content-Disposition": `attachment; filename="${name}.${format}"`,
+          "X-SUDS-Export": `County publication release ${rec.id}: combined figures screened for small cells, for publication${rec.status === "withdrawn" ? " (WITHDRAWN: do not use)" : ""}. No client-level data.`,
+          "X-SUDS-Report-Counts": `suppressed (threshold ${rec.threshold})`,
+          "X-SUDS-Report-Purpose": "publication"
+        });
+        if (format === "json") {
+          ctx.res.end(JSON.stringify({ id: rec.id, sha256: rec.sha256, status: rec.status, published_at: rec.published_at, withdrawn_at: rec.withdrawal ? rec.withdrawal.at : null, release: rec.content }, null, 2) + "\n");
+          return;
+        }
+        ctx.res.end(format === "xlsx" ? S.writeWorkbook([{ name: "About", columns: x.aboutCols, rows: x.about }, { name: "Figures", columns: x.figureCols, rows: x.figures }, { name: "Notes", columns: x.noteCols, rows: x.notes }]) : S.toCsv([...x.about.map((a) => ({ section: "About", measure: a.k, value: a.v })), ...x.figures, ...x.notes.map((n) => ({ section: "Suppressed or withheld", measure: n.measure, value: n.shown, note: n.why }))], x.figureCols));
+      });
+      r.post("/api/county/publications/:id/withdraw", ...manage, (ctx) => {
+        const v = validate(ctx.body || {}, { reason: { type: "string", required: true, maxLen: 500 } });
+        const reason = K.cleanText(v.reason, 500);
+        if (reason.length < 3) throw badRequest("Say why the release is withdrawn.", { fields: { reason: "required" } });
+        let rec;
+        try {
+          rec = PUB.withdraw(ctx.params.id, reason, ctx.user);
+        } catch (e) {
+          if (e instanceof PUB.PublicationError) throw new HttpError3(e.status, e.message, { reason: e.code });
+          throw e;
+        }
+        if (!rec) throw notFound("Publication release not found");
+        audit3.log({ user: ctx.user, action: "county.publication.withdraw", entity: "county_publication", entityId: rec.id, ip: ctx.ip, details: { from: rec.period_from, to: rec.period_to, sha256: rec.sha256, withdrawal_id: rec.withdrawal.id } });
+        return rec;
       });
     };
   }
@@ -50208,6 +50727,15 @@ var require_db = __commonJS({
       (d) => {
         addColumn(d, "county_programmes", "on_suds", "INTEGER NOT NULL DEFAULT 1");
         if (tableExists(d, "county_submissions") && !tableCols(d, "county_submissions").includes("source")) rebuildTable(d, safeSchema(), "county_submissions");
+      },
+      // 61: county publication releases (built for 1.21.0, not yet released; docs/COUNTY-VIEW.md "Publication"):
+      //     county_publications, each screened release of the combined figures a county published and each withdrawal,
+      //     append-only (its triggers, as schema.sql declares them). A new table: nothing to backfill. Self-contained and
+      //     idempotent, so it can be renumbered.
+      (d) => {
+        const text = safeSchema();
+        createTablesFromSchema(d, text, ["county_publications"], 61);
+        for (const m of text.matchAll(/CREATE TRIGGER IF NOT EXISTS county_publications_\w+ [\s\S]*?END;/g)) d.exec(m[0]);
       }
     ];
     var PERF_INDEXES_47 = [

@@ -237,13 +237,16 @@ navigation still shows County view while any programme is registered, active or 
   to the list's heading. Which files count toward a chosen period is on the combined view, not here.
 - **Programs** (`#/county?tab=programmes`): this county's code; register, rename, add notes, deactivate (and keep
   counting); **Keys** for each programme's key history.
+- **Publish** (`#/county?tab=publish`; built for 1.21.0, not yet released): a screened publication release of the
+  combined figures for a period, and the releases published ([Publication](#publication), below).
 
 Every read and write is audited: `county.view`, `county.export`, `county.code.create`, `county.programme.add`,
 `county.programme.update`, `county.programme.deactivate`, `county.programme.reactivate`,
 `county.programme.key.replace|compromised|trusted`, `county.submission.import` (with its status: imported,
 superseded or older) and `.duplicate`, `county.submission.refuse`, `county.submission.throttled`,
 `county.submission.withdraw` (with the reason), `county.submission.reinstate`; for figures the county entered (released in
-1.20.0), `county.entry.create|update|import|refuse|withdraw|reinstate`. On the programme's side:
+1.20.0), `county.entry.create|update|import|refuse|withdraw|reinstate`; for publication releases (built for 1.21.0, not
+yet released), `county.publication.prepare|publish|refuse|export|withdraw`. On the programme's side:
 `county_submission.key.create`, `county_submission.key.rotate`, `county_submission.export`. The audit entries carry
 ids, periods, fingerprints and hashes, never figures.
 
@@ -275,7 +278,7 @@ not withdrawn), signed by a key not marked compromised, from an active programme
 | Permission | Who holds it by default | What it allows |
 | --- | --- | --- |
 | `county:view` | Administrator, supervisor, finance | The combined view and its files (with `export:read`), the list of programmes and files, the county code |
-| `county:manage` (sensitive) | Administrator | Register, change, deactivate programmes and replace or distrust their keys (it decides whose figures the county accepts); import, withdraw and reinstate files; register a programme not on SUDS and enter or import its figures (released in 1.20.0) |
+| `county:manage` (sensitive) | Administrator | Register, change, deactivate programmes and replace or distrust their keys (it decides whose figures the county accepts); import, withdraw and reinstate files; register a programme not on SUDS and enter or import its figures (released in 1.20.0); prepare, publish and withdraw publication releases (built for 1.21.0, not yet released) |
 
 Neither can be granted to a role that does not see exact aggregate counts (`reports:exact` or `reports:funder`):
 **read-only**, navigators and clinicians (`server/permissions.js` `grantProblem`). Read-only's reports are
@@ -536,6 +539,83 @@ county's staff are accountable for it through the audit log and the source docum
 agreement says what the county may enter ([market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md),
 section 8).
 
+## Publication
+
+*Built for 1.21.0, not yet released. Office server only. Migration 61; `server/county-publication.js`,
+`server/county-publication-audit.js`.*
+
+The combined view is internal: exact figures for authorised county staff. **County view › Publish**
+(`#/county?tab=publish`) is the publication screen over the combined release: it makes a **screened, publishable
+release** of the combined figures for a period, records it, and never changes it.
+
+- **What is published.** For one period that has ended (the whole period; not by quarter): the programs whose figures
+  count (by name, with *part of the period* where it applies, and which were entered by the county), and the county
+  totals of the combined view's rows: spending (approved, pending, by allowable use, by HIAA) and the thirteen outcomes.
+  Never a program's own column, a file, a fingerprint or anything about a client. Money and the outcomes that are not
+  counts of people (contacts, kits, test strips, syringes, education sessions, staff training hours:
+  `settlement-outcome-map.js` kind `count`) are exact, as in a program's own publication release. The totals of
+  people and of events that each happen to one person (people served, referrals made, people linked to care and to
+  MOUD, people trained, reversals, treatment admissions) are **screened**.
+- **The method is the program's own** (`server/sdc.js` `protect`, [HIPAA.md](HIPAA.md#small-cells-in-aggregate-reports),
+  [ADR-0009](architecture/ADR-0009-publication-release.md)): a total from 1 to T-1 is shown `<T`; more is hidden
+  (`suppressed`) until every small count is protected, against the printout and against the method (an attacker who
+  knows the code); a total the check cannot protect is `withheld` with why; a release that still cannot be shown safe,
+  or whose check runs out of its budget, is **refused** (`422`, audited with why). Deterministic: the same counted
+  files and choices give the same release and hash.
+- **Audited against every program's own release** (DATA-NETWORK, *The basis*). Each program may publish its own
+  release, so a reader may hold every program's own figure and subtract. The model gives the reader the most a
+  program's own release can say: each program's figure for each measure as a cell that release prints, its number
+  when 0 or at least T and `<T` when 1 to T-1 (`sdc.js` `fixed`: shown by the primary rule, never hidden or withheld
+  by this audit). The county totals are hidden until every program's small figure is protected against the totals
+  and every other program's figures: a county total of 357 beside programs whose own releases print 200 and 150 and
+  `<11` is suppressed, since 357 − 200 − 150 = 7. Within a program, people linked to MOUD are among those linked to
+  care, and those among the people served (held where the figures keep them); measures tied by nothing are audited
+  apart, each within its own budget (60 programs with a third of their figures small take about 2 seconds). The attack is in the tests twice: a
+  brute force over every split of the small figures (`test/county-publication.test.js`), and the algorithm-aware
+  attacker over whole families of counties, one of the SDC attacker sweeps (`test/county-publication-sdc.test.js`,
+  full size in CI's `thorough-sdc` job).
+- **Figures the county entered** count by the combined view's own rule (D1–D5 above: a signed file outranks them), are
+  named in the release as *entered by the county — not signed by the program*, and can be left out (**Leave out
+  figures entered by the county**, `entered: "exclude"`), which the release then says.
+- **Prepare, review, publish.** A county manager (`county:manage`) chooses the period (and may raise the threshold),
+  **Check the figures** shows what would be published (nothing is recorded; audited `county.publication.prepare`
+  with the hash and what was suppressed, never a figure), ticks *I have reviewed the suppressed figures and the
+  programs named before publishing*, and **Publish**es. The server screens again and publishes only if the figures
+  still give the hash reviewed (a file imported, withdrawn or entered since: `409`, prepare again).
+- **The record.** Each release is a row of `county_publications`: who published it, when, the period, the method's
+  parameters (threshold, whether entered figures counted, the SUDS version) and the canonical JSON of exactly what was
+  published with its SHA-256 (audited `county.publication.publish`). The table is append-only in the database itself
+  (triggers refuse an UPDATE or DELETE of anything but the encrypted reason key rotation re-encrypts). **Withdraw**
+  (with a reason) adds a withdrawal row of its own (the reason encrypted; audited `county.publication.withdraw`
+  without it); the release stays as published and is shown and exported marked *withdrawn: do not use*.
+- **Overlapping periods are refused.** Two releases whose periods overlap could be subtracted from each other (a year
+  beside its quarters), so a period that overlaps any release already published is refused (`409`, `overlap`), a
+  withdrawn one included: it was seen.
+- **Files.** On screen (the release's dialog, with its hash), CSV, Excel (sheets About, Figures and **Notes**: each
+  suppressed or withheld figure and why, never its value) and JSON (`county:view` with `export:read`, audited
+  `county.publication.export`); the read API's `GET /api/county-connect/v1/publications` (read token) lists every
+  release as published, with its status.
+- **Not a disclosure.** A release is aggregates, program names and labels; `county-publication.js` `checkAggregate`
+  refuses content with any other key. Nothing in it can name a client, so it does not pass through
+  `server/disclosure.js`.
+- **Permissions.** `county:manage` prepares, publishes and withdraws; `county:view` lists and reads releases; the
+  files need `export:read`. No new permission.
+
+**Owner decisions** (conservative defaults, built for 1.21.0, not yet released; each can be relaxed later):
+
+1. *The reader holds the most any program's own release could say*: every program figure of 0 or at least T is
+   assumed published exactly. A county with one small program beside published big ones gets that measure's total
+   suppressed, even if the programs publish nothing.
+2. *The threshold is the county's own* (`small_cell_threshold`, 11 by default), raised per release if wanted, never
+   lowered. A county should set it at least as high as the highest threshold its programs publish with: a program's
+   figure between the county's and its own threshold is assumed printed exactly.
+3. *No corrected release of a period*: any overlap with a release already published, withdrawn or not, is refused.
+4. *Whole period, totals only*: no by-quarter release and no program columns in this version.
+5. *Entered figures counted by default*, as on the combined view, and named; the preparer can leave them out.
+6. *Publishing needs the review ticked and the hash reviewed*; the withdrawal's reason is kept encrypted with it, not in
+   the audit log, and shown to `county:manage` only.
+7. *Independent of the program's Modules › publication switch*: a county-only install publishes with `county:manage`.
+
 ## Not on SUDS on this device
 
 The routes are office-server only (`server/app.js` `LOCAL_ROUTE_MODULES`; `test/county-device.test.js`): SUDS on
@@ -545,10 +625,10 @@ office-only too (`county-connect` in `LOCAL_ROUTE_MODULES`'s exclusions; `test/c
 
 ## Deferred
 
-- **Publication.** Nothing here publishes anything. Publishing combined figures needs **the publication screen
-  over the combined release** (planned): the small-cell method audited over the county total *and* every
-  programme's own releases it could be differenced against (DATA-NETWORK, *The basis*). The page and its files say
-  so.
+- **Publication** is built for 1.21.0, not yet released: **the publication screen over the combined release**
+  ([Publication](#publication), above), the small-cell method audited over the county total *and* every programme's
+  own releases it could be differenced against (DATA-NETWORK, *The basis*). Still deferred: a corrected release of a
+  period already published, a release by quarter, and program columns in a release.
 - **Award and contract amounts per fund** (spending against the award): needs the award in the file, so a schema
   version 2 of the payload.
 - **Reporting-cadence reminders on the programme's side** (the quarter the county expects, and whether its file was
@@ -578,6 +658,13 @@ County-entered figures (released in 1.20.0): `server/county-entry.js`, the entry
 `entered_via`, `source_ref_enc`); tests `test/county-entry.test.js` and `test/migrations.test.js` (migration 60 on a
 database with signed submissions); the browser script `scripts/ui/county.mjs` (section 4) and the dialogs in
 `scripts/ui/accessibility.mjs`.
+
+Publication releases (built for 1.21.0, not yet released): `server/county-publication.js` (prepare, record, withdraw,
+files), `server/county-publication-audit.js` (the model, over `server/sdc.js` with its `fixed` cells), the publication
+routes in `server/routes/county.js` and `/v1/publications` in `server/routes/county-connect.js`, the Publish tab in
+`public/views/county.js`; migration 61 (`county_publications`, append-only); tests `test/county-publication.test.js`
+and the attacker sweep `test/county-publication-sdc.test.js`; the browser script `scripts/ui/county-publication.mjs`,
+and the Publish tab and its dialogs in `scripts/ui/accessibility.mjs`.
 
 The county connection: `server/county-connect.js`, `server/county-connect-client.js`,
 `server/routes/county-connect.js`, `public/views/countyconnect.js`; migration 57 (`county_connect_tokens`,

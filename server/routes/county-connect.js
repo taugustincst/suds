@@ -8,6 +8,8 @@
 //     GET  /api/county-connect/v1/status        what the county expects of the calling programme (connection token)
 //     GET  /api/county-connect/v1/combined      the combined view for ?from&to[&format=json|tidy-csv] (read token)
 //     GET  /api/county-connect/v1/programs      the programmes and their files' periods (read token)
+//     GET  /api/county-connect/v1/publications  the county's publication releases, each as published, withdrawn ones
+//                                               marked (read token; built for 1.21.0, not yet released)
 //   The county's settings and tokens (signed in):
 //     GET  /api/county-connect/settings          on or off, the cadence, the endpoints (county:view)
 //     PUT  /api/county-connect/settings          switch on or off, the cadence and start (county:manage and settings:manage)
@@ -207,6 +209,16 @@ module.exports = (r) => {
     });
     audit.log({ user: CC.actor(t), action: 'county.api.read', ip: ctx.ip, details: { what: 'programs', token_id: t.id, programmes: rows.length } });
     return { rows, notes: { classification: 'Internal: for authorised county staff and systems only.', source: `A programme's source is "signed" (it runs SUDS and signs its files) or "county_entered" (not on SUDS: ${K.ENTERED_LABEL}); each period's source says which its figures are.` } };
+  });
+
+  // The county's publication releases (server/county-publication.js): each exactly as published (its screened content
+  // and SHA-256), a withdrawn one marked with when. Public figures, but read here with the same read token and limits.
+  r.get('/api/county-connect/v1/publications', (ctx) => {
+    const t = machine(ctx, CC.SCOPES.read, CC.LIMITS.readPerToken);
+    const PUB = require('../county-publication');
+    const rows = PUB.list().map(x => { const rec = PUB.get(x.id); return { id: rec.id, period: { from: rec.period_from, to: rec.period_to }, status: rec.status, published_at: rec.published_at, withdrawn_at: rec.withdrawal ? rec.withdrawal.at : null, sha256: rec.sha256, release: rec.content }; });
+    audit.log({ user: CC.actor(t), action: 'county.api.read', ip: ctx.ip, details: { what: 'publications', token_id: t.id, releases: rows.length } });
+    return { rows, notes: { classification: 'Publication releases: screened for small cells, for publication. A withdrawn release must not be used.', hash: 'sha256 is of the release\'s canonical JSON (keys sorted, no whitespace), as recorded when it was published.' } };
   });
 
   // ---- the county's settings and tokens ----

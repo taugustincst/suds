@@ -595,7 +595,7 @@ test('the combined view: per program and in total, who submitted for the whole p
   assert.equal(d.rows.find(x => x.key === 'people_served').label, 'People served (each program\'s own count, summed)');
   for (const k of ['people_served', 'referrals_made', 'people_linked', 'moud_linked', 'people_trained']) assert.match(d.rows.find(x => x.key === k).label, /each program's own count, summed/);
   assert.ok(!/unduplicated/i.test(JSON.stringify({ ...d, indicators: undefined })), 'never "unduplicated"');
-  assert.ok(d.caveats.some(c => /counted twice/.test(c))); assert.match(d.publication_note, /publication screen over the combined release \(planned\)/); assert.ok(d.caveat_summary);
+  assert.ok(d.caveats.some(c => /counted twice/.test(c))); assert.match(d.publication_note, /Publish \(built for 1\.21\.0, not yet released\)/); assert.ok(d.caveat_summary);
   assert.ok(byName[samples[0].name].submissions[0].received_at);
   const a = lastAudit('county.view'); assert.equal(a.details.what, 'combined'); assert.ok(!JSON.stringify(a.details).includes('naloxone'));
   // Both quarters: the totals are the sum of every file, and the programs add up to the total.
@@ -667,7 +667,7 @@ test('the combined view as Excel, CSV and a tidy CSV: labelled internal and exac
   assert.equal(csv.status, 200);
   assert.match(csv.headers.get('content-disposition'), /suds-county-view-2026-01-01_2026-06-30-internal-exact\.csv/);
   assert.equal(csv.headers.get('x-suds-report-counts'), 'exact');
-  assert.match(csv.data, /Internal — exact counts/); assert.match(csv.data, /counted twice/); assert.match(csv.data, /publication screen over the combined release \(planned\)/);
+  assert.match(csv.data, /Internal — exact counts/); assert.match(csv.data, /counted twice/); assert.match(csv.data, /use Publish \(built for 1\.21\.0, not yet released\)/);
   assert.ok(!/unduplicated/i.test(csv.data), 'U1: never "unduplicated" in the export');
   assert.match(csv.data, /2 of 3 programs submitted for the whole period, 0 for part of it, 1 not at all\./, 'U2: the headline');
   assert.match(csv.data, /Total \(2 of 3 programs complete\)/, 'M6: the total says how many are complete');

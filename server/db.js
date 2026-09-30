@@ -767,6 +767,15 @@ const migrations = [
     addColumn(d, 'county_programmes', 'on_suds', 'INTEGER NOT NULL DEFAULT 1');
     if (tableExists(d, 'county_submissions') && !tableCols(d, 'county_submissions').includes('source')) rebuildTable(d, safeSchema(), 'county_submissions');
   },
+  // 61: county publication releases (built for 1.21.0, not yet released; docs/COUNTY-VIEW.md "Publication"):
+  //     county_publications, each screened release of the combined figures a county published and each withdrawal,
+  //     append-only (its triggers, as schema.sql declares them). A new table: nothing to backfill. Self-contained and
+  //     idempotent, so it can be renumbered.
+  (d) => {
+    const text = safeSchema();
+    createTablesFromSchema(d, text, ['county_publications'], 61);
+    for (const m of text.matchAll(/CREATE TRIGGER IF NOT EXISTS county_publications_\w+ [\s\S]*?END;/g)) d.exec(m[0]);
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

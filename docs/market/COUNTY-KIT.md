@@ -44,7 +44,7 @@ line says **[owner to complete]**.
   county enters no more of its figures ([../COUNTY-VIEW.md](../COUNTY-VIEW.md), *County-entered figures*).
 
 What it does **not** get, and must not be promised: a published or public dashboard (the publication screen over
-the combined release is planned, not built); benchmarks or rankings across CBOs (Tier 2, not built); people counted
+the combined release is built for 1.21.0, not yet released: screened releases of the combined figures, not a dashboard); benchmarks or rankings across CBOs (Tier 2, not built); people counted
 once across CBOs (never: a person served by two CBOs counts twice, and the view says so); a check that the
 figures match the county's own reporting template or DHCS's current form (not yet done: STRATEGY §2,
 *Dependency*).

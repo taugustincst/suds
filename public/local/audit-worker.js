@@ -714,7 +714,7 @@
         function run(values, forced = []) {
           const w = world(values);
           const withheldTables = new Set(forced);
-          const hideable = (s2, i) => s2[i] === "vis" && vars[i].published && values[i] > 0 && !withheldTables.has(vars[i].table);
+          const hideable = (s2, i) => s2[i] === "vis" && vars[i].published && !vars[i].fixed && values[i] > 0 && !withheldTables.has(vars[i].table);
           const withStatus = (s2, i, x) => {
             const t = s2.slice();
             t[i] = x;
@@ -723,7 +723,7 @@
           };
           const withTable = (s2, table) => {
             const t = s2.slice();
-            for (const i of tableOf.get(table)) if (vars[i].published) t[i] = "withheld";
+            for (const i of tableOf.get(table)) if (vars[i].published && !vars[i].fixed) t[i] = "withheld";
             w.applyMirror(t);
             return t;
           };
@@ -750,7 +750,7 @@
             if (k.op !== "<=" || k.rhs !== 0 || k.terms.length !== 2) continue;
             const [[a, ca], [b, cb]] = k.terms;
             const [sub, tot] = ca === 1 && cb === -1 ? [a, b] : ca === -1 && cb === 1 ? [b, a] : [null, null];
-            if (sub !== null && hiddenTotals.has(tot) && vars[sub].people && s[sub] === "vis" && values[sub] >= T) s[sub] = "sec";
+            if (sub !== null && hiddenTotals.has(tot) && vars[sub].people && !vars[sub].fixed && s[sub] === "vis" && values[sub] >= T) s[sub] = "sec";
           }
           w.applyMirror(s);
           const watch = model.watch || {};
@@ -804,7 +804,7 @@
             const hl = model.headlineVar;
             if (hl === void 0 || st[hl] === "vis") return st;
             let t = null;
-            for (const i of model.companions || []) if (st[i] === "vis" && vars[i].published && values[i] >= T) {
+            for (const i of model.companions || []) if (st[i] === "vis" && vars[i].published && !vars[i].fixed && values[i] >= T) {
               t = t || st.slice();
               t[i] = "sec";
             }
@@ -860,7 +860,7 @@
             const seen = /* @__PURE__ */ new Set();
             for (const i of [...level.keys()].sort((a, b) => level.get(a) - level.get(b) || a - b)) {
               const t2 = vars[i].table;
-              if (seen.has(t2) || withheldTables.has(t2) || !vars[i].published) continue;
+              if (seen.has(t2) || withheldTables.has(t2) || !vars[i].published || vars[i].fixed) continue;
               seen.add(t2);
               tables.push(t2);
             }
@@ -1102,9 +1102,10 @@
           return out2;
         };
         const tablesFor = (id) => {
+          const own = (i) => model.vars[i].published && !model.vars[i].fixed;
           let idx = byId.has(id) ? [byId.get(id)] : (derivedById.get(id)?.terms || []).map(([j]) => j);
-          if (idx.some((i) => !model.vars[i].published)) idx = [...idx.filter((i) => model.vars[i].published), ...idx.filter((i) => !model.vars[i].published).flatMap(neighbours)];
-          const t = [...new Set(idx.filter((i) => model.vars[i].published).map((i) => model.vars[i].table))];
+          if (idx.some((i) => !own(i))) idx = [...idx.filter(own), ...idx.filter((i) => !own(i)).flatMap(neighbours)];
+          const t = [...new Set(idx.filter(own).map((i) => model.vars[i].table))];
           const other = t.filter((x) => !keep.has(x));
           return other.length ? other : t;
         };

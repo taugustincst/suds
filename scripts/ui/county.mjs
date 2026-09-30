@@ -244,7 +244,7 @@ try {
   ok(await adm.isVisible('[data-cv-caveat-summary]') && !(await adm.isVisible('[data-cv-caveats-full] ul')), 'U13: the caveats fold behind an always-visible summary');
   await adm.click('[data-cv-caveats-full] > summary');
   ok(/counted twice/.test(await adm.textContent('[data-cv-caveats]')), 'the caveats in full say a person may be counted twice');
-  ok(/publication screen over the combined release \(planned\)/.test(await adm.textContent('[data-cv-publication]')), 'and that publishing needs the publication screen (planned)');
+  ok(/use Publish \(built for 1\.21\.0, not yet released\)/.test(await adm.textContent('[data-cv-publication]')), 'and that publishing is done under Publish, screened');
   const [cv] = await Promise.all([adm.waitForEvent('download'), adm.click('[data-cv-export=csv]')]);
   eq(cv.suggestedFilename(), `suds-county-view-${lq.from}_${lq.to}-internal-exact.csv`, 'the combined view downloads as a file labelled internal and exact');
   const [tidy] = await Promise.all([adm.waitForEvent('download'), adm.click('[data-cv-export=tidy]')]);
