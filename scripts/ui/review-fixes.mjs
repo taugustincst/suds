@@ -496,6 +496,11 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   const text = await page.textContent('.main');
   ok(/Two-step verification coverage/.test(text) && /Last recovery drill/.test(text) && /Audit anchors outside the database/.test(text), 'with MFA coverage, the last recovery drill and the audit anchors');
   ok(/no SOC 2/.test(text), 'and says plainly that it is not an attestation');
+  // One list with the host compliance check (server/compliance-rules.js): each control names the rule it evidences,
+  // and the host section says when the last signed report was made (none on the seeded server).
+  ok(groups.includes('Host (last compliance check)'), 'Security status has the host compliance section', groups);
+  ok(/45 CFR §164\.312\(d\)/.test(await page.textContent('[data-rules="app.mfa_required"]').catch(() => '')), 'two-step verification names 45 CFR §164.312(d)');
+  ok(/no report yet|on \d{4}-\d{2}-\d{2}/.test(text), 'and when the last host compliance report was made, or that there is none');
   ok(await page.$('[data-mfa-report]'), 'and lists the accounts without two-step verification');
   await go(page, 'admin?tab=system');
   const card = await until(() => page.$('[data-dr-drill]'));

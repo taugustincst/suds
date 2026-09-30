@@ -18,7 +18,8 @@ export async function securityTab() {
     h('div', { class: 'grid cols-4 mb' }, stat('OK', s.counts.ok, 'ok'), stat('Attention', s.counts.warn, s.counts.warn ? 'warn' : ''), stat('Action needed', s.counts.bad, s.counts.bad ? 'danger' : ''), stat('Two-step verification', `${s.mfa.coverage_pct}%`, s.mfa.coverage_pct === 100 ? 'ok' : 'warn')),
     groups.map(g => h('div', { class: 'card mb', 'data-group': g }, h('h2', {}, g),
       table([
-        { label: 'Control', render: i => h('b', {}, i.name) },
+        // The rules each line produces evidence for (server/compliance-rules.js), shared with the host compliance check.
+        { label: 'Control', render: i => h('div', {}, h('b', {}, i.name), i.rules && i.rules.length ? h('div', { class: 'small muted', 'data-rules': i.check_id }, i.rules.map(r => r.cite).join('; ')) : null) },
         { label: 'Status', render: i => badge(LABEL[i.level], KIND[i.level]) },
         { label: 'In this installation', render: i => h('div', {}, i.value, i.detail ? h('div', { class: 'small muted' }, i.detail) : null) },
         { label: 'Where', render: i => h('span', { class: 'small mono' }, i.evidence) },
@@ -36,7 +37,8 @@ export async function securityTab() {
     h('div', { class: 'card' }, h('h2', {}, 'Evidence for an auditor'),
       h('p', { class: 'small' }, 'The audit export is the hash chain as NDJSON with a manifest (digest, MAC, the anchors in range and an Ed25519 signature). It is verified away from this server with ', h('code', {}, 'npm run verify-audit-export -- <file> --public-key <key>.pem'), ', and a recovery-drill report with ', h('code', {}, 'npm run verify-dr-report'), ' — the public key is all either needs. Anchors seal the chain head outside the database; the recovery drill report is on System & backups. The evidence package for county IT is docs/security/.'),
       signingKey ? h('p', { class: 'small', 'data-signing-key': signingKey.key_id }, 'Signing key: Ed25519, key id ', h('code', {}, signingKey.key_id), '. Record this id where the auditor can find it independently of the documents it signs.') : null,
-      h('div', { class: 'row' }, exportLink, signingKey ? h('a', { class: 'btn sm', href: '/api/admin/security/signing-key?format=pem', download: '' }, 'Download signing public key') : null, h('button', { class: 'btn sm', onClick: anchorNow }, 'Anchor the audit log now'), anchorMsg)));
+      h('p', { class: 'small' }, 'The host compliance check (', h('code', {}, 'npm run compliance-check'), ', weekly on SUDS Server) checks this machine as well — disk encryption, firewall, TLS, time synchronisation, updates — and writes a report signed with the same key; its findings are in the "Host (last compliance check)" section above. Verify it with ', h('code', {}, 'npm run verify-compliance-report -- <file> --public-key <key>.pem'), '.'),
+      h('div', { class: 'row' }, exportLink, s.compliance ? h('a', { class: 'btn sm', href: '/api/admin/security/compliance-report?format=html', download: '', 'data-compliance-report': s.compliance.report_id }, `Download the last compliance report (${String(s.compliance.generated_at || '').slice(0, 10)})`) : null, signingKey ? h('a', { class: 'btn sm', href: '/api/admin/security/signing-key?format=pem', download: '' }, 'Download signing public key') : null, h('button', { class: 'btn sm', onClick: anchorNow }, 'Anchor the audit log now'), anchorMsg)));
 }
 
 // Provisioning from the county identity provider: SCIM tokens (Entra ID / Okta user provisioning) and the
