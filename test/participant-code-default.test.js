@@ -97,3 +97,28 @@ test('sync: a device\'s coded client lands with its code re-indexed by the offic
   assert.equal(none.rejected.length, 1);
   assert.match(none.rejected[0].reason, /is missing a required field/);
 });
+
+test('merge: the kept record takes the name or the participant code it lacks from the same person\'s other record (review fix)', async () => {
+  const { blindIndex } = require('../server/crypto');
+  const PC = require('../server/participant-code');
+  // A coded client kept, the named record merged in: the kept one gets the name and is found by it.
+  const coded = ok(await admin.post('/api/clients', { participant_code: 'MRG-1234' }), 201, 'coded').id;
+  const named = ok(await admin.post('/api/clients', { first_name: 'Rosalind', last_name: 'Mergetest', confirm_duplicate: true }), 201, 'named').id;
+  ok(await admin.post(`/api/clients/${coded}/merge`, { source_id: named, reason: 'same person' }), 200, 'merge named into coded');
+  const k = ok(await admin.get(`/api/clients/${coded}`), 200, 'kept').client;
+  assert.equal(k.display_name, 'Mergetest, Rosalind');
+  assert.equal(k.participant_code, 'MRG1234');
+  const row = H.db.one(`SELECT * FROM clients WHERE id=?`, coded);
+  assert.equal(row.last_name_idx, blindIndex('Mergetest'), 'found by surname');
+  assert.equal(row.full_name_idx, blindIndex('MergetestRosalind'));
+  assert.ok(ok(await admin.get('/api/clients?q=Mergetest&status=all'), 200, 'search').clients.some((c) => c.id === coded));
+  // A named client kept, the coded record merged in: the kept one gets the code (and its index, for the SSP count).
+  const named2 = ok(await admin.post('/api/clients', { first_name: 'Tobias', last_name: 'Mergekeep', confirm_duplicate: true }), 201, 'named2').id;
+  const coded2 = ok(await admin.post('/api/clients', { participant_code: 'TMK-5566' }), 201, 'coded2').id;
+  ok(await admin.post(`/api/clients/${named2}/merge`, { source_id: coded2, reason: 'same person' }), 200, 'merge coded into named');
+  const k2 = ok(await admin.get(`/api/clients/${named2}`), 200, 'kept2').client;
+  assert.equal(k2.display_name, 'Mergekeep, Tobias', 'the kept name stays');
+  assert.equal(k2.participant_code, 'TMK5566');
+  assert.equal(H.db.one(`SELECT participant_code_idx i FROM clients WHERE id=?`, named2).i, PC.index('TMK5566'));
+  assert.ok(ok(await admin.get('/api/clients?q=TMK5566&status=all'), 200, 'search by code').clients.some((c) => c.id === named2));
+});

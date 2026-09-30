@@ -448,6 +448,14 @@ module.exports = (r) => {
         if (!keep[col] && source[col]) fills[col] = source[col];
       }
       for (const col of M.PLAIN_FIELDS) if ((keep[col] === null || keep[col] === '' || keep[col] === undefined) && source[col]) fills[col] = source[col];
+      // A client known by a participant code and no name (1.21.0) merged with the named record of the same person, either
+      // way round: the kept record takes the name it lacks, and the code it lacks (with its index), so the person is
+      // still found by either and the SSP summary still counts their anonymous visits under that code as theirs
+      // (server/ssp-report.js) rather than as someone else's.
+      const K = M.decryptRow(keep); const S = M.decryptRow(source);
+      const named = (x) => String(x.first_name || '').trim() !== '' || String(x.last_name || '').trim() !== '';
+      if (!named(K) && named(S)) { fills.first_name_enc = source.first_name_enc; fills.last_name_enc = source.last_name_enc; }
+      if (!keep.participant_code_enc && source.participant_code_enc) { fills.participant_code_enc = source.participant_code_enc; fills.participant_code_idx = source.participant_code_idx; }
       // The earlier intake date is the one that describes when this person actually started.
       if (source.intake_date && (!keep.intake_date || source.intake_date < keep.intake_date)) fills.intake_date = source.intake_date;
       const keys = Object.keys(fills);
@@ -455,7 +463,7 @@ module.exports = (r) => {
       // What the merge filled in on the kept record is a change to it like any other: a revision (via 'merge').
       if (keys.length) {
         const plainFills = M.decryptRow(Object.fromEntries(keys.map(k => [k, fills[k]])));
-        delete plainFills.display_name;
+        delete plainFills.display_name; delete plainFills.participant_code_idx;
         mergeRevision = REV.record({ user: ctx.user, clientId: keep.id, changes: REV.diff(M.decryptRow(keep), plainFills), via: 'merge', ip: ctx.ip });
       }
       // Recompute the kept record's blind indexes in case a name field was filled in from the duplicate.
@@ -464,6 +472,11 @@ module.exports = (r) => {
       db.run(`UPDATE clients SET dob_idx=?, phone_idx=?, name_prefix_idx=?, name_phonetic_idx=?, preferred_name_idx=?, updated_at=? WHERE id=?`,
         plain.dob ? blindIndex(plain.dob) : null, plain.phone ? blindIndex(String(plain.phone).replace(/\D/g, '')) : null,
         M.namePrefixIndex(plain.last_name || ''), M.namePhoneticIndex(plain.last_name || ''), M.preferredNameIndex(plain.preferred_name), db.now(), keep.id);
+      // A name taken from the duplicate (above) is searched by every name index, as a name saved on the record is.
+      if (fills.last_name_enc !== undefined || fills.first_name_enc !== undefined) {
+        const ix = M.clientIndexes(plain);
+        db.run(`UPDATE clients SET last_name_idx=?, full_name_idx=?, first_name_idx=?, first_name_prefix_idx=? WHERE id=?`, ix.last_name_idx, ix.full_name_idx, ix.first_name_idx, ix.first_name_prefix_idx, keep.id);
+      }
 
       // A worker assigned to both records is now assigned to the keeper twice. Keep the assignment that
       // started first; the rest are duplicates, not history.
