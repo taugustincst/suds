@@ -85,3 +85,29 @@ test('reset-admin says loudly when it reactivates a deactivated administrator, a
     assert.equal(d.reactivated, true); assert.equal(d.users_manage_deny_cleared, true);
   } finally { fs.rmSync(dir2, { recursive: true, force: true }); }
 });
+
+test('reset-admin removes the administrator\'s passkeys too (audited, cause "cli reset"): a passkey is a way in and a second factor', () => {
+  const dir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-reset-admin-'));
+  const env3 = { SUDS_DATA_DIR: dir3, SUDS_DB_PATH: path.join(dir3, 'suds.db') };
+  const inDb3 = (code) => { const r = node(['-e', `const db = require('./server/db'); db.open(); const out = (() => { ${code} })(); db.close(); process.stdout.write(JSON.stringify(out ?? null));`], env3); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  try {
+    assert.equal(node(['scripts/create-admin.js'], { ...env3, SUDS_ADMIN_USERNAME: 'keyed', SUDS_ADMIN_PASSWORD: 'Original-Pass-2026!' }).status, 0);
+    // Two passkeys (someone else may hold the phone), and a session one of them opened.
+    inDb3(`const u = db.one("SELECT id FROM users WHERE username='keyed'");
+      for (const [id, cred] of [['pk1', 'cred-one'], ['pk2', 'cred-two']]) db.run("INSERT INTO passkeys(id,user_id,credential_id,public_key,alg,rp_id,name) VALUES(?,?,?,'AAAA',-7,'suds.example','Phone')", id, u.id, cred);
+      db.run("INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_source,reauth_method,passkey_id) VALUES('sk',?,?,?,?,'passkey','passkey','pk1')", u.id, db.now(), db.now(), new Date(Date.now() + 3600e3).toISOString());`);
+    const r = node(['scripts/reset-admin.js', 'keyed'], env3);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /2 passkeys \(fingerprint sign-in\) were removed/);
+    const after = inDb3(`const u = db.one("SELECT id FROM users WHERE username='keyed'"); return { passkeys: db.one("SELECT COUNT(*) n FROM passkeys WHERE user_id=?", u.id).n,
+      sessions: db.one("SELECT COUNT(*) n FROM sessions WHERE user_id=? AND revoked_at IS NULL", u.id).n,
+      removed: db.all("SELECT username, entity_id, details FROM audit_log WHERE action='auth.passkey.removed'"), reset: db.one("SELECT details FROM audit_log WHERE action='admin.reset_cli'").details, id: u.id };`);
+    assert.equal(after.passkeys, 0, 'the passkeys are gone');
+    assert.equal(after.sessions, 0);
+    assert.equal(after.removed.length, 1, 'audited as auth.passkey.removed');
+    assert.equal(after.removed[0].username, 'cli'); assert.equal(after.removed[0].entity_id, after.id);
+    const d = JSON.parse(after.removed[0].details);
+    assert.equal(d.cause, 'cli reset'); assert.equal(d.count, 2);
+    assert.equal(JSON.parse(after.reset).passkeys_removed, 2, 'and counted in the reset\'s own entry');
+  } finally { fs.rmSync(dir3, { recursive: true, force: true }); }
+});

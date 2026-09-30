@@ -119,7 +119,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   reauth_method TEXT,
   -- The passkey that signed this session in (or finished its second step), when one did: removing that passkey
   -- ends the session (server/passkeys.js remove; migration 58).
-  passkey_id TEXT
+  passkey_id TEXT,
+  -- 1 for a device's sync sign-in (X-Sync-Client): a device signs in with the password and, with two-step verification
+  -- on, the authenticator code; it cannot give a fingerprint, so a passkey does not count as its second factor
+  -- (server/auth.js login and requireAuth; docs/FINGERPRINT.md; migration 59).
+  sync_client INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 

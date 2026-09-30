@@ -86,7 +86,7 @@ module.exports = (r) => {
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
     // default_fund_id: what the visit form pre-fills its funding source with (the worker's, else the programme's).
     // mfa_methods: how a session still owing its second step may finish it ('totp', 'passkey').
-    return { user: auth.publicUser(u), mfaPending: !!ctx.session.mfa_pending, mfa_methods: ctx.session.mfa_pending ? auth.mfaMethods(u) : undefined, org_name: db.getSetting('org_name', 'SUDS'), idle_minutes: auth.policy().idleMinutes, setup_needed: false,
+    return { user: auth.publicUser(u), mfaPending: !!ctx.session.mfa_pending, mfa_methods: ctx.session.mfa_pending ? auth.mfaMethods(u, { syncClient: !!ctx.session.sync_client }) : undefined, org_name: db.getSetting('org_name', 'SUDS'), idle_minutes: auth.policy().idleMinutes, setup_needed: false,
       default_fund_id: require('./budget').defaultFundFor(u.id),
       // The programme profile and the modules in force (server/programme.js): what the navigation shows.
       programme: { profile: require('../programme').profile(), modules: require('../programme').modules(),

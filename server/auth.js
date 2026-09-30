@@ -283,15 +283,16 @@ function caseloadFilter(user, col = 'c.id') {
 
 // ---- Sessions ----
 const COOKIE = 'suds_session';
-function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = 'password', passkeyId = null } = {}) {
+function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = 'password', passkeyId = null, syncClient = false } = {}) {
   const token = randomToken(32);
   const now = new Date();
   const expires = new Date(now.getTime() + policy().absoluteHours * 3600 * 1000);
   // Creating a session is the moment its user proved who they are (a password, a passkey, or the identity provider).
   // reauth_method says which: "Require fingerprint or authenticator for signing" counts only a passkey or a code.
   // passkey_id: the passkey that opened it, so removing that passkey ends it (server/passkeys.js remove).
-  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method,passkey_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource, now.toISOString(), reauthMethod, passkeyId);
+  // sync_client: a device's sync sign-in, for which a passkey is not a second factor (requireAuth, mfaDeadline).
+  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method,passkey_id,sync_client) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource, now.toISOString(), reauthMethod, passkeyId, syncClient ? 1 : 0);
   return token;
 }
 // ---- recent re-authentication (the electronic-signature step) ----
@@ -572,8 +573,13 @@ function requireAuth(ctx) {
     // — and nothing else, get through.
     const shellOnly = ctx.method === 'GET' && (ctx.path === '/api/meta/constants' || ctx.path === '/api/me/prefs');
     // A passkey sign-in (mfa_source 'passkey') was two factors in one: the device held the key and verified the person.
-    const due = ctx.session?.mfa_source === 'idp' || ctx.session?.mfa_source === 'passkey' ? null : mfaDeadline(ctx.user);
+    // A device's sync session (sync_client) signed in with the password and cannot give a fingerprint: for it a passkey
+    // is not the account's two-step verification, and the deadline is the one it had before passkeys (mfaDeadline).
+    const sync = !!ctx.session?.sync_client;
+    const due = ctx.session?.mfa_source === 'idp' || ctx.session?.mfa_source === 'passkey' ? null : mfaDeadline(ctx.user, { passkeyCounts: !sync });
     if (due && Date.now() > Date.parse(due) && !shellOnly) {
+      // Someone whose passkey counts in the browser is told why the device is different, and what would work there.
+      if (sync && mfaDeadline(ctx.user) === null) throw new HttpError(403, DEVICE_NEEDS_AUTHENTICATOR, { deviceNeedsAuthenticator: true, mfaSetupDeadline: due });
       throw new HttpError(403, 'Two-step verification must be set up for your role before you can continue', { mfaSetupRequired: true, mfaSetupDeadline: due });
     }
     if (ctx.user.must_change_password && !shellOnly) throw new HttpError(403, 'Password change required', { passwordChangeRequired: true });
@@ -586,13 +592,15 @@ function requireAuth(ctx) {
  * When this user must have two-step verification in place, or null if it is not required of them (or is
  * already set up). Measured from the account's creation.
  */
-function mfaDeadline(user) {
+// `passkeyCounts`: false for a device's sync sign-in, which cannot use a passkey: the deadline is then the one the
+// account had before passkeys (its authenticator app is the only second factor a device can give).
+function mfaDeadline(user, { passkeyCounts = true } = {}) {
   if (!user || user.mfa_enabled) return null;
   if (!policy().mfaRequiredRoles.includes(user.role)) return null;
   // A passkey with user verification (the fingerprint, or the device's screen lock) is multi-factor on its own
   // (NIST SP 800-63B: a multi-factor cryptographic authenticator, AAL2; docs/FINGERPRINT.md): an account that has
   // one has set up two-step verification, as long as fingerprint sign-in is allowed here.
-  if (policy().passkeySignin && passkeyCount(user.id) > 0) return null;
+  if (passkeyCounts && policy().passkeySignin && passkeyCount(user.id) > 0) return null;
   const created = Date.parse(user.created_at || 0) || Date.now();
   return new Date(created + policy().mfaGraceDays * 86400000).toISOString();
 }
@@ -711,22 +719,30 @@ async function login({ username, password, ctx }) {
   // The second step is the authenticator code, or the fingerprint: with two-step verification on, either; for a role
   // that requires it, an account whose only second factor is a passkey finishes signing in with it (a password alone
   // is one factor, and the passkey is what counts as that account's enrolment in mfaDeadline).
-  const passkeyStep = policy().passkeySignin && passkeyCount(user.id) > 0;
+  // Not for a device's sync sign-in (X-Sync-Client): a device sends the password and, at most, the authenticator code
+  // (local/sync.js), and a passkey is refused there (server/passkeys.js loginFinish). For it, everything is as it was
+  // before passkeys: the code when the account has an authenticator app; otherwise the enrolment deadline, after which
+  // the session is stopped (requireAuth) and the device told to add an authenticator app (DEVICE_NEEDS_AUTHENTICATOR).
+  const syncClient = !!ctx.headers['x-sync-client'];
+  const passkeyStep = !syncClient && policy().passkeySignin && passkeyCount(user.id) > 0;
   const mfaPending = !!user.mfa_enabled || (mfaRequiredForRole && passkeyStep);
-  const token = createSession(user, ctx, { mfaPending });
+  const token = createSession(user, ctx, { mfaPending, syncClient });
   // A password sign-in while SSO is required is the break-glass path: said so in the audit trail and the log.
   if (emergency) console.warn(`[suds] emergency (break-glass) password sign-in by ${user.username} while single sign-on is required`);
   audit.log({ user, action: mfaPending ? 'auth.login.mfa_pending' : 'auth.login', ip: ctx.ip, details: emergency ? { emergency_account: true } : undefined });
-  const deadline = mfaDeadline(user);
-  return { token, user: publicUser(user), mfaPending, mfaMethods: mfaPending ? mfaMethods(user) : undefined, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled && !passkeyStep, mfaSetupDeadline: deadline };
+  const deadline = mfaDeadline(user, { passkeyCounts: !syncClient });
+  return { token, user: publicUser(user), mfaPending, mfaMethods: mfaPending ? mfaMethods(user, { syncClient }) : undefined, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled && !passkeyStep, mfaSetupDeadline: deadline };
 }
-/** The ways this account may finish the second step of signing in: 'totp', 'passkey'. */
-function mfaMethods(user) {
+/** The ways this account may finish the second step of signing in: 'totp', 'passkey' (never on a device's sync sign-in). */
+function mfaMethods(user, { syncClient = false } = {}) {
   const out = [];
   if (user.mfa_enabled) out.push('totp');
-  if (policy().passkeySignin && passkeyCount(user.id) > 0) out.push('passkey');
+  if (!syncClient && policy().passkeySignin && passkeyCount(user.id) > 0) out.push('passkey');
   return out;
 }
+// What a device is told when its owner's only second factor is a passkey, past the enrolment deadline of a role that
+// requires two-step verification: a device cannot use a passkey (docs/FINGERPRINT.md).
+const DEVICE_NEEDS_AUTHENTICATOR = 'Fingerprint sign-in does not work for syncing a device, and your role requires two-step verification. Add an authenticator app under My profile to sync this device, then sync again.';
 
 function verifyMfa(ctx, code) {
   if (!ctx.session) throw unauthorized();

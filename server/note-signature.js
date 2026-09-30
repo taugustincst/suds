@@ -10,9 +10,12 @@
 //    whose hash was intact under the old key (and leaves one that was not, so a tampered note stays visible). Kept
 //    for back-compatibility: every signed note, every audit entry and every export names it.
 //  * contentHash: SHA-256 over the canonical JSON (server/canonical.js) of what was signed, in PLAINTEXT: the note
-//    id, the signer, the act (sign or cosign), the note's kind, title, text, structured sections, when it happened and
-//    whose record it is. It does not change when the key does. A fingerprint confirmation's statement names this
-//    hash (its `content`), so its evidence verifies after a key rotation, on the office server and offline.
+//    id, the signer, the act (sign or cosign), the note's kind, title, text, structured sections and when it happened.
+//    It does not change when the key does. A fingerprint confirmation's statement names this hash (its `content`), so
+//    its evidence verifies after a key rotation, on the office server and offline.
+//    NOT the client the note is filed under (client_id): the note id names the record, and what was attested is what
+//    the note says. Merging a duplicate client record moves its notes to the record kept (routes/clients.js merge),
+//    which must not make a signature read as "changed"; the ciphertext signature hash never included it either.
 //
 // Works in the browser kernel too (rules/notes.js): nothing here reaches beyond server/crypto.js and canonical.js.
 const { sha256, decrypt } = require('./crypto');
@@ -28,7 +31,7 @@ function signedContent(n, signerId, act = 'sign') {
   const dec = (v) => (v ? decrypt(v) : null);
   let structured = null;
   if (n.structured_enc) { const t = decrypt(n.structured_enc); try { structured = JSON.parse(t); } catch { structured = t; } }
-  return { v: 1, act, note_id: n.id, signer_id: signerId, kind: n.kind, title: dec(n.title_enc), content: dec(n.content_enc), structured, occurred_at: n.occurred_at, client_id: n.client_id };
+  return { v: 1, act, note_id: n.id, signer_id: signerId, kind: n.kind, title: dec(n.title_enc), content: dec(n.content_enc), structured, occurred_at: n.occurred_at };
 }
 /** The plaintext content hash (hex SHA-256 of signedContent in canonical JSON): a fingerprint statement's `content`. */
 function contentHash(n, signerId, act = 'sign') { return sha256(canonical(signedContent(n, signerId, act))); }

@@ -751,6 +751,12 @@ const migrations = [
     addColumn(d, 'sessions', 'passkey_id', 'TEXT');
     createTablesFromSchema(d, safeSchema(), ['passkeys', 'webauthn_challenges', 'signature_evidence'], 58);
   },
+  // 59: sessions.sync_client (1.19.0, docs/FINGERPRINT.md): a device's sync sign-in is marked, so a passkey (which a
+  //     device cannot use) is not counted as that session's second factor. Every existing session was a browser's or
+  //     a device's opened before passkeys existed; 0 is right for all of them. Self-contained and idempotent.
+  (d) => {
+    addColumn(d, 'sessions', 'sync_client', 'INTEGER NOT NULL DEFAULT 0');
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

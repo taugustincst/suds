@@ -169,7 +169,10 @@ module.exports = (r) => {
     // recovers an account someone else may have had, and a passkey is a way in and a second factor like the code
     // (each removal audited as auth.passkey.removed with the cause, and the sessions they opened end with them).
     const passkeyCause = v.is_active === 0 ? 'deactivated' : ctx.body.reset_mfa ? 'two-step verification reset' : v.password ? 'password reset' : null;
-    const passkeysRemoved = passkeyCause && !require('../config').local ? require('../passkeys').remove(u.id, { actor: ctx.user, ip: ctx.ip, cause: passkeyCause }) : 0;
+    // An administrator resetting their own two-step verification keeps the session they are doing it from (it may be one
+    // a passkey opened); every other session those passkeys opened ends. A password reset ends them all anyway (above).
+    const keepSession = u.id === ctx.user.id && ctx.session ? ctx.session.id : null;
+    const passkeysRemoved = passkeyCause && !require('../config').local ? require('../passkeys').remove(u.id, { actor: ctx.user, ip: ctx.ip, cause: passkeyCause, keepSession }) : 0;
     // Deactivating someone, or resetting their password from here, ends their hold on client records on
     // every phone they sync from too: each of their devices is told to erase itself at its next sync. The
     // wipe is answered before the credentials are (server/auth.js login()), so an inactive account or an

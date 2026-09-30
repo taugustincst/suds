@@ -6886,7 +6886,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   reauth_method TEXT,
   -- The passkey that signed this session in (or finished its second step), when one did: removing that passkey
   -- ends the session (server/passkeys.js remove; migration 58).
-  passkey_id TEXT
+  passkey_id TEXT,
+  -- 1 for a device's sync sign-in (X-Sync-Client): a device signs in with the password and, with two-step verification
+  -- on, the authenticator code; it cannot give a fingerprint, so a passkey does not count as its second factor
+  -- (server/auth.js login and requireAuth; docs/FINGERPRINT.md; migration 59).
+  sync_client INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
@@ -13240,7 +13244,7 @@ var require_note_signature = __commonJS({
           structured = t;
         }
       }
-      return { v: 1, act, note_id: n.id, signer_id: signerId, kind: n.kind, title: dec2(n.title_enc), content: dec2(n.content_enc), structured, occurred_at: n.occurred_at, client_id: n.client_id };
+      return { v: 1, act, note_id: n.id, signer_id: signerId, kind: n.kind, title: dec2(n.title_enc), content: dec2(n.content_enc), structured, occurred_at: n.occurred_at };
     }
     function contentHash(n, signerId, act = "sign") {
       return sha2562(canonical(signedContent(n, signerId, act)));
@@ -26610,7 +26614,7 @@ var require_auth = __commonJS({
         return {
           user: auth3.publicUser(u),
           mfaPending: !!ctx.session.mfa_pending,
-          mfa_methods: ctx.session.mfa_pending ? auth3.mfaMethods(u) : void 0,
+          mfa_methods: ctx.session.mfa_pending ? auth3.mfaMethods(u, { syncClient: !!ctx.session.sync_client }) : void 0,
           org_name: db3.getSetting("org_name", "SUDS"),
           idle_minutes: auth3.policy().idleMinutes,
           setup_needed: false,
@@ -46830,7 +46834,8 @@ var require_users2 = __commonJS({
         if (v.is_active === 0) auth3.revokeAllForUser(u.id);
         if (v.is_active === 0 && u.is_active) require_referral_links().revokeForUser(u.id, ctx.user);
         const passkeyCause = v.is_active === 0 ? "deactivated" : ctx.body.reset_mfa ? "two-step verification reset" : v.password ? "password reset" : null;
-        const passkeysRemoved = passkeyCause && !require_config().local ? require_passkeys().remove(u.id, { actor: ctx.user, ip: ctx.ip, cause: passkeyCause }) : 0;
+        const keepSession = u.id === ctx.user.id && ctx.session ? ctx.session.id : null;
+        const passkeysRemoved = passkeyCause && !require_config().local ? require_passkeys().remove(u.id, { actor: ctx.user, ip: ctx.ip, cause: passkeyCause, keepSession }) : 0;
         let wiped2 = [];
         const wipeDevices = v.wipe_devices === void 0 ? true : !!v.wipe_devices;
         if ((v.is_active === 0 || v.password) && wipeDevices) wiped2 = devices.requestWipeForUser(u.id, { actor: ctx.user, ip: ctx.ip, reason: v.is_active === 0 ? "deactivated" : "password_reset" });
@@ -47701,12 +47706,12 @@ var require_auth2 = __commonJS({
       return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND ${activeAssignment()})`, params: [user.id] };
     }
     var COOKIE = "suds_session";
-    function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = "password", passkeyId = null } = {}) {
+    function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = "password", passkeyId = null, syncClient = false } = {}) {
       const token2 = randomToken(32);
       const now2 = /* @__PURE__ */ new Date();
       const expires = new Date(now2.getTime() + policy().absoluteHours * 3600 * 1e3);
       db3.run(
-        `INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method,passkey_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method,passkey_id,sync_client) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         sha2562(token2),
         user.id,
         now2.toISOString(),
@@ -47718,7 +47723,8 @@ var require_auth2 = __commonJS({
         mfaSource,
         now2.toISOString(),
         reauthMethod,
-        passkeyId
+        passkeyId,
+        syncClient ? 1 : 0
       );
       return token2;
     }
@@ -47960,8 +47966,10 @@ var require_auth2 = __commonJS({
       if (ctx.session?.mfa_pending) throw new HttpError3(401, "MFA verification required", { mfaRequired: true });
       if (!ctx.path.startsWith("/api/auth/")) {
         const shellOnly = ctx.method === "GET" && (ctx.path === "/api/meta/constants" || ctx.path === "/api/me/prefs");
-        const due = ctx.session?.mfa_source === "idp" || ctx.session?.mfa_source === "passkey" ? null : mfaDeadline(ctx.user);
+        const sync = !!ctx.session?.sync_client;
+        const due = ctx.session?.mfa_source === "idp" || ctx.session?.mfa_source === "passkey" ? null : mfaDeadline(ctx.user, { passkeyCounts: !sync });
         if (due && Date.now() > Date.parse(due) && !shellOnly) {
+          if (sync && mfaDeadline(ctx.user) === null) throw new HttpError3(403, DEVICE_NEEDS_AUTHENTICATOR, { deviceNeedsAuthenticator: true, mfaSetupDeadline: due });
           throw new HttpError3(403, "Two-step verification must be set up for your role before you can continue", { mfaSetupRequired: true, mfaSetupDeadline: due });
         }
         if (ctx.user.must_change_password && !shellOnly) throw new HttpError3(403, "Password change required", { passwordChangeRequired: true });
@@ -47970,10 +47978,10 @@ var require_auth2 = __commonJS({
         if (age > maxAge && !shellOnly) throw new HttpError3(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
       }
     }
-    function mfaDeadline(user) {
+    function mfaDeadline(user, { passkeyCounts = true } = {}) {
       if (!user || user.mfa_enabled) return null;
       if (!policy().mfaRequiredRoles.includes(user.role)) return null;
-      if (policy().passkeySignin && passkeyCount(user.id) > 0) return null;
+      if (passkeyCounts && policy().passkeySignin && passkeyCount(user.id) > 0) return null;
       const created = Date.parse(user.created_at || 0) || Date.now();
       return new Date(created + policy().mfaGraceDays * 864e5).toISOString();
     }
@@ -48052,20 +48060,22 @@ var require_auth2 = __commonJS({
         }
       }
       const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
-      const passkeyStep = policy().passkeySignin && passkeyCount(user.id) > 0;
+      const syncClient = !!ctx.headers["x-sync-client"];
+      const passkeyStep = !syncClient && policy().passkeySignin && passkeyCount(user.id) > 0;
       const mfaPending = !!user.mfa_enabled || mfaRequiredForRole && passkeyStep;
-      const token2 = createSession(user, ctx, { mfaPending });
+      const token2 = createSession(user, ctx, { mfaPending, syncClient });
       if (emergency) console.warn(`[suds] emergency (break-glass) password sign-in by ${user.username} while single sign-on is required`);
       audit3.log({ user, action: mfaPending ? "auth.login.mfa_pending" : "auth.login", ip: ctx.ip, details: emergency ? { emergency_account: true } : void 0 });
-      const deadline = mfaDeadline(user);
-      return { token: token2, user: publicUser(user), mfaPending, mfaMethods: mfaPending ? mfaMethods(user) : void 0, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled && !passkeyStep, mfaSetupDeadline: deadline };
+      const deadline = mfaDeadline(user, { passkeyCounts: !syncClient });
+      return { token: token2, user: publicUser(user), mfaPending, mfaMethods: mfaPending ? mfaMethods(user, { syncClient }) : void 0, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled && !passkeyStep, mfaSetupDeadline: deadline };
     }
-    function mfaMethods(user) {
+    function mfaMethods(user, { syncClient = false } = {}) {
       const out2 = [];
       if (user.mfa_enabled) out2.push("totp");
-      if (policy().passkeySignin && passkeyCount(user.id) > 0) out2.push("passkey");
+      if (!syncClient && policy().passkeySignin && passkeyCount(user.id) > 0) out2.push("passkey");
       return out2;
     }
+    var DEVICE_NEEDS_AUTHENTICATOR = "Fingerprint sign-in does not work for syncing a device, and your role requires two-step verification. Add an authenticator app under My profile to sync this device, then sync again.";
     function verifyMfa(ctx, code) {
       if (!ctx.session) throw unauthorized();
       const user = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
@@ -49454,6 +49464,12 @@ var require_db = __commonJS({
         addColumn(d, "sessions", "reauth_method", "TEXT");
         addColumn(d, "sessions", "passkey_id", "TEXT");
         createTablesFromSchema(d, safeSchema(), ["passkeys", "webauthn_challenges", "signature_evidence"], 58);
+      },
+      // 59: sessions.sync_client (1.19.0, docs/FINGERPRINT.md): a device's sync sign-in is marked, so a passkey (which a
+      //     device cannot use) is not counted as that session's second factor. Every existing session was a browser's or
+      //     a device's opened before passkeys existed; 0 is right for all of them. Self-contained and idempotent.
+      (d) => {
+        addColumn(d, "sessions", "sync_client", "INTEGER NOT NULL DEFAULT 0");
       }
     ];
     var PERF_INDEXES_47 = [

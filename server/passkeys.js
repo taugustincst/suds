@@ -87,8 +87,15 @@ function availability(ctx) {
 let lastPurge = 0;
 function purge() { lastPurge = Date.now(); return db.run(`DELETE FROM webauthn_challenges WHERE expires_at < ?`, new Date(Date.now() - 60 * 60_000).toISOString()).changes; }
 function purgeDue() { if (Date.now() - lastPurge >= PURGE_EVERY_MS) purge(); }
+// What a waiting challenge keeps of its statement: everything but the content hashes (`content`, and a batch's `items`).
+// A note's content hash is an unkeyed SHA-256 of its plaintext, so it is not left in a table outside the encrypted
+// evidence for the challenge's hour; confirm() recomputes it from the record (bind) and checks that the statement
+// rebuilt from both hashes to the challenge.
+const HASHED_FIELDS = ['content', 'items'];
+const withoutHashes = (st) => Object.fromEntries(Object.entries(st).filter(([k]) => !HASHED_FIELDS.includes(k)));
 /**
- * Issue a challenge (base64url). With a statement, it is the statement's SHA-256; otherwise 32 random bytes. One for
+ * Issue a challenge (base64url). With a statement, it is the statement's SHA-256 (the statement is kept without its
+ * content hashes: withoutHashes); otherwise 32 random bytes. One for
  * nobody yet (`userId` null: the sign-in page) records the address that asked, and is refused past MAX_OPEN_PER_IP
  * waiting from that address or MAX_OPEN_TOTAL in all.
  */
@@ -102,7 +109,7 @@ function issue({ purpose, userId = null, sessionId = null, statement = null, ip 
   const bytes = statement ? W.statementChallenge(statement) : crypto.randomBytes(32);
   const now = Date.now();
   db.run(`INSERT INTO webauthn_challenges(id,purpose,user_id,session_id,statement,ip,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)`,
-    sha256(bytes), purpose, userId, sessionId, statement ? JSON.stringify(statement) : null, ip, new Date(now).toISOString(), new Date(now + CHALLENGE_MS).toISOString());
+    sha256(bytes), purpose, userId, sessionId, statement ? JSON.stringify(withoutHashes(statement)) : null, ip, new Date(now).toISOString(), new Date(now + CHALLENGE_MS).toISOString());
   return W.b64url(bytes);
 }
 /**
@@ -130,8 +137,8 @@ function take(challenge, { purpose, userId = null, sessionId = null }) {
   if (row.purpose !== purpose) throw new W.WebAuthnError('challenge_purpose', 'This confirmation was asked for something else. Try again.');
   if (row.user_id && row.user_id !== userId) throw new W.WebAuthnError('challenge_user', 'This confirmation was asked for by another account.');
   if (row.session_id && row.session_id !== sessionId) throw new W.WebAuthnError('challenge_session', 'This confirmation was asked for in another session.');
+  // The statement as kept (without its content hashes): confirm() completes it from the record and checks its hash.
   const statement = row.statement ? JSON.parse(row.statement) : null;
-  if (statement && sha256(W.statementChallenge(statement)) !== id) throw new W.WebAuthnError('challenge', 'The stored statement does not match its challenge');
   // challengeHash: what the assertion's challenge must hash to (webauthn.js verifyAssertion), from the stored row.
   return { ...row, statement, challengeHash: row.id };
 }
@@ -441,10 +448,13 @@ function confirm(ctx, credential, bind, { action }) {
     if (!credential || typeof credential !== 'object' || !credential.response) throw new W.WebAuthnError('shape', 'The passkey response is missing');
     row = take(challengeOf(credential), { purpose: `sign:${bind.purpose}`, userId: ctx.user.id, sessionId: ctx.session && ctx.session.id });
   } catch (e) { if (e instanceof W.WebAuthnError) refuse(e.code, e.message, { counts: false }); throw e; }
-  const st = row.statement || {};
-  if (st.record_type !== bind.record_type || W.canonical(st.record_ids) !== W.canonical(bind.record_ids)) refuse('another record', 'That fingerprint confirmation was for a different record. Confirm again for this one.', { counts: false });
-  if (st.content !== bind.content) refuse('record changed', 'The record changed after you confirmed. Check it and confirm again.', { counts: false });
-  if (st.user_id !== ctx.user.id || st.rp_id !== rp.rpId) refuse('statement', 'That fingerprint confirmation is not valid here.', { counts: false });
+  const kept = row.statement || {};
+  if (kept.record_type !== bind.record_type || W.canonical(kept.record_ids) !== W.canonical(bind.record_ids)) refuse('another record', 'That fingerprint confirmation was for a different record. Confirm again for this one.', { counts: false });
+  if (kept.user_id !== ctx.user.id || kept.rp_id !== rp.rpId) refuse('statement', 'That fingerprint confirmation is not valid here.', { counts: false });
+  // The statement completed with the content hashes of the record as it is now: it hashes to the challenge only when
+  // the record has not changed since the challenge was issued (the challenge's id is the hash of that hash).
+  const st = { ...kept, content: bind.content, ...(bind.items ? { items: bind.items } : {}) };
+  if (sha256(W.statementChallenge(st)) !== row.id) refuse('record changed', 'The record changed after you confirmed. Check it and confirm again.', { counts: false });
   const pk = findByCredential(credential.id);
   if (!pk || pk.user_id !== ctx.user.id) refuse('unknown passkey', 'That passkey is not one of yours on SUDS.', { counts: false });
   let r;
