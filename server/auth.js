@@ -55,7 +55,9 @@ function passkeyPolicy() {
 /** How many passkeys this user has that can still be used (not flagged as a possible copy). 0 on a device. */
 function passkeyCount(userId) {
   if (config.local || !userId) return 0;
-  try { return db.one(`SELECT COUNT(*) n FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, userId).n; } catch { return 0; }
+  // Not disabled as a possible copy, and accepted by the authenticator allow-list when it is on (server/passkeys.js
+  // usableCount): a passkey the list refuses is not this account's second factor.
+  try { return require('./passkeys').usableCount(userId); } catch { return 0; }
 }
 
 // ---- Role-based permissions (minimum necessary) ----

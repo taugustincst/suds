@@ -23,6 +23,10 @@ export API_RATE_LIMIT=${API_RATE_LIMIT:-6000}
 # so the local-mode, sync and device scripts have a kernel to load. The first-run wizard's server below
 # clears it again, so the wizard asks the question the way a county sees it.
 export LOCAL_MODE_ENABLED=true
+# The authenticator allow-list (fingerprint.mjs, docs/FINGERPRINT.md): the dev server also trusts FIDO Metadata Service
+# files signed under this TEST-ONLY root (its key is beside it), which the script signs one with. SUDS honours it only
+# with SUDS_ENV test or development, never in production.
+export SUDS_TEST_FIDO_MDS_ROOT="$PWD/test/fixtures/fido-mds/TEST-ONLY-mds-root.pem"
 # The AI documentation copilot (docs/AI-COPILOT.md) is driven by r10-ai.mjs against a fake provider that script
 # runs itself on SUDS_AI_FAKE_PORT: the office server is pointed at it, so no call ever leaves this machine. The
 # copilot stays off (no agreement recorded) for every other script.

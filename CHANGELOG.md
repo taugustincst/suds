@@ -4,6 +4,28 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Added: an authenticator allow-list for passkeys (office server; built for 1.21.0, not yet released)
+
+The option FINGERPRINT.md described and left unbuilt. Settings → **Authenticator allow-list (passkeys)**, off by
+default, administrators only: with it on, a passkey can be added only on an authenticator model the programme lists
+(by AAGUID), and the authenticator must prove its model. Registration then asks for attestation `'direct'` (only
+then), and SUDS verifies it with `node:crypto` alone (`server/attestation.js`): `packed` (full attestation; self
+attestation is refused), `fido-u2f` (the all-zero AAGUID), `tpm` (TPM 2.0) and `android-key`; `none`, `apple` and
+`android-safetynet` are refused with the reason. The certificate chain must reach the roots the **FIDO Metadata
+Service** lists for that model, from the Metadata Service file (`blob.jwt`) the administrator downloads and loads on
+the card: SUDS makes no outbound call, checks the file's signature chain to the FIDO Alliance's root (GlobalSign Root
+CA - R3, embedded with its SHA-256), that it is signed for mds.fidoalliance.org, its `nextUpdate`, and that it is not
+older than the one loaded, and refuses models reported compromised or revoked. Passkeys added before the list was on
+were never proven, so they stop working for sign-in and signing at their next use, with a message saying why and the
+audit entry `auth.passkey.not_allowed`; the administrator sees which accounts that affects before saving and must
+confirm the number. Changing the list and loading the file take the password (or code) again every time, and are
+audited (`security.authenticator_allowlist`, `security.authenticator_metadata`). Settings → Security status has a line
+for it (red when the file is out of date: no passkey can be added until the current one is loaded). SUDS on this
+device is unchanged: it has no passkeys. Migration 63 (`passkeys.attestation`, `authenticator_metadata`); 61 and 62
+are held as no-ops on this branch for the other 1.21.0 migrations. Tests: `test/attestation.test.js` (certificates
+made by `test/x509.js`), `scripts/ui/fingerprint.mjs` part 7. Documents: FINGERPRINT.md ("Authenticator
+allow-list", with the owner's decisions), QUESTIONNAIRE #19a, DATA-INVENTORY.
+
 ## 1.20.0 — 2026-09-30
 
 A feature release (migration 60 and the county-entered figures routes), released under a policy exception inside

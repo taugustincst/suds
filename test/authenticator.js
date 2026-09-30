@@ -74,7 +74,10 @@ class SoftAuthenticator {
     if (options && options.user) this.userHandle = options.user.id;
     const clientDataJSON = this.clientData({ type: o.type || 'webauthn.create', challenge: o.challenge || options.challenge, origin: o.origin || this.origin, crossOrigin: o.crossOrigin, topOrigin: o.topOrigin });
     const ad = this.authData({ rpId: o.rpId || this.rpId, flags: this.flags({ at: true, uv: o.uv ?? this.uv, up: o.up ?? this.up, be: o.be, bs: o.bs }), counter: this.counter, attested: true });
-    const attestationObject = cbor(new Map([['fmt', o.fmt || 'none'], ['attStmt', new Map()], ['authData', ad]]));
+    // `attest`: an attestation statement for the authenticator allow-list's tests (test/attestation.test.js), made
+    // from the authenticator data and the client data's hash: (authData, clientDataHash, this) → { fmt, attStmt }.
+    const made = o.attest ? o.attest(ad, sha256(clientDataJSON), this) : null;
+    const attestationObject = cbor(new Map([['fmt', made ? made.fmt : o.fmt || 'none'], ['attStmt', made ? made.attStmt : new Map()], ['authData', ad]]));
     return { id: this.id, rawId: this.id, type: 'public-key', authenticatorAttachment: 'platform',
       response: { clientDataJSON: b64url(clientDataJSON), attestationObject: b64url(attestationObject), transports: ['internal'] } };
   }

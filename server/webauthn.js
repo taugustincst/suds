@@ -217,8 +217,10 @@ function checkAuthFlags(ad, rpId) {
 /**
  * Registration (§7.1). `response` holds base64url clientDataJSON and attestationObject; `id` is the credential id
  * (base64url) the browser reported. Returns what SUDS stores: credential id, public key (SPKI, base64), algorithm,
- * sign count, AAGUID, backup flags and transports. Attestation is not verified: SUDS asks for 'none' and records the
- * AAGUID as reported, for information only.
+ * sign count, AAGUID, backup flags and transports. Attestation is not verified here: SUDS asks for 'none' and records
+ * the AAGUID as reported, for information only — unless the programme's authenticator allow-list is on, when the
+ * caller verifies `attestation` (the format, statement, authenticator data and client data hash) with
+ * server/attestation.js (docs/FINGERPRINT.md, "Authenticator allow-list").
  */
 function verifyRegistration({ id, response, transports: given }, { challenge, challengeHash, rpId, origins, algs = [ALGS.ES256, ALGS.EdDSA, ALGS.Ed25519, ALGS.RS256] }) {
   if (!response || typeof response !== 'object') fail('shape', 'The passkey response is missing');
@@ -238,6 +240,7 @@ function verifyRegistration({ id, response, transports: given }, { challenge, ch
     credentialId: b64url(ad.credentialId), publicKey: k.spki, alg: k.alg, signCount: ad.signCount,
     aaguid: ad.aaguid ? aaguidString(ad.aaguid) : null, backupEligible: ad.be, backedUp: ad.bs, fmt: att.get('fmt'),
     transports: Array.isArray(transports) ? transports.filter(t => known.includes(t)) : [],
+    attestation: { fmt: att.get('fmt'), attStmt: att.get('attStmt'), authData: att.get('authData'), clientDataHash: sha256(clientDataJSON) },
   };
 }
 

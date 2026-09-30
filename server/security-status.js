@@ -139,6 +139,17 @@ function status({ host = true } = {}) {
         `Sign-in ${pol.passkeySignin ? 'on' : 'off'}; signatures and approvals ${pol.passkeySigning ? 'on' : 'off'}; fingerprint or authenticator code required for signing: ${pol.signStrongRequired ? 'yes' : 'no'}.`,
         rpId ? `Relying party ${rpId}.` : config.isProd ? 'WEBAUTHN_RP_ID is not set, so no one can add or use a passkey on this production server: set it to the server\'s name, as in the address staff open and on its certificate (docs/SELF-HOSTING.md), and restart.' : 'WEBAUTHN_RP_ID is not set: outside production, passkeys are made for the host name each request was addressed to (the Host header). Production requires it.',
         httpsOk ? '' : 'Passkeys need HTTPS, which is not on.', 'SUDS stores no fingerprint: only each passkey\'s public key.'].filter(Boolean).join(' '), 'server/passkeys.js, server/webauthn.js; Settings → Security policy');
+    // The authenticator allow-list (docs/FINGERPRINT.md, "Authenticator allow-list"): off by default. On, it needs a
+    // current FIDO Metadata Service file: out of date, no new passkey can be added (red); due within a week, amber.
+    const al = require('./passkeys').allowlist.status();
+    const meta = al.metadata;
+    const soon = meta && !meta.expired && Date.parse(`${meta.next_update}T00:00:00Z`) - Date.now() < 7 * DAY;
+    const notOk = al.models.filter((m) => m.standing !== 'ok');
+    add('Identity', 'Authenticator allow-list (passkeys)', !al.enabled ? 'info' : !meta || meta.expired || notOk.length ? 'bad' : soon ? 'warn' : 'ok',
+      !al.enabled ? 'off: any authenticator may hold a passkey (attestation is not asked for)' : `on: ${al.models.length} model${al.models.length === 1 ? '' : 's'} accepted${meta ? `; metadata file number ${meta.no}, next update ${meta.next_update}${meta.expired ? ' (out of date: no passkey can be added until the current one is loaded)' : ''}` : '; no metadata file loaded'}`,
+      [al.enabled && notOk.length ? `${notOk.map((m) => m.name).join(', ')}: ${notOk.length === 1 ? 'is' : 'are'} missing from the metadata file or reported compromised or revoked, so no passkey on ${notOk.length === 1 ? 'it' : 'them'} is accepted.` : '',
+        al.enabled ? 'Download the current file from the FIDO Metadata Service (https://mds3.fidoalliance.org/) each month and load it under Settings → Authenticator allow-list; SUDS makes no outbound call.' : 'Settings → Authenticator allow-list: accept only the authenticator models the programme lists, each proven by its attestation against the FIDO Metadata Service.',
+        meta && meta.test_root ? 'The loaded file was signed by a test root (development only).' : ''].filter(Boolean).join(' '), 'server/authenticator-allowlist.js, server/attestation.js');
   }
   {
     const dp = require('./deprovision').report();

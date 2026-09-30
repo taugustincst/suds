@@ -71,7 +71,9 @@ async function passkeysCard({ onChange = null } = {}) {
     card.replaceChildren(...[h('h2', {}, 'Fingerprint sign-in'),
       h('p', { class: 'small' }, 'Sign in, sign notes and approve with your fingerprint (or your device’s screen lock) instead of typing your password. It counts as two-step verification. SUDS never receives or stores your fingerprint: your device checks it, and SUDS keeps only a public key for the device.'),
       rows.length ? table([
-        { label: 'Name', render: p => h('span', {}, p.name, here.includes(p.id) ? [' ', h('span', { 'data-passkey-here': '1' }, badge('This device', 'info'))] : null, p.synced ? [' ', badge('Synced', '')] : null, p.flagged ? [' ', badge('Disabled: possible copy', 'danger')] : null) },
+        { label: 'Name', render: p => h('span', {}, p.name, here.includes(p.id) ? [' ', h('span', { 'data-passkey-here': '1' }, badge('This device', 'info'))] : null, p.synced ? [' ', badge('Synced', '')] : null, p.flagged ? [' ', badge('Disabled: possible copy', 'danger')] : null,
+          // The authenticator allow-list (docs/FINGERPRINT.md): a passkey whose model the programme does not accept.
+          p.accepted === false && !p.flagged ? [' ', h('span', { 'data-passkey-not-accepted': p.id }, badge('Not accepted: model not on your programme\'s list', 'danger'))] : null) },
         { label: 'Added', render: p => fmt.date(p.created_at) },
         { label: 'Last used', render: p => (p.last_used_at ? fmt.dt(p.last_used_at) : 'never') },
         { label: '', srLabel: 'Actions', render: p => h('div', { class: 'row nowrap' },
@@ -81,6 +83,7 @@ async function passkeysCard({ onChange = null } = {}) {
       rows.length ? h('p', { class: 'small muted' }, '“This device” marks the ones added in this browser (it forgets if its data is cleared). “Synced” ones also work on your other devices signed in to the same account (iCloud Keychain, Google Password Manager).') : null,
       possible ? (rows.length < d.max ? h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', 'data-passkey-add-open': '1', onClick: add }, 'Add fingerprint sign-in on this device')) : h('p', { class: 'small muted' }, `You have ${d.max}, the most an account may have. Remove one to add another.`))
         : h('p', { class: 'small muted', 'data-passkeys-unavailable': '1' }, d.available ? 'This device or browser cannot do fingerprint sign-in (it needs a fingerprint reader, face recognition or a screen lock that the browser can use). You can add it from another device.' : (d.reason || 'Fingerprint sign-in cannot be used at this address.')),
+      d.allowlist ? h('p', { class: 'small', 'data-passkeys-allowlist': '1' }, `Your programme accepts only these authenticator models: ${d.allowlist.models.join(', ') || 'none yet'}. A passkey kept in a password manager or synced between devices cannot prove its model and is refused; one not accepted stops working for sign-in and signing. Remove it and add one on an accepted authenticator.`) : null,
       approveBox,
       d.strong_required ? h('p', { class: 'small' }, 'Your programme asks for a fingerprint or an authenticator code (not the password alone) to sign notes and approve.') : null].filter(Boolean));
   };

@@ -5,6 +5,8 @@ const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
 const P = require('../passkeys');
+const W = require('../webauthn');
+const A = require('../attestation');
 const { HttpError, badRequest, notFound } = require('../http');
 const { validate } = require('../validate');
 
@@ -44,7 +46,9 @@ module.exports = (r) => {
     const pol = auth.policy();
     const here = P.availability(ctx);
     return { passkeys: P.list(ctx.user.id), max: P.MAX_PER_USER, signin: pol.passkeySignin, signing: pol.passkeySigning, strong_required: pol.signStrongRequired,
-      available: here.ok, reason: here.ok ? null : here.reason, totp: !!db.one(`SELECT mfa_enabled FROM users WHERE id=?`, ctx.user.id).mfa_enabled };
+      available: here.ok, reason: here.ok ? null : here.reason, totp: !!db.one(`SELECT mfa_enabled FROM users WHERE id=?`, ctx.user.id).mfa_enabled,
+      // The authenticator allow-list, when on: which models this programme accepts (My profile says so).
+      allowlist: P.allowlist.enabled() ? { models: P.allowlist.models().map((m) => m.name) } : null };
   });
   // Adding one needs the password again, and the authenticator code with two-step verification on.
   r.post('/api/auth/passkeys/register/options', async (ctx) => {
@@ -112,6 +116,70 @@ module.exports = (r) => {
     if (!removed) throw notFound('Passkey not found');
     audit.log({ user: ctx.user, action: 'user.passkeys.revoked', entity: 'user', entityId: ctx.params.id, ip: ctx.ip, details: { count: removed, passkey: ctx.params.pid } });
     return { ok: true, removed };
+  });
+
+  // ---- the authenticator allow-list (docs/FINGERPRINT.md, "Authenticator allow-list"; built for 1.21.0) ----
+  // Administrators only (settings:manage). Reading it and previewing who a change would affect need nothing more;
+  // changing it or loading a metadata file needs the password or authenticator code with the request, every time
+  // (auth.verifySigner `fresh`, as for the key backup; a single sign-on account confirms with its provider).
+  const L = P.allowlist;
+  const modelsRule = { type: 'array', maxLen: L.MAX_MODELS };
+  const reauthRules = { password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' } };
+  const describeModels = (list) => list.map((m) => ({ ...m, ...L.modelStanding(m.aaguid) }));
+  r.get('/api/admin/authenticator-allowlist', auth.requireAuth, auth.requirePerm('settings:manage'), () => {
+    const st = L.status();
+    return { ...st, catalog: L.catalog(), affected: L.affected({ on: st.enabled, list: L.models() }), max_models: L.MAX_MODELS,
+      trust_root: { subject: 'GlobalSign Root CA - R3 (the FIDO Metadata Service\'s)', sha256: A.FIDO_MDS_ROOT_SHA256, signer: A.MDS_SIGNER_HOST }, formats: A.SUPPORTED_FORMATS };
+  });
+  // What saving { enabled, models } would do, before it is saved: each model's standing in the loaded metadata, and
+  // the accounts whose passkeys would stop working.
+  r.post('/api/admin/authenticator-allowlist/preview', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+    const v = validate(ctx.body || {}, { enabled: { type: 'boolean' }, models: modelsRule }, { partial: true });
+    const list = L.normaliseModels(v.models || [], badRequest);
+    return { models: describeModels(list), affected: L.affected({ on: !!v.enabled, list }) };
+  });
+  r.put('/api/admin/authenticator-allowlist', auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
+    const v = validate(ctx.body || {}, { enabled: { type: 'boolean', required: true }, models: { ...modelsRule, required: true }, acknowledge_affected: { type: 'number', min: 0, integer: true }, ...reauthRules });
+    const on = !!v.enabled;
+    const list = L.normaliseModels(v.models, badRequest);
+    // Checked before the password is asked for, so a list that cannot work is said before anything is spent.
+    if (on) {
+      const meta = L.metadataInfo();
+      if (!meta) throw badRequest('Load the FIDO Metadata Service file first: without it SUDS cannot check any authenticator model.', { allowlistError: 'metadata' });
+      if (meta.expired) throw badRequest(`The FIDO Metadata Service file loaded is out of date (its next update was due on ${meta.next_update}). Load the current one first.`, { allowlistError: 'metadata_expired' });
+      if (!list.length) throw badRequest('List at least one authenticator model to turn the list on.', { fields: { models: 'required' } });
+      const bad = describeModels(list).filter((m) => m.standing !== 'ok');
+      if (bad.length) throw badRequest(`${bad.map((m) => `${m.name} (${m.aaguid})`).join(', ')}: ${bad.some((m) => m.standing === 'refused') ? 'the metadata file reports a compromised or revoked status, or ' : ''}not in the loaded metadata file, so no passkey could be checked for ${bad.length === 1 ? 'it' : 'them'}. Remove ${bad.length === 1 ? 'it' : 'them'} from the list.`, { allowlistError: 'models', models: bad });
+    }
+    // Who it stops: the administrator confirms the number they were shown (preview), so a save cannot cut people off
+    // unseen, or more people than were seen.
+    const aff = L.affected({ on, list });
+    if (aff.passkey_count && v.acknowledge_affected !== aff.passkey_count) throw new HttpError(409, `${aff.passkey_count} passkey${aff.passkey_count === 1 ? '' : 's'} of ${aff.account_count} account${aff.account_count === 1 ? '' : 's'} would stop working. Review them and confirm.`, { affected: aff });
+    await auth.verifySigner(ctx, v, { action: 'security.authenticator_allowlist.failed', purpose: 'change the authenticator allow-list', fresh: true });
+    const before = L.status();
+    db.transaction(() => { db.setSetting('authn_allowlist', on ? '1' : '0'); db.setSetting('authn_allowlist_models', JSON.stringify(list)); });
+    audit.log({ user: ctx.user, action: 'security.authenticator_allowlist', ip: ctx.ip, details: { enabled: on, was_enabled: before.enabled, models: list.map((m) => m.aaguid),
+      affected_accounts: aff.account_count, affected_passkeys: aff.passkey_count, affected_users: aff.accounts.slice(0, 200).map((a) => a.user_id), mds_no: (L.metadataInfo() || {}).no ?? null } });
+    return { ...L.status(), affected: aff };
+  });
+  // The FIDO Metadata Service BLOB (blob.jwt, a few megabytes), which the administrator downloads from
+  // https://mds3.fidoalliance.org/ and uploads here as text: SUDS makes no outbound call. Up to 20 MB, for an
+  // administrator's session only (bodyLimitFor; every other request keeps its own cap).
+  const MDS_PATH = '/api/admin/authenticator-metadata';
+  require('../app').bodyLimitFor(MDS_PATH, (ctx) => (ctx.user && !(ctx.session && ctx.session.mfa_pending) && auth.hasPerm(ctx.user, 'settings:manage') ? 20 * 1024 * 1024 : null));
+  r.post(MDS_PATH, auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
+    const v = validate(ctx.body || {}, { blob: { type: 'string', required: true, maxLen: 20 * 1024 * 1024 }, ...reauthRules });
+    await auth.verifySigner(ctx, v, { action: 'security.authenticator_metadata.failed', purpose: 'load the authenticator metadata', fresh: true });
+    let info;
+    try { info = L.loadMetadata(v.blob); }
+    catch (e) {
+      if (!(e instanceof W.WebAuthnError)) throw e;
+      audit.log({ user: ctx.user, action: 'security.authenticator_metadata.refused', ip: ctx.ip, success: false, details: { reason: e.code } });
+      throw badRequest(`The metadata file was not loaded: ${e.message}`, { metadataError: e.code });
+    }
+    audit.log({ user: ctx.user, action: 'security.authenticator_metadata', ip: ctx.ip, details: { no: info.no, next_update: info.next_update, entries: info.entries, sha256: info.sha256, test_root: info.test_root || undefined } });
+    const st = L.status();
+    return { metadata: info, models: st.models, affected: L.affected({ on: st.enabled, list: L.models() }) };
   });
 
   // ---- the evidence of a fingerprint-confirmed signature, for an auditor ----

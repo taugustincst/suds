@@ -17,6 +17,11 @@
 //      and no code field; a failed fingerprint gives the focus back to its button, enabled; with fingerprint-or-code
 //      required and neither set up, the signature dialog has no Sign button and links to My profile; a single sign-on
 //      account sees the fingerprint beside "Confirm with single sign-on"; the icon is an SVG hidden from screen readers.
+//   7. The authenticator allow-list (built for 1.21.0): an administrator loads a FIDO Metadata Service file signed under
+//      the TEST-ONLY root (test/fixtures/fido-mds, trusted by the dev server only), picks a model from it, sees whose
+//      passkeys would stop working, must confirm that, and saves with the password again; the supervisor's older
+//      passkey is marked not accepted on My profile and refused at sign-in with the reason; a passkey the virtual
+//      authenticator makes cannot prove a listed model and is refused with the reason; axe and no sideways scroll.
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -267,6 +272,82 @@ try {
     if (width === 390) ok(await d.page.$('[data-signature-dialog] [data-fingerprint]'), 'with a passkey, the signature dialog offers the fingerprint on a phone');
     await axe(d.page, `signature dialog (${width})`); ok(await noSideScroll(d.page), `the signature dialog does not scroll sideways at ${width} px`);
     await d.ctx.close();
+  }
+  // ---------------- 7. the authenticator allow-list (built for 1.21.0) ----------------
+  {
+    const A = admin.page;
+    const X = require('../../test/x509.js');
+    const rootPem = fs.readFileSync(new URL('../../test/fixtures/fido-mds/TEST-ONLY-mds-root.pem', import.meta.url), 'utf8');
+    const rootKey = fs.readFileSync(new URL('../../test/fixtures/fido-mds/TEST-ONLY-mds-root.key.pem', import.meta.url), 'utf8');
+    const crypto = require('node:crypto');
+    const root = { der: new crypto.X509Certificate(rootPem).raw, keys: { privateKey: crypto.createPrivateKey(rootKey) }, subject: [['C', 'US'], ['O', 'SUDS tests'], ['CN', 'SUDS TEST-ONLY FIDO MDS root']] };
+    const maker = X.ca('SUDS browser-suite maker root');
+    const MODEL = 'b1eb1eb1-0000-4000-8000-00000000f1f1';
+    const blob = X.mdsBlob({ payload: { no: 1000 + Math.floor(Date.now() / 1000) % 100000, nextUpdate: '2099-12-31', legalHeader: 'test', entries: [X.mdsEntry({ aaguid: MODEL, description: 'SUDS browser-suite key', roots: [maker.der] })] }, ...X.mdsSigner(root) });
+    await go(A, 'admin?tab=settings');
+    await A.waitForSelector('[data-allowlist-card]'); await settle(A);
+    ok(/Off/.test(await A.textContent('[data-allowlist-card] dl')), 'Settings has the authenticator allow-list card, off by default');
+    await axe(A, 'Settings with the authenticator allow-list card (1280)');
+    // Load the metadata file: the file, then the password again.
+    await A.setInputFiles('[data-allowlist-card] input[name=blob_file]', { name: 'blob.jwt', mimeType: 'application/jwt', buffer: Buffer.from(blob) });
+    await A.click('[data-allowlist-card] form:has(input[name=blob_file]) button[type=submit]');
+    await A.waitForSelector('[data-signature-dialog] input[name=password]'); await settle(A);
+    await axe(A, 'allow-list: the password again to load the metadata file (1280)');
+    await A.fill('[data-signature-dialog] input[name=password]', 'AdminPassw0rd!x'); await A.click('[data-signature-dialog] button[type=submit]');
+    ok(await toast(A, /Metadata file number \d+ loaded: 1 authenticator model/), 'the metadata file is loaded and SUDS says what it holds');
+    await A.waitForSelector('[data-allowlist-card] select[name=catalog_pick]'); await settle(A);
+    // Choose the model from the file, turn the list on, check who is affected.
+    await A.selectOption('[data-allowlist-card] select[name=catalog_pick]', MODEL);
+    ok((await A.inputValue('[data-allowlist-card] textarea[name=models]')).includes(MODEL), 'choosing a model from the metadata file adds it to the list');
+    await A.selectOption('[data-allowlist-card] select[name=enabled]', '1');
+    await A.click('[data-allowlist-check]');
+    const affected = await until(async () => { const n = await A.getAttribute('[data-allowlist-preview] [data-affected-count]', 'data-affected-count').catch(() => null); return n === null ? null : Number(n); });
+    ok(affected >= 1, 'before saving, the administrator sees how many passkeys would stop working', affected);
+    ok(/jwalker/.test(await A.textContent('[data-allowlist-preview]')), 'and whose: the supervisor\'s passkey, added before the list, is listed');
+    ok(await A.$('[data-allowlist-preview][role=status][aria-live=polite]'), 'the preview is a polite live region');
+    await axe(A, 'allow-list with who would be affected (1280)');
+    // Saving without confirming is refused at the checkbox; confirming asks for the password again.
+    await A.click('[data-allowlist-card] form:has(textarea[name=models]) button[type=submit]');
+    ok(await until(async () => /confirm that you have checked who is affected/i.test(await A.textContent('[data-allowlist-card] [data-field=acknowledge]'))), 'saving without confirming who is affected is refused, at the checkbox');
+    await A.check('[data-allowlist-card] input[name=acknowledge]');
+    await A.click('[data-allowlist-card] form:has(textarea[name=models]) button[type=submit]');
+    await A.waitForSelector('[data-signature-dialog] input[name=password]');
+    await A.fill('[data-signature-dialog] input[name=password]', 'AdminPassw0rd!x'); await A.click('[data-signature-dialog] button[type=submit]');
+    ok(await toast(A, /allow-list on: 1 model/), 'the list is turned on with the password again');
+    eq((await api(A, 'GET', '/api/admin/authenticator-allowlist')).data.enabled, true, 'and is on');
+    // The supervisor's passkey, added before the list, now says why it is refused.
+    await go(S, 'profile'); await S.waitForSelector('[data-passkeys-allowlist]');
+    ok(await S.$('[data-passkey-not-accepted]'), 'My profile marks the passkey as not accepted');
+    ok(/accepts only these authenticator models: SUDS browser-suite key/.test(await S.textContent('[data-passkeys-allowlist]')), 'and names the models the programme accepts');
+    await axe(S, 'My profile under the authenticator allow-list (390)');
+    ok(await noSideScroll(S), 'My profile under the allow-list does not scroll sideways at 390 px');
+    // The button, not the username field's suggestions (conditional UI), as in 3.
+    await sup.ctx.addInitScript(() => { if (window.PublicKeyCredential) window.PublicKeyCredential.isConditionalMediationAvailable = async () => false; });
+    await S.reload(); await S.waitForSelector('.layout'); await settle(S);
+    await signOut(S);
+    await S.click('[data-fingerprint-signin]');
+    const notAccepted = await until(async () => { const t = await S.$eval('[data-fingerprint-login] [data-fingerprint-status]', e => e.textContent).catch(() => ''); return t && !/Waiting/.test(t) ? t : null; }, { timeout: 15000 });
+    ok(notAccepted && /not accepted any more/.test(notAccepted), 'fingerprint sign-in with it is refused, and the page says why', notAccepted);
+    // A new passkey from the browser's virtual authenticator cannot prove a listed model: refused with the reason.
+    await signInWithPassword(S, 'jwalker', PW);
+    // A fresh authenticator's credential store: the device already holding a passkey for the account is excluded.
+    await sup.cdp.send('WebAuthn.clearCredentials', { authenticatorId: sup.authenticatorId });
+    await go(S, 'profile'); await S.waitForSelector('[data-passkey-add-open]');
+    await S.click('[data-passkey-add-open]'); await S.waitForSelector('.modal [data-passkey-add]');
+    await S.fill('.modal input[name=name]', 'Unlisted key'); await S.fill('.modal input[name=password]', PW); await S.click('.modal button[type=submit]');
+    const why = await until(async () => { const t = await S.textContent('.modal').catch(() => ''); return /could not be added|accepts only certain authenticator models/.test(t) ? t : null; }, { timeout: 15000 });
+    ok(why, 'adding a passkey an unlisted authenticator makes is refused, and the dialog says why', why ? why.slice(0, 300) : (await S.textContent('.modal').catch(() => 'no dialog')).slice(0, 400));
+    await S.keyboard.press('Escape');
+    // Back as it was: the list off (the password again), and the supervisor's passkey works again.
+    eq((await api(A, 'PUT', '/api/admin/authenticator-allowlist', { enabled: false, models: [{ name: 'SUDS browser-suite key', aaguid: MODEL }], password: 'AdminPassw0rd!x' })).status, 200, 'the administrator turns the list off again');
+    await go(S, `profile?_=${Date.now()}`); await S.waitForSelector('[data-passkeys-card]'); await settle(S);
+    ok(!(await S.$('[data-passkey-not-accepted]')) && !(await S.$('[data-passkeys-allowlist]')), 'and the passkey is accepted again');
+    for (const width of [390, 320]) {
+      await A.setViewportSize({ width, height: 844 }); await go(A, 'admin?tab=settings'); await A.waitForSelector('[data-allowlist-card]'); await settle(A);
+      ok(await noSideScroll(A), `the allow-list card does not scroll sideways at ${width} px`);
+      if (width === 320) await axe(A, 'Settings with the authenticator allow-list card (320)');
+    }
+    await A.setViewportSize({ width: 1280, height: 900 });
   }
   await sup.ctx.close(); await nav.ctx.close();
 } catch (e) {

@@ -13,6 +13,9 @@ const db = require('./db');
 const config = require('./config');
 const audit = require('./audit');
 const W = require('./webauthn');
+// The authenticator allow-list (docs/FINGERPRINT.md, "Authenticator allow-list"; off by default): which passkeys may
+// be added and used when a programme accepts only certain authenticator models.
+const L = require('./authenticator-allowlist');
 const { encrypt, decrypt, sha256, uuid } = require('./crypto');
 const { HttpError, badRequest, forbidden, notFound } = require('./http');
 
@@ -144,8 +147,16 @@ function take(challenge, { purpose, userId = null, sessionId = null }) {
 }
 
 // ---- credentials ----
-const present = (p) => ({ id: p.id, name: p.name, created_at: p.created_at, last_used_at: p.last_used_at, transports: p.transports ? JSON.parse(p.transports) : [], aaguid: p.aaguid,
-  algorithm: W.ALG_NAMES[p.alg] || String(p.alg), synced: !!p.backed_up, flagged: !!p.flagged_at, flagged_at: p.flagged_at || null, flag_reason: p.flag_reason || null });
+// `accepted`: whether the authenticator allow-list lets it be used now (always, with the list off); `attested`: its
+// model was proven at enrolment (attestation verified under the list).
+const attestedOf = (p) => { try { const a = JSON.parse(p.attestation || 'null'); return !!(a && a.verified); } catch { return false; } };
+const present = (p) => { const al = L.passkeyAllowed(p); return { id: p.id, name: p.name, created_at: p.created_at, last_used_at: p.last_used_at, transports: p.transports ? JSON.parse(p.transports) : [], aaguid: p.aaguid,
+  algorithm: W.ALG_NAMES[p.alg] || String(p.alg), synced: !!p.backed_up, flagged: !!p.flagged_at, flagged_at: p.flagged_at || null, flag_reason: p.flag_reason || null,
+  attested: attestedOf(p), accepted: al.ok, not_accepted_reason: al.ok ? null : al.reason }; };
+/** The passkeys of an account that can be used now: not disabled as a possible copy, and accepted by the allow-list. */
+function usable(userId) { return db.all(`SELECT * FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, userId).filter((p) => L.passkeyAllowed(p).ok); }
+/** How many (auth.passkeyCount: whether a passkey counts as the account's second factor). */
+function usableCount(userId) { return L.enabled() ? usable(userId).length : db.one(`SELECT COUNT(*) n FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, userId).n; }
 function list(userId) { return db.all(`SELECT * FROM passkeys WHERE user_id=? ORDER BY created_at`, userId).map(present); }
 function findByCredential(credentialId) { return typeof credentialId === 'string' && credentialId.length <= 1400 ? db.one(`SELECT * FROM passkeys WHERE credential_id=?`, credentialId) : null; }
 const descriptor = (p) => ({ type: 'public-key', id: p.credential_id, ...(p.transports ? { transports: JSON.parse(p.transports) } : {}) });
@@ -185,16 +196,24 @@ async function registrationOptions(ctx, { password, code }) {
   A.clearFailures(u.id);
   const existing = db.all(`SELECT * FROM passkeys WHERE user_id=?`, u.id);
   if (existing.length >= MAX_PER_USER) throw badRequest(`You already have ${MAX_PER_USER} passkeys, the most one account may have. Remove one you no longer use first.`);
+  // Under the authenticator allow-list the device is asked to prove its model (attestation 'direct'), and any
+  // authenticator may be offered (a security key too): the list, not the kind of authenticator, decides. Without
+  // current metadata nothing could be checked, so no options are issued.
+  const allowlist = L.enabled();
+  if (allowlist) {
+    const meta = L.metadataInfo();
+    if (!meta || meta.expired) throw badRequest(meta ? `Your programme accepts only certain authenticator models, and the FIDO Metadata Service file SUDS checks them against is out of date (its next update was due on ${meta.next_update}). Ask your administrator to load the current one.` : 'Your programme accepts only certain authenticator models, and its administrator has not loaded the FIDO Metadata Service file SUDS checks them against yet. Ask your administrator.', { passkeyError: meta ? 'allowlist_metadata_expired' : 'allowlist_metadata' });
+  }
   const challenge = issue({ purpose: 'register', userId: u.id, sessionId: ctx.session.id });
   return { publicKey: {
     challenge, rp: { id: rp.rpId, name: rp.rpName }, user: { id: userHandle(u.id), name: u.username, displayName: u.display_name || u.username },
     pubKeyCredParams: [{ type: 'public-key', alg: W.ALGS.ES256 }, { type: 'public-key', alg: W.ALGS.EdDSA }, { type: 'public-key', alg: W.ALGS.Ed25519 }, { type: 'public-key', alg: W.ALGS.RS256 }],
-    timeout: TIMEOUT_MS, attestation: 'none',
+    timeout: TIMEOUT_MS, attestation: allowlist ? 'direct' : 'none',
     // The device's own authenticator (Touch ID, Windows Hello, an Android fingerprint), discoverable where it can be,
     // and always with user verification: a passkey used without the fingerprint (or screen lock) is refused.
-    authenticatorSelection: { authenticatorAttachment: 'platform', residentKey: 'preferred', requireResidentKey: false, userVerification: 'required' },
+    authenticatorSelection: { ...(allowlist ? {} : { authenticatorAttachment: 'platform' }), residentKey: 'preferred', requireResidentKey: false, userVerification: 'required' },
     excludeCredentials: existing.map(descriptor),
-  } };
+  }, ...(allowlist ? { allowlist: { models: L.models().map((m) => m.name) } } : {}) };
 }
 /** Step two: check the new credential and keep its public key. Audited (auth.passkey.enrolled). */
 function registrationFinish(ctx, { credential, name }) {
@@ -206,14 +225,18 @@ function registrationFinish(ctx, { credential, name }) {
     const reg = W.verifyRegistration(credential, { challengeHash: row.challengeHash, rpId: rp.rpId, origins: rp.origins });
     if (findByCredential(reg.credentialId)) throw new HttpError(409, 'This passkey is already registered.');
     if (db.one(`SELECT COUNT(*) n FROM passkeys WHERE user_id=?`, ctx.user.id).n >= MAX_PER_USER) throw badRequest(`You already have ${MAX_PER_USER} passkeys.`);
+    // The authenticator allow-list: the attestation verified against the model's roots in the loaded metadata.
+    const attestation = L.enabled() ? L.checkRegistration(reg.attestation) : null;
     const id = uuid();
     const label = cleanName(name) || 'Passkey';
-    db.run(`INSERT INTO passkeys(id,user_id,credential_id,public_key,alg,sign_count,transports,aaguid,backup_eligible,backed_up,rp_id,name) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-      id, ctx.user.id, reg.credentialId, reg.publicKey, reg.alg, reg.signCount, JSON.stringify(reg.transports), reg.aaguid, reg.backupEligible ? 1 : 0, reg.backedUp ? 1 : 0, rp.rpId, label);
+    db.run(`INSERT INTO passkeys(id,user_id,credential_id,public_key,alg,sign_count,transports,aaguid,backup_eligible,backed_up,rp_id,name,attestation) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      id, ctx.user.id, reg.credentialId, reg.publicKey, reg.alg, reg.signCount, JSON.stringify(reg.transports), attestation ? attestation.aaguid : reg.aaguid, reg.backupEligible ? 1 : 0, reg.backedUp ? 1 : 0, rp.rpId, label,
+      attestation ? JSON.stringify(attestation) : null);
     // The name is the owner's label for their device ("Maria's iPhone"): kept out of the audit entry, as the key is.
     // The entry anchors the key instead: the SHA-256 of its SPKI and of the credential id, in the hash-chained log,
     // so a signature's evidence can be tied to the key accepted here (evidenceFor, scripts/verify-passkey-evidence.js).
-    audit.log({ user: ctx.user, action: 'auth.passkey.enrolled', entity: 'passkey', entityId: id, ip: ctx.ip, details: { algorithm: W.ALG_NAMES[reg.alg], alg: reg.alg, aaguid: reg.aaguid, synced: reg.backedUp,
+    audit.log({ user: ctx.user, action: 'auth.passkey.enrolled', entity: 'passkey', entityId: id, ip: ctx.ip, details: { algorithm: W.ALG_NAMES[reg.alg], alg: reg.alg, aaguid: attestation ? attestation.aaguid : reg.aaguid, synced: reg.backedUp,
+      ...(attestation ? { attestation: { verified: true, fmt: attestation.fmt, type: attestation.type, mds_no: attestation.mds_no } } : {}),
       ...W.credentialFingerprints({ publicKey: reg.publicKey, credentialId: reg.credentialId }), count: db.one(`SELECT COUNT(*) n FROM passkeys WHERE user_id=?`, ctx.user.id).n } });
     return present(db.one(`SELECT * FROM passkeys WHERE id=?`, id));
   } catch (e) {
@@ -268,6 +291,14 @@ function checkAssertion(ctx, credential, pk, rp, challengeHash) {
     audit.log({ user: { id: pk.user_id }, action: 'auth.passkey.clone_suspected', entity: 'passkey', entityId: pk.id, ip: ctx.ip, success: false, details: { stored_count: pk.sign_count, presented_count: r.signCount } });
     throw new W.WebAuthnError('counter', 'This passkey\'s counter went backwards, which can mean it was copied. It has been disabled; tell your administrator.');
   }
+  // The authenticator allow-list: a passkey whose model was not proven for a listed model at enrolment (every one
+  // added while the list was off), or whose model is now reported compromised, is refused at its next use. Checked
+  // once the signature has verified, so only the passkey's holder learns why.
+  const allowed = L.passkeyAllowed(pk);
+  if (!allowed.ok) {
+    audit.log({ user: { id: pk.user_id }, action: 'auth.passkey.not_allowed', entity: 'passkey', entityId: pk.id, ip: ctx.ip, success: false, details: { reason: allowed.reason, aaguid: pk.aaguid } });
+    throw new W.WebAuthnError('not_allowed', L.refusalMessage(allowed.reason));
+  }
   db.run(`UPDATE passkeys SET sign_count=?, backed_up=?, last_used_at=? WHERE id=?`, r.signCount, r.backedUp ? 1 : 0, db.now(), pk.id);
   return r;
 }
@@ -286,8 +317,8 @@ function loginOptions(ctx) {
   const app = require('./app');
   if (!app.rateLimit(`passkey-options:${ctx.ip}`, 60, 60_000)) throw new HttpError(429, 'Too many attempts. Try again later.');
   if (ctx.user && ctx.session && ctx.session.mfa_pending) {
-    const creds = db.all(`SELECT * FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, ctx.user.id);
-    if (!creds.length) throw badRequest('Your account has no passkey. Enter the code from your authenticator app.');
+    const creds = usable(ctx.user.id);
+    if (!creds.length) throw badRequest(L.enabled() ? 'Your account has no passkey your programme accepts. Enter the code from your authenticator app.' : 'Your account has no passkey. Enter the code from your authenticator app.');
     return { purpose: 'mfa', publicKey: { challenge: issue({ purpose: 'mfa', userId: ctx.user.id, sessionId: ctx.session.id }), rpId: rp.rpId, timeout: TIMEOUT_MS, userVerification: 'required', allowCredentials: creds.map(descriptor) } };
   }
   return { purpose: 'login', publicKey: { challenge: issue({ purpose: 'login', ip: ctx.ip || null }), rpId: rp.rpId, timeout: TIMEOUT_MS, userVerification: 'required', allowCredentials: [] } };
@@ -331,9 +362,9 @@ function loginFinish(ctx, { credential }) {
     if (!(e instanceof W.WebAuthnError)) throw e;
     // A signature that does not verify, or a missing fingerprint check, counts toward the account's lockout like a
     // wrong password (a flagged or copied credential does not: nothing was guessed, and it is refused anyway).
-    const counts = !['flagged', 'counter', 'rpid'].includes(e.code);
+    const counts = !['flagged', 'counter', 'rpid', 'not_allowed'].includes(e.code);
     const locked = counts ? A.recordPasswordFailure(user) : false;
-    failedAttempt(who, locked ? `${e.code}; locked after failures` : e.code, e.message, e.code === 'counter' || e.code === 'flagged' ? 403 : 401);
+    failedAttempt(who, locked ? `${e.code}; locked after failures` : e.code, e.message, ['counter', 'flagged', 'not_allowed'].includes(e.code) ? 403 : 401);
   }
   const pol = A.policy();
   if (second) {
@@ -417,8 +448,8 @@ function signingOptions(ctx, purpose, params) {
   requirePolicy('signing');
   const rp = relyingParty(ctx);
   const b = bindingFor(ctx, purpose, params);
-  const creds = db.all(`SELECT * FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, ctx.user.id);
-  if (!creds.length) throw badRequest('You have no passkey yet. Add one under My profile → Fingerprint sign-in.');
+  const creds = usable(ctx.user.id);
+  if (!creds.length) throw badRequest(L.enabled() && db.one(`SELECT 1 FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, ctx.user.id) ? 'None of your passkeys is on your programme\'s list of accepted authenticators. Use your password or authenticator code, or add a passkey on an accepted authenticator under My profile → Fingerprint sign-in.' : 'You have no passkey yet. Add one under My profile → Fingerprint sign-in.');
   const statement = { v: 1, purpose: b.purpose, record_type: b.record_type, record_ids: b.record_ids, content: b.content, ...(b.items ? { items: b.items } : {}), user_id: ctx.user.id, rp_id: rp.rpId,
     issued_at: new Date().toISOString(), nonce: crypto.randomBytes(16).toString('hex') };
   const challenge = issue({ purpose: `sign:${b.purpose}`, userId: ctx.user.id, sessionId: ctx.session.id, statement });
@@ -459,7 +490,7 @@ function confirm(ctx, credential, bind, { action }) {
   if (!pk || pk.user_id !== ctx.user.id) refuse('unknown passkey', 'That passkey is not one of yours on SUDS.', { counts: false });
   let r;
   try { r = checkAssertion(ctx, credential, pk, rp, row.challengeHash); }
-  catch (e) { if (e instanceof W.WebAuthnError) refuse(e.code, e.message, { counts: !['flagged', 'counter', 'rpid'].includes(e.code) }); throw e; }
+  catch (e) { if (e instanceof W.WebAuthnError) refuse(e.code, e.message, { counts: !['flagged', 'counter', 'rpid', 'not_allowed'].includes(e.code) }); throw e; }
   A.clearFailures(ctx.user.id);
   // statement_hash: SHA-256 of the canonical statement, which is the challenge the device signed (the challenge row's
   // own id is the hash of that again: challenges are kept hashed).
@@ -543,4 +574,4 @@ function adoption() {
 }
 
 module.exports = { CHALLENGE_MS, MAX_PER_USER, MAX_OPEN_PER_IP, PURPOSES, relyingParty, configuredRpId, availability, issue, take, purge, list, remove, rename, registrationOptions, registrationFinish,
-  loginOptions, loginFinish, bindingFor, signingOptions, confirm, evidenceFor, enrolmentOf, noteEvidence, adoption, userHandle };
+  loginOptions, loginFinish, bindingFor, signingOptions, confirm, evidenceFor, enrolmentOf, noteEvidence, adoption, userHandle, usable, usableCount, allowlist: L };

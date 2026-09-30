@@ -767,6 +767,19 @@ const migrations = [
     addColumn(d, 'county_programmes', 'on_suds', 'INTEGER NOT NULL DEFAULT 1');
     if (tableExists(d, 'county_submissions') && !tableCols(d, 'county_submissions').includes('source')) rebuildTable(d, safeSchema(), 'county_submissions');
   },
+  // 61, 62: numbers held for the other 1.21.0 streams' migrations (the release's integration puts theirs here). A
+  //     documented no-op on this branch, so the authenticator allow-list's migration keeps the number 63 it was given.
+  (d) => { void d; },
+  (d) => { void d; },
+  // 63: the authenticator allow-list for passkeys (built for 1.21.0, not yet released; docs/FINGERPRINT.md
+  //     "Authenticator allow-list"): passkeys.attestation (the attestation verified at enrolment under the list; NULL
+  //     for every passkey added before, which is right: none was attested) and authenticator_metadata (what SUDS keeps
+  //     of an uploaded FIDO Metadata Service BLOB). Office server only. Self-contained and idempotent, so it can be
+  //     renumbered.
+  (d) => {
+    addColumn(d, 'passkeys', 'attestation', 'TEXT');
+    createTablesFromSchema(d, safeSchema(), ['authenticator_metadata'], 63);
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

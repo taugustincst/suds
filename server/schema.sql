@@ -150,9 +150,31 @@ CREATE TABLE IF NOT EXISTS passkeys (
   -- Set when the signature counter went backwards (a possible copy of the credential): refused from then on,
   -- until the owner or an administrator removes it.
   flagged_at TEXT,
-  flag_reason TEXT
+  flag_reason TEXT,
+  -- The attestation verified at enrolment under the authenticator allow-list (docs/FINGERPRINT.md, "Authenticator
+  -- allow-list"): JSON { verified, fmt, type, aaguid, mds_no, verified_at }. NULL for a passkey added while the list
+  -- was off (attestation 'none': its AAGUID is only what the device said), which the list, once on, does not accept.
+  -- The attestation certificate itself is not kept (migration 63).
+  attestation TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
+
+-- What SUDS keeps of the FIDO Metadata Service BLOB an administrator uploaded, for the authenticator allow-list
+-- (server/authenticator-allowlist.js): per authenticator model (an AAGUID, or for a U2F key its attestation key
+-- identifiers), its description, the root certificates its attestation must chain to, its status reports and
+-- attestation types. Public data about products, no PHI and nothing about any person. Replaced whole by each upload;
+-- the BLOB's number and dates are the setting authn_mds. Office server only, never synchronised (migration 63).
+CREATE TABLE IF NOT EXISTS authenticator_metadata (
+  id TEXT PRIMARY KEY,                 -- the AAGUID, or 'u2f:' and the first key identifier
+  aaguid TEXT,
+  key_ids TEXT NOT NULL DEFAULT '[]',  -- JSON array of hex SHA-1 key identifiers (fido-u2f)
+  description TEXT NOT NULL DEFAULT '',
+  root_certificates TEXT NOT NULL,     -- JSON array of base64 DER certificates
+  status_reports TEXT NOT NULL,        -- JSON array of { status, effectiveDate }
+  attestation_types TEXT NOT NULL DEFAULT '[]',
+  mds_no INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_authenticator_metadata_aaguid ON authenticator_metadata(aaguid);
 
 -- WebAuthn challenges waiting for an answer: stored by SHA-256 of the challenge (never the challenge itself),
 -- single-use (used_at), bound to a purpose and, once signed in, to the user and session; two minutes to live.
