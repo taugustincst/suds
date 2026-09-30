@@ -241,6 +241,11 @@ function widenRange({ a, b, lo, hi, x, T, P, shows, over = () => false }) {
 // }
 // A var with aux: true is a count of people that only ties others (the people of several combined funds); it
 // is not itself one of the sensitive quantities.
+// A var with fixed: true is a cell another release prints (a programme's own publication release, beside the
+// county's combined one: server/county-publication-audit.js, 1.21.0): it shows by the primary rule alone ("<T" when
+// 1 to T-1, else its number, which is what a reader holding that release knows at most), is never hidden or
+// withheld by this audit, and its table is never one to withhold. Its "<T" cells are sensitive quantities like any
+// other: the rest of the release must be hidden until they are protected.
 // status per var: 'vis' | 'pri' | 'sec' | 'withheld' | 'unpub'.
 //
 // run(values) is the suppression for one world (one set of true values); it is also what the attacker runs.
@@ -445,9 +450,9 @@ function auditor(model, T, { budget, meter = newMeter() }) {
     const w = world(values);
     const withheldTables = new Set(forced);
     // A zero is printed as 0 and never hidden; the primary rule hides every count of people from 1 to T-1.
-    const hideable = (s, i) => s[i] === 'vis' && vars[i].published && values[i] > 0 && !withheldTables.has(vars[i].table);
+    const hideable = (s, i) => s[i] === 'vis' && vars[i].published && !vars[i].fixed && values[i] > 0 && !withheldTables.has(vars[i].table);
     const withStatus = (s, i, x) => { const t = s.slice(); t[i] = x; w.applyMirror(t); return t; };
-    const withTable = (s, table) => { const t = s.slice(); for (const i of tableOf.get(table)) if (vars[i].published) t[i] = 'withheld'; w.applyMirror(t); return t; };
+    const withTable = (s, table) => { const t = s.slice(); for (const i of tableOf.get(table)) if (vars[i].published && !vars[i].fixed) t[i] = 'withheld'; w.applyMirror(t); return t; };
     let s = vars.map((v, i) => (!v.published ? 'unpub' : withheldTables.has(v.table) ? 'withheld' : v.people && small(values[i]) ? 'pri' : 'vis'));
     // A total whose every part that is not 0 is shown "<T" (women <11, men <11) is hidden too, whatever it is:
     // printed, it would say how the small parts add up, and hiding it only when that pins them (served 12,
@@ -473,7 +478,7 @@ function auditor(model, T, { budget, meter = newMeter() }) {
     for (const k of w.cons) {
       if (k.op !== '<=' || k.rhs !== 0 || k.terms.length !== 2) continue;
       const [[a, ca], [b, cb]] = k.terms; const [sub, tot] = ca === 1 && cb === -1 ? [a, b] : ca === -1 && cb === 1 ? [b, a] : [null, null];
-      if (sub !== null && hiddenTotals.has(tot) && vars[sub].people && s[sub] === 'vis' && values[sub] >= T) s[sub] = 'sec';
+      if (sub !== null && hiddenTotals.has(tot) && vars[sub].people && !vars[sub].fixed && s[sub] === 'vis' && values[sub] >= T) s[sub] = 'sec';
     }
     w.applyMirror(s);
     // A cover - parts that together are at least a total (race codes: everyone has at least one, and some have
@@ -528,7 +533,7 @@ function auditor(model, T, { budget, meter = newMeter() }) {
       const hl = model.headlineVar;
       if (hl === undefined || st[hl] === 'vis') return st;
       let t = null;
-      for (const i of model.companions || []) if (st[i] === 'vis' && vars[i].published && values[i] >= T) { t = t || st.slice(); t[i] = 'sec'; }
+      for (const i of model.companions || []) if (st[i] === 'vis' && vars[i].published && !vars[i].fixed && values[i] >= T) { t = t || st.slice(); t[i] = 'sec'; }
       if (!t) return st;
       w.applyMirror(t);
       const changed = []; t.forEach((x, i) => { if (x !== st[i]) changed.push(i); });
@@ -569,7 +574,7 @@ function auditor(model, T, { budget, meter = newMeter() }) {
       // Nothing visible left near it: withhold a table that binds it, nearest first.
       const tables = []; const seen = new Set();
       for (const i of [...level.keys()].sort((a, b) => (level.get(a) - level.get(b)) || (a - b))) {
-        const t = vars[i].table; if (seen.has(t) || withheldTables.has(t) || !vars[i].published) continue;
+        const t = vars[i].table; if (seen.has(t) || withheldTables.has(t) || !vars[i].published || vars[i].fixed) continue;
         seen.add(t); tables.push(t);
       }
       if (!tables.length) break; // nothing left to withhold: the check below refuses the release
@@ -824,9 +829,12 @@ function protect(model, T, { budget = 4000, stepLimit = STEP_LIMIT, timeLimitMs 
   // The published tables a count that could not be shown protected is in: its own, or for a count printed
   // nowhere, those of the counts it is worked out from (or tied to), the headline last.
   const tablesFor = (id) => {
+    // A cell another release prints (fixed) is never withheld here: like a count printed nowhere, the tables of
+    // the counts it is tied to are withheld instead.
+    const own = (i) => model.vars[i].published && !model.vars[i].fixed;
     let idx = byId.has(id) ? [byId.get(id)] : (derivedById.get(id)?.terms || []).map(([j]) => j);
-    if (idx.some(i => !model.vars[i].published)) idx = [...idx.filter(i => model.vars[i].published), ...idx.filter(i => !model.vars[i].published).flatMap(neighbours)];
-    const t = [...new Set(idx.filter(i => model.vars[i].published).map(i => model.vars[i].table))];
+    if (idx.some(i => !own(i))) idx = [...idx.filter(own), ...idx.filter(i => !own(i)).flatMap(neighbours)];
+    const t = [...new Set(idx.filter(own).map(i => model.vars[i].table))];
     const other = t.filter(x => !keep.has(x));
     return other.length ? other : t;
   };

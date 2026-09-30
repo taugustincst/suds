@@ -12,6 +12,9 @@ import { programmeConnections } from './countyconnect.js';
 //   #/county                   the combined view for a period (county:view); &by=quarter for the trend
 //   #/county?tab=submissions   import a file, and every file received (import, withdraw, reinstate: county:manage)
 //   #/county?tab=programmes    the programs whose files are accepted, their keys, and this county's code
+//   #/county?tab=publish       publication releases of the combined figures (built for 1.21.0, not yet released;
+//                              server/county-publication.js): prepare, review and publish (county:manage), the releases
+//                              published and withdrawn (county:view), their files (export:read)
 // Figures the county enters for a program not on SUDS (released in 1.20.0; server/county-entry.js): "Add a program not
 // on SUDS", "Enter figures" and "Import a CSV" on Programs; everywhere they appear they are marked "entered by the
 // county — not signed by the program", and the combined view can leave them out (&entered=exclude).
@@ -59,11 +62,11 @@ function copyButton(value, what, attrs = {}) {
 }
 
 route('county', async (r) => {
-  const tab = ['submissions', 'programmes'].includes(r.query.get('tab')) ? r.query.get('tab') : 'view';
-  const tabs = pageTabs([['view', 'Combined view'], ['submissions', 'Submissions'], ['programmes', 'Programs']], tab,
+  const tab = ['submissions', 'programmes', 'publish'].includes(r.query.get('tab')) ? r.query.get('tab') : 'view';
+  const tabs = pageTabs([['view', 'Combined view'], ['submissions', 'Submissions'], ['programmes', 'Programs'], ['publish', 'Publish']], tab,
     (k) => nav(k === 'view' ? 'county' : `county?tab=${k}`), { label: 'County view sections', wrap: true });
   const intro = h('p', { class: 'small', 'data-county-intro': '1' }, `The settlement spending and outcomes the programs the county funds send it, each as a file its own SUDS signed, and the figures the county's staff enter for a program not on SUDS, marked "${ENTERED_WORDS}". Exact aggregate figures for authorised county staff: no client of any program is ever in them, and nothing here is for publication.`);
-  const body = tab === 'programmes' ? await programmesTab() : tab === 'submissions' ? await submissionsTab(r) : await viewTab(r);
+  const body = tab === 'programmes' ? await programmesTab() : tab === 'submissions' ? await submissionsTab(r) : tab === 'publish' ? await publishTab() : await viewTab(r);
   return h('div', { 'data-county': tab }, pageHead('County view'), tabs, intro, body);
 });
 
@@ -196,6 +199,132 @@ function quarterView(d) {
     d.rows.some(x => x.group === 'award') ? h('p', { class: 'small', 'data-cq-award-note': '1' }, d.award_note) : null,
     section('award', 'Spending against the award, by quarter', 'cq-award-h'),
     perQuarter);
+}
+
+// ---- publication releases of the combined figures (built for 1.21.0, not yet released) ----
+const PUB_STATUS = { published: ['Published', 'ok'], withdrawn: ['Withdrawn: do not use', 'danger'] };
+const PUB_GROUPS = { spending: 'Spending from settlement funds', use: 'Spent by allowable use (Exhibit E)', hiaa: 'Spent by High Impact Abatement Activity', outcome: 'Outcomes' };
+/** A published figure as shown: a number, or the symbol it is published as, in words (never colour alone). */
+const shownValue = (x) => (typeof x.value === 'number' ? (x.money ? money(x.value) : num(x.value)) : String(x.value));
+const SCREEN_NOTE = { small: 'Small', complementary: 'Suppressed: protects a program\'s small figure', withheld: 'Withheld' };
+const pubPeriod = (x) => `${fmt.date(x.period_from)} – ${fmt.date(x.period_to)}`;
+/** What a release would publish (or did): its programs, its figures by section, what was hidden and why, its notes. */
+function releaseBody(c) {
+  const entered = c.figures_entered_by_the_county;
+  const sections = Object.keys(PUB_GROUPS).map(g => [g, c.rows.filter(x => x.group === g)]).filter(([, rows]) => rows.length);
+  return h('div', { 'data-pub-release': '1' },
+    h('h3', {}, `Programs (${c.programmes.length})`),
+    h('ul', { 'data-pub-programmes': '1' }, c.programmes.map(p => h('li', {}, p.name, p.coverage === 'part' ? ' (part of the period)' : '',
+      p.source === 'county_entered' || p.source === 'mixed' ? h('span', { class: 'small', 'data-pub-entered': '1' }, p.source === 'mixed' ? ` — some figures ${ENTERED_WORDS}` : ` — ${ENTERED_WORDS}`) : null))),
+    !entered.counted ? h('p', { class: 'small', 'data-pub-entered-left-out': '1' }, `Figures entered by the county are left out${entered.left_out.length ? ` (${entered.left_out.join(', ')})` : ''}.`) : null,
+    sections.map(([g, rows]) => h('div', { 'data-pub-group': g }, h('h3', {}, PUB_GROUPS[g]),
+      table([{ label: 'Measure', render: x => x.label }, { label: 'County total', cardLabel: 'Total', num: true, render: x => h('span', { 'data-pub-value': x.key }, shownValue(x)) },
+        { label: 'Screened', render: x => (x.suppressed ? h('span', { 'data-pub-suppressed': x.key }, badge(SCREEN_NOTE[x.suppressed], 'warn')) : x.screened ? 'Shown' : 'Exact') }], rows))),
+    h('h3', {}, 'Suppressed or withheld, and why'),
+    c.suppressed.length || c.withheld.length
+      ? h('ul', { 'data-pub-why': '1' }, [...c.suppressed.map(x => h('li', {}, h('b', {}, `${x.label}: `), x.why)), ...c.withheld.map(x => h('li', {}, h('b', {}, `${x.key}: `), x.why))])
+      : h('p', { class: 'small', 'data-pub-why': 'none' }, 'Nothing was suppressed or withheld.'),
+    h('details', { class: 'small', 'data-pub-notes': '1' }, h('summary', {}, 'Notes and method'), h('ul', {}, c.notes.map(n => h('li', {}, n))),
+      h('p', {}, `${c.method.name}. Threshold ${c.method.threshold}. Differencing: ${c.method.differencing}.`)));
+}
+async function publishTab() {
+  const manage = can('county:manage');
+  const listHeading = h('h2', { id: 'cpub-list-h', tabindex: '-1' }, 'Releases published');
+  const list = h('div', { 'data-pub-rows': '1' });
+  const download = (x, format) => fetchDownload(`/api/county/publications/${x.id}/export${format ? `?format=${format}` : ''}`)
+    .then(() => toast(x.status === 'withdrawn' ? 'Downloaded. This release is withdrawn: do not use it.' : 'Downloaded. A publication release, screened for small cells.', 'ok')).catch(e => toast(e.message, 'error'));
+  const openRelease = async (x) => {
+    const rec = await get(`/api/county/publications/${x.id}`);
+    modal(`Release for ${pubPeriod(rec)}`, h('div', { 'data-pub-view': rec.id },
+      rec.status === 'withdrawn' ? h('p', { class: 'banner danger', 'data-pub-withdrawn': '1' }, `Withdrawn on ${fmt.date(rec.withdrawal.at)}${rec.withdrawal.by ? ` by ${rec.withdrawal.by}` : ''}: do not use these figures.${rec.withdrawal.reason ? ` Why: ${rec.withdrawal.reason}` : ''}`) : null,
+      h('p', { class: 'small' }, `Published ${fmt.date(rec.published_at)}${rec.published_by ? ` by ${rec.published_by}` : ''}. SHA-256 of what was published: `, h('code', { class: 'small', style: { overflowWrap: 'anywhere' } }, rec.sha256)),
+      releaseBody(rec.content)), { wide: true });
+  };
+  const refresh = async () => {
+    const rows = (await get('/api/county/publications')).rows;
+    list.replaceChildren(table([{ label: 'Period', render: pubPeriod },
+      { label: 'Published', render: x => `${fmt.date(x.published_at)}${x.published_by ? ` by ${x.published_by}` : ''}` },
+      { label: 'Status', render: x => h('span', { 'data-pub-status': x.status }, badge(PUB_STATUS[x.status][0], PUB_STATUS[x.status][1]), x.withdrawal ? h('span', { class: 'small' }, ` on ${fmt.date(x.withdrawal.at)}`) : null) },
+      { label: 'Programs', num: true, render: x => num(x.programmes) }, { label: 'Suppressed', num: true, render: x => num(x.suppressed) },
+      { label: '', srLabel: 'Actions', render: x => h('div', { class: 'row' },
+        h('button', { class: 'btn sm', 'data-pub-open': x.id, 'aria-label': `View release for ${pubPeriod(x)}`, onClick: () => openRelease(x) }, 'View release'),
+        can('export:read') ? [['', 'CSV'], ['xlsx', 'Excel'], ['json', 'JSON']].map(([fmtKey, label]) => h('button', { class: 'btn sm ghost', 'data-pub-export': fmtKey || 'csv', 'aria-label': `${label} of the release for ${pubPeriod(x)}`, onClick: () => download(x, fmtKey) }, label)) : null,
+        manage && x.status === 'published' ? h('button', { class: 'btn sm ghost', 'data-pub-withdraw': x.id, 'aria-label': `Withdraw the release for ${pubPeriod(x)}`, onClick: () => withdrawRelease(x) }, 'Withdraw') : null) }],
+    rows, { empty: 'No release published yet.' }));
+  };
+  const withdrawRelease = async (x) => {
+    const reason = await confirmDialog('Withdraw this release?', `The release for ${pubPeriod(x)} will be marked withdrawn wherever it is listed and in its files. It is kept as it was published (it was seen), and it still stops any overlapping period from being published.`,
+      { danger: true, okText: 'Withdraw', requireReason: true, minLength: 3, maxLength: 500, reasonLabel: 'Why is it withdrawn?' });
+    if (!reason) return;
+    try {
+      await post(`/api/county/publications/${x.id}/withdraw`, { reason });
+      await refresh(); listHeading.focus();
+      toast('Withdrawn. The release is kept, marked withdrawn.', 'ok');
+    } catch (e) { toast(e.message, 'error'); }
+  };
+  await refresh();
+  const intro = h('p', { class: 'small', 'data-pub-intro': '1' }, 'A publication release is the combined figures of a period that has ended, screened for publication by the small-cell method SUDS uses for a program\'s own releases: a county total of people or events under the threshold is shown as "<" the threshold, and a total that could be subtracted with the programs\' own published figures to reveal a small one is suppressed. Money and counts that are not of people stay exact. Each release is recorded as published and never changed; it can be withdrawn.');
+  return h('div', { 'data-pub': '1' }, intro, manage ? prepareCard(refresh, listHeading) : null,
+    h('section', { class: 'card mb', 'aria-labelledby': 'cpub-list-h', 'data-pub-list': '1' }, h('div', { class: 'card-head' }, listHeading), list));
+}
+function prepareCard(refresh, listHeading) {
+  const today = fmt.today(); const lq = lastCompleteQuarter(today); const P = presets(today);
+  const fromI = h('input', { type: 'date', id: 'cpub-from', name: 'from', value: lq.from, 'aria-describedby': 'cpub-err' });
+  const toI = h('input', { type: 'date', id: 'cpub-to', name: 'to', value: lq.to, 'aria-describedby': 'cpub-err' });
+  const preset = h('select', { id: 'cpub-preset' }, h('option', { value: '' }, 'Choose a period…'), P.map(p => h('option', { value: p.key, selected: p.from === lq.from && p.to === lq.to }, p.label)));
+  preset.addEventListener('change', () => { const p = P.find(x => x.key === preset.value); if (p) { fromI.value = p.from; toI.value = p.to; } });
+  const enteredI = h('input', { type: 'checkbox', id: 'cpub-entered', name: 'entered', 'data-pub-exclude-entered': '1', 'aria-describedby': 'cpub-entered-help' });
+  const thresholdI = h('input', { type: 'number', id: 'cpub-threshold', name: 'threshold', min: '3', max: '50', step: '1', inputmode: 'numeric', 'aria-describedby': 'cpub-threshold-help' });
+  const err = h('div', { class: 'err', id: 'cpub-err', role: 'alert', style: { flexBasis: '100%' } });
+  // What would be published, or why not, said where the person is: the focus moves to it.
+  const result = h('div', { tabindex: '-1', class: 'hidden', 'data-pub-result': '1' });
+  const show = (node, okay) => {
+    result.className = okay ? 'mb' : 'banner danger mb';
+    if (okay) { result.setAttribute('role', 'region'); result.setAttribute('aria-labelledby', 'cpub-result-h'); } else { result.setAttribute('role', 'alert'); result.removeAttribute('aria-labelledby'); }
+    result.setAttribute('data-pub-outcome', okay ? 'prepared' : 'refused');
+    result.replaceChildren(node); result.focus();
+  };
+  const checkBtn = h('button', { class: 'btn primary', type: 'submit', 'data-pub-prepare': '1' }, 'Check the figures');
+  const reviewPanel = (p, c) => {
+    const reviewed = h('input', { type: 'checkbox', id: 'cpub-reviewed', 'data-pub-reviewed': '1', 'aria-describedby': 'cpub-reviewed-err' });
+    const pubErr = h('div', { class: 'err', id: 'cpub-reviewed-err', role: 'alert' });
+    const pubBtn = h('button', { class: 'btn primary', type: 'button', 'data-pub-publish': '1', onClick: async () => {
+      if (!reviewed.checked) { pubErr.textContent = 'Tick that you reviewed the release first.'; reviewed.setAttribute('aria-invalid', 'true'); reviewed.focus(); return; }
+      pubBtn.disabled = true;
+      try {
+        await post('/api/county/publications', { ...c, sha256: p.sha256, reviewed: true }, { quiet: true });
+        result.className = 'hidden'; result.replaceChildren();
+        await refresh(); listHeading.focus();
+        toast('Published. The release is recorded and is never changed.', 'ok');
+      } catch (ex) { pubErr.textContent = ex.message; pubBtn.disabled = false; }
+    } }, 'Publish');
+    return h('section', { class: 'card', 'data-pub-review': p.sha256 },
+      h('h2', { id: 'cpub-result-h' }, `What would be published for ${fmt.date(c.from)} – ${fmt.date(c.to)}`),
+      h('p', { class: 'small' }, 'Nothing is published until you confirm below. Read the figures, and what was suppressed and why.'),
+      releaseBody(p.content),
+      h('div', { class: 'field' }, h('label', { class: 'check', for: 'cpub-reviewed' }, reviewed, p.review_confirmation), pubErr),
+      h('div', { class: 'btn-row' }, pubBtn));
+  };
+  const f = h('form', { class: 'filters', noValidate: true, 'data-pub-form': '1', onSubmit: async (e) => {
+    e.preventDefault();
+    err.textContent = ''; for (const i of [fromI, toI]) i.removeAttribute('aria-invalid');
+    const problem = !fromI.value || !toI.value ? 'Choose a start and an end date.' : fromI.value > toI.value ? `The start date (${fmt.date(fromI.value)}) is after the end date (${fmt.date(toI.value)}).` : '';
+    if (problem) { err.textContent = problem; fromI.setAttribute('aria-invalid', 'true'); toI.setAttribute('aria-invalid', 'true'); fromI.focus(); return; }
+    const c = { from: fromI.value, to: toI.value, entered: enteredI.checked ? 'exclude' : 'include', ...(thresholdI.value ? { threshold: Number(thresholdI.value) } : {}) };
+    checkBtn.disabled = true;
+    try { show(reviewPanel(await post('/api/county/publications/prepare', c, { quiet: true }), c), true); }
+    catch (ex) { show(h('p', {}, h('b', {}, 'Not published. '), ex.message), false); }
+    finally { checkBtn.disabled = false; }
+  } },
+  h('div', { class: 'field' }, h('label', { for: 'cpub-preset' }, 'Period'), preset),
+  h('div', { class: 'field' }, h('label', { for: 'cpub-from' }, 'From'), fromI), h('div', { class: 'field' }, h('label', { for: 'cpub-to' }, 'To'), toI),
+  h('div', { class: 'field' }, h('label', { for: 'cpub-threshold' }, 'Threshold (optional)'), thresholdI, h('div', { class: 'help', id: 'cpub-threshold-help' }, 'Empty: the county\'s own. It can be raised, never lowered.')),
+  h('div', { class: 'field' }, h('label', { class: 'check', for: 'cpub-entered' }, enteredI, 'Leave out figures entered by the county'), h('div', { class: 'help', id: 'cpub-entered-help' }, 'Publishes only files the programs signed.')),
+  checkBtn, err);
+  return h('section', { class: 'card mb', 'aria-labelledby': 'cpub-prep-h', 'data-pub-preparer': '1' },
+    h('div', { class: 'card-head' }, h('h2', { id: 'cpub-prep-h' }, 'Prepare a publication release')),
+    h('p', { class: 'small' }, 'Choose a period that has ended. SUDS screens its combined figures and shows what would be published; you then confirm and publish. A period that overlaps a release already published cannot be published: the two could be subtracted.'),
+    f, result);
 }
 
 // ---- submissions: import, and every file received ----

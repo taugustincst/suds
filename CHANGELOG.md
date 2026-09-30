@@ -195,6 +195,32 @@ are held as no-ops on this branch for the other 1.21.0 migrations. Tests: `test/
 made by `test/x509.js`), `scripts/ui/fingerprint.mjs` part 7. Documents: FINGERPRINT.md ("Authenticator
 allow-list", with the owner's decisions), QUESTIONNAIRE #19a, DATA-INVENTORY.
 
+### County publication releases (built for 1.21.0, not yet released)
+
+The publication screen over the combined county release (docs/COUNTY-VIEW.md, *Publication*): County view › Publish
+makes a screened, publishable release of a county's combined figures for a period, records it, and never changes it.
+
+- **The same small-cell method as a programme's own release** (`server/sdc.js`), audited over the county totals and
+  against every programme's own release they could be differenced against: each programme's figure is modelled as a
+  cell its own release prints (its number when 0 or at least T, `<T` when small), so a county total that would give a
+  small programme's figure away once the others' are subtracted is suppressed. `sdc.js` gains `fixed` cells (printed
+  by another release, never hidden or withheld by this audit); a programme's own releases are unchanged. Money and
+  counts that are not of people stay exact. A release the check cannot protect is refused.
+- **Prepare, review, publish** (`county:manage`; no new permission): what would be published is shown first, and
+  publishing needs the review ticked and the figures unchanged since (the hash reviewed). Each release is recorded
+  with who, when, the period, the method's parameters and the SHA-256 of what was published, in `county_publications`
+  (migration 61), append-only in the database itself; **withdraw** is a record of its own. A period that overlaps a
+  release already published, withdrawn or not, is refused.
+- **Figures the county entered** count by the combined view's rule (a signed file outranks them), are named in the
+  release, and can be left out.
+- **Files**: on screen, CSV, Excel with a Notes sheet (what was suppressed and why, never the value) and JSON; the read
+  API's `GET /api/county-connect/v1/publications`. Audited `county.publication.prepare|publish|refuse|export|withdraw`,
+  never with a figure.
+- Tests: `test/county-publication.test.js` (permissions, screening, a differencing attack, refusal, determinism, the
+  record, withdrawal, entered figures, files, the read API) and the algorithm-aware differencing attacker
+  `test/county-publication-sdc.test.js`, one of the SDC sweeps. Browser script `scripts/ui/county-publication.mjs`
+  (the suite is now 55 scripts), and the Publish tab and its dialogs in `scripts/ui/accessibility.mjs`.
+
 ## 1.20.0 — 2026-09-30
 
 A feature release (migration 60 and the county-entered figures routes), released under a policy exception inside

@@ -41,6 +41,17 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-09-30 — Claude: county publication releases (branch `feat/121-county-publication`, not pushed; built for 1.21.0, not yet released)
+
+- County view › Publish: the publication screen over the combined county release (docs/COUNTY-VIEW.md,
+  *Publication*). Migration **61** (`county_publications`, append-only by triggers). No new permission
+  (`county:manage` prepares, publishes, withdraws). `server/sdc.js` gains `fixed` cells (a cell another release
+  prints); the programme releases' models set none, so their releases are unchanged.
+- Owner decisions taken with conservative defaults are listed in COUNTY-VIEW *Publication* (seven, e.g. overlapping
+  periods refused even after a withdrawal, and every programme figure of 0 or at least T assumed published exactly).
+- The browser suite is **55 scripts** with `county-publication.mjs`. `test/county-publication-sdc.test.js` joins the
+  SDC sweeps (`thorough-sdc`; about 70 s at full size).
+
 ### 2026-09-30 — Claude: 1.20.0 (documentation pass, evidence, installer fixes, county kit, county-entered figures)
 
 - One feature release under a recorded policy exception (docs/RELEASE.md, *Record: 1.20.0*): migration 60 and the

@@ -820,7 +820,7 @@ const CAVEATS = [
   'Each figure is what the program recorded in SUDS for the work charged to the opioid settlement funds it chose to report to the county, from its own Settlement outcomes page. Money is exact; a cost per outcome is not calculated across programs.',
 ];
 const PERIOD_RULE = 'A program\'s submission counts when its whole period lies inside the period chosen here; nothing is pro-rated. Where two of one program\'s submissions overlap (a quarter and a month inside it), the longer one counts, except that a signed file always counts over figures the county entered. A program whose submissions cover only part of the period is marked "part of the period". An inactive program\'s files count only if the county chose to keep counting them.';
-const PUBLICATION_NOTE = 'Publishing these figures needs the publication screen over the combined release (planned). Until then nothing here is for publication.';
+const PUBLICATION_NOTE = 'To publish combined figures, use Publish (built for 1.21.0, not yet released): it screens the totals of a period with SUDS\'s small-cell method, checked against each program\'s own published figures, and records what was published. Nothing on the combined view or in its files is for publication.';
 
 module.exports = {
   FORMAT, SCHEMA_VERSION, SCHEMA_VERSIONS, ALGORITHM, MAX_FILE_BYTES, MAX_QUARTERS, VALUE_KEYS, PAYLOAD, PAYLOAD_V2, PAYLOADS, AWARD_NOT_IN_FILE, AWARD_NONE, awardFrom, awardNote, TEXT_MAX, CAVEATS, CAVEAT_SUMMARY, PERIOD_RULE, PUBLICATION_NOTE, SubmissionError,

@@ -106,13 +106,25 @@ function backstopRefusal(inputs) {
 let deviceRunner = null;
 /** local/kernel.js: the Web Worker runner for this device's audits (null: audit on the page). */
 function setDeviceAuditRunner(fn) { deviceRunner = typeof fn === 'function' ? fn : null; clearCache(); }
-function inlineAudit(inputs, T, opts) {
+function inlineAudit(inputs, T, opts, kind) {
   auditStats.inline++;
-  return new Promise((resolve) => require('./spreadsheet').defer(resolve)).then(() => RA.protectFigures(inputs, T, opts));
+  return new Promise((resolve) => require('./spreadsheet').defer(resolve)).then(() => (kind === 'county' ? require('./county-publication-audit').protectCounty : RA.protectFigures)(inputs, T, opts));
 }
-/** The audit of one release's figures, off the main thread where there is one. */
-function runAudit(inputs, T) {
+/**
+ * The audit of one release's figures, off the main thread where there is one. kind 'county': a county publication
+ * release (server/county-publication.js; office server only, so never on a device's runner).
+ */
+function runAudit(inputs, T, { kind } = {}) {
   const opts = { ...auditOptions };
+  if (kind === 'county') {
+    if (inline()) return inlineAudit(inputs, T, opts, kind);
+    auditStats.worker++;
+    return new Promise((resolve, reject) => {
+      const id = ++seq;
+      pending.set(id, { resolve, reject, timer: null, w: null, msg: { id, inputs, T, opts, kind } });
+      dispatch(id);
+    });
+  }
   // On a device, in its Web Worker where it has one; otherwise inline (the browser kernel without one, or
   // SUDS_AUDIT_INLINE=1), after letting the event loop go once, so the page can paint between the read and the
   // audit (docs/architecture/ADR-0009, "Where it runs").

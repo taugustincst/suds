@@ -1722,6 +1722,35 @@ CREATE TABLE IF NOT EXISTS county_submissions (
   CHECK ((source = 'signed' AND key_id IS NOT NULL AND signature IS NOT NULL AND entered_via IS NULL) OR (source = 'county_entered' AND key_id IS NULL AND signature IS NULL AND entered_via IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_county_submissions_programme ON county_submissions(programme_id, period_from, period_to);
+-- County publication releases (migration 61; built for 1.21.0, not yet released; docs/COUNTY-VIEW.md "Publication";
+-- server/county-publication.js). On a county's server: each screened release of the combined figures it published,
+-- and each withdrawal of one. A release row holds exactly what was published (content: the canonical JSON of
+-- screened aggregates, never an exact small count, no client-level data: it is public) and its SHA-256, with who
+-- published it, when, the period and the method's parameters (threshold, whether figures the county entered were
+-- counted). A withdrawal is a row of its own (kind 'withdrawal', release_id the release, its reason encrypted: typed
+-- text); nothing is ever changed or deleted (the triggers below; reason_enc stays re-encryptable by key rotation).
+CREATE TABLE IF NOT EXISTS county_publications (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('release','withdrawal')),
+  release_id TEXT REFERENCES county_publications(id),
+  period_from TEXT NOT NULL,
+  period_to TEXT NOT NULL,
+  threshold INTEGER NOT NULL,
+  entered TEXT NOT NULL CHECK (entered IN ('include','exclude')),
+  method TEXT NOT NULL,                -- JSON: the method and its parameters
+  content TEXT,                        -- a release: the canonical JSON of what was published
+  sha256 TEXT NOT NULL,                -- of the release's content (a withdrawal: of the release it withdraws)
+  reason_enc TEXT,                     -- a withdrawal: why, AES-256-GCM
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  created_by TEXT REFERENCES users(id),
+  CHECK ((kind = 'release' AND release_id IS NULL AND content IS NOT NULL AND reason_enc IS NULL) OR (kind = 'withdrawal' AND release_id IS NOT NULL AND content IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_county_publications_period ON county_publications(period_from, period_to);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_county_publications_withdrawal ON county_publications(release_id);
+CREATE TRIGGER IF NOT EXISTS county_publications_no_update BEFORE UPDATE OF id, kind, release_id, period_from, period_to, threshold, entered, method, content, sha256, created_at, created_by ON county_publications
+  BEGIN SELECT RAISE(ABORT, 'county_publications is append-only: a published release is never changed (withdraw it: a new row)'); END;
+CREATE TRIGGER IF NOT EXISTS county_publications_no_delete BEFORE DELETE ON county_publications
+  BEGIN SELECT RAISE(ABORT, 'county_publications is append-only: a published release is never deleted'); END;
 
 -- The county connection (docs/COUNTY-VIEW.md, "Connecting"; server/county-connect.js, server/county-connect-client.js).
 -- Office server only, never synchronised (server/sync-tables.js server_only). Optional and off by default on both sides.

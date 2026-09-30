@@ -130,8 +130,12 @@ programme, not unduplicated. Tier 1 has an API too: an optional county connectio
 CBO's server sends the same signed file and sees what is outstanding, and read tokens for the county's own systems
 (COUNTY-VIEW *Connecting*).
 
-**What is planned (not scheduled).** A published funder dashboard: needs the publication screen over the combined
-release. Benchmarks across programmes (Tier 2).
+**What is built for 1.21.0, not yet released.** The publication screen over the combined release: a screened,
+recorded release of a county's combined figures, audited against each programme's own published figures
+(COUNTY-VIEW *Publication*).
+
+**What is planned (not scheduled).** A published funder dashboard on top of those releases. Benchmarks across
+programmes (Tier 2).
 
 **Assessment.**
 
@@ -332,7 +336,7 @@ until counsel and one pilot have looked at it.
 | AI documentation copilot | **Released in 1.17.0** ([docs/AI-COPILOT.md](../AI-COPILOT.md)); off by default |
 | Least-privilege default; client revision history | **Released in 1.17.0** |
 | SABG primary-prevention events and their summary; anonymous SSP participant code | **Released in 1.17.0**; no PPSDS file (the mapping awaits the DHCS data dictionary) |
-| Funder-facing outcome view across CBOs | **Released in 1.18.0**: the county view from signed, exact submissions, internal only ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)), sent as a file or over the optional county connection, with a read API for the county's systems; a published view needs the publication screen over the combined release (**planned**) |
+| Funder-facing outcome view across CBOs | **Released in 1.18.0**: the county view from signed, exact submissions, internal only ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)), sent as a file or over the optional county connection, with a read API for the county's systems; screened publication releases of the combined figures are built for 1.21.0, not yet released (COUNTY-VIEW *Publication*); a published dashboard is **planned** |
 | Street-outreach screen (one-handed anonymous contacts, offline, *My shift*) with the SSP participant code; settlement outcomes by fund | **Released in 1.17.0** |
 | SUDS Server: the Linux installer and its weekly signed compliance check | **Released in 1.18.0** ([docs/SELF-HOSTING.md](../SELF-HOSTING.md)); tested in a fake root with stub system commands and run for real on Ubuntu 24.04 in a systemd container ([docs/evidence/installer-container-run-2026-09-30/](../evidence/installer-container-run-2026-09-30/README.md)); 1.20.0 fixes the four problems that run found; not yet on a real VM, or on RHEL 9, by the project |
 | Fingerprint sign-in, authorization and signing with passkeys | **Released in 1.19.0** ([docs/FINGERPRINT.md](../FINGERPRINT.md)); office server only; no biometric data held |

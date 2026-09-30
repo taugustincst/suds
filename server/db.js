@@ -767,10 +767,15 @@ const migrations = [
     addColumn(d, 'county_programmes', 'on_suds', 'INTEGER NOT NULL DEFAULT 1');
     if (tableExists(d, 'county_submissions') && !tableCols(d, 'county_submissions').includes('source')) rebuildTable(d, safeSchema(), 'county_submissions');
   },
-  // 61: reserved for another 1.21.0 change (numbers are assigned per change so parallel work merges cleanly). A
-  //     documented no-op on this branch, kept so the field-device migration below keeps number 62; when the change
-  //     that owns 61 is merged, its migration replaces this line.
-  (d) => { void d; },
+  // 61: county publication releases (built for 1.21.0, not yet released; docs/COUNTY-VIEW.md "Publication"):
+  //     county_publications, each screened release of the combined figures a county published and each withdrawal,
+  //     append-only (its triggers, as schema.sql declares them). A new table: nothing to backfill. Self-contained and
+  //     idempotent, so it can be renumbered.
+  (d) => {
+    const text = safeSchema();
+    createTablesFromSchema(d, text, ['county_publications'], 61);
+    for (const m of text.matchAll(/CREATE TRIGGER IF NOT EXISTS county_publications_\w+ [\s\S]*?END;/g)) d.exec(m[0]);
+  },
   // 62: field devices and participant-code clients (built for 1.21.0, not yet released; server/field-scope.js,
   //     docs/PLATFORM.md "Field devices"). devices.sync_scope ('full' for every existing device: nothing a device
   //     holds changes on upgrade), scope_changed_at and field_applied_at; sessions.device_id, the device a sync

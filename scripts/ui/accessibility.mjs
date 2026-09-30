@@ -260,6 +260,8 @@ async function pagesFor(page) {
       const d = new Date(); let y = d.getFullYear(); let q = Math.floor(d.getMonth() / 3) - 2; if (q < 0) { q += 4; y--; }
       const from = `${y}-${String(q * 3 + 1).padStart(2, '0')}-01`; const end = new Date(Date.UTC(d.getFullYear(), Math.floor(d.getMonth() / 3) * 3, 0)).toISOString().slice(0, 10);
       out.push('county?tab=submissions', 'county?tab=programmes', `county?from=${from}&to=${end}&by=quarter`);
+      // Publication releases of the combined figures (built for 1.21.0, not yet released): the Publish tab.
+      out.push('county?tab=publish');
       // The county connection (docs/COUNTY-VIEW.md, "Connecting"): the County connections page, for county:view.
       out.push('county-connect');
     }
@@ -337,6 +339,13 @@ async function prepareOffice() {
   const ccProgs = (await api(page, 'GET', '/api/county/programmes')).data.rows;
   must(await api(page, 'POST', '/api/county-connect/tokens', { scope: 'county.submit', programme_id: ccProgs.find(p => p.on_suds !== false).id }), 'a connection token');
   must(await api(page, 'POST', '/api/county-connect/tokens', { scope: 'county.read', name: 'County data warehouse' }), 'a read token');
+  // A county publication release of the earliest quarter the sample files cover (built for 1.21.0, not yet released;
+  // docs/COUNTY-VIEW.md "Publication"), so the Publish tab is audited with a release in its list, and its View and
+  // Withdraw dialogs open. Releases are append-only: on a server that already has it, the overlap refusal is fine.
+  const [, pubFrom, pubTo] = /(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})\.json$/.exec(sampleFiles[0]);
+  const pubPrep = await api(page, 'POST', '/api/county/publications/prepare', { from: pubFrom, to: pubTo });
+  if (pubPrep.status === 200) must(await api(page, 'POST', '/api/county/publications', { from: pubFrom, to: pubTo, sha256: pubPrep.data.sha256, reviewed: true }), 'a county publication release');
+  else if (pubPrep.status !== 409) throw new Error(`a county publication release could not be prepared: ${pubPrep.status} ${JSON.stringify(pubPrep.data)}`);
   // A supervisor (clients:all, care plan, assessments, Part 2 registers) records the clinical and Part 2 records.
   await as('jwalker', PW);
   const fresh = must(await api(page, 'POST', '/api/clients', { first_name: 'Ada', last_name: 'Audit', status: 'waitlist', confirm_duplicate: true }), 'a client with no episode');
@@ -515,6 +524,8 @@ const BUTTON_DIALOGS = [
   ['settlement', 'Make a new key'],
   // The county connection: issuing a connection or read token, and connecting this server to a county.
   ['county?tab=programmes', 'Issue token'], ['county-connect', 'Issue a read token'], ['settlement', 'Connect to the county'],
+  // Publication releases (built for 1.21.0, not yet released): one release, as published, and withdrawing it (cancelled).
+  ['county?tab=publish', 'View release'], ['county?tab=publish', 'Withdraw'],
   // The supervision queue: countersigning one note (the note's text, a comment, the signature step).
   ['supervision', 'Countersign'],
 ];
