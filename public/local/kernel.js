@@ -21004,7 +21004,83 @@ try {
       }
       return { ...info, previous_database_kept_at: kept };
     }
-    module.exports = { create: create3, createAsync, encryptPlain, encryptFileSync, decrypt: decrypt3, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect: inspect2, restore, restoreWhenIdle, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
+    function restoreInPlace(plainBytes, { dbPath = config2.dbPath, by = "cli" } = {}) {
+      if (dbPath === ":memory:") throw new Error("This server is configured with an in-memory database; there is nothing to restore into.");
+      if (db3.isOpen && db3.isOpen()) throw new Error("The database is open in this process: restoreInPlace() is for a stopped server.");
+      const info = inspect2(plainBytes);
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const dir = path.dirname(dbPath);
+      const side = `${dbPath}.restoring-${stamp2}`;
+      const journals = (f) => ["-wal", "-shm", "-journal"].map((s) => f + s);
+      const fd2 = fs.openSync(side, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 384);
+      try {
+        fs.writeSync(fd2, plainBytes);
+        fs.fsyncSync(fd2);
+      } finally {
+        fs.closeSync(fd2);
+      }
+      try {
+        const d = new DatabaseSync2(side, { readOnly: true });
+        try {
+          const ok = String(Object.values(d.prepare("PRAGMA integrity_check").get())[0]).toLowerCase() === "ok";
+          const v = Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0);
+          if (!ok || v !== info.schema_version) throw new Error("The copy written beside the database does not match the backup (a disk problem?). Nothing was replaced.");
+        } finally {
+          d.close();
+        }
+        for (const j of journals(side)) secureUnlink(j);
+      } catch (e) {
+        secureUnlink(side);
+        for (const j of journals(side)) secureUnlink(j);
+        throw e;
+      }
+      const aside = `${dbPath}.replaced-${stamp2}`;
+      fs.mkdirSync(aside, { mode: 448 });
+      const moved = [];
+      for (const f of [dbPath, ...journals(dbPath)]) {
+        if (fs.existsSync(f)) {
+          fs.renameSync(f, path.join(aside, path.basename(f)));
+          moved.push(path.basename(f));
+        }
+      }
+      fs.renameSync(side, dbPath);
+      for (const j of journals(dbPath)) {
+        try {
+          fs.unlinkSync(j);
+        } catch {
+        }
+      }
+      try {
+        const dfd = fs.openSync(dir, "r");
+        try {
+          fs.fsyncSync(dfd);
+        } finally {
+          fs.closeSync(dfd);
+        }
+      } catch {
+      }
+      db3.open(dbPath);
+      try {
+        const restoredGen = db3.getSetting("db_generation", null) || "initial";
+        db3.setSetting("db_generation", require_crypto().uuid());
+        require_audit().log({ user: { username: by }, action: "backup.restore", details: { mode: "in-place (server stopped)", clients: info.counts.clients, schema_version: info.schema_version, replaced: moved } });
+        if (!config2.local) require_audit_anchor().write("restore", { prevGen: restoredGen });
+      } finally {
+        db3.close();
+      }
+      for (const f of moved) {
+        const p = path.join(aside, f);
+        try {
+          encryptFileSync(p, `${p}.enc`);
+          secureUnlink(p);
+        } catch (e) {
+          db3.noteSealError(p, e);
+          console.warn(`[suds] ${JSON.stringify({ event: "restore.aside_seal_failed", error: String(e && e.message || e).slice(0, 200) })}`);
+        }
+      }
+      return { ...info, replaced_kept_at: moved.length ? aside : null };
+    }
+    module.exports = { create: create3, createAsync, encryptPlain, encryptFileSync, decrypt: decrypt3, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect: inspect2, restore, restoreWhenIdle, restoreInPlace, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
   }
 });
 

@@ -98,7 +98,7 @@ Everything recorded after that backup was taken will be gone, so check the summa
 
 A backup from an older version of SUDS is brought up to date automatically when it is restored.
 
-Restoring through the browser handles databases up to about 450 MB. A bigger one (a county with years of scanned forms) is restored on the server itself: `node scripts/backup.js --restore <file>`, which has no size limit.
+Restoring through the browser handles databases up to about 450 MB. A bigger one (a county with years of scanned forms) is restored on the server itself, with SUDS stopped: `node scripts/backup.js --restore-in-place <file>`, which has no size limit.
 
 ## Stopping, restarting, updating
 * **Stop / restart:** stop or restart the service (or close and reopen the terminal window if you started it by hand).

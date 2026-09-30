@@ -115,11 +115,11 @@ sudo systemd-run --wait --pipe --collect --uid=suds --gid=suds --working-directo
   -p LoadCredential=suds_index_key:/etc/suds/credentials/suds_index_key \
   -p LoadCredential=suds_backup_key:/etc/suds/credentials/suds_backup_key \
   -p LoadCredential=suds_signing_key:/etc/suds/credentials/suds_signing_key \
-  /opt/suds/node/bin/node scripts/backup.js --restore /mnt/suds-offsite/suds-<stamp>.db.enc /var/lib/suds/suds.db
+  /opt/suds/node/bin/node scripts/backup.js --restore-in-place /mnt/suds-offsite/suds-<stamp>.db.enc
 sudo systemctl start suds
 ```
 
-(`server/config.js` finds each key in the transient unit's credential directory by its name.) On a replacement server: install with the same options, put the escrowed keys in `/etc/suds/credentials` **before** the first start, then restore.
+(`server/config.js` finds each key in the transient unit's credential directory by its name.) `--restore-in-place` never opens the live database — it may be one a newer release migrated, which this code cannot read: it checks the backup, writes it beside the database and checks that copy, moves `suds.db` and its `-wal`/`-shm` aside into `suds.db.replaced-<stamp>/` (sealed like a backup), renames the copy into place, drops any journal and writes a `restore` audit anchor. `upgrade.sh` uses the same command for its rollback. On a replacement server: install with the same options, put the escrowed keys in `/etc/suds/credentials` **before** the first start, then restore.
 
 ## Recovery drill
 

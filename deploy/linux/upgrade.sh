@@ -84,7 +84,7 @@ else
   act sed -i "s/^SUDS_VERSION=.*/SUDS_VERSION=$CUR/" "$(P "$ETC/suds-server.conf")"
   act systemctl daemon-reload
   # The new version may have migrated the database before failing: put back the backup taken in step 3.
-  as_suds scripts/backup.js --restore "${backup_file#"$ROOT"}" "$DATA_DIR/suds.db" || die "the restore of $backup_file failed: SUDS is stopped. Restore it by hand (docs/SELF-HOSTING.md, Backup and restore) before starting SUDS $CUR."
+  as_suds scripts/backup.js --restore-in-place "${backup_file#"$ROOT"}" || die "the restore of $backup_file failed: SUDS is stopped. Restore it by hand (docs/SELF-HOSTING.md, Backup and restore) before starting SUDS $CUR."
   act systemctl start suds.service
   wait_ready 180 || die "SUDS $CUR did not come back either: journalctl -u suds -n 200"
   die "the upgrade to $VERSION failed and was rolled back: SUDS $CUR is running on the database as it was before the upgrade ($backup_file)."

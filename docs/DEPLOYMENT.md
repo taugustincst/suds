@@ -208,8 +208,12 @@ uses the device's recovery code or a backup (WEB_APP.md, *Can't sign in?*).
 
 ```bash
 npm run backup -- /secure/backups        # encrypted, consistent snapshot (VACUUM INTO + AES-256-GCM)
-node scripts/backup.js --restore /secure/backups/suds-<stamp>.db.enc /opt/suds/data/suds.db
+node scripts/backup.js --restore /secure/backups/suds-<stamp>.db.enc /tmp/check.db   # decrypt to a separate file; the live database is not touched
+# with SUDS stopped, put a backup in place of the live database (never opens it; moves it and its -wal/-shm aside, sealed):
+node scripts/backup.js --restore-in-place /secure/backups/suds-<stamp>.db.enc
 ```
+
+(`<data dir>/suds.db` is the database: `/var/lib/suds` on SUDS Server, `./data` by default; `/opt/suds` holds only code there.)
 
 **Lower RPO.** For a recovery point in minutes rather than hours, also set **Settings → Scheduled backups → Also snapshot every (minutes)** (e.g. 15): an encrypted online snapshot (SQLite backup API, no downtime; about 1.2 s and at most a ~90 ms pause for a 100 MB database) goes to the offsite directory every N minutes, the newest `backup_snapshot_retain` kept. Security status shows the worst-case RPO. Measurements and sizing: security/BACKUP-AND-DR.md.
 
@@ -300,7 +304,7 @@ Run exactly one instance: a container platform must not scale it out (`server/in
 1. Build a second host (another site, availability zone or region) from the same release, with the same keys available from the secrets manager but **SUDS not running** (`systemctl disable --now suds`, or the container scaled to 0). It can read the offsite backup share and the anchor store.
 2. Replication is the backup set: scheduled backups every *N* hours (RPO ≈ *N*) copied to the offsite share the standby reads. Do not replicate the live SQLite file (copying it while it is written produces a damaged copy).
 3. Prove the standby monthly: on the standby, `npm run dr-drill -- --backup <newest file on the offsite share>`. The report is the evidence that the standby can take over within the RTO, measured on the machine that would.
-4. Failover: declare the primary lost and make sure it is stopped or fenced (two live copies would diverge); on the standby `node scripts/backup.js --restore <newest offsite backup> <data dir>/suds.db`, start SUDS, move the DNS name or proxy target, and tell staff to sign in again. Local-mode devices see the new database generation on their next sync and re-offer what the backup lacked (`server/routes/sync.js`). Record the event in the incident register (Privacy & Part 2 → Incidents & breaches). A restore through Settings → System & backups also writes a `restore` audit anchor, so the anchors from before it are not reported as tampering.
+4. Failover: declare the primary lost and make sure it is stopped or fenced (two live copies would diverge); on the standby, with SUDS stopped, `node scripts/backup.js --restore-in-place <newest offsite backup>`, start SUDS, move the DNS name or proxy target, and tell staff to sign in again. Local-mode devices see the new database generation on their next sync and re-offer what the backup lacked (`server/routes/sync.js`). Record the event in the incident register (Privacy & Part 2 → Incidents & breaches). A restore through Settings → System & backups also writes a `restore` audit anchor, so the anchors from before it are not reported as tampering.
 5. Failback is the same procedure in the other direction, from a backup taken on the standby.
 
 What this does not give you: automatic failover or zero data loss. Anything entered after the last backup is lost in a site failure; shorten the backup interval to shorten that window.
