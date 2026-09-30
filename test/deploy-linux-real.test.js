@@ -1,0 +1,334 @@
+'use strict';
+// SUDS Server's installer and upgrade, RUN FOR REAL (not --dry-run) into a fake root filesystem
+// (SUDS_INSTALL_ROOT), with stub system commands on PATH: package managers, systemctl, ufw, firewall-cmd,
+// useradd, chown (ownership is recorded, not applied: the tests are not root), install (runs the real install
+// with -o/-g recorded and stripped), curl (serves fixture Node.js and Caddy tarballs whose checksums are in the
+// test tree's pins, and answers the health check), systemd-run (runs the command as the service would, with the
+// credentials and environment file mapped into the fake root). The dry-run tests only read the plan; these
+// look at what is actually on disk afterwards: modes, contents, symlinks, the manifest, and — for upgrade.sh —
+// a real rollback of a database a failed release had migrated.
+const { test, after } = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const { spawnSync, execFileSync } = require('node:child_process');
+
+const REPO = path.join(__dirname, '..');
+const VERSION = require('../package.json').version;
+const OLD = '1.16.0';
+const pins = Object.fromEntries(fs.readFileSync(path.join(REPO, 'deploy/linux/pins'), 'utf8').split('\n').filter((l) => /^[A-Z_0-9]+=/.test(l)).map((l) => l.split('=')));
+const NODE_V = pins.NODE_VERSION;
+const CADDY_V = pins.CADDY_VERSION;
+const CADDY_V2 = CADDY_V.replace(/\.(\d+)$/, (m, p) => `.${Number(p) + 1}`);
+const which = (c) => execFileSync('sh', ['-c', `command -v ${c}`], { encoding: 'utf8' }).trim();
+const REAL_INSTALL = which('install');
+const has = (c) => spawnSync('sh', ['-c', `command -v ${c}`]).status === 0;
+const canRun = has('xz') && has('unzip') && has('sha256sum') && has('tar');
+
+const work = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-deploy-real-'));
+after(() => { spawnSync('chmod', ['-R', 'u+w', work]); fs.rmSync(work, { recursive: true, force: true }); });
+let n = 0;
+
+const sh = (file, body) => fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+const js = (file, body) => fs.writeFileSync(file, `#!${process.execPath}\n'use strict';\n${body}\n`, { mode: 0o755 });
+
+/** Fixture Node.js and Caddy tarballs, built once. */
+const fixtures = (() => {
+  const d = path.join(work, 'fixtures'); fs.mkdirSync(d);
+  const nd = path.join(d, `node-${NODE_V}-linux-x64`);
+  fs.mkdirSync(path.join(nd, 'bin'), { recursive: true }); fs.mkdirSync(path.join(nd, 'lib', 'node_modules'), { recursive: true });
+  sh(path.join(nd, 'bin', 'node'), `if [ "$1" = "--version" ]; then echo ${NODE_V}; exit 0; fi\nexec "${process.execPath}" "$@"`);
+  fs.writeFileSync(path.join(nd, 'lib', 'node_modules', 'README'), 'fixture\n', { mode: 0o644 });
+  const nodeTar = path.join(d, `node-${NODE_V}-linux-x64.tar.xz`);
+  if (canRun) execFileSync('tar', ['-cJf', nodeTar, '-C', d, `node-${NODE_V}-linux-x64`]);
+  const caddy = (v) => {
+    const cd = path.join(d, `caddy-${v}`); fs.mkdirSync(cd);
+    sh(path.join(cd, 'caddy'), `if [ "$1" = "version" ]; then echo "v${v} h1:fixture"; fi`);
+    const t = path.join(d, `caddy_${v}_linux_amd64.tar.gz`);
+    if (canRun) execFileSync('tar', ['-czf', t, '-C', cd, 'caddy']);
+    return t;
+  };
+  const c1 = caddy(CADDY_V); const c2 = caddy(CADDY_V2);
+  const sum = (f, a) => (canRun ? crypto.createHash(a).update(fs.readFileSync(f)).digest('hex') : '');
+  return { dir: d, nodeSha: sum(nodeTar, 'sha256'), caddy: { [CADDY_V]: sum(c1, 'sha512'), [CADDY_V2]: sum(c2, 'sha512') } };
+})();
+
+/** A SUDS release tree (what install.sh / upgrade.sh run from): the real deploy/, server/ and scripts, pins for the fixtures. */
+function tree(version, { caddy = CADDY_V, caddyfileExtra = '' } = {}) {
+  const t = path.join(work, `tree-${version}-${++n}`);
+  fs.mkdirSync(path.join(t, 'deploy'), { recursive: true }); fs.mkdirSync(path.join(t, 'scripts'));
+  fs.cpSync(path.join(REPO, 'deploy', 'linux'), path.join(t, 'deploy', 'linux'), { recursive: true });
+  fs.cpSync(path.join(REPO, 'server'), path.join(t, 'server'), { recursive: true });
+  for (const f of ['backup.js', 'compliance-check.js']) fs.copyFileSync(path.join(REPO, 'scripts', f), path.join(t, 'scripts', f));
+  fs.cpSync(path.join(REPO, 'scripts', 'compliance'), path.join(t, 'scripts', 'compliance'), { recursive: true });
+  fs.writeFileSync(path.join(t, 'package.json'), fs.readFileSync(path.join(REPO, 'package.json'), 'utf8').replace(/^ {2}"version": ".*",$/m, `  "version": "${version}",`));
+  fs.writeFileSync(path.join(t, 'Caddyfile'), fs.readFileSync(path.join(REPO, 'Caddyfile'), 'utf8') + caddyfileExtra);
+  fs.writeFileSync(path.join(t, 'deploy/linux/pins'), fs.readFileSync(path.join(REPO, 'deploy/linux/pins'), 'utf8')
+    .replace(/^NODE_SHA256_LINUX_X64=.*$/m, `NODE_SHA256_LINUX_X64=${fixtures.nodeSha}`)
+    .replace(/^CADDY_VERSION=.*$/m, `CADDY_VERSION=${caddy}`).replace(/^CADDY_SHA512_LINUX_AMD64=.*$/m, `CADDY_SHA512_LINUX_AMD64=${fixtures.caddy[caddy]}`));
+  return t;
+}
+
+/** A fake root and the stub commands. */
+function host({ os: osName = 'ubuntu' } = {}) {
+  const dir = path.join(work, `host-${++n}`);
+  const root = path.join(dir, 'root'); const bin = path.join(dir, 'bin'); const tmp = path.join(dir, 'tmp'); const log = path.join(dir, 'commands.log');
+  for (const d of ['etc', 'mnt/worm/suds-anchors', 'mnt/offsite', 'var/lib', 'etc/dnf']) fs.mkdirSync(path.join(root, d), { recursive: true });
+  fs.mkdirSync(bin); fs.mkdirSync(tmp); fs.writeFileSync(log, '');
+  fs.writeFileSync(path.join(root, 'etc/os-release'), osName === 'ubuntu' ? 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.1 LTS"\n' : 'ID="rocky"\nVERSION_ID="9.4"\nPRETTY_NAME="Rocky Linux 9.4"\n');
+  fs.writeFileSync(path.join(root, 'etc/dnf/automatic.conf'), '[commands]\nupgrade_type = default\napply_updates = no\n');
+  const logIt = `echo "$(basename "$0") $*" >> "${log}"`;
+  for (const c of ['apt-get', 'dnf', 'useradd', 'runuser', 'ufw', 'timedatectl', 'restorecon', 'chown']) sh(path.join(bin, c), `${logIt}\nexit 0`);
+  sh(path.join(bin, 'firewall-cmd'), `${logIt}\n[ "$1" = "--get-default-zone" ] && echo public\nexit 0`);
+  sh(path.join(bin, 'id'), 'exit 1');
+  sh(path.join(bin, 'uname'), 'echo x86_64');
+  sh(path.join(bin, 'findmnt'), 'echo "/dev/mapper/suds-data ext4"');
+  sh(path.join(bin, 'lsblk'), "printf 'suds-data crypt\\nsda3 part\\nsda disk\\n'");
+  sh(path.join(bin, 'mountpoint'), 'exit 0');
+  sh(path.join(bin, 'who'), 'exit 0');
+  sh(path.join(bin, 'ss'), 'exit 0');
+  sh(path.join(bin, 'getenforce'), 'echo "${HARNESS_GETENFORCE:-Disabled}"');
+  // install: the real one, with the ownership it was asked for recorded and left out (the tests are not root).
+  js(path.join(bin, 'install'), `const a = process.argv.slice(2); const keep = []; const own = {};
+    for (let i = 0; i < a.length; i++) { if (a[i] === '-o' || a[i] === '-g') { own[a[i]] = a[++i]; continue; } keep.push(a[i]); }
+    require('fs').appendFileSync(${JSON.stringify(log)}, 'install ' + a.join(' ') + '\\n');
+    const r = require('child_process').spawnSync(${JSON.stringify(REAL_INSTALL)}, keep, { stdio: 'inherit' }); process.exit(r.status === null ? 1 : r.status);`);
+  // systemctl: recorded; "start suds.service" on the release named by HARNESS_MIGRATE_VERSION migrates the database
+  // the way a new release would (a schema this older code does not know, a table, a write-ahead log left behind).
+  js(path.join(bin, 'systemctl'), `const fs = require('fs'); const a = process.argv.slice(2);
+    fs.appendFileSync(${JSON.stringify(log)}, 'systemctl ' + a.join(' ') + '\\n');
+    if (a[0] === 'is-active' || a[0] === 'is-enabled') process.exit(process.env.HARNESS_CHRONY_ACTIVE && a.includes('chrony') ? 0 : 3);
+    const root = process.env.SUDS_INSTALL_ROOT;
+    if (a[0] === 'start' && a[1] === 'suds.service' && process.env.HARNESS_MIGRATE_VERSION && fs.readlinkSync(root + '/opt/suds/current') === process.env.HARNESS_MIGRATE_VERSION) {
+      const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(root + '/var/lib/suds/suds.db');
+      const v = Number(d.prepare("SELECT value FROM settings WHERE key='schema_version'").get().value);
+      d.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE migrated_by_the_new_release(x);");
+      d.prepare("UPDATE settings SET value=? WHERE key='schema_version'").run(String(v + 3));
+      d.prepare("UPDATE settings SET value='written by the new release' WHERE key='org_name'").run();
+      fs.appendFileSync(${JSON.stringify(log)}, 'MIGRATED to schema ' + (v + 3) + '\\n');
+      process.exit(0); // without closing: the -wal stays, as after a crash
+    }
+    process.exit(0);`);
+  // curl: the fixture tarballs by name; the health check answers for the releases in HARNESS_HEALTHY.
+  js(path.join(bin, 'curl'), `const fs = require('fs'); const path = require('path'); const a = process.argv.slice(2);
+    fs.appendFileSync(${JSON.stringify(log)}, 'curl ' + a.join(' ') + '\\n');
+    const url = a.find((x) => /^https?:/.test(x)); const oi = a.indexOf('-o');
+    if (/\\/api\\/health\\/ready$/.test(url)) { const cur = fs.readlinkSync(process.env.SUDS_INSTALL_ROOT + '/opt/suds/current'); process.exit((process.env.HARNESS_HEALTHY || '').split(',').includes(cur) ? 0 : 7); }
+    const f = path.join(${JSON.stringify(fixtures.dir)}, path.basename(url));
+    if (oi < 0 || !fs.existsSync(f)) process.exit(22);
+    fs.copyFileSync(f, a[oi + 1]);`);
+  // systemd-run: the command as the service runs it — credentials in a private directory, the environment file,
+  // paths mapped into the fake root.
+  js(path.join(bin, 'systemd-run'), `const fs = require('fs'); const path = require('path'); const os = require('os'); const a = process.argv.slice(2);
+    fs.appendFileSync(${JSON.stringify(log)}, 'systemd-run ' + a.join(' ') + '\\n');
+    const root = process.env.SUDS_INSTALL_ROOT; const pre = (p) => (p.startsWith('/') && !p.startsWith(root) ? root + p : p);
+    const env = { PATH: process.env.PATH, HOME: process.env.HOME || '/tmp', TMPDIR: process.env.TMPDIR || '/tmp' }; const creds = []; const files = []; let cwd = '/'; let i = 0;
+    for (; i < a.length; i++) {
+      if (a[i].startsWith('--working-directory=')) cwd = a[i].slice(20);
+      else if (a[i] === '-p') { const v = a[++i]; if (v.startsWith('LoadCredential=')) creds.push(v.slice(15)); else if (v.startsWith('EnvironmentFile=')) files.push(v.slice(16)); }
+      else if (a[i] === '-E') { const v = a[++i]; env[v.slice(0, v.indexOf('='))] = v.slice(v.indexOf('=') + 1); }
+      else if (a[i].startsWith('-')) continue; else break;
+    }
+    for (const f of files) for (const line of fs.readFileSync(pre(f), 'utf8').split('\\n')) { const m = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line); if (m) env[m[1]] = pre(m[2]); }
+    if (env.SUDS_DATA_DIR) env.SUDS_DATA_DIR = pre(env.SUDS_DATA_DIR);
+    const cd = fs.mkdtempSync(path.join(os.tmpdir(), 'creds-')); for (const c of creds) { const [name, p] = c.split(':'); fs.copyFileSync(pre(p), path.join(cd, name)); }
+    env.CREDENTIALS_DIRECTORY = cd;
+    const r = require('child_process').spawnSync(process.execPath, a.slice(i + 1).map((x) => (x.startsWith('/') ? pre(x) : x)), { cwd: pre(cwd), env, stdio: 'inherit' });
+    fs.rmSync(cd, { recursive: true, force: true }); process.exit(r.status === null ? 1 : r.status);`);
+  return { dir, root, bin, tmp, log, commands: () => fs.readFileSync(log, 'utf8') };
+}
+
+function run(h, script, treeDir, args, env = {}) {
+  const e = { PATH: `${h.bin}:${process.env.PATH}`, HOME: process.env.HOME || '/tmp', TMPDIR: h.tmp, SUDS_INSTALL_ROOT: h.root, LANG: 'C', ...env };
+  const r = spawnSync('bash', [path.join(treeDir, 'deploy/linux', script), ...args], { env: e, encoding: 'utf8', timeout: 120000 });
+  return { code: r.status, out: r.stdout, err: r.stderr, all: r.stdout + r.stderr };
+}
+const INSTALL = ['--domain=suds.county.example.gov', '--admin-cidr=10.20.0.0/16', '--offsite=/mnt/offsite', '--anchors=/mnt/worm/suds-anchors', '--skip-compliance-check'];
+const mode = (p) => fs.statSync(p).mode & 0o7777;
+const oct = (m) => m.toString(8).padStart(4, '0');
+function walk(dir, fn) { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const p = path.join(dir, e.name); fn(p, e); if (e.isDirectory()) walk(p, fn); } }
+
+test('install.sh for real: code 0755/read-only for everyone, data 0700, credentials 0700 with 0600 keys, a separate compliance key', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const h = host(); const t = tree(VERSION);
+  const r = run(h, 'install.sh', t, INSTALL, { HARNESS_HEALTHY: VERSION });
+  assert.equal(r.code, 0, r.all);
+  const R = h.root;
+  // Under umask 077, every directory the service or Caddy runs from is still readable and searchable by them.
+  for (const top of [`opt/suds/${VERSION}`, `opt/suds/node-${NODE_V}`, `opt/caddy/${CADDY_V}`]) {
+    const base = path.join(R, top);
+    assert.equal(mode(base) & 0o555, 0o555, `${top} is ${oct(mode(base))}: readable and searchable by all`);
+    walk(base, (p, e) => {
+      const m = mode(p);
+      if (e.isDirectory()) assert.equal(m & 0o055, 0o055, `${path.relative(R, p)} is ${oct(m)}`);
+      else if (e.isFile()) assert.equal(m & 0o044, 0o044, `${path.relative(R, p)} is ${oct(m)}`);
+    });
+  }
+  for (const top of [`opt/suds/${VERSION}`, `opt/suds/node-${NODE_V}`]) walk(path.join(R, top), (p) => assert.equal(mode(p) & 0o222, 0, `${path.relative(R, p)} is read-only`));
+  for (const d of ['opt/suds', 'opt/caddy', 'etc/suds', 'etc/caddy']) assert.equal(mode(path.join(R, d)), 0o755, d);
+  assert.equal(mode(path.join(R, `opt/suds/node-${NODE_V}/bin/node`)) & 0o111, 0o111, 'node is executable by the suds user');
+  assert.equal(mode(path.join(R, `opt/caddy/${CADDY_V}/caddy`)), 0o755);
+  // Relative symlinks, so they resolve the same in production and here.
+  assert.equal(fs.readlinkSync(path.join(R, 'opt/suds/current')), VERSION);
+  assert.equal(fs.readlinkSync(path.join(R, 'opt/suds/node')), `node-${NODE_V}`);
+  assert.equal(fs.readlinkSync(path.join(R, 'opt/caddy/current')), CADDY_V);
+  assert.equal(execFileSync(path.join(R, 'opt/suds/node/bin/node'), ['--version'], { encoding: 'utf8' }).trim(), NODE_V);
+  // A completed stage: marker = SHA-256 of the manifest; every file matches.
+  const staged = path.join(R, 'opt/suds', VERSION);
+  assert.equal(fs.readFileSync(path.join(staged, '.suds-staged'), 'utf8').trim(), crypto.createHash('sha256').update(fs.readFileSync(path.join(staged, '.suds-manifest'))).digest('hex'));
+  assert.equal(spawnSync('sha256sum', ['--quiet', '--strict', '-c', '.suds-manifest'], { cwd: staged }).status, 0);
+  assert.ok(!fs.existsSync(path.join(R, `opt/suds/${VERSION}.partial`)));
+  // Data, credentials, the compliance directory and key.
+  assert.equal(mode(path.join(R, 'var/lib/suds')), 0o700);
+  assert.equal(mode(path.join(R, 'etc/suds/credentials')), 0o700);
+  for (const k of ['suds_encryption_key', 'suds_index_key', 'suds_backup_key', 'suds_signing_key']) {
+    const f = path.join(R, 'etc/suds/credentials', k);
+    assert.equal(mode(f), 0o600, k); assert.match(fs.readFileSync(f, 'utf8'), /^[0-9a-f]{64}$/, k);
+  }
+  assert.equal(mode(path.join(R, 'var/lib/suds-compliance')), 0o750);
+  const ck = path.join(R, 'etc/suds/compliance-signing-key');
+  assert.equal(mode(ck), 0o600); assert.match(fs.readFileSync(ck, 'utf8'), /^[0-9a-f]{64}$/);
+  assert.ok(!fs.readdirSync(path.join(R, 'etc/suds/credentials')).some((f) => /compliance/.test(f)), 'not among the service\'s credentials');
+  assert.ok(!fs.readFileSync(path.join(R, 'etc/systemd/system/suds.service'), 'utf8').includes('compliance-signing-key'), 'never LoadCredential\'d to suds.service');
+  const pub = fs.readFileSync(path.join(R, 'etc/suds/compliance-signing-key.pub.pem'), 'utf8');
+  assert.equal(mode(path.join(R, 'etc/suds/compliance-signing-key.pub.pem')), 0o644);
+  assert.equal(pub.trim(), require('../server/signing').publicInfo(Buffer.from(fs.readFileSync(ck, 'utf8').trim(), 'hex')).public_key_pem.trim());
+  assert.match(r.out, /compliance signing key id [0-9a-f]{16}/);
+  // Ownership the installer asked for (recorded by the stubs).
+  const cmds = h.commands();
+  for (const l of [`install -d -m 0700 -o suds -g suds ${R}/var/lib/suds`, `install -d -m 0700 -o root -g root ${R}/etc/suds/credentials`, `install -d -m 0750 -o root -g suds ${R}/var/lib/suds-compliance`,
+    `install -d -m 0755 -o root -g root ${R}/opt/suds ${R}/opt/suds/node-${NODE_V}`, `install -d -m 0755 -o root -g root ${R}/opt/caddy ${R}/opt/caddy/${CADDY_V}`, `chown -R root:root ${R}/opt/suds/${VERSION}.partial`]) assert.ok(cmds.includes(l), `${l}\n${cmds}`);
+  for (const k of ['suds_encryption_key', 'compliance-signing-key']) assert.match(cmds, new RegExp(`chown root:root ${R}/etc/suds/(credentials/)?${k}\\.suds-new`), k);
+  // Files: contents as intended.
+  for (const u of ['suds.service', 'suds-compliance.service', 'suds-compliance.timer', 'caddy.service']) {
+    assert.equal(fs.readFileSync(path.join(R, 'etc/systemd/system', u), 'utf8'), fs.readFileSync(path.join(t, 'deploy/linux', u), 'utf8'), u);
+    assert.equal(mode(path.join(R, 'etc/systemd/system', u)), 0o644, u);
+  }
+  const env = fs.readFileSync(path.join(R, 'etc/suds/suds.env'), 'utf8');
+  assert.match(env, /^SUDS_COMPLIANCE_DIR=\/var\/lib\/suds-compliance$/m); assert.match(env, /^SUDS_COMPLIANCE_PUBLIC_KEY_FILE=\/etc\/suds\/compliance-signing-key\.pub\.pem$/m);
+  assert.ok(!/[0-9a-f]{64}/.test(env), 'no key in the environment file');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(R, 'etc/suds/provision.json'), 'utf8')).settings, { backup_schedule_hours: '4', backup_offsite_dir: '/mnt/offsite', dr_drill_monthly: '1', mfa_require_all: '1' });
+  const site = fs.readFileSync(path.join(R, 'etc/systemd/system/suds.service.d/10-site.conf'), 'utf8');
+  assert.match(site, /^RequiresMountsFor=\/mnt\/worm\/suds-anchors$/m, 'only the anchors are required');
+  assert.match(site, /^ReadWritePaths=\/mnt\/worm\/suds-anchors -\/mnt\/offsite$/m, 'the offsite share is optional: an outage does not stop SUDS');
+  assert.match(fs.readFileSync(path.join(R, 'etc/systemd/journald.conf.d/suds.conf'), 'utf8'), /^SystemMaxUse=8G$/m);
+  const conf = fs.readFileSync(path.join(R, 'etc/suds/suds-server.conf'), 'utf8');
+  for (const l of ['SUDS_COMPLIANCE_DIR=/var/lib/suds-compliance', 'SUDS_COMPLIANCE_SIGNING_KEY_FILE=/etc/suds/compliance-signing-key', 'SUDS_RELEASE_CHECKSUM_SOURCE=local-tree', `SUDS_VERSION=${VERSION}`]) assert.ok(conf.includes(`${l}\n`), l);
+  assert.match(conf, /^SUDS_INSTALLED_AT=\d{4}-\d\d-\d\dT[\d:]{8}Z$/m);
+  assert.ok(cmds.includes('systemctl enable --now systemd-timesyncd'), 'timesyncd when chrony is not there');
+  assert.ok(!/restorecon/.test(cmds), 'no SELinux relabel on Ubuntu');
+  fs.writeFileSync(path.join(h.dir, 'first-run.json'), JSON.stringify({ conf }));
+});
+
+test('install.sh run again: idempotent — keys kept, first install date kept, operator lines kept, the old SSH rule removed; a broken stage is redone', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const h = host(); const t = tree(VERSION);
+  assert.equal(run(h, 'install.sh', t, INSTALL, { HARNESS_HEALTHY: VERSION }).code, 0);
+  const R = h.root;
+  const key = fs.readFileSync(path.join(R, 'etc/suds/credentials/suds_encryption_key'), 'utf8');
+  const ckey = fs.readFileSync(path.join(R, 'etc/suds/compliance-signing-key'), 'utf8');
+  const confFile = path.join(R, 'etc/suds/suds-server.conf');
+  const first = /^SUDS_INSTALLED_AT=(.*)$/m.exec(fs.readFileSync(confFile, 'utf8'))[1];
+  fs.appendFileSync(confFile, 'SUDS_LOCAL_NOTE=kept by the operator\n');
+  // An interrupted stage elsewhere, and this release's marker gone: both are dealt with.
+  fs.mkdirSync(path.join(R, `opt/suds/${VERSION}.partial/junk`), { recursive: true });
+  spawnSync('chmod', ['u+w', path.join(R, 'opt/suds', VERSION)]); fs.unlinkSync(path.join(R, 'opt/suds', VERSION, '.suds-staged'));
+  fs.writeFileSync(h.log, '');
+  const r = run(h, 'install.sh', t, INSTALL.map((a) => (a.startsWith('--admin-cidr') ? '--admin-cidr=10.30.0.0/16' : a)), { HARNESS_HEALTHY: VERSION });
+  assert.equal(r.code, 0, r.all);
+  assert.equal(fs.readFileSync(path.join(R, 'etc/suds/credentials/suds_encryption_key'), 'utf8'), key, 'a key is never regenerated');
+  assert.equal(fs.readFileSync(path.join(R, 'etc/suds/compliance-signing-key'), 'utf8'), ckey);
+  const conf = fs.readFileSync(confFile, 'utf8');
+  assert.equal(/^SUDS_INSTALLED_AT=(.*)$/m.exec(conf)[1], first, 'the first install date is kept');
+  assert.match(conf, /^SUDS_LOCAL_NOTE=kept by the operator$/m, 'a line the installer does not manage is kept');
+  assert.match(conf, /^SUDS_ADMIN_CIDR=10\.30\.0\.0\/16$/m);
+  const cmds = h.commands();
+  assert.ok(cmds.includes('ufw allow proto tcp from 10.30.0.0/16 to any port 22'), cmds);
+  assert.ok(cmds.includes('ufw delete allow proto tcp from 10.20.0.0/16 to any port 22'), 'the previous SSH rule is removed');
+  assert.ok(!fs.existsSync(path.join(R, `opt/suds/${VERSION}.partial`)), 'the leftover .partial is removed');
+  assert.match(r.err, /is not a complete staged release/);
+  assert.ok(fs.existsSync(path.join(R, 'opt/suds', VERSION, '.suds-staged')), 'restaged with its marker');
+  assert.equal(fs.readdirSync(path.join(R, 'opt/suds')).filter((f) => f.includes('.replaced.')).length, 0);
+});
+
+test('install.sh for real on Rocky 9: chrony with the county time source, SELinux relabel when enforcing, curl-minimal left alone', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const h = host({ os: 'rocky' }); const t = tree(VERSION);
+  fs.writeFileSync(path.join(h.root, 'etc/chrony.conf'), 'pool 2.rhel.pool.ntp.org iburst\n');
+  const r = run(h, 'install.sh', t, [...INSTALL, '--ntp-server=ntp1.county.gov,10.0.0.5'], { HARNESS_HEALTHY: VERSION, HARNESS_GETENFORCE: 'Enforcing' });
+  assert.equal(r.code, 0, r.all);
+  const R = h.root; const cmds = h.commands();
+  assert.match(cmds, /^dnf install -y -q ca-certificates xz unzip tar firewalld chrony dnf-automatic$/m, 'curl is present (curl-minimal): not installed over it');
+  assert.equal(fs.readFileSync(path.join(R, 'etc/chrony.d/suds.conf'), 'utf8'), 'server ntp1.county.gov iburst prefer\nserver 10.0.0.5 iburst prefer\n');
+  assert.match(fs.readFileSync(path.join(R, 'etc/chrony.conf'), 'utf8'), /^include \/etc\/chrony\.d\/\*\.conf$/m);
+  assert.ok(cmds.includes('systemctl restart chronyd'));
+  assert.match(cmds, new RegExp(`^restorecon -R ${R}/opt/suds `, 'm'), 'relabelled for SELinux');
+  assert.match(fs.readFileSync(path.join(R, 'etc/dnf/automatic.conf'), 'utf8'), /upgrade_type = security\napply_updates = yes/);
+  assert.match(fs.readFileSync(path.join(R, 'etc/suds/suds-server.conf'), 'utf8'), /^SUDS_NTP_SERVERS=ntp1\.county\.gov,10\.0\.0\.5$/m);
+});
+
+test('install.sh for real on Ubuntu with chrony already running: chrony is kept, systemd-timesyncd not installed', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const h = host(); const t = tree(VERSION);
+  const r = run(h, 'install.sh', t, [...INSTALL, '--ntp-server=ntp.county.gov'], { HARNESS_HEALTHY: VERSION, HARNESS_CHRONY_ACTIVE: '1' });
+  assert.equal(r.code, 0, r.all);
+  const cmds = h.commands();
+  assert.ok(!/systemd-timesyncd/.test(cmds), 'timesyncd neither installed nor enabled');
+  assert.ok(cmds.includes('systemctl enable --now chrony'));
+  assert.equal(fs.readFileSync(path.join(h.root, 'etc/chrony/sources.d/suds.sources'), 'utf8'), 'server ntp.county.gov iburst prefer\n');
+});
+
+/** An installed OLD release with a real database, ready for upgrade.sh. */
+function installedOld() {
+  const h = host(); const old = tree(OLD);
+  const r = run(h, 'install.sh', old, [...INSTALL, `--version=${OLD}`], { HARNESS_HEALTHY: OLD });
+  assert.equal(r.code, 0, r.all);
+  const R = h.root;
+  const creds = path.join(h.dir, 'creds'); fs.cpSync(path.join(R, 'etc/suds/credentials'), creds, { recursive: true });
+  const mk = spawnSync(process.execPath, ['--no-warnings=ExperimentalWarning', '-e', `const db = require('./server/db'); db.open(); require('./server/bootstrap').ensureBootstrap(); db.setSetting('org_name', 'County SUD programme'); require('./server/audit').log({ user: { username: 'system' }, action: 'test.before_upgrade' }); db.close();`],
+    { cwd: path.join(R, 'opt/suds/current'), env: { PATH: process.env.PATH, SUDS_ENV: 'production', SUDS_DATA_DIR: path.join(R, 'var/lib/suds'), AUDIT_ANCHOR_DIR: path.join(R, 'mnt/worm/suds-anchors'), CREDENTIALS_DIRECTORY: creds, SUDS_ADMIN_PASSWORD: 'AdminPassw0rd!x' }, encoding: 'utf8' });
+  assert.equal(mk.status, 0, mk.stderr);
+  const q = (sql) => { const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(path.join(R, 'var/lib/suds/suds.db'), { readOnly: true }); try { return d.prepare(sql).all(); } finally { d.close(); } };
+  return { h, R, q, schema: Number(q(`SELECT value FROM settings WHERE key='schema_version'`)[0].value) };
+}
+
+test('upgrade.sh for real: the new release migrates the database and never becomes ready — rolled back to the old code on the backup, journals gone', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const { h, R, q, schema } = installedOld();
+  const next = tree(VERSION, { caddy: CADDY_V2 });
+  fs.writeFileSync(h.log, '');
+  const r = run(h, 'upgrade.sh', next, [VERSION, '--ready-timeout=2', '--skip-compliance-check'], { HARNESS_HEALTHY: OLD, HARNESS_MIGRATE_VERSION: VERSION });
+  assert.equal(r.code, 1, r.all);
+  assert.match(r.err, new RegExp(`REFUSED: the upgrade to ${VERSION.replace(/\./g, '\\.')} failed and was rolled back: SUDS ${OLD.replace(/\./g, '\\.')} is running on the database as it was before the upgrade`));
+  const cmds = h.commands();
+  assert.match(cmds, /MIGRATED to schema/, 'the new release did migrate the database before failing');
+  assert.ok(cmds.indexOf('scripts/backup.js --restore-in-place') > cmds.indexOf('MIGRATED'), 'restored after the migration');
+  assert.equal(fs.readlinkSync(path.join(R, 'opt/suds/current')), OLD, 'the old code is live');
+  assert.equal(fs.readlinkSync(path.join(R, 'opt/caddy/current')), CADDY_V, 'and the old Caddy');
+  assert.equal(Number(q(`SELECT value FROM settings WHERE key='schema_version'`)[0].value), schema, 'the database is the pre-upgrade backup');
+  assert.equal(q(`SELECT value FROM settings WHERE key='org_name'`)[0].value, 'County SUD programme');
+  assert.equal(q(`SELECT name FROM sqlite_master WHERE name='migrated_by_the_new_release'`).length, 0);
+  assert.ok(!fs.existsSync(path.join(R, 'var/lib/suds/suds.db-wal')) && !fs.existsSync(path.join(R, 'var/lib/suds/suds.db-shm')), 'no journal of the migrated database beside the restored one');
+  const aside = fs.readdirSync(path.join(R, 'var/lib/suds')).find((f) => f.startsWith('suds.db.replaced-'));
+  assert.ok(aside && fs.readdirSync(path.join(R, 'var/lib/suds', aside)).includes('suds.db.enc'), 'the migrated database is kept aside, sealed');
+  assert.match(fs.readFileSync(path.join(R, 'etc/suds/suds-server.conf'), 'utf8'), new RegExp(`^SUDS_VERSION=${OLD.replace(/\./g, '\\.')}$`, 'm'));
+  assert.ok(q(`SELECT 1 FROM audit_log WHERE action='backup.restore'`).length, 'the restore is in the audit log');
+  // The old code opens the restored database.
+  const open = spawnSync(process.execPath, ['--no-warnings=ExperimentalWarning', '-e', `const db = require('./server/db'); db.open(); db.close();`],
+    { cwd: path.join(R, 'opt/suds/current'), env: { PATH: process.env.PATH, SUDS_ENV: 'production', SUDS_DATA_DIR: path.join(R, 'var/lib/suds'), CREDENTIALS_DIRECTORY: path.join(R, 'etc/suds/credentials') }, encoding: 'utf8' });
+  assert.equal(open.status, 0, open.stderr);
+});
+
+test('upgrade.sh for real: a successful upgrade swaps the code, installs the newly pinned Caddy, checks its version and restarts it', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const { h, R } = installedOld();
+  const next = tree(VERSION, { caddy: CADDY_V2, caddyfileExtra: '\n# changed\n' });
+  fs.writeFileSync(h.log, '');
+  const r = run(h, 'upgrade.sh', next, [VERSION, '--ready-timeout=2', '--skip-compliance-check'], { HARNESS_HEALTHY: `${OLD},${VERSION}` });
+  assert.equal(r.code, 0, r.all);
+  assert.equal(fs.readlinkSync(path.join(R, 'opt/suds/current')), VERSION);
+  assert.equal(fs.readlinkSync(path.join(R, 'opt/caddy/current')), CADDY_V2);
+  assert.match(r.out, new RegExp(`Caddy answers v${CADDY_V2.replace(/\./g, '\\.')}`));
+  const cmds = h.commands();
+  assert.ok(cmds.includes('systemctl restart caddy.service'), 'Caddy restarted for the new pin and Caddyfile');
+  assert.ok(cmds.indexOf('systemctl restart caddy.service') > cmds.indexOf('systemctl start suds.service'), 'after SUDS is ready');
+  assert.match(fs.readFileSync(path.join(R, 'etc/caddy/Caddyfile'), 'utf8'), /# changed/);
+  assert.equal(mode(path.join(R, `opt/caddy/${CADDY_V2}`)), 0o755);
+  assert.ok(fs.readdirSync(path.join(R, 'var/lib/suds/backups')).some((f) => f.startsWith('pre-upgrade-')), 'the pre-upgrade backup');
+});

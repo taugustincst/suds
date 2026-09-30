@@ -23,6 +23,24 @@ module.exports = (r) => {
     return { ...info, signs: ['recovery-drill reports (<data>/backups/dr-drill-*.json)', 'audit-export manifests (GET /api/admin/audit/export)'], verify_with: ['npm run verify-dr-report -- <report.json> --public-key <this key>.pem', 'npm run verify-audit-export -- <export.ndjson> --public-key <this key>.pem'] };
   });
 
+  // The last host compliance report (scripts/compliance-check.js), as written: the signed JSON document, or
+  // ?format=html the self-contained page an auditor can verify offline (npm run verify-compliance-report).
+  // Settings → Security status shows its findings; this is the evidence file itself. No PHI in it (host
+  // facts, settings, counts), but it describes the installation's defences, so it is settings:manage and
+  // each view is audited.
+  r.get('/api/admin/security/compliance-report', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+    const hc = require('../security-status').hostCompliance();
+    if (!hc) throw new HttpError(404, 'No compliance report yet: run npm run compliance-check on the server (docs/SELF-HOSTING.md)');
+    const html = ctx.query.get('format') === 'html';
+    audit.log({ user: ctx.user, action: 'security.compliance_report.view', entity: 'compliance_report', entityId: hc.doc.report && hc.doc.report.report_id, ip: ctx.ip, details: { file: hc.file, format: html ? 'html' : 'json', signature: hc.verification.ok ? 'verified' : 'does not verify' } });
+    if (html) {
+      const page = require('../compliance-report').renderHtml(hc.doc);
+      ctx.res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Disposition': `attachment; filename="${hc.file.replace(/\.json$/, '.html')}"`, 'Cache-Control': 'no-store' });
+      ctx.res.end(page); return;
+    }
+    return { file: hc.file, verification: { ok: hc.verification.ok, errors: hc.verification.errors, key_id: hc.verification.key_id, key_source: hc.verification.key_source }, ...hc.doc };
+  });
+
   r.get('/api/admin/security/mfa-report', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
     const rep = require('../security-status').mfaReport();
     audit.log({ user: ctx.user, action: 'security.mfa_report', ip: ctx.ip, details: { without: rep.without.length } });

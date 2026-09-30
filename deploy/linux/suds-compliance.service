@@ -1,0 +1,46 @@
+# The weekly SUDS compliance check (scripts/compliance-check.js), started by suds-compliance.timer. Runs as root:
+# the disk-encryption, firewall and credential checks need it. It only reads: the database from a private copy
+# (never opened in place), the host through its own tools. The one thing it writes is the signed report, into
+# /var/lib/suds-compliance (root-owned 0750, group suds, so Settings → Security status can read it), signed with
+# /etc/suds/compliance-signing-key — a key only root holds, never loaded into suds.service. A failed check makes
+# the run exit 1, so `systemctl status suds-compliance` and the county's monitoring see it.
+[Unit]
+Description=SUDS compliance check (weekly signed evidence report)
+Documentation=file:///opt/suds/current/docs/SELF-HOSTING.md
+After=suds.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/suds/current
+EnvironmentFile=/etc/suds/suds.env
+Environment=SUDS_ENV=production SUDS_DATA_DIR=/var/lib/suds
+ExecStart=/opt/suds/node/bin/node --no-warnings=ExperimentalWarning scripts/compliance-check.js
+UMask=0077
+StandardOutput=journal
+SyslogIdentifier=suds-compliance
+# Filesystem: everything read-only but the report directory and /run (ufw's iptables and cryptsetup take lock
+# files there). The data directory is only read (through a copy made in the private /tmp).
+ProtectSystem=strict
+ReadWritePaths=/var/lib/suds-compliance /run
+ReadOnlyPaths=/var/lib/suds
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+# Root, but only the capabilities the checks use: reading the suds-owned data, backups and anchors
+# (DAC_READ_SEARCH), handing a report to the suds group (CHOWN), asking the firewall (NET_ADMIN, NET_RAW for
+# iptables-legacy), cryptsetup status (SYS_ADMIN) and reading the running service's environment (SYS_PTRACE).
+# PrivateDevices= is deliberately off: cryptsetup status needs /dev/mapper/control.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_CHOWN CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_SYS_PTRACE
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native

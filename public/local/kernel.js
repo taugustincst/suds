@@ -19828,6 +19828,362 @@ var require_scim = __commonJS({
   }
 });
 
+// server/signing.js
+var require_signing = __commonJS({
+  "server/signing.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var PKCS8_PREFIX = import_buffer.Buffer.from("302e020100300506032b657004220420", "hex");
+    var ALGORITHM = "Ed25519";
+    function privateKeyFrom(seed) {
+      if (!import_buffer.Buffer.isBuffer(seed) || seed.length !== 32) throw new Error("The signing key must be 32 bytes");
+      return crypto3.createPrivateKey({ key: import_buffer.Buffer.concat([PKCS8_PREFIX, seed]), format: "der", type: "pkcs8" });
+    }
+    var cached = null;
+    function keys(seed = require_config().signingKey) {
+      if (cached && cached.seed.equals(seed)) return cached;
+      const privateKey = privateKeyFrom(seed);
+      const publicKey = crypto3.createPublicKey(privateKey);
+      const pem = publicKey.export({ type: "spki", format: "pem" });
+      cached = { seed, privateKey, publicKey, pem, keyId: keyIdOf(pem) };
+      return cached;
+    }
+    function keyIdOf(publicKeyPem) {
+      const der = crypto3.createPublicKey(publicKeyPem).export({ type: "spki", format: "der" });
+      return crypto3.createHash("sha256").update(der).digest("hex").slice(0, 16);
+    }
+    function publicInfo(seed) {
+      const k = keys(seed);
+      const der = k.publicKey.export({ type: "spki", format: "der" });
+      return { algorithm: ALGORITHM, key_id: k.keyId, public_key_pem: k.pem, sha256_fingerprint: crypto3.createHash("sha256").update(der).digest("hex") };
+    }
+    function sign2(data, seed) {
+      return crypto3.sign(null, import_buffer.Buffer.from(data), keys(seed).privateKey).toString("base64");
+    }
+    function verify(data, signatureB64, publicKeyPem) {
+      try {
+        const key = crypto3.createPublicKey(publicKeyPem);
+        if (key.asymmetricKeyType !== "ed25519") return false;
+        return crypto3.verify(null, import_buffer.Buffer.from(data), key, import_buffer.Buffer.from(String(signatureB64), "base64"));
+      } catch {
+        return false;
+      }
+    }
+    module.exports = { ALGORITHM, sign: sign2, verify, publicInfo, keyIdOf, privateKeyFrom };
+  }
+});
+
+// server/dr-report.js
+var require_dr_report = __commonJS({
+  "server/dr-report.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var signing = require_signing();
+    function canonical(v) {
+      if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+      if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
+      return JSON.stringify(v === void 0 ? null : v);
+    }
+    function verifyDoc(doc, { publicKeyPem = null } = {}) {
+      const errors = [];
+      const warnings = [];
+      const out2 = { ok: false, errors, warnings, key_id: null, key_source: publicKeyPem ? "supplied" : "embedded" };
+      if (!doc || typeof doc !== "object" || !doc.report || !doc.integrity) {
+        errors.push("this is not a SUDS recovery-drill report ({ report, integrity })");
+        return out2;
+      }
+      const { report, integrity } = doc;
+      const body = canonical(report);
+      if (crypto3.createHash("sha256").update(body).digest("hex") !== integrity.sha256) errors.push("the SHA-256 of the report does not match its integrity block: the report was edited");
+      const key = publicKeyPem || integrity.public_key_pem;
+      if (!integrity.ed25519_signature) errors.push("the report is not signed (made by a SUDS version before Ed25519 signing); only its HMAC can be checked, with the index key");
+      else if (!key) errors.push("no public key: supply the one published by the server (--public-key)");
+      else {
+        let kid = null;
+        try {
+          kid = signing.keyIdOf(key);
+        } catch {
+          errors.push("the public key is not a valid PEM key");
+        }
+        out2.key_id = kid;
+        if (kid) {
+          if (!signing.verify(body, integrity.ed25519_signature, key)) errors.push("the Ed25519 signature does not verify with this public key: the report was altered, or was not signed by this server");
+          if (integrity.signing_key_id && integrity.signing_key_id !== kid) errors.push(`the report names signing key ${integrity.signing_key_id}, not the key supplied (${kid})`);
+          if (report.signed_by && report.signed_by.key_id && report.signed_by.key_id !== kid) errors.push(`the signed report names signing key ${report.signed_by.key_id}, not ${kid}`);
+        }
+        if (!publicKeyPem) warnings.push(`checked with the public key embedded in the report (key id ${kid}); compare that id with the one published by the server (Settings \u2192 Security status, or GET /api/admin/security/signing-key) before relying on it`);
+      }
+      out2.ok = errors.length === 0;
+      return out2;
+    }
+    module.exports = { canonical, verifyDoc };
+  }
+});
+
+// server/compliance-report.js
+var require_compliance_report = __commonJS({
+  "server/compliance-report.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var signing = require_signing();
+    var drReport = require_dr_report();
+    var FORMAT2 = "suds-compliance-report";
+    var FILE_RE = /^compliance-\d{4}-\d{2}-\d{2}T[\d-]+Z\.json$/;
+    var { canonical } = drReport;
+    function seal2(report, seed) {
+      const body = canonical(report);
+      const out2 = { sha256: crypto3.createHash("sha256").update(body).digest("hex") };
+      if (seed) {
+        const pub = signing.publicInfo(seed);
+        Object.assign(out2, { ed25519_signature: signing.sign(body, seed), signing_key_id: pub.key_id, public_key_pem: pub.public_key_pem });
+      }
+      out2.algorithm = 'SHA-256 and an Ed25519 signature (report.host.signed_with names the key) over the canonical JSON of "report" (keys sorted)';
+      return out2;
+    }
+    function verifyDoc(doc, { publicKeyPem = null } = {}) {
+      if (!doc || typeof doc !== "object" || !doc.report || !doc.integrity || doc.report.format !== FORMAT2) {
+        return { ok: false, errors: ['this is not a SUDS compliance report ({ report, integrity } with report.format "suds-compliance-report")'], warnings: [], key_id: null };
+      }
+      const r = drReport.verifyDoc(doc, { publicKeyPem });
+      r.errors = r.errors.map((e) => e.replace("recovery-drill report", "compliance report"));
+      return r;
+    }
+    var esc = (s) => String(s === null || s === void 0 ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+    var RESULT_LABEL = { pass: "Pass", fail: "Fail", warn: "Warning", "not-checked": "Could not check" };
+    function counts(checks) {
+      const c = { pass: 0, fail: 0, warn: 0, "not-checked": 0 };
+      for (const k of checks || []) c[k.result] = (c[k.result] || 0) + 1;
+      return c;
+    }
+    function overall(checks) {
+      const c = counts(checks);
+      return c.fail ? "fail" : c["not-checked"] ? "incomplete" : c.warn ? "pass-with-warnings" : "pass";
+    }
+    function renderText(report) {
+      const c = report.summary.counts;
+      const lines = [
+        `SUDS compliance check \u2014 ${report.host.hostname} \u2014 ${report.generated_at}`,
+        `Result: ${report.summary.overall.toUpperCase()}  (${c.pass} pass, ${c.fail} fail, ${c.warn} warning, ${c["not-checked"]} could not check)`
+      ];
+      if (report.risk_accepted && report.risk_accepted.length) for (const r of report.risk_accepted) lines.push(`!!! RISK ACCEPTED: ${r}`);
+      const order = { fail: 0, "not-checked": 1, warn: 2, pass: 3 };
+      for (const k of [...report.checks].sort((a, b) => order[a.result] - order[b.result])) {
+        lines.push(`  [${RESULT_LABEL[k.result].toUpperCase().padEnd(15)}] ${k.id.padEnd(22)} ${k.title}`);
+        if (k.result !== "pass") {
+          if (k.evidence) lines.push(`      observed: ${k.evidence}`);
+          if (k.remediation) lines.push(`      fix: ${k.remediation}`);
+        }
+      }
+      return lines.join("\n") + "\n";
+    }
+    function renderHtml(doc) {
+      const { report, integrity } = doc;
+      const c = report.summary.counts;
+      const rows = report.checks.map((k) => `<tr class="r-${esc(k.result)}"><td><code>${esc(k.id)}</code></td><td>${esc(k.title)}</td><td><span class="badge b-${esc(k.result)}">${esc(RESULT_LABEL[k.result] || k.result)}</span></td><td>${(k.rules || []).map((r) => `<div>${esc(r.cite)} <span class="muted">${esc(r.title)}</span></div>`).join("")}</td><td>${esc(k.evidence)}</td><td>${k.result === "pass" ? "" : esc(k.remediation)}</td></tr>`).join("\n");
+      const embedded = JSON.stringify(doc).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
+      return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SUDS compliance report ${esc(report.host.hostname)} ${esc(report.generated_at)}</title>
+<style>
+body{font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;margin:0 auto;padding:16px;max-width:1200px;color:#1b1f24;background:#fff}
+h1{font-size:1.5rem;margin:.2em 0}h2{font-size:1.15rem;margin-top:1.6em}
+table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{border:1px solid #c9ced6;padding:6px 8px;text-align:left;vertical-align:top}
+th{background:#eef1f5}code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;overflow-wrap:anywhere}
+.muted{color:#4a5360}.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-weight:600;white-space:nowrap}
+.b-pass{background:#dcf2e3;color:#0d4f25}.b-fail{background:#fbdcdc;color:#7a0b0b}.b-warn{background:#fdf0cf;color:#5c3d00}.b-not-checked{background:#e4e7ec;color:#1b1f24}
+.risk{border:3px solid #7a0b0b;background:#fbdcdc;color:#7a0b0b;padding:10px;font-weight:700}
+.wrap{overflow-x:auto}dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px}dt{font-weight:600}dd{margin:0;overflow-wrap:anywhere}
+</style>
+</head>
+<body>
+<main>
+<h1>SUDS compliance report</h1>
+<p><strong>Result: ${esc(report.summary.overall)}</strong> \u2014 ${c.pass} pass, ${c.fail} fail, ${c.warn} warning, ${c["not-checked"]} could not check. \u201CCould not check\u201D is never counted as a pass.</p>
+${(report.risk_accepted || []).map((r) => `<p class="risk">RISK ACCEPTED: ${esc(r)}</p>`).join("\n")}
+<dl>
+<dt>Host</dt><dd>${esc(report.host.hostname)} (${esc(report.host.os)})</dd>
+<dt>Generated</dt><dd>${esc(report.generated_at)}</dd>
+<dt>SUDS</dt><dd>${esc(report.host.suds_version)}; Node ${esc(report.host.node_version)}</dd>
+<dt>Run as</dt><dd>${esc(report.host.run_as)}</dd>
+<dt>Report id</dt><dd><code>${esc(report.report_id)}</code></dd>
+<dt>SHA-256</dt><dd><code>${esc(integrity.sha256)}</code></dd>
+<dt>Signed by</dt><dd>${integrity.ed25519_signature ? `Ed25519 key id <code>${esc(integrity.signing_key_id)}</code>` : "NOT SIGNED (the signing key was not available to the check)"}</dd>
+</dl>
+<h2>Checks</h2>
+<div class="wrap"><table>
+<caption class="muted">Each check, the rule it produces evidence for, what was observed and how to fix it</caption>
+<thead><tr><th scope="col">Check</th><th scope="col">Title</th><th scope="col">Result</th><th scope="col">Rule</th><th scope="col">Observed</th><th scope="col">Remediation</th></tr></thead>
+<tbody>
+${rows}
+</tbody></table></div>
+<h2>Scope</h2>
+<p>${esc(report.scope)}</p>
+<h2>Verifying this report</h2>
+<p>The signed report is embedded in this page. Verify it with the public key of the key that signed it, obtained independently of this page: on SUDS Server the compliance key's public half (/etc/suds/compliance-signing-key.pub.pem, recorded at install), elsewhere the server's signing key (Settings \u2192 Security status \u2192 Download signing public key): <code>node scripts/verify-compliance-report.js ${esc(report.report_id)}.html --public-key &lt;public key&gt;.pem</code>. The verifier also re-renders this page from the signed report and fails if what it shows was edited.</p>
+</main>
+<script type="application/json" id="suds-compliance-report">${embedded}<\/script>
+</body>
+</html>
+`;
+    }
+    function extractFromHtml(html) {
+      const m = /<script type="application\/json" id="suds-compliance-report">([\s\S]*?)<\/script>/.exec(String(html));
+      if (!m) return null;
+      try {
+        return JSON.parse(m[1]);
+      } catch {
+        return null;
+      }
+    }
+    function verifyHtml(html, opts = {}) {
+      const doc = extractFromHtml(html);
+      if (!doc) return { ok: false, errors: ["no signed SUDS compliance report is embedded in this page"], warnings: [], key_id: null };
+      const r = verifyDoc(doc, opts);
+      if (renderHtml(doc) !== String(html)) {
+        r.errors.push("the page does not match the signed report embedded in it: what it shows was edited");
+        r.ok = false;
+      }
+      return r;
+    }
+    function latest(dir) {
+      let names = [];
+      try {
+        names = fs.readdirSync(dir).filter((f) => FILE_RE.test(f)).sort();
+      } catch {
+        return null;
+      }
+      for (let i = names.length - 1; i >= 0; i--) {
+        try {
+          return { file: names[i], doc: JSON.parse(fs.readFileSync(path.join(dir, names[i]), "utf8")) };
+        } catch {
+        }
+      }
+      return null;
+    }
+    module.exports = { FORMAT: FORMAT2, FILE_RE, canonical, seal: seal2, verifyDoc, verifyHtml, renderHtml, renderText, extractFromHtml, latest, counts, overall, RESULT_LABEL };
+  }
+});
+
+// server/compliance-rules.js
+var require_compliance_rules = __commonJS({
+  "server/compliance-rules.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var RULES = {
+      "hipaa-308a1iiA": { cite: "45 CFR \xA7164.308(a)(1)(ii)(A)", title: "Risk analysis (R)" },
+      "hipaa-308a1iiB": { cite: "45 CFR \xA7164.308(a)(1)(ii)(B)", title: "Risk management (R)" },
+      "hipaa-308a1iiD": { cite: "45 CFR \xA7164.308(a)(1)(ii)(D)", title: "Information system activity review (R)" },
+      "hipaa-308a3iiC": { cite: "45 CFR \xA7164.308(a)(3)(ii)(C)", title: "Termination procedures (A)" },
+      "hipaa-308a4iiC": { cite: "45 CFR \xA7164.308(a)(4)(ii)(C)", title: "Access establishment and modification (A)" },
+      "hipaa-308a5iiB": { cite: "45 CFR \xA7164.308(a)(5)(ii)(B)", title: "Protection from malicious software (A)" },
+      "hipaa-308a5iiD": { cite: "45 CFR \xA7164.308(a)(5)(ii)(D)", title: "Password management (A)" },
+      "hipaa-308a7iiA": { cite: "45 CFR \xA7164.308(a)(7)(ii)(A)", title: "Data backup plan (R)" },
+      "hipaa-308a7iiB": { cite: "45 CFR \xA7164.308(a)(7)(ii)(B)", title: "Disaster recovery plan (R)" },
+      "hipaa-308a7iiD": { cite: "45 CFR \xA7164.308(a)(7)(ii)(D)", title: "Testing and revision procedures (A)" },
+      "hipaa-308a8": { cite: "45 CFR \xA7164.308(a)(8)", title: "Evaluation (R)" },
+      "hipaa-310d1": { cite: "45 CFR \xA7164.310(d)(1)", title: "Device and media controls" },
+      "hipaa-310d2iv": { cite: "45 CFR \xA7164.310(d)(2)(iv)", title: "Data backup and storage (A)" },
+      "hipaa-312a1": { cite: "45 CFR \xA7164.312(a)(1)", title: "Access control" },
+      "hipaa-312a2i": { cite: "45 CFR \xA7164.312(a)(2)(i)", title: "Unique user identification (R)" },
+      "hipaa-312a2iii": { cite: "45 CFR \xA7164.312(a)(2)(iii)", title: "Automatic logoff (A)" },
+      "hipaa-312a2iv": { cite: "45 CFR \xA7164.312(a)(2)(iv)", title: "Encryption and decryption (A)" },
+      "hipaa-312b": { cite: "45 CFR \xA7164.312(b)", title: "Audit controls" },
+      "hipaa-312c1": { cite: "45 CFR \xA7164.312(c)(1)", title: "Integrity" },
+      "hipaa-312c2": { cite: "45 CFR \xA7164.312(c)(2)", title: "Mechanism to authenticate electronic PHI (A)" },
+      "hipaa-312d": { cite: "45 CFR \xA7164.312(d)", title: "Person or entity authentication" },
+      "hipaa-312e1": { cite: "45 CFR \xA7164.312(e)(1)", title: "Transmission security" },
+      "hipaa-312e2ii": { cite: "45 CFR \xA7164.312(e)(2)(ii)", title: "Encryption in transmission (A)" },
+      "hipaa-316b2i": { cite: "45 CFR \xA7164.316(b)(2)(i)", title: "Documentation time limit (six years)" },
+      "part2-16a2i": { cite: "42 CFR \xA72.16(a)(2)(i)", title: "Electronic records: creating, receiving, maintaining and transmitting" },
+      "part2-16a2ii": { cite: "42 CFR \xA72.16(a)(2)(ii)", title: "Electronic records: destroying, and sanitising media" },
+      "part2-16a2iii": { cite: "42 CFR \xA72.16(a)(2)(iii)", title: "Electronic records: using and accessing" },
+      "cmia-56101a": { cite: "Cal. Civ. Code \xA756.101(a)", title: "Preserve confidentiality in creating, maintaining, storing and destroying medical information" },
+      "cmia-56101b1A": { cite: "Cal. Civ. Code \xA756.101(b)(1)(A)", title: "Electronic record system protects and preserves integrity" },
+      "cmia-56101b1B": { cite: "Cal. Civ. Code \xA756.101(b)(1)(B)", title: "Electronic record system records every change or deletion" }
+    };
+    var HOST_CHECKS = [
+      { id: "host.os", title: "Supported operating system", rules: ["hipaa-308a1iiB"], remediation: "Run SUDS Server on Ubuntu 24.04 LTS or RHEL/Rocky/Alma 9, which receive security updates and which the installer supports." },
+      { id: "host.data_dir", title: "Data directory and database file permissions", rules: ["hipaa-312a1", "part2-16a2iii", "cmia-56101a"], remediation: "chown -R suds:suds /var/lib/suds; chmod 0700 /var/lib/suds; chmod 0600 /var/lib/suds/suds.db* (deploy/linux/install.sh does this)." },
+      { id: "host.disk_encryption", title: "Data on an encrypted block device", rules: ["hipaa-312a2iv", "hipaa-310d1", "part2-16a2i", "cmia-56101a"], remediation: 'Put the data directory on a LUKS (dm-crypt) volume. This cannot be done in place: attach a new encrypted disk, stop SUDS, move /var/lib/suds onto it and start SUDS again (docs/SELF-HOSTING.md, "Prerequisites").' },
+      { id: "host.keys", title: "Keys kept out of readable files and the environment", rules: ["hipaa-312a2iv", "hipaa-312a1"], remediation: "Keep each key in /etc/suds/credentials/<name> (root, 0600, directory 0700) loaded with LoadCredential= (deploy/linux/suds.service); remove any SUDS_*_KEY from Environment= and from environment files." },
+      { id: "host.service", title: "Service sandboxing (systemd unit)", rules: ["hipaa-312a1", "hipaa-308a1iiB"], remediation: "Install deploy/linux/suds.service unchanged (deploy/linux/install.sh) and keep local changes in a drop-in that does not weaken it." },
+      { id: "host.tls", title: "HTTPS: TLS 1.2 or newer, valid certificate, HSTS", rules: ["hipaa-312e1", "hipaa-312e2ii", "part2-16a2i"], remediation: "Terminate TLS with Caddy (the repository's Caddyfile, installed as /etc/caddy/Caddyfile: TLS 1.2+ only, HSTS) or a county certificate; renew the certificate before it has 14 days left." },
+      { id: "host.http_redirect", title: "Plain HTTP only redirects to HTTPS", rules: ["hipaa-312e1"], remediation: "Serve nothing but a redirect (and ACME challenges) on port 80; close it when the certificate is county-issued." },
+      { id: "host.bind", title: "SUDS listens on this machine only (127.0.0.1)", rules: ["hipaa-312e1", "hipaa-312a1"], remediation: "Set HOST=127.0.0.1 in the unit (deploy/linux/suds.service) so only the TLS proxy on this host can reach SUDS." },
+      { id: "host.firewall", title: "Host firewall active with only the expected ports", rules: ["hipaa-312e1", "hipaa-308a1iiB"], remediation: "ufw (Ubuntu) or firewalld (RHEL): deny incoming by default, allow 443 (and 80 while it only redirects), SSH only from the administration network (deploy/linux/install.sh --admin-cidr)." },
+      { id: "host.time_sync", title: "Clock synchronised (audit timestamps)", rules: ["hipaa-312b", "cmia-56101b1B"], remediation: "Enable chrony (RHEL) or systemd-timesyncd/chrony (Ubuntu) against the county time source: timedatectl set-ntp true." },
+      { id: "host.security_updates", title: "Automatic security updates", rules: ["hipaa-308a5iiB", "hipaa-308a1iiB"], remediation: "Ubuntu: unattended-upgrades with the -security origin and apt-daily-upgrade.timer; RHEL: dnf-automatic with upgrade_type = security, apply_updates = yes and dnf-automatic.timer (as deploy/linux/install.sh sets it)." },
+      { id: "host.journald", title: "System journal persistent and retained", rules: ["hipaa-312b", "hipaa-308a1iiD"], remediation: "Storage=persistent and MaxRetentionSec at least the log retention policy (default 400 days) in /etc/systemd/journald.conf.d/suds.conf; forward to the county SIEM for longer." },
+      { id: "host.auditd", title: "Linux audit daemon (recommended)", rules: ["hipaa-312b", "hipaa-308a1iiD"], remediation: "Recommended, not required: install and enable auditd so logins, sudo and changes to /etc/suds are recorded by the OS as well." },
+      { id: "host.node", title: "Node.js is the pinned, checksum-verified release", rules: ["hipaa-308a1iiB"], remediation: "Install the release pinned in deploy/linux/pins (the one CI tests) with deploy/linux/install.sh or upgrade.sh." },
+      { id: "host.suds_version", title: "SUDS release is supported", rules: ["hipaa-308a1iiB", "hipaa-308a5iiB"], remediation: 'Upgrade to the latest minor release (docs/RELEASE.md, "Supported versions") with deploy/linux/upgrade.sh.' },
+      { id: "host.release_integrity", title: "SUDS release checked against an independently published checksum", rules: ["hipaa-308a1iiB", "hipaa-308a5iiB"], remediation: "Upgrade with --release-sha256=<hex> taken from a channel other than the download (the release notes and the CHANGELOG entry at the release tag: docs/SELF-HOSTING.md, Upgrading), not --trust-release-checksum." },
+      { id: "host.backup_files", title: "Latest backup is recent and the offsite copy exists", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Scheduled backups (Settings \u2192 Scheduled backups) with the offsite directory on the mounted offsite share; check the share is mounted." },
+      { id: "host.dr_evidence", title: "Recovery drill within 90 days, signed report verifies", rules: ["hipaa-308a7iiD", "hipaa-308a7iiB"], remediation: "Run a recovery drill with the escrowed key file against the offsite copy (Settings \u2192 System & backups, or npm run dr-drill); turn the monthly drill on." },
+      { id: "host.audit_verify", title: "Audit chain and external anchors verify now", rules: ["hipaa-312b", "hipaa-312c1", "hipaa-312c2", "cmia-56101b1B", "part2-16a2iii"], remediation: 'A failure is a possible incident: follow docs/security/INCIDENT-RESPONSE.md. "Could not check" means the check ran without the index key (run it as root, or from suds-compliance.service).' }
+    ];
+    var APP_CHECKS = [
+      { id: "app.mfa_coverage", item: "Two-step verification coverage", rules: ["hipaa-312d", "hipaa-308a5iiD"], remediation: "Have every active account enrol in two-step verification (Settings \u2192 Security status lists who has not)." },
+      { id: "app.mfa_required", item: "Two-step verification required for", rules: ["hipaa-312d"], remediation: 'Settings \u2192 Security policy \u2192 "Require two-step verification for every role" (or MFA_REQUIRED_ROLES naming every role).' },
+      { id: "app.sso", item: "Single sign-on (OIDC)", rules: ["hipaa-312a2i", "hipaa-308a3iiC"], remediation: 'Configure OIDC against the county identity provider (docs/DEPLOYMENT.md, "Single sign-on").' },
+      { id: "app.idp_mfa", item: "Identity provider's multi-factor sign-in", rules: ["hipaa-312d"], info: "pass", remediation: "Trust the provider's MFA only where it enforces MFA for this application (conditional access)." },
+      { id: "app.deprovisioning", item: "Deprovisioning", rules: ["hipaa-308a3iiC", "hipaa-308a4iiC"], info: "warn", remediation: 'Create a SCIM token or set "Disable single sign-on accounts not seen for (days)".' },
+      { id: "app.password_signin", item: "Password sign-in", rules: ["hipaa-312d"], info: "pass", remediation: 'Settings \u2192 Security policy \u2192 "Require single sign-on" with named break-glass administrators.' },
+      { id: "app.password_policy", item: "Password policy", rules: ["hipaa-308a5iiD"], info: "pass", remediation: "Enforced in code (server/auth.js); nothing to configure." },
+      { id: "app.session_timeout", item: "Session timeouts", rules: ["hipaa-312a2iii"], remediation: "Settings \u2192 Security policy: idle timeout 15 minutes or less." },
+      { id: "app.backups", item: "Scheduled encrypted backups", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Settings \u2192 Scheduled backups: every 4 hours or less." },
+      { id: "app.snapshots", item: "Frequent online snapshots", rules: ["hipaa-308a7iiA"], info: "pass", remediation: 'Optional: Settings \u2192 Scheduled backups \u2192 "Also snapshot every (minutes)" for a recovery point in minutes.' },
+      { id: "app.rpo", item: "Recovery point objective (worst case)", rules: ["hipaa-308a7iiA", "hipaa-308a7iiB"], remediation: "Shorten the backup interval, or add snapshots, until the worst case is within the target." },
+      { id: "app.offsite", item: "Offsite copy", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Set the offsite directory to the mounted offsite share (Settings \u2192 Scheduled backups)." },
+      { id: "app.dr_drill", item: "Last recovery drill", rules: ["hipaa-308a7iiD", "hipaa-308a7iiB"], remediation: "Run a recovery drill (Settings \u2192 System & backups)." },
+      { id: "app.dr_monthly", item: "Monthly recovery drill", rules: ["hipaa-308a7iiD"], info: "warn", remediation: 'Settings \u2192 Scheduled backups \u2192 "Recovery drill every month".' },
+      { id: "app.plaintext_copies", item: "Unencrypted database copies", rules: ["hipaa-312a2iv", "part2-16a2ii"], remediation: "Free disk space so SUDS can seal them, or delete them securely." },
+      { id: "app.backup_key", item: "Backup encryption key", rules: ["hipaa-312a2iv", "hipaa-308a7iiA"], info: "warn", remediation: "Set SUDS_BACKUP_KEY (deploy/linux/install.sh generates it) so the PHI key can rotate without re-keying the backups." },
+      { id: "app.audit_chain", item: "Audit chain verification", rules: ["hipaa-312b", "hipaa-312c1", "cmia-56101b1B"], remediation: "A failure is a possible incident (docs/security/INCIDENT-RESPONSE.md)." },
+      { id: "app.audit_anchors", item: "Audit anchors outside the database", rules: ["hipaa-312b", "hipaa-312c2", "cmia-56101b1A"], remediation: "AUDIT_ANCHOR_DIR on write-once storage outside the data directory (install.sh --anchors)." },
+      { id: "app.audit_retention", item: "Audit retention", rules: ["hipaa-316b2i", "hipaa-312b"], remediation: "Remove AUDIT_RETENTION_DAYS or set it to 2190 or more." },
+      { id: "app.phi_key", item: "PHI encryption key", rules: ["hipaa-312a2iv", "part2-16a2i", "cmia-56101a"], remediation: "Rotate annually (npm run rotate-key) and keep the key in the credential store." },
+      { id: "app.signing_key", item: "Evidence signing key (Ed25519)", rules: ["hipaa-312c2"], remediation: "Provide SUDS_SIGNING_KEY (install.sh generates it) and give its public key to the auditor." },
+      { id: "app.index_key", item: "Index key (blind indexes, audit chain)", rules: ["hipaa-312c1"], info: "pass", remediation: "Rotate on custodian change or suspected exposure (npm run rotate-index-key)." },
+      { id: "app.key_backup", item: "Key backup", rules: ["hipaa-308a7iiA"], remediation: "Download the key backup (Settings \u2192 System & backups) and keep it apart from the database backups." },
+      { id: "app.client_retention", item: "Client record retention", rules: ["part2-16a2ii", "cmia-56101a"], info: "pass", remediation: "Set the retention period the programme's policy requires (never below 6 years)." },
+      { id: "app.https", item: "HTTPS", rules: ["hipaa-312e1", "hipaa-312e2ii"], remediation: "Run behind the TLS proxy with TRUST_PROXY=1, or give SUDS a certificate." },
+      { id: "app.local_mode", item: "Local mode (offline copies on devices)", rules: ["hipaa-310d1", "hipaa-312a1"], remediation: "Leave LOCAL_MODE_ENABLED off unless a field-work need is documented (docs/PLATFORM.md)." },
+      { id: "app.version", item: "Version", rules: ["hipaa-308a1iiB"], info: "pass", remediation: "See host.suds_version." },
+      { id: "app.db_indexes", item: "Database indexes", rules: ["hipaa-312c1"], inAppOnly: true, remediation: "Resolve the duplicate rows named, then restart." },
+      { id: "app.monitoring", item: "Monitoring", rules: ["hipaa-308a1iiD"], info: "pass", remediation: "Point the county monitoring at /api/health; set METRICS_TOKEN for Prometheus." }
+    ];
+    var byItem = new Map(APP_CHECKS.map((c) => [c.item, c]));
+    var byId = new Map([...HOST_CHECKS, ...APP_CHECKS].map((c) => [c.id, c]));
+    var slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    function forItem(name) {
+      return byItem.get(name) || { id: `app.other.${slug(name)}`, item: name, rules: [], remediation: "" };
+    }
+    function cite(keys) {
+      return (keys || []).filter((k) => RULES[k]).map((k) => ({ key: k, ...RULES[k] }));
+    }
+    function resultOfLevel(level, entry) {
+      if (level === "ok") return "pass";
+      if (level === "bad") return "fail";
+      if (level === "warn") return "warn";
+      if (level === "info") return entry && entry.info || "warn";
+      return "not-checked";
+    }
+    function levelOfResult(result) {
+      return result === "pass" ? "ok" : result === "fail" ? "bad" : "warn";
+    }
+    module.exports = { RULES, HOST_CHECKS, APP_CHECKS, forItem, cite, byId, resultOfLevel, levelOfResult, RESULTS: ["pass", "fail", "warn", "not-checked"] };
+  }
+});
+
 // server/deprovision.js
 var require_deprovision = __commonJS({
   "server/deprovision.js"(exports, module) {
@@ -20825,7 +21181,83 @@ try {
       }
       return { ...info, previous_database_kept_at: kept };
     }
-    module.exports = { create: create3, createAsync, encryptPlain, encryptFileSync, decrypt: decrypt3, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect: inspect2, restore, restoreWhenIdle, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
+    function restoreInPlace(plainBytes, { dbPath = config2.dbPath, by = "cli" } = {}) {
+      if (dbPath === ":memory:") throw new Error("This server is configured with an in-memory database; there is nothing to restore into.");
+      if (db3.isOpen && db3.isOpen()) throw new Error("The database is open in this process: restoreInPlace() is for a stopped server.");
+      const info = inspect2(plainBytes);
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const dir = path.dirname(dbPath);
+      const side = `${dbPath}.restoring-${stamp2}`;
+      const journals = (f) => ["-wal", "-shm", "-journal"].map((s) => f + s);
+      const fd2 = fs.openSync(side, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 384);
+      try {
+        fs.writeSync(fd2, plainBytes);
+        fs.fsyncSync(fd2);
+      } finally {
+        fs.closeSync(fd2);
+      }
+      try {
+        const d = new DatabaseSync2(side, { readOnly: true });
+        try {
+          const ok = String(Object.values(d.prepare("PRAGMA integrity_check").get())[0]).toLowerCase() === "ok";
+          const v = Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0);
+          if (!ok || v !== info.schema_version) throw new Error("The copy written beside the database does not match the backup (a disk problem?). Nothing was replaced.");
+        } finally {
+          d.close();
+        }
+        for (const j of journals(side)) secureUnlink(j);
+      } catch (e) {
+        secureUnlink(side);
+        for (const j of journals(side)) secureUnlink(j);
+        throw e;
+      }
+      const aside = `${dbPath}.replaced-${stamp2}`;
+      fs.mkdirSync(aside, { mode: 448 });
+      const moved = [];
+      for (const f of [dbPath, ...journals(dbPath)]) {
+        if (fs.existsSync(f)) {
+          fs.renameSync(f, path.join(aside, path.basename(f)));
+          moved.push(path.basename(f));
+        }
+      }
+      fs.renameSync(side, dbPath);
+      for (const j of journals(dbPath)) {
+        try {
+          fs.unlinkSync(j);
+        } catch {
+        }
+      }
+      try {
+        const dfd = fs.openSync(dir, "r");
+        try {
+          fs.fsyncSync(dfd);
+        } finally {
+          fs.closeSync(dfd);
+        }
+      } catch {
+      }
+      db3.open(dbPath);
+      try {
+        const restoredGen = db3.getSetting("db_generation", null) || "initial";
+        db3.setSetting("db_generation", require_crypto().uuid());
+        require_audit().log({ user: { username: by }, action: "backup.restore", details: { mode: "in-place (server stopped)", clients: info.counts.clients, schema_version: info.schema_version, replaced: moved } });
+        if (!config2.local) require_audit_anchor().write("restore", { prevGen: restoredGen });
+      } finally {
+        db3.close();
+      }
+      for (const f of moved) {
+        const p = path.join(aside, f);
+        try {
+          encryptFileSync(p, `${p}.enc`);
+          secureUnlink(p);
+        } catch (e) {
+          db3.noteSealError(p, e);
+          console.warn(`[suds] ${JSON.stringify({ event: "restore.aside_seal_failed", error: String(e && e.message || e).slice(0, 200) })}`);
+        }
+      }
+      return { ...info, replaced_kept_at: moved.length ? aside : null };
+    }
+    module.exports = { create: create3, createAsync, encryptPlain, encryptFileSync, decrypt: decrypt3, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect: inspect2, restore, restoreWhenIdle, restoreInPlace, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
   }
 });
 
@@ -21011,100 +21443,6 @@ var require_scheduled_backup = __commonJS({
       return Math.min(files.length, retain);
     }
     module.exports = { runIfDue, run: run2, runHeld, settings, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };
-  }
-});
-
-// server/signing.js
-var require_signing = __commonJS({
-  "server/signing.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var PKCS8_PREFIX = import_buffer.Buffer.from("302e020100300506032b657004220420", "hex");
-    var ALGORITHM = "Ed25519";
-    function privateKeyFrom(seed) {
-      if (!import_buffer.Buffer.isBuffer(seed) || seed.length !== 32) throw new Error("The signing key must be 32 bytes");
-      return crypto3.createPrivateKey({ key: import_buffer.Buffer.concat([PKCS8_PREFIX, seed]), format: "der", type: "pkcs8" });
-    }
-    var cached = null;
-    function keys(seed = require_config().signingKey) {
-      if (cached && cached.seed.equals(seed)) return cached;
-      const privateKey = privateKeyFrom(seed);
-      const publicKey = crypto3.createPublicKey(privateKey);
-      const pem = publicKey.export({ type: "spki", format: "pem" });
-      cached = { seed, privateKey, publicKey, pem, keyId: keyIdOf(pem) };
-      return cached;
-    }
-    function keyIdOf(publicKeyPem) {
-      const der = crypto3.createPublicKey(publicKeyPem).export({ type: "spki", format: "der" });
-      return crypto3.createHash("sha256").update(der).digest("hex").slice(0, 16);
-    }
-    function publicInfo(seed) {
-      const k = keys(seed);
-      const der = k.publicKey.export({ type: "spki", format: "der" });
-      return { algorithm: ALGORITHM, key_id: k.keyId, public_key_pem: k.pem, sha256_fingerprint: crypto3.createHash("sha256").update(der).digest("hex") };
-    }
-    function sign2(data, seed) {
-      return crypto3.sign(null, import_buffer.Buffer.from(data), keys(seed).privateKey).toString("base64");
-    }
-    function verify(data, signatureB64, publicKeyPem) {
-      try {
-        const key = crypto3.createPublicKey(publicKeyPem);
-        if (key.asymmetricKeyType !== "ed25519") return false;
-        return crypto3.verify(null, import_buffer.Buffer.from(data), key, import_buffer.Buffer.from(String(signatureB64), "base64"));
-      } catch {
-        return false;
-      }
-    }
-    module.exports = { ALGORITHM, sign: sign2, verify, publicInfo, keyIdOf, privateKeyFrom };
-  }
-});
-
-// server/dr-report.js
-var require_dr_report = __commonJS({
-  "server/dr-report.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var signing = require_signing();
-    function canonical(v) {
-      if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
-      if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
-      return JSON.stringify(v === void 0 ? null : v);
-    }
-    function verifyDoc(doc, { publicKeyPem = null } = {}) {
-      const errors = [];
-      const warnings = [];
-      const out2 = { ok: false, errors, warnings, key_id: null, key_source: publicKeyPem ? "supplied" : "embedded" };
-      if (!doc || typeof doc !== "object" || !doc.report || !doc.integrity) {
-        errors.push("this is not a SUDS recovery-drill report ({ report, integrity })");
-        return out2;
-      }
-      const { report, integrity } = doc;
-      const body = canonical(report);
-      if (crypto3.createHash("sha256").update(body).digest("hex") !== integrity.sha256) errors.push("the SHA-256 of the report does not match its integrity block: the report was edited");
-      const key = publicKeyPem || integrity.public_key_pem;
-      if (!integrity.ed25519_signature) errors.push("the report is not signed (made by a SUDS version before Ed25519 signing); only its HMAC can be checked, with the index key");
-      else if (!key) errors.push("no public key: supply the one published by the server (--public-key)");
-      else {
-        let kid = null;
-        try {
-          kid = signing.keyIdOf(key);
-        } catch {
-          errors.push("the public key is not a valid PEM key");
-        }
-        out2.key_id = kid;
-        if (kid) {
-          if (!signing.verify(body, integrity.ed25519_signature, key)) errors.push("the Ed25519 signature does not verify with this public key: the report was altered, or was not signed by this server");
-          if (integrity.signing_key_id && integrity.signing_key_id !== kid) errors.push(`the report names signing key ${integrity.signing_key_id}, not the key supplied (${kid})`);
-          if (report.signed_by && report.signed_by.key_id && report.signed_by.key_id !== kid) errors.push(`the signed report names signing key ${report.signed_by.key_id}, not ${kid}`);
-        }
-        if (!publicKeyPem) warnings.push(`checked with the public key embedded in the report (key id ${kid}); compare that id with the one published by the server (Settings \u2192 Security status, or GET /api/admin/security/signing-key) before relying on it`);
-      }
-      out2.ok = errors.length === 0;
-      return out2;
-    }
-    module.exports = { canonical, verifyDoc };
   }
 });
 
@@ -21617,9 +21955,64 @@ var require_security_status = __commonJS({
       const r = db3.one(`SELECT updated_at FROM settings WHERE key=?`, key);
       return r ? r.updated_at : null;
     }
-    function status() {
+    var complianceDir = () => config2.complianceDir || path.join(config2.dataDir, "compliance");
+    function complianceKey() {
+      if (config2.compliancePublicKeyFile) {
+        try {
+          const pem = fs.readFileSync(config2.compliancePublicKeyFile, "utf8");
+          if (!/-----BEGIN PUBLIC KEY-----/.test(pem)) return { error: `${config2.compliancePublicKeyFile} is not a PEM public key` };
+          return { pem, source: "compliance" };
+        } catch (e) {
+          return { error: `the compliance public key ${config2.compliancePublicKeyFile} cannot be read (${e.code || e.message})` };
+        }
+      }
+      return { pem: require_signing().publicInfo().public_key_pem, source: "service" };
+    }
+    function noReportLevel({ isProd = config2.isProd, confFile = proc.env.SUDS_SERVER_CONF || "/etc/suds/suds-server.conf" } = {}) {
+      let installed = false;
+      try {
+        installed = fs.existsSync(confFile);
+      } catch {
+      }
+      return isProd && installed ? "warn" : "info";
+    }
+    function hostCompliance({ record = true } = {}) {
+      const rep = require_compliance_report();
+      const found = rep.latest(complianceDir());
+      if (!found) return null;
+      let verification;
+      const key = complianceKey();
+      try {
+        verification = key.error ? { ok: false, errors: [key.error], warnings: [] } : rep.verifyDoc(found.doc, { publicKeyPem: key.pem });
+      } catch (e) {
+        verification = { ok: false, errors: [String(e.message || e)], warnings: [] };
+      }
+      const r = found.doc && found.doc.report;
+      if (record && r && r.report_id && db3.getSetting("compliance_report_seen", null) !== r.report_id) {
+        db3.setSetting("compliance_report_seen", r.report_id);
+        try {
+          require_audit().log({
+            user: { username: "system" },
+            action: "security.compliance_report.generated",
+            entity: "compliance_report",
+            entityId: r.report_id,
+            success: verification.ok && r.summary && r.summary.overall !== "fail",
+            details: { file: found.file, generated_at: r.generated_at, overall: r.summary && r.summary.overall, counts: r.summary && r.summary.counts, signature: verification.ok ? "verified" : "does not verify" }
+          });
+        } catch (e) {
+          console.error("[suds] could not audit the compliance report:", e && e.message);
+        }
+      }
+      verification.key_source = key.source || null;
+      return { ...found, verification };
+    }
+    function status({ host = true } = {}) {
       const items = [];
-      const add = (group, name, level, value, detail = "", evidence = "") => items.push({ group, name, level, value, detail, evidence });
+      const rules = require_compliance_rules();
+      const add = (group, name, level, value, detail = "", evidence = "") => {
+        const c = rules.forItem(name);
+        items.push({ group, name, level, value, detail, evidence, check_id: c.id, rules: rules.cite(c.rules) });
+      };
       const pol = auth3.policy();
       const mfa = mfaReport();
       const overdue = mfa.without.filter((u) => u.overdue).length;
@@ -21832,14 +22225,43 @@ var require_security_status = __commonJS({
         "server/db.js ensureIndexes"
       );
       add("Platform", "Monitoring", config2.metricsToken || config2.logFormat === "json" ? "ok" : "info", [config2.metricsToken ? "Prometheus metrics on" : "metrics off", `logs ${config2.logFormat}`].join("; "), "/api/health answers 503 on a failed audit check, stale backups or an expiring certificate.", "server/metrics.js, server/log.js, server/routes/app.js");
+      let compliance = null;
+      if (host) {
+        const hc = hostCompliance();
+        const G = "Host (last compliance check)";
+        if (!hc) {
+          items.push({ group: G, name: "Host compliance check", level: noReportLevel(), value: "no report yet", detail: `No report in ${complianceDir()}. Run npm run compliance-check on the server (deploy/linux/install.sh schedules it weekly: suds-compliance.timer).`, evidence: "scripts/compliance-check.js", check_id: "host.report", rules: rules.cite(["hipaa-308a8"]) });
+        } else {
+          const r = hc.doc.report || {};
+          const age = ageDays(r.generated_at);
+          const signed = hc.verification.ok;
+          const overall = r.summary && r.summary.overall || "unknown";
+          compliance = { file: hc.file, generated_at: r.generated_at || null, overall, signature_ok: signed, report_id: r.report_id || null };
+          items.push({
+            group: G,
+            name: "Host compliance check",
+            level: !signed || overall === "fail" ? "bad" : age === null || age > 8 || overall !== "pass" ? "warn" : "ok",
+            value: `${overall} on ${String(r.generated_at || "?").slice(0, 10)}${age !== null ? ` (${Math.floor(age)} day${Math.floor(age) === 1 ? "" : "s"} ago)` : ""}`,
+            detail: [signed ? `The report's Ed25519 signature verifies with ${hc.verification.key_source === "compliance" ? "the compliance check's own key (root-only; not this service's)" : "this server's signing key"}.` : `The report does not verify: ${(hc.verification.errors || []).join("; ")}.`, age !== null && age > 8 ? "Older than a week: is suds-compliance.timer running?" : "", ...(r.risk_accepted || []).map((x) => `RISK ACCEPTED: ${x}`)].filter(Boolean).join(" "),
+            evidence: `compliance/${hc.file}`,
+            check_id: "host.report",
+            rules: rules.cite(["hipaa-308a8"])
+          });
+          if (signed) {
+            for (const k of (r.checks || []).filter((x) => String(x.id).startsWith("host."))) {
+              items.push({ group: G, name: k.title, level: rules.levelOfResult(k.result), value: k.result === "not-checked" ? "could not check" : k.result === "pass" ? "pass" : k.result, detail: [k.evidence, k.result === "pass" ? "" : k.remediation].filter(Boolean).join(" \u2014 "), evidence: `as of ${String(r.generated_at).slice(0, 16).replace("T", " ")} UTC`, check_id: k.id, rules: k.rules || [] });
+            }
+          }
+        }
+      }
       const counts = { ok: 0, warn: 0, bad: 0, info: 0 };
       for (const i of items) counts[i.level]++;
-      return { generated_at: db3.now(), version: config2.version, counts, items, mfa, attestation: "SUDS holds no SOC 2, ISO 27001, HITRUST, StateRAMP or FedRAMP attestation. This page reports the technical controls in this installation; independent attestation requires an auditor (docs/security/SOC2-READINESS.md)." };
+      return { generated_at: db3.now(), version: config2.version, counts, items, mfa, compliance, attestation: "SUDS holds no SOC 2, ISO 27001, HITRUST, StateRAMP or FedRAMP attestation. This page reports the technical controls in this installation; independent attestation requires an auditor (docs/security/SOC2-READINESS.md)." };
     }
     function plainCopiesAdvice(plain) {
       return plain.map((p) => `${p.path} (${p.kind === "restore" ? "the database as it was before a restore, kept to undo it" : "a snapshot taken before a schema upgrade"}; since ${p.since}) holds every record unencrypted${p.error ? `; sealing it failed: ${p.error.error}` : ""}.`).join(" ") + " SUDS tries again every hour. Make room on the disk and check that SUDS can write to that folder; the next hourly try (or a restart) then seals it. If it is not needed, delete it securely instead (shred -u, or your platform's secure delete).";
     }
-    module.exports = { status, mfaReport, validateSettings, plainCopiesAdvice };
+    module.exports = { status, mfaReport, validateSettings, plainCopiesAdvice, hostCompliance, complianceDir, complianceKey, noReportLevel };
   }
 });
 
@@ -44347,6 +44769,19 @@ var require_security = __commonJS({
         }
         return { ...info, signs: ["recovery-drill reports (<data>/backups/dr-drill-*.json)", "audit-export manifests (GET /api/admin/audit/export)"], verify_with: ["npm run verify-dr-report -- <report.json> --public-key <this key>.pem", "npm run verify-audit-export -- <export.ndjson> --public-key <this key>.pem"] };
       });
+      r.get("/api/admin/security/compliance-report", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const hc = require_security_status().hostCompliance();
+        if (!hc) throw new HttpError3(404, "No compliance report yet: run npm run compliance-check on the server (docs/SELF-HOSTING.md)");
+        const html = ctx.query.get("format") === "html";
+        audit3.log({ user: ctx.user, action: "security.compliance_report.view", entity: "compliance_report", entityId: hc.doc.report && hc.doc.report.report_id, ip: ctx.ip, details: { file: hc.file, format: html ? "html" : "json", signature: hc.verification.ok ? "verified" : "does not verify" } });
+        if (html) {
+          const page = require_compliance_report().renderHtml(hc.doc);
+          ctx.res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Disposition": `attachment; filename="${hc.file.replace(/\.json$/, ".html")}"`, "Cache-Control": "no-store" });
+          ctx.res.end(page);
+          return;
+        }
+        return { file: hc.file, verification: { ok: hc.verification.ok, errors: hc.verification.errors, key_id: hc.verification.key_id, key_source: hc.verification.key_source }, ...hc.doc };
+      });
       r.get("/api/admin/security/mfa-report", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
         const rep = require_security_status().mfaReport();
         audit3.log({ user: ctx.user, action: "security.mfa_report", ip: ctx.ip, details: { without: rep.without.length } });
@@ -47706,6 +48141,16 @@ var require_db = __commonJS({
       openedPath = dbPath;
       return db3;
     }
+    function openReadOnly(dbPath = config2.dbPath) {
+      if (db3) return db3;
+      db3 = new DatabaseSync2(dbPath, { readOnly: true });
+      try {
+        db3.exec("PRAGMA busy_timeout = 5000");
+      } catch {
+      }
+      openedPath = dbPath;
+      return db3;
+    }
     function openWith(bytes3) {
       if (db3) {
         try {
@@ -48958,7 +49403,7 @@ var require_db = __commonJS({
     function tombstone(table, id) {
       run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now2());
     }
-    module.exports = { open: open3, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, plaintextCopies, sealPlaintextCopies, noteSealError, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
+    module.exports = { open: open3, openReadOnly, openWith, get, close, isOpen, readSnapshot, inSnapshot, indexProblems, plaintextCopies, sealPlaintextCopies, noteSealError, LATEST_SCHEMA_VERSION: migrations.length, MAIN_SITE_ID, migrateSupplies, now: now2, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint, reindexNameParts };
   }
 });
 

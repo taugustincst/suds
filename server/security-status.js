@@ -40,9 +40,68 @@ function mfaReport() {
 function lastAudit(action) { return db.one(`SELECT at, details FROM audit_log WHERE action=? ORDER BY id DESC LIMIT 1`, action) || null; }
 function settingUpdatedAt(key) { const r = db.one(`SELECT updated_at FROM settings WHERE key=?`, key); return r ? r.updated_at : null; }
 
-function status() {
+// Where scripts/compliance-check.js writes its signed reports by default (and where this page reads the last).
+const complianceDir = () => config.complianceDir || path.join(config.dataDir, 'compliance');
+
+/**
+ * The public key a compliance report must verify with: SUDS Server's separate compliance key when the
+ * installer configured one (SUDS_COMPLIANCE_PUBLIC_KEY_FILE; its private half is root-only and never given to
+ * this service), else this server's own evidence signing key. { pem, source } or { error }.
+ */
+function complianceKey() {
+  if (config.compliancePublicKeyFile) {
+    try {
+      const pem = fs.readFileSync(config.compliancePublicKeyFile, 'utf8');
+      if (!/-----BEGIN PUBLIC KEY-----/.test(pem)) return { error: `${config.compliancePublicKeyFile} is not a PEM public key` };
+      return { pem, source: 'compliance' };
+    } catch (e) { return { error: `the compliance public key ${config.compliancePublicKeyFile} cannot be read (${e.code || e.message})` }; }
+  }
+  return { pem: require('./signing').publicInfo().public_key_pem, source: 'service' };
+}
+
+/**
+ * How "no report yet" counts: a warning on a production server the Linux installer set up (it schedules
+ * the check, so a missing report means the timer is not running), information anywhere else (a wizard or
+ * Docker install has no host check to run). The installer leaves /etc/suds/suds-server.conf.
+ */
+function noReportLevel({ isProd = config.isProd, confFile = process.env.SUDS_SERVER_CONF || '/etc/suds/suds-server.conf' } = {}) {
+  let installed = false; try { installed = fs.existsSync(confFile); } catch {}
+  return isProd && installed ? 'warn' : 'info';
+}
+
+/**
+ * The newest host compliance report (scripts/compliance-check.js) in the data directory: { file, doc,
+ * verification } or null. Its signature is checked against this server's own signing key. The first time
+ * the server sees a report it is recorded in the audit log (security.compliance_report.generated), so the
+ * log says when each weekly check ran and what it found — the check itself only reads the database.
+ */
+function hostCompliance({ record = true } = {}) {
+  const rep = require('./compliance-report');
+  const found = rep.latest(complianceDir());
+  if (!found) return null;
+  let verification;
+  const key = complianceKey();
+  try { verification = key.error ? { ok: false, errors: [key.error], warnings: [] } : rep.verifyDoc(found.doc, { publicKeyPem: key.pem }); }
+  catch (e) { verification = { ok: false, errors: [String(e.message || e)], warnings: [] }; }
+  const r = found.doc && found.doc.report;
+  if (record && r && r.report_id && db.getSetting('compliance_report_seen', null) !== r.report_id) {
+    db.setSetting('compliance_report_seen', r.report_id);
+    try {
+      require('./audit').log({ user: { username: 'system' }, action: 'security.compliance_report.generated', entity: 'compliance_report', entityId: r.report_id,
+        success: verification.ok && r.summary && r.summary.overall !== 'fail', details: { file: found.file, generated_at: r.generated_at, overall: r.summary && r.summary.overall, counts: r.summary && r.summary.counts, signature: verification.ok ? 'verified' : 'does not verify' } });
+    } catch (e) { console.error('[suds] could not audit the compliance report:', e && e.message); }
+  }
+  verification.key_source = key.source || null;
+  return { ...found, verification };
+}
+
+function status({ host = true } = {}) {
   const items = [];
-  const add = (group, name, level, value, detail = '', evidence = '') => items.push({ group, name, level, value, detail, evidence });
+  const rules = require('./compliance-rules');
+  const add = (group, name, level, value, detail = '', evidence = '') => {
+    const c = rules.forItem(name);
+    items.push({ group, name, level, value, detail, evidence, check_id: c.id, rules: rules.cite(c.rules) });
+  };
   const pol = auth.policy();
 
   // ---- Identity ----
@@ -160,9 +219,36 @@ function status() {
     ixp.length ? `Could not be created at startup: ${ixp.map((x) => `${x.index} (${x.error})`).join('; ')}. A missing UNIQUE index usually means duplicate rows it would have prevented; resolve them, then restart.` : 'Checked at every start.', 'server/db.js ensureIndexes');
   add('Platform', 'Monitoring', config.metricsToken || config.logFormat === 'json' ? 'ok' : 'info', [config.metricsToken ? 'Prometheus metrics on' : 'metrics off', `logs ${config.logFormat}`].join('; '), '/api/health answers 503 on a failed audit check, stale backups or an expiring certificate.', 'server/metrics.js, server/log.js, server/routes/app.js');
 
+  // ---- Host: the last compliance check (scripts/compliance-check.js, weekly from suds-compliance.timer) ----
+  // Host controls (disk encryption, firewall, TLS, time sync, updates) are not visible from inside the
+  // process; they are shown as the last signed report found them, with its date, never as current.
+  let compliance = null;
+  if (host) {
+    const hc = hostCompliance();
+    const G = 'Host (last compliance check)';
+    if (!hc) {
+      items.push({ group: G, name: 'Host compliance check', level: noReportLevel(), value: 'no report yet', detail: `No report in ${complianceDir()}. Run npm run compliance-check on the server (deploy/linux/install.sh schedules it weekly: suds-compliance.timer).`, evidence: 'scripts/compliance-check.js', check_id: 'host.report', rules: rules.cite(['hipaa-308a8']) });
+    } else {
+      const r = hc.doc.report || {};
+      const age = ageDays(r.generated_at);
+      const signed = hc.verification.ok;
+      const overall = (r.summary && r.summary.overall) || 'unknown';
+      compliance = { file: hc.file, generated_at: r.generated_at || null, overall, signature_ok: signed, report_id: r.report_id || null };
+      items.push({ group: G, name: 'Host compliance check', level: !signed || overall === 'fail' ? 'bad' : age === null || age > 8 || overall !== 'pass' ? 'warn' : 'ok',
+        value: `${overall} on ${String(r.generated_at || '?').slice(0, 10)}${age !== null ? ` (${Math.floor(age)} day${Math.floor(age) === 1 ? '' : 's'} ago)` : ''}`,
+        detail: [signed ? `The report's Ed25519 signature verifies with ${hc.verification.key_source === 'compliance' ? 'the compliance check\'s own key (root-only; not this service\'s)' : 'this server\'s signing key'}.` : `The report does not verify: ${(hc.verification.errors || []).join('; ')}.`, age !== null && age > 8 ? 'Older than a week: is suds-compliance.timer running?' : '', ...(r.risk_accepted || []).map((x) => `RISK ACCEPTED: ${x}`)].filter(Boolean).join(' '),
+        evidence: `compliance/${hc.file}`, check_id: 'host.report', rules: rules.cite(['hipaa-308a8']) });
+      if (signed) {
+        for (const k of (r.checks || []).filter((x) => String(x.id).startsWith('host.'))) {
+          items.push({ group: G, name: k.title, level: rules.levelOfResult(k.result), value: k.result === 'not-checked' ? 'could not check' : k.result === 'pass' ? 'pass' : k.result, detail: [k.evidence, k.result === 'pass' ? '' : k.remediation].filter(Boolean).join(' — '), evidence: `as of ${String(r.generated_at).slice(0, 16).replace('T', ' ')} UTC`, check_id: k.id, rules: k.rules || [] });
+        }
+      }
+    }
+  }
+
   const counts = { ok: 0, warn: 0, bad: 0, info: 0 };
   for (const i of items) counts[i.level]++;
-  return { generated_at: db.now(), version: config.version, counts, items, mfa, attestation: 'SUDS holds no SOC 2, ISO 27001, HITRUST, StateRAMP or FedRAMP attestation. This page reports the technical controls in this installation; independent attestation requires an auditor (docs/security/SOC2-READINESS.md).' };
+  return { generated_at: db.now(), version: config.version, counts, items, mfa, compliance, attestation: 'SUDS holds no SOC 2, ISO 27001, HITRUST, StateRAMP or FedRAMP attestation. This page reports the technical controls in this installation; independent attestation requires an auditor (docs/security/SOC2-READINESS.md).' };
 }
 
 /** What to do about database copies still in plaintext (server/db.js plaintextCopies): one sentence per file. */
@@ -171,4 +257,4 @@ function plainCopiesAdvice(plain) {
     + ' SUDS tries again every hour. Make room on the disk and check that SUDS can write to that folder; the next hourly try (or a restart) then seals it. If it is not needed, delete it securely instead (shred -u, or your platform\'s secure delete).';
 }
 
-module.exports = { status, mfaReport, validateSettings, plainCopiesAdvice };
+module.exports = { status, mfaReport, validateSettings, plainCopiesAdvice, hostCompliance, complianceDir, complianceKey, noReportLevel };

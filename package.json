@@ -23,6 +23,8 @@
     "dr-exercise": "node --no-warnings=ExperimentalWarning scripts/dr-exercise.js",
     "verify-audit-export": "node scripts/verify-audit-export.js",
     "verify-dr-report": "node scripts/verify-dr-report.js",
+    "compliance-check": "node --no-warnings=ExperimentalWarning scripts/compliance-check.js",
+    "verify-compliance-report": "node scripts/verify-compliance-report.js",
     "update": "node --no-warnings=ExperimentalWarning scripts/update.js",
     "package": "node scripts/package.js",
     "build:local": "node scripts/build-local.js",

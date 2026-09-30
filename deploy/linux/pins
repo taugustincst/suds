@@ -1,0 +1,15 @@
+# Exact releases deploy/linux/install.sh and upgrade.sh install, each checked against the checksum here before
+# it is unpacked. Never a floating version, never `curl | sh`.
+#
+# NODE_*: the Node.js release CI tests SUDS on. Must equal NODE22_VERSION / NODE22_SHA256 at the top of
+# .github/workflows/ci.yml and release.yml (test/deploy-linux.test.js fails otherwise); bump all three together
+# (docs/RELEASE.md, "Bumping the pinned Node versions"). The checksum is the linux-x64 .tar.xz line of
+# https://nodejs.org/dist/<version>/SHASUMS256.txt.asc, whose signature is checked against the Node.js release keys.
+NODE_VERSION=v22.23.3
+NODE_SHA256_LINUX_X64=df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de
+#
+# CADDY_*: the static Caddy binary that terminates TLS (--tls=caddy or county-cert). The SHA-512 is the
+# linux_amd64 line of https://github.com/caddyserver/caddy/releases/download/v<version>/caddy_<version>_checksums.txt
+# (Caddy publishes SHA-512; that file is signed with Sigstore upstream). The minor line matches docker-compose.yml.
+CADDY_VERSION=2.10.2
+CADDY_SHA512_LINUX_AMD64=747df7ee74de188485157a383633a1a963fd9233b71fbb4a69ddcbcc589ce4e2cc82dacf5dbbe136cb51d17e14c59daeb5d9bc92487610b0f3b93680b2646546

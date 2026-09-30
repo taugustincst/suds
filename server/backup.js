@@ -444,4 +444,64 @@ function restoreHeld(plainBytes) {
   return { ...info, previous_database_kept_at: kept };
 }
 
-module.exports = { create, createAsync, encryptPlain, encryptFileSync, decrypt, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect, restore, restoreWhenIdle, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
+/**
+ * Put a backup in place of the live database while SUDS is STOPPED, without ever opening the live file: for
+ * an upgrade's rollback (deploy/linux/upgrade.sh) and a restore on the server (docs/SELF-HOSTING.md). The live
+ * database may have been migrated by a newer release that then failed to start, so this code may be unable
+ * to open it at all (schema newer than it understands): restore() and the old `scripts/backup.js --restore`
+ * opened it first, and so could not roll an upgrade back.
+ *
+ *  1. inspect the backup (integrity, a SUDS database, a schema this build understands) — the live file is untouched;
+ *  2. write it beside the live file (O_EXCL, 0600, fsync) and check that copy again;
+ *  3. move the live database and its -wal/-shm aside into <db>.replaced-<stamp>/, rename the copy into place,
+ *     and make sure no journal is left beside it (a -wal from the replaced database would corrupt it);
+ *  4. open the restored database (at or below this build's schema, so safe) for a new sync generation and a
+ *     'restore' audit anchor, as restore() does, and record the restore in the audit log;
+ *  5. seal the replaced files like backups (they are plaintext PHI) and remove the plaintext.
+ * Returns inspect()'s description plus { replaced_kept_at }.
+ */
+function restoreInPlace(plainBytes, { dbPath = config.dbPath, by = 'cli' } = {}) {
+  if (dbPath === ':memory:') throw new Error('This server is configured with an in-memory database; there is nothing to restore into.');
+  if (db.isOpen && db.isOpen()) throw new Error('The database is open in this process: restoreInPlace() is for a stopped server.');
+  const info = inspect(plainBytes);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const dir = path.dirname(dbPath);
+  const side = `${dbPath}.restoring-${stamp}`;
+  const journals = (f) => ['-wal', '-shm', '-journal'].map((s) => f + s);
+  const fd = fs.openSync(side, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+  try { fs.writeSync(fd, plainBytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  try {
+    const d = new DatabaseSync(side, { readOnly: true });
+    try {
+      const ok = String(Object.values(d.prepare('PRAGMA integrity_check').get())[0]).toLowerCase() === 'ok';
+      const v = Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0);
+      if (!ok || v !== info.schema_version) throw new Error('The copy written beside the database does not match the backup (a disk problem?). Nothing was replaced.');
+    } finally { d.close(); }
+    for (const j of journals(side)) secureUnlink(j);
+  } catch (e) { secureUnlink(side); for (const j of journals(side)) secureUnlink(j); throw e; }
+  // The swap: the live files are moved (not copied, not opened) aside, then the checked copy renamed into place.
+  const aside = `${dbPath}.replaced-${stamp}`;
+  fs.mkdirSync(aside, { mode: 0o700 });
+  const moved = [];
+  for (const f of [dbPath, ...journals(dbPath)]) { if (fs.existsSync(f)) { fs.renameSync(f, path.join(aside, path.basename(f))); moved.push(path.basename(f)); } }
+  fs.renameSync(side, dbPath);
+  for (const j of journals(dbPath)) { try { fs.unlinkSync(j); } catch {} }
+  try { const dfd = fs.openSync(dir, 'r'); try { fs.fsyncSync(dfd); } finally { fs.closeSync(dfd); } } catch {}
+  // Now a database this build understands: a new generation and an anchor, as restore() does, and an audit entry.
+  db.open(dbPath);
+  try {
+    const restoredGen = db.getSetting('db_generation', null) || 'initial';
+    db.setSetting('db_generation', require('./crypto').uuid());
+    require('./audit').log({ user: { username: by }, action: 'backup.restore', details: { mode: 'in-place (server stopped)', clients: info.counts.clients, schema_version: info.schema_version, replaced: moved } });
+    if (!config.local) require('./audit-anchor').write('restore', { prevGen: restoredGen });
+  } finally { db.close(); }
+  // The replaced database is plaintext PHI: sealed like a backup (opens with `scripts/backup.js --restore`).
+  for (const f of moved) {
+    const p = path.join(aside, f);
+    try { encryptFileSync(p, `${p}.enc`); secureUnlink(p); }
+    catch (e) { db.noteSealError(p, e); console.warn(`[suds] ${JSON.stringify({ event: 'restore.aside_seal_failed', error: String(e && e.message || e).slice(0, 200) })}`); }
+  }
+  return { ...info, replaced_kept_at: moved.length ? aside : null };
+}
+
+module.exports = { create, createAsync, encryptPlain, encryptFileSync, decrypt, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect, restore, restoreWhenIdle, restoreInPlace, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };

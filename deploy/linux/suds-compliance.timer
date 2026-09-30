@@ -1,0 +1,13 @@
+# Runs suds-compliance.service weekly (and at the next boot if a run was missed). Each run leaves a signed
+# JSON and HTML report in /var/lib/suds-compliance, which SUDS never deletes: keep them with the audit evidence
+# for the six-year documentation period (45 CFR §164.316(b)(2); docs/evidence/README.md).
+[Unit]
+Description=Weekly SUDS compliance check
+
+[Timer]
+OnCalendar=weekly
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

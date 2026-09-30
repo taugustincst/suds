@@ -30,6 +30,8 @@ if (config.dbPath !== ':memory:') {
 db.open();
 try { db.checkKeyFingerprint(); } catch (e) { console.error(`[suds] ${e.message}`); process.exit(1); }
 ensureBootstrap();
+// Settings an installer chose for this server (SUDS_PROVISION_FILE; deploy/linux/install.sh), where unset.
+try { require('./provision').apply(); } catch (e) { console.error('[suds] provisioned settings:', e.message); }
 // Production problems nobody would otherwise see until an auditor asks: said once, loudly, at every start.
 for (const problem of require('./startup-checks').problems()) console.error(`[suds] WARNING: ${problem}`);
 // A drill or backup interrupted by a crash leaves a decrypted copy of the database in the data directory:
@@ -91,6 +93,8 @@ function housekeeping() {
     require('./county-connect-client').autoSendIfDue().catch((e) => console.error('[suds] county connection automatic send', e && e.message || e));
     // Monthly recovery drill, if an administrator turned it on (off by default). Runs in the background.
     require('./dr-drill').runIfDue();
+    // A new host compliance report (the weekly suds-compliance.timer) is recorded in the audit log.
+    try { require('./security-status').hostCompliance(); } catch (e) { console.error('[suds] reading the compliance report', e && e.message || e); }
     // A plaintext copy of the database a restore set aside, or a pre-migration snapshot, whose sealing failed:
     // tried again every hour rather than only at the next start; still plain, it is on Security status and /api/health.
     try { db.sealPlaintextCopies(); } catch (e) { console.error('[suds] sealing plaintext database copies', e && e.message || e); }
