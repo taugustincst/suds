@@ -550,7 +550,7 @@ test('SUDS 1.19.0\'s first start on a 1.18.0 database: sessions it opened surviv
   }
 });
 
-// Migration 60 (county-entered figures, built for 1.20.0) on a county's 1.19.0 database that already holds signed
+// Migration 60 (county-entered figures, released in 1.20.0) on a county's 1.19.0 database that already holds signed
 // county submissions: county_submissions is rebuilt (key_id and signature may be NULL now, with source, entered_via,
 // source_ref_enc and a CHECK), every existing row is kept as a signed one, and county_programmes gains on_suds (1).
 test('migration 60: a county\'s signed submissions survive the rebuild as signed ones, and the table takes entered figures', () => {

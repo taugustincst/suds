@@ -1,5 +1,5 @@
 'use strict';
-// County-entered figures for grantees not on SUDS (built for 1.20.0; docs/COUNTY-VIEW.md "County-entered figures").
+// County-entered figures for grantees not on SUDS (released in 1.20.0; docs/COUNTY-VIEW.md "County-entered figures").
 //
 // A county funds programmes that run SUDS (their figures arrive as signed files, server/county.js) and some that do
 // not. For one that does not, registered "not on SUDS" (county_programmes.on_suds = 0, no key), a person with

@@ -7,8 +7,8 @@ still runs its own 90-day pilot (PILOT-KIT sections 1–7); this kit covers what
 for the county, the timeline, the measures and the documents a county will ask for.
 
 The product it describes is the **county view**, released in 1.18.0 ([../COUNTY-VIEW.md](../COUNTY-VIEW.md);
-Tier 1 of [DATA-NETWORK.md](DATA-NETWORK.md)). Everything below is what the software does today, except where a
-line says **"built for 1.20.0, not yet released"** or **[owner to complete]**.
+Tier 1 of [DATA-NETWORK.md](DATA-NETWORK.md)). Everything below is what the software does today (county-entered figures from 1.20.0), except where a
+line says **[owner to complete]**.
 
 ## Who this is for
 
@@ -36,7 +36,7 @@ line says **"built for 1.20.0, not yet released"** or **[owner to complete]**.
 - **Optionally, a connection** (off by default on both sides): each CBO's server posts the same signed file to the
   county's server and sees which periods the county still expects, and the county's own systems read the combined
   view with a read token ([../COUNTY-VIEW.md](../COUNTY-VIEW.md), *Connecting*).
-- **Grantees not on SUDS** (*built for 1.20.0, not yet released*): a grantee that does not run SUDS can be
+- **Grantees not on SUDS** (*released in 1.20.0*): a grantee that does not run SUDS can be
   registered as "not on SUDS", and the county's own staff enter its figures for a period, or import them as a CSV
   in the same tidy layout SUDS exports. They are counted by default, marked everywhere as **"entered by the county
   — not signed by the program"**, counted separately in the headline, and can be left out of any view with one
@@ -79,7 +79,7 @@ offered.
 | **A lost or exposed key** | The CBO makes a new key and reads the new fingerprint out; the county replaces the key, and marks the old one compromised if its files should stop counting | [../COUNTY-VIEW.md](../COUNTY-VIEW.md), *Key history* |
 
 A grantee **not on SUDS** does nothing in SUDS: it sends the county its figures the way it does today, and the
-county enters them (*built for 1.20.0, not yet released*).
+county enters them (*released in 1.20.0*).
 
 ## Data flows
 
@@ -121,8 +121,7 @@ Staggered so the vendor is not deploying three CBOs at once (PILOT-KIT §8). Wee
 | 14–16 | County measures taken (below); the connection tried with one CBO if the county wants it | Day 60 | Day 30 | Day 14 |
 | 18–22 | County decision at the end of the last CBO's 90 days (PILOT-KIT §8, *Decision at the end*) | Day 90: evaluation | Day 60 | Day 30 |
 
-A grantee not on SUDS can join the combined view from week 5 with county-entered figures (*built for 1.20.0, not
-yet released*), so the county sees its whole portfolio while only some of it runs SUDS.
+A grantee not on SUDS can join the combined view from week 5 with county-entered figures (*released in 1.20.0*), so the county sees its whole portfolio while only some of it runs SUDS.
 
 ## Success measures
 

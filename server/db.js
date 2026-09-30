@@ -757,7 +757,7 @@ const migrations = [
   (d) => {
     addColumn(d, 'sessions', 'sync_client', 'INTEGER NOT NULL DEFAULT 0');
   },
-  // 60: county-entered figures for grantees not on SUDS (built for 1.20.0, docs/COUNTY-VIEW.md "County-entered
+  // 60: county-entered figures for grantees not on SUDS (released in 1.20.0, docs/COUNTY-VIEW.md "County-entered
   //     figures"): county_programmes.on_suds (1 for every programme registered so far: each has a key), and
   //     county_submissions rebuilt so key_id and signature may be NULL for figures the county entered, with source
   //     ('signed' for every existing row), entered_via and source_ref_enc, and a CHECK that a signed row has a key and

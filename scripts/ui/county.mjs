@@ -17,7 +17,7 @@
 //   3. Finance sees the County view once programs are registered and cannot register one; read-only never.
 //   4. axe (WCAG 2.1 A/AA) on the county pages, the dialogs and the settlement card at 1280 and 390 px; nothing
 //      sideways at 390 px, and the settlement card with its key open at 320 px.
-//   5. A program not on SUDS (built for 1.20.0): added with the keyboard; its figures entered in the dialog ("1,200"
+//   5. A program not on SUDS (released in 1.20.0): added with the keyboard; its figures entered in the dialog ("1,200"
 //      refused at its field, the focus there; a fund added and removed, announced), and imported as the long CSV (a
 //      file with problems listed by row and column as an alert that takes the focus; a good one previewed, each
 //      fund's category asked in a fieldset, the source document required); marked "entered by the county — not
@@ -323,7 +323,7 @@ try {
   await fph.setViewportSize({ width: 390, height: 844 }); await axe(fph, 'settlement with Send to the county, key open (390)');
   await phCtx.close(); await finPh.close();
 
-  // ---------------- 4. a program not on SUDS: figures the county enters (built for 1.20.0) ----------------
+  // ---------------- 4. a program not on SUDS: figures the county enters (released in 1.20.0) ----------------
   // Added with the keyboard; its figures entered in the dialog (a mistake said at its field first), then imported as
   // the combined view's own long CSV (a file with problems listed by row first); marked "entered by the county — not
   // signed by the program" on every screen, counted separately in the headline, and left out by the switch.

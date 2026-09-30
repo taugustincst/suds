@@ -1,5 +1,5 @@
 'use strict';
-// County-entered figures for grantees not on SUDS (built for 1.20.0; server/county-entry.js, server/routes/county.js;
+// County-entered figures for grantees not on SUDS (released in 1.20.0; server/county-entry.js, server/routes/county.js;
 // docs/COUNTY-VIEW.md "County-entered figures"): registering a programme not on SUDS, entering its figures in the
 // form or importing them as the county view's own tidy CSV, validated against the submission allow-list with strict
 // numbers and the period rules; stored as county submissions with source 'county_entered', counted by the combined

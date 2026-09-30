@@ -39,9 +39,9 @@ Rules for every release:
 
 | Line | Gets | For how long |
 | --- | --- | --- |
-| **The latest minor** (today 1.19.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
-| **The previous minor** (today 1.18.x, until 30 days after 1.19.0's release date: the date of its tag. `v1.19.0` is not pushed yet (*Record: 1.19.0*; [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), so its 30 days have not started; 1.19.0 was published to GitHub Pages on 2026-09-30, and a programme should plan as if they run from then, to 2026-10-30) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.18` is made from `v1.18.0`'s line once the tags exist) | **30 days** after the next minor's release date, then none |
-| Anything older (today 1.17.x and before: once 1.19.0 was released, 1.17.x stopped being the previous minor, whatever was left of its 30 days after 1.18.0; 1.16.x stopped when 1.18.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
+| **The latest minor** (today 1.20.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
+| **The previous minor** (today 1.19.x, until 30 days after 1.20.0's release date: the date of its tag. `v1.20.0` is not pushed yet (*Record: 1.20.0*; [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), so its 30 days have not started; 1.20.0 was published to GitHub Pages on 2026-09-30, and a programme should plan as if they run from then, to 2026-10-30) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.19` is made from `v1.19.0`'s line once the tags exist) | **30 days** after the next minor's release date, then none |
+| Anything older (today 1.18.x and before: once 1.20.0 was released, 1.18.x stopped being the previous minor, whatever was left of its 30 days after 1.19.0; 1.17.x stopped when 1.19.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
@@ -178,6 +178,18 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.17.1 | new behaviour in a patch (AI providers Bedrock and Vertex AI, and the copilot's estimated cost and spending limit) and more than the patch line limit; released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner asked for Bedrock/Vertex and the dollar cost to ship in 1.17.1 with the review-of-1.17.0 fixes, and for it to be deployed to Pages when green; no migration, permission or route | owner (a request, no workflow record; *Record: 1.17.1*, below) |
 | 1.18.0 | monthly limit (a feature release inside 1.17.0's 28 days: migrations 56 and 57, the `county:view` and `county:manage` permissions, the county view, county connection and compliance-report routes); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner asked for the cross-CBO funder view, the county connection API and a self-hosted compliant server, and to cut the release once they were complete and working; each was reviewed (security, UX, engineering, market) and its findings fixed before the stamp | owner (a request, no workflow record; *Record: 1.18.0*, below) |
 | 1.19.0 | monthly limit (a feature release inside 1.18.0's 28 days: migrations 58 and 59 and the passkey routes); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner asked for fingerprint sign-in, authorization and signing and then said to release it ("Release 19"); it had security, UX and engineering reviews, a second-pass review and a regression sweep against 1.18.0, all fixed before the stamp | owner (a request, no workflow record; *Record: 1.19.0*, below) |
+| 1.20.0 | monthly limit (a feature release inside 1.19.0's 28 days: migration 60 and the county-entered figures routes); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner said there is no freeze and to complete all build through 1.20; it carries the documentation, evidence and installer fixes from the review of 1.19.0 and county-entered figures, which had security, UX and engineering reviews, all fixed before the stamp | owner (a request, no workflow record; *Record: 1.20.0*, below) |
+
+**Record: 1.20.0 ships under a policy exception, published without a tag.** 1.20.0 is a feature release inside
+1.19.0's 28 days, on the owner's instruction ("We are building the app, there is no freeze at this time. Complete all
+build through 1.20"). It carries the market-readiness review of 1.19.0's repository work: the documents brought up to
+1.19.0 and now 1.20.0, LICENSE and SECURITY.md, a recovery drill, an upgrade drill and a real installer run with their
+evidence, the installer and day-one fixes that run found, the county-contract kit, and county-entered figures for
+grantees not on SUDS (migration 60 and its routes; no new permission). The county-entered figures had security, UX and
+engineering reviews whose findings were fixed before the stamp, with the owner-default decisions recorded in
+docs/COUNTY-VIEW.md. It is the first new minor released as two commits, the stamp and its SBOM (*Stamp checklist*); the
+second is the one CI passes, that goes to `main` and `gh-pages` by a direct push, and that the owner tags. The next
+feature release waits 28 days from 1.20.0. Its tag goes in the same push as the others.
 
 **Record: 1.19.0 ships under a policy exception, published without a tag.** 1.19.0 is a feature release inside
 1.18.0's 28 days: fingerprint sign-in, authorization and signing with WebAuthn passkeys (docs/FINGERPRINT.md). It adds
@@ -227,11 +239,11 @@ change: 1.16.0 is the previous feature release) and for any 1.16.x patch (whose 
 `v1.16.2`: 1.16.3 and 1.16.4 alone count 1,137 of the 1,500 lines), `scripts/migration-order.js`'s baseline, and
 *Backports* step B, whose `git rev-parse 'v1.16.4^{commit}'` fails without the tag.
 
-**Now six tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.19.1). 1.17.1, 1.18.0 and
-1.19.0 were published the same way, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`, `v1.17.1`, `v1.18.0` and
-`v1.19.0`, pushed together while `main` says 1.19.0. The hand-off has the checks, the tag commands, the one push,
-what each tag's runs do (the 1.16.x gates refuse, the other four need a *Run workflow* with `policy_exception`, and
-only `v1.19.0`'s `Web app` run is approved: it republishes the build already live), and the SHA-256 each release
+**Now seven tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.20.0). 1.17.1, 1.18.0,
+1.19.0 and 1.20.0 were published the same way, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`, `v1.17.1`,
+`v1.18.0`, `v1.19.0` and `v1.20.0`, pushed together while `main` says 1.20.0. The hand-off has the checks, the tag commands, the one push,
+what each tag's runs do (the 1.16.x gates refuse, the other five need a *Run workflow* with `policy_exception`, and
+only `v1.20.0`'s `Web app` run is approved: it republishes the build already live), and the SHA-256 each release
 zip will have, rebuilt from each commit. The paragraphs below are the reasoning of 1.17.0's time, for three tags;
 the rule they set, never an older tag alone, is unchanged.
 
@@ -318,7 +330,9 @@ is one phrase to search for.
 describe move to it: `docs/security/QUESTIONNAIRE.md`'s **Checked against** line and `docs/evidence/README.md`'s
 **Version.** line, and for a new minor an SBOM of the stamp commit (`node scripts/sbom.js --ref <stamp sha> --out
 docs/evidence/sbom-X.Y.Z.cdx.json`, with every link to the old one outside the evidence index moved to it; older SBOMs
-stay as history). The rule `test/doc-currency.test.js` enforces: once `package.json`'s version X.Y.Z has a dated
+stay as history). A commit cannot hold an SBOM of itself, so a new minor is two commits: `Release X.Y.Z` (the stamp,
+with the links already naming the new SBOM), then `SBOM of the X.Y.Z stamp`, which adds the file and nothing else; the
+second is the release commit that CI must pass, that goes to `main` and that is tagged (since 1.20.0). The rule `test/doc-currency.test.js` enforces: once `package.json`'s version X.Y.Z has a dated
 CHANGELOG heading, each of the three names a version on the X.Y line, no later than X.Y.Z (a patch may keep its
 minor's documents and SBOM; a new minor may not), and every SBOM link outside the evidence index names the newest
 SBOM. While a version is being prepared (no date yet), the rule applies to the last stamped version. Re-read the
@@ -715,7 +729,7 @@ branches' workflows could publish; deleting them removes the rest.
 **8. Code scanning and private vulnerability reporting.** Settings → **Code security** → *Code scanning* → **Set up** → **Default** →
 languages *JavaScript/TypeScript* and *GitHub Actions* → **Enable CodeQL** (optional); on the same page turn on **Secret
 scanning** and **Push protection**. None of these changes what SUDS ships; they report. **Not optional:** on the same
-page turn on **Private vulnerability reporting**. `SECURITY.md` (1.19.1) tells reporters to use it (**Security** →
+page turn on **Private vulnerability reporting**. `SECURITY.md` (1.20.0) tells reporters to use it (**Security** →
 **Report a vulnerability**), and until it is on that button does not exist. Check: the repository's Security tab shows
 *Report a vulnerability* to a signed-in account that is not a collaborator. Then confirm the response targets
 `SECURITY.md` marks `[owner to confirm]`.

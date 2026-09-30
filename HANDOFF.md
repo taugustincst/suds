@@ -41,25 +41,21 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
-### 2026-09-30 — Claude: the 1.19.1 documentation pass (branch `docs/1191-stamp-pass`, not pushed)
+### 2026-09-30 — Claude: 1.20.0 (documentation pass, evidence, installer fixes, county kit, county-entered figures)
 
-- Documentation, evidence, a test of documentation and repository metadata only: no migration, route, permission or
-  behaviour change, no version bump (`## Unreleased` in CHANGELOG.md). The questionnaire, the evidence index, the
-  buyer guides, the market README, the security documents and the SBOM (`docs/evidence/sbom-1.19.0.cdx.json`, from
-  `3dc20dc`) now describe 1.19.0. `test/doc-currency.test.js` fails when they fall behind a stamped minor again.
+- One feature release under a recorded policy exception (docs/RELEASE.md, *Record: 1.20.0*): migration 60 and the
+  county-entered figures routes (docs/COUNTY-VIEW.md, with owner-default decisions D1–D5 for the owner to confirm or
+  change), the installer and day-one fixes from a real install in a systemd container, the county-contract kit
+  (docs/market/COUNTY-KIT.md), recovery and upgrade drills with evidence, and the documents brought up to 1.20.0 (the
+  questionnaire, the evidence index, the buyer guides, the security documents and `docs/evidence/sbom-1.20.0.cdx.json`).
+  `test/doc-currency.test.js` fails when they fall behind a stamped minor again.
 - **LICENSE** (MIT) names "The SUDS contributors" as the copyright holder, because `package.json` names no author.
   **Owner:** replace the holder with the legal entity once one exists (or confirm it as is).
 - **SECURITY.md** sends reporters to GitHub's private vulnerability reporting. **Owner:** turn it on (Settings →
   Code security → *Private vulnerability reporting*; docs/RELEASE.md, *Owner: repository settings*, step 8) and
   confirm the response targets it marks `[owner to confirm]`.
-- **Follow-up for a code change (not done here):** three strings still tell operators to take the zip's checksum
-  from "the CHANGELOG entry at the release tag", which cannot hold it (the zip is built from that commit):
-  `deploy/linux/lib.sh` `stage_release`'s refusal (pinned by `test/deploy-linux.test.js`) and `host.release_integrity`'s
-  remediation in `server/compliance-rules.js` (and so `public/local/kernel.js`). The documents now say "the CHANGELOG
-  on `main`" (docs/SELF-HOSTING.md, docs/RELEASE.md).
-
-### 2026-09-30 — Claude: 1.19.0 recovery, upgrade and installer evidence (branch `evidence/1191-drill`, not pushed)
-
+- **Installer on real VMs:** the run was in a container on Ubuntu 24.04; RHEL 9 and real VMs are owner-pending
+  (docs/evidence/INSTALLER-VM-RUN.md).
 - Evidence and tests only; no behaviour change, no version bump. docs/evidence/dr-drill-2026-09-30/ (the drill on
   1.19.0, run as 1.16.2's was: 11/11, drill RTO 5 s, host RTO 3.7 s), docs/evidence/upgrade-drill-2026-09-30/
   (1.16.2 and 1.18.0 databases opened by 1.19.0: fresh-install shape, nothing lost, then drilled 11/11), and
@@ -119,15 +115,16 @@ _(Append replies here, newest first.)_
 
 ### Release waiting
 
-- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0 and 1.19.0 are on `main`, and 1.19.0 is live, but none is tagged: the
-  owner tags all six, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the six
-  `git tag -a` commands and `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0`, what each tag's runs do
-  (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`, `v1.18.0` and `v1.19.0`
-  each need *Run workflow* with a `policy_exception`; only `v1.19.0`'s `Web app` run is approved, a republish of the
+- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0 and 1.20.0 are on `main`, and 1.20.0 is live, but none is tagged:
+  the owner tags all seven, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the seven
+  `git tag -a` commands and `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0`, what each tag's runs do
+  (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`, `v1.18.0`, `v1.19.0` and
+  `v1.20.0` each need *Run workflow* with a `policy_exception`; only `v1.20.0`'s `Web app` run is approved, a republish of the
   live build), and the SHA-256 of each release zip, rebuilt from its commit (reproducible: the same method matches
   the published `v1.15.4` and `v1.16.2` checksums). After the releases, the owner records each checksum in its release
   notes and in the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh --release-sha256` needs. Push the
-  tags while `main` says 1.19.0, or add a stamped 1.19.1's tag to the same push. The assistant cannot push tags (its
+  tags while `main` says 1.20.0, or add a newer stamped version's tag to the same push. `v1.20.0` goes on the commit
+  after `Release 1.20.0` that adds its SBOM. The assistant cannot push tags (its
   environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the owner*). Never push tags from an
   assistant's clone, and never an older tag alone.
 - The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here

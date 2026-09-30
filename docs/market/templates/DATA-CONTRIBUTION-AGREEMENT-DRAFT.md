@@ -113,7 +113,7 @@ carries only the file in section 2 and the County's receipt and status.
 
 ## 8. Figures entered by the County
 
-8.1 `[Applies from SUDS 1.20.0 (built for 1.20.0, not yet released); delete this section if not used.]` Only while
+8.1 `[Applies from SUDS 1.20.0; delete this section if not used.]` Only while
 the Programme is registered with the County as **not on SUDS** (it does not run SUDS and has no signing key
 registered) may the County enter the Programme's figures itself, from a document the Programme sent (a report, an
 invoice backup, a spreadsheet), recording which document. SUDS marks them everywhere as **entered by the county — not

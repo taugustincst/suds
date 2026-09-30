@@ -110,9 +110,9 @@ Evidence, documentation and tests only; no change to what SUDS does.
   on the installed server and the signed compliance reports; RHEL 9 could not be run. Four findings recorded for
   the owner. The run on real Ubuntu 24.04 and RHEL 9 VMs is owner-pending: docs/evidence/INSTALLER-VM-RUN.md.
 
-### Added: county-entered figures for grantees not on SUDS (docs/COUNTY-VIEW.md; built for 1.20.0, not yet released)
+### Added: county-entered figures for grantees not on SUDS (docs/COUNTY-VIEW.md; released in 1.20.0)
 
-For the feature release after 1.19.0: migration 60 and new routes; no new permission (`county:manage` enters,
+Migration 60 and new routes; no new permission (`county:manage` enters,
 `county:view` sees). Office server only.
 
 - **A program not on SUDS.** County view › Programs › **Add a program not on SUDS** registers a grantee with no key
@@ -163,8 +163,8 @@ For the feature release after 1.19.0: migration 60 and new routes; no new permis
   `test/api-docs.test.js` fails when the file is not exactly what the script writes (`--check`).
 - `node scripts/county-sample.js --register` adds a fourth sample programme, not on SUDS, with entered figures for the
   same two quarters.
-- The penetration test scope has a row for the CSV import parser; the pricing options say the feature is built for
-  1.20.0, not yet released.
+- The penetration test scope has a row for the CSV import parser; the pricing options say the feature is released in
+  1.20.0.
 
 ### Documentation: the county-contract kit
 
@@ -185,8 +185,7 @@ No code, migration, permission or route: documents for a county that funds sever
   (docs/market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md): purpose, aggregate exact counts not for publication,
   no re-identification, retention and deletion, security, the key exchange and a lost key, county-entered figures
   (only for a programme registered as not on SUDS), term. **A draft for counsel**, not reviewed.
-- The first-meeting walkthrough's county-funder path adds county-entered figures, marked built for 1.20.0, not yet
-  released (DEMO-SCRIPT.md); the penetration test scope has rows of its own for the county push endpoint and the
+- The first-meeting walkthrough's county-funder path adds county-entered figures, marked released in 1.20.0 (DEMO-SCRIPT.md); the penetration test scope has rows of its own for the county push endpoint and the
   county read API (PEN-TEST-SCOPE.md); the pilot kit and pricing options point at the county kit.
 
 ## 1.19.0 — 2026-09-30

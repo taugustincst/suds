@@ -21,7 +21,7 @@ It has two halves:
   each programme it funds by the public key the programme gives it, imports the files the programmes send, and sees
   them combined for a period (or quarter by quarter), on screen and as Excel, CSV or a long "tidy" CSV. For a
   grantee that does not run SUDS, the county's own staff enter its figures, marked everywhere as entered by the
-  county (built for 1.20.0, not yet released: [County-entered figures](#county-entered-figures)).
+  county (released in 1.20.0: [County-entered figures](#county-entered-figures)).
 
 The screens say "program" (US spelling, as Settings › Program does); this document keeps the codebase's
 "programme".
@@ -36,7 +36,7 @@ The screens say "program" (US spelling, as Settings › Program does); this docu
   (`programmes.json`) and their files, made for the county whose code is given, to register and import by hand (or
   through the API, as the browser suite does). Nothing touches a database.
 - `--register` also registers a fourth programme **not on SUDS** (Canyon Mobile Outreach) with figures entered by the
-  county for the same two quarters (built for 1.20.0, not yet released; *County-entered figures*, below).
+  county for the same two quarters (released in 1.20.0; *County-entered figures*, below).
 
 ## What the file holds
 
@@ -242,8 +242,8 @@ Every read and write is audited: `county.view`, `county.export`, `county.code.cr
 `county.programme.update`, `county.programme.deactivate`, `county.programme.reactivate`,
 `county.programme.key.replace|compromised|trusted`, `county.submission.import` (with its status: imported,
 superseded or older) and `.duplicate`, `county.submission.refuse`, `county.submission.throttled`,
-`county.submission.withdraw` (with the reason), `county.submission.reinstate`; for figures the county entered (built for
-1.20.0, not yet released), `county.entry.create|update|import|refuse|withdraw|reinstate`. On the programme's side:
+`county.submission.withdraw` (with the reason), `county.submission.reinstate`; for figures the county entered (released in
+1.20.0), `county.entry.create|update|import|refuse|withdraw|reinstate`. On the programme's side:
 `county_submission.key.create`, `county_submission.key.rotate`, `county_submission.export`. The audit entries carry
 ids, periods, fingerprints and hashes, never figures.
 
@@ -275,7 +275,7 @@ not withdrawn), signed by a key not marked compromised, from an active programme
 | Permission | Who holds it by default | What it allows |
 | --- | --- | --- |
 | `county:view` | Administrator, supervisor, finance | The combined view and its files (with `export:read`), the list of programmes and files, the county code |
-| `county:manage` (sensitive) | Administrator | Register, change, deactivate programmes and replace or distrust their keys (it decides whose figures the county accepts); import, withdraw and reinstate files; register a programme not on SUDS and enter or import its figures (built for 1.20.0, not yet released) |
+| `county:manage` (sensitive) | Administrator | Register, change, deactivate programmes and replace or distrust their keys (it decides whose figures the county accepts); import, withdraw and reinstate files; register a programme not on SUDS and enter or import its figures (released in 1.20.0) |
 
 Neither can be granted to a role that does not see exact aggregate counts (`reports:exact` or `reports:funder`):
 **read-only**, navigators and clinicians (`server/permissions.js` `grantProblem`). Read-only's reports are
@@ -437,7 +437,7 @@ Nothing else changes: the connection carries what the emailed file carried.
 
 ## County-entered figures
 
-*Built for 1.20.0, not yet released. Office server only. Migration 60; `server/county-entry.js`.*
+*Released in 1.20.0. Office server only. Migration 60; `server/county-entry.js`.*
 
 A county funds some grantees that do not run SUDS. Without them the combined view is not the county's portfolio, and
 the only alternative is a spreadsheet beside it. So the county can register a programme as **not on SUDS** and its
@@ -572,7 +572,7 @@ withdraw and reinstate, the combined and by-quarter views), `server/routes/count
 on its own), `test/county-device.test.js`; browser script `scripts/ui/county.mjs`, and the county pages and dialogs
 in `scripts/ui/accessibility.mjs` (`A11Y_PAGES='county|settlement'` audits just them, in every pass).
 
-County-entered figures (built for 1.20.0, not yet released): `server/county-entry.js`, the entry routes in
+County-entered figures (released in 1.20.0): `server/county-entry.js`, the entry routes in
 `server/routes/county.js`, the Add a program not on SUDS, Enter figures and Import a CSV dialogs in
 `public/views/county.js`; migration 60 (`county_programmes.on_suds`; `county_submissions` rebuilt with `source`,
 `entered_via`, `source_ref_enc`); tests `test/county-entry.test.js` and `test/migrations.test.js` (migration 60 on a

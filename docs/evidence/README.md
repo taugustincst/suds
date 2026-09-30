@@ -9,7 +9,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.19.0, the stamp commit `3dc20dc` ("Release 1.19.0", on `main`, and published to GitHub Pages by a direct `gh-pages` push at the owner's request); the owner has not tagged it yet ([../RELEASE.md](../RELEASE.md), *Record: 1.19.0*; the tag hand-off is [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). The SBOMs for 1.17.0 (`485548c`) and 1.16.4 (`6491308`) stay in this folder as history; none was made for 1.17.1 or 1.18.0. `test/doc-currency.test.js` fails when this line, the questionnaire's *Checked against* or the newest SBOM falls behind the minor line of the version `package.json` stamps. (Until the review of the 1.17.0 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed, and that was never published.)
+**Version.** It describes 1.20.0: the stamp "Release 1.20.0" and the commit after it that adds its SBOM (on `main`, and published to GitHub Pages by a direct `gh-pages` push at the owner's request); the owner has not tagged it yet ([../RELEASE.md](../RELEASE.md), *Record: 1.20.0*; the tag hand-off is [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). The SBOMs for 1.19.0 (`3dc20dc`), 1.17.0 (`485548c`) and 1.16.4 (`6491308`) stay in this folder as history; none was made for 1.17.1 or 1.18.0. `test/doc-currency.test.js` fails when this line, the questionnaire's *Checked against* or the newest SBOM falls behind the minor line of the version `package.json` stamps. (Until the review of the 1.17.0 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed, and that was never published.)
 
 **Other ways in.** The same ground is covered question by question in [../security/QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md), and for buyers in [../market/BUYER-GUIDE-IT.md](../market/BUYER-GUIDE-IT.md).
 
@@ -17,7 +17,8 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 | File | What it is | How to check it |
 | --- | --- | --- |
-| [sbom-1.19.0.cdx.json](sbom-1.19.0.cdx.json) | CycloneDX 1.5 software bill of materials for 1.19.0. See *The SBOM*, below. Generated from the stamp commit, since the tag is not pushed yet | `node scripts/sbom.js --ref 3dc20dcfa27cefce0d7e715ac1229892d887f4fe` prints the same bytes, and `test/sbom.test.js` checks it |
+| [sbom-1.20.0.cdx.json](sbom-1.20.0.cdx.json) | CycloneDX 1.5 software bill of materials for 1.20.0. See *The SBOM*, below. Generated from the stamp commit, since the tag is not pushed yet | `node scripts/sbom.js --ref 3dc20dcfa27cefce0d7e715ac1229892d887f4fe` prints the same bytes, and `test/sbom.test.js` checks it |
+| [sbom-1.19.0.cdx.json](sbom-1.19.0.cdx.json) | History: the SBOM for 1.19.0. See *The SBOM*, below. Generated from the stamp commit, since the tag is not pushed yet | `node scripts/sbom.js --ref 3dc20dcfa27cefce0d7e715ac1229892d887f4fe` prints the same bytes, and `test/sbom.test.js` checks it |
 | [sbom-1.17.0.cdx.json](sbom-1.17.0.cdx.json) | The SBOM for 1.17.0 (history) | `node scripts/sbom.js --ref 485548c7b076954cdbf1ec4445335d7459662048` prints the same bytes |
 | [sbom-1.16.4.cdx.json](sbom-1.16.4.cdx.json) | The SBOM for 1.16.4 (history) | `node scripts/sbom.js --ref 6491308` prints the same bytes |
 | [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md) | The tag hand-off for 1.16.3 to 1.19.0: the tag commands, the SHA-256 of each release zip the release workflow will build (rebuilt here from each commit, reproducibly), the one push, and what each tag's workflow runs will do | Rebuild a zip with `git archive --format=zip --prefix=suds-vX.Y.Z/ <commit>` and `sha256sum` it |
@@ -93,7 +94,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 ### Vulnerability management and supply chain
 
-- **Documents:** [VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md); [`SECURITY.md`](../../SECURITY.md) (how to report); the SBOM ([sbom-1.19.0.cdx.json](sbom-1.19.0.cdx.json)); `.github/dependabot.yml`.
+- **Documents:** [VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md); [`SECURITY.md`](../../SECURITY.md) (how to report); the SBOM ([sbom-1.20.0.cdx.json](sbom-1.20.0.cdx.json)); `.github/dependabot.yml`.
 - **Tests:** `sbom` (the server requires only Node built-ins; the committed SBOM equals a fresh run), `kernel-parity`.
 - **CI:** `test` (the kernel and schema must match their sources); Node pinned by SHA-256.
 - **Status:** The server has zero runtime npm packages, and the SBOM is published. The security policy is `SECURITY.md`. **Owner-pending:** CodeQL and secret scanning (repository settings), turning on private vulnerability reporting and confirming `SECURITY.md`'s response targets, and a penetration test. SAST and DAST are not in CI.

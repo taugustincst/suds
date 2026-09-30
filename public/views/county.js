@@ -12,7 +12,7 @@ import { programmeConnections } from './countyconnect.js';
 //   #/county                   the combined view for a period (county:view); &by=quarter for the trend
 //   #/county?tab=submissions   import a file, and every file received (import, withdraw, reinstate: county:manage)
 //   #/county?tab=programmes    the programs whose files are accepted, their keys, and this county's code
-// Figures the county enters for a program not on SUDS (built for 1.20.0; server/county-entry.js): "Add a program not
+// Figures the county enters for a program not on SUDS (released in 1.20.0; server/county-entry.js): "Add a program not
 // on SUDS", "Enter figures" and "Import a CSV" on Programs; everywhere they appear they are marked "entered by the
 // county — not signed by the program", and the combined view can leave them out (&entered=exclude).
 loadingFor('county', () => 'Adding up the programs\' submissions…');
@@ -364,7 +364,7 @@ function keysDialog(p) {
     joins ? null : history, h('h3', {}, joins ? 'Its key' : 'Replace the key'), f), { wide: true });
 }
 
-// ---- programs not on SUDS: figures the county enters (built for 1.20.0; server/county-entry.js) ----
+// ---- programs not on SUDS: figures the county enters (released in 1.20.0; server/county-entry.js) ----
 let measuresCache = null;
 /** The outcomes a submission carries, in order, with their labels (from GET /api/county/programmes). */
 async function measures() {

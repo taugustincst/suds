@@ -139,7 +139,7 @@ Zero runtime dependencies: the server uses only Node.js built-ins; a production 
 Build-time tooling is listed separately. A CycloneDX SBOM per release, reproducible from the commit. Dependabot
 for build tooling, the container base and CI actions. Evidence:
 [../../security/VULNERABILITY-MANAGEMENT.md](../../security/VULNERABILITY-MANAGEMENT.md);
-[../../evidence/sbom-1.17.0.cdx.json](../../evidence/sbom-1.17.0.cdx.json) (`node scripts/sbom.js`,
+[../../evidence/sbom-1.20.0.cdx.json](../../evidence/sbom-1.20.0.cdx.json) (`node scripts/sbom.js`,
 `test/sbom.test.js`).
 
 **Q. Penetration testing?** **None has been done. [owner to complete]: an independent penetration test and its
@@ -211,8 +211,7 @@ Exports: CSV and Excel of every table, the county view's Excel, CSV and tidy CSV
 server; the database is a standard SQLite file. The software is MIT-licensed and may be kept running without a
 contract. Any copy the vendor held for support is deleted within 30 days with a certificate. Evidence:
 [../PILOT-KIT.md](../PILOT-KIT.md), section 6; [DPA-DRAFT.md](DPA-DRAFT.md), section 7;
-[../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #14. **[owner to complete]: a `LICENSE` file in
-the repository.**
+[../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #14; the licence text is [../../../LICENSE](../../../LICENSE).
 
 ## Support
 

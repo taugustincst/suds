@@ -132,7 +132,7 @@ Related documents:
 
 | Threat | Mitigation | Code / test |
 | --- | --- | --- |
-| A malicious npm package in the server | There are none: the server uses Node built-ins only, which the SBOM script checks ([../evidence/sbom-1.19.0.cdx.json](../evidence/sbom-1.19.0.cdx.json)) | `scripts/sbom.js`; `test/sbom.test.js` |
+| A malicious npm package in the server | There are none: the server uses Node built-ins only, which the SBOM script checks ([../evidence/sbom-1.20.0.cdx.json](../evidence/sbom-1.20.0.cdx.json)) | `scripts/sbom.js`; `test/sbom.test.js` |
 | A malicious build tool changes the kernel | Few build tools, pinned by lockfile. The kernel is committed and CI rebuilds and compares it. esbuild and sql.js are updated by hand | `ci.yml` drift step, `scripts/kernel-build-options.js`; `test/kernel-parity.test.js` |
 | Releasing untested or unapproved code | The gate requires every required job to be green on the exact commit, on `main`, from a `v*` tag matching the version, and runs `main`'s copy of the gate scripts. The owner approves the `release` environment | `scripts/release-gate.js`, `scripts/release-policy.js`; `test/release-gate.test.js`, `test/release-policy.test.js` |
 | A backport released from the wrong line (1.17.0) | The gate accepts a commit on `origin/maint/X.Y` only for a patch of a minor older than `main`'s, measures it against the previous tag on its own line, and does not mark it Latest or publish the web app | `scripts/release-gate.js`, `scripts/release-policy.js`, `web-app.yml`; `test/release-gate.test.js`, `test/release-policy.test.js` |

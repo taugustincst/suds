@@ -26,7 +26,7 @@
 //     POST /api/county/submissions         import a file: { text } (county:manage)
 //     POST /api/county/submissions/:id/withdraw    withdraw one, with a reason (county:manage)
 //     POST /api/county/submissions/:id/reinstate   put a withdrawn one back (county:manage)
-//   County-entered figures for a programme not on SUDS (built for 1.20.0; server/county-entry.js):
+//   County-entered figures for a programme not on SUDS (released in 1.20.0; server/county-entry.js):
 //     POST /api/county/programmes          with { not_on_suds: true }: register one with no key (county:manage)
 //     POST /api/county/programmes/:id/entries         its figures for a period, from the form (county:manage)
 //     POST /api/county/programmes/:id/entries/import  a tidy CSV of its figures: { text, source_ref, funds, preview }
