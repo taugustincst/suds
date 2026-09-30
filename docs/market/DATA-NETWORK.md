@@ -96,7 +96,13 @@ file** from its Settlement outcomes page (the page's own exact figures by settle
 total; an allow-list of aggregate fields, no identifiers), signed with an Ed25519 key of its office server. The
 county registers each CBO's public key, exchanged out of band with a fingerprint read out, imports the signed
 files on its own SUDS server and sees them per programme and summed, labelled internal and exact, "people served
-per programme, summed" and never unduplicated. No link between servers is added: the file is the transport.
+per programme, summed" and never unduplicated. By default the file is the transport and there is no link between
+servers. Tier 1 now also has an **API** (built for 1.18.0, not yet released; COUNTY-VIEW *Connecting*): an optional
+county connection, **off by default**, over which a CBO's server posts the **same signed aggregate file** with a
+connection token the county issued it (the token says who is calling; the file must still verify under that CBO's
+registered key), sees which periods the county still expects, and over which the county's own systems read the
+combined view with a read token. It carries nothing the emailed file did not: no figures back, no other CBO's data,
+no client-level data.
 **Not built:** the publication screen over the combined release (so nothing from the county view can be
 published), key rotation and revocation, and the county's own template.
 

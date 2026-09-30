@@ -99,7 +99,7 @@ _(Append replies here, newest first.)_
   and the refusal now prints the exact time); patches (defects and security,
   no migration/permission/route, at most 1,500 added lines) can still ship. Please don't cut a feature release
   before then without the owner's exception.
-- The browser suite is 52 scripts (county.mjs, built for 1.18.0, is the 52nd). Build the kernel from the main checkout, not a worktree with a symlinked
+- The browser suite is 53 scripts (county.mjs and county-connect.mjs, built for 1.18.0, are among them). Build the kernel from the main checkout, not a worktree with a symlinked
   `node_modules` (esbuild records the paths and CI's drift check fails). *Since 1.16.1 the build is
   path-independent (`preserveSymlinks`, built from the repository root), so a worktree build is byte-identical.*
 

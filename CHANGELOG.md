@@ -4,8 +4,43 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
-A feature release (a migration, two permissions and new routes): built for 1.18.0, not yet released. The version is
+A feature release (two migrations, two permissions and new routes): built for 1.18.0, not yet released. The version is
 not stamped; the feature freeze in HANDOFF.md applies to cutting it.
+
+### Added: the county connection (docs/COUNTY-VIEW.md, *Connecting*; built for 1.18.0, not yet released)
+
+- **Optional, off by default on both sides.** A county that runs the county view can switch on a connection
+  (`county_connect_enabled`, County connections, `county:manage` and `settings:manage`); while off its routes answer
+  404. It carries only the same signed county submission file the download makes: the "no link between servers"
+  default stays, and the link, where a county turns it on, adds nothing a programme did not already send.
+- **Connection tokens** per registered programme (County view › Programmes; `county:manage`): 256 random bits,
+  shown once in a dialog with a Copy button, kept as SHA-256, optionally expiring, revocable, last use and address
+  recorded. `POST /api/county-connect/v1/submissions` takes the signed file as its body (256 KB, capped before it is
+  read and only for a live connection token) and imports it through `county.js`'s own `parseFile`/`importParsed`; a
+  file signed by another programme than the token's is rolled back and refused (`wrong_programme`). The answer is
+  the county's receipt (status, reason, SHA-256, received time), never figures. `GET /api/county-connect/v1/status`
+  says what the county expects of that programme (its code, the cadence: calendar quarters, state fiscal quarters or
+  months; the last year of periods, which are outstanding) and nothing of any other programme.
+- **Read tokens** (`county.read`; 90 days by default, at most a year) for the county's own systems:
+  `GET /api/county-connect/v1/combined` (JSON or tidy CSV, from the combined-view builder, with notes: summed, not
+  unduplicated; exact, internal, not for publication) and `/v1/programs`. A token is never a session, and a session
+  never opens these routes. Rate limited per token, per address, for wrong tokens and in all; refusals audited and
+  throttled; `county.api.read`, `county_connect.status`, `county.submission.import` with `via: "county-connect"`.
+- **The programme's side** (Settlement outcomes › Send to the county over the connection): an administrator saves
+  the county's address and token (encrypted, never returned); **Test connection** shows what the county expects;
+  **Send to the county now** (whoever may make the county file) sends it and shows the receipt, with a send log
+  (no figures); audited `county_submission.send`. Automatic sending of outstanding periods, once a day, is off by
+  default. Outbound: https only, no redirects, a timeout, a 64 KB answer cap, private addresses refused in production
+  unless `SUDS_COUNTY_ALLOW_PRIVATE=1`, public ones through `server/outbound.js`.
+- **Migration 57**: `county_connect_tokens`, `county_connection` (`token_enc`), `county_connect_sends`. Office server
+  only; not on SUDS on this device.
+- Tests: `test/county-connect.test.js` (tokens, push, refusals, the 256 KB cap, limits, scopes and sessions, status,
+  the read API, the programme's side with a 307, a timeout and a private address, and a programme server sending to
+  a county server over HTTP end to end), `test/county-connect-device.test.js`; browser script
+  `scripts/ui/county-connect.mjs` (the suite is now 53 scripts), and the County connections page and its dialogs in
+  the accessibility audit.
+- Docs: COUNTY-VIEW *Connecting*, API.md, DEPLOYMENT (outbound to the county; inbound on the county's server),
+  THREAT-MODEL, DATA-INVENTORY, PEN-TEST-SCOPE, DATA-NETWORK and STRATEGY (Tier 1 has an API), USER_GUIDE.
 
 ### Added: the county view (docs/COUNTY-VIEW.md; DATA-NETWORK Tier 1)
 

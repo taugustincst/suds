@@ -5,16 +5,17 @@ exact submissions.*
 
 A county that funds harm-reduction and treatment programmes with opioid settlement money needs to see, in one
 place, what each programme spent and what it did with it. Each programme already sends the county its figures
-under its funding contract. The county view puts those figures side by side and adds them up, without any link
-between the programmes' SUDS servers and the county's, and without any client of any programme ever reaching the
-county.
+under its funding contract. The county view puts those figures side by side and adds them up without any client of
+any programme ever reaching the county. By default there is no link between the programmes' SUDS servers and the
+county's: the signed file is the transport. The **county connection** ([Connecting](#connecting), below) is an
+optional link, off unless the county switches it on, that carries the same signed file and nothing else.
 
 It has two halves:
 
 - **Send to the county** (a programme's server): on **Reports › Settlement outcomes**, a person who files the
   programme's funder submission makes a **county submission file** for the period on screen: a signed JSON file.
-  The programme sends it to the county the way the county asks (email, the county's file drop); SUDS sends
-  nothing itself.
+  The programme sends it to the county the way the county asks (email, the county's file drop); or, where the county
+  has switched on the county connection, SUDS posts the same file to the county's server (see *Connecting*).
 - **County view** (the county's own SUDS server): the county registers each programme it funds, by the public key
   the programme gives it; imports the files the programmes send; and sees them combined for a period, on screen
   and as an Excel or CSV file.
@@ -141,11 +142,101 @@ publication releases only, and the county view's small counts are exact and not 
 granted `county:manage` individually. A programme's server holds these permissions too, but shows no County view
 entry until a programme is registered there, except to an administrator (who registers them).
 
+## Connecting
+
+*Built for 1.18.0, not yet released. Optional, and off by default on both sides.*
+
+Emailing the file works, and stays. Where the county runs SUDS and wants it, the programme's server can post the file
+to the county's server directly, the county's own systems can read the combined view, and the programme can see which
+periods the county still expects. `server/county-connect.js` (the county's side), `server/county-connect-client.js`
+(the programme's side), `server/routes/county-connect.js`.
+
+### What crosses the link
+
+Only the **same signed county submission file** the download makes (the programme's side builds it with the same
+steps: the Settlement outcomes figures, `county.js` `payloadFrom`'s allow-list, `signFile`), and in the other
+direction the county's receipt (`status`, `reason`, `{ sha256, received_at }`) and its **status**: what it expects of
+that one programme. Never a figure back, never another programme's anything, never client-level data.
+
+### The trust model: a token *and* the signature
+
+- The county issues a **connection token** per registered programme (County view › Programmes › Connection tokens;
+  `county:manage`). It is 256 random bits behind the prefix `sudscc_`, shown once, kept only as its SHA-256
+  (`county_connect_tokens.token_hash`), optionally expiring (90 days, a year, two years or never), revocable, with the
+  time and address of its last use recorded. Issued, revoked and every use audited.
+- The token only says **which programme is calling**. The file must still verify through `county.js`'s own import
+  path (`parseFile`, then `importParsed`: the allow-list, the period, the county code, a registered and active
+  programme's key, the signature). If the key that signed the file belongs to a different programme than the token,
+  the import is rolled back and refused (`wrong_programme`): a token never makes a file count, and programme A's
+  token cannot carry programme B's file.
+- Neither kind of token is ever a session: a county token presented anywhere else is not a sign-in, and a signed-in
+  session (cookie or its token) does not open the machine routes.
+
+### The county's side
+
+- **Switch**: `county_connect_enabled`, off by default; **County connections** (`#/county-connect`), for
+  `county:manage` **and** `settings:manage` (it exposes an endpoint). While off, every machine route answers 404 as if
+  it did not exist.
+- `POST /api/county-connect/v1/submissions` with `Authorization: Bearer sudscc_…` and the file as the JSON body.
+  Answers `201 { status: "imported" | "superseded" | "older", reason: null, message, period, receipt }`,
+  `200 { status: "duplicate", … }` or `422` (`413` over 256 KB) `{ status: "refused", reason, message, receipt }`,
+  `reason` being `county.js`'s refusal code or `wrong_programme`. The body is capped at **256 KB before it is read**,
+  and only for a live connection token while the switch is on (`server/app.js` `bodyLimitFor`); anything else
+  without a session keeps the 64 KB cap. Audited `county.submission.import|duplicate|refuse` with `via:
+  "county-connect"` and the token's id; the actor is the token's prefix, never a user.
+- `GET /api/county-connect/v1/status` (the same token): the county's code and name, the **cadence** it expects
+  (a setting: quarterly by calendar quarter, quarterly by the state fiscal year from July 1, or monthly; and an
+  optional first period), the last year of complete periods and, for each, whether it has a counting file, the outstanding
+  ones, and this programme's files' periods and receipts. Audited `county_connect.status`.
+- **Read tokens** (`sudscr_…`; scope `county.read`) for the county's own systems: named, expiring after 90 days
+  unless chosen (at most a year), revocable, last use recorded. `GET /api/county-connect/v1/combined?from&to
+  [&format=json|tidy-csv]` answers the combined view from `county.js` `combined()` (the same inclusion rule) with
+  `notes` saying the figures are **summed, not unduplicated** and **exact, internal, not for publication**, and the
+  caveats; the tidy CSV has one row per programme and measure plus the total, with the notes in its headers.
+  `GET /api/county-connect/v1/programs`: names, active, fingerprints, last received, the counting files' periods (no
+  public or private keys). Audited `county.api.read`, never with figures.
+- **Rate limits** (per 10 minutes, on top of the global API limit): 120 per address across the machine routes, 2,000
+  from all addresses together, 20 wrong tokens per address (then the address waits), per token 30 sends, 60 status
+  calls, 120 reads, and 20 refused files. Refusals of callers without a good token are written to the audit log ten
+  an hour per token (or for unknown tokens together) and then summarised, as secure referral links do.
+
+### The programme's side
+
+- **Connect to the county** (Settlement outcomes › Send to the county over the connection; `settings:manage`): the
+  county's address and the connection token. The token is stored encrypted (`county_connection.token_enc`) and never
+  returned to a browser once saved (only its first characters).
+- **Test connection** (whoever may make the county file, or `settings:manage`): asks the county's `/status` and shows
+  what it expects and what is outstanding.
+- **Send to the county now** (`reports:funder`, `budget:read`, `export:read`: the same as making the file): builds
+  the file for the period, posts it, and shows the county's receipt. The funds that go in are the ones chosen for this
+  county on the Send to the county card (remembered per county code), or those given. Each send is kept in a **send
+  log** (`county_connect_sends`: period, payload SHA-256, the county's answer, when, who; never figures) and audited
+  `county_submission.send` (period, fingerprint, payload SHA-256, host, answer).
+- **Automatic sending**, off by default (a checkbox beside the address): the hourly housekeeping, once a day at
+  most, asks `/status` what is outstanding and sends those periods (four at most a day), each logged and audited as
+  automatic (`county_submission.auto` for the run).
+- **Outbound safety**: https only (plain http only to this machine, never in production); no redirect is ever
+  followed (the token goes only to the configured host); a 15-second timeout; the answer read to 64 KB at most. A
+  public address goes through `server/outbound.js` (checked, resolved, and connected to the address that passed the
+  check; a name resolving to a private address is refused). An address on this machine or a private network is
+  refused in production unless the server is started with `SUDS_COUNTY_ALLOW_PRIVATE=1` (a county reached over a
+  VPN). Certificates are verified; a county whose certificate comes from its own CA is trusted with
+  `NODE_EXTRA_CA_CERTS`.
+
+### Exposure
+
+The county's endpoint must be reachable from the programmes' servers: through the county's TLS reverse proxy on the
+internet, or a VPN between them ([DEPLOYMENT.md](DEPLOYMENT.md), *Inbound from the internet*). Behind a proxy set
+`TRUST_PROXY=1`, so the per-address limits and the recorded last-use address are the caller's. A county may also
+allow-list its programmes' addresses at its proxy or WAF (only `/api/county-connect/v1/` needs to be reachable).
+Nothing else changes: the connection carries what the emailed file carried.
+
 ## Not on SUDS on this device
 
 The routes are office-server only (`server/app.js` `LOCAL_ROUTE_MODULES`; `test/county-device.test.js`): SUDS on
 this device has no county relationship, signs nothing for one and imports nothing from one. The Settlement outcomes
-page shows no Send to the county there, and the navigation no County view.
+page shows no Send to the county there, and the navigation no County view. The county connection's routes are
+office-only too (`county-connect` in `LOCAL_ROUTE_MODULES`'s exclusions; `test/county-connect-device.test.js`).
 
 ## Deferred
 
@@ -169,4 +260,8 @@ page shows no Send to the county there, and the navigation no County view.
 `server/county.js` (format, canonical form, keys, allow-list, import, the combined view), `server/routes/county.js`,
 `public/views/county.js`, the Send to the county card in `public/views/settlement.js`, `scripts/county-sample.js`;
 migration 56 (`server/db.js`); tests `test/county.test.js`, `test/county-device.test.js`; browser script
-`scripts/ui/county.mjs`.
+`scripts/ui/county.mjs`. The county connection: `server/county-connect.js`, `server/county-connect-client.js`,
+`server/routes/county-connect.js`, `public/views/countyconnect.js`; migration 57 (`county_connect_tokens`,
+`county_connection`, `county_connect_sends`); tests `test/county-connect.test.js` (including a programme server
+sending to a county server over HTTP end to end), `test/county-connect-device.test.js`; browser script
+`scripts/ui/county-connect.mjs`.
