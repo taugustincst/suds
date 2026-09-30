@@ -31,7 +31,7 @@ function rateLimitReset(key) { buckets.delete(key); }
 // out of the local-mode kernel.
 const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
   'interventions', 'overdose', 'prevention', 'calls', 'time', 'supervision', 'resources', 'referrals', 'referral-links', 'tasks', 'budget', 'notes',
-  'consents', 'patient-requests', 'part2', 'compliance', 'careplan', 'assessments', 'suprt', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors', 'fhir', 'scim', 'ai'];
+  'consents', 'patient-requests', 'part2', 'compliance', 'careplan', 'assessments', 'suprt', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors', 'fhir', 'scim', 'ai', 'county'];
 
 // Not on a device: setup and app are office-server concerns (first-run wizard, connection info), sync is the
 // device's own runner, intake is an inbound API for other systems to call, and oidc needs a live identity
@@ -43,7 +43,9 @@ const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport
 // (server/ai-copilot.js): it needs the provider key and the programme's recorded agreement, both the office's,
 // and a device never sends a client's text to an AI provider. referral-links serves one-time links to
 // organisations outside the programme (server/referral-links.js): only the office has an address they can reach.
-const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security', 'scim', 'ai', 'referral-links'].includes(m));
+// county is the county view and the programme's Send to the county file (server/county.js): SUDS on this device has
+// no county relationship, signs nothing for one and imports nothing from one.
+const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security', 'scim', 'ai', 'referral-links', 'county'].includes(m));
 
 // Served in place of the app shell when local mode is off (the wizard's answer in server.json, or LOCAL_MODE_ENABLED). No scripts, nothing to configure.
 const LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS — local mode is off</title>

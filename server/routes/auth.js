@@ -90,7 +90,10 @@ module.exports = (r) => {
       // The programme profile and the modules in force (server/programme.js): what the navigation shows.
       programme: { profile: require('../programme').profile(), modules: require('../programme').modules(),
         // Whether "Secure link" is offered on a referral (server/referral-links.js; office server only).
-        referral_links: db.getSetting('referral_links_enabled', '0') === '1' } };
+        referral_links: db.getSetting('referral_links_enabled', '0') === '1',
+        // How many programmes this server accepts county submissions from (the county view, server/county.js):
+        // the County view entry shows for county:view once there is one, and to county:manage always.
+        county_programmes: db.one(`SELECT COUNT(*) n FROM county_programmes WHERE active=1`).n } };
   });
 
   // Whether signing a note now needs the password (or authenticator code) again, or only a confirmation:

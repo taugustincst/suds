@@ -718,6 +718,19 @@ const migrations = [
       for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
     }
   },
+  // 56: the county view (docs/COUNTY-VIEW.md): county_signing_keys (the key a programme signs its county
+  //     submission files with), county_programmes and county_submissions (on a county's server, the programmes
+  //     it accepts files from and the files it imported). Office server only. Self-contained and idempotent, so
+  //     it can be renumbered.
+  (d) => {
+    const schemaText = safeSchema();
+    for (const t of ['county_signing_keys', 'county_programmes', 'county_submissions']) {
+      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+      if (!m) throw new Error(`migration 56: no definition for ${t} in schema`);
+      d.exec(m[0]);
+      for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
+    }
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

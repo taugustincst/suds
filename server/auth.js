@@ -92,17 +92,25 @@ function ssoPolicy() {
 // field staff do; supplies:manage is the rest of running the cupboard (items, sites, transfers between sites,
 // adjustments after a count, disposal of expired stock), held by supervisors and administrators. A visit's own
 // draw-down needs only interventions:write, as it always has.
+// county:view and county:manage (the county view, docs/COUNTY-VIEW.md) are for a county that runs SUDS to see the
+// signed submissions its funded programmes send it: county:view sees the combined view (exact aggregate figures per
+// programme, summed; no client of any programme, ever), county:manage registers the programmes' keys and imports
+// and withdraws their files. Administrators hold both; supervisors and finance hold county:view, as they hold
+// exact submission counts (reports:exact, reports:funder) here already. Read-only does not: its reports are
+// publication releases only, and the county view's exact small counts are not for publication, so neither is
+// ever granted to a role without exact counts (permissions.js grantProblem). A programme's own server holds them
+// too but has nothing to show until it registers a programme; its Send to the county file needs reports:funder.
 const PERMS = {
   admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all','records:manage-others',
                'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve','budget:manage',
                'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','graph:import','reports:read','assignments:manage','export:read','export:identified','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','clients:legal-hold','patient-requests:*','careplan:read',
-               'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*'],
+               'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*','county:view','county:manage'],
   supervisor: ['clients:read','clients:write','clients:all','records:manage-others','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
                'consents:*','imports:*','graph:import','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*',
-               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*','ai:draft'],
+               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*','ai:draft','county:view'],
   // Front-line staff hold export:read so the Export buttons on their own screens work; without
   // export:identified every file they can produce is de-identified (Safe Harbor), and caseload-scoped for a
   // person denied clients:all. budget:read (1.16.0): a clinician sees programme spending; no budget:write.
@@ -118,7 +126,7 @@ const PERMS = {
   // submission runs of the funder, NDP and settlement reports, exact, by fund and for any range. It holds no
   // reports:internal or reports:exact, so no internal runs, and its dashboard stays masked. Money and hours
   // are exact everywhere, and on Budget and Time for any range or fund.
-  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','budget:manage','time:read','time:all','time:approve','reports:read','reports:funder','export:read','users:read','documents:read','documents:write'],
+  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','budget:manage','time:read','time:all','time:approve','reports:read','reports:funder','export:read','users:read','documents:read','documents:write','county:view'],
   // readonly is for oversight (a county analyst, an auditor's dashboard): aggregate reports and the resource
   // directory, keyed by client code. It holds neither clients:read nor export:read, so it can identify nobody
   // and take nothing off the system. Its funder, NDP and settlement reports are publication releases only.

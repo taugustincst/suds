@@ -14,8 +14,12 @@ const PRIVILEGED_PERMISSIONS = ['users:manage', 'settings:manage', 'apikeys:mana
 const SENSITIVE = new Set(['export:identified', 'clients:all', 'records:manage-others', 'disclosures:override', 'notes:clinical:breakglass', 'clients:merge', 'clients:legal-hold',
   'assignments:manage', 'clients:read', 'clients:list-deidentified',
   // ai:draft (1.17.0) sends de-identified session text about a client to the AI provider (docs/AI-COPILOT.md).
-  'ai:draft']);
+  'ai:draft',
+  // county:manage decides whose signed figures a county accepts (it registers the keys they are checked with).
+  'county:manage']);
 
+const COUNTY_PERMS = ['county:view', 'county:manage'];
+const EXACT_COUNTS = ['reports:exact', 'reports:funder'];
 // What opens a client's identity: a record (clients:write implies clients:read, auth.hasPerm), or a file of them.
 const IDENTIFYING = ['clients:read', 'clients:write', 'export:identified'];
 /**
@@ -38,6 +42,10 @@ function grantProblem(role, roleDefaults, permission) {
   if (deidentified && IDENTIFYING.includes(permission)) return `A ${role} account knows clients by client code only (de-identified), so it cannot be granted "${permission}", which would let it identify them. If this person needs to open client records, give them a role that does.`;
   if (permission === 'records:manage-others' && !defaults.includes('clients:write')) return `"${permission}" can only be granted to a role that records client work (navigator, clinician, supervisor, administrator)`;
   if (permission === 'ai:draft' && !defaults.includes('clients:write')) return `"${permission}" can only be granted to a role that documents client work (navigator, clinician, supervisor, administrator)`;
+  // The county view's figures are exact, small counts included, and not for publication: only a role that sees exact
+  // aggregate counts (reports:exact or reports:funder: finance, supervisor, administrator) may hold it. Read-only's
+  // reports are publication releases, and front-line roles run no submission.
+  if (COUNTY_PERMS.includes(permission) && !defaults.some(p => EXACT_COUNTS.includes(p))) return `"${permission}" can only be granted to a role that sees exact aggregate counts (finance, supervisor, administrator): the county view's figures are exact and not for publication`;
   if (permission === 'clients:list-deidentified' && defaults.some(p => IDENTIFYING.includes(p))) return `"clients:list-deidentified" is how a de-identified role (finance, read-only) lists clients by code. A ${role} already opens client records; to show them every client (not only their caseload), clients:all is the permission.`;
   return null;
 }
@@ -106,6 +114,8 @@ const DEFS = [
   ['supplies:*', 'Supplies (read and manage)', 'Items, sites, transfers, adjustments, disposal.'],
   ['supplies:read', 'See supply stock', 'Stock on hand by site and lot.'],
   ['supplies:receive', 'Receive supply deliveries', 'Record stock that arrived at a site.'],
+  ['county:view', 'See the county view', 'For a county that funds programmes: the signed submissions they send, side by side and summed for a period, and its Excel or CSV file. Exact aggregate figures for authorised county staff, not for publication; never a client. Administrators, supervisors and finance by default.'],
+  ['county:manage', 'Manage county submissions', 'Register the programmes whose signed submissions the county accepts (each by its public key), import their files and withdraw one. Administrators by default.'],
   ['ai:draft', 'Use the AI documentation copilot', 'Ask the AI copilot for a draft (progress note sections, assessment narratives, care plan and CalOMS suggestions) from text they give it, with identifiers replaced before it is sent. Only while an administrator has recorded the agreement with the provider and switched the copilot on. Clinicians, supervisors and navigators by default.'],
 ];
 
