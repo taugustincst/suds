@@ -193,17 +193,10 @@ test('parsers read the real documents\' shapes', () => {
   assert.ok(RS.parseEvidence(read(RS.FILES.evidence)), 'the evidence line is read');
 });
 
-// Findings the repository had when this check was written (1.21.0 development), fixed by the documentation stream of
-// the same release: the 1.20.0 CHANGELOG section kept 1.19.x lines, and the evidence index's owner step still called
-// 1.19.0 live. A finding outside this list fails the test; once these are fixed the list can be emptied.
-const KNOWN = [
-  ['CHANGELOG.md', 'the 1.20.0 section says "describe 1.19.0"'],
-  ['CHANGELOG.md', 'the 1.20.0 section says "checked against 1.19.0"'],
-  ['CHANGELOG.md', 'the 1.20.0 section says "1.19.x is the latest minor"'],
-  ['CHANGELOG.md', 'the 1.20.0 section says "1.18.x the previous"'],
-  ['CHANGELOG.md', 'the 1.20.0 section says "describes 1.19.0"'],
-  ['docs/evidence/README.md', 'says 1.19.0 is live on GitHub Pages; other documents say 1.20.0'],
-];
+// Findings the repository had when this check was written (1.21.0 development) were fixed by the documentation stream
+// of the same release and the 1.21 review (the last: a 1.20.0 CHANGELOG line recording the questionnaire's earlier
+// check in words the check reads as stale). A finding in this list is tolerated; the list is empty, so none is.
+const KNOWN = [];
 
 test('the repository: the documents alone (deterministic) raise no finding but the known ones', () => {
   const r = RS.run(path.join(__dirname, '..'), { mode: 'docs-only' });

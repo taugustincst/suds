@@ -298,7 +298,7 @@ test that failed before the fix, in the real-execution harness (`test/deploy-lin
   describes the optional county connection (off by default; the CBO's push with a county-issued token *and* the
   file's Ed25519 signature; status; the county's read API with expiring read tokens; `TRUST_PROXY=1`; only the
   aggregate file leaves), SUDS Server and its compliance report, and fingerprint sign-in. The security
-  questionnaire is checked against 1.20.0 (it was checked against 1.19.0, `3dc20dc`, before the stamp): #5 names the county connection (outbound from a CBO) and the
+  questionnaire is checked against 1.20.0 (its previous check, before the stamp, was of 1.19.0 at `3dc20dc`): #5 names the county connection (outbound from a CBO) and the
   county server's inbound push and read endpoints, and the AI copilot's Bedrock and Vertex AI providers; #6 the
   `LICENSE`; #7, #8, #29, #39 and #48 what 1.18.0 and 1.19.0 changed; #36a the AI-authorship figures recounted
   from git (643 of 662 commits written with the assistant: 630 as author, 13 as co-author; the method is stated).
