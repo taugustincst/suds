@@ -14627,6 +14627,12 @@ var require_clients = __commonJS({
     }
     var DUPLICATE_CHECKS = 60;
     var DUPLICATE_CHECK_WINDOW_MS = 15 * 6e4;
+    function codesOf(keep, source) {
+      const PC = require_participant_code();
+      const k = PC.normalise(keep.participant_code);
+      const s = PC.normalise(source.participant_code);
+      return { keep: k, source: s, differ: !!(k && s && k !== s) };
+    }
     function updateClient(ctx, row, v, { reverts = null } = {}) {
       rules.assertWrite("clients", { id: row.id, ...rules.toColumns("clients", v) }, ctx, { existing: row });
       const enc2 = M.encryptFields(v);
@@ -14876,6 +14882,22 @@ var require_clients = __commonJS({
         audit3.log({ user: ctx.user, action: "episode.open", entity: "episode", entityId: episodeId, clientId: row.id, ip: ctx.ip, details: { readmission: true } });
         return { id: row.id, client_code: row.client_code, episode_id: episodeId };
       });
+      r.get("/api/clients/:id/merge/preview", auth3.requireAuth, auth3.requirePerm("clients:merge"), (ctx) => {
+        const keep = loadClient(ctx, ctx.params.id);
+        const sourceId = ctx.query.get("source_id") || "";
+        const source = sourceId ? db3.one(`SELECT * FROM clients WHERE id=?`, sourceId) : null;
+        if (!source || source.deleted_at || source.merged_into) throw notFound("The record to merge was not found");
+        if (source.id === keep.id) throw badRequest("Choose a different record to merge in");
+        auth3.assertClientAccess(ctx, source.id);
+        const codes = codesOf(M.decryptRow(keep), M.decryptRow(source));
+        audit3.log({ user: ctx.user, action: "client.merge.preview", entity: "client", entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { source: source.id, participant_codes_differ: codes.differ || void 0 } });
+        return {
+          keep: { id: keep.id, client_code: keep.client_code, participant_code: codes.keep },
+          source: { id: source.id, client_code: source.client_code, participant_code: codes.source },
+          participant_codes_differ: codes.differ,
+          notices: codes.differ ? [`The two records have different participant codes (this record: ${codes.keep}; the other: ${codes.source}). This record's code is kept; the other is recorded in the merge's entry on the History tab, from where it can be put back.`] : []
+        };
+      });
       r.post("/api/clients/:id/merge", auth3.requireAuth, auth3.requirePerm("clients:merge"), (ctx) => {
         const keep = loadClient(ctx, ctx.params.id);
         const v = validate(ctx.body, { source_id: { type: "string", required: true }, reason: { type: "string", maxLen: 300 } });
@@ -14926,11 +14948,20 @@ var require_clients = __commonJS({
           if (source.intake_date && (!keep.intake_date || source.intake_date < keep.intake_date)) fills.intake_date = source.intake_date;
           const keys = Object.keys(fills);
           if (keys.length) db3.run(`UPDATE clients SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => fills[k]), db3.now(), keep.id);
+          const codes = codesOf(K, S);
+          let revChanges = {};
           if (keys.length) {
             const plainFills = M.decryptRow(Object.fromEntries(keys.map((k) => [k, fills[k]])));
             delete plainFills.display_name;
             delete plainFills.participant_code_idx;
-            mergeRevision = REV.record({ user: ctx.user, clientId: keep.id, changes: REV.diff(M.decryptRow(keep), plainFills), via: "merge", ip: ctx.ip });
+            revChanges = REV.diff(K, plainFills);
+          }
+          if (codes.differ) {
+            revChanges.participant_code = { before: codes.source, after: codes.keep };
+            moved._participant_codes_differ = true;
+          }
+          if (Object.keys(revChanges).length) {
+            mergeRevision = REV.record({ user: ctx.user, clientId: keep.id, changes: revChanges, via: "merge", ip: ctx.ip });
           }
           const after = db3.one(`SELECT * FROM clients WHERE id=?`, keep.id);
           const plain = M.decryptRow(after);
@@ -14966,7 +14997,7 @@ var require_clients = __commonJS({
         });
         audit3.log({ user: ctx.user, action: "client.merge", entity: "client", entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { merged: source.id, merged_code: source.client_code, moved, reason_recorded: v.reason ? true : void 0, revision: mergeRevision || void 0 } });
         audit3.log({ user: ctx.user, action: "client.merged_away", entity: "client", entityId: source.id, clientId: source.id, ip: ctx.ip, details: { into: keep.id } });
-        return { ok: true, kept: keep.id, merged: source.id, moved };
+        return { ok: true, kept: keep.id, merged: source.id, moved, notices: moved._participant_codes_differ ? ["The two records had different participant codes: this record's is kept, and the other is recorded in the merge's entry on the History tab."] : [] };
       });
       function noteCount(ctx, clientId) {
         const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, `notes:${k}:read`) || auth3.hasPerm(ctx.user, `notes:${k}:write`));
@@ -16120,13 +16151,13 @@ var require_client_name = __commonJS({
     init_globals_inject();
     var auth3 = require_auth2();
     var M = require_clients_model();
-    var SELECT = "c.first_name_enc AS c_first_name_enc, c.last_name_enc AS c_last_name_enc";
+    var SELECT = "c.first_name_enc AS c_first_name_enc, c.last_name_enc AS c_last_name_enc, c.participant_code_enc AS c_participant_code_enc";
     function withClientName(ctx, x) {
       const deidentify = !auth3.hasPerm(ctx.user, "clients:read");
       let client_name = null;
-      if (x.client_id && !deidentify && (x.c_first_name_enc || x.c_last_name_enc)) {
+      if (x.client_id && !deidentify && (x.c_first_name_enc || x.c_last_name_enc || x.c_participant_code_enc)) {
         try {
-          client_name = M.decryptRow({ first_name_enc: x.c_first_name_enc, last_name_enc: x.c_last_name_enc }).display_name || null;
+          client_name = M.decryptRow({ first_name_enc: x.c_first_name_enc, last_name_enc: x.c_last_name_enc, participant_code_enc: x.c_participant_code_enc || null }).display_name || null;
         } catch {
           client_name = null;
         }
@@ -16134,6 +16165,7 @@ var require_client_name = __commonJS({
       const out2 = { ...x, client_name };
       delete out2.c_first_name_enc;
       delete out2.c_last_name_enc;
+      delete out2.c_participant_code_enc;
       return out2;
     }
     module.exports = { withClientName, SELECT };
@@ -19692,11 +19724,13 @@ var require_referral_links = __commonJS({
           user
         });
         consentId = basis.consent.id;
-        const c = db3.one(`SELECT first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients WHERE id=?`, referral.client_id);
+        const c = db3.one(`SELECT first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc, participant_code_enc FROM clients WHERE id=?`, referral.client_id);
+        const legal = [dec2(c.first_name_enc), dec2(c.last_name_enc)].filter(Boolean).join(" ");
+        const pcode = dec2(c.participant_code_enc);
         const message = String(v.message || "").trim().slice(0, 1e3);
         packet = {
           client: {
-            name: [dec2(c.first_name_enc), dec2(c.last_name_enc)].filter(Boolean).join(" "),
+            name: legal || (pcode ? `Participant ${pcode}` : ""),
             preferred_name: dec2(c.preferred_name_enc) || void 0,
             dob: v.include_dob ? dec2(c.dob_enc) || void 0 : void 0,
             phone: v.include_phone ? dec2(c.phone_enc) || void 0 : void 0
@@ -26421,7 +26455,7 @@ var require_exports = __commonJS({
       const sc = { interventions: scoped("interventions", "i"), calls: scoped("calls", "ca"), tasks: scoped("tasks", "t"), overdose_events: scoped("overdose_events", "o") };
       const phi = (v) => identified && v ? decrypt3(v) : v ? "[redacted]" : "";
       const participantRef = pseudonymizer("P");
-      const idCols = identified ? ["last_name", "first_name", "dob", "phone", "email", "address"] : ["age_band"];
+      const idCols = identified ? ["last_name", "first_name", "participant_code", "dob", "phone", "email", "address"] : ["age_band"];
       const strip = (cols2) => identified ? cols2 : cols2.filter((c) => c !== "city");
       const D = {
         clients: {
@@ -27436,7 +27470,7 @@ var require_caloms = __commonJS({
       }
       return out2;
     }
-    var CROSS_RECORD = /* @__PURE__ */ new Set(["no_admission", "admission_has_errors"]);
+    var CROSS_RECORD = /* @__PURE__ */ new Set(["no_admission", "admission_has_errors", "name_missing"]);
     function check(rec, ctx) {
       const out2 = [];
       const add = (field, code, message, severity = "fatal") => out2.push({ field, severity, code, message });
@@ -27447,6 +27481,7 @@ var require_caloms = __commonJS({
         add("record_type", "invalid_record_type", `"${type}" is not a CalOMS record type`);
         return out2;
       }
+      if (ctx.missingName && ctx.missingName.length) add("name", "name_missing", `The client's ${ctx.missingName.join(" and ")} ${ctx.missingName.length === 1 ? "is" : "are"} not recorded (the client is known by a participant code only): a CalOMS Tx record needs the client's legal first and last name. Add ${ctx.missingName.length === 1 ? "it" : "them"} on the client record; until then this record is left out of the submission file.`);
       if (empty(rec.provider_id)) add("provider_id", "provider_missing", "Provider ID is required");
       else if (!(ctx.providers || []).includes(rec.provider_id)) add("provider_id", "provider_unknown", `Provider ID ${rec.provider_id} is not one of this program's CalOMS provider IDs (Settings)`);
       const date = rec.record_date;
@@ -27544,6 +27579,18 @@ var require_caloms = __commonJS({
     function recordsForEpisode(episodeId) {
       return db3.all(`SELECT * FROM caloms_records WHERE episode_id=? ORDER BY record_date, created_at`, episodeId).map(present);
     }
+    function missingName(clientId) {
+      const c = db3.one(`SELECT first_name_enc, last_name_enc FROM clients WHERE id=?`, clientId);
+      if (!c) return [];
+      const blank = (v) => {
+        try {
+          return !v || !String(decrypt3(v)).trim();
+        } catch {
+          return true;
+        }
+      };
+      return [blank(c.first_name_enc) ? "first name" : null, blank(c.last_name_enc) ? "last name" : null].filter(Boolean);
+    }
     function contextFor(episode, { records = null, dob = void 0 } = {}) {
       const recs = records || recordsForEpisode(episode.id);
       const adm = recs.find((r) => r.record_type === "admission") || null;
@@ -27556,7 +27603,7 @@ var require_caloms = __commonJS({
           dob = null;
         }
       }
-      const base = { dob, episode, providers: providers().map((p) => p.id), today: today() };
+      const base = { dob, missingName: missingName(episode.client_id), episode, providers: providers().map((p) => p.id), today: today() };
       let admissionFatal = false;
       if (adm) admissionFatal = fatal(check(adm, { ...base, admission: null })).length > 0;
       return { ...base, admission: adm ? adm.answers : null, admissionDate: adm ? adm.record_date : null, admissionFatal, dischargeDate: dis ? dis.record_date : episode.closed_at || null, records: recs };
@@ -27631,7 +27678,7 @@ var require_caloms = __commonJS({
         return c;
       };
       const rows = [];
-      const labelOf = (field) => (S.FIELD[field] || {}).label || ({ provider_id: "Provider ID", record_date: "Record date", dob: "Date of birth", record_type: "Record" }[field] || field);
+      const labelOf = (field) => (S.FIELD[field] || {}).label || ({ provider_id: "Provider ID", record_date: "Record date", dob: "Date of birth", name: "Client name", record_type: "Record" }[field] || field);
       const checked = [];
       for (const r of recs) {
         const issues = check(r, ctxOf(r.episode_id));
@@ -38432,6 +38479,8 @@ var require_common = __commonJS({
     var FHIR_VERSION = "4.0.1";
     var SYS = {
       clientCode: "urn:suds:client-code",
+      // A client known by a syringe services participant code (1.21.0, server/participant-code.js), as stored (normalised).
+      participantCode: "urn:suds:participant-code",
       medicaid: "urn:suds:medicaid-id",
       interventionType: "urn:suds:codesystem:intervention-type",
       callPurpose: "urn:suds:codesystem:contact",
@@ -39177,6 +39226,7 @@ var require_resources2 = __commonJS({
     var GENDER = { female: "female", male: "male", transgender_female: "female", transgender_male: "male", non_binary: "other", other: "other" };
     function mapPatient(c) {
       const first = dec2(c.first_name_enc), last = dec2(c.last_name_enc), preferred = dec2(c.preferred_name_enc), dob = dec2(c.dob_enc), medicaid = dec2(c.medicaid_id_enc);
+      const pcode = c.participant_code_enc ? dec2(c.participant_code_enc) : null;
       return prune({
         resourceType: "Patient",
         id: c.id,
@@ -39184,10 +39234,11 @@ var require_resources2 = __commonJS({
         extension: raceEthnicity(c.race_codes),
         identifier: [
           { use: "usual", type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v2-0203", code: "MR", display: "Medical record number" }], text: "SUDS client code" }, system: SYS.clientCode, value: c.client_code },
-          medicaid ? { use: "secondary", type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v2-0203", code: "MA", display: "Patient Medicaid number" }] }, system: SYS.medicaid, value: medicaid } : void 0
+          medicaid ? { use: "secondary", type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v2-0203", code: "MA", display: "Patient Medicaid number" }] }, system: SYS.medicaid, value: medicaid } : void 0,
+          pcode ? { use: "secondary", type: { text: "Syringe services participant code" }, system: SYS.participantCode, value: pcode } : void 0
         ],
         active: !["closed", "inactive", "deceased"].includes(c.status),
-        name: [{ use: "official", family: last || void 0, given: first ? [first] : void 0 }, preferred ? { use: "usual", given: [preferred] } : void 0],
+        name: [first || last ? { use: "official", family: last || void 0, given: first ? [first] : void 0 } : void 0, preferred ? { use: "usual", given: [preferred] } : void 0],
         telecom: [telecom("phone", dec2(c.phone_enc), "mobile"), telecom("phone", dec2(c.alt_phone_enc), "home"), telecom("email", dec2(c.email_enc), "home")],
         gender: GENDER[c.gender] || "unknown",
         birthDate: /^\d{4}-\d{2}-\d{2}$/.test(dob || "") ? dob : void 0,
