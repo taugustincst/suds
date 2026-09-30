@@ -8,7 +8,8 @@
 //   git archive v1.11.0 server package.json | tar -x -C /tmp/suds-v1.11.0
 //   node test/fixtures/make-release-fixture.js /tmp/suds-v1.11.0 test/fixtures/release-v1.11.0.sql [--rich]
 //
-// release-v1.18.0.sql: `git archive 39e397e` (the "Release 1.18.0" commit; not tagged), --rich. A table whose key is
+// release-v1.18.0.sql: `git archive 39e397e` (the "Release 1.18.0" commit; not tagged), --rich; release-v1.19.0.sql:
+// `git archive 3dc20dc server package.json` ("Release 1.19.0"), --rich (its county_submissions rows are signed ones). A table whose key is
 // CHECKed to one value (county_connection) gets its one row, and is listed in the expectation's `rich.singletons`.
 //
 // --rich (release-v1.11.0.sql and release-v1.13.0.sql): a database with realistic rows in every table that has

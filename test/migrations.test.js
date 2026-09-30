@@ -299,8 +299,10 @@ test('migration 46: a preferred name with no search index gets one; a written in
 // 1.17.0, whose migrations 49 to 55 and first-start data logic are tested from a database it wrote (below, too).
 // 1.18.0 (schema 57, --rich, made from 39e397e, the released commit) is the release before 1.19.0: its migrations
 // 58 and 59 run on a database that already holds rows in the county tables of 56 and 57 (county_connection, a
-// single-row table, holds its one row), and on sessions it opened (below).
-for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql', 'release-v1.15.3.sql', 'release-v1.16.4.sql', 'release-v1.18.0.sql']) {
+// single-row table, holds its one row), and on sessions it opened (below). 1.19.0 (schema 59, --rich, made from
+// 3dc20dc, the released commit) is the release before 1.20.0: migration 60 rebuilds county_submissions while it holds
+// the signed rows --rich made there, and adds county_programmes.on_suds to programmes that exist.
+for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql', 'release-v1.15.3.sql', 'release-v1.16.4.sql', 'release-v1.18.0.sql', 'release-v1.19.0.sql']) {
   const sql = fs.readFileSync(path.join(__dirname, 'fixtures', fixture), 'utf8');
   const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
   test(`a SUDS ${expect.version} database (schema ${expect.schema_version}) upgrades to the current schema with its records intact`, () => {
@@ -543,6 +545,69 @@ test('SUDS 1.19.0\'s first start on a 1.18.0 database: sessions it opened surviv
     for (const [t, n] of Object.entries(county)) assert.equal(db().one(`SELECT COUNT(*) n FROM "${t}"`).n, n, `${t} keeps its ${n} row(s)`);
     assert.equal(decrypt(db().one(`SELECT token_enc FROM county_connection WHERE id='county'`).token_enc), token, 'the county connection token still decrypts to what it was');
     assert.equal(require('../server/audit').verifyChain().ok, true, 'the audit chain verifies');
+  } finally {
+    require('../server/db').close();
+    require('../server/db').open(dbPath);
+    fs.rmSync(fdir, { recursive: true, force: true });
+  }
+});
+
+// SUDS 1.20.0's first start on a 1.19.0 database (upgrade drill of 1.20.0, docs/evidence/upgrade-drill-2026-09-30-v1.20.0):
+// the database 1.19.0 wrote itself (release-v1.19.0.sql), with signed county submissions in county_submissions and
+// sessions 1.19.0 opened. Migration 60 rebuilds county_submissions (the only way SQLite relaxes NOT NULL): every row
+// must come through as a signed one with its key, signature, hash and encrypted payload unchanged, every programme
+// gets on_suds 1, the sessions still sign their holders in, and the audit chain still verifies.
+test('SUDS 1.20.0\'s first start on a 1.19.0 database: county submissions survive migration 60 as signed, sessions survive, audit chain verifies', () => {
+  const { sha256, decrypt } = require('../server/crypto');
+  const sql = fs.readFileSync(path.join(__dirname, 'fixtures', 'release-v1.19.0.sql'), 'utf8');
+  const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
+  assert.equal(expect.version, '1.19.0'); assert.equal(expect.schema_version, 59);
+  const fdir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-first-start-1.19.0-'));
+  const fpath = path.join(fdir, 'suds.db');
+  const d = new DatabaseSync(fpath);
+  d.exec(sql);
+  const subCols = d.prepare(`PRAGMA table_info(county_submissions)`).all();
+  assert.ok(!subCols.some((c) => c.name === 'source'), '1.19.0 had no county_submissions.source');
+  assert.equal(subCols.find((c) => c.name === 'key_id').notnull, 1, '1.19.0 required a key on every submission');
+  assert.ok(!d.prepare(`PRAGMA table_info(county_programmes)`).all().some((c) => c.name === 'on_suds'), '1.19.0 had no county_programmes.on_suds');
+  const subsBefore = d.prepare(`SELECT id, programme_id, key_id, period_from, period_to, sha256, signature, superseded_by, withdrawn_at, payload_enc FROM county_submissions ORDER BY id`).all().map((r) => ({ ...r }));
+  assert.ok(subsBefore.length >= 3, `the fixture holds ${subsBefore.length} county submissions`);
+  assert.ok(subsBefore.every((r) => r.key_id && r.signature), 'each one signed, as 1.19.0 required');
+  const payloads = Object.fromEntries(subsBefore.map((r) => [r.id, decrypt(r.payload_enc)]));
+  const programmes = d.prepare(`SELECT id FROM county_programmes ORDER BY id`).all().map((r) => r.id);
+  assert.ok(programmes.length >= 1);
+  // Sessions 1.19.0 opened: one signed in (its second factor a passkey, as 1.19.0 recorded it), one still owing its code.
+  const user = d.prepare(`SELECT id FROM users WHERE is_active=1 AND role='navigator' ORDER BY rowid LIMIT 1`).get();
+  const now = new Date(); const later = new Date(now.getTime() + 8 * 3600_000);
+  const tokens = { signedIn: 'fixture-1.19-signed-in', owesCode: 'fixture-1.19-owes-code' };
+  const ins = d.prepare(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method,passkey_id,sync_client) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  ins.run(sha256(tokens.signedIn), user.id, now.toISOString(), now.toISOString(), later.toISOString(), 0, '127.0.0.1', 'fixture', null, now.toISOString(), 'totp', null, 0);
+  ins.run(sha256(tokens.owesCode), user.id, now.toISOString(), now.toISOString(), later.toISOString(), 1, '127.0.0.1', 'fixture', null, null, null, null, 0);
+  const auditBefore = d.prepare(`SELECT COUNT(*) n FROM audit_log`).get().n;
+  d.close();
+  require('../server/db').close();
+  try {
+    require('../server/db').open(fpath);
+    assert.equal(db().getSetting('schema_version'), String(require('../server/db').LATEST_SCHEMA_VERSION));
+    assertSameShape(schemaShape(db().get()), freshShape(), '1.19.0 (first start)');
+    const after = db().all(`SELECT id, programme_id, key_id, period_from, period_to, sha256, signature, superseded_by, withdrawn_at, payload_enc, source, entered_via, source_ref_enc FROM county_submissions ORDER BY id`).map((r) => ({ ...r }));
+    assert.deepEqual(after, subsBefore.map((r) => ({ ...r, source: 'signed', entered_via: null, source_ref_enc: null })), 'every submission kept, unchanged, as a signed one');
+    for (const r of after) assert.equal(decrypt(r.payload_enc), payloads[r.id], `submission ${r.id}'s payload still decrypts to what it was`);
+    assert.deepEqual(db().all(`SELECT id, on_suds FROM county_programmes ORDER BY id`).map((r) => ({ ...r })), programmes.map((id) => ({ id, on_suds: 1 })), 'every programme registered so far is on SUDS');
+    assert.deepEqual(db().all('PRAGMA foreign_key_check'), []);
+    for (const t of ['signedIn', 'owesCode']) {
+      const s = db().one(`SELECT mfa_pending, revoked_at, reauth_method, sync_client FROM sessions WHERE id=?`, sha256(tokens[t]));
+      assert.deepEqual({ ...s }, { mfa_pending: t === 'owesCode' ? 1 : 0, revoked_at: null, reauth_method: t === 'signedIn' ? 'totp' : null, sync_client: 0 }, `the ${t} session after migration 60`);
+    }
+    const auth = require('../server/auth');
+    const ctx = { cookies: { suds_session: tokens.signedIn }, headers: {} };
+    assert.equal((auth.resolveSession(ctx) || {}).id, user.id, 'a session 1.19.0 opened still signs its holder in');
+    const pending = { cookies: { suds_session: tokens.owesCode }, headers: {} };
+    auth.resolveSession(pending);
+    assert.equal(pending.session.mfa_pending, 1, 'and one still owing its second factor still owes it');
+    const chain = require('../server/audit').verifyChain();
+    assert.equal(chain.ok, true, 'the audit chain verifies');
+    assert.ok(chain.checked >= auditBefore, `every audit entry 1.19.0 wrote is checked (${chain.checked} >= ${auditBefore})`);
   } finally {
     require('../server/db').close();
     require('../server/db').open(dbPath);
