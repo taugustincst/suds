@@ -68,7 +68,7 @@ only against a figure the buyer has given.
 | | |
 | --- | --- |
 | **Structure** | A county pays one annual amount covering support (and, when offered, hosting) for up to N CBOs it funds, with a price per additional CBO. Implementation for each CBO priced separately (model D) or as a per-CBO allowance inside the licence |
-| **What it buys** | Support for each CBO; a county contact; the funder-facing view across the CBOs (planned: [STRATEGY.md](STRATEGY.md), *Create 2*); one security review for all of them |
+| **What it buys** | Support for each CBO; a county contact; one security review for all of them; and the **county view** across the CBOs (built for 1.18.0, not yet released; [../COUNTY-VIEW.md](../COUNTY-VIEW.md)): the county's own SUDS server (a county-only install: no client data on it) set up with the county code and each CBO's key, key exchange at each CBO's kickoff, help importing the signed quarterly files, and support for the combined view, its quarter-by-quarter trend and its Excel, CSV and tidy CSV files. Not in it: publishing combined figures (the publication screen over the combined release is planned), benchmarks across CBOs (Tier 2), county-entered figures for grantees not on SUDS |
 | **For** | "Sell to the money": one buyer, one procurement, many programmes; CBOs without IT capacity get a sponsor; the county gets consistent outcome data |
 | **Against** | Long procurement; the county may expect hosting, which is not offered; one contract concentrates revenue; the county, not the vendor, must be the data steward for any benchmarking ([DATA-NETWORK.md](DATA-NETWORK.md)) |
 | **Note** | "Licence" is the buyer's word; the contract is for services. Say so in the proposal, to avoid a county expecting rights it already has under MIT |

@@ -220,12 +220,16 @@ before it is proposed.
 | **Hosting** | County-hosted (one server per CBO, on county infrastructure) or each CBO's IT partner. Vendor hosting is not offered |
 | **Length** | 2–4 weeks of county discovery, then each CBO's 90-day pilot, staggered by 2–4 weeks so the vendor is not deploying three at once |
 | **Paid work (FDE packages)** | Discovery (county and each CBO), deployment, data migration, training, reporting setup against each funder's template, county programme management ([PRICING-OPTIONS.md](PRICING-OPTIONS.md), model D) |
-| **Out of scope** | Everything section 1 excludes; the AI copilot (1.17.0) for any CBO that has not recorded its BAA and Part 2 QSOA with the AI provider under Settings → AI copilot, after county counsel has reviewed its data flow (where a CBO has, the copilot is in scope for that CBO and section 5's copilot arm applies; never for SUD counseling notes, never on SUDS on this device); secure referral links (1.17.0; off by default) unless counsel has reviewed the link design as built and the pilot server is reachable from the internet; the planned county funder view and pooled benchmarks, which are not built |
+| **Out of scope** | Everything section 1 excludes; the AI copilot (1.17.0) for any CBO that has not recorded its BAA and Part 2 QSOA with the AI provider under Settings → AI copilot, after county counsel has reviewed its data flow (where a CBO has, the copilot is in scope for that CBO and section 5's copilot arm applies; never for SUD counseling notes, never on SUDS on this device); secure referral links (1.17.0; off by default) unless counsel has reviewed the link design as built and the pilot server is reachable from the internet; pooled benchmarks across CBOs, which are not built; the county view (built for 1.18.0, not yet released) is in scope only on a build that has it |
 
 ### What the county gets
 
 - Its CBOs' funder submissions for the pilot period produced from SUDS: exact aggregate counts, no client-level
   data, as its funding contracts already provide for.
+- On a build with the county view (built for 1.18.0, not yet released; [../COUNTY-VIEW.md](../COUNTY-VIEW.md)): those
+  figures as **quarterly signed files**, one per CBO per quarter, made for the county (its county code) from only
+  the settlement funds the county pays for, and imported into the county's own SUDS server, where they are
+  combined per CBO, in total and by quarter. The county's server holds no client data (a county-only install).
 - One security and privacy review covering every CBO's instance ([BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md)).
 - A measured answer to "does this reduce our grantees' reporting burden and improve what we receive?"
 - The information it needs to decide whether to act as data steward for pooled outcomes later
@@ -239,11 +243,23 @@ before it is proposed.
 | **County IT and privacy** | County IT security and the county privacy officer | One review for all instances; BAA/QSOA and DPA; the restore drill where the county hosts |
 | **Vendor FDE lead** | Vendor | Delivers the packages; keeps the time log that measures implementation hours per CBO |
 
+### Key exchange at kickoff (county view)
+
+At each CBO's kickoff meeting, where the county view is in scope: the county reads its **county code** from County
+view › Programs and the CBO types it on Settlement outcomes › Send to the county; the CBO shows its key (**Show the
+key for the county**), emails the public key, and **reads the fingerprint out** while the county registers the CBO
+and types it (or ticks that it compared it). The CBO ticks the funds the county pays for. From then on the CBO makes
+its file after each quarter ends and sends it the way the county asks; the county imports it. A lost or exposed key:
+the CBO makes a new one and reads the new fingerprint out; the county replaces the key (and marks the old one
+compromised if its files should stop counting).
+
 ### County measures (in addition to each CBO's section 5)
 
 | Measure | How | Target (agree before starting) |
 | --- | --- | --- |
 | Funder submissions from SUDS accepted by the county without rework | Count per CBO per reporting period | Every CBO, at least one period |
+| Quarterly county files received and imported on time (county view builds) | County view › Submissions: a *Current* file per CBO per quarter; the headline for the quarter | Every CBO, every pilot quarter, within the time the contract sets |
+| County staff hours to combine its CBOs' figures (county view builds) | The same method as the compile-hours baseline, with the combined view and its Excel | Recorded; compared with the baseline |
 | County staff hours to compile its grantees' figures | Baseline from the last period; same method in the pilot | Recorded; target agreed with the county |
 | Settlement spending recorded with an allowable use | Settlement report, per CBO | All settlement spending categorised |
 | Implementation hours per CBO against the estimate | Vendor time log | Recorded — feeds [PRICING-OPTIONS.md](PRICING-OPTIONS.md) |

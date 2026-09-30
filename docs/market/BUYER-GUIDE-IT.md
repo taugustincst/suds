@@ -85,6 +85,7 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
                                         ├──> FHIR R4 API / bulk export ──> county EHR / HIE  [optional, consent-enforced]
                                         ├──> Encounter hand-off / CalOMS extract (files) ──> county EHR / DHCS via county
                                         ├──> Microsoft Graph (OneNote import)                [optional, needs BAA]
+                                        ├──> County submission file (signed, aggregate) ──> a person sends it to the county [optional]
                                         └──> Provider websites (resource pictures only, no PHI) [optional]
 ```
 
@@ -119,6 +120,14 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
   enabled until the programme records a BAA and a Part 2 QSOA with the provider; the remaining free text may still
   identify someone, so treat the provider as receiving PHI; the result is a draft a person edits and signs. Review
   it in your risk register before enabling it ([STRATEGY.md](STRATEGY.md), *Create 1*).
+- **The county view (built for 1.18.0, not yet released) adds one file, carried by people, not a connection.** A
+  CBO's finance lead makes a **county submission file** for a quarter: aggregate counts and money for the settlement
+  funds they tick, addressed to one county by its county code and signed with the CBO server's own Ed25519 key; no
+  client, code, name, date of birth or single event (an allow-list, checked when made and on import). SUDS sends it
+  nowhere: the CBO emails or uploads it as the county asks. The county's own SUDS server (which can be a county-only
+  install with no client data) imports it after checking the county code, the signature under the key the CBO read
+  out, and the file's shape. Keys are exchanged once, out of band, and can be replaced. Both ends audit every step
+  without the figures ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)).
 - **Settlement outcomes and street outreach (1.17.0) add no data flow.** The settlement outcomes page and its
   Excel/CSV file are aggregate figures made in the browser session of the person who asks for them (audited);
   nothing is sent to the state or anyone else. A street outreach contact is an ordinary anonymous visit, saved on

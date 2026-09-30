@@ -5,54 +5,74 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 ## Unreleased
 
 A feature release (a migration, two permissions and new routes): built for 1.18.0, not yet released. The version is
-not stamped; the feature freeze in HANDOFF.md applies to cutting it.
+not stamped. The release policy's feature interval runs 28 days from 1.17.0's stamp (2026-09-29 21:08 UTC), so it
+refuses 1.18.0 before about **2026-10-27 21:08 UTC** without the owner's `policy_exception` (HANDOFF.md).
 
 ### Added: the county view (docs/COUNTY-VIEW.md; DATA-NETWORK Tier 1)
 
 - **Send to the county** (Settlement outcomes; office server only). Whoever files the funder submission
-  (`reports:funder`, with `budget:read` and `export:read`) makes a **county submission file** for the period: the
-  Settlement outcomes page's own exact figures (`figures()`, not a second count) per settlement fund, per Exhibit E
-  allowable use and in total, with spending and the thirteen outcomes. Aggregate only: the payload is an allow-list
-  checked when the file is made and again on import; no client, client code, participant code, name, date of birth
-  or single event. Signed with an **Ed25519 key of this office server**, made on first use, its private half
-  encrypted with the database key (`county_signing_keys.private_key_enc`); the public key and a 32-character
-  fingerprint are on the page, to give the county out of band. The signature is over a canonical serialisation
-  (sorted keys, no whitespace). The page says the file leaves the program, holds exact counts and is for the county
-  under the funding contract, not for publication. Audited `county_submission.export` (period, fingerprint, payload
-  SHA-256; never figures).
-- **County view** (`#/county`; office server only): for a county that runs SUDS. Register each programme by its public
-  key (the fingerprint is shown to compare, and a typed one that does not match refuses the key); import its signed
-  files (size, JSON, schema and allow-list, period ended and not backwards, a registered and active programme's key,
-  the signature; every refusal says why, is audited `county.submission.refuse` and is throttled per person); a
-  second file for the same programme and period supersedes the first (kept), the same file twice changes nothing,
-  and a file can be withdrawn. The combined view for a period: who has submitted (whole period, part, none), each
-  file's received date and fingerprint, spending by allowable use and by High Impact Abatement Activity, and each
-  outcome, one column per programme and a total, with Excel and CSV labelled internal and exact. Only files wholly
-  inside the chosen period count, the longer of two overlapping ones; nothing is pro-rated. The page says in plain
-  words that people are summed per programme, **not unduplicated across programmes**, that the figures are exact
-  and for authorised county staff only, and that publishing them needs the publication screen over the combined
-  release (planned). Everything audited: `county.view`, `county.export`, `county.programme.add|update|deactivate`,
-  `county.submission.import|duplicate|refuse|withdraw`.
+  (`reports:funder`, with `budget:read` and `export:read`) makes a **county submission file** for a period and one
+  county: the Settlement outcomes page's own exact figures (`figures()`, not a second count) **for the settlement
+  funds they tick** (nothing is ticked the first time; the choice is remembered per county; every total is over the
+  chosen funds alone), per fund, per Exhibit E allowable use and in total, with spending and the thirteen outcomes.
+  The file names its **recipient**: the county code the county gives out (County view › Programs) and the county's
+  name. The card has its own **period**: the last complete calendar quarter by default, each quarter also named as
+  its California fiscal-year quarter (July–September is FY Q1), whole fiscal years and the last calendar year; the
+  period is shown beside the button, a non-quarter period is warned about, and one that ends today or later is
+  refused. Aggregate only: the payload is an allow-list checked when the file is made and again on import; no
+  client, client code, participant code, name, date of birth or single event. Signed with an **Ed25519 key of this
+  office server**, its private half encrypted with the database key (`county_signing_keys.private_key_enc`). **Show
+  the key for the county** makes it without a file; the fingerprint and public key each have a Copy button, and the
+  key wraps on a phone. **Make a new key** retires it and shows the new fingerprint to read to the county (audited
+  `county_submission.key.rotate`). The file is named after the program. Audited `county_submission.export` (period,
+  county code, fingerprint, payload SHA-256; never figures).
+- **County view** (`#/county`; office server only): for a county that runs SUDS (a county-only install holds no
+  client data). **Programs**: the county code; register each program by its public key, with the fingerprint shown
+  as the key is typed and either the fingerprint read out typed (a mismatch refuses the key) or "I compared it"
+  ticked; **key history** per program (replace the key; files an old key signed keep counting unless it is marked
+  compromised; a new file must use the current key; one program is always one column); deactivate (its new files
+  refused and its files no longer counted, unless the county keeps counting them). **Submissions**: import signed
+  files (size, JSON, schema and allow-list, typed text free of control characters and bounded, `generated_at`
+  strict ISO-8601 UTC, the SUDS version a version, the period ended, **made for this county**, a registered current
+  key of an active program, the signature; every refusal says why, is audited `county.submission.refuse` and is
+  throttled per person, and a throttled attempt is audited once per window); of one program's files for a period
+  **the one made last counts** (by the signed time, whatever order they arrive in: an older one is kept already
+  replaced); the same file twice changes nothing (per program); **withdraw** a current file with a reason (whatever
+  it had replaced counts again) and **reinstate** a withdrawn one; each file *Current*, *Replaced*, *Withdrawn* or
+  *Not counted: key compromised*. **Combined view** for a period (a form, Enter applies; presets for the last
+  quarter, the fiscal year and its quarters, the calendar year and the year to date): the headline "N of M programs
+  submitted for the whole period, K for part of it, J not at all", who submitted, spending by allowable use and by
+  High Impact Abatement Activity, and each outcome, one column per program and **Total (N of M programs complete)**,
+  "— not submitted" in words for a program with nothing for the period; people labelled "each program's own count,
+  summed" (never "unduplicated"); the caveats behind an always-visible one-line summary; **by quarter** (measures by
+  quarter, each quarter combined by the same rule, each program's figures behind a disclosure); Excel, CSV and a
+  long **tidy CSV** (program, period, fund, grant number, measure, value), labelled internal and exact. Only files
+  wholly inside the chosen period count, the longer of two overlapping ones; nothing is pro-rated. Everything
+  audited without figures.
 - **Permissions** `county:view` (administrators, supervisors, finance) and `county:manage` (administrators; sensitive).
   Neither can be granted to a role without exact aggregate counts (read-only, navigators, clinicians). The County
-  view entry shows to `county:view` once a programme is registered, and to `county:manage` always.
-- **Migration 56**: `county_signing_keys`, `county_programmes`, `county_submissions` (payload encrypted,
-  `payload_enc`). Office server only (`server/sync-tables.js` `server_only`); not in the local kernel's routes, so SUDS
-  on this device neither makes nor imports a county file.
-- `scripts/county-sample.js`: three fictional programmes' keys and signed files, to try the county side on a
-  development server. `npm run seed` stays a programme's data.
-- Tests: `test/county.test.js`, `test/county-device.test.js`; browser script `scripts/ui/county.mjs` (the suite is
-  now 52 scripts), and the county pages, the programme dialog, the withdraw confirmation and the settlement card's
-  public key in the accessibility audit.
+  view entry shows to `county:view` once any program is registered (active or not), and to `county:manage` always.
+- **Migration 56**: `county_signing_keys`, `county_programmes`, `county_programme_keys`, `county_submissions`
+  (payload encrypted, `payload_enc`; one submission per program and payload). Office server only
+  (`server/sync-tables.js` `server_only`); not in the local kernel's routes, so SUDS on this device neither makes nor
+  imports a county file.
+- `scripts/county-sample.js`: three fictional programs' keys and signed files. `--register` sets up a development
+  server's county view in one command (refused on production); `<dir> --county-code …` writes the files for a
+  county. `npm run seed` stays a program's data.
+- Tests: `test/county.test.js` (each test stands on its own; the payload's fields frozen for schema version 1),
+  `test/county-device.test.js`; browser script `scripts/ui/county.mjs` (the suite is now **53 scripts**; 1.17.1 had
+  52), and the county pages, the program, keys, withdraw and new-key dialogs and the settlement card's public key in
+  the accessibility audit (`A11Y_PAGES` audits one area in every pass).
 - Docs: `docs/COUNTY-VIEW.md` (new); DATA-NETWORK Tier 1 status, STRATEGY *Built vs planned*, POSITIONING, the market
-  README, buyer guide and demo script, README *At a glance*, USER_GUIDE, API.md, DATA-INVENTORY, THREAT-MODEL,
-  PEN-TEST-SCOPE (the import parser).
+  README, buyer guides, demo script (Path 2), pricing (model C), pilot kit (§8), README *At a glance*, USER_GUIDE,
+  API.md, DATA-INVENTORY, THREAT-MODEL, PEN-TEST-SCOPE (the import parser).
 
 ### Deferred
 
 - The publication screen over the combined release (so nothing from the county view is publishable); benchmarks
-  (Tier 2); key rotation and revocation for the county signing key; checking the file against a county's own
-  template. Unduplication across programmes is ruled out, not deferred.
+  (Tier 2); county-entered unsigned figures for grantees not on SUDS; award and contract amounts per fund (a schema
+  version 2); reporting-cadence reminders on the program's side; checking the file against a county's own template.
+  Unduplication across programs is ruled out, not deferred.
 
 ## 1.17.1 — 2026-09-29
 
