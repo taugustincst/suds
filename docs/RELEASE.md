@@ -7,7 +7,7 @@
 - [ ] No secrets, databases or `data/` contents in the tree (`git status`, `.gitignore`)
 - [ ] Upgrade path: schema migrations in `server/db.js` run on start; take a backup before upgrading
 - [ ] Nothing native: no APK, launcher or mobile step is part of the release (removed in 1.9.3; docs/PLATFORM.md)
-- [ ] CI's advisory job looked at: `webkit` (WebKit smoke subset). A red advisory job is not a blocker but gets an issue. (`node24` is a required job since the release after 1.11.0; it passed on the 1.11.0 release commit.)
+- [ ] CI's advisory jobs looked at: `webkit` (WebKit smoke subset) and `release-state` (the release documents against origin's tags, `main` and GitHub Pages; *Stamp checklist: the release state*, below). A red advisory job is not a blocker but gets an issue. (`node24` is a required job since the release after 1.11.0; it passed on the 1.11.0 release commit.)
 - [ ] Real-device checklist done on the release candidate (2 iPhones, 2 Androids — [ADOPTION.md](ADOPTION.md#4-real-device-release-checklist))
 - [ ] **On-screen version checked**: after deploying to the pilot server, and on the GitHub Pages site (SUDS on this device) once it is republished, the version SUDS shows (footer / `version.json`) is the version being released
 
@@ -340,6 +340,24 @@ answers those documents give for what the release changed, not only the version 
 them two releases behind: the county connection and passkeys missing from the questionnaire, "planned" for a
 released county view).
 
+**Stamp checklist: the release state** (built for 1.21.0, not yet released). `node scripts/release-state.js` compares what the release
+documents say with what is true: the questionnaire's *Checked against* and the evidence index's *Version.*; the
+*Supported versions* rows, the *Record* references and the exceptions ledger above, against the dated CHANGELOG
+sections; [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)'s table (each commit exists, is on `main`, and is
+"Release X.Y.Z" or the "SBOM of the X.Y.Z stamp" commit after it; its dates, `git tag -a` lines, check loop and push
+agree; whether each tag is pushed) and HANDOFF.md's *Release waiting* entry; every "live on GitHub Pages" against the
+`version.json` `gh-pages` serves; a stamped version newer than the newest pushed tag that the hand-off does not list;
+and, inside each dated CHANGELOG section `## X.Y.Z — date`, a line calling another minor "the latest minor" or "the
+previous", or saying "checked against", "describe(s)", "not yet released" or "fix release" of another version (the few
+legitimate historical lines are in `CHANGELOG_ALLOW` in the script, each with its reason). Each finding is printed as
+`file:line` with a fix, and the exit status is 1 while there is one. Run it **before handing a stamp to the owner**,
+and **after the owner pushes tags or the site is republished** (then update the hand-off, *Release waiting* and the
+pending wording it names). `--fetch` fetches `main` and `gh-pages` first; by default it also asks `git ls-remote
+--tags origin`; `--offline` uses only this clone and lists what it could not check; `--docs-only` reads the documents
+alone. CI runs it on every push as the advisory `release-state` job, not in the release gate: its answer changes when
+a tag is pushed or the site republished, without a commit, and at a tag's own release run the hand-off still lists
+that tag. Tested in `test/release-state.test.js`.
+
 #### Handing a release to the owner
 Whoever prepares a release (a maintainer, or the maintaining assistant) stamps it on `main` and then hands it over;
 the owner tags it. **The maintaining assistant cannot push tags at all** (its environment's proxy refuses a tag
@@ -395,7 +413,7 @@ QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` r
 | `thorough-sdc` | the statistical-disclosure-control attacker sweeps at full size (`scripts/test-thorough.js` `SDC_SWEEPS`) |
 | `dr-drill` | backup and restore actually work: `scripts/dr-exercise.js` (seed, encrypted backup through the scheduled path, `npm run dr-drill` with an escrowed key file, host restore into a fresh data directory, row counts, audit chain, signed report verified with the public key); the signed report is printed in the job log |
 
-`webkit` stays advisory (`continue-on-error`) and is not checked. If CI on the commit is still running (a tag pushed together with its commit) the gate waits, up to an hour (`RELEASE_GATE_WAIT_MINUTES`). A failed or missing required job fails the release with the reason; fix it (or re-run a flaky job — the latest attempt counts) and run the release again. The `verify` and `release` jobs then check out exactly the gated commit, so a branch that moved in the meantime cannot slip an untested commit in. The decision logic is tested in `test/release-gate.test.js`, which also fails if a required job is renamed out of `ci.yml`.
+`webkit` and `release-state` stay advisory (`continue-on-error`) and are not checked. If CI on the commit is still running (a tag pushed together with its commit) the gate waits, up to an hour (`RELEASE_GATE_WAIT_MINUTES`). A failed or missing required job fails the release with the reason; fix it (or re-run a flaky job — the latest attempt counts) and run the release again. The `verify` and `release` jobs then check out exactly the gated commit, so a branch that moved in the meantime cannot slip an untested commit in. The decision logic is tested in `test/release-gate.test.js`, which also fails if a required job is renamed out of `ci.yml`.
 
 1.11.0 itself was published while its `browser` job had failed — the case this gate now refuses.
 

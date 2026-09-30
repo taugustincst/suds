@@ -265,3 +265,33 @@ jobs:
           SCRIPTS: static-site qa-retest
           SUDS_REGION_PICTURES: 'off'
         run: npm run build:local && scripts/ui/run-all.sh
+  # What the release documents say (the questionnaire, the evidence index, RELEASE.md's supported versions and
+  # ledger, the tag hand-off, HANDOFF.md's Release waiting entry, the CHANGELOG's dated sections) against the
+  # CHANGELOG, main's history, origin's tags and the version.json gh-pages serves (scripts/release-state.js;
+  # docs/RELEASE.md, stamp checklist). Advisory (continue-on-error), like webkit, and not in the release gate: its
+  # answer changes when the owner pushes a tag or the site is republished, not only with the commit, and at a tag's
+  # own release run the hand-off still, rightly, lists that tag as owed. A red run gets the documents fixed.
+  # History without file contents (--filter=blob:none), as the release gate clones, so it can ask whether each
+  # hand-off commit is on main; no npm install (Node built-ins and git only).
+  release-state:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Check out, with main's and gh-pages' history (no file contents) and the release tags
+        run: |
+          git clone --quiet --filter=blob:none --no-checkout "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src
+          cd src
+          git fetch --quiet origin "${GITHUB_SHA}" '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/gh-pages:refs/remotes/origin/gh-pages' '+refs/tags/v*:refs/tags/v*'
+          git checkout --quiet "${GITHUB_SHA}"
+      - name: Install Node 22 (pinned version, pinned checksum)
+        run: |
+          file="node-${NODE22_VERSION}-linux-x64.tar.xz"
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://nodejs.org/dist/${NODE22_VERSION}/${file}"
+          echo "${NODE22_SHA256}  ${file}" | sha256sum -c - || { echo "::error::${file} does not match the SHA-256 pinned in the workflow"; exit 1; }
+          mkdir -p node22 && tar -xJf "$file" -C node22 --strip-components=1
+          echo "$RUNNER_TEMP/node22/bin" >> "$GITHUB_PATH"
+      - name: Release documents against the tags, main and gh-pages
+        working-directory: src
+        run: node scripts/release-state.js

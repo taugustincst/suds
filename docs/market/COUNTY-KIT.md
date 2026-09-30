@@ -168,6 +168,26 @@ Agree the targets before starting; record the baseline with the current process 
 | Pilot plan per CBO | [PILOT-KIT.md](PILOT-KIT.md) | Written |
 | Pricing | [PRICING-OPTIONS.md](PRICING-OPTIONS.md) (model C, county site licence; model D, services) | Nothing decided |
 
+## The evidence packet
+
+Send the documents above as one packet rather than as links (built for 1.21.0, not yet released). From a clone of the repository, at the
+commit (or tag) of the release the county will run:
+
+```bash
+node scripts/county-packet.js --ref <commit or tag> --out suds-county-packet --zip suds-county-packet.zip
+```
+
+It holds this kit, the security questionnaire, the RFI answers, the data contribution agreement, DPA and BAA/QSOA
+drafts, the newest SBOM, the newest recovery, upgrade and installer drill evidence, SECURITY.md, the LICENSE, the
+accessibility conformance report and the penetration-test scope, each at its own path, with a `README.md` saying what
+each file is and which version it describes, and a `MANIFEST.sha256` of every file. The README gives the checks a
+county can run itself: `sha256sum -c MANIFEST.sha256`, the same command at the same commit (it makes the same bytes,
+zip included), `node scripts/sbom.js --ref <commit>` for the SBOM, `npm run verify-dr-report` and
+`npm run verify-compliance-report` for the signed reports, and `npm run verify-audit-export` for an audit export from
+the county's own server. The files are read from git at that commit, never from a working tree. The packet carries the
+documents' limits with it (drafts not reviewed by counsel, no certification or penetration test, development-environment
+drills, a self-assessed accessibility report): say them when you send it. Tested in `test/county-packet.test.js`.
+
 ## Owner-pending items
 
 Software cannot close these. A county will ask about each; say plainly that it is open.
