@@ -8,6 +8,9 @@
 //   git archive v1.11.0 server package.json | tar -x -C /tmp/suds-v1.11.0
 //   node test/fixtures/make-release-fixture.js /tmp/suds-v1.11.0 test/fixtures/release-v1.11.0.sql [--rich]
 //
+// release-v1.18.0.sql: `git archive 39e397e` (the "Release 1.18.0" commit; not tagged), --rich. A table whose key is
+// CHECKed to one value (county_connection) gets its one row, and is listed in the expectation's `rich.singletons`.
+//
 // --rich (release-v1.11.0.sql and release-v1.13.0.sql): a database with realistic rows in every table that has
 // an encrypted (_enc) column, not one row each - the release's own sample data (server/demo.js seed, as `npm run
 // seed` loads it), clients with names in other scripts written through its API, and then, for every table with
@@ -115,7 +118,8 @@ async function enrich(db, call) {
     const row = {};
     for (const c of cols) {
       const fk = fks.find((f) => f.from === c.name);
-      if (c.pk && /TEXT/i.test(c.type)) row[c.name] = uuid();
+      if (c.pk && singletonId(sql, c.name)) row[c.name] = singletonId(sql, c.name);
+      else if (c.pk && /TEXT/i.test(c.type)) row[c.name] = uuid();
       else if (c.pk) continue;
       else if (fk) {
         if (!c.notnull && k === RICH_ROWS - 1) { row[c.name] = null; continue; }
@@ -138,19 +142,22 @@ async function enrich(db, call) {
     if (SKIP_ROWS.has(name)) continue;
     const enc = d.prepare(`PRAGMA table_info("${name}")`).all().filter((c) => c.name.endsWith('_enc'));
     if (!enc.length) continue;
-    for (let k = d.prepare(`SELECT COUNT(*) n FROM "${name}"`).get().n; k < RICH_ROWS; k++) insertRow(name, k);
+    // A single-row table (its key CHECKed to one value: county_connection, 1.18.0) gets its one row.
+    const rowsWanted = isSingleton(byName.get(name).sql) ? 1 : RICH_ROWS;
+    for (let k = d.prepare(`SELECT COUNT(*) n FROM "${name}"`).get().n; k < rowsWanted; k++) insertRow(name, k);
     // A column no row has a value in gets one (users.mfa_secret_enc: an enrolment not finished yet, say).
     for (const c of enc) {
       if (d.prepare(`SELECT COUNT(*) n FROM "${name}" WHERE "${c.name}" IS NOT NULL`).get().n) continue;
       d.prepare(`UPDATE "${name}" SET "${c.name}"=? WHERE rowid=(SELECT MIN(rowid) FROM "${name}")`).run(encrypt(SAMPLES[n++ % SAMPLES.length]));
     }
   }
-  const encTables = {};
+  const encTables = {}; const singletons = [];
   for (const { name } of tables) {
     if (SKIP_ROWS.has(name) || !d.prepare(`PRAGMA table_info("${name}")`).all().some((c) => c.name.endsWith('_enc'))) continue;
     encTables[name] = d.prepare(`SELECT COUNT(*) n FROM "${name}"`).get().n;
+    if (isSingleton(byName.get(name).sql)) singletons.push(name);
   }
-  return { encTables, unicodeClients: unicode, made };
+  return { encTables, singletons, unicodeClients: unicode, made };
 }
 /**
  * --rich, for a release that has them (1.15.0 on): the state a later release's first start acts on besides the
@@ -177,6 +184,13 @@ function laterState(db) {
   if (has('caloms_submissions')) out.caloms_submissions = d.prepare(`SELECT id FROM caloms_submissions ORDER BY rowid`).all().map((r) => r.id);
   return out;
 }
+/** The one value a primary key is CHECKed to (`id TEXT PRIMARY KEY CHECK (id = 'county')`), or null. */
+function singletonId(sql, col) {
+  const esc = col.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp(`\\b${esc}\\b[^,]*?PRIMARY KEY[^,]*?CHECK\\s*\\(\\s*${esc}\\s*=\\s*'([^']*)'\\s*\\)`, 'i').exec(sql);
+  return m ? m[1] : null;
+}
+const isSingleton = (sql) => /PRIMARY KEY[^,]*?CHECK\s*\(\s*\w+\s*=\s*'[^']*'\s*\)/i.test(sql);
 /** A value for a NOT NULL column with no default: the first choice its CHECK allows, else one of its type's shape. */
 function valueFor(table, c, sql, k) {
   const esc = c.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

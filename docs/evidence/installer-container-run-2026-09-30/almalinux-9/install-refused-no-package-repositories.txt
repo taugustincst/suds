@@ -1,0 +1,14 @@
+SUDS Server installer — SUDS 1.19.0
+
+== Checking the host ==
+  - AlmaLinux 9.8 (Olive Jaguar) (rhel family)
+  - data volume: /var/lib is on overlay from overlay (not a local block device)
+WARNING: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: !!! /var/lib/suds IS NOT ON AN ENCRYPTED VOLUME. Client records will sit on this disk unencrypted at rest
+WARNING: !!! (only the PHI fields SUDS encrypts itself are protected). Accepted by the operator: installer drill in a systemd container: no LUKS volume attached
+WARNING: !!! Every compliance report will carry this as RISK ACCEPTED until the data is moved to a LUKS volume.
+WARNING: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  - --console-access: the SSH lock-out check is skipped (you are at the console)
+
+== Packages ==
+Error: Failed to download metadata for repo 'appstream': Cannot prepare internal mirrorlist: Curl error (6): Couldn't resolve host name for https://mirrors.almalinux.org/mirrorlist/9/appstream [Could not resolve host: mirrors.almalinux.org]

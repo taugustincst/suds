@@ -45,6 +45,25 @@ migration, route, permission or behaviour change; nothing for an administrator t
   *Checked against*, the evidence index's *Version.* or the newest SBOM is not on that version's minor line, or a
   document outside the evidence index links an older SBOM (docs/RELEASE.md, stamp checklist). It fails on `3dc20dc`.
 
+Evidence, documentation and tests only; no change to what SUDS does.
+
+- **Recovery drill on 1.19.0** (docs/evidence/dr-drill-2026-09-30/): `scripts/dr-exercise.js --clients 20000` on
+  the released tree (`3dc20dc`), as the 1.16.2 drill was run: 11 of 11 checks, drill RTO 5 s, host-procedure RTO
+  3.7 s, RPO 5 s; the signed report, its public key, the transcript. BACKUP-AND-DR.md, the evidence index and the
+  questionnaire name it as the latest.
+- **Upgrade drill** (docs/evidence/upgrade-drill-2026-09-30/): databases written by 1.16.2 and by 1.18.0 through
+  their own code and API (20,000 clients, a signed and countersigned note, a TOTP user) opened by 1.19.0: schema
+  identical to a fresh install, no rows lost, every sampled value decrypts, the note and the audit chain verify,
+  the old sessions and TOTP still work; then backed up, restored and drilled, 11 of 11 each.
+- **Migration tests**: `test/migrations.test.js` upgrades a database 1.18.0 wrote (`test/fixtures/release-v1.18.0.sql`,
+  with rows in the county tables of migrations 56 and 57), and checks that sessions 1.18.0 opened come through
+  migrations 58 and 59 as browser sessions that still sign their holder in. The fixture maker handles a single-row
+  table (`county_connection`).
+- **Installer run** (docs/evidence/installer-container-run-2026-09-30/): `deploy/linux/install.sh`, and `upgrade.sh`
+  from 1.18.0 to 1.19.0, run for real on Ubuntu 24.04 with systemd in a container (not a VM), with a recovery drill
+  on the installed server and the signed compliance reports; RHEL 9 could not be run. Four findings recorded for
+  the owner. The run on real Ubuntu 24.04 and RHEL 9 VMs is owner-pending: docs/evidence/INSTALLER-VM-RUN.md.
+
 ## 1.19.0 — 2026-09-30
 
 A feature release (migrations 58 and 59 and the passkey routes), released under a policy exception inside 1.18.0's

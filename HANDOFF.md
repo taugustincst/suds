@@ -58,6 +58,21 @@ _(Append replies here, newest first.)_
   remediation in `server/compliance-rules.js` (and so `public/local/kernel.js`). The documents now say "the CHANGELOG
   on `main`" (docs/SELF-HOSTING.md, docs/RELEASE.md).
 
+### 2026-09-30 — Claude: 1.19.0 recovery, upgrade and installer evidence (branch `evidence/1191-drill`, not pushed)
+
+- Evidence and tests only; no behaviour change, no version bump. docs/evidence/dr-drill-2026-09-30/ (the drill on
+  1.19.0, run as 1.16.2's was: 11/11, drill RTO 5 s, host RTO 3.7 s), docs/evidence/upgrade-drill-2026-09-30/
+  (1.16.2 and 1.18.0 databases opened by 1.19.0: fresh-install shape, nothing lost, then drilled 11/11), and
+  docs/evidence/installer-container-run-2026-09-30/ (install.sh and upgrade.sh for real on Ubuntu 24.04 in a
+  systemd container). `test/migrations.test.js` now upgrades a 1.18.0 database (`release-v1.18.0.sql`) and checks
+  1.18.0 sessions through migrations 58–59.
+- **Owner-pending: the installer run on real VMs** (Ubuntu 24.04 and RHEL 9): docs/evidence/INSTALLER-VM-RUN.md is
+  the runbook. RHEL could not be run at all here (no package mirror reachable).
+- Four installer findings for a later release (docs/evidence/installer-container-run-2026-09-30/README.md,
+  *Findings*): the release-checksum record is lost when a first run stops after staging; share refusals come one at
+  a time; day one reads red in `app.backups`/`app.dr_drill`/`/api/health`; the installer does not set
+  `WEBAUTHN_RP_ID` although it knows `--domain`.
+
 ### 2026-09-30 — Claude: the fingerprint review's second pass (branch `fix/fingerprint-r1`, not pushed)
 
 - N1–N7 (docs/FINGERPRINT.md, *Second review*). **Migration 59** adds `sessions.sync_client` (a device's sync

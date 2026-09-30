@@ -120,7 +120,8 @@ Evidence that goes with this questionnaire:
 
 - **The drill.** The recovery drill (`npm run dr-drill`, or Settings) restores the newest backup into a throwaway copy, optionally with the escrowed key file. It verifies the copy end to end, measures RTO and RPO against targets, and writes an Ed25519-signed report.
 - **In CI.** The `dr-drill` CI job runs it on every push.
-- **Committed evidence.** Two development drills are in [../evidence/](../evidence/README.md); the latest, on the released 1.16.2 at 20,000 clients, passed 11 of 11 checks with an RTO of 3.8 s.
+- **Committed evidence.** Three development drills are in [../evidence/](../evidence/README.md); the latest, on the released 1.19.0 at 20,000 clients (2026-09-30), passed 11 of 11 checks with a drill RTO of 5 s and a host-procedure RTO of 3.7 s. An upgrade drill opened databases written by 1.16.2 and 1.18.0 with 1.19.0, found them structurally identical to a fresh install with nothing lost, and drilled them (11 of 11 each).
+- **Installer.** The Linux installer and upgrader have run for real on Ubuntu 24.04 in a systemd container, with a drill on the installed server; not yet on a VM, and not on RHEL 9 (owner-pending: [../evidence/INSTALLER-VM-RUN.md](../evidence/INSTALLER-VM-RUN.md)).
 - **Not yet done:** a drill on a real deployment, run by its operator. **County, in a pilot.**
 
 ## Application security and SDLC

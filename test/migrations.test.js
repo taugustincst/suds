@@ -297,7 +297,10 @@ test('migration 46: a preferred name with no search index gets one; a written in
 // blind index must still match, after the upgrade. 1.15.3 (schema 48, --rich) is the starting point of 1.16.0's
 // defaults; 1.16.4 (schema 48, --rich, made from 6491308, the released commit) is the newest: the release before
 // 1.17.0, whose migrations 49 to 55 and first-start data logic are tested from a database it wrote (below, too).
-for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql', 'release-v1.15.3.sql', 'release-v1.16.4.sql']) {
+// 1.18.0 (schema 57, --rich, made from 39e397e, the released commit) is the release before 1.19.0: its migrations
+// 58 and 59 run on a database that already holds rows in the county tables of 56 and 57 (county_connection, a
+// single-row table, holds its one row), and on sessions it opened (below).
+for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql', 'release-v1.15.3.sql', 'release-v1.16.4.sql', 'release-v1.18.0.sql']) {
   const sql = fs.readFileSync(path.join(__dirname, 'fixtures', fixture), 'utf8');
   const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
   test(`a SUDS ${expect.version} database (schema ${expect.schema_version}) upgrades to the current schema with its records intact`, () => {
@@ -408,7 +411,7 @@ for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.
         // Several rows in every table the release had with an encrypted column, each column holding a value in
         // some row; text in other scripts among them.
         for (const [t, n] of Object.entries(expect.rich.encTables)) {
-          assert.ok(n >= 3, `the fixture has ${n} rows in ${t}`);
+          assert.ok(n >= ((expect.rich.singletons || []).includes(t) ? 1 : 3), `the fixture has ${n} rows in ${t}`);
           if (!db().one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, t)) continue;
           for (const col of db().all(`PRAGMA table_info("${t}")`).map((x) => x.name).filter((x) => x.endsWith('_enc') && plainBefore[t] && x in plainBefore[t])) {
             assert.ok(Object.values(plainBefore[t][col]).some((v) => v !== null && v !== ''), `${t}.${col} holds a value in some row`);
@@ -483,6 +486,62 @@ test('SUDS 1.17.0\'s first start on a 1.16.4 database: caseload default off, acc
     assert.deepEqual({ ...filed }, { content_enc: '', title_enc: null, metadata_enc: null, status: 'committed' }, 'the text of an item filed as a note is cleared');
     for (const [id, enc] of Object.entries(stagedBefore)) assert.equal(db().one(`SELECT content_enc FROM import_items WHERE id=?`, id).content_enc, enc, 'a staged item keeps its text');
     assert.ok(db().one(`SELECT 1 FROM audit_log WHERE action='import.committed_text_cleared'`), 'and it is audited');
+    assert.equal(require('../server/audit').verifyChain().ok, true, 'the audit chain verifies');
+  } finally {
+    require('../server/db').close();
+    require('../server/db').open(dbPath);
+    fs.rmSync(fdir, { recursive: true, force: true });
+  }
+});
+
+// SUDS 1.19.0's first start on a 1.18.0 database (upgrade drill of 1.19.0, docs/evidence/upgrade-drill-2026-09-30):
+// migrations 58 and 59 add sessions.reauth_method, passkey_id and sync_client to a table that holds rows. A session
+// 1.18.0 opened must still sign its holder in afterwards (nobody is signed out by the upgrade), read as a browser's
+// (sync_client 0: its second factor, if any, was 1.18.0's own), with no passkey and no recorded re-authentication
+// method; a session still owing its second factor still owes it. The county rows 1.18.0 wrote are all still there.
+test('SUDS 1.19.0\'s first start on a 1.18.0 database: sessions it opened survive migrations 58 and 59 as browser sessions, county rows intact', () => {
+  const { sha256, decrypt } = require('../server/crypto');
+  const sql = fs.readFileSync(path.join(__dirname, 'fixtures', 'release-v1.18.0.sql'), 'utf8');
+  const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
+  assert.equal(expect.version, '1.18.0'); assert.equal(expect.schema_version, 57);
+  const fdir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-first-start-1.18.0-'));
+  const fpath = path.join(fdir, 'suds.db');
+  const d = new DatabaseSync(fpath);
+  d.exec(sql);
+  const cols = d.prepare(`PRAGMA table_info(sessions)`).all().map((c) => c.name);
+  for (const c of ['reauth_method', 'passkey_id', 'sync_client']) assert.ok(!cols.includes(c), `1.18.0 had no sessions.${c}`);
+  const user = d.prepare(`SELECT id FROM users WHERE is_active=1 AND role='navigator' ORDER BY rowid LIMIT 1`).get();
+  const now = new Date(); const later = new Date(now.getTime() + 8 * 3600_000);
+  const tokens = { signedIn: 'fixture-session-signed-in', owesCode: 'fixture-session-owes-code' };
+  const ins = d.prepare(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at) VALUES(?,?,?,?,?,?,?,?,?,?)`);
+  ins.run(sha256(tokens.signedIn), user.id, now.toISOString(), now.toISOString(), later.toISOString(), 0, '127.0.0.1', 'fixture', null, now.toISOString());
+  ins.run(sha256(tokens.owesCode), user.id, now.toISOString(), now.toISOString(), later.toISOString(), 1, '127.0.0.1', 'fixture', null, null);
+  const county = Object.fromEntries(['county_signing_keys', 'county_programmes', 'county_programme_keys', 'county_submissions', 'county_connect_tokens', 'county_connection', 'county_connect_sends']
+    .map((t) => [t, d.prepare(`SELECT COUNT(*) n FROM "${t}"`).get().n]));
+  const conn = d.prepare(`SELECT token_enc FROM county_connection WHERE id='county'`).get();
+  assert.ok(conn, 'the fixture holds the county connection row');
+  const token = decrypt(conn.token_enc);
+  d.close();
+  require('../server/db').close();
+  try {
+    require('../server/db').open(fpath);
+    assert.equal(db().getSetting('schema_version'), String(require('../server/db').LATEST_SCHEMA_VERSION));
+    assertSameShape(schemaShape(db().get()), freshShape(), '1.18.0 (first start)');
+    for (const t of ['signedIn', 'owesCode']) {
+      const s = db().one(`SELECT sync_client, reauth_method, passkey_id, mfa_pending, revoked_at FROM sessions WHERE id=?`, sha256(tokens[t]));
+      assert.deepEqual({ ...s }, { sync_client: 0, reauth_method: null, passkey_id: null, mfa_pending: t === 'owesCode' ? 1 : 0, revoked_at: null }, `the ${t} session after migrations 58 and 59`);
+    }
+    const auth = require('../server/auth');
+    const ctx = { cookies: { suds_session: tokens.signedIn }, headers: {} };
+    const u = auth.resolveSession(ctx);
+    assert.equal(u && u.id, user.id, 'a session 1.18.0 opened still signs its holder in');
+    assert.equal(ctx.session.sync_client, 0);
+    const pending = { cookies: { suds_session: tokens.owesCode }, headers: {} };
+    auth.resolveSession(pending);
+    assert.equal(pending.session.mfa_pending, 1, 'and one still owing its second factor still owes it');
+    for (const t of ['passkeys', 'webauthn_challenges', 'signature_evidence']) assert.equal(db().one(`SELECT COUNT(*) n FROM "${t}"`).n, 0, `${t} starts empty`);
+    for (const [t, n] of Object.entries(county)) assert.equal(db().one(`SELECT COUNT(*) n FROM "${t}"`).n, n, `${t} keeps its ${n} row(s)`);
+    assert.equal(decrypt(db().one(`SELECT token_enc FROM county_connection WHERE id='county'`).token_enc), token, 'the county connection token still decrypts to what it was');
     assert.equal(require('../server/audit').verifyChain().ok, true, 'the audit chain verifies');
   } finally {
     require('../server/db').close();
