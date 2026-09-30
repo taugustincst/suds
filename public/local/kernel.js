@@ -8341,6 +8341,60 @@ CREATE TABLE IF NOT EXISTS county_submissions (
   withdrawn_by TEXT REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_county_submissions_programme ON county_submissions(programme_id, period_from, period_to);
+
+-- The county connection (docs/COUNTY-VIEW.md, "Connecting"; server/county-connect.js, server/county-connect-client.js).
+-- Office server only, never synchronised (server/sync-tables.js server_only). Optional and off by default on both sides.
+-- county_connect_tokens, on a county's server: the machine tokens it issues. A connection token (scope county.submit)
+-- belongs to one registered programme and lets that programme's server post its signed file and read what the
+-- county expects of it; a read token (scope county.read) lets the county's own systems read the combined view. Only
+-- the SHA-256 of a token is kept (shown once when issued); neither kind is ever a session.
+CREATE TABLE IF NOT EXISTS county_connect_tokens (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL CHECK (scope IN ('county.submit','county.read')),
+  programme_id TEXT REFERENCES county_programmes(id),   -- a connection token's programme; NULL for a read token
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,     -- SHA-256 of the token, hex
+  prefix TEXT NOT NULL,                -- the token's first characters, to recognise it by
+  expires_at TEXT,                     -- NULL: never (a connection token may be issued without an expiry)
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  created_by TEXT REFERENCES users(id),
+  last_used_at TEXT,
+  last_used_ip TEXT,
+  revoked_at TEXT,
+  revoked_by TEXT REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_county_connect_tokens_programme ON county_connect_tokens(programme_id);
+-- On a programme's server: the county it sends its county submission files to (one row, id 'county'). The token the
+-- county issued is encrypted like every other secret column and never returned to a browser once saved.
+CREATE TABLE IF NOT EXISTS county_connection (
+  id TEXT PRIMARY KEY CHECK (id = 'county'),
+  base_url TEXT NOT NULL,
+  token_enc TEXT NOT NULL,
+  token_hint TEXT,                     -- the token's first characters, to tell which one is saved
+  auto_send INTEGER NOT NULL DEFAULT 0,
+  county_code TEXT,                    -- what the county's status said it is, the last time it was asked
+  county_name TEXT,
+  last_checked_at TEXT,
+  last_check_ok INTEGER,
+  last_check_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_by TEXT REFERENCES users(id)
+);
+-- Each file a programme's server sent to the county over the connection, and the county's answer: never the figures.
+CREATE TABLE IF NOT EXISTS county_connect_sends (
+  id TEXT PRIMARY KEY,
+  period_from TEXT NOT NULL,
+  period_to TEXT NOT NULL,
+  sha256 TEXT,                         -- of the canonical payload sent
+  status TEXT NOT NULL,                -- the county's answer (imported, duplicate, superseded, older, refused) or failed
+  reason TEXT,                         -- a refusal's reason code, or why the send failed
+  county_received_at TEXT,             -- from the county's receipt
+  base_url TEXT NOT NULL,
+  automatic INTEGER NOT NULL DEFAULT 0,
+  sent_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  sent_by TEXT REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_county_connect_sends_sent ON county_connect_sends(sent_at);
 `;
   }
 });
@@ -12313,7 +12367,12 @@ var require_sync_tables = __commonJS({
         "referral_links",
         "county_signing_keys",
         "county_programmes",
-        "county_submissions"
+        "county_submissions",
+        // county_connect_* and county_connection (the county connection, docs/COUNTY-VIEW.md "Connecting"): the machine
+        // tokens a county issues, and on a programme's server the county it sends to and its send log. A device has none.
+        "county_connect_tokens",
+        "county_connection",
+        "county_connect_sends"
       ],
       // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
       // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
@@ -12332,6 +12391,9 @@ var require_sync_tables = __commonJS({
         county_signing_keys: ["private_key_enc"],
         county_programmes: [],
         county_submissions: ["payload_enc"],
+        county_connect_tokens: [],
+        county_connection: ["token_enc"],
+        county_connect_sends: [],
         idempotency_keys: ["response_enc"]
       },
       // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
@@ -12422,7 +12484,11 @@ var require_sync_tables = __commonJS({
         ["county_signing_keys", "created_by"],
         ["county_programmes", "created_by"],
         ["county_submissions", "received_by"],
-        ["county_submissions", "withdrawn_by"]
+        ["county_submissions", "withdrawn_by"],
+        ["county_connect_tokens", "created_by"],
+        ["county_connect_tokens", "revoked_by"],
+        ["county_connection", "updated_by"],
+        ["county_connect_sends", "sent_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -28385,6 +28451,504 @@ var require_county = __commonJS({
   }
 });
 
+// server/county-connect.js
+var require_county_connect = __commonJS({
+  "server/county-connect.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { sha256: sha2562, randomToken, uuid: uuid2 } = require_crypto();
+    var SETTING_ENABLED = "county_connect_enabled";
+    var SETTING_CADENCE = "county_connect_cadence";
+    var SETTING_START = "county_connect_start";
+    var CADENCES = {
+      quarterly_calendar: "Quarterly (calendar quarters: January to March, \u2026)",
+      quarterly_fiscal: "Quarterly (state fiscal year from July 1: Q1 is July to September)",
+      monthly: "Monthly"
+    };
+    var SCOPES = { submit: "county.submit", read: "county.read" };
+    var PREFIX = { "county.submit": "sudscc_", "county.read": "sudscr_" };
+    var CONNECTION_MAX_DAYS = 3 * 366;
+    var READ_DEFAULT_DAYS = 90;
+    var READ_MAX_DAYS = 366;
+    var EXPECTED_QUARTERS = 4;
+    var EXPECTED_MONTHS = 12;
+    var MAX_PUSH_BYTES = 256 * 1024;
+    var LIMITS = {
+      perIp: 120,
+      // every machine route together, per address
+      all: 2e3,
+      // every address together: a flood spread over many addresses is still bounded
+      badPerIp: 20,
+      // a missing, unknown, expired or revoked token, per address, before the next is refused unread
+      pushPerToken: 30,
+      statusPerToken: 60,
+      readPerToken: 120,
+      refusedPerToken: 20
+      // files refused under one token, as the upload path allows a person (routes/county.js)
+    };
+    var WINDOW_MS = 10 * 6e4;
+    var enabled = () => db3.getSetting(SETTING_ENABLED, "0") === "1";
+    function cadence() {
+      const c = db3.getSetting(SETTING_CADENCE, "quarterly_calendar");
+      return CADENCES[c] ? c : "quarterly_calendar";
+    }
+    function startDate() {
+      const s = db3.getSetting(SETTING_START, "");
+      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+    }
+    var today = () => require_budget().localDate();
+    function countyCode() {
+      const K = require_county();
+      if (typeof K.countyCode !== "function") return null;
+      const c = K.countyCode();
+      return c && typeof c === "object" ? c.code : c || null;
+    }
+    function settings() {
+      return {
+        enabled: enabled(),
+        cadence: cadence(),
+        cadences: Object.entries(CADENCES).map(([value, label]) => ({ value, label })),
+        start: startDate(),
+        county_code: countyCode(),
+        county_name: db3.getSetting("org_name", "") || null,
+        endpoints: { submissions: "/api/county-connect/v1/submissions", status: "/api/county-connect/v1/status", combined: "/api/county-connect/v1/combined", programs: "/api/county-connect/v1/programs" },
+        limits: { max_file_bytes: MAX_PUSH_BYTES, read_default_days: READ_DEFAULT_DAYS, read_max_days: READ_MAX_DAYS, connection_max_days: CONNECTION_MAX_DAYS }
+      };
+    }
+    function saveSettings({ enabled: on, cadence: c, start: start2 }) {
+      const changed = [];
+      if (on !== void 0 && on !== null) {
+        db3.setSetting(SETTING_ENABLED, on ? "1" : "0");
+        changed.push(SETTING_ENABLED);
+      }
+      if (c !== void 0 && c !== null) {
+        if (!CADENCES[c]) throw new Error(`cadence must be one of ${Object.keys(CADENCES).join(", ")}`);
+        db3.setSetting(SETTING_CADENCE, c);
+        changed.push(SETTING_CADENCE);
+      }
+      if (start2 !== void 0) {
+        if (start2) db3.setSetting(SETTING_START, start2);
+        else db3.run(`DELETE FROM settings WHERE key=?`, SETTING_START);
+        changed.push(SETTING_START);
+      }
+      return changed;
+    }
+    function tokenState(t, now2 = Date.now()) {
+      return t.revoked_at ? "revoked" : t.expires_at && Date.parse(t.expires_at) <= now2 ? "expired" : "live";
+    }
+    function tokenOut(t) {
+      return {
+        id: t.id,
+        scope: t.scope,
+        kind: t.scope === SCOPES.submit ? "connection" : "read",
+        programme_id: t.programme_id || null,
+        programme: t.programme || null,
+        name: t.name,
+        prefix: t.prefix,
+        expires_at: t.expires_at,
+        created_at: t.created_at,
+        created_by_name: t.created_by_name || null,
+        last_used_at: t.last_used_at,
+        last_used_ip: t.last_used_ip,
+        revoked_at: t.revoked_at,
+        state: tokenState(t)
+      };
+    }
+    function listTokens() {
+      return db3.all(`SELECT t.*, p.name programme, u.display_name created_by_name FROM county_connect_tokens t LEFT JOIN county_programmes p ON p.id=t.programme_id LEFT JOIN users u ON u.id=t.created_by
+    ORDER BY (t.revoked_at IS NULL) DESC, t.created_at DESC, t.id`).map(tokenOut);
+    }
+    var addDays = (days) => new Date(Date.now() + days * 864e5).toISOString();
+    function issue({ scope, programmeId = null, name = "", expiresDays, user }) {
+      if (!Object.values(SCOPES).includes(scope)) throw new Error("A token is a connection token (county.submit) or a read token (county.read).");
+      let expiresAt = null;
+      let label = String(name || "").trim().slice(0, 120);
+      if (scope === SCOPES.submit) {
+        const p = programmeId ? db3.one(`SELECT * FROM county_programmes WHERE id=?`, programmeId) : null;
+        if (!p) throw new Error("Choose the programme this connection token is for.");
+        if (!p.active) throw new Error(`${p.name} is not an active programme here. Reactivate it before connecting it.`);
+        if (expiresDays !== void 0 && expiresDays !== null) {
+          if (!Number.isInteger(expiresDays) || expiresDays < 1 || expiresDays > CONNECTION_MAX_DAYS) throw new Error(`A connection token expires after 1 to ${CONNECTION_MAX_DAYS} days, or never.`);
+          expiresAt = addDays(expiresDays);
+        }
+        if (!label) label = `Connection for ${p.name}`;
+      } else {
+        if (programmeId) throw new Error("A read token is the county's own and belongs to no programme.");
+        const d = expiresDays === void 0 || expiresDays === null ? READ_DEFAULT_DAYS : expiresDays;
+        if (!Number.isInteger(d) || d < 1 || d > READ_MAX_DAYS) throw new Error(`A read token expires after 1 to ${READ_MAX_DAYS} days (${READ_DEFAULT_DAYS} unless you choose).`);
+        expiresAt = addDays(d);
+        if (!label) throw new Error('Name the read token after the system that will use it (for example "County data warehouse").');
+      }
+      const token2 = PREFIX[scope] + randomToken(32);
+      const id = uuid2();
+      db3.run(
+        `INSERT INTO county_connect_tokens(id,scope,programme_id,name,token_hash,prefix,expires_at,created_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)`,
+        id,
+        scope,
+        scope === SCOPES.submit ? programmeId : null,
+        label,
+        sha2562(token2),
+        token2.slice(0, 12),
+        expiresAt,
+        db3.now(),
+        user ? user.id : null
+      );
+      return { token: token2, row: tokenOut(db3.one(`SELECT t.*, p.name programme FROM county_connect_tokens t LEFT JOIN county_programmes p ON p.id=t.programme_id WHERE t.id=?`, id)) };
+    }
+    function revoke(id, user) {
+      const t = db3.one(`SELECT * FROM county_connect_tokens WHERE id=?`, id);
+      if (!t) return null;
+      db3.run(`UPDATE county_connect_tokens SET revoked_at=COALESCE(revoked_at, ?), revoked_by=COALESCE(revoked_by, ?) WHERE id=?`, db3.now(), user ? user.id : null, id);
+      return { before: t, row: tokenOut(db3.one(`SELECT t.*, p.name programme FROM county_connect_tokens t LEFT JOIN county_programmes p ON p.id=t.programme_id WHERE t.id=?`, id)) };
+    }
+    function bearer(ctx) {
+      const h = String(ctx.headers.authorization || "");
+      return /^Bearer [A-Za-z0-9_-]{20,200}$/.test(h) ? h.slice(7) : null;
+    }
+    function lookup(ctx) {
+      const token2 = bearer(ctx);
+      if (!token2) return { refused: "no_token" };
+      const t = db3.one(`SELECT t.*, p.name programme, p.active programme_active FROM county_connect_tokens t LEFT JOIN county_programmes p ON p.id=t.programme_id WHERE t.token_hash=?`, sha2562(token2));
+      if (!t) return { refused: "unknown_token" };
+      const st = tokenState(t);
+      if (st !== "live") return { refused: `${st}_token`, token: t };
+      return { token: t };
+    }
+    function touch(t, ip) {
+      db3.run(`UPDATE county_connect_tokens SET last_used_at=?, last_used_ip=? WHERE id=?`, db3.now(), ip ? String(ip).slice(0, 64) : null, t.id);
+    }
+    var actor = (t) => ({ id: null, username: `county-token:${t.prefix}` });
+    function pushBodyLimit(ctx) {
+      if (ctx.method !== "POST" || !enabled()) return null;
+      const r = lookup(ctx);
+      return r.token && !r.refused && r.token.scope === SCOPES.submit ? MAX_PUSH_BYTES : null;
+    }
+    var REFUSALS_LOGGED_PER_HOUR = 10;
+    var REFUSAL_WINDOW_MS = 36e5;
+    var refusals = /* @__PURE__ */ new Map();
+    function summarise(key, w) {
+      if (!w.extra) return;
+      const addresses = [...w.byIp.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([ip, n]) => ({ ip, n }));
+      audit3.log({
+        user: w.user,
+        action: w.action,
+        entity: w.entity,
+        entityId: w.entityId,
+        ip: null,
+        success: false,
+        details: { reason: "refused_summary", count: w.extra, window_start: new Date(w.start).toISOString(), window_end: new Date(Math.min(Date.now(), w.start + REFUSAL_WINDOW_MS)).toISOString(), addresses }
+      });
+    }
+    function flushRefusals() {
+      for (const [key, w] of refusals) summarise(key, w);
+      refusals.clear();
+    }
+    function logRefusal({ action, token: token2 = null, ip, reason, details = {} }) {
+      const key = `${action}|${token2 ? token2.id : "unknown"}`;
+      const now2 = Date.now();
+      let w = refusals.get(key);
+      if (w && now2 - w.start >= REFUSAL_WINDOW_MS) {
+        summarise(key, w);
+        refusals.delete(key);
+        w = null;
+      }
+      if (!w) {
+        w = { start: now2, logged: 0, extra: 0, byIp: /* @__PURE__ */ new Map(), action, user: token2 ? actor(token2) : null, entity: token2 ? "county_connect_token" : null, entityId: token2 ? token2.id : null };
+        refusals.set(key, w);
+      }
+      if (w.logged < REFUSALS_LOGGED_PER_HOUR) {
+        w.logged++;
+        audit3.log({ user: w.user, action, entity: w.entity, entityId: w.entityId, ip, success: false, details: { reason, ...details } });
+        if (w.logged === REFUSALS_LOGGED_PER_HOUR) audit3.log({ user: w.user, action, entity: w.entity, entityId: w.entityId, ip, success: false, details: { reason: "counting", note: "further refusals this hour are counted and summarised, not written one by one" } });
+        return;
+      }
+      w.extra++;
+      w.byIp.set(ip || "?", (w.byIp.get(ip || "?") || 0) + 1);
+      if (refusals.size > 5e3) flushRefusals();
+    }
+    var pad = (n) => String(n).padStart(2, "0");
+    var monthEnd = (y, m) => new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+    function expectedPeriods(c = cadence(), day = today(), start2 = startDate()) {
+      const out2 = [];
+      let y = Number(day.slice(0, 4));
+      let m = Number(day.slice(5, 7));
+      if (c === "monthly") {
+        for (let i = 0; i < EXPECTED_MONTHS; i++) {
+          m--;
+          if (m < 1) {
+            m = 12;
+            y--;
+          }
+          out2.unshift({ from: `${y}-${pad(m)}-01`, to: monthEnd(y, m), label: `${new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-US", { month: "long", timeZone: "UTC" })} ${y}` });
+        }
+      } else {
+        let q = Math.floor((m - 1) / 3);
+        for (let i = 0; i < EXPECTED_QUARTERS; i++) {
+          q--;
+          if (q < 0) {
+            q = 3;
+            y--;
+          }
+          const m1 = q * 3 + 1;
+          const from = `${y}-${pad(m1)}-01`;
+          const to = monthEnd(y, m1 + 2);
+          let label = `${y} Q${q + 1}`;
+          if (c === "quarterly_fiscal") {
+            const fyStart = m1 >= 7 ? y : y - 1;
+            const fq = m1 >= 7 ? (m1 - 7) / 3 + 1 : (m1 + 5) / 3 + 1;
+            label = `FY ${fyStart}\u2013${String(fyStart + 1).slice(2)} Q${fq}`;
+          }
+          out2.unshift({ from, to, label });
+        }
+      }
+      return start2 ? out2.filter((p) => p.from >= start2) : out2;
+    }
+    function statusFor(t) {
+      const prog = db3.one(`SELECT id, name, active FROM county_programmes WHERE id=?`, t.programme_id);
+      const subs = db3.all(`SELECT period_from, period_to, sha256, received_at, superseded_by, withdrawn_at FROM county_submissions WHERE programme_id=? ORDER BY received_at DESC LIMIT 200`, t.programme_id);
+      const counting = subs.filter((s) => !s.superseded_by && !s.withdrawn_at);
+      const has = (p) => counting.some((s) => s.period_from === p.from && s.period_to === p.to);
+      const expected = expectedPeriods().map((p) => ({ ...p, received: has(p) }));
+      return {
+        county: { code: countyCode(), name: db3.getSetting("org_name", "") || null },
+        programme: { id: prog.id, name: prog.name, active: !!prog.active },
+        cadence: cadence(),
+        cadence_label: CADENCES[cadence()],
+        start: startDate(),
+        today: today(),
+        expected,
+        outstanding: expected.filter((p) => !p.received).map(({ received, ...p }) => p),
+        // eslint-disable-line no-unused-vars
+        received: subs.slice(0, 40).map((s) => ({ from: s.period_from, to: s.period_to, sha256: s.sha256, received_at: s.received_at, status: s.withdrawn_at ? "withdrawn" : s.superseded_by ? "superseded" : "current" })),
+        max_file_bytes: MAX_PUSH_BYTES
+      };
+    }
+    module.exports = {
+      SETTING_ENABLED,
+      SETTING_CADENCE,
+      SETTING_START,
+      CADENCES,
+      SCOPES,
+      PREFIX,
+      LIMITS,
+      WINDOW_MS,
+      MAX_PUSH_BYTES,
+      READ_DEFAULT_DAYS,
+      READ_MAX_DAYS,
+      CONNECTION_MAX_DAYS,
+      REFUSALS_LOGGED_PER_HOUR,
+      enabled,
+      cadence,
+      startDate,
+      countyCode,
+      settings,
+      saveSettings,
+      issue,
+      revoke,
+      listTokens,
+      tokenOut,
+      tokenState,
+      bearer,
+      lookup,
+      touch,
+      actor,
+      pushBodyLimit,
+      logRefusal,
+      flushRefusals,
+      expectedPeriods,
+      statusFor,
+      today
+    };
+  }
+});
+
+// server/outbound.js
+var require_outbound = __commonJS({
+  "server/outbound.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fetchImpl = null;
+    var lookupImpl = null;
+    var fetchOverridden = false;
+    function _setFetchForTests(fn) {
+      fetchImpl = fn || null;
+      fetchOverridden = !!fn;
+    }
+    function _setLookupForTests(fn) {
+      lookupImpl = fn;
+    }
+    var proxyInUse = () => !!(proc.env.HTTPS_PROXY || proc.env.https_proxy) && proc.env.NODE_USE_ENV_PROXY === "1";
+    function resolver() {
+      if (lookupImpl) return lookupImpl;
+      let dns;
+      try {
+        dns = __require("node:dns").promises;
+      } catch {
+        return null;
+      }
+      return (h) => dns.lookup(h, { all: true, verbatim: true });
+    }
+    var soft = (message, extra = {}) => Object.assign(new Error(message), { soft: true }, extra);
+    function privateV4(a) {
+      const [x, y] = a.split(".").map(Number);
+      return x === 0 || x === 10 || x === 127 || x === 100 && y >= 64 && y <= 127 || x === 169 && y === 254 || x === 172 && y >= 16 && y <= 31 || x === 192 && y === 168 || x === 192 && y === 0 || x === 198 && (y === 18 || y === 19) || x >= 224;
+    }
+    function v6groups(a) {
+      let s = a;
+      const quad = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
+      if (quad) {
+        const [p, q, r, t] = quad.slice(1).map(Number);
+        s = s.slice(0, quad.index) + (p << 8 | q).toString(16) + ":" + (r << 8 | t).toString(16);
+      }
+      const halves = s.split("::");
+      if (halves.length > 2) return null;
+      const head = halves[0] ? halves[0].split(":") : [];
+      const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+      const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+      if (fill < 0) return null;
+      const g = [...head, ...Array(fill).fill("0"), ...tail].map((h) => parseInt(h, 16));
+      return g.length === 8 && g.every((n) => Number.isInteger(n) && n >= 0 && n <= 65535) ? g : null;
+    }
+    function isPrivateAddress(ip) {
+      const a = String(ip).toLowerCase().replace(/^\[|\]$/g, "").replace(/%.*$/, "");
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(a)) return privateV4(a);
+      const g = v6groups(a);
+      if (!g) return true;
+      const v4of = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+      if (g.slice(0, 5).every((n) => n === 0) && (g[5] === 65535 || g[5] === 0)) return g[5] === 0 && g[6] === 0 && g[7] <= 1 ? true : privateV4(v4of(g[6], g[7]));
+      if (g[0] === 100 && g[1] === 65435) return true;
+      if (g[0] === 8194) return privateV4(v4of(g[1], g[2]));
+      return (g[0] & 65024) === 64512 || (g[0] & 65472) === 65152 || (g[0] & 65472) === 65216 || (g[0] & 65280) === 65280 || g[0] === 8193 && g[1] === 3512 || g[0] === 8193 && g[1] === 0;
+    }
+    var PRIVATE_HOST = /^(localhost|.*\.local|.*\.internal|.*\.localhost|.*\.home\.arpa|metadata\.google\.internal)$/i;
+    function assertPublicHttps(u) {
+      let url;
+      try {
+        url = new URL(u);
+      } catch {
+        throw soft("not a web address");
+      }
+      if (url.protocol !== "https:") throw soft("not an https address");
+      if (url.username || url.password) throw soft("an address with a user name or password in it is not allowed");
+      const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
+      if (!host || PRIVATE_HOST.test(host)) throw soft("that address is not on the public internet");
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(host) && privateV4(host)) throw soft("that address is not on the public internet");
+      if (host.includes(":")) throw soft("that address is not on the public internet");
+      return url.href;
+    }
+    async function resolvePublic(host, { viaProxy = false } = {}) {
+      const lookup = resolver();
+      if (!lookup) return null;
+      let addrs;
+      try {
+        addrs = await lookup(host);
+      } catch (e) {
+        if (viaProxy && /^(ENOTFOUND|EAI_AGAIN)$/.test(String(e && e.code))) return null;
+        throw describeNetworkError({ cause: e }) || soft("could not find that address");
+      }
+      addrs = (addrs || []).map((x) => typeof x === "string" ? { address: x } : x).map((x) => ({ address: x.address, family: x.family || (String(x.address).includes(":") ? 6 : 4) }));
+      if (!addrs.length || addrs.some((x) => isPrivateAddress(x.address))) throw soft("that address is not on the public internet");
+      return addrs;
+    }
+    async function assertResolvesPublic(url) {
+      const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+      if (!lookupImpl && fetchOverridden) return;
+      await resolvePublic(host, { viaProxy: proxyInUse() });
+    }
+    function connectLookup(hostname2, options, callback) {
+      if (typeof options === "function") {
+        callback = options;
+        options = {};
+      }
+      resolvePublic(String(hostname2).replace(/^\[|\]$/g, "")).then((addrs) => {
+        if (!addrs) throw soft("could not find that address");
+        const want = options && options.family ? addrs.filter((a) => a.family === options.family) : addrs;
+        if (!want.length) throw soft("could not find that address");
+        if (options && options.all) callback(null, want);
+        else callback(null, want[0].address, want[0].family);
+      }).catch((e) => callback(e));
+    }
+    function pinnedFetch(url, { method = "GET", body, headers = {}, signal, maxBytes = 2 * 1024 * 1024 } = {}) {
+      const https = (init_empty(), __toCommonJS(empty_exports));
+      return new Promise((resolve2, reject) => {
+        const req = https.request(url, { method, headers, signal, lookup: connectLookup, autoSelectFamily: false }, (res) => {
+          const chunks = [];
+          let size = 0;
+          res.on("data", (c) => {
+            size += c.length;
+            if (size > maxBytes + 1) {
+              reject(soft("file is too large"));
+              res.destroy();
+              req.destroy();
+              return;
+            }
+            chunks.push(c);
+          });
+          res.on("end", () => {
+            const h = new Headers();
+            for (const [k, v] of Object.entries(res.headers)) for (const x of [].concat(v)) h.append(k, String(x));
+            const nullBody = [101, 204, 205, 304].includes(res.statusCode);
+            try {
+              resolve2(new Response(nullBody ? null : import_buffer.Buffer.concat(chunks), { status: res.statusCode, statusText: res.statusMessage, headers: h }));
+            } catch (e) {
+              reject(e);
+            }
+          });
+          res.on("error", reject);
+        });
+        req.on("error", reject);
+        if (body !== void 0 && body !== null) req.write(body);
+        req.end();
+      });
+    }
+    function transport(url, opts) {
+      if (fetchImpl) return fetchImpl(url, opts);
+      if (proxyInUse()) return globalThis.fetch(url, opts);
+      return pinnedFetch(url, opts);
+    }
+    var NETWORK_CODES = /^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)$/;
+    var CERT_CODES = /CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)/;
+    function describeNetworkError(e) {
+      const code = e && e.cause && (e.cause.code || e.cause.name) || e && e.code || "";
+      const proxyHint = proc.env.HTTPS_PROXY || proc.env.https_proxy ? proc.env.NODE_USE_ENV_PROXY === "1" ? " HTTPS_PROXY is set; check the proxy allows these sites." : ' HTTPS_PROXY is set but Node only uses it when NODE_USE_ENV_PROXY=1 is set too (docs/DEPLOYMENT.md, "Outbound internet").' : ' If the office network only reaches the internet through a proxy, set HTTPS_PROXY and NODE_USE_ENV_PROXY=1 (docs/DEPLOYMENT.md, "Outbound internet").';
+      if (CERT_CODES.test(String(code))) return soft(`the connection's certificate was not trusted (${code}). A proxy that inspects HTTPS needs its certificate given to Node with NODE_EXTRA_CA_CERTS.`, { network: true });
+      if (NETWORK_CODES.test(String(code)) || /fetch failed/i.test(e && e.message)) return soft(`the computer running SUDS could not reach the internet${code ? ` (${code})` : ""}.${proxyHint}`, { network: true });
+      return null;
+    }
+    async function fetchChecked(url, { timeoutMs = 1e4, maxBytes = 2 * 1024 * 1024, hops = 4, method = "GET", body, headers = {}, check } = {}) {
+      const guard = check || (async (u) => {
+        const href = assertPublicHttps(u);
+        await assertResolvesPublic(href);
+        return href;
+      });
+      let target = await guard(url);
+      let res;
+      for (let i = 0; i <= hops; i++) {
+        try {
+          res = await transport(target, { method, body, signal: AbortSignal.timeout(timeoutMs), redirect: "manual", maxBytes, headers: { "User-Agent": "SUDS", Accept: "*/*", ...headers } });
+        } catch (e) {
+          if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw soft("timed out");
+          throw describeNetworkError(e) || e;
+        }
+        if (res.status < 300 || res.status >= 400) break;
+        const location = res.headers.get("location");
+        if (!location) break;
+        if (i === hops) throw soft("too many redirects");
+        if (method !== "GET") throw soft(`the server answered ${res.status} with a redirect`);
+        target = await guard(new URL(location, target).href);
+      }
+      if (!res.ok) throw soft(`site returned ${res.status}`);
+      if (Number(res.headers.get("content-length") || 0) > maxBytes) throw soft("file is too large");
+      const buf = import_buffer.Buffer.from(await res.arrayBuffer());
+      if (buf.length > maxBytes) throw soft("file is too large");
+      return { buf, url: target, res };
+    }
+    module.exports = { isPrivateAddress, assertPublicHttps, assertResolvesPublic, connectLookup, pinnedFetch, proxyInUse, transport, fetchChecked, describeNetworkError, soft, _setFetchForTests, _setLookupForTests };
+  }
+});
+
 // server/small-cells.js
 var require_small_cells = __commonJS({
   "server/small-cells.js"(exports, module) {
@@ -32378,6 +32942,545 @@ var require_reports = __commonJS({
   }
 });
 
+// server/county-connect-client.js
+var require_county_connect_client = __commonJS({
+  "server/county-connect-client.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var config2 = require_config();
+    var audit3 = require_audit();
+    var outbound = require_outbound();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var TIMEOUT_MS = 15e3;
+    var MAX_ANSWER_BYTES = 64 * 1024;
+    var AUTO_EVERY_MS = 24 * 36e5;
+    var AUTO_MAX_PERIODS = 4;
+    var timeoutMs = TIMEOUT_MS;
+    function _setTimeoutForTests(ms) {
+      timeoutMs = ms || TIMEOUT_MS;
+    }
+    var ConnectError = class extends Error {
+      constructor(message, extra = {}) {
+        super(message);
+        Object.assign(this, extra);
+      }
+    };
+    var LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "::1"]);
+    var hostOf = (u) => u.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+    var allowPrivate = () => proc.env.SUDS_COUNTY_ALLOW_PRIVATE === "1";
+    function privateHost(host) {
+      if (LOOPBACK.has(host)) return true;
+      try {
+        outbound.assertPublicHttps(`https://${host.includes(":") ? `[${host}]` : host}/`);
+        return false;
+      } catch {
+        return true;
+      }
+    }
+    function checkBaseUrl(value) {
+      let u;
+      try {
+        u = new URL(String(value || "").trim());
+      } catch {
+        throw new ConnectError("The county's address is not a web address. Type it as the county gave it, for example https://suds.county.example.");
+      }
+      if (u.username || u.password) throw new ConnectError("The county's address must not have a user name or password in it.");
+      if (u.search || u.hash) throw new ConnectError("Type the county's address without anything after a ? or #.");
+      const host = hostOf(u);
+      if (u.protocol === "http:") {
+        if (config2.isProd || !LOOPBACK.has(host)) throw new ConnectError("The county's address must start with https://. SUDS sends the token and the file only over an encrypted connection.");
+      } else if (u.protocol !== "https:") throw new ConnectError("The county's address must start with https://.");
+      if (privateHost(host) && !allowPrivate() && (config2.isProd || !LOOPBACK.has(host))) {
+        throw new ConnectError("That address is on this computer or a private network. SUDS sends to a county there only when the server is started with SUDS_COUNTY_ALLOW_PRIVATE=1 (a county reached over a VPN; docs/DEPLOYMENT.md).");
+      }
+      return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, "")}`;
+    }
+    var row = () => db3.one(`SELECT * FROM county_connection WHERE id='county'`);
+    function describe2() {
+      const c = row();
+      if (!c) return { connected: false, base_url: null, token_hint: null, auto_send: false, county_code: null, county_name: null, last_checked_at: null, last_check_ok: null, last_check_error: null, last_auto_at: db3.getSetting("county_connect_auto_at", null) };
+      return {
+        connected: true,
+        base_url: c.base_url,
+        token_hint: c.token_hint,
+        auto_send: !!c.auto_send,
+        county_code: c.county_code,
+        county_name: c.county_name,
+        last_checked_at: c.last_checked_at,
+        last_check_ok: c.last_check_ok === null ? null : !!c.last_check_ok,
+        last_check_error: c.last_check_error,
+        updated_at: c.updated_at,
+        last_auto_at: db3.getSetting("county_connect_auto_at", null)
+      };
+    }
+    function save({ baseUrl, token: token2, autoSend }, user) {
+      const have = row();
+      const url = baseUrl !== void 0 && baseUrl !== null ? checkBaseUrl(baseUrl) : have ? have.base_url : null;
+      if (!url) throw new ConnectError("Type the county's address.");
+      const t = token2 === void 0 || token2 === null ? "" : String(token2).trim();
+      if (t && !/^sudscc_[A-Za-z0-9_-]{40,60}$/.test(t)) throw new ConnectError("That is not a county connection token. Paste the whole token the county gave you: it starts with sudscc_.");
+      if (!have && !t) throw new ConnectError("Paste the connection token the county gave you.");
+      const auto = autoSend === void 0 || autoSend === null ? have ? !!have.auto_send : false : !!autoSend;
+      const changed = { base_url: !have || have.base_url !== url, token: !!t, auto_send: !have || !!have.auto_send !== auto };
+      if (have) {
+        const reset = changed.base_url || changed.token;
+        db3.run(
+          `UPDATE county_connection SET base_url=?, token_enc=COALESCE(?, token_enc), token_hint=COALESCE(?, token_hint), auto_send=?, updated_at=?, updated_by=?${reset ? ", county_code=NULL, county_name=NULL, last_checked_at=NULL, last_check_ok=NULL, last_check_error=NULL" : ""} WHERE id='county'`,
+          url,
+          t ? encrypt3(t) : null,
+          t ? t.slice(0, 12) : null,
+          auto ? 1 : 0,
+          db3.now(),
+          user ? user.id : null
+        );
+      } else {
+        db3.run(`INSERT INTO county_connection(id,base_url,token_enc,token_hint,auto_send,updated_at,updated_by) VALUES('county',?,?,?,?,?,?)`, url, encrypt3(t), t.slice(0, 12), auto ? 1 : 0, db3.now(), user ? user.id : null);
+      }
+      return { changed, host: new URL(url).host };
+    }
+    function remove() {
+      const had = row();
+      db3.run(`DELETE FROM county_connection WHERE id='county'`);
+      return had;
+    }
+    function directRequest(url, { method, headers, body }) {
+      const u = new URL(url);
+      const mod = u.protocol === "http:" ? (init_empty(), __toCommonJS(empty_exports)) : (init_empty(), __toCommonJS(empty_exports));
+      return new Promise((resolve2, reject) => {
+        const req = mod.request(u, { method, headers, timeout: timeoutMs }, (res) => {
+          const chunks = [];
+          let size = 0;
+          res.on("data", (c) => {
+            size += c.length;
+            if (size > MAX_ANSWER_BYTES) {
+              req.destroy();
+              reject(new ConnectError("The county's server sent a longer answer than SUDS reads."));
+              return;
+            }
+            chunks.push(c);
+          });
+          res.on("end", () => resolve2({ status: res.statusCode, location: res.headers.location || null, contentType: String(res.headers["content-type"] || ""), text: import_buffer.Buffer.concat(chunks).toString("utf8") }));
+          res.on("error", reject);
+        });
+        req.on("timeout", () => req.destroy(Object.assign(new Error("timed out"), { name: "TimeoutError" })));
+        req.on("error", reject);
+        if (body) req.write(body);
+        req.end();
+      });
+    }
+    async function publicRequest(url, { method, headers, body }) {
+      outbound.assertPublicHttps(url);
+      await outbound.assertResolvesPublic(url);
+      const res = await outbound.transport(url, { method, headers, body, signal: AbortSignal.timeout(timeoutMs), redirect: "error", maxBytes: MAX_ANSWER_BYTES });
+      if (Number(res.headers.get("content-length") || 0) > MAX_ANSWER_BYTES) throw new ConnectError("The county's server sent a longer answer than SUDS reads.");
+      const buf = import_buffer.Buffer.from(await res.arrayBuffer());
+      if (buf.length > MAX_ANSWER_BYTES) throw new ConnectError("The county's server sent a longer answer than SUDS reads.");
+      return { status: res.status, location: res.headers.get("location"), contentType: res.headers.get("content-type") || "", text: buf.toString("utf8") };
+    }
+    function describeFailure(e) {
+      if (e instanceof ConnectError) return e;
+      if (e && (e.name === "TimeoutError" || e.name === "AbortError" || /timed out/.test(e.message))) return new ConnectError(`The county's server did not answer within ${Math.round(timeoutMs / 1e3)} seconds.`, { reason: "timeout" });
+      if (e && /redirect/i.test(String(e.message || "") + String(e.cause && e.cause.message || ""))) return new ConnectError("The county's server answered with a redirect. SUDS never follows one with the token: check the county's address.", { reason: "redirect" });
+      const n = outbound.describeNetworkError(e);
+      if (n) return new ConnectError(`The county's server could not be reached: ${n.message}`, { reason: "network" });
+      if (e && e.soft) return new ConnectError(`The county's server could not be reached: ${e.message}.`, { reason: "refused_address" });
+      return new ConnectError("The county's server could not be reached.", { reason: "network" });
+    }
+    async function call2(method, path, body) {
+      const c = row();
+      if (!c) throw new ConnectError("This server is not connected to a county. Save the county's address and token first.", { reason: "not_connected" });
+      const url = checkBaseUrl(c.base_url) + path;
+      const headers = { Authorization: `Bearer ${decrypt3(c.token_enc)}`, Accept: "application/json", "User-Agent": `SUDS/${config2.version}` };
+      if (body !== void 0) headers["Content-Type"] = "application/json";
+      const u = new URL(url);
+      const direct = u.protocol === "http:" || privateHost(hostOf(u)) && (allowPrivate() || !config2.isProd && LOOPBACK.has(hostOf(u)));
+      let res;
+      try {
+        res = await (direct ? directRequest : publicRequest)(url, { method, headers, body });
+      } catch (e) {
+        throw describeFailure(e);
+      }
+      if (res.status >= 300 && res.status < 400) throw new ConnectError(`The county's server answered with a redirect (${res.status}). SUDS never follows one with the token: check the county's address.`, { reason: "redirect", status: res.status });
+      let data = null;
+      if (/json/.test(res.contentType)) {
+        try {
+          data = JSON.parse(res.text);
+        } catch {
+          data = null;
+        }
+      }
+      if (res.status === 404) throw new ConnectError("The county's server has no county connection here: it is switched off there, or the address is wrong.", { reason: "not_found", status: 404 });
+      if (res.status === 401) throw new ConnectError("The county did not accept the token: it is wrong, expired or revoked. Ask the county for a new connection token.", { reason: "token", status: 401 });
+      if (res.status === 403) throw new ConnectError("The county's server refused: this token cannot do that.", { reason: "scope", status: 403 });
+      if (res.status === 429) throw new ConnectError("The county's server asked SUDS to slow down. Try again in ten minutes.", { reason: "rate_limited", status: 429 });
+      if (!data || typeof data !== "object") throw new ConnectError(`The county's server answered ${res.status} with something that is not a SUDS county connection answer.`, { reason: "bad_answer", status: res.status });
+      return { status: res.status, data };
+    }
+    async function test() {
+      try {
+        const r = await call2("GET", "/api/county-connect/v1/status");
+        if (r.status !== 200 || !r.data.programme || !Array.isArray(r.data.expected)) throw new ConnectError(`The county's server answered ${r.status}: ${String(r.data.error || "not a status").slice(0, 200)}`, { reason: "bad_answer" });
+        const county = r.data.county || {};
+        db3.run(`UPDATE county_connection SET last_checked_at=?, last_check_ok=1, last_check_error=NULL, county_code=?, county_name=? WHERE id='county'`, db3.now(), county.code ? String(county.code).slice(0, 40) : null, county.name ? String(county.name).slice(0, 200) : null);
+        return { ok: true, status: r.data };
+      } catch (e) {
+        if (!(e instanceof ConnectError)) throw e;
+        db3.run(`UPDATE county_connection SET last_checked_at=?, last_check_ok=0, last_check_error=? WHERE id='county'`, db3.now(), e.message.slice(0, 300));
+        return { ok: false, error: e.message, reason: e.reason || null };
+      }
+    }
+    async function buildFile({ from, to, user, recipient }) {
+      const K = require_county();
+      const SO = require_settlement_outcomes();
+      const range = require_reports().range({ query: new URLSearchParams({ from, to }) });
+      const raw = await db3.readSnapshot(async () => SO.figures(range));
+      const payload = K.payloadFrom(raw, { programme: db3.getSetting("org_name", ""), recipient });
+      const { key, created } = K.ensureKey(user);
+      const { file, sha256: sha2562, fingerprint } = K.signFile(payload);
+      return { file, sha256: sha2562, fingerprint, payload, keyCreated: created ? key : null };
+    }
+    var WORDS = {
+      imported: "The county imported the file.",
+      superseded: "The county imported the file. It replaces the one it had for the same period.",
+      older: "The county kept the file, but a newer one it already has for the same period is the one that counts.",
+      duplicate: "The county already had this file; nothing changed."
+    };
+    async function send({ from, to, user = null, ip = null, automatic = false }) {
+      const c = row();
+      if (!c) throw new ConnectError("This server is not connected to a county. Save the county's address and token first.", { reason: "not_connected" });
+      if (!c.county_code) await test();
+      const cur = row();
+      const recipient = cur.county_code ? { county_code: cur.county_code, county_name: cur.county_name || "" } : void 0;
+      const made = await buildFile({ from, to, user, recipient });
+      if (made.keyCreated) audit3.log({ user, action: "county_submission.key.create", ip, details: { fingerprint: made.keyCreated.fingerprint } });
+      const host = new URL(c.base_url).host;
+      let status;
+      let reason = null;
+      let message;
+      let receipt = null;
+      try {
+        const r = await call2("POST", "/api/county-connect/v1/submissions", JSON.stringify(made.file));
+        status = String(r.data.status || "");
+        if (!["imported", "superseded", "older", "duplicate", "refused"].includes(status)) throw new ConnectError(`The county's server answered ${r.status} without saying what it did with the file.`, { reason: "bad_answer" });
+        reason = r.data.reason || null;
+        receipt = r.data.receipt && typeof r.data.receipt === "object" ? { sha256: String(r.data.receipt.sha256 || "").slice(0, 64) || null, received_at: String(r.data.receipt.received_at || "").slice(0, 40) || null } : null;
+        message = status === "refused" ? `The county refused the file: ${String(r.data.message || reason || "").slice(0, 500)}` : WORDS[status];
+        if (receipt && receipt.sha256 && status !== "refused" && receipt.sha256 !== made.sha256) {
+          message += " The county's receipt names a different file: ask the county to check.";
+        }
+      } catch (e) {
+        if (!(e instanceof ConnectError)) throw e;
+        status = "failed";
+        reason = e.reason || "network";
+        message = e.message;
+      }
+      const id = uuid2();
+      db3.run(
+        `INSERT INTO county_connect_sends(id,period_from,period_to,sha256,status,reason,county_received_at,base_url,automatic,sent_at,sent_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+        id,
+        from,
+        to,
+        made.sha256,
+        status,
+        reason ? String(reason).slice(0, 60) : null,
+        receipt ? receipt.received_at : null,
+        c.base_url,
+        automatic ? 1 : 0,
+        db3.now(),
+        user ? user.id : null
+      );
+      audit3.log({
+        user: user || { username: "system" },
+        action: "county_submission.send",
+        entity: "county_connect_send",
+        entityId: id,
+        ip,
+        success: !["failed", "refused"].includes(status),
+        details: { from, to, fingerprint: made.fingerprint, sha256: made.sha256, host, status, reason: reason || void 0, automatic, funds: made.payload.funds.length, leaves_programme: status !== "failed", content: "aggregate counts and money; no client-level data" }
+      });
+      return { status, reason, message, receipt, send: sendOut(db3.one(`SELECT s.*, u.display_name sent_by_name FROM county_connect_sends s LEFT JOIN users u ON u.id=s.sent_by WHERE s.id=?`, id)) };
+    }
+    function sendOut(s) {
+      return { id: s.id, period_from: s.period_from, period_to: s.period_to, sha256: s.sha256, status: s.status, reason: s.reason, county_received_at: s.county_received_at, host: (() => {
+        try {
+          return new URL(s.base_url).host;
+        } catch {
+          return null;
+        }
+      })(), automatic: !!s.automatic, sent_at: s.sent_at, sent_by_name: s.sent_by_name || (s.automatic ? "Automatic" : null) };
+    }
+    function sends(limit2 = 50) {
+      return db3.all(`SELECT s.*, u.display_name sent_by_name FROM county_connect_sends s LEFT JOIN users u ON u.id=s.sent_by ORDER BY s.sent_at DESC, s.id LIMIT ?`, limit2).map(sendOut);
+    }
+    var autoRunning = false;
+    async function autoSendIfDue({ force = false } = {}) {
+      const c = row();
+      if (!c || !c.auto_send || autoRunning) return null;
+      const last = db3.getSetting("county_connect_auto_at", null);
+      if (!force && last && Date.now() - Date.parse(last) < AUTO_EVERY_MS) return null;
+      autoRunning = true;
+      try {
+        db3.setSetting("county_connect_auto_at", db3.now());
+        const t = await test();
+        if (!t.ok) {
+          audit3.log({ user: { username: "system" }, action: "county_submission.auto", success: false, details: { host: new URL(c.base_url).host, error: t.reason || "failed" } });
+          return { sent: [], error: t.error };
+        }
+        const done = new Set(db3.all(`SELECT period_from, period_to FROM county_connect_sends WHERE status IN ('imported','superseded','duplicate','older')`).map((s) => `${s.period_from}|${s.period_to}`));
+        const todo = (t.status.outstanding || []).filter((p) => /^\d{4}-\d{2}-\d{2}$/.test(p.from) && /^\d{4}-\d{2}-\d{2}$/.test(p.to) && !done.has(`${p.from}|${p.to}`)).slice(0, AUTO_MAX_PERIODS);
+        const sent = [];
+        for (const p of todo) sent.push({ from: p.from, to: p.to, ...await send({ from: p.from, to: p.to, automatic: true }) });
+        audit3.log({ user: { username: "system" }, action: "county_submission.auto", details: { host: new URL(c.base_url).host, outstanding: (t.status.outstanding || []).length, sent: sent.length } });
+        return { sent };
+      } finally {
+        autoRunning = false;
+      }
+    }
+    module.exports = { TIMEOUT_MS, MAX_ANSWER_BYTES, ConnectError, checkBaseUrl, describe: describe2, save, remove, call: call2, test, buildFile, send, sends, autoSendIfDue, _setTimeoutForTests };
+  }
+});
+
+// server/routes/county-connect.js
+var require_county_connect2 = __commonJS({
+  "server/routes/county-connect.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var CC = require_county_connect();
+    var CL = require_county_connect_client();
+    var { validate } = require_validate();
+    var { badRequest, notFound, forbidden, unauthorized, HttpError: HttpError3 } = require_http();
+    var DAY = /^\d{4}-\d{2}-\d{2}$/;
+    var isDay = (s) => typeof s === "string" && DAY.test(s) && Number.isFinite(Date.parse(s)) && new Date(Date.parse(s)).toISOString().slice(0, 10) === s;
+    function period(from, to) {
+      if (!isDay(from) || !isDay(to)) throw badRequest("Choose a period: from and to must be dates (YYYY-MM-DD).");
+      if (from > to) throw badRequest(`The start date (${from}) is after the end date (${to}).`);
+      return { from, to };
+    }
+    function machine(ctx, scope, perToken) {
+      if (!CC.enabled()) throw notFound("Not found");
+      ctx.res.setHeader("Cache-Control", "no-store");
+      const { rateLimit, rateLimited } = require_app2();
+      if (!rateLimit(`county-connect:${ctx.ip}`, CC.LIMITS.perIp, CC.WINDOW_MS)) throw new HttpError3(429, "Too many requests from this address. Wait ten minutes.");
+      if (!rateLimit("county-connect:*", CC.LIMITS.all, CC.WINDOW_MS)) throw new HttpError3(429, "Too many requests. Wait ten minutes.");
+      const badKey = `county-connect-bad:${ctx.ip}`;
+      if (rateLimited(badKey, CC.LIMITS.badPerIp)) throw new HttpError3(429, "Too many requests with a token that is not valid from this address. Wait ten minutes.");
+      const r = CC.lookup(ctx);
+      if (r.refused) {
+        rateLimit(badKey, CC.LIMITS.badPerIp, CC.WINDOW_MS);
+        CC.logRefusal({ action: "county_connect.refuse", token: r.token || null, ip: ctx.ip, reason: r.refused, details: { path: ctx.path } });
+        ctx.res.setHeader("WWW-Authenticate", 'Bearer realm="suds-county-connect"');
+        throw unauthorized(r.refused === "no_token" ? "A county connection bearer token is required." : "The token is not valid: it is unknown, expired or revoked.");
+      }
+      const t = r.token;
+      if (t.scope !== scope) {
+        CC.logRefusal({ action: "county_connect.refuse", token: t, ip: ctx.ip, reason: "wrong_scope", details: { path: ctx.path, scope: t.scope } });
+        throw forbidden(scope === CC.SCOPES.read ? "A connection token cannot read the combined view: use a read token." : "A read token cannot send or ask for a programme's status: use the programme's connection token.");
+      }
+      if (!rateLimit(`county-connect-token:${t.id}`, perToken, CC.WINDOW_MS)) throw new HttpError3(429, "Too many requests with this token. Wait ten minutes.");
+      CC.touch(t, ctx.ip);
+      return t;
+    }
+    function cboCan(ctx) {
+      return auth3.hasPerm(ctx.user, "reports:funder") && auth3.hasPerm(ctx.user, "budget:read");
+    }
+    function configOrFiler(ctx) {
+      if (!ctx.user) throw unauthorized();
+      if (auth3.hasPerm(ctx.user, "settings:manage") || cboCan(ctx)) return;
+      audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms: ["settings:manage", "reports:funder+budget:read"], path: ctx.path } });
+      throw forbidden("You do not have permission for this action");
+    }
+    module.exports = (r) => {
+      require_app2().bodyLimitFor("/api/county-connect/v1/submissions", CC.pushBodyLimit);
+      r.post("/api/county-connect/v1/submissions", async (ctx) => {
+        const t = machine(ctx, CC.SCOPES.submit, CC.LIMITS.pushPerToken);
+        const K = require_county();
+        const { rateLimit, rateLimited } = require_app2();
+        const refusedKey = `county-connect-refused:${t.id}`;
+        if (rateLimited(refusedKey, CC.LIMITS.refusedPerToken)) throw new HttpError3(429, "Too many files were refused under this token in the last few minutes. Wait ten minutes, and check the file is the one SUDS made.");
+        const textIn = ctx.rawBody && ctx.rawBody.length ? ctx.rawBody.toString("utf8") : ctx.body && Object.keys(ctx.body).length ? JSON.stringify(ctx.body) : "";
+        const fileSha = textIn ? require_crypto().sha256(textIn) : null;
+        const receivedAt = db3.now();
+        try {
+          const parsed = K.parseFile(textIn, { today: CC.today(), now: (/* @__PURE__ */ new Date()).toISOString() });
+          const out2 = db3.transaction(() => {
+            const o = K.importParsed(parsed, null);
+            if (o.programme.id !== t.programme_id) throw new K.SubmissionError("wrong_programme", "The file was not signed with the key the county registered for the programme this token belongs to. Send your own programme's file, with your own token.");
+            return o;
+          });
+          const s = out2.submission;
+          audit3.log({
+            user: CC.actor(t),
+            action: out2.status === "duplicate" ? "county.submission.duplicate" : "county.submission.import",
+            entity: "county_submission",
+            entityId: s.id,
+            ip: ctx.ip,
+            details: { via: "county-connect", token_id: t.id, programme_id: t.programme_id, fingerprint: parsed.fingerprint, from: s.period_from, to: s.period_to, sha256: s.sha256, status: out2.status, superseded: out2.replaced || void 0 }
+          });
+          ctx.status = out2.status === "duplicate" ? 200 : 201;
+          return {
+            status: out2.status,
+            reason: null,
+            period: { from: s.period_from, to: s.period_to },
+            message: out2.status === "duplicate" ? `The county already had this file (received ${String(s.received_at).slice(0, 10)}); nothing changed.` : out2.status === "superseded" ? "Imported. It replaces the file the county had for the same period." : out2.status === "older" ? "Kept, but a newer file the county already has for the same period is the one that counts." : "Imported.",
+            receipt: { sha256: s.sha256, received_at: s.received_at }
+          };
+        } catch (e) {
+          if (!(e instanceof K.SubmissionError)) throw e;
+          rateLimit(refusedKey, CC.LIMITS.refusedPerToken, CC.WINDOW_MS);
+          CC.logRefusal({ action: "county.submission.refuse", token: t, ip: ctx.ip, reason: e.code, details: { via: "county-connect", token_id: t.id, programme_id: t.programme_id, file_sha256: fileSha, bytes: textIn ? import_buffer.Buffer.byteLength(textIn) : 0 } });
+          ctx.status = e.code === "too_large" ? 413 : 422;
+          return { status: "refused", reason: e.code, message: e.message, receipt: { sha256: null, received_at: receivedAt } };
+        }
+      });
+      r.get("/api/county-connect/v1/status", (ctx) => {
+        const t = machine(ctx, CC.SCOPES.submit, CC.LIMITS.statusPerToken);
+        const s = CC.statusFor(t);
+        audit3.log({ user: CC.actor(t), action: "county_connect.status", entity: "county_programme", entityId: t.programme_id, ip: ctx.ip, details: { token_id: t.id, outstanding: s.outstanding.length } });
+        return s;
+      });
+      r.get("/api/county-connect/v1/combined", (ctx) => {
+        const t = machine(ctx, CC.SCOPES.read, CC.LIMITS.readPerToken);
+        const { from, to } = period(ctx.query.get("from") || "", ctx.query.get("to") || "");
+        const format = ctx.query.get("format") || "json";
+        if (!["json", "tidy-csv"].includes(format)) throw badRequest("format must be json or tidy-csv");
+        const K = require_county();
+        const d = K.combined(from, to);
+        audit3.log({ user: CC.actor(t), action: "county.api.read", ip: ctx.ip, details: { what: "combined", token_id: t.id, from, to, format, programmes: d.programmes.length, submitted: d.submitted } });
+        const notes = {
+          counts: "exact",
+          purpose: "internal",
+          classification: "Exact, internal, not for publication: for authorised county staff and systems only.",
+          unduplicated: false,
+          not_unduplicated: "People are counted by each programme and summed: a person served by two programmes counts twice. Not unduplicated across programmes.",
+          caveats: d.caveats,
+          rule: d.rule,
+          publication_note: d.publication_note
+        };
+        if (format === "json") {
+          const { caveats, rule, publication_note, ...rest } = d;
+          return { ...rest, notes };
+        }
+        const S = require_spreadsheet();
+        const rows = [];
+        for (const x of d.rows) {
+          for (const p of d.programmes) rows.push({ from, to, programme_id: p.id, programme: p.name, programme_status: p.status, group: x.group, measure_key: x.key, measure: x.label, unit: x.money ? "money" : "count", value: x.by[p.id] });
+          rows.push({ from, to, programme_id: "", programme: "Total (summed, not unduplicated)", programme_status: "", group: x.group, measure_key: x.key, measure: x.label, unit: x.money ? "money" : "count", value: x.total });
+        }
+        const cols2 = ["from", "to", "programme_id", "programme", "programme_status", "group", "measure_key", "measure", "unit", "value"].map((key) => ({ key, label: key }));
+        ctx.res.writeHead(200, {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Content-Disposition": `attachment; filename="suds-county-combined-${from}_${to}-internal-exact.csv"`,
+          "X-SUDS-Report-Counts": "exact",
+          "X-SUDS-Report-Purpose": "internal",
+          "X-SUDS-Export": "County view: exact aggregate figures from programmes' signed submissions, for authorised county staff; not for publication; summed, not unduplicated. No client-level data."
+        });
+        ctx.res.end(S.toCsv(rows, cols2));
+      });
+      r.get("/api/county-connect/v1/programs", (ctx) => {
+        const t = machine(ctx, CC.SCOPES.read, CC.LIMITS.readPerToken);
+        const K = require_county();
+        const progs = db3.all(`SELECT * FROM county_programmes ORDER BY name COLLATE NOCASE, id`);
+        const subs = db3.all(`SELECT programme_id, period_from, period_to, received_at, sha256 FROM county_submissions WHERE superseded_by IS NULL AND withdrawn_at IS NULL ORDER BY period_from, received_at`);
+        const rows = progs.map((p) => {
+          const out2 = K.programmeOut(p);
+          const mine = subs.filter((s) => s.programme_id === p.id);
+          return {
+            id: p.id,
+            name: p.name,
+            active: !!p.active,
+            fingerprint: out2.fingerprint,
+            fingerprint_display: out2.fingerprint_display,
+            last_received: mine.reduce((m, s) => s.received_at > m ? s.received_at : m, "") || null,
+            periods: mine.map((s) => ({ from: s.period_from, to: s.period_to, received_at: s.received_at, sha256: s.sha256 }))
+          };
+        });
+        audit3.log({ user: CC.actor(t), action: "county.api.read", ip: ctx.ip, details: { what: "programs", token_id: t.id, programmes: rows.length } });
+        return { rows, notes: { classification: "Internal: for authorised county staff and systems only." } };
+      });
+      r.get("/api/county-connect/settings", auth3.requireAuth, auth3.requirePerm("county:view"), () => CC.settings());
+      r.put("/api/county-connect/settings", auth3.requireAuth, auth3.requirePerm("county:manage"), auth3.requirePerm("settings:manage"), (ctx) => {
+        const v = validate(ctx.body, { enabled: { type: "boolean" }, cadence: { type: "string", enum: Object.keys(CC.CADENCES) }, start: { type: "string", maxLen: 10 } }, { partial: true });
+        if (v.start && !isDay(v.start)) throw badRequest("The first period expected must start on a date (YYYY-MM-DD).", { fields: { start: "must be a date" } });
+        const was = CC.enabled();
+        const changed = CC.saveSettings({ enabled: v.enabled === void 0 || v.enabled === null ? void 0 : !!v.enabled, cadence: v.cadence, start: ctx.body && "start" in ctx.body ? v.start || null : void 0 });
+        audit3.log({ user: ctx.user, action: "county_connect.settings", ip: ctx.ip, details: { changed, enabled: CC.enabled(), was_enabled: was, cadence: CC.cadence() } });
+        return CC.settings();
+      });
+      r.get("/api/county-connect/tokens", auth3.requireAuth, auth3.requirePerm("county:manage"), (ctx) => {
+        const rows = CC.listTokens();
+        audit3.log({ user: ctx.user, action: "county_connect.token.list", ip: ctx.ip, details: { count: rows.length } });
+        return { rows, enabled: CC.enabled() };
+      });
+      r.post("/api/county-connect/tokens", auth3.requireAuth, auth3.requirePerm("county:manage"), (ctx) => {
+        const v = validate(ctx.body, { scope: { type: "string", required: true, enum: Object.values(CC.SCOPES) }, programme_id: { type: "string", maxLen: 64 }, name: { type: "string", maxLen: 120 }, expires_days: { type: "number", integer: true } });
+        let out2;
+        try {
+          out2 = CC.issue({ scope: v.scope, programmeId: v.programme_id || null, name: v.name || "", expiresDays: v.expires_days === void 0 || v.expires_days === null ? void 0 : v.expires_days, user: ctx.user });
+        } catch (e) {
+          throw badRequest(e.message);
+        }
+        audit3.log({ user: ctx.user, action: "county_connect.token.issue", entity: "county_connect_token", entityId: out2.row.id, ip: ctx.ip, details: { scope: out2.row.scope, programme_id: out2.row.programme_id || void 0, prefix: out2.row.prefix, expires_at: out2.row.expires_at } });
+        ctx.status = 201;
+        return { ...out2.row, token: out2.token, note: "Copy the token now: it is not shown again. Only its SHA-256 is kept." };
+      });
+      r.post("/api/county-connect/tokens/:id/revoke", auth3.requireAuth, auth3.requirePerm("county:manage"), (ctx) => {
+        const out2 = CC.revoke(ctx.params.id, ctx.user);
+        if (!out2) throw notFound("Token not found");
+        audit3.log({ user: ctx.user, action: "county_connect.token.revoke", entity: "county_connect_token", entityId: out2.row.id, ip: ctx.ip, details: { scope: out2.row.scope, programme_id: out2.row.programme_id || void 0, prefix: out2.row.prefix, already: !!out2.before.revoked_at } });
+        return out2.row;
+      });
+      r.get("/api/county-connect/connection", auth3.requireAuth, configOrFiler, (ctx) => {
+        const c = CL.describe();
+        const log = CL.sends();
+        audit3.log({ user: ctx.user, action: "county_connect.connection.view", ip: ctx.ip, details: { connected: c.connected, sends: log.length } });
+        return { ...c, sends: log, can_configure: auth3.hasPerm(ctx.user, "settings:manage"), can_send: cboCan(ctx) && auth3.hasPerm(ctx.user, "export:read") };
+      });
+      r.put("/api/county-connect/connection", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const v = validate(ctx.body, { base_url: { type: "string", maxLen: 500 }, token: { type: "string", maxLen: 200 }, auto_send: { type: "boolean" } }, { partial: true });
+        let out2;
+        try {
+          out2 = CL.save({ baseUrl: v.base_url, token: v.token, autoSend: v.auto_send === void 0 || v.auto_send === null ? void 0 : !!v.auto_send }, ctx.user);
+        } catch (e) {
+          if (e instanceof CL.ConnectError) throw badRequest(e.message, { fields: /token/i.test(e.message) && !/address/.test(e.message) ? { token: e.message } : { base_url: e.message } });
+          throw e;
+        }
+        audit3.log({ user: ctx.user, action: "county_connect.connection.save", ip: ctx.ip, details: { host: out2.host, base_url_changed: out2.changed.base_url, token_changed: out2.changed.token, auto_send: CL.describe().auto_send } });
+        return CL.describe();
+      });
+      r.delete("/api/county-connect/connection", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const had = CL.remove();
+        audit3.log({ user: ctx.user, action: "county_connect.connection.remove", ip: ctx.ip, details: { had: !!had, host: had ? new URL(had.base_url).host : void 0 } });
+        return CL.describe();
+      });
+      r.post("/api/county-connect/connection/test", auth3.requireAuth, configOrFiler, async (ctx) => {
+        if (!CL.describe().connected) throw badRequest("Save the county's address and token first.");
+        const out2 = await CL.test();
+        audit3.log({ user: ctx.user, action: "county_connect.connection.test", ip: ctx.ip, success: out2.ok, details: { host: new URL(CL.describe().base_url).host, ok: out2.ok, reason: out2.reason || void 0, outstanding: out2.ok ? out2.status.outstanding.length : void 0 } });
+        return { ...out2, connection: CL.describe() };
+      });
+      r.post("/api/county-connect/send", auth3.requireAuth, auth3.requirePerm("reports:funder"), auth3.requirePerm("budget:read"), auth3.requirePerm("export:read"), async (ctx) => {
+        const v = validate(ctx.body, { from: { type: "string", required: true, maxLen: 10 }, to: { type: "string", required: true, maxLen: 10 } });
+        const { from, to } = period(v.from, v.to);
+        if (to > CC.today()) throw badRequest(`The period ends in the future (${to}). A county submission reports a period that has happened: choose an end date of today or earlier.`);
+        if (!CL.describe().connected) throw badRequest("This server is not connected to a county. An administrator saves the county's address and token under Send to the county \u203A Connect to the county.");
+        const K = require_county();
+        try {
+          return await CL.send({ from, to, user: ctx.user, ip: ctx.ip });
+        } catch (e) {
+          if (e instanceof K.SubmissionError) throw badRequest(`The county file could not be made: ${e.message}`);
+          if (e instanceof CL.ConnectError) throw badRequest(e.message);
+          throw e;
+        }
+      });
+    };
+  }
+});
+
 // server/routes/county.js
 var require_county2 = __commonJS({
   "server/routes/county.js"(exports, module) {
@@ -33894,191 +34997,6 @@ var require_common = __commonJS({
       throw new FhirError(400, `"${raw}" is not a ${type} reference`, { code: "invalid" });
     }
     module.exports = { FHIR_JSON, FHIR_NDJSON, FHIR_VERSION, SYS, PART2_SECURITY, FhirError, outcome, send, sendError, baseUrl, dateClause, refId };
-  }
-});
-
-// server/outbound.js
-var require_outbound = __commonJS({
-  "server/outbound.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var fetchImpl = null;
-    var lookupImpl = null;
-    var fetchOverridden = false;
-    function _setFetchForTests(fn) {
-      fetchImpl = fn || null;
-      fetchOverridden = !!fn;
-    }
-    function _setLookupForTests(fn) {
-      lookupImpl = fn;
-    }
-    var proxyInUse = () => !!(proc.env.HTTPS_PROXY || proc.env.https_proxy) && proc.env.NODE_USE_ENV_PROXY === "1";
-    function resolver() {
-      if (lookupImpl) return lookupImpl;
-      let dns;
-      try {
-        dns = __require("node:dns").promises;
-      } catch {
-        return null;
-      }
-      return (h) => dns.lookup(h, { all: true, verbatim: true });
-    }
-    var soft = (message, extra = {}) => Object.assign(new Error(message), { soft: true }, extra);
-    function privateV4(a) {
-      const [x, y] = a.split(".").map(Number);
-      return x === 0 || x === 10 || x === 127 || x === 100 && y >= 64 && y <= 127 || x === 169 && y === 254 || x === 172 && y >= 16 && y <= 31 || x === 192 && y === 168 || x === 192 && y === 0 || x === 198 && (y === 18 || y === 19) || x >= 224;
-    }
-    function v6groups(a) {
-      let s = a;
-      const quad = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
-      if (quad) {
-        const [p, q, r, t] = quad.slice(1).map(Number);
-        s = s.slice(0, quad.index) + (p << 8 | q).toString(16) + ":" + (r << 8 | t).toString(16);
-      }
-      const halves = s.split("::");
-      if (halves.length > 2) return null;
-      const head = halves[0] ? halves[0].split(":") : [];
-      const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
-      const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
-      if (fill < 0) return null;
-      const g = [...head, ...Array(fill).fill("0"), ...tail].map((h) => parseInt(h, 16));
-      return g.length === 8 && g.every((n) => Number.isInteger(n) && n >= 0 && n <= 65535) ? g : null;
-    }
-    function isPrivateAddress(ip) {
-      const a = String(ip).toLowerCase().replace(/^\[|\]$/g, "").replace(/%.*$/, "");
-      if (/^\d+\.\d+\.\d+\.\d+$/.test(a)) return privateV4(a);
-      const g = v6groups(a);
-      if (!g) return true;
-      const v4of = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
-      if (g.slice(0, 5).every((n) => n === 0) && (g[5] === 65535 || g[5] === 0)) return g[5] === 0 && g[6] === 0 && g[7] <= 1 ? true : privateV4(v4of(g[6], g[7]));
-      if (g[0] === 100 && g[1] === 65435) return true;
-      if (g[0] === 8194) return privateV4(v4of(g[1], g[2]));
-      return (g[0] & 65024) === 64512 || (g[0] & 65472) === 65152 || (g[0] & 65472) === 65216 || (g[0] & 65280) === 65280 || g[0] === 8193 && g[1] === 3512 || g[0] === 8193 && g[1] === 0;
-    }
-    var PRIVATE_HOST = /^(localhost|.*\.local|.*\.internal|.*\.localhost|.*\.home\.arpa|metadata\.google\.internal)$/i;
-    function assertPublicHttps(u) {
-      let url;
-      try {
-        url = new URL(u);
-      } catch {
-        throw soft("not a web address");
-      }
-      if (url.protocol !== "https:") throw soft("not an https address");
-      if (url.username || url.password) throw soft("an address with a user name or password in it is not allowed");
-      const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
-      if (!host || PRIVATE_HOST.test(host)) throw soft("that address is not on the public internet");
-      if (/^\d+\.\d+\.\d+\.\d+$/.test(host) && privateV4(host)) throw soft("that address is not on the public internet");
-      if (host.includes(":")) throw soft("that address is not on the public internet");
-      return url.href;
-    }
-    async function resolvePublic(host, { viaProxy = false } = {}) {
-      const lookup = resolver();
-      if (!lookup) return null;
-      let addrs;
-      try {
-        addrs = await lookup(host);
-      } catch (e) {
-        if (viaProxy && /^(ENOTFOUND|EAI_AGAIN)$/.test(String(e && e.code))) return null;
-        throw describeNetworkError({ cause: e }) || soft("could not find that address");
-      }
-      addrs = (addrs || []).map((x) => typeof x === "string" ? { address: x } : x).map((x) => ({ address: x.address, family: x.family || (String(x.address).includes(":") ? 6 : 4) }));
-      if (!addrs.length || addrs.some((x) => isPrivateAddress(x.address))) throw soft("that address is not on the public internet");
-      return addrs;
-    }
-    async function assertResolvesPublic(url) {
-      const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
-      if (!lookupImpl && fetchOverridden) return;
-      await resolvePublic(host, { viaProxy: proxyInUse() });
-    }
-    function connectLookup(hostname2, options, callback) {
-      if (typeof options === "function") {
-        callback = options;
-        options = {};
-      }
-      resolvePublic(String(hostname2).replace(/^\[|\]$/g, "")).then((addrs) => {
-        if (!addrs) throw soft("could not find that address");
-        const want = options && options.family ? addrs.filter((a) => a.family === options.family) : addrs;
-        if (!want.length) throw soft("could not find that address");
-        if (options && options.all) callback(null, want);
-        else callback(null, want[0].address, want[0].family);
-      }).catch((e) => callback(e));
-    }
-    function pinnedFetch(url, { method = "GET", body, headers = {}, signal, maxBytes = 2 * 1024 * 1024 } = {}) {
-      const https = (init_empty(), __toCommonJS(empty_exports));
-      return new Promise((resolve2, reject) => {
-        const req = https.request(url, { method, headers, signal, lookup: connectLookup, autoSelectFamily: false }, (res) => {
-          const chunks = [];
-          let size = 0;
-          res.on("data", (c) => {
-            size += c.length;
-            if (size > maxBytes + 1) {
-              reject(soft("file is too large"));
-              res.destroy();
-              req.destroy();
-              return;
-            }
-            chunks.push(c);
-          });
-          res.on("end", () => {
-            const h = new Headers();
-            for (const [k, v] of Object.entries(res.headers)) for (const x of [].concat(v)) h.append(k, String(x));
-            const nullBody = [101, 204, 205, 304].includes(res.statusCode);
-            try {
-              resolve2(new Response(nullBody ? null : import_buffer.Buffer.concat(chunks), { status: res.statusCode, statusText: res.statusMessage, headers: h }));
-            } catch (e) {
-              reject(e);
-            }
-          });
-          res.on("error", reject);
-        });
-        req.on("error", reject);
-        if (body !== void 0 && body !== null) req.write(body);
-        req.end();
-      });
-    }
-    function transport(url, opts) {
-      if (fetchImpl) return fetchImpl(url, opts);
-      if (proxyInUse()) return globalThis.fetch(url, opts);
-      return pinnedFetch(url, opts);
-    }
-    var NETWORK_CODES = /^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)$/;
-    var CERT_CODES = /CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)/;
-    function describeNetworkError(e) {
-      const code = e && e.cause && (e.cause.code || e.cause.name) || e && e.code || "";
-      const proxyHint = proc.env.HTTPS_PROXY || proc.env.https_proxy ? proc.env.NODE_USE_ENV_PROXY === "1" ? " HTTPS_PROXY is set; check the proxy allows these sites." : ' HTTPS_PROXY is set but Node only uses it when NODE_USE_ENV_PROXY=1 is set too (docs/DEPLOYMENT.md, "Outbound internet").' : ' If the office network only reaches the internet through a proxy, set HTTPS_PROXY and NODE_USE_ENV_PROXY=1 (docs/DEPLOYMENT.md, "Outbound internet").';
-      if (CERT_CODES.test(String(code))) return soft(`the connection's certificate was not trusted (${code}). A proxy that inspects HTTPS needs its certificate given to Node with NODE_EXTRA_CA_CERTS.`, { network: true });
-      if (NETWORK_CODES.test(String(code)) || /fetch failed/i.test(e && e.message)) return soft(`the computer running SUDS could not reach the internet${code ? ` (${code})` : ""}.${proxyHint}`, { network: true });
-      return null;
-    }
-    async function fetchChecked(url, { timeoutMs = 1e4, maxBytes = 2 * 1024 * 1024, hops = 4, method = "GET", body, headers = {}, check } = {}) {
-      const guard = check || (async (u) => {
-        const href = assertPublicHttps(u);
-        await assertResolvesPublic(href);
-        return href;
-      });
-      let target = await guard(url);
-      let res;
-      for (let i = 0; i <= hops; i++) {
-        try {
-          res = await transport(target, { method, body, signal: AbortSignal.timeout(timeoutMs), redirect: "manual", maxBytes, headers: { "User-Agent": "SUDS", Accept: "*/*", ...headers } });
-        } catch (e) {
-          if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw soft("timed out");
-          throw describeNetworkError(e) || e;
-        }
-        if (res.status < 300 || res.status >= 400) break;
-        const location = res.headers.get("location");
-        if (!location) break;
-        if (i === hops) throw soft("too many redirects");
-        if (method !== "GET") throw soft(`the server answered ${res.status} with a redirect`);
-        target = await guard(new URL(location, target).href);
-      }
-      if (!res.ok) throw soft(`site returned ${res.status}`);
-      if (Number(res.headers.get("content-length") || 0) > maxBytes) throw soft("file is too large");
-      const buf = import_buffer.Buffer.from(await res.arrayBuffer());
-      if (buf.length > maxBytes) throw soft("file is too large");
-      return { buf, url: target, res };
-    }
-    module.exports = { isPrivateAddress, assertPublicHttps, assertResolvesPublic, connectLookup, pinnedFetch, proxyInUse, transport, fetchChecked, describeNetworkError, soft, _setFetchForTests, _setLookupForTests };
   }
 });
 
@@ -44589,6 +45507,7 @@ var init_ = __esm({
       "./routes/clients.js": () => require_clients(),
       "./routes/compliance.js": () => require_compliance(),
       "./routes/consents.js": () => require_consents2(),
+      "./routes/county-connect.js": () => require_county_connect2(),
       "./routes/county.js": () => require_county2(),
       "./routes/dataimport.js": () => require_dataimport2(),
       "./routes/documents.js": () => require_documents(),
@@ -44637,7 +45556,7 @@ var require_idempotency = __commonJS({
     var { sha256: sha2562, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     var TTL_MS = 24 * 3600 * 1e3;
     var MAX_STORED_BYTES = 512 * 1024;
-    var EXEMPT = [/^\/api\/auth\//, /^\/api\/sync\//, /^\/api\/local\//, /^\/api\/setup(\/|$)/, /^\/api\/users(\/|$)/, /^\/api\/admin\/(api-keys|restore|keys-backup)/, /^\/api\/me\/(password|mfa)/];
+    var EXEMPT = [/^\/api\/auth\//, /^\/api\/sync\//, /^\/api\/local\//, /^\/api\/setup(\/|$)/, /^\/api\/users(\/|$)/, /^\/api\/admin\/(api-keys|restore|keys-backup)/, /^\/api\/county-connect\/tokens(\/|$)/, /^\/api\/me\/(password|mfa)/];
     var inflight2 = /* @__PURE__ */ new Map();
     var lastPurge = 0;
     function applies(ctx) {
@@ -44800,9 +45719,10 @@ var require_app2 = __commonJS({
       "fhir",
       "scim",
       "ai",
-      "county"
+      "county",
+      "county-connect"
     ];
-    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "fhir", "security", "scim", "ai", "referral-links", "county"].includes(m));
+    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "fhir", "security", "scim", "ai", "referral-links", "county", "county-connect"].includes(m));
     var LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS \u2014 local mode is off</title>
 <style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.5}h1{font-size:1.4rem}a{color:#0b5}</style></head>
 <body><h1>Local mode is turned off on this server</h1>
@@ -44828,7 +45748,16 @@ var require_app2 = __commonJS({
       /^\/api\/sync\/(push|blob)(\/|$)/
       // a local-mode device's sync payload and attachments
     ];
+    var BODY_LIMIT_HOOKS = /* @__PURE__ */ new Map();
+    function bodyLimitFor(path2, fn) {
+      BODY_LIMIT_HOOKS.set(path2, fn);
+    }
     function bodyLimit(ctx) {
+      const hook = BODY_LIMIT_HOOKS.get(ctx.path);
+      if (hook) {
+        const n = hook(ctx);
+        if (n) return n;
+      }
       const authed = !!ctx.user && !ctx.session?.mfa_pending;
       if (!authed) return ctx.path.startsWith("/api/intake/") || ctx.path.startsWith("/scim/") ? config2.maxJsonBodyBytes : config2.maxUnauthBodyBytes;
       if (ctx.path.startsWith("/api/admin/restore")) return config2.maxRestoreBodyBytes;
@@ -44950,7 +45879,7 @@ var require_app2 = __commonJS({
         }
       };
     }
-    module.exports = { createHandler, rateLimit, rateLimited, rateLimitReset, ROUTE_MODULES, LOCAL_ROUTE_MODULES: LOCAL_ROUTE_MODULES2 };
+    module.exports = { createHandler, rateLimit, rateLimited, rateLimitReset, bodyLimitFor, ROUTE_MODULES, LOCAL_ROUTE_MODULES: LOCAL_ROUTE_MODULES2 };
   }
 });
 
@@ -46946,6 +47875,20 @@ var require_db = __commonJS({
         for (const t of ["county_signing_keys", "county_programmes", "county_submissions"]) {
           const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
           if (!m) throw new Error(`migration 56: no definition for ${t} in schema`);
+          d.exec(m[0]);
+          for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
+        }
+      },
+      // 57: the county connection (docs/COUNTY-VIEW.md, "Connecting"): county_connect_tokens (on a county's server, the
+      //     connection and read tokens it issues, hashed), county_connection and county_connect_sends (on a programme's
+      //     server, the county it sends to, its token encrypted, and what it sent). Office server only, off by default.
+      //     Kept apart from 56 (the county view) so the two can be reviewed and renumbered separately; self-contained
+      //     and idempotent.
+      (d) => {
+        const schemaText = safeSchema();
+        for (const t of ["county_connect_tokens", "county_connection", "county_connect_sends"]) {
+          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+          if (!m) throw new Error(`migration 57: no definition for ${t} in schema`);
           d.exec(m[0]);
           for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
         }

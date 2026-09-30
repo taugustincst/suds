@@ -86,6 +86,9 @@ function housekeeping() {
     // Monthly CalOMS Tx run, if an administrator turned it on (off by default): validates the month before and
     // prepares its submission file (not a disclosure until someone produces it; server/caloms-schedule.js).
     try { require('./caloms-schedule').runIfDue(); } catch (e) { console.error('[suds] CalOMS scheduled run', e && e.message || e); }
+    // Sending the county file to the county over the county connection, if an administrator turned it on (off by
+    // default; server/county-connect-client.js): once a day at most, the periods the county says are outstanding.
+    require('./county-connect-client').autoSendIfDue().catch((e) => console.error('[suds] county connection automatic send', e && e.message || e));
     // Monthly recovery drill, if an administrator turned it on (off by default). Runs in the background.
     require('./dr-drill').runIfDue();
     // A plaintext copy of the database a restore set aside, or a pre-migration snapshot, whose sealing failed:
@@ -106,6 +109,6 @@ for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
   stopping = true;
   console.log('[suds] shutting down…');
   // Flush the log file before exiting, so the last lines (often the reason for the stop) are not lost.
-  // The hour's count of refused referral-link opens goes into the audit log before the database closes.
-  listener.stop(() => { try { require('./referral-links').flushRefusals(); } catch {} try { db.close(); } catch {} require('./log').flush().finally(() => process.exit(0)); });
+  // The hour's count of refused referral-link opens (and county connection calls) goes into the audit log before the database closes.
+  listener.stop(() => { try { require('./referral-links').flushRefusals(); } catch {} try { require('./county-connect').flushRefusals(); } catch {} try { db.close(); } catch {} require('./log').flush().finally(() => process.exit(0)); });
 });

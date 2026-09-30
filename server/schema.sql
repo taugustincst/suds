@@ -1574,3 +1574,57 @@ CREATE TABLE IF NOT EXISTS county_submissions (
   withdrawn_by TEXT REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_county_submissions_programme ON county_submissions(programme_id, period_from, period_to);
+
+-- The county connection (docs/COUNTY-VIEW.md, "Connecting"; server/county-connect.js, server/county-connect-client.js).
+-- Office server only, never synchronised (server/sync-tables.js server_only). Optional and off by default on both sides.
+-- county_connect_tokens, on a county's server: the machine tokens it issues. A connection token (scope county.submit)
+-- belongs to one registered programme and lets that programme's server post its signed file and read what the
+-- county expects of it; a read token (scope county.read) lets the county's own systems read the combined view. Only
+-- the SHA-256 of a token is kept (shown once when issued); neither kind is ever a session.
+CREATE TABLE IF NOT EXISTS county_connect_tokens (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL CHECK (scope IN ('county.submit','county.read')),
+  programme_id TEXT REFERENCES county_programmes(id),   -- a connection token's programme; NULL for a read token
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,     -- SHA-256 of the token, hex
+  prefix TEXT NOT NULL,                -- the token's first characters, to recognise it by
+  expires_at TEXT,                     -- NULL: never (a connection token may be issued without an expiry)
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  created_by TEXT REFERENCES users(id),
+  last_used_at TEXT,
+  last_used_ip TEXT,
+  revoked_at TEXT,
+  revoked_by TEXT REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_county_connect_tokens_programme ON county_connect_tokens(programme_id);
+-- On a programme's server: the county it sends its county submission files to (one row, id 'county'). The token the
+-- county issued is encrypted like every other secret column and never returned to a browser once saved.
+CREATE TABLE IF NOT EXISTS county_connection (
+  id TEXT PRIMARY KEY CHECK (id = 'county'),
+  base_url TEXT NOT NULL,
+  token_enc TEXT NOT NULL,
+  token_hint TEXT,                     -- the token's first characters, to tell which one is saved
+  auto_send INTEGER NOT NULL DEFAULT 0,
+  county_code TEXT,                    -- what the county's status said it is, the last time it was asked
+  county_name TEXT,
+  last_checked_at TEXT,
+  last_check_ok INTEGER,
+  last_check_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_by TEXT REFERENCES users(id)
+);
+-- Each file a programme's server sent to the county over the connection, and the county's answer: never the figures.
+CREATE TABLE IF NOT EXISTS county_connect_sends (
+  id TEXT PRIMARY KEY,
+  period_from TEXT NOT NULL,
+  period_to TEXT NOT NULL,
+  sha256 TEXT,                         -- of the canonical payload sent
+  status TEXT NOT NULL,                -- the county's answer (imported, duplicate, superseded, older, refused) or failed
+  reason TEXT,                         -- a refusal's reason code, or why the send failed
+  county_received_at TEXT,             -- from the county's receipt
+  base_url TEXT NOT NULL,
+  automatic INTEGER NOT NULL DEFAULT 0,
+  sent_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  sent_by TEXT REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_county_connect_sends_sent ON county_connect_sends(sent_at);
