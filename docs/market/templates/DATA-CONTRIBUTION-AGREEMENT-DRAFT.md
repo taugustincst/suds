@@ -113,11 +113,13 @@ carries only the file in section 2 and the County's receipt and status.
 
 ## 8. Figures entered by the County
 
-8.1 `[Applies from SUDS 1.20.0 (built for 1.20.0, not yet released); delete this section if not used.]` Where the
-Programme does not run SUDS, or for a period it did not send a signed file, the County may enter the Programme's
-figures itself, from a document the Programme sent (a report, an invoice backup, a spreadsheet), recording which
-document. SUDS marks them everywhere as **entered by the county — not signed by the program**, counts them
-separately, and can leave them out of any view.
+8.1 `[Applies from SUDS 1.20.0 (built for 1.20.0, not yet released); delete this section if not used.]` Only while
+the Programme is registered with the County as **not on SUDS** (it does not run SUDS and has no signing key
+registered) may the County enter the Programme's figures itself, from a document the Programme sent (a report, an
+invoice backup, a spreadsheet), recording which document. SUDS marks them everywhere as **entered by the county — not
+signed by the program**, counts them separately, and can leave them out of any view. Once the Programme runs SUDS
+and its key is registered, the County enters no more of its figures: those already entered may be withdrawn or
+reinstated but not changed, and a file the Programme signs for a period always counts over them.
 
 8.2 The County enters only the fields in section 2.1, from the Programme's own document, and corrects or withdraws
 an entry when the Programme shows it is wrong. Sections 3 to 6 apply to entered figures as to signed ones.

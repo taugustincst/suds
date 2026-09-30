@@ -40,7 +40,8 @@ line says **"built for 1.20.0, not yet released"** or **[owner to complete]**.
   registered as "not on SUDS", and the county's own staff enter its figures for a period, or import them as a CSV
   in the same tidy layout SUDS exports. They are counted by default, marked everywhere as **"entered by the county
   — not signed by the program"**, counted separately in the headline, and can be left out of any view with one
-  switch ([../COUNTY-VIEW.md](../COUNTY-VIEW.md), *County-entered figures*).
+  switch. A file a grantee signs always counts over figures the county entered, and once a grantee runs SUDS the
+  county enters no more of its figures ([../COUNTY-VIEW.md](../COUNTY-VIEW.md), *County-entered figures*).
 
 What it does **not** get, and must not be promised: a published or public dashboard (the publication screen over
 the combined release is planned, not built); benchmarks or rankings across CBOs (Tier 2, not built); people counted

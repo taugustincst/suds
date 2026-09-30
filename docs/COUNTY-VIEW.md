@@ -252,7 +252,9 @@ ids, periods, fingerprints and hashes, never figures.
 Only a submission whose **whole period lies inside** the chosen period counts; nothing is pro-rated. Where two of
 one programme's counting submissions overlap (a quarter and a month inside it), the **longer** one counts and the
 other is left out, so no day is counted twice (between two of the same length, the earlier-starting, then the
-later-received). A programme whose counting submissions cover only part of the period is shown as *part of the
+later-received). **A signed file always outranks figures the county entered** (*County-entered figures*, below):
+they never push a signed file out, and where they overlap one they are left out ("a signed file covers this"),
+whatever their length. A programme whose counting submissions cover only part of the period is shown as *part of the
 period*. So a county choosing a quarter sees the quarterly files, and choosing a year sees every file inside the
 year; a monthly file never counts toward a period it only partly overlaps. "Counting" means current (not replaced,
 not withdrawn), signed by a key not marked compromised, from an active programme or one kept.
@@ -444,9 +446,12 @@ by the program**.
 
 - **Registering.** County view › Programs › **Add a program not on SUDS**: a name and notes, no key
   (`POST /api/county/programmes { name, notes, not_on_suds: true }`; `county_programmes.on_suds = 0`; audited
-  `county.programme.add` with `on_suds: false`). It has no key, so it can send no signed file and gets no connection
-  token. When it starts running SUDS, the county adds its key (**Keys**): it is then on SUDS, its entered figures stay
-  (marked), and its signed files count by the usual rule (the one made last for a period counts).
+  `county.programme.add` with `on_suds: false`); the message that says it was added offers **Enter figures**. It has
+  no key, so it can send no signed file and gets no connection token. A name already registered, whatever its case or spacing, is refused (`409`, `duplicate_name`) on registering
+  either kind and on renaming, so the long CSV's `program` column and the county's people always name one programme.
+  When it starts running SUDS, the county adds its key (**Add its key**): it is then on SUDS for good, and its entered
+  figures stay, marked. From then on they can be **withdrawn and reinstated but not edited**: no Correct, no new
+  entries or imports (`409`, `on_suds`), and the Submissions list says so (`programme_on_suds`).
 - **Entering figures** (`county:manage`): **Enter figures** for a period — the period, the **source document** the
   figures come from (required: "Q2 report emailed 3 July 2026"), and for each fund its name, grant number, Exhibit E
   allowable use, High Impact Abatement Activity, spending (under its own category, under other categories, pending)
@@ -461,20 +466,47 @@ by the program**.
   and says, by row and column, everything wrong with it (nothing is saved), or shows the periods and funds it holds
   and asks for each fund's Exhibit E use and HIAA (the layout has neither); **Import** then enters every period, all
   or none, each by the same path as the form. Rows of "All funds in the submission" give the totals: if present,
-  every total is needed and the spending totals must equal the funds' added up.
+  every total is needed and the spending totals must equal the funds' added up. **Only this programme's rows are
+  read**: another programme's (the county's own long CSV has every programme in it) are never imported, and the
+  preview, a refusal and the import's message say in one line how many there were and whose. A file with none of
+  this programme's rows is refused. **Download a template for this program** gives the layout with the programme's
+  name, the last complete quarter, its funds as last entered and every measure, the values empty
+  (`GET /api/county/programmes/:id/entries/template?from&to`, `county:manage`, audited `county.entry.template`).
+  Choosing another file clears the check (its preview, categories and Import), and **Import** makes sure the file
+  chosen is still the one checked, unchanged (name, size, time and content), or refuses and asks for a new check.
+- **The `source` column.** The long CSV's `source` is a code, `signed` or `county_entered`, as the read API gives it,
+  and `source_label` says it in words (the About sheet explains both). On import either column may be present;
+  `source` must be one of the codes (or the words, or empty), and a row that says `signed` is **warned about in the
+  preview**: once imported, its figures are entered by the county, not signed. (A signed programme can never share
+  the programme's name: see *Registering*.)
 - **What is checked**, form and CSV alike: strict numbers (digits and one decimal point: up to two decimals for money
   and hours, whole numbers for counts; no thousands separators, currency signs, spaces, signs, exponents, or blank
   for 0), every figure of every fund present, the allow-list's measures and categories only, no fund or CSV cell twice,
   real dates, the start on or before the end, a period that has ended; for a CSV, the header, the programme's own name
-  on every row, at most 12 periods, 5,000 rows and 256 KB. Text is held to the signed files' rule (`cleanText`), and a
-  cell the spreadsheet guard quoted (`'=…`) is read back as its text.
+  on every row it reads, at most 12 periods, 5,000 rows and 256 KB. Text is held to the signed files' rule
+  (`cleanText`), and a cell the spreadsheet guard quoted (`'=…`) is read back as its text. A figure that is not a
+  number is one problem, said at its cell, not also "has no …" for the same fund. Refused entries and imports are
+  **throttled per person** as refused files are (20 in ten minutes, then `429`, audited once per window as
+  `county.entry.throttled`).
 - **Stored** as a county submission with `source = 'county_entered'`, no key and no signature (a CHECK keeps a signed
   row signed and an entered one unsigned), the payload encrypted like a signed one's (`payload_enc`), who entered it
   (`received_by`), when (`received_at`), how (`entered_via`: `form` or `csv`) and the source document
-  (`source_ref_enc`, encrypted; on the county's own Submissions list only, never in the read API). Entering figures
+  (`source_ref_enc`, encrypted; on the county's own Submissions list **for `county:manage` only** — someone who may
+  only view sees that the figures were entered, not the document — and never in the read API). Entering figures
   again for the same period **replaces** the earlier ones by the signed files' rule (`resettle`: the one "made" last
   counts; the earlier kept, marked replaced); **Withdraw** and **Reinstate** are the signed files' own routes;
-  **Correct** on a current entry opens the form filled in with it.
+  **Correct** on a current entry opens the form filled in with its figures (the source document is not carried over:
+  a correction names its own, and the earlier one is said under the field).
+- **Signed outranks entered.** For one period, a signed file counts over figures the county entered, **whatever
+  either's `generated_at`** (`resettle` places signed files first): a signed file made before the county typed the
+  figures in still replaces them, and reinstating the entered figures while a signed file counts leaves them
+  replaced. Across periods, in the combined view, entered figures **never push a signed file out as an overlap**
+  (`choose` places every signed file first): where they overlap one, the signed files count and the entered figures
+  are left out, listed with `why: "signed_covers"`, "a signed file covers this". Two entered periods that overlap
+  follow the usual longer-counts rule between themselves.
+- **The county connection.** A programme that joined SUDS may get a connection token; its `/v1/status` counts only
+  its **signed** files as received: figures the county entered never make a period received or take it off the
+  outstanding list. Each `received` item carries `source`, so the programme sees the entered ones for what they are.
 - **Counted by the same rule** (`countingSubs`, `coverage`, `filesCount`): an entered quarter counts in a quarter as a
   signed quarter does, and a programme's entered and signed files are combined as any two of its files are.
 - **Marked everywhere.** The combined view: each programme's **Source** (*Signed by the program*, *Entered by the
@@ -482,19 +514,22 @@ by the program**.
   heading, and under each total the part of it entered by the county; the **headline counts them separately** ("Of
   the 3 with figures, 1 has figures entered by the county — not signed by the program."). By quarter: the part of each
   quarter's total, and the count in its heading. Excel and CSV: the column heading, a column *Of the total, entered by
-  the county*, the Submissions sheet's *Source* column and an About row. The tidy CSV: a ninth column, `source`. The
+  the county*, the Submissions sheet's *Source* column and About rows (the *Report* line names entered figures only
+  when the file has some). The tidy CSV: `source` (`signed` or `county_entered`) and `source_label`. The
   read API: `source` per programme and per submission, `total_entered` per row, a tidy-CSV `source` column and rows
   of the entered part, and `/v1/programs`' `on_suds`, `source` and each period's `source`.
 - **Leaving them out.** Counted by default; **Leave out figures entered by the county** on the combined view (and
-  `&entered=exclude` on the view, its export and `/v1/combined`) takes them away before the counting rule is applied:
+  `&entered=exclude` on the view, its export and `/v1/combined`; `entered` takes only `include` or `exclude`, anything
+  else is refused with `400` rather than read as "include") takes them away before the counting rule is applied:
   a programme not on SUDS with no signed file is no column, a programme with both keeps its signed files only, and the
   page, headline and files say what was left out (`entered_left_out`). Every total then drops by exactly its entered
   part (`test/county-entry.test.js`).
 - **Audited** without figures or typed text: `county.entry.create` (a first entry for the period) and
   `county.entry.update` (one that replaces figures or a file), `county.entry.import` (the file's SHA-256, its rows and
   each entry's id, period, hash and status), `county.entry.refuse` (the reason, the fields or the number of rows
-  wrong; never the values), `county.entry.withdraw` (with the reason), `county.entry.reinstate`, and `county.view`
-  with `what: "entry"` for the correction form.
+  wrong; never the values), `county.entry.withdraw` (with the reason), `county.entry.reinstate`,
+  `county.entry.template` (the period and the number of funds), `county.entry.throttled`, and `county.view` with
+  `what: "entry"` for the correction form.
 
 What it is not: a way to make a programme's figures look signed. Nothing about an entered figure is signed; the
 county's staff are accountable for it through the audit log and the source document, and the data contribution
