@@ -4,6 +4,19 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+## 1.21.0 — 2026-09-30
+
+A feature release (migrations 61, 62 and 63; the county publication, field-device, authenticator allow-list and
+county reminder routes; no new permission), released under a policy exception inside 1.20.0's 28 days
+(docs/RELEASE.md, *Record: 1.21.0*). It builds what the documents called planned: a screened **publication release**
+of the combined county figures, **field devices** that hold only what a field worker needs, with **participant
+codes first** for outreach, an **authenticator allow-list** for passkeys, **award amounts** in the county file
+(version 2) and **reminders** when a county file is due. It adds a threat model and fuzz tests for the county
+surface and SUDS Server, a check of the release documents against the repository, a county evidence packet, the
+evidence re-run on 1.20.0, and a test that keeps the documents' content current. Upgrading runs migrations 61 to 63
+on start; field devices, participant codes first and the allow-list are off until an administrator turns them on.
+Upgrade a county's server before its programmes send version 2 files (docs/COUNTY-VIEW.md, *Award amounts*).
+
 ### Security: the county surface's threat model and fuzz tests
 
 Built for 1.21.0, not yet released. No migration.
@@ -147,7 +160,7 @@ Evidence and tests only; no change to what SUDS does.
 - Citations moved to this evidence: the evidence index, BACKUP-AND-DR, the questionnaire's recovery answer and the
   county RFI answers (drills; the security contact now cites SECURITY.md, the named address still owner-pending).
 
-### Field devices and minimal personal information (stream F)
+### Field devices and minimal personal information
 
 Built for 1.21.0, not yet released. Migration 62 (61 is kept for another 1.21.0 change). Both features are off unless
 an administrator turns them on.
@@ -221,7 +234,7 @@ makes a screened, publishable release of a county's combined figures for a perio
   `test/county-publication-sdc.test.js`, one of the SDC sweeps. Browser script `scripts/ui/county-publication.mjs`
   (the suite is now 56 scripts, with `field-device.mjs`), and the Publish tab and its dialogs in `scripts/ui/accessibility.mjs`.
 
-### Review fixes (1.21 integration review)
+### Fixed: defects found by the integration review
 
 - **Upgrading from 1.19.0 left passkeys unconfigured** (the finding of the 1.20.0 installer run): the documented
   command ran the installed 1.19.0 `upgrade.sh`, which does not add `WEBAUTHN_RP_ID`/`WEBAUTHN_ORIGINS`.
