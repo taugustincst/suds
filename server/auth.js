@@ -283,7 +283,7 @@ function caseloadFilter(user, col = 'c.id') {
 
 // ---- Sessions ----
 const COOKIE = 'suds_session';
-function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = 'password', passkeyId = null, syncClient = false } = {}) {
+function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = 'password', passkeyId = null, syncClient = false, deviceId = null } = {}) {
   const token = randomToken(32);
   const now = new Date();
   const expires = new Date(now.getTime() + policy().absoluteHours * 3600 * 1000);
@@ -291,8 +291,9 @@ function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauth
   // reauth_method says which: "Require fingerprint or authenticator for signing" counts only a passkey or a code.
   // passkey_id: the passkey that opened it, so removing that passkey ends it (server/passkeys.js remove).
   // sync_client: a device's sync sign-in, for which a passkey is not a second factor (requireAuth, mfaDeadline).
-  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method,passkey_id,sync_client) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource, now.toISOString(), reauthMethod, passkeyId, syncClient ? 1 : 0);
+  // device_id: the device a sync sign-in came from (1.21.0), so its scope is read from the office's own record of it.
+  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method,passkey_id,sync_client,device_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource, now.toISOString(), reauthMethod, passkeyId, syncClient ? 1 : 0, deviceId);
   return token;
 }
 // ---- recent re-authentication (the electronic-signature step) ----
@@ -560,6 +561,12 @@ function resolveSession(ctx) {
 function requireAuth(ctx) {
   if (!ctx.user) throw unauthorized();
   if (ctx.session?.mfa_pending) throw new HttpError(401, 'MFA verification required', { mfaRequired: true });
+  // A field device's sync session (1.21.0, server/field-scope.js) reaches the sync routes and nothing else: the scope
+  // is what the device may hold, and the rest of the API would hand it everything its user may read.
+  if (ctx.session?.device_id && !ctx.path.startsWith('/api/sync/') && !ctx.path.startsWith('/api/auth/')) {
+    const dev = db.one(`SELECT sync_scope FROM devices WHERE id=?`, ctx.session.device_id);
+    if (dev && dev.sync_scope === 'field') throw new HttpError(403, 'A field device\'s sync session can only sync', { fieldDevice: true });
+  }
   if (!ctx.path.startsWith('/api/auth/')) {
     // Roles the county marks as requiring two-step verification cannot reach anything once their grace
     // period has run out. This used to be advisory — the login response said so and nothing stopped the
@@ -714,6 +721,9 @@ async function login({ username, password, ctx }) {
       throw new HttpError(403, 'This device has been revoked and can no longer sync. Contact your administrator.', { deviceRevoked: true, wipeRequested: !!device.wipe_requested_at, deviceWipeRequired: !!device.wipe_requested_at || undefined });
     }
     if (device.wipe_requested_at) { pendingWipe = device; wipeRequired(true); }
+    // Its user may make it a field device as they enrol it (the sync form's "Keep only what I need in the field"):
+    // narrowing only. Widening what a phone holds back to everything is an administrator's decision (devices.js).
+    if (ctx.body && ctx.body.field_device === true && device.sync_scope !== 'field') devices.setScope(device.id, 'field', { actor: user, ip: ctx.ip, via: 'enrolment' });
   }
   const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
   // The second step is the authenticator code, or the fingerprint: with two-step verification on, either; for a role
@@ -726,12 +736,15 @@ async function login({ username, password, ctx }) {
   const syncClient = !!ctx.headers['x-sync-client'];
   const passkeyStep = passkeyStepOwed(user, { syncClient });
   const mfaPending = !!user.mfa_enabled || (mfaRequiredForRole && passkeyStep);
-  const token = createSession(user, ctx, { mfaPending, syncClient });
+  const token = createSession(user, ctx, { mfaPending, syncClient, deviceId: syncClient ? deviceId : null });
   // A password sign-in while SSO is required is the break-glass path: said so in the audit trail and the log.
   if (emergency) console.warn(`[suds] emergency (break-glass) password sign-in by ${user.username} while single sign-on is required`);
   audit.log({ user, action: mfaPending ? 'auth.login.mfa_pending' : 'auth.login', ip: ctx.ip, details: emergency ? { emergency_account: true } : undefined });
   const deadline = mfaDeadline(user, { passkeyCounts: !syncClient });
-  return { token, user: publicUser(user), mfaPending, mfaMethods: mfaPending ? mfaMethods(user, { syncClient }) : undefined, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled && !passkeyStep, mfaSetupDeadline: deadline };
+  // A device is told its scope as it signs in (1.21.0): one that changed scope sends what it has first (local/sync.js).
+  const dev = deviceId && syncClient ? db.one(`SELECT sync_scope FROM devices WHERE id=?`, deviceId) : null;
+  return { token, user: publicUser(user), mfaPending, mfaMethods: mfaPending ? mfaMethods(user, { syncClient }) : undefined, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled && !passkeyStep, mfaSetupDeadline: deadline,
+    device: dev ? { scope: dev.sync_scope } : undefined };
 }
 /**
  * Whether a sign-in that proved only one factor (a password, or single sign-on whose provider did not assert

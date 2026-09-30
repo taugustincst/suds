@@ -14,6 +14,7 @@ import audit from '../server/audit.js';
 import { HttpError } from '../server/http.js';
 import { encrypt, decrypt, blindIndex, uuid } from '../server/crypto.js';
 import SYNC from '../server/sync-tables.js';
+import FIELD from '../server/field-scope.js';
 import SUPPLIES from '../server/supplies.js';
 import NOTE_RULES from '../server/rules/notes.js';
 import TASK_RULES from '../server/rules/tasks.js';
@@ -185,6 +186,10 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
     // record lives on -- unless another account on this shared device still has them on its caseload.
     for (const id of payload.dropped_clients || []) {
       if (typeof id !== 'string') continue;
+      if (!db.one(`SELECT 1 FROM clients WHERE id=?`, id)) continue; // a field device is told of every client it may not hold
+      // A client with changes made here that the office has not had stays until they are sent (a field device pushes
+      // before it narrows, local/sync.js run; this is the rest: a visit recorded here since).
+      if (hasUnsent(id)) { skipped.push({ table: 'clients', id, reason: 'kept on this device: it has changes not yet sent to the office' }); continue; }
       if (officeUserId && db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id<>? AND ${auth.activeAssignment()}`, id, officeUserId)) continue;
       db.savepoint(() => {
         const removed = SYNC.purgeClient(db, id);
@@ -219,6 +224,7 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
       db.savepoint(() => { db.run(`DELETE FROM ${t.name} WHERE id=?`, id); db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, id); },
         (err) => skipped.push({ table: t.name, id, reason: String(err && err.message || 'could not be removed').slice(0, 200) }));
     }
+    if (payload.device_scope === 'field' && payload.field && typeof payload.field.window_start === 'string') pruneField(payload.field.window_start);
     keepNotices(payload.notices);
     if ((payload.dropped_rows || []).length) audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.scope_removed', details: { rows: payload.dropped_rows.length } });
     // This person's own per-user grants and denies (1.15.0), so the kernel applies the permissions the office
@@ -235,6 +241,81 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
     settleSupplies(payload, officeUserId, skipped);
   });
   return counts;
+}
+
+// ---- field devices (built for 1.21.0, not yet released; server/field-scope.js) ----
+// The office decides what a field device holds and sends nothing else. What this device does is tidy up what it
+// already had: everything from before it became a field device (resetForField), and contacts that have since left the
+// window (pruneField). Never a row with changes made here that the office has not had: those stay until they are sent.
+const untouched = (table, alias = 'x') => `EXISTS (SELECT 1 FROM sync_seen s WHERE s.table_name='${table}' AND s.id=${alias}.id AND s.updated_at IS COALESCE(${alias}.updated_at, ${alias}.created_at))`;
+const hasTable = (name) => !!db.one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, name);
+/** Whether anything about this client was changed here and not yet sent (the client row or a row that names it). */
+function hasUnsent(clientId) {
+  for (const t of SYNC.tables) {
+    if (!hasTable(t.name)) continue;
+    const col = t.name === 'clients' ? 'id' : t.clientCol;
+    if (!col) continue;
+    if (db.one(`SELECT 1 FROM ${t.name} x WHERE x.${col}=? AND NOT ${untouched(t.name)} LIMIT 1`, clientId)) return true;
+  }
+  return false;
+}
+/** The rows of other tables that point at a row of `name` (so a parent is never removed from under a kept child). */
+function referencesTo(name) {
+  const refs = [];
+  for (const t of SYNC.tables) {
+    if (t.parent && t.parent[0] === name) refs.push([t.name, t.parent[1]]);
+    if (t.selfParent && t.name === name) refs.push([t.name, t.selfParent]);
+    if (name === 'clients' && t.clientCol && t.name !== 'clients') refs.push([t.name, t.clientCol]);
+  }
+  if (name === 'clients') refs.push(['clients', 'merged_into']);
+  return refs.filter(([tn]) => hasTable(tn));
+}
+/** Remove the rows of `t` that were exchanged and not changed here since, and that nothing kept still points at. */
+function removeUntouched(t, extra = '', params = []) {
+  if (!hasTable(t.name)) return 0;
+  const keep = referencesTo(t.name).map(([tn, col]) => `AND NOT EXISTS (SELECT 1 FROM ${tn} r WHERE r.${col}=x.id${tn === t.name ? ' AND r.id<>x.id' : ''})`).join(' ');
+  const ids = db.all(`SELECT x.id FROM ${t.name} x WHERE ${untouched(t.name)} ${extra} ${keep}`, ...params).map(r => r.id);
+  let n = 0;
+  for (const id of ids) {
+    db.savepoint(() => { db.run(`DELETE FROM ${t.name} WHERE id=?`, id); db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, id); n++; }, () => {});
+  }
+  return n;
+}
+/**
+ * This device became a field device (the office said so as it signed in, or in its pull: `field_reset`). Everything
+ * it holds that a field device may not, or holds in part, goes: the rows of every table that is not sent whole to a
+ * field device, exchanged and unchanged here (children first). The pull then starts again from the beginning for
+ * every account on the device and brings back exactly what the field scope allows. Tables sent whole (supplies, the
+ * lists, the directory, staff accounts) are kept as they are. Rows with changes not yet sent are kept and named.
+ */
+export function resetForField(skipped = []) {
+  const counts = {};
+  db.transaction(() => {
+    for (const t of [...SYNC.tables].reverse()) {
+      const d = FIELD.decision(t.name);
+      if (d && d.decision === 'include') continue;
+      const n = removeUntouched(t);
+      if (n) counts[t.name] = n;
+      if (hasTable(t.name)) for (const r of db.all(`SELECT x.id FROM ${t.name} x WHERE NOT ${untouched(t.name)}`)) if (!d || d.decision === 'exclude') skipped.push({ table: t.name, id: r.id, reason: 'kept on this device: it has changes not yet sent to the office' });
+    }
+    db.run(`DELETE FROM settings WHERE key='sync_cursor' OR key LIKE 'sync_cursor:%' OR key LIKE 'sync_scope:%'`);
+  });
+  audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.field_reset', details: { rows: counts } });
+  return counts;
+}
+/** A field device's contacts and overdose reports that have left the window (the office sends none older). */
+function pruneField(windowStart) {
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(windowStart)) return;
+  const old = (alias) => `${alias}.occurred_at < ?`;
+  if (hasTable('intervention_supplies')) removeUntouched({ name: 'intervention_supplies' }, `AND x.intervention_id IN (SELECT i.id FROM interventions i WHERE ${old('i')} AND ${untouched('interventions', 'i')})`, [windowStart]);
+  removeUntouched({ name: 'interventions' }, `AND ${old('x')}`, [windowStart]);
+  removeUntouched({ name: 'overdose_events' }, `AND ${old('x')}`, [windowStart]);
+}
+/** What this device holds, as the office last said (its This device page). */
+export function scopeStatus() {
+  let field = null; try { field = JSON.parse(db.getSetting('device_field', 'null')); } catch { field = null; }
+  const scope = db.getSetting('device_sync_scope', null);
+  return { scope, field: scope === 'field' ? field : null };
 }
 
 /** One office row into the local database. True when it was stored; false when our own edit is newer. */
@@ -514,14 +595,64 @@ export function resetExchangeState() {
 export const RESTORED_MESSAGE = 'The office database was restored from a backup; re-sending this device\'s records';
 const generationOf = (pulled) => (pulled.db_generation === null || pulled.db_generation === undefined ? '' : String(pulled.db_generation));
 
+
+/** Send everything this device has that the office has not: rows in chunks, then its deletions and its audit trail. */
+async function pushAll(server, token, officeUserId, onProgress) {
+  onProgress('Uploading this device\'s changes…');
+  const deviceNow = db.now();
+  const pending = localRows(officeUserId);
+  const chunks = chunkRows(pending);
+  const pushedCounts = {}; const rejected = []; const conflicts = [];
+  for (let i = 0; i < chunks.length; i++) {
+    if (chunks.length > 1) onProgress(`Uploading this device's changes (${i + 1} of ${chunks.length})…`);
+    const res = await call(server, '/api/sync/push', { method: 'POST', body: JSON.stringify({ device_now: deviceNow, tables: chunks[i] }) }, token);
+    const rejectedIds = new Set((res.rejected || []).map(x => x.table + ':' + x.id));
+    rejected.push(...(res.rejected || [])); conflicts.push(...(res.conflicts || []));
+    for (const w of res.warnings || []) conflicts.push({ table: w.table, id: w.id, label: null, columns: [], reason: w.reason, warning: true });
+    for (const [k, v] of Object.entries(res.applied || {})) if (typeof v === 'number') pushedCounts[k] = (pushedCounts[k] || 0) + v;
+    // A row counts as exchanged only if the office did not reject it -- or if it rejected it for good.
+    db.transaction(() => {
+      for (const [table, rows] of Object.entries(chunks[i])) for (const r of rows) if (!rejectedIds.has(table + ':' + r.id)) seen(table, r.id, stamp(r));
+      settleRejections(res.rejected || [], chunks[i], conflicts);
+    });
+  }
+
+  // ---- tombstones and this device's audit trail ----
+  // Only our own deletions go up: one the office sent us (sync_server_tombstones) is its record, and
+  // echoing it back shifted by this phone's clock offset rewrote the office's deletion time every sync.
+  const tombstones = pendingTombstones();
+  const auditRows = db.all(`SELECT at, action, entity, entity_id, client_id, success, details FROM audit_log WHERE at > ? AND action NOT LIKE 'sync.%' ORDER BY at, id LIMIT 2000`, db.getSetting('audit_pushed', NEVER));
+  if (tombstones.length || auditRows.length) {
+    const res = await call(server, '/api/sync/push', { method: 'POST', body: JSON.stringify({ device_now: deviceNow, tombstones, audit: auditRows }) }, token);
+    const rejectedIds = new Set((res.rejected || []).map(x => x.table + ':' + x.id));
+    rejected.push(...(res.rejected || []));
+    const permanent = new Set((res.rejected || []).filter(x => isPermanent(x)).map(x => x.table + ':' + x.id));
+    db.transaction(() => {
+      // Only forget the tombstones the office actually accepted; a rejected delete stays pending so the
+      // device does not end up silently diverging from the office copy -- unless the office has said it
+      // will never take it, in which case the office copy is the truth and the next pull restores it.
+      for (const ts of tombstones) if (!rejectedIds.has(ts.table_name + ':' + ts.id) || permanent.has(ts.table_name + ':' + ts.id)) db.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, ts.table_name, ts.id);
+    });
+    db.setSetting('sync_pushed', deviceNow);
+    // Advance the audit cursor only past rows that were actually sent, never to "now" — anything above
+    // the page limit has to go next time rather than being dropped.
+    if (auditRows.length) db.setSetting('audit_pushed', auditRows[auditRows.length - 1].at);
+  } else {
+    db.setSetting('sync_pushed', deviceNow);
+  }
+
+  return { pushedCounts, rejected, conflicts };
+}
+
 /** Full sync: sign in to the office server, pull changes, push local changes, record the cursor. */
-export async function run({ server, username, password, code, onProgress = () => {} }) {
+export async function run({ server, username, password, code, fieldDevice = false, onProgress = () => {} }) {
   if (!server) throw new HttpError(400, 'Office server address is required');
   assertNotStaticHost();
   onProgress('Signing in to the office server…');
   let login;
   try {
-    login = await call(server, '/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+    // field_device: its user asks for this device to be a field device as they enrol it (narrowing only; server/auth.js).
+    login = await call(server, '/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password, ...(fieldDevice ? { field_device: true } : {}) }) });
   } catch (e) {
     // The office server has told this specific device (not the account) to erase itself, the moment it
     // tried to sign in — before any session or data exchange happened. Nothing else in the payload can be
@@ -553,6 +684,27 @@ export async function run({ server, username, password, code, onProgress = () =>
     const pullConflicts = []; const skipped = []; const notices = [];
     // ---- pull, page by page ----
     const officeUserId = (login.user && login.user.id) || username;
+    // The office says what this device is as it signs in (server/auth.js login). When that changed since the last sync,
+    // what was recorded here goes up first, under the scope it was recorded in, so nothing is lost when the device
+    // then narrows: a device that became a field device removes what it may no longer hold before pulling again.
+    const officeScope = login.device && ['full', 'field'].includes(login.device.scope) ? login.device.scope : null;
+    const heldScope = db.getSetting('device_sync_scope', 'full');
+    let earlyPushed = {}; const earlyRejected = []; const earlyConflicts = [];
+    let fieldResetDone = false;
+    if (officeScope && officeScope !== heldScope) {
+      onProgress(officeScope === 'field' ? 'This device is now a field device: sending its changes first…' : 'This device now holds everything again: sending its changes first…');
+      // A device that has never synced has nothing the office has not had yet that belongs to it (its first pull
+      // turns its own account into the office's before anything goes up), so it just starts in the new scope.
+      if (db.getSetting('last_sync_at', null)) {
+        const first = await pushAll(server, token, officeUserId, onProgress);
+        earlyPushed = first.pushedCounts; earlyRejected.push(...first.rejected); earlyConflicts.push(...first.conflicts);
+      }
+      if (officeScope === 'field') {
+        onProgress('Removing what a field device does not keep…');
+        resetForField(skipped); fieldResetDone = true;
+        notices.push('This device is now a field device: it keeps only what you need in the field. Everything else was removed from it (nothing was deleted at the office).');
+      } else notices.push('This device is no longer a field device: it downloaded everything you may see.');
+    }
     let since = readCursor(officeUserId, username);
     const applied = {}; let pages = 0; let serverNow = null; let generationReset = false;
     // Backfill pages (the records of clients newly assigned to this person, which the office sends in pages
@@ -591,7 +743,13 @@ export async function run({ server, username, password, code, onProgress = () =>
         pages++;
         continue;
       }
+      // The office's own word that this device must start again as a field device (its scope key changed).
+      if (pulled.field_reset && !fieldResetDone) { resetForField(skipped); fieldResetDone = true; }
       const counts = applyPull(pulled, pullConflicts, skipped, officeUserId);
+      if (pulled.device_scope === 'field' || pulled.device_scope === 'full') {
+        db.setSetting('device_sync_scope', pulled.device_scope);
+        db.setSetting('device_field', JSON.stringify(pulled.device_scope === 'field' && pulled.field ? { window_days: pulled.field.window_days, holds: pulled.field.holds } : null));
+      }
       for (const [k, v] of Object.entries(counts)) applied[k] = (applied[k] || 0) + v;
       serverNow = pulled.server_now;
       // The cursor is opaque here: a plain timestamp, or one carrying the office's backfill position. It is
@@ -605,49 +763,11 @@ export async function run({ server, username, password, code, onProgress = () =>
       if (++pages > 200) break;
     }
 
-    // ---- push, in chunks ----
-    onProgress('Uploading this device\'s changes…');
-    const deviceNow = db.now();
-    const pending = localRows(officeUserId);
-    const chunks = chunkRows(pending);
-    const pushedCounts = {}; const rejected = []; const conflicts = [...pullConflicts];
-    for (let i = 0; i < chunks.length; i++) {
-      if (chunks.length > 1) onProgress(`Uploading this device's changes (${i + 1} of ${chunks.length})…`);
-      const res = await call(server, '/api/sync/push', { method: 'POST', body: JSON.stringify({ device_now: deviceNow, tables: chunks[i] }) }, token);
-      const rejectedIds = new Set((res.rejected || []).map(x => x.table + ':' + x.id));
-      rejected.push(...(res.rejected || [])); conflicts.push(...(res.conflicts || []));
-      for (const w of res.warnings || []) conflicts.push({ table: w.table, id: w.id, label: null, columns: [], reason: w.reason, warning: true });
-      for (const [k, v] of Object.entries(res.applied || {})) if (typeof v === 'number') pushedCounts[k] = (pushedCounts[k] || 0) + v;
-      // A row counts as exchanged only if the office did not reject it -- or if it rejected it for good.
-      db.transaction(() => {
-        for (const [table, rows] of Object.entries(chunks[i])) for (const r of rows) if (!rejectedIds.has(table + ':' + r.id)) seen(table, r.id, stamp(r));
-        settleRejections(res.rejected || [], chunks[i], conflicts);
-      });
-    }
-
-    // ---- tombstones and this device's audit trail ----
-    // Only our own deletions go up: one the office sent us (sync_server_tombstones) is its record, and
-    // echoing it back shifted by this phone's clock offset rewrote the office's deletion time every sync.
-    const tombstones = pendingTombstones();
-    const auditRows = db.all(`SELECT at, action, entity, entity_id, client_id, success, details FROM audit_log WHERE at > ? AND action NOT LIKE 'sync.%' ORDER BY at, id LIMIT 2000`, db.getSetting('audit_pushed', NEVER));
-    if (tombstones.length || auditRows.length) {
-      const res = await call(server, '/api/sync/push', { method: 'POST', body: JSON.stringify({ device_now: deviceNow, tombstones, audit: auditRows }) }, token);
-      const rejectedIds = new Set((res.rejected || []).map(x => x.table + ':' + x.id));
-      rejected.push(...(res.rejected || []));
-      const permanent = new Set((res.rejected || []).filter(x => isPermanent(x)).map(x => x.table + ':' + x.id));
-      db.transaction(() => {
-        // Only forget the tombstones the office actually accepted; a rejected delete stays pending so the
-        // device does not end up silently diverging from the office copy -- unless the office has said it
-        // will never take it, in which case the office copy is the truth and the next pull restores it.
-        for (const ts of tombstones) if (!rejectedIds.has(ts.table_name + ':' + ts.id) || permanent.has(ts.table_name + ':' + ts.id)) db.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, ts.table_name, ts.id);
-      });
-      db.setSetting('sync_pushed', deviceNow);
-      // Advance the audit cursor only past rows that were actually sent, never to "now" — anything above
-      // the page limit has to go next time rather than being dropped.
-      if (auditRows.length) db.setSetting('audit_pushed', auditRows[auditRows.length - 1].at);
-    } else {
-      db.setSetting('sync_pushed', deviceNow);
-    }
+    // ---- push ----
+    const { pushedCounts, rejected, conflicts: pushConflicts } = await pushAll(server, token, officeUserId, onProgress);
+    const conflicts = [...pullConflicts, ...earlyConflicts, ...pushConflicts];
+    rejected.unshift(...earlyRejected);
+    for (const [k, v] of Object.entries(earlyPushed)) pushedCounts[k] = (pushedCounts[k] || 0) + v;
 
     // ---- attachments ----
     const uploaded = await uploadBlobs(server, token, onProgress);
@@ -664,9 +784,9 @@ export { applyPull, localRows, chunkRows };
 export function register(router) {
   // The tables are made when the database is opened (local/kernel.js openDatabase): a locked device has none open here.
   router.post('/api/local/sync', auth.requireAuth, async (ctx) => {
-    const { server, username, password, code } = ctx.body || {};
-    return run({ server, username: username || ctx.user.username, password, code });
+    const { server, username, password, code, field_device: fieldDevice } = ctx.body || {};
+    return run({ server, username: username || ctx.user.username, password, code, fieldDevice: fieldDevice === true });
   });
   router.get('/api/local/sync/status', auth.requireAuth, () => ({ last_sync_at: db.getSetting('last_sync_at', null), server: db.getSetting('sync_server', null), username: db.getSetting('sync_username', null),
-    pending: localRows().length }));
+    pending: localRows().length, device: scopeStatus() }));
 }

@@ -30,6 +30,10 @@ const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'progra
   // SUPRT-A (server/suprt.js): the SOR grant and site IDs every record carries, and whether the reassessment
   // is due at 3 or 6 months.
   'suprt_grant_id', 'suprt_site_id', 'suprt_reassessment_months',
+  // Minimal personal information (built for 1.21.0, not yet released): new clients and outreach contacts start with a
+  // participant code instead of a name; new devices start as field devices, and the window a field device holds
+  // (server/field-scope.js). All three are off (or 90 days) unless an administrator changes them.
+  'participant_code_default', 'field_device_default', 'field_device_window_days',
   // The programme profile and its module switches (server/programme.js): presentation, not permissions.
   ...require('../programme').SETTING_KEYS];
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
@@ -75,7 +79,8 @@ module.exports = (r) => {
         if (k === 'self_signup' && v !== '' && !['0', '1'].includes(v)) throw badRequest('self_signup must be 1 (on) or 0 (off)');
         // The programme's calendar (server/routes/budget.js orgTimezone): an IANA name this server knows.
         if (k === 'org_timezone' && v !== '' && !require('./budget').validTimezone(v)) throw badRequest('org_timezone must be a time zone name such as America/Los_Angeles');
-        if (['mfa_require_all', 'sso_required', 'dr_drill_monthly', 'passkey_signin', 'passkey_signing', 'sign_strong_required'].includes(k) && v !== '' && !['0', '1'].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
+        if (['mfa_require_all', 'sso_required', 'dr_drill_monthly', 'passkey_signin', 'passkey_signing', 'sign_strong_required', 'participant_code_default', 'field_device_default'].includes(k) && v !== '' && !['0', '1'].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
+        if (k === 'field_device_window_days' && v !== '') { const FS = require('../field-scope'); if (!(Number.isInteger(Number(v)) && Number(v) >= FS.WINDOW_MIN && Number(v) <= FS.WINDOW_MAX)) throw badRequest(`field_device_window_days must be a whole number of days from ${FS.WINDOW_MIN} to ${FS.WINDOW_MAX}`); }
         if (['dr_rto_target_minutes', 'dr_rpo_target_hours'].includes(k) && v !== '' && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
         if (k === 'mfa_required_roles') v = v.split(',').map(x => x.trim()).filter(x => ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'].includes(x)).join(',');
         if (k === 'sign_reauth_minutes' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 60)) throw badRequest('sign_reauth_minutes must be a whole number of minutes from 0 (always ask) to 60');
@@ -346,6 +351,14 @@ module.exports = (r) => {
     db.run(`UPDATE devices SET revoked_at=NULL, wipe_requested_at=NULL WHERE id=?`, d.id);
     audit.log({ user: ctx.user, action: 'device.clear', entity: 'device', entityId: d.id, ip: ctx.ip, details: { device_user: d.user_id } });
     return { ok: true };
+  });
+  // What a device's sync carries (built for 1.21.0, not yet released; server/field-scope.js): 'full' or 'field'. The
+  // change reaches the device at its next sync (server/devices.js setScope); audited there as device.scope.
+  r.post('/api/admin/devices/:id/scope', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    const d = findDevice(ctx);
+    const { scope } = validate(ctx.body, { scope: { type: 'string', required: true, enum: require('../devices').SCOPES } });
+    const changed = require('../devices').setScope(d.id, scope, { actor: ctx.user, ip: ctx.ip, via: 'admin' });
+    return { ok: true, changed: !!changed, scope };
   });
 
   r.get('/api/admin/stats', auth.requireAuth, auth.requirePerm('settings:manage'), () => ({

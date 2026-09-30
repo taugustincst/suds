@@ -27,6 +27,9 @@ module.exports = {
     // Caseload restriction (1.16.0): with each person's own grants and denies (pull's permission_overrides), a
     // device holds a person the office holds to their caseload to it too (server/auth.js caseloadRestricted).
     'caseload_restriction',
+    // Whether new clients and outreach contacts start with a participant code instead of a name (1.21.0): a device's
+    // forms start the way its office's do. (A field device's scope and window are the office's alone: server/field-scope.js.)
+    'participant_code_default',
     // The programme profile and module switches (server/programme.js): a device shows what its office shows.
     ...require('./programme').SETTING_KEYS],
   tables: [
@@ -41,7 +44,9 @@ module.exports = {
     { name: 'funding_sources', enc: [], scope: 'all', writePerm: 'budget:manage', redact: { perm: 'budget:read', cols: { total_amount: 0, grant_number: null, restrictions: null, notes: null } } },
     { name: 'budget_lines', enc: [], scope: 'all', writePerm: 'budget:manage', parent: ['funding_sources', 'funding_source_id'], selfParent: 'parent_id', redact: { perm: 'budget:read', cols: { allocated_amount: 0, notes: null } } },
     // merged_into points at another client: the record that was kept must land before its duplicate.
-    { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc', 'legal_hold_reason_enc', 'legal_hold_cleared_reason_enc', 'removed_reason_enc', 'contact_preferences_enc'], legacy: { legal_hold_reason: 'legal_hold_reason_enc', contact_preferences: 'contact_preferences_enc' }, scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write', selfParent: 'merged_into' },
+    // participant_code_enc (1.21.0): a client known by an SSP participant code instead of a name; its blind index is
+    // recomputed by the receiver (importRow below), in the same domain as a visit's code.
+    { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc', 'legal_hold_reason_enc', 'legal_hold_cleared_reason_enc', 'removed_reason_enc', 'contact_preferences_enc', 'participant_code_enc'], legacy: { legal_hold_reason: 'legal_hold_reason_enc', contact_preferences: 'contact_preferences_enc' }, scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write', selfParent: 'merged_into' },
     { name: 'assignments', enc: ['notes_enc'], legacy: { notes: 'notes_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'assignments:manage', parent: ['clients', 'client_id'] },
     { name: 'episodes', enc: ['presenting_problem_enc', 'discharge_summary_enc', 'reopen_reason_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['clients', 'client_id'] },
     // CalOMS Tx records hang off an episode: the episode must land first.
@@ -124,6 +129,8 @@ module.exports = {
     'is missing a required field', 'refers to a record the office server does not have', 'attributed to',
     'would create a cycle', 'parent allocation does not belong', 'its ', 'has a value the office does not accept',
     'needs a lawful basis for disclosure', 'drawn down at the office',
+    // A field device writing outside its scope (server/field-scope.js, server/rules/push.js fieldRefusal).
+    'outside this field device',
   ],
   // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
   // emergency access, and a device has no supervisor to review it.
@@ -239,6 +246,7 @@ function importRow(t, r, existingCols) {
     if (r.preferred_name_enc !== undefined) o.preferred_name_idx = M.preferredNameIndex(r.preferred_name_enc || '');
     if (r.dob_enc !== undefined) o.dob_idx = crypto.blindIndex(r.dob_enc || '');
     if (r.phone_enc !== undefined) o.phone_idx = crypto.blindIndex(String(r.phone_enc || '').replace(/\D/g, ''));
+    if (r.participant_code_enc !== undefined) o.participant_code_idx = require('./participant-code').index(r.participant_code_enc);
   }
   // An anonymous contact's SSP participant code is counted by its blind index, under the receiver's own key.
   if (t.name === 'interventions' && r.participant_code_enc !== undefined) o.participant_code_idx = require('./rules/interventions').participantCode(r.participant_code_enc).idx;

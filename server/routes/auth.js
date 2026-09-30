@@ -19,7 +19,7 @@ module.exports = (r) => {
     ctx.res.setHeader('Set-Cookie', auth.cookieHeader(result.token));
     // Sync clients (local-mode devices) authenticate with a bearer token instead of the cookie
     const out = { user: result.user, mfaPending: result.mfaPending, mfaMethods: result.mfaMethods, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };
-    if (ctx.headers['x-sync-client']) out.token = result.token;
+    if (ctx.headers['x-sync-client']) { out.token = result.token; if (result.device) out.device = result.device; }
     return out;
   });
 
