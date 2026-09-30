@@ -589,7 +589,7 @@ async function scriptedCounty(status) {
       res.writeHead(req.method === 'POST' ? 201 : 200, { 'content-type': 'application/json' });
       if (req.method !== 'POST') { res.end(JSON.stringify(status())); return; }
       const file = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      posted.push({ ...file.payload.period, recipient: file.payload.recipient });
+      posted.push({ ...file.payload.period, recipient: file.payload.recipient, schema_version: file.payload.schema_version, envelope_version: file.schema_version, awards: file.payload.funds.map(f => f.award) });
       res.end(JSON.stringify({ status: 'imported', reason: null, receipt: { sha256: null, received_at: new Date().toISOString() } }));
     });
   });
@@ -787,3 +787,90 @@ test('r1 #8: the hourly housekeeping writes the summary of a throttled refusal w
   assert.equal(got.at(-1).reason, 'refused_summary'); assert.equal(got.at(-1).count, 3);
   assert.match(require('node:fs').readFileSync(require('node:path').join(__dirname, '../server/index.js'), 'utf8'), /county-connect'\)\.sweepRefusals\(\)/, 'housekeeping calls it');
 });
+
+// ---------------------------------------------------------------- 1.21: award amounts (schema version 2) and reminders
+test('1.21: /status tells a programme what the county reads (accepts_schema_versions), when files are due (due_days, due_by); due_days is the county\'s setting', async () => {
+  ok(await enable(true), 200);
+  try {
+    const t = ok(await issue(admin, { scope: 'county.submit', programme_id: progA.id }));
+    let st = ok(await bearer('GET', '/api/county-connect/v1/status', t.token), 200);
+    assert.deepEqual(st.accepts_schema_versions, K.SCHEMA_VERSIONS); assert.ok(st.accepts_schema_versions.includes(2));
+    assert.equal(st.due_days, 30, 'thirty days unless the county says otherwise');
+    for (const p of st.expected) assert.equal(p.due_by, CC.plusDays(p.to, 30));
+    assert.equal((await fin.put('/api/county-connect/settings', { due_days: 45 })).status, 403, 'the county\'s administrator sets it');
+    for (const bad of [0, 181, 1.5, 'x']) assert.equal((await admin.put('/api/county-connect/settings', { due_days: bad })).status, 400, String(bad));
+    const s = ok(await admin.put('/api/county-connect/settings', { due_days: 45 }), 200);
+    assert.equal(s.due_days, 45); assert.deepEqual(s.accepts_schema_versions, K.SCHEMA_VERSIONS);
+    assert.equal(lastAudit('county_connect.settings').details.due_days, 45);
+    st = ok(await bearer('GET', '/api/county-connect/v1/status', t.token), 200);
+    assert.equal(st.due_days, 45); for (const p of st.expected) assert.equal(p.due_by, CC.plusDays(p.to, 45));
+    ok(await admin.put('/api/county-connect/settings', { due_days: 30 }), 200);
+  } finally { ok(await enable(false), 200); }
+});
+
+test('1.21: the programme sends the version the county reads: version 1 (no award) to a county on 1.20 that says nothing, version 2 to one that reads it; the screen warns', async () => {
+  const [q0] = P.completeQuarters(CC.today(), 1);
+  let reads = null;
+  const county = await scriptedCounty(() => statusOf('FAKE2345', [], reads ? { accepts_schema_versions: reads, due_days: 20 } : {}));
+  try {
+    H.db.run(`DELETE FROM county_connect_sends`);
+    ok(await admin.put('/api/county-connect/connection', { base_url: county.url, token: aToken }), 200);
+    remember('FAKE2345', [fund]);
+    // A county on SUDS 1.20 or earlier: its /status has no accepts_schema_versions. It reads version 1 only.
+    ok(await fin.post('/api/county-connect/connection/test', {}), 200);
+    let c = ok(await fin.get('/api/county-connect/connection'), 200);
+    assert.equal(c.county_older, true); assert.deepEqual(c.county_reads, [1]); assert.equal(c.send_version, 1);
+    assert.match(c.county_older_note, /version 1 only \(SUDS 1\.20 or earlier\)/);
+    let s = ok(await fin.post('/api/county-connect/send', { ...q0, funds: [fund] }), 200);
+    assert.equal(s.status, 'imported');
+    let sent = county.posted[county.posted.length - 1];
+    assert.equal(sent.schema_version, 1); assert.equal(sent.envelope_version, 1); assert.deepEqual(sent.awards, [undefined], 'a version 1 file has no award');
+    assert.equal(lastAudit('county_submission.send').details.schema_version, 1);
+    // The reminders say the same (the card's warning and its version 1 box).
+    const rem = ok(await fin.get('/api/county-submission/reminders'), 200);
+    assert.equal(rem.connection.county_older, true);
+    // The county upgrades: its /status says it reads 1 and 2. The next file is version 2, with the award in it.
+    reads = [1, 2];
+    ok(await fin.post('/api/county-connect/connection/test', {}), 200);
+    c = ok(await fin.get('/api/county-connect/connection'), 200);
+    assert.equal(c.county_older, false); assert.equal(c.send_version, 2); assert.equal(c.county_older_note, null);
+    s = ok(await fin.post('/api/county-connect/send', { ...q0, funds: [fund] }), 200);
+    sent = county.posted[county.posted.length - 1];
+    assert.equal(sent.schema_version, 2); assert.equal(sent.envelope_version, 2);
+    assert.deepEqual(sent.awards, [{ amount: 50000, from: '2026-01-01', to: '2026-12-31' }]);
+    // What the county said is checked before it is kept: nonsense versions, due days and periods are dropped.
+    const f = CL.statusFacts({ cadence: 'weekly', due_days: 9999, accepts_schema_versions: ['2', 2.5, -1], expected: [{ from: '2026-02-30', to: '2026-03-31' }, { from: q0.from, to: q0.to, label: 'Q‮', received: 'yes', due_by: 'soon' }] }, 'FAKE2345');
+    assert.equal(f.cadence, null); assert.equal(f.due_days, null); assert.equal(f.accepts_schema_versions, null);
+    assert.deepEqual(f.expected, [{ from: q0.from, to: q0.to, label: 'Q', received: false, due_by: null }]);
+    assert.equal(CL.versionForCounty(f), 1, 'a county that does not say what it reads is sent version 1');
+  } finally { await county.close(); ok(await admin.del('/api/county-connect/connection'), 200); }
+});
+
+test('1.21: reminders learned from the connected county: its periods, due dates and what it received; a file sent and accepted is done', async () => {
+  const [q0, q1] = P.completeQuarters(CC.today(), 2);
+  const due0 = CC.plusDays(q0.to, 20); const due1 = CC.plusDays(q1.to, 20);
+  const expected = [{ from: q1.from, to: q1.to, label: 'Older quarter', received: true, due_by: due1 }, { from: q0.from, to: q0.to, label: 'Latest quarter', received: false, due_by: due0 }];
+  const county = await scriptedCounty(() => statusOf('FAKE2345', [], { accepts_schema_versions: [1, 2], due_days: 20, expected }));
+  try {
+    H.db.run(`DELETE FROM county_connect_sends`);
+    H.db.run(`DELETE FROM settings WHERE key IN ('county_submission_made','county_submission_schedules')`);
+    ok(await admin.put('/api/county-connect/connection', { base_url: county.url, token: aToken }), 200);
+    remember('FAKE2345', [fund]);
+    let r = ok(await fin.get('/api/county-submission/reminders'), 200);
+    assert.equal(r.counties.length, 0, 'nothing until the county has said what it expects');
+    ok(await fin.post('/api/county-connect/connection/test', {}), 200);
+    r = ok(await fin.get('/api/county-submission/reminders'), 200);
+    assert.equal(r.counties.length, 1);
+    const c = r.counties[0];
+    assert.equal(c.source, 'county'); assert.equal(c.connected, true); assert.equal(c.cadence, 'quarterly_calendar'); assert.equal(c.due_days, 20);
+    assert.deepEqual(c.periods.map(p => [p.from, p.state]), [[q1.from, 'received'], [q0.from, p0state(due0)]]);
+    assert.equal(r.reminders.length, 1); assert.equal(r.reminders[0].from, q0.from);
+    assert.match(r.reminders[0].text, /^County file to Fake County for Latest quarter (was )?due by .* — not yet made or sent$/);
+    // Sent and accepted: done.
+    ok(await fin.post('/api/county-connect/send', { ...q0, funds: [fund] }), 200);
+    r = ok(await fin.get('/api/county-submission/reminders'), 200);
+    assert.equal(r.counties[0].periods.find(p => p.from === q0.from).state, 'sent'); assert.equal(r.reminders.length, 0);
+    assert.equal(JSON.parse(H.db.getSetting('county_submission_made'))[0].via, 'send');
+  } finally { await county.close(); ok(await admin.del('/api/county-connect/connection'), 200); }
+});
+const p0state = (due) => (due < CC.today() ? 'overdue' : 'due');

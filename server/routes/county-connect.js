@@ -10,7 +10,8 @@
 //     GET  /api/county-connect/v1/programs      the programmes and their files' periods (read token)
 //   The county's settings and tokens (signed in):
 //     GET  /api/county-connect/settings          on or off, the cadence, the endpoints (county:view)
-//     PUT  /api/county-connect/settings          switch on or off, the cadence and start (county:manage and settings:manage)
+//     PUT  /api/county-connect/settings          switch on or off, the cadence and start, and how many days after a
+//                                                period ends its file is due (due_days; county:manage and settings:manage)
 //     GET  /api/county-connect/tokens            every token issued, never the token itself (county:manage)
 //     POST /api/county-connect/tokens            issue one, shown once (county:manage)
 //     POST /api/county-connect/tokens/:id/revoke revoke one (county:manage)
@@ -167,6 +168,7 @@ module.exports = (r) => {
       not_unduplicated: 'People are counted by each program and summed: a person served by two programs counts twice. Not unduplicated across programs.',
       caveats: d.caveats, rule: d.rule, publication_note: d.publication_note,
       entered: entered ? 'counted' : 'left out', entered_label: K.ENTERED_LABEL, entered_note: d.entered_note,
+      award: `${d.award.note} A programme with figures whose files carry no award has value null in the award rows, and its award.status says why (not_in_file: version 1 files; none: no fund with an award). unit percent: spent against the award, in per cent.`,
       source: 'Each programme and submission has a source: "signed" (a file the program\'s key signed), "county_entered" (' + K.ENTERED_LABEL + ') or, for a programme, "mixed". Each row\'s total_entered is the part of its total entered by the county.' };
     if (format === 'json') {
       const { caveats, rule, publication_note, entered_note, entered_label, ...rest } = d; // eslint-disable-line no-unused-vars
@@ -177,9 +179,9 @@ module.exports = (r) => {
     const rows = [];
     const anyEntered = d.programmes.some(p => p.source === K.ENTERED || p.source === 'mixed');
     for (const x of d.rows) {
-      for (const p of d.programmes) rows.push({ from, to, programme_id: p.id, programme: p.name, programme_status: p.status, source: p.source || '', group: x.group, measure_key: x.key, measure: x.label, unit: x.money ? 'money' : 'count', value: x.by[p.id] });
-      rows.push({ from, to, programme_id: '', programme: 'Total (summed, not unduplicated)', programme_status: '', source: '', group: x.group, measure_key: x.key, measure: x.label, unit: x.money ? 'money' : 'count', value: x.total });
-      if (anyEntered) rows.push({ from, to, programme_id: '', programme: `Of the total, ${K.ENTERED_LABEL}`, programme_status: '', source: K.ENTERED, group: x.group, measure_key: x.key, measure: x.label, unit: x.money ? 'money' : 'count', value: x.total_entered });
+      for (const p of d.programmes) rows.push({ from, to, programme_id: p.id, programme: p.name, programme_status: p.status, source: p.source || '', group: x.group, measure_key: x.key, measure: x.label, unit: x.percent ? 'percent' : x.money ? 'money' : 'count', value: x.by[p.id] });
+      rows.push({ from, to, programme_id: '', programme: 'Total (summed, not unduplicated)', programme_status: '', source: '', group: x.group, measure_key: x.key, measure: x.label, unit: x.percent ? 'percent' : x.money ? 'money' : 'count', value: x.total });
+      if (anyEntered) rows.push({ from, to, programme_id: '', programme: `Of the total, ${K.ENTERED_LABEL}`, programme_status: '', source: K.ENTERED, group: x.group, measure_key: x.key, measure: x.label, unit: x.percent ? 'percent' : x.money ? 'money' : 'count', value: x.total_entered });
     }
     const cols = ['from', 'to', 'programme_id', 'programme', 'programme_status', 'source', 'group', 'measure_key', 'measure', 'unit', 'value'].map(key => ({ key, label: key }));
     ctx.res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store',
@@ -212,11 +214,12 @@ module.exports = (r) => {
   // ---- the county's settings and tokens ----
   r.get('/api/county-connect/settings', auth.requireAuth, auth.requirePerm('county:view'), (ctx) => CC.settings({ user: ctx.user, ip: ctx.ip }));
   r.put('/api/county-connect/settings', auth.requireAuth, auth.requirePerm('county:manage'), auth.requirePerm('settings:manage'), (ctx) => {
-    const v = validate(ctx.body, { enabled: { type: 'boolean' }, cadence: { type: 'string', enum: Object.keys(CC.CADENCES) }, start: { type: 'string', maxLen: 10 } }, { partial: true });
+    const v = validate(ctx.body, { enabled: { type: 'boolean' }, cadence: { type: 'string', enum: Object.keys(CC.CADENCES) }, start: { type: 'string', maxLen: 10 }, due_days: { type: 'number', integer: true } }, { partial: true });
     if (v.start && !isDay(v.start)) throw badRequest('The first period expected must start on a date (YYYY-MM-DD).', { fields: { start: 'must be a date' } });
+    if (v.due_days !== undefined && v.due_days !== null && (v.due_days < 1 || v.due_days > CC.DUE_DAYS_MAX)) throw badRequest(`Files are due 1 to ${CC.DUE_DAYS_MAX} days after a period ends.`, { fields: { due_days: `must be 1 to ${CC.DUE_DAYS_MAX}` } });
     const was = CC.enabled();
-    const changed = CC.saveSettings({ enabled: v.enabled === undefined || v.enabled === null ? undefined : !!v.enabled, cadence: v.cadence, start: ctx.body && 'start' in ctx.body ? (v.start || null) : undefined });
-    audit.log({ user: ctx.user, action: 'county_connect.settings', ip: ctx.ip, details: { changed, enabled: CC.enabled(), was_enabled: was, cadence: CC.cadence() } });
+    const changed = CC.saveSettings({ enabled: v.enabled === undefined || v.enabled === null ? undefined : !!v.enabled, cadence: v.cadence, start: ctx.body && 'start' in ctx.body ? (v.start || null) : undefined, dueDays: v.due_days === undefined || v.due_days === null ? undefined : v.due_days });
+    audit.log({ user: ctx.user, action: 'county_connect.settings', ip: ctx.ip, details: { changed, enabled: CC.enabled(), was_enabled: was, cadence: CC.cadence(), due_days: CC.dueDays() } });
     return CC.settings({ user: ctx.user, ip: ctx.ip });
   });
   r.get('/api/county-connect/tokens', auth.requireAuth, auth.requirePerm('county:manage'), (ctx) => {

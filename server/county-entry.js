@@ -38,6 +38,13 @@ const CSV_COLUMNS = ['program', 'period_from', 'period_to', 'fund', 'grant_numbe
 const TOTAL_FUND = 'All funds in the submission';
 const SPEND_CODES = ['spend_own_category', 'spend_other_categories', 'spend_approved', 'spend_pending'];
 const TOTAL_CODES = ['spend_approved', 'spend_pending', ...K.VALUE_KEYS];
+/**
+ * A fund's award (schema version 2; built for 1.21.0, not yet released), optional: its amount, and the award period's
+ * first and last days. In the form, three fields per fund; in the long CSV, three measure codes per fund whose value is
+ * the amount or a date (YYYY-MM-DD). All three, or none (an empty value is "not given").
+ */
+const AWARD_MEASURES = [['award_amount', 'Award or contract amount ($)'], ['award_from', 'Award period: first day (YYYY-MM-DD)'], ['award_to', 'Award period: last day (YYYY-MM-DD)']];
+const AWARD_CODES = AWARD_MEASURES.map(([c]) => c);
 const MAX_CSV_BYTES = 256 * 1024;
 const MAX_CSV_ROWS = 5000;
 const MAX_PERIODS = 12;
@@ -51,7 +58,7 @@ class EntryError extends Error {
 }
 
 /** What kind of number a measure is: money (2 decimals), hours (2 decimals) or a count (whole). */
-const kindOf = (code) => (SPEND_CODES.includes(code) ? 'money' : code === 'staff_training_hours' ? 'hours' : 'count');
+const kindOf = (code) => (SPEND_CODES.includes(code) || code === 'award_amount' ? 'money' : code === 'staff_training_hours' ? 'hours' : 'count');
 const PATTERN = { money: /^\d{1,12}(\.\d{1,2})?$/, hours: /^\d{1,9}(\.\d{1,2})?$/, count: /^\d{1,12}$/ };
 const HINT = {
   money: 'an amount of 0 or more, digits only with up to two decimals (for example 1234.50): no commas, currency signs or spaces',
@@ -112,7 +119,20 @@ function checkFund(f, at, problems) {
   const num = (code) => { try { return strictNumber(f[code], code); } catch (e) { problems.push([at(code), e.message]); return 0; } };
   const own = num('spend_own_category'); const other = num('spend_other_categories'); const pending = num('spend_pending');
   const values = Object.fromEntries(K.VALUE_KEYS.map(k => [k, num(k)]));
-  return { name: name || 'Fund', grant_number: grant, category, hiaa, spend: { own_category: own, other_categories: other, approved: round2(own + other), pending }, values };
+  return { name: name || 'Fund', grant_number: grant, category, hiaa, spend: { own_category: own, other_categories: other, approved: round2(own + other), pending }, values, award: checkAward(f, at, problems) };
+}
+/** A fund's award as entered: null when none of its three fields is given, else all three, checked. */
+function checkAward(f, at, problems) {
+  const given = (k) => f[k] !== undefined && f[k] !== null && String(f[k]).trim() !== '';
+  if (!AWARD_CODES.some(given)) return null;
+  const before = problems.length;
+  let amount = null;
+  if (!given('award_amount')) problems.push([at('award_amount'), 'is needed with the award period: the award or contract amount (or leave the award period empty too)']);
+  else { try { amount = strictNumber(f.award_amount, 'award_amount'); if (!(amount > 0)) problems.push([at('award_amount'), 'must be more than 0 (leave the award empty if the program has none)']); } catch (e) { problems.push([at('award_amount'), e.message]); } }
+  const day = (k, what) => { const v = given(k) ? String(f[k]).trim() : ''; if (!v) { problems.push([at(k), `is needed with the award amount: the award period's ${what} (YYYY-MM-DD)`]); return null; } if (!K.isDay(v)) { problems.push([at(k), `"${v.slice(0, 20)}" is not a real date (YYYY-MM-DD)`]); return null; } return v; };
+  const from = day('award_from', 'first day'); const to = day('award_to', 'last day');
+  if (from && to && from > to) problems.push([at('award_from'), `is after the award period's last day (${K.humanDay(to)})`]);
+  return problems.length > before ? null : { amount: round2(amount), from, to };
 }
 
 /**
@@ -135,7 +155,7 @@ function payloadFor(prog, period, funds, { totalValues = null, now = new Date().
     generated_at: now,
     suds_version: String(config.version),
     counts: 'exact',
-    funds: funds.map(f => ({ name: f.name, grant_number: f.grant_number, category: f.category, hiaa: f.hiaa, spend: { ...f.spend }, values: { ...f.values } })),
+    funds: funds.map(f => ({ name: f.name, grant_number: f.grant_number, category: f.category, hiaa: f.hiaa, spend: { ...f.spend }, values: { ...f.values }, award: f.award ? { ...f.award } : null })),
     categories: cats,
     total: { spend: { approved: sum(funds, f => f.spend.approved), pending: sum(funds, f => f.spend.pending) },
       values: totalValues ? { ...totalValues } : Object.fromEntries(K.VALUE_KEYS.map(k => [k, sum(funds, f => f.values[k])])) },
@@ -249,10 +269,14 @@ function readCsv(prog, text, { today, funds: choices = [] } = {}) {
     const gnum = K.cleanText(grant, K.TEXT_MAX.grant_number) || null;
     const isTotal = fname === TOTAL_FUND;
     const mcode = String(code || '').trim();
-    const allowed = isTotal ? TOTAL_CODES : [...SPEND_CODES, ...K.VALUE_KEYS];
+    const allowed = isTotal ? TOTAL_CODES : [...SPEND_CODES, ...K.VALUE_KEYS, ...AWARD_CODES];
     if (!allowed.includes(mcode)) { err(line, 'measure_code', `"${K.cleanText(mcode, 40)}" is not a measure a county submission carries${isTotal ? ' in its totals' : ''}.`); return; }
+    // The award is optional (an empty value is "not given"), and its period is two dates in the value column.
+    const isAward = AWARD_CODES.includes(mcode);
+    if (isAward && !String(value || '').trim()) return;
     let n = null; let badValue = null;
-    try { n = strictNumber(value, mcode); } catch (e) { badValue = e.message; }
+    if (isAward && mcode !== 'award_amount') { n = String(value).trim(); if (!K.isDay(n)) badValue = `"${n.slice(0, 20)}" is not a real date (YYYY-MM-DD): ${mcode} is the award period's ${mcode === 'award_from' ? 'first' : 'last'} day.`; }
+    else { try { n = strictNumber(value, mcode); } catch (e) { badValue = e.message; } }
     const pkey = `${from.trim()}_${to.trim()}`;
     const fkey = isTotal ? '\u0000total' : `${fname.toLowerCase()}\u0000${(gnum || '').toLowerCase()}`;
     const dup = `${pkey}|${fkey}|${mcode}`;
@@ -292,7 +316,8 @@ function readCsv(prog, text, { today, funds: choices = [] } = {}) {
       const key = `${f.name.toLowerCase()}\u0000${(f.grant_number || '').toLowerCase()}`;
       if (!distinct.has(key)) distinct.set(key, { name: f.name, grant_number: f.grant_number });
       const pick = choices.find(c => c && K.cleanText(c.name, 200).toLowerCase() === f.name.toLowerCase() && (K.cleanText(c.grant_number, 100) || '').toLowerCase() === (f.grant_number || '').toLowerCase()) || {};
-      pf.push({ name: f.name, grant_number: f.grant_number, category: pick.category, hiaa: pick.hiaa, spend_own_category: own, spend_other_categories: other, spend_pending: f.m.spend_pending, ...Object.fromEntries(K.VALUE_KEYS.map(k => [k, f.m[k]])) });
+      pf.push({ name: f.name, grant_number: f.grant_number, category: pick.category, hiaa: pick.hiaa, spend_own_category: own, spend_other_categories: other, spend_pending: f.m.spend_pending, ...Object.fromEntries(K.VALUE_KEYS.map(k => [k, f.m[k]])),
+        ...Object.fromEntries(AWARD_CODES.filter(k => f.m[k] !== undefined).map(k => [k, f.m[k]])), firstRow: f.firstRow });
     }
     let totalValues = null;
     const t = per.total;
@@ -330,10 +355,14 @@ function importCsv(programmeId, body, user, { today }) {
   const built = parsed.periods.map((per) => {
     const problems = [];
     const funds = per.funds.map((f) => checkFund(f, (k) => `${f.name}: ${k}`, problems));
-    if (problems.length) throw new EntryError('csv', 'Choose an Exhibit E allowable use and a High Impact Abatement Activity SUDS knows for each fund.', { errors: problems.slice(0, MAX_ERRORS).map(([c, m]) => ({ row: null, column: c, message: m })) });
+    if (problems.length) {
+      const award = problems.filter(([c]) => AWARD_CODES.some(k => c.endsWith(`: ${k}`)));
+      throw new EntryError('csv', award.length ? `Check each fund's award in ${K.humanPeriod(per.from, per.to)}: give its amount and both days of its award period (award_amount, award_from, award_to), or none of them.` : 'Choose an Exhibit E allowable use and a High Impact Abatement Activity SUDS knows for each fund.',
+        { errors: problems.slice(0, MAX_ERRORS).map(([c, m]) => ({ row: (per.funds.find(f => c.startsWith(`${f.name}: `)) || {}).firstRow || null, column: c, message: m })) });
+    }
     return { period: { from: per.from, to: per.to }, funds, totalValues: per.totalValues };
   });
-  const describe = (x) => ({ from: x.period.from, to: x.period.to, funds: x.funds.map(f => ({ name: f.name, grant_number: f.grant_number, category: f.category, hiaa: f.hiaa, spend_approved: f.spend.approved, spend_pending: f.spend.pending })),
+  const describe = (x) => ({ from: x.period.from, to: x.period.to, funds: x.funds.map(f => ({ name: f.name, grant_number: f.grant_number, category: f.category, hiaa: f.hiaa, spend_approved: f.spend.approved, spend_pending: f.spend.pending, award: f.award })),
     total: { spend_approved: round2(x.funds.reduce((n, f) => n + f.spend.approved, 0)), spend_pending: round2(x.funds.reduce((n, f) => n + f.spend.pending, 0)), values: x.totalValues || Object.fromEntries(K.VALUE_KEYS.map(k => [k, round2(x.funds.reduce((n, f) => n + f.values[k], 0))])) },
     totals_given: !!x.totalValues });
   const said = { others: parsed.others, warnings: parsed.warnings };
@@ -359,7 +388,8 @@ function entryForm(id) {
   return {
     id: s.id, programme_id: s.programme_id, from: s.period_from, to: s.period_to, status: K.summary(s).status, entered_via: s.entered_via, received_at: s.received_at,
     source_ref: s.source_ref_enc ? decrypt(s.source_ref_enc) : '',
-    funds: pl.funds.map(f => ({ name: f.name, grant_number: f.grant_number || '', category: f.category, hiaa: f.hiaa || '', spend_own_category: f.spend.own_category, spend_other_categories: f.spend.other_categories, spend_pending: f.spend.pending, ...f.values })),
+    funds: pl.funds.map(f => ({ name: f.name, grant_number: f.grant_number || '', category: f.category, hiaa: f.hiaa || '', spend_own_category: f.spend.own_category, spend_other_categories: f.spend.other_categories, spend_pending: f.spend.pending, ...f.values,
+      award_amount: f.award ? f.award.amount : '', award_from: f.award ? f.award.from : '', award_to: f.award ? f.award.to : '' })),
   };
 }
 /** The source document's reference of entered submissions, for the county's own list (never in a summary or the read API). */
@@ -377,4 +407,4 @@ function entryMessage(prog, from, to, status, replacedSource, counting = null) {
   return `Saved ${prog.name}'s figures for ${period}, ${K.ENTERED_LABEL}.`;
 }
 
-module.exports = { SOURCE_WORDS, CSV_COLUMNS, TOTAL_FUND, SPEND_CODES, TOTAL_CODES, MAX_CSV_BYTES, MAX_PERIODS, MAX_FUNDS, EntryError, strictNumber, kindOf, checkPeriod, readCsv, enter, importCsv, entryForm, sourceRefs, entryMessage, payloadFor, INDICATORS: MAP.INDICATORS };
+module.exports = { SOURCE_WORDS, CSV_COLUMNS, TOTAL_FUND, SPEND_CODES, TOTAL_CODES, AWARD_MEASURES, AWARD_CODES, MAX_CSV_BYTES, MAX_PERIODS, MAX_FUNDS, EntryError, strictNumber, kindOf, checkPeriod, readCsv, enter, importCsv, entryForm, sourceRefs, entryMessage, payloadFor, INDICATORS: MAP.INDICATORS };

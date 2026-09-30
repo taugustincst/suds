@@ -114,8 +114,9 @@ test('the payload allow-list refuses any field a submission never carries, at an
 
 test('schema version 1 is frozen: the payload\'s fields, values list included, are exactly these', () => {
   // Changing any of this is a new schema version (K.SCHEMA_VERSION), never an edit to version 1: a county running
-  // an older SUDS would refuse the file, or read a figure under the wrong name.
-  assert.equal(K.SCHEMA_VERSION, 1);
+  // an older SUDS would refuse the file, or read a figure under the wrong name. Version 1 is still read (1.21.0).
+  assert.ok(K.SCHEMA_VERSIONS.includes(1));
+  assert.deepEqual(K.PAYLOADS[1], K.PAYLOAD);
   assert.deepEqual(K.PAYLOAD, {
     top: ['categories', 'counts', 'funds', 'generated_at', 'period', 'programme', 'recipient', 'schema_version', 'suds_version', 'total'],
     period: ['from', 'to'],
@@ -175,7 +176,7 @@ test('S1: the time a file was made is strict ISO-8601 UTC, the version a version
   // And over HTTP: a properly signed file whose generated_at is free text is refused, and nothing is stored.
   freshCounty(); await registerSample(0);
   const q = clone(base); q.generated_at = 'soon';
-  const forged = { format: K.FORMAT, schema_version: 1, payload: q, signature: { algorithm: 'Ed25519', key_fingerprint: samples[0].fingerprint, value: crypto.sign(null, Buffer.from(K.canonical(q)), require('../server/signing').privateKeyFrom(samples[0].seed)).toString('base64') } };
+  const forged = { format: K.FORMAT, schema_version: q.schema_version, payload: q, signature: { algorithm: 'Ed25519', key_fingerprint: samples[0].fingerprint, value: crypto.sign(null, Buffer.from(K.canonical(q)), require('../server/signing').privateKeyFrom(samples[0].seed)).toString('base64') } };
   const r = await importFile(admin, text(forged));
   assert.equal(r.status, 422); assert.equal(r.data.reason, 'schema'); assert.match(r.data.error, /generated_at/);
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM county_submissions`).n, 0);
@@ -213,7 +214,7 @@ test('Send to the county: the key is made on first use, its private half encrypt
   const pem = crypto.createPublicKey(require('../server/signing').privateKeyFrom(seed)).export({ type: 'spki', format: 'pem' });
   assert.equal(pem, row.public_key, 'the stored public key is the private key\'s');
   assert.equal(ownF.signature.key_fingerprint, row.fingerprint);
-  assert.equal(ownF.format, 'suds-county-submission'); assert.equal(ownF.schema_version, 1);
+  assert.equal(ownF.format, 'suds-county-submission'); assert.equal(ownF.schema_version, 2); assert.equal(ownF.payload.schema_version, 2);
   const k = (await fin.get('/api/county-submission/key')).data.key;
   assert.equal(k.fingerprint, row.fingerprint); assert.match(k.public_key, /BEGIN PUBLIC KEY/);
   assert.ok(!('private_key_enc' in k));
@@ -225,7 +226,7 @@ test('Send to the county: the key is made on first use, its private half encrypt
   assert.equal(p.total.spend.approved, 1234.5);
   assert.equal(p.funds.length, 1); assert.equal(p.funds[0].category, 'core_a'); assert.equal(p.funds[0].hiaa, 'hiaa_6');
   // No client, code, name or date of birth: every key on the allow-list.
-  const allowed = new Set(Object.values(K.PAYLOAD).flat());
+  const allowed = new Set(Object.values(K.PAYLOAD_V2).flat());
   const keys = new Set(); const strings = [];
   const walk = (v) => { if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === 'object') for (const [kk, x] of Object.entries(v)) { keys.add(kk); walk(x); } else if (typeof v === 'string') strings.push(v); };
   walk(p);
@@ -235,7 +236,7 @@ test('Send to the county: the key is made on first use, its private half encrypt
   assert.ok(!ownText.includes('Zebedee') && !ownText.includes(code));
   // Audited as leaving the programme, with what identifies the file and not its figures.
   const a = lastAudit('county_submission.export');
-  assert.deepEqual(Object.keys(a.details).sort(), ['content', 'county_code', 'fingerprint', 'from', 'funds', 'leaves_programme', 'sha256', 'to']);
+  assert.deepEqual(Object.keys(a.details).sort(), ['content', 'county_code', 'fingerprint', 'from', 'funds', 'leaves_programme', 'schema_version', 'sha256', 'to']);
   assert.equal(a.details.sha256, crypto.createHash('sha256').update(K.canonical(p)).digest('hex'));
   assert.equal(a.details.fingerprint, row.fingerprint);
   assert.ok(lastAudit('county_submission.key.create'));

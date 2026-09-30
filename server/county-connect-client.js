@@ -88,7 +88,12 @@ function describe() {
   if (!c) return { connected: false, base_url: null, token_hint: null, auto_send: false, county_code: null, county_name: null, pending_county_code: null, last_checked_at: null, last_check_ok: null, last_check_error: null, last_auto_at: db.getSetting('county_connect_auto_at', null) };
   const p = pendingCode();
   const K = require('./county');
-  return { connected: true, base_url: c.base_url, token_hint: c.token_hint, auto_send: !!c.auto_send, county_code: c.county_code, county_name: c.county_name,
+  const st = lastStatus();
+  // The county's SUDS reads only older file versions (1.20 or earlier): said on the screen that makes the file.
+  const older = !!st && !countyReads(K.SCHEMA_VERSION, st);
+  return { connected: true,
+    county_reads: st ? (st.accepts_schema_versions || [1]) : null, county_older: older, send_version: st ? versionForCounty(st) : null,
+    county_older_note: older ? `The county's SUDS reads county files of version ${(st.accepts_schema_versions || [1]).join(' and ')} only (SUDS 1.20 or earlier): files sent over the connection are made in version ${versionForCounty(st)}, without the award amounts. Ask the county to upgrade SUDS; until then, a file you download for it must be version 1 too.` : null, base_url: c.base_url, token_hint: c.token_hint, auto_send: !!c.auto_send, county_code: c.county_code, county_name: c.county_name,
     pending_county_code: p ? { code: p.code, code_display: K.formatCode(p.code), name: p.name, previous: p.previous, previous_display: K.formatCode(p.previous), seen_at: p.at } : null,
     last_checked_at: c.last_checked_at, last_check_ok: c.last_check_ok === null ? null : !!c.last_check_ok, last_check_error: c.last_check_error, updated_at: c.updated_at,
     last_auto_at: db.getSetting('county_connect_auto_at', null) };
@@ -98,6 +103,44 @@ function pendingCode() {
   try { const p = JSON.parse(db.getSetting(PENDING_CODE, 'null')); return p && typeof p === 'object' && typeof p.code === 'string' ? p : null; } catch { return null; }
 }
 const clearPending = () => db.run(`DELETE FROM settings WHERE key=?`, PENDING_CODE);
+/**
+ * What the county's /status last said about what it expects and what it reads (built for 1.21.0, not yet released),
+ * held to what SUDS can use (statusFacts): { county_code, cadence, due_days, start, expected, accepts_schema_versions,
+ * at }. Read by the programme's reminders (county-schedule.js) and by send (which file version to make). Cleared with
+ * the connection, or when the address or token changes.
+ */
+const LAST_STATUS = 'county_connect_last_status';
+function lastStatus() {
+  try { const o = JSON.parse(db.getSetting(LAST_STATUS, 'null')); return o && typeof o === 'object' && !Array.isArray(o) ? o : null; } catch { return null; }
+}
+const clearLastStatus = () => db.run(`DELETE FROM settings WHERE key=?`, LAST_STATUS);
+const CADENCE_CODES = ['quarterly_calendar', 'quarterly_fiscal', 'monthly'];
+/**
+ * The parts of a county's /status the programme keeps, checked (the county's server is not trusted beyond what it may
+ * decide): a cadence SUDS knows (or null), due_days a whole number of 1 to 365 days (or null), each expected period
+ * real dates in order with a label of plain text, at most 24 of them, and the file versions it reads (whole numbers;
+ * null when the county does not say, as a county on SUDS 1.20 or earlier does not: it reads version 1 only).
+ */
+function statusFacts(data, code) {
+  const K = require('./county');
+  const day = (v) => (K.isDay(v) ? v : null);
+  const cadence = CADENCE_CODES.includes(data.cadence) ? data.cadence : null;
+  const dueDays = Number.isInteger(data.due_days) && data.due_days >= 1 && data.due_days <= 365 ? data.due_days : null;
+  const expected = (Array.isArray(data.expected) ? data.expected : []).slice(0, 24).filter(p => p && typeof p === 'object' && day(p.from) && day(p.to) && p.from <= p.to)
+    .map(p => ({ from: p.from, to: p.to, label: typeof p.label === 'string' ? K.cleanText(p.label, 120) : '', received: p.received === true, due_by: day(p.due_by) }));
+  const versions = Array.isArray(data.accepts_schema_versions) ? data.accepts_schema_versions.filter(v => Number.isInteger(v) && v >= 1 && v <= 99).slice(0, 10) : null;
+  return { county_code: code, cadence, due_days: dueDays, start: day(data.start), expected, accepts_schema_versions: versions && versions.length ? versions : null, at: db.now() };
+}
+/** Whether the connected county reads county files of version `v` (a county that does not say reads version 1 only). */
+function countyReads(v, st = lastStatus()) {
+  if (!st) return v === 1;
+  return Array.isArray(st.accepts_schema_versions) ? st.accepts_schema_versions.includes(v) : v === 1;
+}
+/** The file version to send the connected county: the latest this SUDS makes that the county reads. */
+function versionForCounty(st = lastStatus()) {
+  const K = require('./county');
+  return [...K.SCHEMA_VERSIONS].sort((a, b) => b - a).find(v => countyReads(v, st)) || 1;
+}
 /**
  * Save the county's address, and the token when one is given (required the first time). `confirmCode`: the
  * administrator confirms a county code the county's server started giving (pendingCode), which then becomes the saved
@@ -122,7 +165,7 @@ function save({ baseUrl, token, autoSend, confirmCode = false }, user) {
   if (pending && auto && !have.auto_send) throw new ConnectError(`The county's server now gives a different county code (${require('./county').formatCode(pending.code)}, was ${require('./county').formatCode(pending.previous)}). Check with the county that it is theirs and confirm it before switching automatic sending on.`, { field: 'auto_send' });
   if (have) {
     // A new address or token: what the county said before no longer applies.
-    if (reset) clearPending();
+    if (reset) { clearPending(); clearLastStatus(); }
     db.run(`UPDATE county_connection SET base_url=?, token_enc=COALESCE(?, token_enc), token_hint=COALESCE(?, token_hint), auto_send=?, updated_at=?, updated_by=?${reset ? ', county_code=NULL, county_name=NULL, last_checked_at=NULL, last_check_ok=NULL, last_check_error=NULL' : ''} WHERE id='county'`,
       url, t ? encrypt(t) : null, t ? t.slice(0, 12) : null, auto ? 1 : 0, db.now(), user ? user.id : null);
   } else {
@@ -130,7 +173,7 @@ function save({ baseUrl, token, autoSend, confirmCode = false }, user) {
   }
   return { changed, host: new URL(url).host, confirmed };
 }
-function remove() { const had = row(); db.run(`DELETE FROM county_connection WHERE id='county'`); clearPending(); return had; }
+function remove() { const had = row(); db.run(`DELETE FROM county_connection WHERE id='county'`); clearPending(); clearLastStatus(); return had; }
 
 // ---- talking to the county -----------------------------------------------------------------------------------------
 /** A request over node:http(s) straight to the address (this machine outside production, or a county allowed on a private network). */
@@ -256,6 +299,8 @@ async function test({ user = null, ip = null } = {}) {
       return { ok: true, status: r.data, code_changed: { code: county.code, previous: cur.county_code } };
     }
     if (county.code && cur.county_code === county.code) clearPending();
+    // What the county expects and reads, kept for the reminders and for which file version to send (never figures).
+    db.setSetting(LAST_STATUS, JSON.stringify(statusFacts(r.data, county.code || cur.county_code || null)));
     db.run(`UPDATE county_connection SET last_checked_at=?, last_check_ok=1, last_check_error=NULL, county_code=COALESCE(?, county_code), county_name=? WHERE id='county'`, db.now(), county.code, county.name);
     return { ok: true, status: r.data };
   } catch (e) {
@@ -291,13 +336,13 @@ function fundsFor(code, given) {
  * field. `fundIds`: the settlement funds that county pays for (fundsFor), never none. Throws county.js's
  * SubmissionError when the allow-list refuses the figures. Returns { file, sha256, fingerprint, payload, keyCreated }.
  */
-async function buildFile({ from, to, user, recipient, fundIds, remember = true }) {
+async function buildFile({ from, to, user, recipient, fundIds, remember = true, schemaVersion }) {
   if (!Array.isArray(fundIds) || !fundIds.length) throw new ConnectError('Choose the settlement funds this county pays for: only they go into the file.', { reason: 'funds' });
   const K = require('./county');
   const SO = require('./settlement-outcomes');
   const range = require('./routes/reports').range({ query: new URLSearchParams({ from, to }) });
   const raw = await db.readSnapshot(async () => SO.figures(range, { fundIds }));
-  const payload = K.payloadFrom(raw, { programme: db.getSetting('org_name', ''), recipient });
+  const payload = K.payloadFrom(raw, { programme: db.getSetting('org_name', ''), recipient, ...(schemaVersion ? { schemaVersion } : {}) });
   const { key, created } = K.ensureKey(user);
   const { file, sha256, fingerprint } = K.signFile(payload);
   // Remembered for this county, as the file route does: the card offers the same name and funds next time. Only a
@@ -340,8 +385,12 @@ async function send({ from, to, user = null, ip = null, automatic = false, funds
   const name = K.cleanText(countyName, K.TEXT_MAX.county_name) || cur.county_name || (remembered && K.cleanText(remembered.name, K.TEXT_MAX.county_name)) || '';
   if (!name) throw new ConnectError('Type the county\'s name on the Send to the county card, as the file should show it.', { reason: 'recipient' });
   const recipient = { county_code: cur.county_code, county_name: name };
+  // The file version the county reads: what its /status last said (asked now if it has not said since the connection
+  // was saved). A county on SUDS 1.20 or earlier says nothing, and is sent version 1, without the award amounts.
+  if (!lastStatus()) await test({ user, ip });
+  const schemaVersion = versionForCounty();
   // An automatic send uses only the funds a person last chose for this county's code, never a list given to it.
-  const made = await buildFile({ from, to, user, recipient, fundIds: fundsFor(recipient.county_code, automatic ? undefined : funds), remember: !automatic });
+  const made = await buildFile({ from, to, user, recipient, fundIds: fundsFor(recipient.county_code, automatic ? undefined : funds), remember: !automatic, schemaVersion });
   if (made.keyCreated) audit.log({ user, action: 'county_submission.key.create', ip, details: { fingerprint: made.keyCreated.fingerprint } });
   const host = new URL(c.base_url).host;
   let status; let reason = null; let message; let receipt = null;
@@ -358,10 +407,13 @@ async function send({ from, to, user = null, ip = null, automatic = false, funds
     status = 'failed'; reason = e.reason || 'network'; message = e.message;
   }
   const id = uuid();
+  // Made, whatever the county answered: the programme's reminders (county-schedule.js) count the period as made, and as
+  // sent once the county accepted it (county_connect_sends).
+  require('./county-schedule').recordMade({ county_code: recipient.county_code, from, to, sha256: made.sha256, schema_version: made.payload.schema_version, via: automatic ? 'auto' : 'send' });
   db.run(`INSERT INTO county_connect_sends(id,period_from,period_to,sha256,status,reason,county_received_at,base_url,automatic,sent_at,sent_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
     id, from, to, made.sha256, status, reason ? String(reason).slice(0, 60) : null, receipt ? receipt.received_at : null, c.base_url, automatic ? 1 : 0, db.now(), user ? user.id : null);
   audit.log({ user: user || { username: 'system' }, action: 'county_submission.send', entity: 'county_connect_send', entityId: id, ip, success: !['failed', 'refused'].includes(status),
-    details: { from, to, county_code: recipient.county_code, fingerprint: made.fingerprint, sha256: made.sha256, host, status, reason: reason || undefined, automatic, funds: made.payload.funds.length, leaves_programme: status !== 'failed', content: 'aggregate counts and money; no client-level data' } });
+    details: { from, to, county_code: recipient.county_code, fingerprint: made.fingerprint, sha256: made.sha256, schema_version: made.payload.schema_version, host, status, reason: reason || undefined, automatic, funds: made.payload.funds.length, leaves_programme: status !== 'failed', content: 'aggregate counts and money; no client-level data' } });
   return { status, reason, message, receipt, send: sendOut(db.one(`SELECT s.*, u.display_name sent_by_name FROM county_connect_sends s LEFT JOIN users u ON u.id=s.sent_by WHERE s.id=?`, id)) };
 }
 function sendOut(s) { return { id: s.id, period_from: s.period_from, period_to: s.period_to, sha256: s.sha256, status: s.status, reason: s.reason, county_received_at: s.county_received_at, host: (() => { try { return new URL(s.base_url).host; } catch { return null; } })(), automatic: !!s.automatic, sent_at: s.sent_at, sent_by_name: s.sent_by_name || (s.automatic ? 'Automatic' : null) }; }
@@ -460,4 +512,4 @@ async function autoSendIfDue({ force = false } = {}) {
   } finally { autoRunning = false; }
 }
 
-module.exports = { TIMEOUT_MS, MAX_ANSWER_BYTES, AUTO_LOOKBACK, ConnectError, checkBaseUrl, describe, save, remove, call, test, buildFile, send, sends, autoSendIfDue, cadencePeriods, periodProblem, countyFromStatus, _setTimeoutForTests };
+module.exports = { TIMEOUT_MS, MAX_ANSWER_BYTES, AUTO_LOOKBACK, LAST_STATUS, lastStatus, statusFacts, countyReads, versionForCounty, ConnectError, checkBaseUrl, describe, save, remove, call, test, buildFile, send, sends, autoSendIfDue, cadencePeriods, periodProblem, countyFromStatus, _setTimeoutForTests };

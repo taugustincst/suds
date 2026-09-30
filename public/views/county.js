@@ -19,6 +19,14 @@ loadingFor('county', () => 'Adding up the programs\' submissions…');
 
 const money = (n) => (typeof n === 'number' ? fmt.money(n) : '—');
 const num = (n) => (typeof n === 'number' ? fmt.num(n) : '—');
+/** A figure of a row, as its kind reads: money, a share of the award in per cent, or a count. */
+const figureOf = (x, v) => (x.percent ? (typeof v === 'number' ? `${fmt.num(v)}%` : '—') : x.money ? money(v) : num(v));
+/**
+ * A program's cell with no figure: in the award rows, why (its files carry no award: "award not in file", or none of
+ * its funds has one), else "not submitted". Never a greyed 0 alone.
+ */
+const noFigure = (x, pid) => (x.by_note && x.by_note[pid] ? h('span', { class: 'muted', 'data-cv-award-note': x.by_note[pid] }, '— ', h('span', { class: 'small' }, x.by_note[pid]))
+  : h('span', { class: 'muted', 'data-cv-none': '1' }, '— ', h('span', { class: 'small' }, 'not submitted')));
 const STATUS = { whole: ['Whole period', 'ok'], part: ['Part of the period', 'warn'], none: ['Not submitted', 'danger'] };
 const statusBadge = (s) => badge(STATUS[s][0], STATUS[s][1]);
 const periodText = (s) => `${fmt.date(s.period_from)} – ${fmt.date(s.period_to)}`;
@@ -130,16 +138,18 @@ async function viewTab(r) {
     table([{ label: 'Program', render: p => p.name }, { label: 'For this period', render: p => statusBadge(p.status) }, { label: 'Source', render: p => sourceTag(p.source) },
       { label: 'Files counted', render: p => (p.submissions.length ? p.submissions.map(s => h('div', {}, `${periodText(s)} · received ${fmt.date(s.received_at)}`)) : '—') },
       { label: 'Left out', render: p => (p.left_out.length ? p.left_out.map(s => h('div', { class: 'small', 'data-cv-left-out': s.why }, `${periodText(s)}${s.source === 'county_entered' ? ' (entered by the county)' : ''}: ${s.reason}`)) : '—') }], d.programmes, { empty: 'No programs.' }));
-  const figure = (x, v) => (x.money ? money(v) : num(v));
+  const figure = figureOf;
   // A program with nothing for the period has no figure: "—" and the words, never a greyed 0 alone (M6).
   // A program's figures the county entered carry "(entered)" in every cell, and its column says what that means.
   const marks = (p) => [p.status === 'part' ? 'part' : null, isEnteredSource(p.source) ? 'entered' : null].filter(Boolean);
-  const progCell = (p) => (x) => (x.by[p.id] === null ? h('span', { class: 'muted', 'data-cv-none': '1' }, '— ', h('span', { class: 'small' }, 'not submitted'))
+  const progCell = (p) => (x) => (x.by[p.id] === null ? noFigure(x, p.id)
     : marks(p).length ? h('span', {}, figure(x, x.by[p.id]), h('span', { class: 'small muted', 'data-cv-cell-entered': isEnteredSource(p.source) ? '1' : null }, ` (${marks(p).join(', ')})`)) : figure(x, x.by[p.id]));
   const progHead = (p) => (isEnteredSource(p.source) ? h('span', {}, p.name, h('span', { class: 'small muted', 'data-cv-entered-mark': p.id }, p.source === 'mixed' ? ` (some figures ${ENTERED_WORDS})` : ` (${ENTERED_WORDS})`)) : p.name);
   // The entered part goes on a line of its own under the total, and wraps: at phone width it is never one long line.
   const enteredPart = (x, v, attr) => h('div', { class: 'small muted', [attr]: '1', style: { whiteSpace: 'normal' } }, `(incl. ${figure(x, v)} entered by the county)`);
-  const totalCell = (x) => h('span', {}, h('b', {}, figure(x, x.total)), x.total_entered ? enteredPart(x, x.total_entered, 'data-cv-total-entered') : null);
+  const totalCell = (x) => (x.group === 'award' && x.total === null ? h('span', { class: 'muted', 'data-cv-award-total-none': '1' }, '— ', h('span', { class: 'small' }, 'no program\'s files carry an award'))
+    : h('span', {}, h('b', {}, figure(x, x.total)), x.group === 'award' ? h('div', { class: 'small muted', 'data-cv-award-over': '1', style: { whiteSpace: 'normal' } }, `(over ${x.total_over} of ${d.award.of} program${d.award.of === 1 ? '' : 's'})`) : null,
+      x.total_entered ? enteredPart(x, x.total_entered, 'data-cv-total-entered') : null));
   // A column heading with a marker is an element, and an element can be in one table only: each table gets its own.
   const cols = () => [{ label: 'Measure', render: x => x.label },
     ...d.programmes.map(p => ({ label: progHead(p), cardLabel: isEnteredSource(p.source) ? `${shorts[p.id]} (entered)` : shorts[p.id], num: true, render: progCell(p) })),
@@ -154,15 +164,16 @@ async function viewTab(r) {
     group('spending', 'Spending from settlement funds', 'cv-spend-h'),
     group('use', 'Spent by allowable use (Exhibit E)', 'cv-use-h', `${HELP.exhibitE} Each fund's spending under its own category.`),
     group('hiaa', 'Spent by High Impact Abatement Activity', 'cv-hiaa-h', `${HELP.hiaa} Everything the funds marked with each activity spent (approved or reimbursed).`),
-    group('outcome', 'Outcomes', 'cv-outcome-h', 'Counts of people are each program\'s own count, added up: a person served by two programs counts twice.'));
+    group('outcome', 'Outcomes', 'cv-outcome-h', 'Counts of people are each program\'s own count, added up: a person served by two programs counts twice.'),
+    d.award ? group('award', 'Spending against the award', 'cv-award-h', d.award.note) : null);
 }
 /** By quarter (M5): the measures down the side, the quarters across (their totals); each quarter's programs behind a disclosure. */
 function quarterView(d) {
   if (d.too_many) return h('div', { class: 'banner info', role: 'status', 'data-cv-quarters-too-many': '1' }, `That is more than ${d.max_quarters} quarters. Choose a shorter period to see it by quarter.`);
   if (!d.quarters.length) return h('div', { class: 'banner info', role: 'status', 'data-cv-no-quarters': '1' }, 'No whole quarter lies inside this period. Choose a period that starts on the first day of a quarter (January, April, July or October 1) and ends on the last day of one.');
-  const figure = (x, v) => (x.money ? money(v) : num(v));
+  const figure = figureOf;
   const qLabel = (q) => monthsLabel(q.from, q.to);
-  const qCell = (i) => (x) => h('span', {}, figure(x, x.by_quarter[i]), x.by_quarter_entered && x.by_quarter_entered[i] ? h('div', { class: 'small muted', 'data-cq-entered': '1', style: { whiteSpace: 'normal' } }, `(incl. ${figure(x, x.by_quarter_entered[i])} entered by the county)`) : null);
+  const qCell = (i) => (x) => h('span', {}, figure(x, x.by_quarter[i]), x.by_quarter_over ? h('div', { class: 'small muted', style: { whiteSpace: 'normal' } }, `(over ${x.by_quarter_over[i]} of ${d.quarters[i].award ? d.quarters[i].award.of : 0})`) : null, x.by_quarter_entered && x.by_quarter_entered[i] ? h('div', { class: 'small muted', 'data-cq-entered': '1', style: { whiteSpace: 'normal' } }, `(incl. ${figure(x, x.by_quarter_entered[i])} entered by the county)`) : null);
   const cols = [{ label: 'Measure', render: x => x.label },
     ...d.quarters.map((q, i) => ({ label: `${qLabel(q)} (${q.whole} of ${q.of} complete${q.entered_programmes ? `; ${q.entered_programmes} entered by the county` : ''})`, cardLabel: qLabel(q), num: true, render: qCell(i) }))];
   const section = (g, title, id) => { const rows = d.rows.filter(x => x.group === g); return rows.length ? h('section', { class: 'card mb', 'aria-labelledby': id, 'data-cv-quarter-group': g }, h('div', { class: 'card-head' }, h('h2', { id }, title)), table(cols, rows)) : null; };
@@ -170,7 +181,7 @@ function quarterView(d) {
     d.quarters.map((q, qi) => {
       const shorts = shortNames(q.programmes);
       const pc = [{ label: 'Measure', render: x => x.label }, ...q.programmes.map(p => ({ label: isEnteredSource(p.source) ? `${p.name} (${ENTERED_WORDS})` : p.name, cardLabel: isEnteredSource(p.source) ? `${shorts[p.id]} (entered)` : shorts[p.id], num: true,
-        render: x => (x.by[p.id] === null ? h('span', { class: 'muted' }, '— ', h('span', { class: 'small' }, 'not submitted')) : isEnteredSource(p.source) ? h('span', {}, figure(x, x.by[p.id]), h('span', { class: 'small muted' }, ' (entered)')) : figure(x, x.by[p.id])) })),
+        render: x => (x.by[p.id] === null ? noFigure(x, p.id) : isEnteredSource(p.source) ? h('span', {}, figure(x, x.by[p.id]), h('span', { class: 'small muted' }, ' (entered)')) : figure(x, x.by[p.id])) })),
         { label: `Total (${q.whole} of ${q.of} programs complete)`, cardLabel: 'Total', num: true, render: x => h('b', {}, figure(x, x.total)) }];
       return h('div', { 'data-cv-quarter': qi }, h('h3', {}, qLabel(q)), h('p', { class: 'small' }, q.headline), table(pc, q.rows));
     }));
@@ -182,6 +193,8 @@ function quarterView(d) {
     section('use', 'Spent by allowable use (Exhibit E), by quarter', 'cq-use-h'),
     section('hiaa', 'Spent by High Impact Abatement Activity, by quarter', 'cq-hiaa-h'),
     section('outcome', 'Outcomes, by quarter', 'cq-outcome-h'),
+    d.rows.some(x => x.group === 'award') ? h('p', { class: 'small', 'data-cq-award-note': '1' }, d.award_note) : null,
+    section('award', 'Spending against the award, by quarter', 'cq-award-h'),
     perQuarter);
 }
 
@@ -384,7 +397,7 @@ function notOnSudsForm() {
   const m = modal('Add a program not on SUDS', h('div', { 'data-cp-entered-dialog': '1' },
     h('p', { class: 'small' }, `For a grantee that does not run SUDS. It has no key, so it sends no signed file: the county's own staff enter its figures (or import them as a CSV) from what it sends. Every view and file marks them "${ENTERED_WORDS}", and the combined view can leave them out.`), f), { wide: true });
 }
-const FUND_TEXT = ['name', 'grant_number', 'category', 'hiaa'];
+const FUND_TEXT = ['name', 'grant_number', 'category', 'hiaa', 'award_amount', 'award_from', 'award_to'];
 /** Exhibit E's uses, each named with its schedule as the fund form names them (budget.js settlementFields). */
 const useKind = (code) => (code.startsWith('core_') ? 'Core strategy ' : code.startsWith('approved_') ? 'Approved use ' : '');
 const useOptions = () => ((state.constants || {}).SETTLEMENT_USES || []).map(x => ({ value: x.code, label: `${useKind(x.code)}${x.label}` }));
@@ -431,6 +444,11 @@ async function enterFiguresDialog(p, { initial = null } = {}) {
         { name: `${pre}category`, label: 'Exhibit E allowable use', type: 'select', options: useOpts, placeholder: 'No settlement category recorded', span: true },
         { name: `${pre}hiaa`, label: 'High Impact Abatement Activity', type: 'select', options: hiaaOpts, placeholder: '— not recorded —', span: true },
         ...SPEND.map(([k, label]) => ({ name: `${pre}${k}`, label, required: true })),
+        // The award (built for 1.21.0, not yet released): optional; all three, or none.
+        { type: 'section', label: `Fund ${i + 1}: award (optional)` },
+        { name: `${pre}award_amount`, label: 'Award or contract amount ($)', help: 'Leave the three award fields empty if the program did not say. With an amount, give the award period too.' },
+        { name: `${pre}award_from`, label: 'Award period from', type: 'date' },
+        { name: `${pre}award_to`, label: 'Award period to', type: 'date' },
         { type: 'section', label: `Fund ${i + 1}: outcomes` },
         ...M.map(x => ({ name: `${pre}${x.key}`, label: x.label, required: true })));
     }
@@ -445,7 +463,7 @@ async function enterFiguresDialog(p, { initial = null } = {}) {
       } });
     // Figures are typed as text so SUDS, not the browser, says what is wrong with "1,200" or "$5". Every one is
     // required (marked *, as every form marks a required field): 0 where the program reported none.
-    for (let i = 0; i < n; i++) for (const k of numeric) { const el = f.inputs[`funds.${i}.${k}`]; if (el) el.setAttribute('inputmode', 'decimal'); }
+    for (let i = 0; i < n; i++) for (const k of [...numeric, 'award_amount']) { const el = f.inputs[`funds.${i}.${k}`]; if (el) el.setAttribute('inputmode', 'decimal'); }
     holder.replaceChildren(h('p', { class: 'small' }, `Figures ${ENTERED_WORDS}: every view and file marks them so. Fields marked * are required. Type each figure as digits (up to two decimals for money and hours), 0 where the program reported none. Saving figures for a period that already has some replaces them; the earlier ones are kept.`), f);
   };
   build();

@@ -34,7 +34,15 @@ const signing = require('./signing');
 const { encrypt, decrypt, uuid } = require('./crypto');
 
 const FORMAT = 'suds-county-submission';
-const SCHEMA_VERSION = 1;
+/**
+ * The version a file is made in (always the latest: built for 1.21.0, not yet released), and every version this SUDS
+ * reads. Version 2 adds each fund's award (its award or contract amount and the award period, from the programme's
+ * fund record: funding_sources.total_amount, fiscal_year_start and fiscal_year_end), signed like the rest; version 1
+ * files are read as before and shown as "award not in file". A county on SUDS 1.20 or earlier reads version 1 only:
+ * the county upgrades first (docs/COUNTY-VIEW.md, "Award amounts").
+ */
+const SCHEMA_VERSION = 2;
+const SCHEMA_VERSIONS = [1, 2];
 const ALGORITHM = 'Ed25519';
 /** The largest submission file the county imports (a programme with 200 funds is well under 100 KB). */
 const MAX_FILE_BYTES = 256 * 1024;
@@ -221,7 +229,8 @@ function signWithCurrentKey(data) {
 // Every key a payload may hold, and what its value must be. Nothing else passes: not when the file is made
 // (so a change to figures() that added a client-level field could not leak through), and not when it is
 // imported. money: a finite amount >= 0; count: a finite number >= 0 (staff training hours have one decimal).
-// test/county.test.js freezes this list for SCHEMA_VERSION 1: changing it is a new schema version.
+// test/county.test.js freezes this list for schema version 1, and PAYLOAD_V2 for version 2: changing either is a new
+// schema version.
 const PAYLOAD = {
   top: ['categories', 'counts', 'funds', 'generated_at', 'period', 'programme', 'recipient', 'schema_version', 'suds_version', 'total'],
   period: ['from', 'to'],
@@ -233,6 +242,15 @@ const PAYLOAD = {
   totalSpend: ['approved', 'pending'],
   values: [...VALUE_KEYS].sort(),
 };
+/**
+ * Version 2: version 1 with each fund's `award`, null (no award recorded for the fund) or { amount, from, to }: the
+ * award or contract amount (more than 0) and the award period (real days, from on or before to).
+ */
+const PAYLOAD_V2 = { ...PAYLOAD, fund: [...PAYLOAD.fund, 'award'].sort(), award: ['amount', 'from', 'to'] };
+const PAYLOADS = { 1: PAYLOAD, 2: PAYLOAD_V2 };
+/** What a county view says of a programme whose files carry no award (version 1 files). */
+const AWARD_NOT_IN_FILE = 'award not in file';
+const AWARD_NONE = 'no award recorded';
 /** The longest each typed text may be. */
 const TEXT_MAX = { programme: 200, county_name: 200, fund_name: 200, grant_number: 100 };
 
@@ -254,10 +272,31 @@ const text = (v, where, max, { nullable = false } = {}) => {
 };
 function valuesOk(v, where) { exactKeys(v, PAYLOAD.values, where); for (const k of PAYLOAD.values) amount(v[k], `${where}.${k}`); }
 
-/** Throws SubmissionError('schema' | 'period') unless `p` is exactly a county submission payload. */
+/** A version 2 fund's award: null, or exactly { amount, from, to } with an amount above 0 and a real period. */
+function awardOk(a, where) {
+  if (a === null) return;
+  exactKeys(a, PAYLOAD_V2.award, where);
+  amount(a.amount, `${where}.amount`);
+  if (!(a.amount > 0)) refuse('schema', `${where}.amount must be more than 0 (a fund with no award recorded has award: null).`);
+  if (!isDay(a.from) || !isDay(a.to)) refuse('schema', `${where}'s period must be real dates (YYYY-MM-DD).`);
+  if (a.from > a.to) refuse('schema', `${where}'s period starts (${humanDay(a.from)}) after it ends (${humanDay(a.to)}).`);
+}
+/**
+ * A fund's award as the programme's fund record gives it (settlement-outcomes.js figures(): { amount, from, to }), or
+ * null: no amount above 0, or no real award period, is "no award recorded", never a guess.
+ */
+function awardFrom(a) {
+  if (!a || typeof a !== 'object') return null;
+  const n = Number(a.amount);
+  if (!Number.isFinite(n) || n <= 0 || n > 1e12 || !isDay(a.from) || !isDay(a.to) || a.from > a.to) return null;
+  return { amount: Math.round(n * 100) / 100, from: a.from, to: a.to };
+}
+/** Throws SubmissionError('schema' | 'period') unless `p` is exactly a county submission payload (version 1 or 2). */
 function checkPayload(p, { today, now } = {}) {
-  exactKeys(p, PAYLOAD.top, 'The submission');
-  if (p.schema_version !== SCHEMA_VERSION) refuse('schema', `This file is county submission version ${JSON.stringify(p.schema_version)}; this SUDS reads version ${SCHEMA_VERSION}. Ask the program to make it again with the same version of SUDS as the county, or upgrade SUDS.`);
+  if (!p || typeof p !== 'object' || Array.isArray(p)) refuse('schema', 'The submission must be an object.');
+  if (!SCHEMA_VERSIONS.includes(p.schema_version)) refuse('schema', `This file is county submission version ${JSON.stringify(p.schema_version)}; this SUDS reads versions ${SCHEMA_VERSIONS.join(' and ')}. Ask the program to make it again with the same version of SUDS as the county, or upgrade SUDS.`);
+  const L = PAYLOADS[p.schema_version];
+  exactKeys(p, L.top, 'The submission');
   text(p.programme, 'The program name', TEXT_MAX.programme);
   if (typeof p.suds_version !== 'string' || !VERSION.test(p.suds_version)) refuse('schema', 'The SUDS version must be a version number (letters, digits, dots, plus and minus; at most 40 characters).');
   if (!isInstant(p.generated_at)) refuse('schema', 'The time the file was made (generated_at) must be a date and time in UTC, as SUDS writes it (for example 2026-07-02T16:05:00.000Z).');
@@ -278,7 +317,8 @@ function checkPayload(p, { today, now } = {}) {
   if (!Array.isArray(p.funds) || p.funds.length > MAX_FUNDS) refuse('schema', `funds must be a list of at most ${MAX_FUNDS}.`);
   p.funds.forEach((f, i) => {
     const w = `funds[${i}]`;
-    exactKeys(f, PAYLOAD.fund, w);
+    exactKeys(f, L.fund, w);
+    if (p.schema_version >= 2) awardOk(f.award, `${w}.award`);
     text(f.name, `${w}.name`, TEXT_MAX.fund_name); text(f.grant_number, `${w}.grant_number`, TEXT_MAX.grant_number, { nullable: true });
     if (!USE_CODES.has(f.category)) refuse('schema', `${w}.category is not an Exhibit E allowable use SUDS knows.`);
     if (f.hiaa !== null && !HIAA_CODES.has(f.hiaa)) refuse('schema', `${w}.hiaa is not a High Impact Abatement Activity SUDS knows.`);
@@ -305,7 +345,8 @@ function checkPayload(p, { today, now } = {}) {
  * figures, before any small-cell protection). `raw` is figures(range, { fundIds }) for { from, to } and the funds
  * the person chose. A figure the allow-list expects and figures() did not give is an error, never a quiet 0.
  */
-function payloadFrom(raw, { programme, recipient, generatedAt = new Date().toISOString(), version = config.version } = {}) {
+function payloadFrom(raw, { programme, recipient, generatedAt = new Date().toISOString(), version = config.version, schemaVersion = SCHEMA_VERSION } = {}) {
+  if (!SCHEMA_VERSIONS.includes(schemaVersion)) refuse('schema', `A county file is made in version ${SCHEMA_VERSIONS.join(' or ')}.`);
   const need = (o, k, where) => { if (!o || !Object.prototype.hasOwnProperty.call(o, k) || o[k] === undefined || o[k] === null) refuse('schema', `${where} has no ${k}: the figures are not the shape this version of SUDS expects.`); return o[k]; };
   const vals = (v, where) => Object.fromEntries(VALUE_KEYS.map(k => [k, need(v, k, where)]));
   const code = normaliseCode(recipient && recipient.county_code);
@@ -313,7 +354,7 @@ function payloadFrom(raw, { programme, recipient, generatedAt = new Date().toISO
   const countyName = cleanText(recipient && recipient.county_name, TEXT_MAX.county_name);
   if (!countyName) refuse('recipient', 'Type the county\'s name, as the file should show it.');
   const p = {
-    schema_version: SCHEMA_VERSION,
+    schema_version: schemaVersion,
     programme: cleanText(programme, TEXT_MAX.programme) || 'Unnamed program',
     recipient: { county_code: code, county_name: countyName },
     period: { from: raw.from, to: raw.to },
@@ -322,7 +363,7 @@ function payloadFrom(raw, { programme, recipient, generatedAt = new Date().toISO
     counts: 'exact',
     funds: raw.funds.map((f, i) => ({ name: cleanText(f.name, TEXT_MAX.fund_name) || `Fund ${i + 1}`, grant_number: cleanText(f.grant_number, TEXT_MAX.grant_number) || null, category: f.category, hiaa: f.hiaa || null,
       spend: { own_category: need(f.spend, 'own_category', `funds[${i}].spend`), other_categories: need(f.spend, 'other_categories', `funds[${i}].spend`), approved: need(f.spend, 'approved', `funds[${i}].spend`), pending: need(f.spend, 'pending', `funds[${i}].spend`) },
-      values: vals(f.values, `funds[${i}].values`) })),
+      values: vals(f.values, `funds[${i}].values`), ...(schemaVersion >= 2 ? { award: awardFrom(f.award) } : {}) })),
     categories: raw.categories.map((c, i) => ({ key: c.key, spend_own_category: need(c, 'spend_own_category', `categories[${i}]`), values: vals(c.values, `categories[${i}].values`) })),
     total: { spend: { approved: need(raw.total.spend, 'approved', 'total.spend'), pending: need(raw.total.spend, 'pending', 'total.spend') }, values: vals(raw.total.values, 'total.values') },
   };
@@ -331,7 +372,7 @@ function payloadFrom(raw, { programme, recipient, generatedAt = new Date().toISO
 /** A file name part from the program's name: "Riverbend Harm Reduction" → "riverbend-harm-reduction". */
 const slug = (s) => cleanText(s, 200).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '') || 'program';
 
-const envelope = (payload, fingerprint, signature) => ({ format: FORMAT, schema_version: SCHEMA_VERSION, payload, signature: { algorithm: ALGORITHM, key_fingerprint: fingerprint, value: signature } });
+const envelope = (payload, fingerprint, signature) => ({ format: FORMAT, schema_version: payload.schema_version, payload, signature: { algorithm: ALGORITHM, key_fingerprint: fingerprint, value: signature } });
 /** The file: the payload, its signature over canonical(payload), and the signing key's fingerprint. */
 function signFile(payload) {
   const bytes = canonical(payload);
@@ -363,7 +404,10 @@ function parseFile(textIn, { today, now } = {}) {
   try { f = JSON.parse(textIn); } catch { refuse('malformed', 'The file is not a county submission: it is not valid JSON. Ask the program to send the file SUDS made, unchanged.'); }
   if (!f || typeof f !== 'object' || Array.isArray(f) || f.format !== FORMAT) refuse('format', 'The file is not a SUDS county submission (its format is not suds-county-submission).');
   exactKeys(f, ['format', 'payload', 'schema_version', 'signature'], 'The file');
-  if (f.schema_version !== SCHEMA_VERSION) refuse('schema', `This file is county submission version ${JSON.stringify(f.schema_version)}; this SUDS reads version ${SCHEMA_VERSION}.`);
+  if (!SCHEMA_VERSIONS.includes(f.schema_version)) refuse('schema', `This file is county submission version ${JSON.stringify(f.schema_version)}; this SUDS reads versions ${SCHEMA_VERSIONS.join(' and ')}.`);
+  // The envelope's version is not signed; the payload's is. They must agree, so a signed version 1 payload cannot be
+  // passed off as version 2 (or the other way round).
+  if (!f.payload || typeof f.payload !== 'object' || f.payload.schema_version !== f.schema_version) refuse('schema', 'The file\'s version and its signed contents\' version differ: the file was changed after it was made.');
   exactKeys(f.signature, ['algorithm', 'key_fingerprint', 'value'], 'The signature');
   if (f.signature.algorithm !== ALGORITHM) refuse('signature', 'The file is not signed with Ed25519.');
   const fingerprint = normaliseFingerprint(f.signature.key_fingerprint);
@@ -628,6 +672,19 @@ function combined(from, to, { entered = true } = {}) {
     for (const c of pl.categories) agg.use[c.key] = (agg.use[c.key] || 0) + c.spend_own_category;
     for (const f of pl.funds) { const h = f.hiaa || 'none'; agg.hiaa[h] = (agg.hiaa[h] || 0) + f.spend.approved; }
   };
+  // The award (schema version 2): each fund's award counted once per programme however many of its files in the
+  // period carry it (the same fund, grant number and award period), and what the period's files spent (approved or
+  // reimbursed) under the funds that carry one. Version 1 files carry no award ("award not in file").
+  const awardAgg = () => ({ awards: new Map(), spent: 0, v1: 0, v2: 0, without: 0 });
+  const addAward = (a, pl) => {
+    if (!(pl.schema_version >= 2)) { a.v1++; return; }
+    a.v2++;
+    for (const f of pl.funds) {
+      if (!f.award) { a.without++; continue; }
+      a.awards.set([f.name, f.grant_number || '', f.award.from, f.award.to].join('\u0000').toLowerCase(), f.award.amount);
+      a.spent += f.spend.approved;
+    }
+  };
   for (const p of programmes) {
     const { used, overlapped, covered, outside, days_covered: daysCovered, status } = coverage(byProg.get(p.id), from, to);
     if (!filesCount(p)) { if (used.length) inactiveLeftOut.push({ id: p.id, name: p.name, files: used.length }); continue; }
@@ -637,18 +694,26 @@ function combined(from, to, { entered = true } = {}) {
       if (p.on_suds === 0 && !used.length) continue;
     }
     if (!p.active && !used.length) continue;
-    const agg = blank(); const aggEntered = blank();
+    const agg = blank(); const aggEntered = blank(); const aw = awardAgg();
     for (const s of used) {
       const pl = JSON.parse(decrypt(s.payload_enc));
       add(agg, pl); if (isEntered(s)) add(aggEntered, pl);
+      addAward(aw, pl);
     }
     const source = sourceOf(used);
+    const awardTotal = [...aw.awards.values()].reduce((n, x) => n + x, 0);
+    const award = !used.length ? null : {
+      status: !aw.v2 ? 'not_in_file' : !aw.awards.size ? 'none' : aw.v1 || aw.without ? 'partial' : 'whole',
+      amount: aw.awards.size ? round2(awardTotal) : null, spent: aw.awards.size ? round2(aw.spent) : null,
+      pct: aw.awards.size ? round1((aw.spent / awardTotal) * 100) : null, files_without: aw.v1, funds_without: aw.without,
+    };
     cols.push({
       id: p.id, name: p.name, active: !!p.active, keep_files: !!p.keep_files, on_suds: p.on_suds !== 0,
       status, days_covered: daysCovered, days_in_period: period, source,
       submissions: used.map(summary),
       left_out: [...overlapped.map(s => ({ ...summary(s), why: 'overlaps', reason: LEFT_OUT.overlaps })), ...covered.map(s => ({ ...summary(s), why: 'signed_covers', reason: LEFT_OUT.signed_covers })),
         ...outside.filter(s => s.period_from <= to && s.period_to >= from).map(s => ({ ...summary(s), why: 'outside', reason: LEFT_OUT.outside }))],
+      award, award_note: award ? awardNote(award) : null,
       agg: used.length ? agg : null, aggEntered: source === ENTERED || source === 'mixed' ? aggEntered : null,
     });
   }
@@ -664,6 +729,21 @@ function combined(from, to, { entered = true } = {}) {
   for (const u of USE_ROWS()) if (cols.some(c => c.agg && c.agg.use[u.code])) rows.push(row('use', u.code, u.label, a => a.use[u.code]));
   for (const x of HIAA_ROWS()) if (cols.some(c => c.agg && c.agg.hiaa[x.code])) rows.push(row('hiaa', x.code, x.label, a => a.hiaa[x.code]));
   for (const k of VALUE_KEYS) rows.push(row('outcome', k, measureLabel(k), a => a.values[k], { money: false, round: k === 'staff_training_hours' ? round1 : (n) => n }));
+  // Award rows: each programme's award, what it spent against it, and the share; a programme whose files carry no
+  // award has none (by: null, with why in by_note), and every total is over the programmes whose files carry it only.
+  const withAward = cols.filter(c => c.award && c.award.amount !== null);
+  const enteredAward = withAward.filter(c => c.aggEntered);
+  const sumOf = (list, k) => round2(list.reduce((n, c) => n + c.award[k], 0));
+  const pctOf = (list) => { const a = sumOf(list, 'amount'); return a ? round1((sumOf(list, 'spent') / a) * 100) : null; };
+  const awardRow = (key, label, pick, total, totalEntered, { money = true, percent = false } = {}) => ({
+    group: 'award', key, label, money, percent, by: Object.fromEntries(cols.map(c => [c.id, c.award && c.award.amount !== null ? pick(c.award) : null])),
+    by_note: Object.fromEntries(cols.filter(c => c.award && c.award.amount === null).map(c => [c.id, c.award.status === 'not_in_file' ? AWARD_NOT_IN_FILE : AWARD_NONE])),
+    total, total_entered: totalEntered, total_over: withAward.length });
+  if (cols.some(c => c.agg)) {
+    rows.push(awardRow('award_amount', 'Award or contract amount (each fund\'s award counted once)', a => a.amount, withAward.length ? sumOf(withAward, 'amount') : null, sumOf(enteredAward, 'amount')));
+    rows.push(awardRow('award_spent', 'Spent in this period under the funds with an award (approved or reimbursed)', a => a.spent, withAward.length ? sumOf(withAward, 'spent') : null, sumOf(enteredAward, 'spent')));
+    rows.push(awardRow('award_spent_pct', 'Spent against the award (%)', a => a.pct, pctOf(withAward), enteredAward.length ? pctOf(enteredAward) : 0, { money: false, percent: true }));
+  }
   const whole = cols.filter(c => c.status === 'whole').length; const part = cols.filter(c => c.status === 'part').length; const none = cols.filter(c => c.status === 'none').length;
   const enteredProgrammes = cols.filter(c => c.source === ENTERED || c.source === 'mixed').length;
   return {
@@ -673,9 +753,21 @@ function combined(from, to, { entered = true } = {}) {
     submitted: whole + part, not_submitted: none, whole, part, none, of: cols.length,
     entered, entered_programmes: enteredProgrammes, entered_left_out: enteredLeftOut, has_entered: hasEntered(),
     headline: headline(whole, part, none, cols.length, { entered: enteredProgrammes, leftOut: enteredLeftOut.length }),
+    award: { programmes_with: withAward.length, of: cols.filter(c => c.agg).length, note: awardTotalsNote(withAward.length, cols.filter(c => c.agg).length) },
     inactive_left_out: inactiveLeftOut,
     caveats: CAVEATS, caveat_summary: CAVEAT_SUMMARY, publication_note: PUBLICATION_NOTE, rule: PERIOD_RULE, entered_label: ENTERED_LABEL, entered_note: ENTERED_NOTE,
   };
+}
+/** What a programme's award status means, in words (the view, its files and the read API say the same). */
+function awardNote(a) {
+  if (a.status === 'not_in_file') return `${AWARD_NOT_IN_FILE}: its files for this period are version 1 (made before SUDS 1.21), which carry no award`;
+  if (a.status === 'none') return `${AWARD_NONE}: none of the funds in its files has an award amount`;
+  if (a.status === 'partial') return `award for some funds only: ${[a.files_without ? `${a.files_without} file${a.files_without === 1 ? '' : 's'} without the award (version 1)` : null, a.funds_without ? `${a.funds_without} fund${a.funds_without === 1 ? '' : 's'} with no award recorded` : null].filter(Boolean).join('; ')}`;
+  return 'award in every file';
+}
+/** The award totals are over the programmes whose files carry the award only: said wherever a total is shown. */
+function awardTotalsNote(withAward, of) {
+  return `Award totals are over the ${withAward} of ${of} program${of === 1 ? '' : 's'} with figures whose files carry an award; a program whose files carry none (${AWARD_NOT_IN_FILE}, or ${AWARD_NONE}) is not in them. The spending against the award is what the period's files spent (approved or reimbursed) under the funds with an award, and each fund's award is counted once however many files carry it.`;
 }
 /** Whether the county has entered figures for any programme (the views offer to leave them out only then). */
 const hasEntered = () => !!db.one(`SELECT 1 x FROM county_submissions WHERE source=? LIMIT 1`, ENTERED);
@@ -702,17 +794,19 @@ function byQuarter(from, to, { entered = true } = {}) {
   if (!qs.length) return { from, to, quarters: [], rows: [], days_outside_quarters: daysIn(from, to), too_many: false, entered, has_entered: hasEntered() };
   if (qs.length > MAX_QUARTERS) return { from, to, quarters: [], rows: [], too_many: true, max_quarters: MAX_QUARTERS, entered, has_entered: hasEntered() };
   const views = qs.map(q => combined(q.from, q.to, { entered }));
-  const order = [['spending', 'spend_approved'], ['spending', 'spend_pending'], ...USE_ROWS().map(u => ['use', u.code]), ...HIAA_ROWS().map(x => ['hiaa', x.code]), ...VALUE_KEYS.map(k => ['outcome', k])];
+  const order = [['spending', 'spend_approved'], ['spending', 'spend_pending'], ...USE_ROWS().map(u => ['use', u.code]), ...HIAA_ROWS().map(x => ['hiaa', x.code]), ...VALUE_KEYS.map(k => ['outcome', k]), ...['award_amount', 'award_spent', 'award_spent_pct'].map(k => ['award', k])];
   const rows = [];
   for (const [g, k] of order) {
     const found = views.map(v => v.rows.find(r => r.group === g && r.key === k));
     const first = found.find(Boolean); if (!first) continue;
-    rows.push({ group: g, key: k, label: first.label, money: first.money, by_quarter: found.map(r => (r ? r.total : 0)), by_quarter_entered: found.map(r => (r ? r.total_entered : 0)) });
+    rows.push({ group: g, key: k, label: first.label, money: first.money, percent: !!first.percent, by_quarter: found.map(r => (r ? r.total : g === 'award' ? null : 0)), by_quarter_entered: found.map(r => (r ? r.total_entered : 0)),
+      ...(g === 'award' ? { by_quarter_over: found.map(r => (r ? r.total_over : 0)) } : {}) });
   }
   const inQuarters = qs.reduce((n, q) => n + daysIn(q.from, q.to), 0);
   return {
     from, to, rows, too_many: false, days_outside_quarters: daysIn(from, to) - inQuarters, entered, has_entered: hasEntered(), entered_label: ENTERED_LABEL, entered_note: ENTERED_NOTE,
-    quarters: views.map((v) => ({ from: v.from, to: v.to, whole: v.whole, part: v.part, none: v.none, of: v.of, headline: v.headline, entered_programmes: v.entered_programmes, entered_left_out: v.entered_left_out, programmes: v.programmes, rows: v.rows })),
+    award_note: 'Award totals in each quarter are over the programs whose files for that quarter carry an award; each quarter\'s own programs say which.',
+    quarters: views.map((v) => ({ from: v.from, to: v.to, award: v.award, whole: v.whole, part: v.part, none: v.none, of: v.of, headline: v.headline, entered_programmes: v.entered_programmes, entered_left_out: v.entered_left_out, programmes: v.programmes, rows: v.rows })),
   };
 }
 
@@ -726,7 +820,7 @@ const PERIOD_RULE = 'A program\'s submission counts when its whole period lies i
 const PUBLICATION_NOTE = 'Publishing these figures needs the publication screen over the combined release (planned). Until then nothing here is for publication.';
 
 module.exports = {
-  FORMAT, SCHEMA_VERSION, ALGORITHM, MAX_FILE_BYTES, MAX_QUARTERS, VALUE_KEYS, PAYLOAD, TEXT_MAX, CAVEATS, CAVEAT_SUMMARY, PERIOD_RULE, PUBLICATION_NOTE, SubmissionError,
+  FORMAT, SCHEMA_VERSION, SCHEMA_VERSIONS, ALGORITHM, MAX_FILE_BYTES, MAX_QUARTERS, VALUE_KEYS, PAYLOAD, PAYLOAD_V2, PAYLOADS, AWARD_NOT_IN_FILE, AWARD_NONE, awardFrom, awardNote, TEXT_MAX, CAVEATS, CAVEAT_SUMMARY, PERIOD_RULE, PUBLICATION_NOTE, SubmissionError,
   ENTERED, ENTERED_LABEL, ENTERED_NOTE, LEFT_OUT, USE_CODES, HIAA_CODES, CURRENT, subById, sha256Hex, isEntered, sourceOf, hasEntered,
   SUBS, canonical, cleanText, fingerprintOf, formatFingerprint, normaliseFingerprint, parsePublicKey, normaliseCode, formatCode, countyCode,
   currentKey, retiredKeys, ensureKey, rotateKey, payloadFrom, signFile, signWithSeed, checkPayload, parseFile, importParsed, withdraw, reinstate, resettle, resettleProgramme,

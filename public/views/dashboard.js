@@ -14,6 +14,9 @@ async function drawHome(r) {
     security: can('settings:manage') && !state.local ? quiet('/api/admin/security/alerts').catch(() => null) : null,
     caseloads: can('assignments:manage') ? quiet('/api/users/caseloads').catch(() => null) : null,
     supplies: can('supplies:manage') ? import('./supplies.js').then(m => m.supplyHome()) : null,
+    // County files due (built for 1.21.0, not yet released; server/county-schedule.js): for whoever makes the county
+    // file, on an office server (SUDS on this device makes none).
+    county: can('reports:funder') && can('budget:read') && can('export:read') && !state.local ? quiet('/api/county-submission/reminders').catch(() => null) : null,
     setup: can('settings:manage') && !state.local ? Promise.all([
       quiet('/api/forms/starters').catch(() => null),
       quiet('/api/users').catch(() => ({ users: [] })),
@@ -115,6 +118,13 @@ async function drawHome(r) {
       const what = cl.inactive_clients ? `${cl.inactive_clients} client${cl.inactive_clients > 1 ? 's are' : ' is'}` : `${cl.inactive_tasks} open to-do${cl.inactive_tasks > 1 ? 's are' : ' is'}`;
       alerts.push(['warn', `${what} assigned to inactive staff`, gone.length === 1 ? `#/admin?tab=caseload&from=${gone[0].id}` : '#/admin?tab=caseload']);
     }
+  }
+  // A county file due or overdue and not yet made or sent: one pill each (three at most, then how many more), to the
+  // reporting schedule on Settlement outcomes.
+  const county = await early.county;
+  if (county && county.reminders && county.reminders.length) {
+    for (const x of county.reminders.slice(0, 3)) alerts.push([x.overdue ? 'danger' : 'warn', x.text, '#/settlement?card=schedule']);
+    if (county.reminders.length > 3) alerts.push(['warn', `${county.reminders.length - 3} more county file${county.reminders.length - 3 === 1 ? '' : 's'} not yet made or sent`, '#/settlement?card=schedule']);
   }
   // Supplies expired or expiring, running low, or short on the books: for whoever runs the cupboard (views/supplies.js).
   const supplies = await early.supplies;

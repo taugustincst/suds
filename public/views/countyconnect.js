@@ -84,14 +84,15 @@ route('county-connect', async () => {
     h('div', { class: 'card-head' }, h('h2', { id: 'cc-set-h' }, 'The connection')),
     h('p', { class: 'small' }, 'Off by default. Switched on, programs the county has issued a connection token to can send their signed county file to this server over the internet, and see which periods the county still expects. The address must be reachable from the programs\' servers: through the county\'s TLS proxy, or a VPN (docs/DEPLOYMENT.md).'),
     s.proxy_warning ? h('p', { class: 'banner warn small', role: 'note', 'data-cc-proxy-warning': '1' }, s.proxy_warning) : null,
-    kv([['Status', s.enabled ? badge('On: accepting connections', 'ok') : badge('Off', '')], ['County code', s.county_code_display || s.county_code || '—'],
+    kv([['Status', s.enabled ? badge('On: accepting connections', 'ok') : badge('Off', '')], ['County code', s.county_code_display || s.county_code || '—'], ['Files due', `${s.due_days} days after each period ends`],
       ['Send address', h('code', { class: 'small' }, `${location.origin}${s.endpoints.submissions}`)], ['Status address', h('code', { class: 'small' }, `${location.origin}${s.endpoints.status}`)]]),
     configure ? form([
       { name: 'enabled', label: 'Accept connections from programs', type: 'checkbox', value: s.enabled, span: true },
       { name: 'cadence', label: 'Periods the county expects', type: 'select', noBlank: true, value: s.cadence, options: s.cadences, span: true, help: 'What a program\'s Test connection shows as expected and outstanding (the last year of them).' },
       { name: 'start', label: 'Expect no period that starts before (optional)', type: 'date', value: s.start || '', span: true },
+      { name: 'due_days', label: 'Days after a period ends that its file is due', type: 'number', value: String(s.due_days), span: true, help: `1 to ${s.due_days_max}. Programs connected to this server are told it, and their SUDS reminds them when a file is due.` },
     ], { submitText: 'Save', onSubmit: async (d) => {
-      await put('/api/county-connect/settings', { enabled: !!d.enabled, cadence: d.cadence, start: d.start || null });
+      await put('/api/county-connect/settings', { enabled: !!d.enabled, cadence: d.cadence, start: d.start || null, due_days: d.due_days === '' || d.due_days === undefined ? undefined : Number(d.due_days) });
       toast('Saved.', 'ok'); nav(`county-connect?t=${Date.now()}`);
     } }) : h('p', { class: 'small muted' }, 'An administrator (county management and settings) switches the connection on and chooses the periods.'));
 
@@ -169,7 +170,7 @@ export function countySendCard(choice = {}) {
             st.outstanding.length ? h('p', {}, `Outstanding: ${st.outstanding.map(p => p.label || periodText(p)).join('; ')}.`) : h('p', {}, 'Nothing outstanding: the county has a file for every period it expects.')], true);
         } else say(`Not connected. ${r.error}`, false);
       } catch (e) { say(e.message, false); }
-      finally { btn.disabled = false; await refresh(); }
+      finally { btn.disabled = false; await refresh(); if (choice.onMade) choice.onMade(); }
     };
     const send = async (btn) => {
       if (!choice.checked) { say('The Send to the county card above has not finished loading. Try again in a moment.', false); return; }
@@ -181,7 +182,8 @@ export function countySendCard(choice = {}) {
         const ok = !['refused', 'failed'].includes(r.status);
         say([h('p', {}, h('b', {}, ok ? 'Sent. ' : 'Not accepted. '), r.message), r.receipt && r.receipt.sha256 ? h('p', { class: 'small' }, `County's receipt: file ${r.receipt.sha256.slice(0, 16)}…, received ${r.receipt.received_at ? fmt.date(r.receipt.received_at) : ''}.`) : null], ok);
       } catch (e) { say(e.message, false); }
-      finally { btn.disabled = false; await refresh(); }
+      // The reporting schedule on the same page (views/settlement.js) says the period is sent now.
+      finally { btn.disabled = false; await refresh(); if (choice.onMade) choice.onMade(); }
     };
     const testBtn = h('button', { class: 'btn', type: 'button', 'data-cc-test': '1', onClick: (e) => test(e.currentTarget) }, 'Test connection');
     const sendBtn = c.can_send ? h('button', { class: 'btn primary', type: 'button', 'data-cc-send': '1', onClick: (e) => send(e.currentTarget) }) : null;
@@ -201,8 +203,10 @@ export function countySendCard(choice = {}) {
         try { await put('/api/county-connect/connection', { confirm_county_code: true }); toast('Confirmed. Switch automatic sending on again under Change the connection if you want it.', 'ok'); await refresh(); }
         catch (err) { toast(err.message, 'error'); }
       } }, `Confirm ${pend.code_display} as the county's code`)) : h('p', { class: 'small' }, 'An administrator confirms it.')) : null;
+    // The county's SUDS reads only an older file version (1.20 or earlier): what is sent leaves the award out.
+    const olderBox = c.county_older ? h('p', { class: 'banner warn small', role: 'note', 'data-cc-county-older': '1' }, c.county_older_note) : null;
     body.replaceChildren(
-      ...(pendingBox ? [pendingBox] : []),
+      ...(pendingBox ? [pendingBox] : []), ...(olderBox ? [olderBox] : []),
       kv([['County SUDS address', h('code', { class: 'small', 'data-cc-url': '1' }, c.base_url)], ['Token', h('code', { class: 'small' }, `${c.token_hint}… (saved, not shown)`)],
         ['County', c.county_name ? `${c.county_name}${c.county_code ? ` (code ${c.county_code})` : ''}` : '—'],
         ['Last tested', c.last_checked_at ? `${fmt.date(c.last_checked_at)}: ${c.last_check_ok ? 'connected' : `not connected (${c.last_check_error || 'unknown'})`}` : 'Not yet'],

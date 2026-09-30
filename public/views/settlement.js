@@ -1,4 +1,4 @@
-import { h, route, get, post, state, fmt, can, pageHead, stat, table, kv, nav, toast, emptyState, loadingFor, confirmDialog, announce } from '../app.js';
+import { h, route, get, post, put, del, state, fmt, can, pageHead, stat, table, kv, nav, toast, emptyState, loadingFor, confirmDialog, announce, badge } from '../app.js';
 // Send to the county over the county connection (views/countyconnect.js; built for 1.18.0), after the file card.
 import { countySendCard } from './countyconnect.js';
 import { fetchDownload } from './reports.js';
@@ -110,7 +110,10 @@ route('settlement', async (r) => {
   // The county card's choices (period, county code and name, funds), shared with the connection's Send so that Send
   // now sends exactly the file Download makes.
   const countyChoice = {};
-  return h('div', { 'data-settlement-outcomes': '1' }, ...head, totalCard, catCard, ...d.funds.map(fundCard), countyCard(from, to, countyChoice), countySendCard(countyChoice),
+  const schedule = scheduleCard(countyChoice);
+  // Arrived from a reminder on Home (?card=schedule): the keyboard goes to the reporting schedule once it is drawn.
+  if (schedule && r && r.query && r.query.get('card') === 'schedule') setTimeout(() => { const el = schedule.querySelector('#so-schedule-h'); if (el && el.isConnected) { el.focus(); el.scrollIntoView({ block: 'start' }); } }, 0);
+  return h('div', { 'data-settlement-outcomes': '1' }, ...head, totalCard, catCard, ...d.funds.map(fundCard), countyCard(from, to, countyChoice), countySendCard(countyChoice), schedule,
     h('details', { class: 'small muted' }, h('summary', {}, 'How the counts were made'), h('p', {}, d.counting_statement)));
 });
 
@@ -127,12 +130,12 @@ function countyCard(pageFrom, pageTo, choice = {}) {
     h('p', { class: 'small' }, 'Makes a file of the program\'s settlement figures for a period, for the county that funds it, signed by this server so the county can check it came from you unchanged. It holds exact counts, small numbers included, and money: aggregate figures only, with no names, client codes, dates of birth or single events.'),
     h('p', { class: 'small', 'data-so-county-leaves': '1' }, h('b', {}, 'It leaves the program. '), 'It is for the county under your funding contract, not for publication or sharing. Making it is recorded in the audit log. SUDS sends nothing itself: you send the file the way the county asks.'),
     body);
-  Promise.all([get('/api/county-submission/key', { quiet: true }), get('/api/county-submission/options', { quiet: true })])
-    .then(([k, o]) => body.replaceChildren(countyForm(k, o, today, pageFrom, pageTo, choice)))
+  Promise.all([get('/api/county-submission/key', { quiet: true }), get('/api/county-submission/options', { quiet: true }), get('/api/county-submission/reminders', { quiet: true }).catch(() => null)])
+    .then(([k, o, rem]) => body.replaceChildren(countyForm(k, o, today, pageFrom, pageTo, choice, rem)))
     .catch(e => body.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)));
   return card;
 }
-function countyForm(k, o, today, pageFrom, pageTo, choice) {
+function countyForm(k, o, today, pageFrom, pageTo, choice, rem = null) {
   const last = o.counties[0] || null;
   // The period: the quarters that have ended (the last one first, and chosen), fiscal years, the last calendar year,
   // and the dates on this page when they have ended and are not already offered.
@@ -159,6 +162,17 @@ function countyForm(k, o, today, pageFrom, pageTo, choice) {
     h('legend', {}, 'Settlement funds this county pays for'),
     o.funds.length ? fundBoxes : h('p', { class: 'small muted' }, 'No funding source is marked as opioid settlement money.'),
     h('div', { class: 'help', id: 'so-county-funds-help' }, 'Only the funds you tick go into the file, and every total in it is over them alone: a fund another funder pays for stays out. Nothing is ticked until you choose; SUDS remembers your choice for this county.'));
+  // The file's version (built for 1.21.0, not yet released): version 2, with each fund's award, unless the county still
+  // runs SUDS 1.20 or earlier, which refuses it. Ticked for the person when the connected county says it reads only
+  // version 1 and its code is the one typed.
+  const conn = (rem && rem.connection) || { connected: false };
+  const olderHere = () => !!(conn.connected && conn.county_older && conn.county_code_display && codeI.value.trim().toUpperCase().replace(/[\s-]/g, '') === conn.county_code_display.replace('-', ''));
+  const v1I = h('input', { type: 'checkbox', id: 'so-county-v1', name: 'schema_version_1', checked: olderHere(), 'aria-describedby': 'so-county-v1-help', 'data-so-county-v1': '1' });
+  const olderNote = h('div', { class: 'banner warn small', role: 'status', 'data-so-county-older': '1', hidden: !olderHere() }, conn.county_older_note || '');
+  codeI.addEventListener('change', () => { const o2 = olderHere(); olderNote.hidden = !o2; if (o2) v1I.checked = true; });
+  const version = h('div', { class: 'field span', 'data-so-county-version': '1' }, olderNote,
+    h('label', { class: 'check', for: 'so-county-v1' }, v1I, 'The county runs SUDS 1.20 or earlier: make a version 1 file'),
+    h('div', { class: 'help', id: 'so-county-v1-help' }, 'The file carries each fund\'s award or contract amount and award period (from Funding & spending), so the county can see spending against the award. A county on SUDS 1.20 or earlier cannot read that version: tick this for it, and the file leaves the award out. Ask the county to upgrade.'));
   const err = h('div', { class: 'err', role: 'alert', 'data-so-county-error': '1' });
   const keyBox = h('div', { 'data-so-county-key': '1' });
   const showKey = (key, retired, fresh) => keyBox.replaceChildren(key
@@ -204,8 +218,8 @@ function countyForm(k, o, today, pageFrom, pageTo, choice) {
     const c = checked(); if (!c) return;
     const ids = c.funds; const p = chosen();
     makeBtn.disabled = true;
-    fetchDownload(`/api/county-submission/file?from=${p.from}&to=${p.to}&county_code=${encodeURIComponent(codeI.value.trim())}&county_name=${encodeURIComponent(nameI.value.trim())}&funds=${ids.map(encodeURIComponent).join(',')}`)
-      .then(async () => { toast(`County file for ${monthsLabel(p.from, p.to)} made and downloaded. Send it to the county as your contract says; it holds exact counts and is not for publication.`, 'ok'); try { const x = await get('/api/county-submission/key', { quiet: true }); showKey(x.key, x.retired); } catch { /* the file is made */ } })
+    fetchDownload(`/api/county-submission/file?from=${p.from}&to=${p.to}&county_code=${encodeURIComponent(codeI.value.trim())}&county_name=${encodeURIComponent(nameI.value.trim())}&funds=${ids.map(encodeURIComponent).join(',')}${v1I.checked ? '&schema_version=1' : ''}`)
+      .then(async () => { toast(`County file for ${monthsLabel(p.from, p.to)} made and downloaded${v1I.checked ? ' (version 1, without the award)' : ''}. Send it to the county as your contract says; it holds exact counts and is not for publication.`, 'ok'); if (choice.onMade) choice.onMade(); try { const x = await get('/api/county-submission/key', { quiet: true }); showKey(x.key, x.retired); } catch { /* the file is made */ } })
       .catch(e2 => { err.textContent = e2.message; })
       .finally(() => { makeBtn.disabled = false; });
   } },
@@ -213,7 +227,8 @@ function countyForm(k, o, today, pageFrom, pageTo, choice) {
     h('div', { class: 'field' }, h('label', { for: 'so-county-code' }, 'County code'), codeI, h('div', { class: 'help', id: 'so-county-code-help' }, 'Eight letters and digits the county gives you (its County view › Programs page shows it). The county refuses a file made for another county.')),
     h('div', { class: 'field' }, h('label', { for: 'so-county-name' }, 'County name'), nameI),
     funds,
-    h('div', { class: 'field span' }, h('label', { for: 'so-county-period' }, 'Period'), periodSel, warn)),
+    h('div', { class: 'field span' }, h('label', { for: 'so-county-period' }, 'Period'), periodSel, warn),
+    version),
   h('p', { class: 'county-period' }, 'Period: ', periodShown),
   err,
   h('div', { class: 'btn-row' }, makeBtn));
@@ -223,4 +238,78 @@ function copyBtn(value, what, attr) {
   return h('button', { class: 'btn sm', type: 'button', [attr]: '1', onClick: async () => {
     try { await navigator.clipboard.writeText(value); toast(`${what} copied.`, 'ok'); } catch { toast(`Could not copy: select the ${what.toLowerCase()} and copy it yourself.`, 'error'); }
   } }, `Copy ${what.toLowerCase()}`);
+}
+
+// The county's reporting schedule (built for 1.21.0, not yet released; server/county-schedule.js): which periods each
+// county expects, by when, and whether the file for each was made or sent. Home shows the same reminders. A county
+// connected over the county connection says its own schedule (and what it received); for any other county the program
+// records it here. Office server only, for whoever makes the county file.
+const STATE_WORDS = { received: ['Received by the county', 'ok'], sent: ['Sent', 'ok'], made: ['Made', 'ok'], made_not_sent: ['Made, not yet received', 'warn'], due: ['Not yet made', 'warn'], overdue: ['Overdue', 'danger'] };
+function scheduleCard(choice = {}) {
+  if (state.local || !can('reports:funder') || !can('budget:read') || !can('export:read')) return null;
+  const body = h('div', { 'data-so-schedule-body': '1' }, h('p', { class: 'small muted' }, 'Loading…'));
+  const heading = h('h2', { id: 'so-schedule-h', tabindex: '-1' }, 'County reporting schedule');
+  const card = h('section', { class: 'card mb', 'aria-labelledby': 'so-schedule-h', 'data-so-schedule': '1' }, h('div', { class: 'card-head' }, heading),
+    h('p', { class: 'small' }, 'The periods each county expects a file for, when each is due, and whether it was made or sent. Home reminds you of a file not yet made. A county connected to this server says its own schedule; for any other county, record it here.'),
+    body);
+  const load = async (focusResult) => {
+    try { draw(await get('/api/county-submission/reminders', { quiet: true }), focusResult); }
+    catch (e) { body.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)); }
+  };
+  const draw = (d, focusResult) => {
+    const result = h('div', { class: 'hidden', tabindex: '-1', 'data-so-schedule-result': '1' });
+    const lists = d.counties.map(c => h('div', { class: 'mb', 'data-so-schedule-county': c.county_code },
+      h('h3', {}, `${c.county_name || 'County'} (county code ${c.county_code_display})`),
+      h('p', { class: 'small' }, `${c.cadence_label}; each file due ${c.due_days} day${c.due_days === 1 ? '' : 's'} after its period ends. `,
+        c.source === 'county' ? h('span', { 'data-so-schedule-source': 'county' }, `Said by the county through the connection${c.checked_at ? ` (last asked ${fmt.date(c.checked_at)})` : ''}.`) : h('span', { 'data-so-schedule-source': 'programme' }, `Recorded here; reminders from ${fmt.date(c.start)}.`)),
+      table([{ label: 'Period', render: p => p.label || `${fmt.date(p.from)} – ${fmt.date(p.to)}` }, { label: 'Due by', render: p => fmt.date(p.due_by) },
+        { label: 'File', render: p => h('span', { 'data-so-schedule-state': p.state }, badge(STATE_WORDS[p.state][0], STATE_WORDS[p.state][1]), p.made && p.state !== 'received' ? h('span', { class: 'small muted' }, ` made ${fmt.date(p.made.at)}${p.made.schema_version === 1 ? ' (version 1)' : ''}`) : null) }],
+      c.periods, { empty: 'No period has ended since reminders start.' }),
+      c.schedule ? h('div', { class: 'btn-row' }, h('button', { class: 'btn sm ghost', type: 'button', 'data-so-schedule-remove': c.county_code, 'aria-label': `Stop reminders for ${c.county_name || c.county_code_display}`, onClick: async () => {
+        if (!await confirmDialog('Stop these reminders?', `Home stops reminding you of files for ${c.county_name || c.county_code_display}${c.source === 'county' ? ' that this server recorded (the connected county\'s own schedule still applies)' : ''}.`, { okText: 'Stop reminders' })) return;
+        try { await del(`/api/county-submission/schedules/${encodeURIComponent(c.county_code)}`); toast('Reminders stopped.', 'ok'); await load(); heading.focus(); } catch (e) { toast(e.message, 'error'); }
+      } }, 'Stop reminders')) : null));
+    // Record a schedule: the county's code and name (the card's, by default), how often, when due, and the first period.
+    const codeI = h('input', { id: 'so-schedule-code', name: 'county_code', autocomplete: 'off', 'aria-describedby': 'so-schedule-code-help', 'data-so-schedule-code': '1', value: (document.getElementById('so-county-code') || {}).value || '' });
+    const nameI = h('input', { id: 'so-schedule-name', name: 'county_name', autocomplete: 'off', maxlength: 200, 'data-so-schedule-name': '1', value: (document.getElementById('so-county-name') || {}).value || '' });
+    const cadI = h('select', { id: 'so-schedule-cadence', name: 'cadence', 'data-so-schedule-cadence': '1' }, d.cadences.map(x => h('option', { value: x.value }, x.label)));
+    const dueI = h('input', { id: 'so-schedule-due', name: 'due_days', type: 'number', min: 1, max: d.due_days_max, value: String(d.due_days_default), inputmode: 'numeric', 'aria-describedby': 'so-schedule-due-help', 'data-so-schedule-due': '1' });
+    const startI = h('input', { id: 'so-schedule-start', name: 'start', type: 'date', 'aria-describedby': 'so-schedule-start-help', 'data-so-schedule-start': '1' });
+    const err = h('div', { class: 'err', role: 'alert', id: 'so-schedule-err', 'data-so-schedule-error': '1' });
+    const inputs = { county_code: codeI, county_name: nameI, cadence: cadI, due_days: dueI, start: startI };
+    const f = h('form', { noValidate: true, 'data-so-schedule-form': '1', onSubmit: async (e) => {
+      e.preventDefault();
+      for (const i of Object.values(inputs)) i.removeAttribute('aria-invalid');
+      err.textContent = '';
+      const code = codeI.value.trim().replace(/[\s-]/g, '');
+      if (!code) { err.textContent = 'Type the county code the county gave you.'; codeI.setAttribute('aria-invalid', 'true'); codeI.focus(); return; }
+      try {
+        const out = await put(`/api/county-submission/schedules/${encodeURIComponent(code)}`, { county_name: nameI.value.trim(), cadence: cadI.value, due_days: dueI.value === '' ? undefined : Number(dueI.value), start: startI.value || undefined }, { quiet: true });
+        draw(out, true);
+      } catch (x) {
+        const fields = (x.data && x.data.fields) || {};
+        const first = Object.keys(fields).find(k => inputs[k]);
+        err.textContent = x.message;
+        for (const k of Object.keys(fields)) if (inputs[k]) inputs[k].setAttribute('aria-invalid', 'true');
+        (first ? inputs[first] : codeI).focus();
+      }
+    } },
+    h('div', { class: 'form-grid' },
+      h('div', { class: 'field' }, h('label', { for: 'so-schedule-code' }, 'County code'), codeI, h('div', { class: 'help', id: 'so-schedule-code-help' }, 'The code on the Send to the county card above.')),
+      h('div', { class: 'field' }, h('label', { for: 'so-schedule-name' }, 'County name'), nameI),
+      h('div', { class: 'field' }, h('label', { for: 'so-schedule-cadence' }, 'The county expects a file'), cadI),
+      h('div', { class: 'field' }, h('label', { for: 'so-schedule-due' }, 'Days after a period ends that its file is due'), dueI, h('div', { class: 'help', id: 'so-schedule-due-help' }, `1 to ${d.due_days_max}, as your contract says (${d.due_days_default} if you are not sure).`)),
+      h('div', { class: 'field' }, h('label', { for: 'so-schedule-start' }, 'Remind from (optional)'), startI, h('div', { class: 'help', id: 'so-schedule-start-help' }, 'Periods starting before this day are never reminded about. Left empty: the last period that has ended, so files you sent before are not called missing.'))),
+    err,
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'submit', 'data-so-schedule-save': '1' }, 'Save the schedule')));
+    body.replaceChildren(result, ...(lists.length ? lists : [h('p', { class: 'small muted', 'data-so-schedule-none': '1' }, 'No county schedule yet: Home has nothing to remind you of.')]),
+      h('details', { 'data-so-schedule-add': '1', open: !lists.length }, h('summary', {}, 'Record a county\'s schedule'), f));
+    if (focusResult) {
+      result.setAttribute('role', 'status'); result.className = 'banner info'; result.textContent = d.reminders.length ? `Saved. ${d.reminders.length} file${d.reminders.length === 1 ? ' is' : 's are'} not yet made or sent.` : 'Saved. Every file due so far is made or sent.';
+      result.focus();
+    }
+  };
+  choice.onMade = () => load();
+  load();
+  return card;
 }

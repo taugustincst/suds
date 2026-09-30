@@ -24,6 +24,12 @@
 //      signed by the program" on Submissions (Correct reopens the form), in the headline, the column, every figure
 //      and the total; left out by the switch (the headline, the page and the file name say so); axe on each dialog
 //      at 1280, 390 and 320 px, nothing sideways.
+//   6. Award amounts and reminders (built for 1.21.0, not yet released): the program's file is version 2 with each
+//      fund's award, version 1 when the box for a county on SUDS 1.20 is ticked; the county reads both, the combined
+//      view's Spending against the award says "award not in file" and "no award recorded" in words and how many
+//      programs each total is over, and so does its CSV; Enter figures offers the award, optional. The program records
+//      the county's schedule (a mistake said at the field, the focus there; saved said as a status that takes the
+//      focus); Home reminds of the quarter not yet made and leads to the schedule; Stop reminders; axe at 1280 and 390.
 // The fictional programs' keys and files come from scripts/county-sample.js (the dev server stays a program's).
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
@@ -134,7 +140,10 @@ try {
   await fin.click('[data-so-county-key] details > summary');
   const pem = (await fin.textContent('[data-so-county-pem]')).trim();
   ok(/^-----BEGIN PUBLIC KEY-----/.test(pem), 'the public key is on the page to give the county');
-  const allowed = new Set(['counts', 'funds', 'categories', 'generated_at', 'period', 'programme', 'recipient', 'county_code', 'county_name', 'schema_version', 'suds_version', 'total', 'from', 'to', 'category', 'grant_number', 'hiaa', 'name', 'spend', 'values',
+  // Schema version 2 (built for 1.21.0): each fund's award, { amount, from, to }.
+  eq(own.schema_version, 2, 'the file is version 2');
+  ok(own.payload.funds[0].award && own.payload.funds[0].award.amount > 0, 'carrying the fund\'s award from its record', own.payload.funds[0].award);
+  const allowed = new Set(['counts', 'funds', 'categories', 'generated_at', 'period', 'programme', 'recipient', 'county_code', 'county_name', 'schema_version', 'suds_version', 'total', 'from', 'to', 'category', 'grant_number', 'hiaa', 'name', 'spend', 'values', 'award', 'amount',
     'approved', 'other_categories', 'own_category', 'pending', 'key', 'spend_own_category', 'contacts', 'naloxone_kits', 'fentanyl_strips', 'syringes', 'reversals', 'treatment_admissions', 'education_contacts',
     'staff_training_hours', 'referrals_made', 'people_served', 'people_linked', 'moud_linked', 'people_trained']);
   const keys = new Set(); const walk = (v) => { if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) { keys.add(k); walk(x); } }; walk(own.payload);
@@ -496,6 +505,77 @@ try {
     await axe(np, `Import a CSV dialog with problems (${width})`); ok(await noSideScroll(np), `Import a CSV at ${width} px`);
     await nCtx.close();
   }
+
+  // ---------------- 6. award amounts and reporting reminders (built for 1.21.0, not yet released) ----------------
+  // The county reads version 1 and version 2 files side by side: Eastside's quarter again, as a SUDS before 1.21 made it.
+  const tmpV1 = path.join(tmp, 'v1'); fs.mkdirSync(tmpV1);
+  execFileSync(process.execPath, ['--no-warnings', path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'county-sample.js'), tmpV1, '--county-code', code.data.code_display, '--schema-version', '1'], { stdio: 'ignore' });
+  const esV1 = fs.readdirSync(tmpV1).filter(f => f.startsWith('eastside-') && f.includes(`${lq.from}_${lq.to}`)).map(f => path.join(tmpV1, f))[0];
+  eq(JSON.parse(fs.readFileSync(esV1, 'utf8')).schema_version, 1, 'a version 1 file');
+  eq((await api(adm, 'POST', '/api/county/submissions', { text: fs.readFileSync(esV1, 'utf8') })).status, 201, 'a version 1 file still imports');
+  await go(adm, `county?from=${lq.from}&to=${lq.to}`);
+  const awardCard = await until(() => adm.$('[data-cv-group=award]'));
+  ok(awardCard, 'the combined view has a Spending against the award section');
+  const awardText = await adm.textContent('[data-cv-group=award]');
+  ok(/Award or contract amount/.test(awardText) && /Spent against the award \(%\)/.test(awardText), 'with the award and the share spent against it', awardText.slice(0, 200));
+  ok(await adm.$(`[data-cv-group=award] [data-cv-award-note="award not in file"]`), 'a program whose file is version 1: "award not in file", never 0');
+  ok(await adm.$(`[data-cv-group=award] [data-cv-award-note="no award recorded"]`), 'the program not on SUDS, entered without an award: "no award recorded"');
+  ok(/Award totals are over the \d+ of \d+ programs/.test(awardText), 'the section says the totals are over the programs whose files carry the award');
+  ok(/\(over \d+ of \d+ programs?\)/.test(await adm.$eval('[data-cv-group=award] [data-cv-award-over]', e => e.textContent)), 'and each total says how many');
+  ok(/\d%/.test(awardText), 'the share is a percentage');
+  await axe(adm, 'county combined view with the award (1280)');
+  const [awx] = await Promise.all([adm.waitForEvent('download'), adm.click('[data-cv-export=csv]')]);
+  const awCsv = fs.readFileSync(await awx.path(), 'utf8');
+  ok(/award not in file/.test(awCsv) && /Spent against the award \(%\)/.test(awCsv), 'the CSV has the award rows and says "award not in file"');
+  // Enter figures offers the award, optional, per fund.
+  await go(adm, 'county?tab=programmes');
+  await adm.click(`[data-cp-enter="${canyonId}"]`); await adm.waitForSelector('[data-ce-dialog]');
+  ok(await adm.$('.modal [name="funds.0.award_amount"]') && await adm.$('.modal [name="funds.0.award_from"]') && await adm.$('.modal [name="funds.0.award_to"]'), 'Enter figures asks for each fund\'s award, optional');
+  ok(!/\*/.test(await adm.textContent('.modal [data-field="funds.0.award_amount"] label')), 'not marked required');
+  await adm.keyboard.press('Escape'); await until(async () => !(await adm.$('.modal-bg')));
+  // The program's side: a version 1 file for a county still on SUDS 1.20.
+  await go(fin, 'settlement'); await until(() => fin.$('[data-so-county-form]'));
+  ok(!(await fin.isChecked('[data-so-county-v1]')), 'the card makes version 2 unless asked');
+  await fin.check('[data-so-county-v1]');
+  const [dlv1] = await Promise.all([fin.waitForEvent('download'), fin.click('[data-so-county-file]')]);
+  const v1Own = JSON.parse(fs.readFileSync(await dlv1.path(), 'utf8'));
+  eq(v1Own.schema_version, 1, 'ticked, the file is version 1'); ok(!JSON.stringify(v1Own).includes('award'), 'with no award in it');
+  ok(await toast(fin, /version 1, without the award/), 'and the message says so');
+  // The reporting schedule: recorded for this county from the quarter before the last, so that quarter is due.
+  const sched = await until(() => fin.$('[data-so-schedule-form]'));
+  ok(sched, 'Settlement outcomes has the county reporting schedule');
+  const prevQ = rbPeriod(rb[0]);
+  await fin.fill('[data-so-schedule-code]', code.data.code_display); await fin.fill('[data-so-schedule-name]', 'Sample County Behavioral Health');
+  await fin.fill('[data-so-schedule-due]', '0'); await fin.click('[data-so-schedule-save]');
+  ok(/1 to 180 days/.test(await until(async () => (await fin.textContent('[data-so-schedule-error]')) || null) || ''), 'a due time out of range is said at the form');
+  eq(await fin.getAttribute('[data-so-schedule-due]', 'aria-invalid'), 'true', 'at the field, marked invalid');
+  eq(await fin.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-so-schedule-due')), '1', 'with the focus on it');
+  await fin.fill('[data-so-schedule-due]', '30'); await fin.fill('[data-so-schedule-start]', prevQ.from); await fin.click('[data-so-schedule-save]');
+  const saved = await until(async () => { const e = await fin.$('[data-so-schedule-result][role=status]'); return e ? { text: await e.textContent(), focused: await fin.evaluate(() => document.activeElement && document.activeElement.hasAttribute('data-so-schedule-result')) } : null; });
+  ok(saved && /Saved\. 1 file is not yet made or sent/.test(saved.text), 'saved: it says how many files are not yet made', saved && saved.text);
+  ok(saved && saved.focused, 'and the message takes the focus');
+  ok(await fin.$('[data-so-schedule-state=made]'), 'the quarter whose file was made is Made');
+  ok(await fin.$('[data-so-schedule-state=overdue], [data-so-schedule-state=due]'), 'the quarter before is not yet made');
+  await axe(fin, 'settlement with the reporting schedule (1280)');
+  // Home reminds finance, and the reminder leads to the schedule, with the keyboard on it.
+  await go(fin, 'dashboard');
+  const pill = await until(() => fin.$('a[href="#/settlement?card=schedule"]'));
+  ok(pill && /^County file to Sample County Behavioral Health for .* due by .* — not yet made$/.test((await pill.textContent()).trim()), 'Home says which county file is due by when, not yet made', pill && await pill.textContent());
+  await pill.click();
+  ok(await until(async () => fin.evaluate(() => document.activeElement && document.activeElement.id === 'so-schedule-h')), 'the reminder opens the schedule, with the focus on its heading');
+  const { ctx: fph2Ctx, page: fph2 } = await signIn('afinance', PW, { width: 390, height: 844 });
+  await go(fph2, 'settlement'); await until(() => fph2.$('[data-so-schedule-county]'));
+  await axe(fph2, 'settlement with the reporting schedule (390)'); ok(await noSideScroll(fph2), 'the reporting schedule: nothing sideways at 390 px');
+  await go(fph2, 'dashboard'); await until(() => fph2.$('a[href="#/settlement?card=schedule"]')); await axe(fph2, 'Home with a county file reminder (390)'); ok(await noSideScroll(fph2), 'Home with a reminder: nothing sideways at 390 px');
+  await fph2Ctx.close();
+  // Stop reminders: Home says nothing more.
+  await go(fin, 'settlement'); await until(() => fin.$('[data-so-schedule-remove]'));
+  await fin.click('[data-so-schedule-remove]'); await fin.waitForSelector('.modal-bg .modal');
+  await axe(fin, 'Stop reminders dialog (1280)');
+  await fin.click('.modal-bg .modal .btn.primary');
+  ok(await toast(fin, /Reminders stopped/), 'Stop reminders stops them');
+  await go(fin, 'dashboard'); await settle(fin);
+  ok(!(await fin.$('a[href="#/settlement?card=schedule"]')), 'and Home no longer reminds');
 
   // ---------------- 3. finance and read-only ----------------
   await fin.goto(base + '/'); await fin.reload(); await settle(fin);
